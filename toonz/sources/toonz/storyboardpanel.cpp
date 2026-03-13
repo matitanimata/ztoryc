@@ -1,0 +1,1627 @@
+#include "storyboardpanel.h"
+
+#include "tapp.h"
+#include "toonz/toonzscene.h"
+#include "toonz/txsheet.h"
+#include "toonz/tscenehandle.h"
+#include "toonz/txshcell.h"
+#include "toonz/childstack.h"
+#include "toonz/txshchildlevel.h"
+#include "toonz/tstageobjecttree.h"
+#include "columncommand.h"
+#include "toonz/tstageobject.h"
+#include "toonz/tcolumnhandle.h"
+#include "toonz/txsheethandle.h"
+#include "toonz/txshleveltypes.h"
+#include "toonz/txshlevelcolumn.h"
+#include "toonzqt/stageobjectsdata.h"
+#include "tfxattributes.h"
+#include "toonz/fxdag.h"
+#include "expressionreferencemanager.h"
+#include "toonz/tframehandle.h"
+#include "toonzqt/menubarcommand.h"
+#include "toonz/tstageobjectid.h"
+#include "toonz/tstageobject.h"
+#include "mainwindow.h"
+
+#include <QVBoxLayout>
+#include <QKeyEvent>
+#include <QShortcut>
+#include <QRadioButton>
+#include "iocommand.h"
+#include "subscenecommand.h"
+#include "columnselection.h"
+#include "toonz/tproject.h"
+#include "tsystem.h"
+#include "tsystem.h"
+#include <QSpinBox>
+#include <QDialogButtonBox>
+#include <QDialog>
+#include <QHBoxLayout>
+#include <QGridLayout>
+#include <QScrollArea>
+#include <set>
+#include <QLabel>
+#include <QTextEdit>
+#include <QPushButton>
+#include <QSpinBox>
+#include <QFrame>
+#include <QMouseEvent>
+#include <QDrag>
+#include <QMimeData>
+#include <QMessageBox>
+#include <QFileDialog>
+#include <QPainter>
+#include <QPdfWriter>
+#include <QPageLayout>
+#include <QSizePolicy>
+#include <QResizeEvent>
+#include <QFile>
+#include <QXmlStreamWriter>
+#include <QXmlStreamReader>
+#include <QRegularExpression>
+#include <QTimer>
+#include <QComboBox>
+#include <QStackedWidget>
+
+PanelWidget::PanelWidget(QWidget *parent)
+    : QFrame(parent)
+    , m_shotIndex(0)
+    , m_panelIndex(0)
+    , m_panelCount(1)
+    , m_fps(24)
+    , m_selected(false)
+{
+  setMinimumWidth(200);
+  setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  setAcceptDrops(true);
+  updateBorderStyle();
+
+  QVBoxLayout *layout = new QVBoxLayout(this);
+  layout->setSpacing(2);
+  layout->setContentsMargins(4, 4, 4, 4);
+
+  QWidget *header = new QWidget();
+  header->setStyleSheet("background-color:#3a3a3a; border-radius:2px;");
+  QHBoxLayout *hl = new QHBoxLayout(header);
+  hl->setContentsMargins(6, 3, 6, 3);
+  hl->setSpacing(4);
+
+  auto lbl = [](const QString &t) {
+    QLabel *l = new QLabel(t);
+    l->setStyleSheet("color:#aaa; font-size:10px;");
+    return l;
+  };
+  auto val = [](const QString &t) {
+    QLabel *l = new QLabel(t);
+    l->setStyleSheet("color:#fff; font-size:10px; font-weight:bold;");
+    return l;
+  };
+
+  m_shotLabel = new QLineEdit("01");
+  m_shotLabel->setFixedWidth(36);
+  m_shotLabel->setStyleSheet(
+    "QLineEdit{color:#fff;background:#3a3a3a;border:none;font-size:10px;font-weight:bold;padding:0 2px;}"
+    "QLineEdit:focus{background:#555;border:1px solid #888;}");
+  m_panelLabel = val("1/1");
+
+  // D: durata parziale panel — read-only, derivata dalla subscene
+  m_durationSpin = new QSpinBox();
+  m_durationSpin->setRange(1, 99999);
+  m_durationSpin->setValue(24);
+  m_durationSpin->setFixedWidth(52);
+  m_durationSpin->setReadOnly(true);
+  m_durationSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+  m_durationSpin->setStyleSheet(
+    "QSpinBox{background:#333;color:#aaa;border:1px solid #444;font-size:10px;padding:1px;}");
+
+  m_durationLabel = new QLabel("00:00:00");
+  m_durationLabel->setStyleSheet("color:#88aaff; font-size:10px;");
+
+  m_totalLabel = new QLabel("T:00:00");
+  m_totalLabel->setStyleSheet("color:#aaffaa; font-size:10px;");
+
+  // T: durata totale shot — editabile solo nel panel 0
+  m_totalSpin = new QSpinBox();
+  m_totalSpin->setRange(1, 99999);
+  m_totalSpin->setValue(24);
+  m_totalSpin->setFixedWidth(52);
+  m_totalSpin->setStyleSheet(
+    "QSpinBox{background:#222;color:#aaffaa;border:1px solid #555;font-size:10px;padding:1px;}");
+
+  m_editButton = new QPushButton("Edit");
+  m_editButton->setFixedSize(34, 18);
+  m_editButton->setStyleSheet(
+    "QPushButton{background:#555;color:#ddd;border-radius:3px;font-size:9px;}"
+    "QPushButton:hover{background:#777;}");
+
+  hl->addWidget(lbl("S:"));
+  hl->addWidget(m_shotLabel);
+  hl->addWidget(lbl("P:"));
+  hl->addWidget(m_panelLabel);
+  hl->addWidget(lbl("D:"));
+  hl->addWidget(m_durationSpin);
+  hl->addWidget(lbl("T:"));
+  hl->addWidget(m_totalSpin);
+  hl->addStretch();
+  hl->addWidget(m_editButton);
+  layout->addWidget(header);
+
+  m_previewLabel = new QLabel();
+  m_previewLabel->setAlignment(Qt::AlignCenter);
+  m_previewLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  m_previewLabel->setMinimumHeight(100);
+  m_previewLabel->setStyleSheet("QLabel{background:#f0f0eb;border:none;color:#bbb;}");
+  layout->addWidget(m_previewLabel);
+
+  layout->addWidget(makeFieldLabel("Dialog"));
+  m_dialogField = new QTextEdit();
+  m_dialogField->setPlaceholderText("Enter dialogue...");
+  m_dialogField->setFixedHeight(68);
+  m_dialogField->setStyleSheet(
+    "QTextEdit{background:#2a2a2a;color:#eee;border:1px solid #444;font-size:11px;padding:2px;}");
+  layout->addWidget(m_dialogField);
+
+  layout->addWidget(makeFieldLabel("Action Notes"));
+  m_actionField = new QTextEdit();
+  m_actionField->setPlaceholderText("Enter action notes...");
+  m_actionField->setFixedHeight(68);
+  m_actionField->setStyleSheet(
+    "QTextEdit{background:#2a2a2a;color:#eee;border:1px solid #444;font-size:11px;padding:2px;}");
+  layout->addWidget(m_actionField);
+
+  layout->addWidget(makeFieldLabel("Notes"));
+  m_notesField = new QTextEdit();
+  m_notesField->setPlaceholderText("Enter notes...");
+  m_notesField->setFixedHeight(68);
+  m_notesField->setStyleSheet(
+    "QTextEdit{background:#2a2a2a;color:#eee;border:1px solid #444;font-size:11px;padding:2px;}");
+  layout->addWidget(m_notesField);
+
+  connect(m_editButton, &QPushButton::clicked, this, &PanelWidget::onEditClicked);
+  connect(m_shotLabel, &QLineEdit::editingFinished, [this](){
+    emit dataChanged(m_shotIndex, m_panelIndex);
+  });
+  connect(m_totalSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+          this, [this](int frames){ emit totalDurationChanged(frames); });
+  connect(m_durationSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+          this, &PanelWidget::onDurationSpinChanged);
+  connect(m_dialogField, &QTextEdit::textChanged,
+          [this](){ emit dataChanged(m_shotIndex, m_panelIndex); });
+  connect(m_actionField, &QTextEdit::textChanged,
+          [this](){ emit dataChanged(m_shotIndex, m_panelIndex); });
+  connect(m_notesField, &QTextEdit::textChanged,
+          [this](){ emit dataChanged(m_shotIndex, m_panelIndex); });
+  setDuration(24);
+}
+
+QLabel* PanelWidget::makeFieldLabel(const QString &text) {
+  QLabel *l = new QLabel(text);
+  l->setStyleSheet(
+    "color:#aaa;font-size:10px;font-weight:bold;"
+    "background:#333;padding:1px 4px;border-top:1px solid #555;");
+  return l;
+}
+
+QString PanelWidget::framesToTimecode(int frames) const {
+  int ff = frames % m_fps;
+  int ts = frames / m_fps;
+  int ss = ts % 60;
+  int mm = ts / 60;
+  return QString("%1:%2:%3")
+    .arg(mm, 2, 10, QChar(48))
+    .arg(ss, 2, 10, QChar(48))
+    .arg(ff, 2, 10, QChar(48));
+}
+
+void PanelWidget::updateBorderStyle() {
+  if (m_selected)
+    setStyleSheet("PanelWidget{background:#2b2b2b;border:1px solid #e05a00;border-radius:3px;box-shadow:0 0 0 2px #e05a00;}");
+  else
+    setStyleSheet("PanelWidget{background:#2b2b2b;border:1px solid #555;border-radius:3px;}"
+                  "PanelWidget:hover{border:1px solid #888;}");
+}
+
+void PanelWidget::rescalePreview() {
+  int w = width() - 8;
+  if (w <= 0) w = 200;
+  int h = w * 9 / 16;
+  m_previewLabel->setFixedHeight(h);
+  if (not m_previewPixmap.isNull())
+    m_previewLabel->setPixmap(
+      m_previewPixmap.scaled(w, h, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+}
+
+void PanelWidget::setShotIndex(int si) { m_shotIndex = si; }
+
+void PanelWidget::setPanelIndex(int pi, int total) {
+  m_panelIndex = pi;
+  m_panelCount = total;
+  m_panelLabel->setText(QString("%1/%2").arg(pi + 1).arg(total));
+  // T: editabile solo nel primo panel
+  m_totalSpin->setReadOnly(pi != 0);
+  m_totalSpin->setButtonSymbols(pi == 0 ? QAbstractSpinBox::UpDownArrows : QAbstractSpinBox::NoButtons);
+  m_totalSpin->setStyleSheet(pi == 0
+    ? "QSpinBox{background:#222;color:#aaffaa;border:1px solid #555;font-size:10px;padding:1px;}"
+    : "QSpinBox{background:#333;color:#666;border:1px solid #444;font-size:10px;padding:1px;}");
+}
+
+void PanelWidget::setShotNumber(const QString &n) {
+  m_shotLabel->blockSignals(true);
+  m_shotLabel->setText(n.isEmpty()
+    ? QString("%1").arg(m_shotIndex + 1, 2, 10, QChar(48))
+    : n);
+  m_shotLabel->blockSignals(false);
+}
+
+void PanelWidget::setFps(int fps) {
+  m_fps = fps;
+  m_durationLabel->setText(framesToTimecode(m_durationSpin->value()));
+}
+
+void PanelWidget::setDuration(int frames) {
+  m_durationSpin->blockSignals(true);
+  m_durationSpin->setValue(frames);
+  m_durationSpin->blockSignals(false);
+  m_durationLabel->setText(framesToTimecode(frames));
+}
+
+void PanelWidget::setTotalDuration(int frames) {
+  m_totalLabel->setText("T:" + framesToTimecode(frames));
+  m_totalSpin->blockSignals(true);
+  m_totalSpin->setValue(frames);
+  m_totalSpin->blockSignals(false);
+}
+
+void PanelWidget::setPreviewPixmap(const QPixmap &px) {
+  m_previewPixmap = px;
+  rescalePreview();
+}
+
+void PanelWidget::setSelected(bool sel) {
+  m_selected = sel;
+  updateBorderStyle();
+}
+
+void PanelWidget::setDialog(const QString &t) {
+  m_dialogField->blockSignals(true);
+  m_dialogField->setPlainText(t);
+  m_dialogField->blockSignals(false);
+}
+
+void PanelWidget::setAction(const QString &t) {
+  m_actionField->blockSignals(true);
+  m_actionField->setPlainText(t);
+  m_actionField->blockSignals(false);
+}
+
+void PanelWidget::setNotes(const QString &t) {
+  m_notesField->blockSignals(true);
+  m_notesField->setPlainText(t);
+  m_notesField->blockSignals(false);
+}
+
+int     PanelWidget::duration() const { return m_durationSpin->value(); }
+QString PanelWidget::dialog()   const { return m_dialogField->toPlainText(); }
+QString PanelWidget::action()   const { return m_actionField->toPlainText(); }
+QString PanelWidget::notes()    const { return m_notesField->toPlainText(); }
+
+void PanelWidget::onEditClicked() { emit editRequested(m_shotIndex); }
+
+void PanelWidget::onDurationSpinChanged(int value) {
+  m_durationLabel->setText(framesToTimecode(value));
+  emit durationChanged(m_shotIndex, m_panelIndex, value);
+}
+
+void PanelWidget::mousePressEvent(QMouseEvent *e) {
+  if (e->button() == Qt::LeftButton) {
+    emit clicked(m_shotIndex, m_panelIndex, e->modifiers());
+    // Avvia drag solo senza modifier
+    if (e->modifiers() == Qt::NoModifier) {
+      QDrag *drag = new QDrag(this);
+      QMimeData *mime = new QMimeData();
+      mime->setData("application/x-ztoryc-shotindex",
+                    QByteArray::number(m_shotIndex));
+      drag->setMimeData(mime);
+      QPixmap pm(size());
+      pm.fill(Qt::transparent);
+      render(&pm);
+      drag->setPixmap(pm.scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+      drag->setHotSpot(QPoint(80, 45));
+      drag->exec(Qt::MoveAction);
+    }
+  }
+  QFrame::mousePressEvent(e);
+}
+
+void PanelWidget::resizeEvent(QResizeEvent *e) {
+  QFrame::resizeEvent(e);
+  rescalePreview();
+}
+
+void PanelWidget::dragEnterEvent(QDragEnterEvent *e) {
+  if (e->mimeData()->hasFormat("application/x-ztoryc-shotindex"))
+    e->acceptProposedAction();
+}
+
+void PanelWidget::dragMoveEvent(QDragMoveEvent *e) {
+  if (e->mimeData()->hasFormat("application/x-ztoryc-shotindex"))
+    e->acceptProposedAction();
+}
+
+void PanelWidget::dropEvent(QDropEvent *e) {
+  if (not e->mimeData()->hasFormat("application/x-ztoryc-shotindex")) return;
+  int fromShot = e->mimeData()->data("application/x-ztoryc-shotindex").toInt();
+  if (fromShot != m_shotIndex)
+    emit dropReceived(fromShot, m_shotIndex);
+  e->acceptProposedAction();
+}
+
+StoryboardPanel::StoryboardPanel(QWidget *parent)
+    : TPanel(parent)
+    , m_columnsPerRow(3)
+    , m_selectedShotIndex(-1)
+    , m_fps(24)
+    , m_autoRenumber(true)
+    , m_comboViewer(nullptr)
+{
+  setObjectName("StoryboardPanel");
+  setFocusPolicy(Qt::StrongFocus);
+
+  // Shortcut tastiera
+  QShortcut *scCopy  = new QShortcut(QKeySequence::Copy, this, nullptr, nullptr, Qt::WidgetWithChildrenShortcut);
+  QShortcut *scClone = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_D), this, nullptr, nullptr, Qt::WidgetWithChildrenShortcut);
+  QShortcut *scPaste = new QShortcut(QKeySequence::Paste, this, nullptr, nullptr, Qt::WidgetWithChildrenShortcut);
+  QShortcut *scDelete = new QShortcut(QKeySequence(Qt::Key_Backspace), this, nullptr, nullptr, Qt::WidgetWithChildrenShortcut);
+  connect(scCopy,  &QShortcut::activated, this, &StoryboardPanel::onCopyShot);
+  connect(scClone, &QShortcut::activated, this, &StoryboardPanel::onCloneShot);
+  connect(scPaste, &QShortcut::activated, this, &StoryboardPanel::onPasteShot);
+  connect(scDelete,&QShortcut::activated, this, &StoryboardPanel::onDeleteShot);
+  setWindowTitle(tr("Storyboard"));
+
+  QWidget *main = new QWidget(this);
+  QVBoxLayout *mainLayout = new QVBoxLayout(main);
+  mainLayout->setSpacing(4);
+  mainLayout->setContentsMargins(6, 6, 6, 6);
+
+  QHBoxLayout *tb = new QHBoxLayout();
+
+  m_addShotButton = new QPushButton("+ Add Shot");
+  m_addShotButton->setStyleSheet(
+    "QPushButton{background:#3a6a3a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#4a8a4a;}");
+
+  QLabel *colLabel = new QLabel("Columns:");
+  colLabel->setStyleSheet("color:#ccc;font-size:11px;");
+  m_columnsPerRowSpin = new QSpinBox();
+  m_columnsPerRowSpin->setRange(1, 8);
+  m_columnsPerRowSpin->setValue(m_columnsPerRow);
+  m_columnsPerRowSpin->setFixedWidth(45);
+  m_columnsPerRowSpin->setStyleSheet("background:#333;color:#ddd;border:1px solid #555;");
+
+  m_numberingCombo = new QComboBox();
+  m_numberingCombo->addItem("Auto #");
+  m_numberingCombo->addItem("Keep #");
+  m_numberingCombo->addItem("Renumber All");
+  m_numberingCombo->setFixedWidth(110);
+  m_numberingCombo->setStyleSheet(
+    "QComboBox{background:#444;color:#ddd;border:1px solid #555;border-radius:3px;padding:2px 6px;}"
+    "QComboBox:hover{background:#555;}"
+    "QComboBox QAbstractItemView{background:#333;color:#ddd;selection-background-color:#555;}");
+
+  m_deleteButton = new QPushButton("Delete Shot");
+  m_deleteButton->setStyleSheet(
+    "QPushButton{background:#6a2a2a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#8a3a3a;}");
+
+  m_copyButton = new QPushButton("Copy");
+  m_copyButton->setStyleSheet(
+    "QPushButton{background:#3a4a6a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#4a5a8a;}");
+
+  m_cloneButton = new QPushButton("Clone");
+  m_cloneButton->setStyleSheet(
+    "QPushButton{background:#2a5a4a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#3a7a5a;}");
+
+  m_pasteButton = new QPushButton("Paste");
+  m_pasteButton->setStyleSheet(
+    "QPushButton{background:#4a3a6a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#6a4a8a;}");
+
+  m_copyButton = new QPushButton("Copy");
+  m_copyButton->setStyleSheet(
+    "QPushButton{background:#3a4a6a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#4a5a8a;}");
+
+  m_cloneButton = new QPushButton("Clone");
+  m_cloneButton->setStyleSheet(
+    "QPushButton{background:#2a5a4a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#3a7a5a;}");
+
+  m_pasteButton = new QPushButton("Paste");
+  m_pasteButton->setStyleSheet(
+    "QPushButton{background:#4a3a6a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#6a4a8a;}");
+
+  m_cloneButton = new QPushButton("Clone Shot");
+  m_cloneButton->setStyleSheet(
+    "QPushButton{background:#2a5a4a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#3a7a5a;}");
+
+  m_refreshButton = new QPushButton("Refresh Preview");
+  m_refreshButton->setStyleSheet(
+    "QPushButton{background:#4a4a2a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#6a6a3a;}");
+
+  m_exportPdfButton = new QPushButton("Export PDF");
+  m_exportPdfButton->setStyleSheet(
+    "QPushButton{background:#3a4a6a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#4a5a8a;}");
+
+  m_exportShotsButton = new QPushButton("Export Shots");
+  m_exportShotsButton->setStyleSheet(
+    "QPushButton{background:#4a6a3a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#5a8a4a;}");
+
+  m_exportAnimaticButton = new QPushButton("Export Animatic");
+  m_exportAnimaticButton->setStyleSheet(
+    "QPushButton{background:#6a3a6a;color:white;border-radius:4px;padding:4px 12px;}"
+    "QPushButton:hover{background:#8a4a8a;}");
+
+  tb->addWidget(m_addShotButton);
+  tb->addWidget(m_deleteButton);
+  tb->addWidget(m_copyButton);
+  tb->addWidget(m_cloneButton);
+  tb->addWidget(m_pasteButton);
+  tb->addWidget(m_copyButton);
+  tb->addWidget(m_cloneButton);
+  tb->addWidget(m_pasteButton);
+  tb->addSpacing(8);
+  tb->addWidget(m_numberingCombo);
+  tb->addSpacing(8);
+  tb->addWidget(colLabel);
+  tb->addWidget(m_columnsPerRowSpin);
+  tb->addStretch();
+  tb->addWidget(m_refreshButton);
+  tb->addWidget(m_exportPdfButton);
+  tb->addWidget(m_exportShotsButton);
+  tb->addWidget(m_exportAnimaticButton);
+  mainLayout->addLayout(tb);
+
+  QFrame *sep = new QFrame();
+  sep->setFrameShape(QFrame::HLine);
+  sep->setStyleSheet("color:#444;");
+  mainLayout->addWidget(sep);
+
+  m_scrollArea = new QScrollArea();
+  m_scrollArea->setWidgetResizable(true);
+  m_scrollArea->setStyleSheet("QScrollArea{background:#1e1e1e;border:none;}");
+
+  m_container = new QWidget();
+  m_container->setStyleSheet("background:#1e1e1e;");
+  m_grid = new QGridLayout(m_container);
+  m_grid->setSpacing(8);
+  m_grid->setContentsMargins(8, 8, 8, 8);
+  m_grid->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+  m_scrollArea->setWidget(m_container);
+
+  // ---- EDIT PAGE (lazy - comboViewer created on first use) ----
+  QWidget *editPage = new QWidget();
+  editPage->setStyleSheet("background:#1a1a2a;");
+  QVBoxLayout *editLayout = new QVBoxLayout(editPage);
+  editLayout->setSpacing(8);
+  editLayout->setContentsMargins(8, 8, 8, 8);
+
+  m_backButton = new QPushButton("< Back to Storyboard");
+  m_backButton->setStyleSheet(
+    "QPushButton{background:#3a3a6a;color:white;border-radius:4px;padding:6px 16px;}"
+    "QPushButton:hover{background:#5a5a8a;}");
+  m_backButton->setFixedWidth(180);
+
+  QLabel *editHint = new QLabel("Shot open in viewer - draw, then click Back.");
+  editHint->setStyleSheet("color:#888;font-size:11px;");
+  editHint->setAlignment(Qt::AlignCenter);
+
+  editLayout->addWidget(m_backButton);
+  editLayout->addStretch();
+  editLayout->addWidget(editHint);
+  editLayout->addStretch();
+
+  // ---- STACK ----
+  m_stack = new QStackedWidget();
+  m_stack->addWidget(m_scrollArea);  // 0 = board
+  m_stack->addWidget(editPage);      // 1 = edit
+  mainLayout->addWidget(m_stack);
+  setWidget(main);
+
+  connect(m_addShotButton, &QPushButton::clicked, this, &StoryboardPanel::onAddShot);
+  connect(m_backButton, &QPushButton::clicked, this, &StoryboardPanel::onBackToBoard);
+  connect(m_refreshButton, &QPushButton::clicked, this, &StoryboardPanel::onRefreshPreviews);
+  m_panelDetectTimer = new QTimer(this);
+  m_panelDetectTimer->setSingleShot(true);
+  m_panelDetectTimer->setInterval(1000);
+  connect(m_panelDetectTimer, &QTimer::timeout, this, [this](){
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    if (!scene || scene->getChildStack()->getAncestorCount() == 0) return;
+    AncestorNode *node = scene->getChildStack()->getAncestorInfo(0);
+    if (!node) return;
+    int col = node->m_col;
+    for (int si = 0; si < (int)m_shots.size(); si++) {
+      if (m_shots[si].data.xsheetColumn == col) {
+        detectAndUpdatePanels(si);
+        for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
+          updatePreview(si, pi);
+        break;
+      }
+    }
+  });
+  connect(m_deleteButton, &QPushButton::clicked, this, &StoryboardPanel::onDeleteShot);
+  connect(m_copyButton,   &QPushButton::clicked, this, &StoryboardPanel::onCopyShot);
+  connect(m_cloneButton,  &QPushButton::clicked, this, &StoryboardPanel::onCloneShot);
+  connect(m_pasteButton,  &QPushButton::clicked, this, &StoryboardPanel::onPasteShot);
+  connect(m_exportPdfButton, &QPushButton::clicked, this, &StoryboardPanel::onExportPdf);
+  connect(m_exportShotsButton, &QPushButton::clicked, this, &StoryboardPanel::onExportShots);
+  connect(m_exportAnimaticButton, &QPushButton::clicked, this, &StoryboardPanel::onExportAnimatic);
+  connect(m_columnsPerRowSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+          this, &StoryboardPanel::onColumnsChanged);
+  connect(m_numberingCombo, QOverload<int>::of(&QComboBox::activated),
+          this, &StoryboardPanel::onNumberingChanged);
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
+          this, &StoryboardPanel::refreshFromScene);
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+          this, &StoryboardPanel::onXsheetChanged);
+  // Debounce timer per refresh thumbnail
+  QTimer *refreshTimer = new QTimer(this);
+  refreshTimer->setSingleShot(true);
+  refreshTimer->setInterval(800);
+  connect(refreshTimer, &QTimer::timeout, this, [this](){
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    if (!scene || scene->getChildStack()->getAncestorCount() == 0) return;
+    AncestorNode *node = scene->getChildStack()->getAncestorInfo(0);
+    if (!node) return;
+    int col = node->m_col;
+    for (int si = 0; si < (int)m_shots.size(); si++) {
+      if (m_shots[si].data.xsheetColumn == col) {
+        for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
+          updatePreview(si, pi);
+        break;
+      }
+    }
+  });
+  connect(TApp::instance()->getCurrentFrame(), &TFrameHandle::frameSwitched,
+          this, [this](){ m_panelDetectTimer->start(); });
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched,
+          this, [this](){
+    disconnect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+               this, nullptr);
+    connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+            this, &StoryboardPanel::onXsheetChanged);
+    // Refresh automatico thumbnail
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    if (!scene) return;
+    int ancestorCount = scene->getChildStack()->getAncestorCount();
+    if (ancestorCount == 0) {
+      // Tornati al main — refresh completo
+      QTimer::singleShot(200, this, &StoryboardPanel::onRefreshPreviews);
+    } else {
+      // Entrati in una sottoscena — refresh solo dello shot corrente
+      AncestorNode *node = scene->getChildStack()->getAncestorInfo(0);
+      if (node) {
+        int col = node->m_col;
+        for (int si = 0; si < (int)m_shots.size(); si++) {
+          if (m_shots[si].data.xsheetColumn == col) {
+            for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
+              QTimer::singleShot(300, this, [this, si, pi](){ updatePreview(si, pi); });
+            break;
+          }
+        }
+      }
+    }
+  });
+}
+
+void StoryboardPanel::addPanelWidget(int shotIdx, int panelIdx) {
+  Shot &shot = m_shots[shotIdx];
+  PanelWidget *pw = new PanelWidget(m_container);
+  pw->setFps(m_fps);
+  pw->setShotIndex(shotIdx);
+  pw->setPanelIndex(panelIdx, (int)shot.data.panels.size());
+  pw->setShotNumber(shot.data.shotNumber);
+  pw->setDuration(shot.data.panels[panelIdx].duration);
+  pw->setTotalDuration(shot.data.totalDuration());
+  pw->setDialog(shot.data.panels[panelIdx].dialog);
+  pw->setAction(shot.data.panels[panelIdx].action);
+  pw->setNotes(shot.data.panels[panelIdx].notes);
+  connectPanelWidget(pw);
+  shot.panels.push_back(pw);
+}
+
+void StoryboardPanel::connectPanelWidget(PanelWidget *pw) {
+  connect(pw, &PanelWidget::editRequested, this, &StoryboardPanel::onEditShot);
+  connect(pw, &PanelWidget::durationChanged, this, &StoryboardPanel::onDurationChanged);
+  connect(pw, &PanelWidget::totalDurationChanged, this, [this, pw](int frames){
+    // Trova lo shot corrispondente e aggiorna la durata sul main xsheet
+    for (int si = 0; si < (int)m_shots.size(); si++) {
+      if (!m_shots[si].panels.empty() && m_shots[si].panels[0] == pw) {
+        int col = m_shots[si].data.xsheetColumn;
+        onDurationChanged(si, 0, frames);
+        break;
+      }
+    }
+  });
+  connect(pw, &PanelWidget::clicked, this, &StoryboardPanel::onPanelClicked);
+  connect(pw, &PanelWidget::dropReceived, this, &StoryboardPanel::onMoveShot);
+  connect(pw, &PanelWidget::dataChanged, [this](int si, int pi){
+    if (si >= 0 && si < (int)m_shots.size()) {
+      m_shots[si].data.shotNumber = m_shots[si].panels[0]->shotNumber();
+      for (PanelWidget *p : m_shots[si].panels)
+        p->setShotNumber(m_shots[si].data.shotNumber);
+      updateColumnName(si);
+    }
+    saveZtoryc();
+  });
+}
+
+void StoryboardPanel::renumberAll() {
+  for (int i = 0; i < (int)m_shots.size(); i++) {
+    Shot &shot = m_shots[i];
+    if (m_autoRenumber) {
+      shot.data.shotNumber = QString("%1").arg(i + 1, 2, 10, QChar(48));
+    } else if (shot.data.shotNumber.isEmpty()) {
+      shot.data.shotNumber = QString("%1").arg(i + 1, 2, 10, QChar(48));
+    }
+    updateColumnName(i);
+    for (PanelWidget *pw : shot.panels) {
+      pw->setShotIndex(i);
+      pw->setShotNumber(shot.data.shotNumber);
+      pw->setPanelIndex(pw->panelIndex(), (int)shot.panels.size());
+    }
+  }
+}
+
+void StoryboardPanel::clearShots() {
+  for (Shot &shot : m_shots)
+    for (PanelWidget *pw : shot.panels) {
+      m_grid->removeWidget(pw);
+      delete pw;
+    }
+  m_shots.clear();
+  m_selectedShotIndex = -1;
+}
+
+void StoryboardPanel::resequenceXsheet() {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (not scene) return;
+  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+  if (not xsh) return;
+  int maxFrames = xsh->getFrameCount() + 200;
+  int startFrame = 0;
+  for (int i = 0; i < (int)m_shots.size(); i++) {
+    Shot &shot = m_shots[i];
+    int duration = shot.data.totalDuration();
+    TXshChildLevel *cl = nullptr;
+    for (int r = 0; r <= maxFrames; r++) {
+      TXshCell cell = xsh->getCell(r, i);
+      if (not cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+        cl = cell.m_level->getChildLevel();
+        break;
+      }
+    }
+    if (not cl) { startFrame += duration; continue; }
+    for (int r = 0; r <= maxFrames; r++) xsh->clearCells(r, i);
+    for (int r = 0; r < duration; r++)
+      xsh->setCell(startFrame + r, i, TXshCell(cl, TFrameId(r + 1)));
+    startFrame += duration;
+  }
+  xsh->updateFrameCount();
+  app->getCurrentXsheet()->notifyXsheetChanged();
+}
+
+void StoryboardPanel::rebuildGrid() {
+  for (Shot &shot : m_shots)
+    for (PanelWidget *pw : shot.panels)
+      m_grid->removeWidget(pw);
+  int col = 0, row = 0;
+  for (Shot &shot : m_shots) {
+    for (PanelWidget *pw : shot.panels) {
+      m_grid->addWidget(pw, row, col);
+      pw->show();
+      pw->updateGeometry();
+      col++;
+      if (col >= m_columnsPerRow) { col = 0; row++; }
+    }
+  }
+  m_container->adjustSize();
+  QTimer::singleShot(200, this, [this](){
+    int available = m_scrollArea->viewport()->width() - 8 * (m_columnsPerRow + 1);
+    int colW = qMax(200, available / m_columnsPerRow);
+    for (Shot &shot : m_shots)
+      for (PanelWidget *pw : shot.panels) {
+        pw->setFixedWidth(colW);
+        pw->rescalePreview();
+      }
+    m_container->adjustSize();
+  });
+}
+
+void StoryboardPanel::selectShot(int shotIdx) {
+  // Deseleziona tutti
+  for (int i : m_selectedIndices)
+    if (i >= 0 && i < (int)m_shots.size())
+      for (PanelWidget *pw : m_shots[i].panels) pw->setSelected(false);
+  m_selectedIndices.clear();
+  if (m_selectedShotIndex >= 0 && m_selectedShotIndex < (int)m_shots.size())
+    for (PanelWidget *pw : m_shots[m_selectedShotIndex].panels)
+      pw->setSelected(false);
+  m_selectedShotIndex = shotIdx;
+  if (m_selectedShotIndex >= 0 && m_selectedShotIndex < (int)m_shots.size())
+    for (PanelWidget *pw : m_shots[m_selectedShotIndex].panels)
+      pw->setSelected(true);
+}
+
+void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
+  if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
+  Shot &shot = m_shots[shotIdx];
+  if (panelIdx < 0 || panelIdx >= (int)shot.panels.size()) return;
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (not scene) return;
+  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+  if (not xsh) return;
+  TXshChildLevel *cl = nullptr;
+  for (int r = 0; r <= xsh->getFrameCount(); r++) {
+    TXshCell cell = xsh->getCell(r, shotIdx);
+    if (not cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+      cl = cell.m_level->getChildLevel();
+      break;
+    }
+  }
+  if (not cl) return;
+  TXsheet *subXsh = cl->getXsheet();
+  if (not subXsh) return;
+  int frame = shot.data.panels[panelIdx].startFrame;
+  QPixmap px = IconGenerator::renderXsheetFrame(subXsh, frame, TDimension(1920, 1080));
+  if (not px.isNull())
+    shot.panels[panelIdx]->setPreviewPixmap(px);
+}
+
+QString StoryboardPanel::ztoryPath() const {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (not scene) return QString();
+  TFilePath sp = scene->getScenePath();
+  if (sp.isEmpty()) return QString();
+  QString path = QString::fromStdWString(sp.getWideString());
+  path.replace(QRegularExpression("\.tnz$"), ".ztoryc");
+  return path;
+}
+
+void StoryboardPanel::updateColumnName(int si) {
+  if (si < 0 || si >= (int)m_shots.size()) return;
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (!scene) return;
+  TXsheet *xsh = scene->getXsheet();
+  if (!xsh) return;
+  int col = si; // la colonna corrisponde all indice dello shot
+  TStageObject *obj = xsh->getStageObjectTree()->getStageObject(TStageObjectId::ColumnId(col), false);
+  if (obj) {
+    obj->setName(m_shots[si].data.shotNumber.toStdString());
+    app->getCurrentXsheet()->notifyXsheetChanged();
+  }
+}
+
+void StoryboardPanel::saveZtoryc() {
+  QString path = ztoryPath();
+  if (path.isEmpty()) return;
+  QFile file(path);
+  if (not file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+  QXmlStreamWriter xml(&file);
+  xml.setAutoFormatting(true);
+  xml.writeStartDocument();
+  xml.writeStartElement("ztoryc");
+  xml.writeAttribute("version", "2");
+  for (int si = 0; si < (int)m_shots.size(); si++) {
+    const Shot &shot = m_shots[si];
+    xml.writeStartElement("shot");
+    xml.writeAttribute("index", QString::number(si));
+    xml.writeAttribute("number", shot.data.shotNumber);
+    for (int pi = 0; pi < (int)shot.data.panels.size(); pi++) {
+      const PanelData &pd = shot.data.panels[pi];
+      xml.writeStartElement("panel");
+      xml.writeAttribute("index",      QString::number(pi));
+      xml.writeAttribute("startFrame", QString::number(pd.startFrame));
+      xml.writeAttribute("duration",   QString::number(pd.duration));
+      xml.writeTextElement("dialog", pd.dialog);
+      xml.writeTextElement("action", pd.action);
+      xml.writeTextElement("notes",  pd.notes);
+      xml.writeEndElement();
+    }
+    xml.writeEndElement();
+  }
+  xml.writeEndElement();
+  xml.writeEndDocument();
+  file.close();
+}
+
+void StoryboardPanel::loadZtoryc() {
+  QString path = ztoryPath();
+  if (path.isEmpty()) return;
+  QFile file(path);
+  if (not file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+  QXmlStreamReader xml(&file);
+  int si = -1, pi = -1;
+  while (not xml.atEnd()) {
+    xml.readNext();
+    if (xml.isStartElement()) {
+      if (xml.name() == QLatin1String("shot")) {
+        si = xml.attributes().value("index").toInt();
+        if (si < (int)m_shots.size())
+          m_shots[si].data.shotNumber = xml.attributes().value("number").toString();
+      }
+      else if (xml.name() == QLatin1String("panel")) {
+        pi = xml.attributes().value("index").toInt();
+        if (si >= 0 && si < (int)m_shots.size() && pi >= 0) {
+          // Aggiungi panel mancanti se necessario
+          while (pi >= (int)m_shots[si].data.panels.size()) {
+            PanelData pd;
+            m_shots[si].data.panels.push_back(pd);
+          }
+          m_shots[si].data.panels[pi].startFrame =
+            xml.attributes().value("startFrame").toInt();
+          m_shots[si].data.panels[pi].duration =
+            xml.attributes().value("duration").toInt();
+        }
+      }
+      else if (xml.name() == QLatin1String("dialog")) {
+        QString t = xml.readElementText();
+        if (si >= 0 && si < (int)m_shots.size() &&
+            pi >= 0 && pi < (int)m_shots[si].data.panels.size())
+          m_shots[si].data.panels[pi].dialog = t;
+      }
+      else if (xml.name() == QLatin1String("action")) {
+        QString t = xml.readElementText();
+        if (si >= 0 && si < (int)m_shots.size() &&
+            pi >= 0 && pi < (int)m_shots[si].data.panels.size())
+          m_shots[si].data.panels[pi].action = t;
+      }
+      else if (xml.name() == QLatin1String("notes")) {
+        QString t = xml.readElementText();
+        if (si >= 0 && si < (int)m_shots.size() &&
+            pi >= 0 && pi < (int)m_shots[si].data.panels.size())
+          m_shots[si].data.panels[pi].notes = t;
+      }
+    }
+  }
+  file.close();
+  for (int i = 0; i < (int)m_shots.size(); i++) {
+    Shot &shot = m_shots[i];
+    // Rimuovi tutti i widget esistenti e ricostruisci da data
+    for (PanelWidget *pw : shot.panels) { m_grid->removeWidget(pw); delete pw; }
+    shot.panels.clear();
+    for (int j = 0; j < (int)shot.data.panels.size(); j++) {
+      addPanelWidget(i, j);
+      shot.panels[j]->setDuration(shot.data.panels[j].duration);
+      shot.panels[j]->setDialog(shot.data.panels[j].dialog);
+      shot.panels[j]->setAction(shot.data.panels[j].action);
+      shot.panels[j]->setNotes(shot.data.panels[j].notes);
+    }
+  }
+}
+
+int StoryboardPanel::currentShotIndex() const {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (not scene) return -1;
+  ChildStack *cs = scene->getChildStack();
+  if (not cs) return -1;
+  int depth = cs->getAncestorCount();
+  if (depth == 0) return -1;
+  AncestorNode *node = cs->getAncestorInfo(depth - 1);
+  if (not node) return -1;
+  return node->m_col;
+}
+
+void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
+  if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
+  TApp *app = TApp::instance();
+  TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+  if (not xsh) return;
+  int numCols = xsh->getColumnCount();
+  int numFrames = xsh->getFrameCount();
+  if (numFrames <= 0 || numCols <= 0) return;
+  std::vector<int> panelFrames;
+  panelFrames.push_back(0);
+  for (int r = 1; r < numFrames; r++) {
+    bool changed = false;
+    for (int c = 0; c < numCols && not changed; c++) {
+      TXshCell prev = xsh->getCell(r - 1, c);
+      TXshCell curr = xsh->getCell(r, c);
+      if (prev.m_frameId != curr.m_frameId || prev.isEmpty() != curr.isEmpty())
+        changed = true;
+    }
+    for (int c = 0; c < numCols && not changed; c++) {
+      TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+      if (obj && obj->isKeyframe(r)) changed = true;
+    }
+    if (not changed) {
+      TStageObject *cam = xsh->getStageObject(TStageObjectId::CameraId(0));
+      if (cam && cam->isKeyframe(r)) changed = true;
+    }
+    if (changed) panelFrames.push_back(r);
+  }
+  Shot &shot = m_shots[shotIdx];
+  int newPanelCount = (int)panelFrames.size();
+  if (newPanelCount == (int)shot.data.panels.size()) return;
+  while ((int)shot.data.panels.size() < newPanelCount) {
+    PanelData pd;
+    int pidx = (int)shot.data.panels.size();
+    pd.startFrame = panelFrames[pidx];
+    pd.duration = (pidx + 1 < (int)panelFrames.size())
+                  ? panelFrames[pidx+1] - panelFrames[pidx]
+                  : numFrames - panelFrames[pidx];
+    shot.data.panels.push_back(pd);
+  }
+  for (int i = 0; i < newPanelCount; i++) {
+    shot.data.panels[i].startFrame = panelFrames[i];
+    shot.data.panels[i].duration = (i+1 < newPanelCount)
+                                   ? panelFrames[i+1] - panelFrames[i]
+                                   : numFrames - panelFrames[i];
+  }
+  for (PanelWidget *pw : shot.panels) { m_grid->removeWidget(pw); delete pw; }
+  shot.panels.clear();
+  for (int pi = 0; pi < (int)shot.data.panels.size(); pi++)
+    addPanelWidget(shotIdx, pi);
+  renumberAll();
+  rebuildGrid();
+  saveZtoryc();
+}
+
+void StoryboardPanel::assignKeepNumbers(int insertAt) {
+  int total = (int)m_shots.size();
+  // Assegna numeri fissi agli shot senza shotNumber basandosi sulla posizione originale
+  // Gli shot prima di insertAt mantengono il loro numero, quelli dopo anche
+  for (int j = 0; j < total; j++) {
+    if (j != insertAt && m_shots[j].data.shotNumber.isEmpty())
+      m_shots[j].data.shotNumber = QString("%1").arg(j + 1, 2, 10, QChar(48));
+  }
+  // Se in coda - stessa logica del caso "in mezzo"
+  if (insertAt >= total - 1) {
+    QString baseNum = m_shots[insertAt - 1].data.shotNumber;
+    int i = baseNum.length() - 1;
+    while (i >= 0 && baseNum[i].isLetter()) i--;
+    QString numPart = baseNum.left(i + 1);
+    // Controlla se il precedente ha gia lettere - in quel caso incrementa numero
+    bool prevHasLetter = (i < baseNum.length() - 1);
+    if (prevHasLetter) {
+      // precedente e es. "05A" - nuovo e "05B"
+      QChar letter = 'A';
+      for (int j = 0; j < total - 1; j++) {
+        QString n = m_shots[j].data.shotNumber;
+        if (n.startsWith(numPart) && n.length() == numPart.length() + 1 && n[numPart.length()].isLetter()) {
+          QChar c = n[numPart.length()];
+          if (c.toLatin1() >= letter.toLatin1())
+            letter = QChar(c.toLatin1() + 1);
+        }
+      }
+      m_shots[insertAt].data.shotNumber = numPart + letter;
+    } else {
+      // precedente e es. "05" - nuovo e "05A"
+      QChar letter = 'A';
+      for (int j = 0; j < total - 1; j++) {
+        QString n = m_shots[j].data.shotNumber;
+        if (n.startsWith(numPart) && n.length() == numPart.length() + 1 && n[numPart.length()].isLetter()) {
+          QChar c = n[numPart.length()];
+          if (c.toLatin1() >= letter.toLatin1())
+            letter = QChar(c.toLatin1() + 1);
+        }
+      }
+      m_shots[insertAt].data.shotNumber = numPart + letter;
+    }
+    return;
+  }
+  // Se in testa
+  if (insertAt == 0) {
+    QString nextNum = m_shots[1].data.shotNumber;
+    int i = nextNum.length() - 1;
+    while (i >= 0 && nextNum[i].isLetter()) i--;
+    m_shots[0].data.shotNumber = nextNum.left(i + 1) + "A";
+    return;
+  }
+  // In mezzo - usa numero del precedente + lettera
+  QString baseNum = m_shots[insertAt - 1].data.shotNumber;
+  int i = baseNum.length() - 1;
+  while (i >= 0 && baseNum[i].isLetter()) i--;
+  QString numPart = baseNum.left(i + 1);
+  QChar letter = 'A';
+  for (int j = 0; j < total; j++) {
+    if (j == insertAt) continue;
+    QString n = m_shots[j].data.shotNumber;
+    if (n.startsWith(numPart) && n.length() == numPart.length() + 1 && n[numPart.length()].isLetter()) {
+      QChar c = n[numPart.length()];
+      if (c.toLatin1() >= letter.toLatin1())
+        letter = QChar(c.toLatin1() + 1);
+    }
+  }
+  m_shots[insertAt].data.shotNumber = numPart + letter;
+}
+
+void StoryboardPanel::onXsheetChanged() {
+  // Aggiorna durata shot se siamo al main xsheet
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene || scene->getChildStack()->getAncestorCount() != 0) return;
+  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+  if (!xsh) return;
+  for (int si = 0; si < (int)m_shots.size(); si++) {
+    int col = m_shots[si].data.xsheetColumn;
+    TXshColumn *column = xsh->getColumn(col);
+    if (!column) continue;
+    int r0 = 0, r1 = 0;
+    column->getRange(r0, r1);
+    int duration = r1 - r0 + 1;
+    // Aggiorna durata totale del panel 0 (durata shot)
+    if (!m_shots[si].data.panels.empty()) {
+      m_shots[si].data.panels[0].duration = duration;
+      if (!m_shots[si].panels.empty())
+        m_shots[si].panels[0]->setDuration(duration);
+    }
+  }
+}
+
+void StoryboardPanel::showEvent(QShowEvent *e) {
+  TPanel::showEvent(e);
+  if (m_shots.empty()) refreshFromScene();
+}
+
+void StoryboardPanel::refreshFromScene() {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (not scene) return;
+  clearShots();
+  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+  if (not xsh) return;
+  int numCols = xsh->getColumnCount();
+  for (int col = 0; col < numCols; col++) {
+    TXshChildLevel *cl = nullptr;
+    int duration = 0;
+    for (int r = 0; r < xsh->getFrameCount(); r++) {
+      TXshCell cell = xsh->getCell(r, col);
+      if (not cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+        if (not cl) cl = cell.m_level->getChildLevel();
+        duration++;
+      } else if (duration > 0) break;
+    }
+    if (not cl) continue;
+    Shot shot;
+    shot.data.xsheetColumn = col;
+    shot.data.shotNumber = QString("%1").arg((int)m_shots.size()+1, 2, 10, QChar(48));
+    PanelData pd;
+    pd.startFrame = 0;
+    pd.duration = duration;
+    shot.data.panels.push_back(pd);
+    m_shots.push_back(shot);
+    addPanelWidget((int)m_shots.size()-1, 0);
+  }
+  loadZtoryc();
+  renumberAll();
+  rebuildGrid();
+  QTimer::singleShot(500, this, [this](){
+    for (int si = 0; si < (int)m_shots.size(); si++)
+      for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
+        updatePreview(si, pi);
+  });
+}
+
+void StoryboardPanel::keyPressEvent(QKeyEvent *e) {
+  if (e->modifiers() & Qt::ControlModifier || e->modifiers() & Qt::MetaModifier) {
+    switch (e->key()) {
+      case Qt::Key_C: onCopyShot(); return;
+      case Qt::Key_V: onPasteShot(); return;
+      case Qt::Key_D: onCloneShot(); return;
+    }
+  }
+  if (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace) {
+    onDeleteShot(); return;
+  }
+  TPanel::keyPressEvent(e);
+}
+
+void StoryboardPanel::onCopyShot() {
+  m_clipboard.clear();
+  std::set<int> indices = m_selectedIndices;
+  if (indices.empty() && m_selectedShotIndex >= 0) indices.insert(m_selectedShotIndex);
+  std::vector<int> sorted(indices.begin(), indices.end());
+  std::sort(sorted.begin(), sorted.end());
+  for (int idx : sorted) {
+    if (idx < 0 || idx >= (int)m_shots.size()) continue;
+    ClipboardEntry e;
+    e.data      = m_shots[idx].data;
+    e.isClone   = false;
+    e.srcColumn = idx;
+    m_clipboard.push_back(e);
+  }
+  m_pasteButton->setEnabled(!m_clipboard.empty());
+}
+
+void StoryboardPanel::onCloneShot() {
+  m_clipboard.clear();
+  std::set<int> indices = m_selectedIndices;
+  if (indices.empty() && m_selectedShotIndex >= 0) indices.insert(m_selectedShotIndex);
+  std::vector<int> sorted(indices.begin(), indices.end());
+  std::sort(sorted.begin(), sorted.end());
+  for (int idx : sorted) {
+    if (idx < 0 || idx >= (int)m_shots.size()) continue;
+    ClipboardEntry e;
+    e.data      = m_shots[idx].data;
+    e.isClone   = true;
+    e.srcColumn = idx;
+    m_clipboard.push_back(e);
+  }
+  m_pasteButton->setEnabled(!m_clipboard.empty());
+}
+
+static void cloneChildToPosition(int srcCol, int dstCol) {
+  TApp *app          = TApp::instance();
+  ToonzScene *scene  = app->getCurrentScene()->getScene();
+  TXsheet *xsh       = app->getCurrentXsheet()->getXsheet();
+  TXshColumn *column = xsh->getColumn(srcCol);
+  if (!column) return;
+  TXshLevelColumn *lcolumn = column->getLevelColumn();
+  if (!lcolumn) return;
+  int r0 = 0, r1 = -1;
+  lcolumn->getRange(r0, r1);
+  if (r0 > r1) return;
+  TXshCell cell = lcolumn->getCell(r0);
+  if (cell.isEmpty()) return;
+  TXshChildLevel *childLevel = cell.m_level->getChildLevel();
+  if (!childLevel) return;
+  TXsheet *childXsh = childLevel->getXsheet();
+
+  // Inserisci colonna vuota alla posizione target
+  xsh->insertColumn(dstCol);
+
+  // Crea nuovo child level clone
+  ChildStack *childStack = scene->getChildStack();
+  TXshChildLevel *newChildLevel = childStack->createChild(0, dstCol);
+  TXsheet *newChildXsh = newChildLevel->getXsheet();
+
+  // Copia contenuto
+  std::set<int> indices;
+  for (int i = 0; i < childXsh->getColumnCount(); i++) indices.insert(i);
+  StageObjectsData *data = new StageObjectsData();
+  data->storeColumns(indices, childXsh, 0);
+  data->storeColumnFxs(indices, childXsh, 0);
+  std::list<int> restoredSplineIds;
+  QMap<TStageObjectId, TStageObjectId> idTable;
+  QMap<TFx *, TFx *> fxTable;
+  data->restoreObjects(indices, restoredSplineIds, newChildXsh,
+                       StageObjectsData::eDoClone, idTable, fxTable);
+  delete data;
+
+  newChildXsh->getFxDag()->getXsheetFx()->getAttributes()->setDagNodePos(
+      childXsh->getFxDag()->getXsheetFx()->getAttributes()->getDagNodePos());
+  newChildXsh->updateFrameCount();
+
+  // Rimuovi cella creata da createChild e copia celle originali
+  xsh->removeCells(0, dstCol);
+  for (int r = r0; r <= r1; r++) {
+    TXshCell c = lcolumn->getCell(r);
+    if (c.isEmpty()) continue;
+    c.m_level = newChildLevel;
+    xsh->setCell(r, dstCol, c);
+  }
+
+  xsh->updateFrameCount();
+  app->getCurrentScene()->setDirtyFlag(true);
+  app->getCurrentXsheet()->notifyXsheetChanged();
+}
+
+void StoryboardPanel::onPasteShot() {
+  if (m_clipboard.empty()) return;
+  // Blocca segnali xsheet durante il paste per evitare rebuild intermedi
+  disconnect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged, this, &StoryboardPanel::onXsheetChanged);
+  TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+  int insertAt = m_selectedShotIndex >= 0 ? m_selectedShotIndex + 1 : (int)m_shots.size();
+  for (int ci = 0; ci < (int)m_clipboard.size(); ci++) {
+    int pos     = insertAt + ci;
+    int origSrc = m_clipboard[ci].srcColumn;
+    // Calcola srcCol: per ogni clone inserito prima, se era <= origSrc, origSrc e slittato di +1
+    int srcCol  = origSrc;
+    for (int cj = 0; cj < ci; cj++) {
+      if ((insertAt + cj) <= srcCol) srcCol++;
+    }
+    cloneChildToPosition(srcCol, pos);
+    // Inserisci shot nel modello Ztoryc
+    Shot newShot;
+    newShot.data = m_clipboard[ci].data;
+    newShot.data.shotNumber = "";
+    newShot.data.xsheetColumn = pos;
+    m_shots.insert(m_shots.begin() + pos, newShot);
+    for (int pi = 0; pi < (int)newShot.data.panels.size(); pi++) {
+      addPanelWidget(pos, pi);
+      m_shots[pos].panels[pi]->setDialog(newShot.data.panels[pi].dialog);
+      m_shots[pos].panels[pi]->setAction(newShot.data.panels[pi].action);
+      m_shots[pos].panels[pi]->setNotes(newShot.data.panels[pi].notes);
+      m_shots[pos].panels[pi]->setDuration(newShot.data.panels[pi].duration);
+    }
+  }
+  if (not m_autoRenumber) {
+    for (int ci = 0; ci < (int)m_clipboard.size(); ci++)
+      assignKeepNumbers(insertAt + ci);
+  }
+  renumberAll();
+  // Riconnetti segnale xsheet
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged, this, &StoryboardPanel::onXsheetChanged);
+  resequenceXsheet();
+  rebuildGrid();
+  saveZtoryc();
+}
+
+void StoryboardPanel::onDeleteShot() {
+  // Raccogli indici da cancellare (selezione multipla o singola)
+  std::vector<int> toDelete(m_selectedIndices.begin(), m_selectedIndices.end());
+  if (toDelete.empty() && m_selectedShotIndex >= 0) toDelete.push_back(m_selectedShotIndex);
+  if (toDelete.empty()) return;
+
+  // Blocca segnali xsheet durante delete multiplo
+  disconnect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged, this, &StoryboardPanel::onXsheetChanged);
+  // Ordina in ordine inverso per cancellare dal fondo
+  std::sort(toDelete.rbegin(), toDelete.rend());
+  for (int idx : toDelete) {
+    if (idx < 0 || idx >= (int)m_shots.size()) continue;
+    for (PanelWidget *pw : m_shots[idx].panels) {
+      m_grid->removeWidget(pw);
+      delete pw;
+    }
+    m_shots.erase(m_shots.begin() + idx);
+    ColumnCmd::deleteColumn(idx);
+  }
+  m_selectedShotIndex = -1;
+  m_selectedIndices.clear();
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged, this, &StoryboardPanel::onXsheetChanged);
+  renumberAll();
+  rebuildGrid();
+  saveZtoryc();
+}
+
+void StoryboardPanel::onAddShot() {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (scene && scene->getChildStack()->getAncestorCount() > 0)
+    while (scene->getChildStack()->getAncestorCount() > 0)
+      CommandManager::instance()->execute("MI_CloseChild");
+  TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+  int duration = 24;
+  int insertAt = (m_selectedShotIndex >= 0 && m_selectedShotIndex < (int)m_shots.size())
+                 ? m_selectedShotIndex + 1
+                 : (int)m_shots.size();
+  if (scene && xsh) {
+    TXshLevel *xl = scene->createNewLevel(CHILD_XSHLEVEL);
+    if (xl && xl->getChildLevel()) {
+      TXshChildLevel *cl = xl->getChildLevel();
+      xsh->insertColumn(insertAt);
+      for (int r = 0; r < duration; r++)
+        xsh->setCell(r, insertAt, TXshCell(cl, TFrameId(r+1)));
+      xsh->updateFrameCount();
+      app->getCurrentXsheet()->notifyXsheetChanged();
+    }
+  }
+  Shot shot;
+  shot.data.xsheetColumn = insertAt;
+  PanelData pd;
+  pd.startFrame = 0;
+  pd.duration = duration;
+  shot.data.panels.push_back(pd);
+  m_shots.insert(m_shots.begin() + insertAt, shot);
+  addPanelWidget(insertAt, 0);
+  if (not m_autoRenumber) assignKeepNumbers(insertAt);
+  renumberAll();
+  resequenceXsheet();
+  rebuildGrid();
+  saveZtoryc();
+  selectShot(insertAt);
+}
+
+void StoryboardPanel::onEditShot(int shotIdx) {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (not scene) return;
+  while (scene->getChildStack()->getAncestorCount() > 0)
+    CommandManager::instance()->execute("MI_CloseChild");
+  TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+  if (not xsh) return;
+  int row = 0;
+  for (int r = 0; r < xsh->getFrameCount(); r++) {
+    TXshCell cell = xsh->getCell(r, shotIdx);
+    if (not cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+      row = r; break;
+    }
+  }
+  app->getCurrentColumn()->setColumnIndex(shotIdx);
+  app->getCurrentFrame()->setFrame(row);
+  CommandManager::instance()->execute("MI_OpenChild");
+}
+
+void StoryboardPanel::onBackToBoard() {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (scene)
+    while (scene->getChildStack()->getAncestorCount() > 0)
+      CommandManager::instance()->execute("MI_CloseChild");
+  MainWindow *mw = dynamic_cast<MainWindow*>(TApp::instance()->getMainWindow());
+  if (mw) mw->switchToRoom("BOARD");
+}
+
+void StoryboardPanel::onPanelClicked(int shotIdx, int panelIdx, Qt::KeyboardModifiers modifiers) {
+  setFocus();
+  if (modifiers & Qt::ControlModifier || modifiers & Qt::MetaModifier) {
+    // Ctrl+click: aggiungi/rimuovi dalla selezione
+    if (m_selectedIndices.count(shotIdx)) {
+      m_selectedIndices.erase(shotIdx);
+      for (PanelWidget *pw : m_shots[shotIdx].panels) pw->setSelected(false);
+    } else {
+      m_selectedIndices.insert(shotIdx);
+      for (PanelWidget *pw : m_shots[shotIdx].panels) pw->setSelected(true);
+    }
+    m_selectedShotIndex = shotIdx;
+  } else if (modifiers & Qt::ShiftModifier) {
+    // Shift+click: seleziona range
+    int from = qMin(m_selectedShotIndex, shotIdx);
+    int to   = qMax(m_selectedShotIndex, shotIdx);
+    if (from < 0) from = shotIdx;
+    for (int i = 0; i < (int)m_shots.size(); i++) {
+      bool sel = (i >= from && i <= to);
+      for (PanelWidget *pw : m_shots[i].panels) pw->setSelected(sel);
+      if (sel) m_selectedIndices.insert(i);
+      else     m_selectedIndices.erase(i);
+    }
+  } else {
+    // Click normale: deseleziona tutto e seleziona solo questo
+    for (int i = 0; i < (int)m_shots.size(); i++)
+      for (PanelWidget *pw : m_shots[i].panels) pw->setSelected(false);
+    m_selectedIndices.clear();
+    selectShot(shotIdx);
+    m_selectedIndices.insert(shotIdx);
+  }
+}
+
+void StoryboardPanel::onDurationChanged(int shotIdx, int panelIdx, int frames) {
+  if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
+  if (panelIdx < 0 || panelIdx >= (int)m_shots[shotIdx].data.panels.size()) return;
+  m_shots[shotIdx].data.panels[panelIdx].duration = frames;
+  int tot = m_shots[shotIdx].data.totalDuration();
+  for (PanelWidget *pw : m_shots[shotIdx].panels)
+    pw->setTotalDuration(tot);
+  resequenceXsheet();
+  saveZtoryc();
+}
+
+void StoryboardPanel::onMoveShot(int fromShot, int toShot) {
+  if (fromShot == toShot) return;
+  if (fromShot < 0 || fromShot >= (int)m_shots.size()) return;
+  if (toShot < 0 || toShot >= (int)m_shots.size()) return;
+  Shot s = m_shots[fromShot];
+  m_shots.erase(m_shots.begin() + fromShot);
+  m_shots.insert(m_shots.begin() + toShot, s);
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (scene) {
+    TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+    if (xsh) {
+      int maxFrames = xsh->getFrameCount() + 200;
+      int numCols = (int)m_shots.size();
+      std::vector<std::vector<TXshCell>> cols(numCols);
+      for (int c = 0; c < numCols; c++)
+        for (int r = 0; r <= maxFrames; r++)
+          cols[c].push_back(xsh->getCell(r, c));
+      std::vector<TXshCell> tmp = cols[fromShot];
+      cols.erase(cols.begin() + fromShot);
+      cols.insert(cols.begin() + toShot, tmp);
+      for (int c = 0; c < numCols; c++) {
+        for (int r = 0; r <= maxFrames; r++) xsh->clearCells(r, c);
+        for (int r = 0; r < (int)cols[c].size(); r++)
+          if (not cols[c][r].isEmpty()) xsh->setCell(r, c, cols[c][r]);
+      }
+      xsh->updateFrameCount();
+      app->getCurrentXsheet()->notifyXsheetChanged();
+    }
+  }
+  renumberAll();
+  resequenceXsheet();
+  rebuildGrid();
+  saveZtoryc();
+  selectShot(toShot);
+}
+
+void StoryboardPanel::onColumnsChanged(int value) {
+  m_columnsPerRow = value;
+  rebuildGrid();
+}
+
+void StoryboardPanel::onNumberingChanged(int comboIndex) {
+  if (comboIndex == 0) {
+    m_autoRenumber = true;
+    // Non rinumera subito - lo farà al prossimo addShot
+  } else if (comboIndex == 1) {
+    m_autoRenumber = false;
+  } else if (comboIndex == 2) {
+    m_autoRenumber = true;
+    for (int i = 0; i < (int)m_shots.size(); i++)
+      m_shots[i].data.shotNumber = QString("%1").arg(i+1, 2, 10, QChar(48));
+    renumberAll();
+    m_numberingCombo->blockSignals(true);
+    m_numberingCombo->setCurrentIndex(0);
+    m_numberingCombo->blockSignals(false);
+  }
+  saveZtoryc();
+}
+
+void StoryboardPanel::onRefreshPreviews() {
+  for (int si = 0; si < (int)m_shots.size(); si++)
+    for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
+      updatePreview(si, pi);
+}
+
+void StoryboardPanel::onExportShots() {
+  if (m_shots.empty()) {
+    QMessageBox::information(this, "Export Shots", "No shots to export.");
+    return;
+  }
+
+  // Popup selezione range
+  QDialog dlg(this);
+  dlg.setWindowTitle("Export Shots as Scenes");
+  QVBoxLayout *lay = new QVBoxLayout(&dlg);
+
+  QHBoxLayout *rangeLayout = new QHBoxLayout();
+  QRadioButton *allRadio = new QRadioButton("All shots");
+  QRadioButton *rangeRadio = new QRadioButton("Range:");
+  allRadio->setChecked(true);
+  QSpinBox *fromSpin = new QSpinBox(); fromSpin->setMinimum(1); fromSpin->setMaximum((int)m_shots.size()); fromSpin->setValue(1);
+  QSpinBox *toSpin = new QSpinBox(); toSpin->setMinimum(1); toSpin->setMaximum((int)m_shots.size()); toSpin->setValue((int)m_shots.size());
+  QLabel *toLabel = new QLabel("to");
+  fromSpin->setEnabled(false); toSpin->setEnabled(false); toLabel->setEnabled(false);
+  rangeLayout->addWidget(allRadio);
+  rangeLayout->addWidget(rangeRadio);
+  rangeLayout->addWidget(fromSpin);
+  rangeLayout->addWidget(toLabel);
+  rangeLayout->addWidget(toSpin);
+  rangeLayout->addStretch();
+  lay->addLayout(rangeLayout);
+
+  QObject::connect(rangeRadio, &QRadioButton::toggled, [&](bool checked){
+    fromSpin->setEnabled(checked); toSpin->setEnabled(checked); toLabel->setEnabled(checked);
+  });
+
+  QDialogButtonBox *bbox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  lay->addWidget(bbox);
+  QObject::connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  QObject::connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() != QDialog::Accepted) return;
+
+  int from = allRadio->isChecked() ? 0 : fromSpin->value() - 1;
+  int to   = allRadio->isChecked() ? (int)m_shots.size() - 1 : toSpin->value() - 1;
+
+  // Export
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  TFilePath scenesDir = scene->decodeFilePath(TFilePath("+scenes"));
+
+  int ok = 0, fail = 0;
+  for (int i = from; i <= to; i++) {
+    std::string shotNumStr = m_shots[i].data.shotNumber.toStdString();
+    TFilePath outPath = scenesDir + TFilePath("sc" + shotNumStr + ".tnz");
+
+    // Crea cartella scenes se non esiste
+    TFilePath sceneDir = outPath.getParentDir();
+    if (!TFileStatus(sceneDir).doesExist())
+      TSystem::mkDir(sceneDir);
+
+    // Simula apertura sottoscena come farebbe l'utente
+    // Imposta column selection e apri sottoscena
+    int col = m_shots[i].data.xsheetColumn;
+    TApp::instance()->getCurrentColumn()->setColumnIndex(col);
+    TColumnSelection *colSel = new TColumnSelection();
+    colSel->selectColumn(col, true);
+    TSelection::setCurrent(colSel);
+    ztoryOpenSubXsheet();
+
+    // Verifica che siamo entrati
+    if (scene->getChildStack()->getAncestorCount() == 0) { fail++; continue; }
+
+    bool saved = IoCmd::saveScene(outPath, IoCmd::SAVE_SUBXSHEET);
+    if (saved) ok++; else fail++;
+
+    ztoryCloseSubXsheet(1);
+  }
+
+  QString msg = QString("Export completato: %1 shot esportati").arg(ok);
+  if (fail > 0) msg += QString(", %1 falliti").arg(fail);
+  QMessageBox::information(this, "Export Shots", msg);
+}
+
+void StoryboardPanel::onExportAnimatic() {
+  QMessageBox::information(this, "Export Animatic", "To be connected to render pipeline.");
+}
+
+void StoryboardPanel::onExportPdf() {
+  if (m_shots.empty()) {
+    QMessageBox::information(this, "Export PDF", "No shots to export.");
+    return;
+  }
+  QString path = QFileDialog::getSaveFileName(this, "Save Storyboard PDF", "", "PDF (*.pdf)");
+  if (path.isEmpty()) return;
+  QPdfWriter writer(path);
+  writer.setPageLayout(QPageLayout(QPageSize(QPageSize::A4),
+    QPageLayout::Landscape, QMarginsF(15,15,15,15)));
+  writer.setResolution(150);
+  QPainter painter(&writer);
+  const int cols = 3, pageW = writer.width(), margin = 40;
+  const int cellW = (pageW - margin*(cols+1))/cols;
+  const int imgH = cellW*9/16;
+  bool firstPage = true;
+  int pos = 0;
+  for (int si = 0; si < (int)m_shots.size(); si++) {
+    for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++) {
+      int col = pos % cols;
+      if (col == 0 && not firstPage) writer.newPage();
+      firstPage = false;
+      PanelWidget *pw = m_shots[si].panels[pi];
+      int x = margin + col*(cellW+margin), y = margin;
+      painter.setFont(QFont("Arial", 8, QFont::Bold));
+      painter.drawText(x, y-6, QString("S:%1 P:%2/%3")
+        .arg(si+1,2,10,QChar(48)).arg(pi+1).arg((int)m_shots[si].panels.size()));
+      painter.setPen(QPen(Qt::black, 2));
+      painter.drawRect(x, y, cellW, imgH);
+      int ty = y+imgH+14;
+      painter.setFont(QFont("Arial", 7, QFont::Bold));
+      painter.drawText(x, ty, "Dialog:");
+      painter.setFont(QFont("Arial", 7));
+      painter.drawText(x, ty+12, cellW, 40, Qt::AlignLeft|Qt::TextWordWrap, pw->dialog());
+      ty += 56;
+      painter.setFont(QFont("Arial", 7, QFont::Bold));
+      painter.drawText(x, ty, "Action Notes:");
+      painter.setFont(QFont("Arial", 7));
+      painter.drawText(x, ty+12, cellW, 40, Qt::AlignLeft|Qt::TextWordWrap, pw->action());
+      ty += 56;
+      painter.setFont(QFont("Arial", 7, QFont::Bold));
+      painter.drawText(x, ty, "Notes:");
+      painter.setFont(QFont("Arial", 7));
+      painter.drawText(x, ty+12, cellW, 40, Qt::AlignLeft|Qt::TextWordWrap, pw->notes());
+      pos++;
+    }
+  }
+  painter.end();
+  QMessageBox::information(this, "Export PDF", "Exported to: " + path);
+}
+
+class StoryboardPanelFactory final : public TPanelFactory {
+public:
+  StoryboardPanelFactory() : TPanelFactory("Storyboard") {}
+  TPanel *createPanel(QWidget *parent) override {
+    TPanel *panel = new StoryboardPanel(parent);
+    panel->setObjectName(getPanelType());
+    panel->setWindowTitle(QObject::tr("Storyboard"));
+    return panel;
+  }
+  void initialize(TPanel *panel) override { assert(0); }
+} storyboardPanelFactory;
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 

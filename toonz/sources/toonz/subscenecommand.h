@@ -16,4 +16,9 @@ void collapse(const QList<TFxP> &fxs);
 void explode(int index);
 }
 
+void ztoryOpenSubXsheet();
+void ztoryCloseSubXsheet(int dlevel);
+bool ztoryGetShotRange(int col, int &f0, int &f1);
+void ztorySetShotRange(int col, int f0, int f1);
+
 #endif

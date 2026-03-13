@@ -102,6 +102,7 @@ public:
   int getRoomCount() const;
   Room *getRoom(int index) const;
   Room *getRoomByName(QString &roomName);
+  void switchToRoom(const QString &name);
 
   Room *getCurrentRoom() const;
   void refreshWriteSettings();

@@ -593,6 +593,17 @@ Room *MainWindow::getRoomByName(QString &roomName) {
 
 int MainWindow::getRoomCount() const { return m_stackedWidget->count(); }
 
+void MainWindow::switchToRoom(const QString &name) {
+  QTabBar *tabBar = m_topBar->getRoomTabWidget();
+  for (int i = 0; i < getRoomCount(); i++) {
+    if (getRoom(i)->getName() == name) {
+      tabBar->setCurrentIndex(i);
+      m_stackedWidget->setCurrentIndex(i);
+      break;
+    }
+  }
+}
+
 //-----------------------------------------------------------------------------
 
 void MainWindow::refreshWriteSettings() { writeSettings(); }
@@ -2473,6 +2484,9 @@ void MainWindow::defineActions() {
                           "colormodel");
   createMenuWindowsAction(MI_OpenStudioPalette, QT_TR_NOOP("&Studio Palette"),
                           "", "studiopalette");
+  createMenuWindowsAction(MI_OpenStoryboard, QT_TR_NOOP("&Storyboard"), "", "Storyboard");
+  createMenuWindowsAction("MI_OpenZtoryBack", QT_TR_NOOP("&Ztoryc Back"), "", "ZtoryBack");
+  createMenuWindowsAction("MI_OpenZtoryAnimatic", QT_TR_NOOP("&Ztoryc Animatic"), "", "ZtoryAnimatic");
   createMenuWindowsAction(MI_OpenSchematic, QT_TR_NOOP("&Schematic"), "",
                           "schematic");
   createMenuWindowsAction(MI_InsertFx, QT_TR_NOOP("&FX Browser"), "Ctrl+F",

@@ -38,6 +38,7 @@
 class TFilePath;
 class TXshLevel;
 class TStageObjectSpline;
+class TXsheet;
 class ToonzScene;
 class TOfflineGL;
 
@@ -136,6 +137,7 @@ public:
   static TRaster32P generateRasterFileIcon(const TFilePath &path,
                                            const TDimension &iconSize,
                                            const TFrameId &fid);
+  static QPixmap renderXsheetFrame(TXsheet *xsheet, int row, const TDimension &size);
   static TRaster32P generateSceneFileIcon(const TFilePath &path,
                                           const TDimension &iconSize, int row);
   static TRaster32P generateSplineFileIcon(const TFilePath &path,

@@ -404,6 +404,13 @@ void SchematicScenePanel::hideEvent(QHideEvent *e) {
 }
 
 //=============================================================================
+OpenFloatingPanel openStoryboardCommand(MI_OpenStoryboard, "Storyboard",
+                                              QObject::tr("Storyboard"));
+OpenFloatingPanel openZtoryBackCommand(MI_OpenZtoryBack, "ZtoryBack",
+                                              QObject::tr("Ztoryc Back"));
+OpenFloatingPanel openZtoryAnimaticCommand(MI_OpenZtoryAnimatic, "ZtoryAnimatic",
+                                              QObject::tr("Ztoryc Animatic"));
+
 OpenFloatingPanel openSchematicSceneViewerCommand(MI_OpenSchematic, "Schematic",
                                                   QObject::tr("Schematic"));
 //-----------------------------------------------------------------------------

@@ -106,6 +106,10 @@ set(MOC_HEADERS
     timestretchpopup.h
     toolbar.h
     tpanels.h
+    storyboardpanel.h
+    ztorybackpanel.h
+    ztorymodel.h
+    ztoryanimatic.h
     trackerpopup.h
 	vectorguideddrawingpane.h
     vectorizerpopup.h
@@ -234,6 +238,10 @@ set(SOURCES
     tasksviewer.cpp
     testpanel.cpp
     tpanels.cpp
+    storyboardpanel.cpp
+    ztorybackpanel.cpp
+    ztorymodel.cpp
+    ztoryanimatic.cpp
     xshcellmover.cpp
     xshcellviewer.cpp
     xshcolumnviewer.cpp
@@ -590,10 +598,7 @@ endif()
 
 if(BUILD_ENV_APPLE)
     # CMAKE_RUNTIME_OUTPUT_DIRECTORY should be equivalent to usage on windows despite empty
-    # OSX だと CMAKE_RUNTIME_OUTPUT_DIRECTORY が空だが Windows 版と同じ使い方ができるようにしておく
-    get_target_property(bin Tahoma2D LOCATION)
-    get_filename_component(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${bin} DIRECTORY)
-    # show CMAKE_RUNTIME_OUTPUT_DIRECTORY
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
     message("CMAKE_RUNTIME_OUTPUT_DIRECTORY:" ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 endif()
 

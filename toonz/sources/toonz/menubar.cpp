@@ -676,6 +676,9 @@ void TopBar::loadMenubar() {
   addMenuItem(windowsMenu, MI_OpenXshView);
   addMenuItem(windowsMenu, MI_OpenTimelineView);
   addMenuItem(windowsMenu, MI_OpenFunctionEditor);
+  addMenuItem(windowsMenu, MI_OpenStoryboard);
+  addMenuItem(windowsMenu, MI_OpenZtoryBack);
+  addMenuItem(windowsMenu, MI_OpenZtoryAnimatic);
   addMenuItem(windowsMenu, MI_OpenSchematic);
   addMenuItem(windowsMenu, MI_InsertFx);
   addMenuItem(windowsMenu, MI_FxParamEditor);

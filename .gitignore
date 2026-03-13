@@ -11,6 +11,50 @@ GeneratedFiles
 build*
 Thumbs.db
 
+# CMake/Ninja (in-source) build artifacts
+/.ninja_deps
+/.ninja_log
+/CMakeCache.txt
+/CMakeFiles/
+/cmake_install.cmake
+/*.dylib
+
+# In-source build output directories/binaries
+/colorfx/
+/image/
+/sound/
+/stdfx/
+/tcleanupper/
+/tcomposer/
+/tconverter/
+/tnzbase/
+/tnzcore/
+/tnzext/
+/tnztools/
+/toonzfarm/
+/toonzlib/
+/toonzqt/
+/lzocompress
+/lzodecompress
+/lzodriver/
+/mousedragfilter/
+
+# App bundle and build outputs under toonz/
+/toonz/CMakeFiles/
+/toonz/cmake_install.cmake
+/toonz/qrc_*.cpp
+/toonz/Tahoma2D.app/
+
+# Qt generated files
+/toonz/sources/**/moc_*.cpp
+/toonz/sources/**/moc_*.cpp_parameters
+/toonz/sources/toonz/toonz.qrc.depends
+/toonz/sources/toonz/*.bak
+
+# User/local data
+/stuff/profiles/users/
+/stuff/sandbox/
+
 # bundled thirdparty libraries
 /thirdparty/boost
 /thirdparty/libjpeg-turbo64

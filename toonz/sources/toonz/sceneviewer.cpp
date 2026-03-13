@@ -25,6 +25,8 @@
 
 // TnzQt includes
 #include "toonzqt/icongenerator.h"
+#include <QWindow>
+#include <QScreen>
 #include "toonzqt/gutil.h"
 #include "toonzqt/imageutils.h"
 #include "toonzqt/lutcalibrator.h"
@@ -1176,6 +1178,13 @@ void SceneViewer::showEvent(QShowEvent *) {
   ret = ret &&
         connect(app, SIGNAL(tabletLeft()), this, SLOT(resetTabletStatus()));
 
+  // Forza repaint quando la finestra viene spostata su schermo con DPR diverso
+  // (es. Sidecar iPad)
+  if (window()->windowHandle()) {
+    connect(window()->windowHandle(), &QWindow::screenChanged, this,
+            [this](QScreen *) { update(); });
+  }
+
   if (m_stopMotion) {
     ret = ret && connect(m_stopMotion, SIGNAL(newLiveViewImageReady()), this,
                          SLOT(onNewStopMotionImageReady()));
@@ -2194,7 +2203,7 @@ void SceneViewer::drawScene() {
   clipRect += TPoint(width() * 0.5, height() * 0.5);
 
   ChildStack *childStack = scene->getChildStack();
-  bool editInPlace       = editInPlaceToggle.getStatus() &&
+  bool editInPlace       = (editInPlaceToggle.getStatus() || m_alwaysMainXsheet) &&
                      !app->getCurrentFrame()->isEditingLevel();
 
   bool fillFullColorRaster = TXshSimpleLevel::m_fillFullColorRaster;
@@ -3891,3 +3900,4 @@ void SceneViewer::registerContext() {
   l_contexts.insert(tglContext);
   m_currentContext = tglContext;
 }
+

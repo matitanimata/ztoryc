@@ -18,6 +18,13 @@
 #include "toonz/tscenehandle.h"
 #include "toonz/txshcell.h"
 #include "toonz/txsheet.h"
+#include "xsheetdragtool.h"
+
+#include <QMap>
+#include <QPair>
+
+// Mappa per salvare i frame range per ogni xsheet
+static QMap<TXsheet*, QPair<int,int>> s_frameRangeMap;
 #include "toonz/toonzscene.h"
 #include "toonz/childstack.h"
 #include "toonz/txshleveltypes.h"
@@ -1173,10 +1180,24 @@ void openSubXsheet() {
     if (TSelection::getCurrent()) TSelection::getCurrent()->selectNone();
 
     TUndoManager::manager()->add(new OpenChildUndo());
+    // Salva play range xsheet corrente
+    TXsheet *prevXsh = app->getCurrentXsheet()->getXsheet();
+    int f0, f1, step;
+    XsheetGUI::getPlayRange(f0, f1, step);
+    s_frameRangeMap[prevXsh] = QPair<int,int>(f0, f1);
     app->getCurrentXsheet()->setXsheet(scene->getXsheet());
     app->getCurrentXsheet()->notifyXsheetChanged();
     app->getCurrentColumn()->setColumnIndex(0);
     app->getCurrentFrame()->setFrameIndex(subXsheetFrame);
+    // Ripristina play range sottoscena
+    TXsheet *newXsh = app->getCurrentXsheet()->getXsheet();
+    if (s_frameRangeMap.contains(newXsh)) {
+      auto range = s_frameRangeMap[newXsh];
+      XsheetGUI::setPlayRange(range.first, range.second, 1, false);
+    } else {
+      int fc = newXsh->getFrameCount();
+      XsheetGUI::setPlayRange(0, qMax(0, fc - 1), 1, false);
+    }
     changeSaveSubXsheetAsCommand();
   } else
     DVGui::error(QObject::tr("Select a sub-scene cell."));
@@ -1206,10 +1227,21 @@ void closeSubXsheet(int dlevel) {
   }
   if (cells.empty()) return;
   TUndoManager::manager()->add(new CloseChildUndo(cells));
+  // Salva play range sottoscena corrente
+  TXsheet *currXsh = app->getCurrentXsheet()->getXsheet();
+  int f0, f1, step;
+  XsheetGUI::getPlayRange(f0, f1, step);
+  s_frameRangeMap[currXsh] = QPair<int,int>(f0, f1);
   app->getCurrentXsheet()->setXsheet(scene->getXsheet());
   app->getCurrentXsheet()->notifyXsheetChanged();
   app->getCurrentColumn()->setColumnIndex(cells[0].second);
   app->getCurrentFrame()->setFrameIndex(cells[0].first);
+  // Ripristina play range xsheet padre
+  TXsheet *parentXsh = app->getCurrentXsheet()->getXsheet();
+  if (s_frameRangeMap.contains(parentXsh)) {
+    auto range = s_frameRangeMap[parentXsh];
+    XsheetGUI::setPlayRange(range.first, range.second, 1, false);
+  }
   changeSaveSubXsheetAsCommand();
 }
 
@@ -2744,4 +2776,56 @@ void SubsceneCmd::explode(int index) {
   }
 
   app->getCurrentXsheet()->notifyXsheetChanged();
+}
+
+void ztoryOpenSubXsheet() { openSubXsheet(); }
+void ztoryCloseSubXsheet(int dlevel) { closeSubXsheet(dlevel); }
+ 
+
+bool ztoryGetShotRange(int col, int &f0, int &f1) {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (!scene) return false;
+  TXsheet *mainXsh = scene->getChildStack()->getTopXsheet();
+  if (!mainXsh) return false;
+  // Trova il childXsheet nella colonna
+  for (int r = 0; r < mainXsh->getFrameCount(); r++) {
+    TXshCell cell = mainXsh->getCell(r, col);
+    if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+      TXsheet *childXsh = cell.m_level->getChildLevel()->getXsheet();
+      if (childXsh && s_frameRangeMap.contains(childXsh)) {
+        auto range = s_frameRangeMap[childXsh];
+        f0 = range.first;
+        f1 = range.second;
+        return true;
+      }
+      // Non in mappa — usa frameCount
+      if (childXsh) {
+        f0 = 0;
+        f1 = qMax(0, childXsh->getFrameCount() - 1);
+        return true;
+      }
+      break;
+    }
+  }
+  return false;
+}
+
+void ztorySetShotRange(int col, int f0, int f1) {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (!scene) return;
+  TXsheet *mainXsh = scene->getChildStack()->getTopXsheet();
+  if (!mainXsh) return;
+  for (int r = 0; r < mainXsh->getFrameCount(); r++) {
+    TXshCell cell = mainXsh->getCell(r, col);
+    if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+      TXsheet *childXsh = cell.m_level->getChildLevel()->getXsheet();
+      if (childXsh) {
+        s_frameRangeMap[childXsh] = QPair<int,int>(f0, f1);
+        return;
+      }
+      break;
+    }
+  }
 }

@@ -41,19 +41,13 @@ using namespace DVGui;
 
 namespace {
 inline bool hasScreensWithDifferentDevPixRatio() {
-  static bool ret     = false;
-  static bool checked = false;
-  if (!checked) {  // check once
-    int dpr = QApplication::primaryScreen()->devicePixelRatio();
-    for (auto screen : QGuiApplication::screens()) {
-      if ((int)screen->devicePixelRatio() != dpr) {
-        ret = true;
-        break;
-      }
-    }
-    checked = true;
+  // Controlla ogni volta — i monitor possono essere collegati/scollegati a runtime
+  int dpr = QApplication::primaryScreen()->devicePixelRatio();
+  for (auto screen : QGuiApplication::screens()) {
+    qDebug() << "Screen:" << screen->name() << "DPR:" << screen->devicePixelRatio();
+    if ((int)screen->devicePixelRatio() != dpr) return true;
   }
-  return ret;
+  return false;
 }
 
 int getHighestDevicePixelRatio() {
@@ -190,6 +184,9 @@ QPixmap scalePixmapKeepingAspectRatio(QPixmap pixmap, QSize size,
 
 int getDevicePixelRatio(const QWidget *widget) {
   if (hasScreensWithDifferentDevPixRatio() && widget) {
+    // windowHandle()->screen() e' piu' affidabile di screen() su macOS
+    if (widget->windowHandle() && widget->windowHandle()->screen())
+      return widget->windowHandle()->screen()->devicePixelRatio();
     return widget->screen()->devicePixelRatio();
   }
   static int devPixRatio = QApplication::primaryScreen()->devicePixelRatio();

@@ -1134,6 +1134,28 @@ TRaster32P IconGenerator::generateMeshFileIcon(const TFilePath &path,
 
 //-----------------------------------------------------------------------------
 
+QPixmap IconGenerator::renderXsheetFrame(TXsheet *xsheet, int row, const TDimension &size) {
+  if (!xsheet) return QPixmap();
+  ToonzScene *scene = xsheet->getScene();
+  if (!scene) return QPixmap();
+  TRaster32P ras(size);
+  TPixel32 bgColor = scene->getProperties()->getBgColor();
+  bgColor.m = 255;
+  ras->fill(bgColor);
+  TImageCache::instance()->setEnabled(false);
+  bool rasterizePli = TXshSimpleLevel::m_rasterizePli;
+  TXshSimpleLevel::m_rasterizePli = false;
+  scene->renderFrame(ras, row, xsheet, false);
+  TXshSimpleLevel::m_rasterizePli = rasterizePli;
+  TImageCache::instance()->setEnabled(true);
+  int w = ras->getLx(), h = ras->getLy();
+  ras->lock();
+  QImage img((const uchar*)ras->getRawData(), w, h, w*4, QImage::Format_ARGB32);
+  QImage copy = img.copy();
+  ras->unlock();
+  return QPixmap::fromImage(copy.rgbSwapped().mirrored(false, true));
+}
+
 TRaster32P IconGenerator::generateSceneFileIcon(const TFilePath &path,
                                                 const TDimension &iconSize,
                                                 int row) {

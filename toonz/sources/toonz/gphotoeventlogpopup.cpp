@@ -236,7 +236,11 @@ void GPhotoEventLogPopup::onListAllConfigButtonPressed() {
     return;
   }
 
+  #ifdef WITH_GPHOTO2
   QList<GPConfig> gpConfigs = cam->getCameraAllConfigs();
+#else
+  QList<GPConfig> gpConfigs;
+#endif
   if (gpConfigs.isEmpty()) {
     m_eventLog->append(tr("List All Configs: No configurations retrieved."));
     return;

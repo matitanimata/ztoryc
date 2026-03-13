@@ -244,9 +244,9 @@ TXshSimpleLevel *createMeshLevel(TXshLevel *texturesLevel) {
 
     codedOrigPath = texturesLevel->getPath();
     if (dynamic_cast<TXshChildLevel *>(
-            texturesLevel))  // Sub-xsheets do not have a suitable
-      codedOrigPath = TFilePath(
-          "+drawings/a");  // parent directory. Store them in "+drawings".
+            texturesLevel))  // Sub-xsheets do not have a suitable path.
+      // Use getDefaultLevelPath to respect project settings (scene subfolders etc.)
+      codedOrigPath = scene->getDefaultLevelPath(MESH_XSHLEVEL, pathName);
 
     // temporarily disable underscore in order to get proper file path when the
     // level name includes underscore like "sub_1"

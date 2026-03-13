@@ -1488,6 +1488,13 @@ void IoCmd::newScene() {
   TSelection::setCurrent(0);
   TUndoManager::manager()->reset();
 
+  // Immediately prompt Save As so assets are saved to the correct folders
+  if (!TApp::instance()->isApplicationStarting()) {
+    static SaveSceneAsPopup *popup = 0;
+    if (!popup) popup = new SaveSceneAsPopup();
+    popup->exec();
+  }
+
   bool exist = TSystem::doesExistFileOrLevel(
       scene->decodeFilePath(scene->getScenePath()));
   QAction *act = CommandManager::instance()->getAction(MI_RevertScene);
@@ -1559,6 +1566,15 @@ bool IoCmd::saveScene(const TFilePath &path, int flags) {
   // saved one
   // so the level paths are needed to be reverted after saving
   QHash<TXshLevel *, TFilePath> orgLevelPaths;
+  // When saving subxsheet, backup ALL scene level paths before any change
+  if (saveSubxsheet) {
+    TLevelSet *ls = scene->getLevelSet();
+    for (int i = 0; i < ls->getLevelCount(); i++) {
+      TXshLevel *lv = ls->getLevel(i);
+      if (lv && !lv->getPath().isEmpty())
+        orgLevelPaths.insert(lv, lv->getPath());
+    }
+  }
   auto revertOrgLevelPaths = [&] {
     QHash<TXshLevel *, TFilePath>::const_iterator i =
         orgLevelPaths.constBegin();
@@ -3564,3 +3580,5 @@ public:
   SaveAllLevelsCommandHandler() : MenuItemHandler(MI_SaveAllLevels) {}
   void execute() { IoCmd::saveNonSceneFiles(); }
 } saveAllLevelsCommandHandler;
+
+ 

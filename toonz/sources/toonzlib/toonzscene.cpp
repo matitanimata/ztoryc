@@ -602,7 +602,7 @@ void ToonzScene::save(const TFilePath &fp, TXsheet *subxsh) {
 
   bool wasUntitled = isUntitled();
 
-  setScenePath(fp);
+  if (!subxsh) setScenePath(fp);
 
   TFileStatus fs(newScenePath);
   if (fs.doesExist() && !fs.isWritable())
@@ -664,7 +664,7 @@ void ToonzScene::save(const TFilePath &fp, TXsheet *subxsh) {
 
     // Scene path changed (Untitled -> final  or Save As changed scene name when
     // scene subfolders are used)
-    if (oldScenePath != newScenePath && (wasUntitled ||
+    if (!subxsh && oldScenePath != newScenePath && (wasUntitled ||
                                          TProjectManager::instance()
                                              ->getCurrentProject()
                                              ->getUseSubScenePath())) {
@@ -1777,3 +1777,4 @@ int ToonzScene::getPreviewFrameCount() {
 
   return frameCount;
 }
+

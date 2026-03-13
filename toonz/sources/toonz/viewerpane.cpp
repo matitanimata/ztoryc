@@ -570,8 +570,8 @@ void BaseViewerPanel::onPerspectiveGuideToggled(bool value) {
 //-----------------------------------------------------------------------------
 
 void BaseViewerPanel::getPreviewButtonStates(bool &prev, bool &subCamPrev) {
-  prev       = m_previewButton->isChecked();
-  subCamPrev = m_subcameraPreviewButton->isChecked();
+  prev       = m_previewButton ? m_previewButton->isChecked() : false;
+  subCamPrev = m_subcameraPreviewButton ? m_subcameraPreviewButton->isChecked() : false;
 }
 
 //-----------------------------------------------------------------------------

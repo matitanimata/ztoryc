@@ -186,6 +186,7 @@ class SceneViewer final : public TTool::Viewer,
   QString m_toolDisableReason;
 
   bool m_editPreviewSubCamera;
+  bool m_alwaysMainXsheet = false;
 
   // used for color calibration with 3DLUT
   QOpenGLFramebufferObject *m_fbo = NULL;
@@ -312,6 +313,8 @@ public:
 
   void setIsLocator() { m_isLocator = true; }
   void setIsStyleShortcutSwitchable() { m_isStyleShortcutSwitchable = true; }
+  void setAlwaysMainXsheet(bool v) { m_alwaysMainXsheet = v; }
+  bool alwaysMainXsheet() const { return m_alwaysMainXsheet; }
   int getVGuideCount() override;
   int getHGuideCount() override;
   double getVGuide(int index) override;
