@@ -646,16 +646,6 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent) : TPanel(parent) {
   lay->setContentsMargins(0, 0, 0, 0);
   lay->setSpacing(0);
 
-  QWidget *toolbar = new QWidget(container);
-  QHBoxLayout *toolLay = new QHBoxLayout(toolbar);
-  toolLay->setContentsMargins(6, 4, 6, 4);
-  toolLay->setSpacing(6);
-  QToolButton *loadAudioBtn = new QToolButton(toolbar);
-  loadAudioBtn->setText(tr("Load Audio..."));
-  loadAudioBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
-  toolLay->addWidget(loadAudioBtn);
-  toolLay->addStretch();
-
   m_ruler = new ZtoryAnimaticRuler(container);
   m_track = new ZtoryAnimaticTrack(container);
   m_animViewer = new ZtoryAnimaticViewer(container);
@@ -674,17 +664,19 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent) : TPanel(parent) {
   scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
   scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 
+  QWidget *rightPanel = new QWidget(container);
+  QVBoxLayout *rightLay = new QVBoxLayout(rightPanel);
+  rightLay->setContentsMargins(0, 0, 0, 0);
+  rightLay->setSpacing(0);
+  rightLay->addWidget(scroll);
+
   QSplitter *splitter = new QSplitter(Qt::Horizontal, container);
   splitter->addWidget(m_animViewer);
-  splitter->addWidget(scroll);
+  splitter->addWidget(rightPanel);
   splitter->setStretchFactor(0, 2);
   splitter->setStretchFactor(1, 3);
-  lay->addWidget(toolbar);
   lay->addWidget(splitter);
   setWidget(container);
-
-  connect(loadAudioBtn, &QToolButton::clicked, this,
-          &ZtoryAnimaticPanel::importAudio);
 
   connect(m_ruler, &ZtoryAnimaticRuler::frameChanged,
           this, &ZtoryAnimaticPanel::onFrameChanged);
