@@ -16,24 +16,17 @@
 #
 #  The machine (platform) identifier to append to the library names
 #
-PLAT = _linux
+PLAT = _mac_arm64
 
 #
 #  The name of the libraries to be created/linked to
 #
-SuperLUroot	= $(HOME)/Codes/SuperLU_4.1
+SuperLUroot	= /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/thirdparty/superlu/SuperLU_4.1
 SUPERLULIB   	= $(SuperLUroot)/lib/libsuperlu_4.1.a
 TMGLIB       	= libtmglib.a
 
-## BLASLIB   	= $(SuperLUroot)/lib/libblas.a
-
-BLASDEF 	= -DUSE_VENDOR_BLAS
-BLASLIB 	= -L$(HOME)/lib/GotoBLAS -lgoto
-
-## ATLAS BLAS causes single-precision to fail
-#BLASLIB   	= -L/usr/lib/atlas -lblas
-## This BLAS causes single-precision to fail the test in SuperLU
-#BLASLIB 	= -L/usr/lib -lblas
+# Use the bundled CBLAS (no external BLAS dependency).
+BLASLIB 	= $(SuperLUroot)/lib/libblas$(PLAT).a
 
 LIBS		= $(SUPERLULIB) $(BLASLIB)
 
@@ -45,12 +38,12 @@ ARCH         = ar
 ARCHFLAGS    = cr
 RANLIB       = ranlib
 
-CC           = gcc
-CFLAGS       = -DPRNTlevel=0 -O3
+CC           = clang
+CFLAGS       = -DPRNTlevel=0 -O2 -fPIC -arch arm64 -std=gnu89 -Wno-implicit-function-declaration -Wno-error=implicit-function-declaration
 NOOPTS       = 
-FORTRAN	     = g77
-FFLAGS       = -O2
-LOADER       = $(FORTRAN)
+FORTRAN	     =
+FFLAGS       =
+LOADER       = $(CC)
 LOADOPTS     =
 
 #
@@ -62,4 +55,3 @@ CDEFS        = -DAdd_
 # The directory in which Matlab is installed
 #
 MATLAB	     = /usr/sww/matlab
-
