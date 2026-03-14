@@ -19,7 +19,6 @@
 #include "tundo.h"
 #include "historytypes.h"
 #include "orientation.h"
-#include "xsheetviewer.h"
 #include "toonz/columnfan.h"
 #include "toonz/preferences.h"
 #include "toonz/preferencesitemids.h"
@@ -661,7 +660,6 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent) : TPanel(parent) {
   m_track = new ZtoryAnimaticTrack(container);
   m_animViewer = new ZtoryAnimaticViewer(container);
   m_animViewer->setMinimumHeight(120);
-  m_audioViewer = new XsheetViewer(container);
 
   QScrollArea *scroll = new QScrollArea(container);
   QWidget *scrollContent = new QWidget();
@@ -675,13 +673,11 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent) : TPanel(parent) {
   scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
   scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 
-  QSplitter *splitter = new QSplitter(Qt::Vertical, container);
+  QSplitter *splitter = new QSplitter(Qt::Horizontal, container);
   splitter->addWidget(m_animViewer);
   splitter->addWidget(scroll);
-  splitter->addWidget(m_audioViewer);
-  splitter->setStretchFactor(0, 3);
-  splitter->setStretchFactor(1, 1);
-  splitter->setStretchFactor(2, 2);
+  splitter->setStretchFactor(0, 2);
+  splitter->setStretchFactor(1, 3);
   lay->addWidget(toolbar);
   lay->addWidget(splitter);
   setWidget(container);

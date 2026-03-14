@@ -147,7 +147,6 @@ public:
   void checkOldVersionVisblePartsFlags(QSettings &) override {}
 };
 
-class XsheetViewer;
 
 class ZtoryAnimaticPanel : public TPanel {
   Q_OBJECT
@@ -173,7 +172,6 @@ private:
   ZtoryAnimaticRuler *m_ruler;
   ZtoryAnimaticTrack *m_track;
   ZtoryAnimaticViewer *m_animViewer;
-  XsheetViewer *m_audioViewer;
   double m_ppf = 8.0;
   bool m_audioFilterApplied = false;
   bool m_prevCameraVisible = true;
