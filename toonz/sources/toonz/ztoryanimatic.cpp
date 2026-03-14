@@ -659,7 +659,7 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent) : TPanel(parent) {
   m_ruler = new ZtoryAnimaticRuler(container);
   m_track = new ZtoryAnimaticTrack(container);
   m_animViewer = new ZtoryAnimaticViewer(container);
-  m_animViewer->setMinimumHeight(120);
+  m_audioTrack = new ZtoryAnimaticAudioTrack(container);
 
   QScrollArea *scroll = new QScrollArea(container);
   QWidget *scrollContent = new QWidget();
@@ -668,6 +668,7 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent) : TPanel(parent) {
   scrollLay->setSpacing(0);
   scrollLay->addWidget(m_ruler);
   scrollLay->addWidget(m_track);
+  scrollLay->addWidget(m_audioTrack);
   scroll->setWidget(scrollContent);
   scroll->setWidgetResizable(true);
   scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
@@ -698,6 +699,11 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent) : TPanel(parent) {
 
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
           this, &ZtoryAnimaticPanel::refreshFromScene);
+
+  connect(m_track, &ZtoryAnimaticTrack::zoomChanged,
+          m_audioTrack, &ZtoryAnimaticAudioTrack::setPixelsPerFrame);
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+          m_audioTrack, &ZtoryAnimaticAudioTrack::refreshFromScene);
   connect(TApp::instance()->getCurrentFrame(), &TFrameHandle::frameSwitched,
           this, [this](){
     // Aggiorna playhead solo se siamo al main xsheet

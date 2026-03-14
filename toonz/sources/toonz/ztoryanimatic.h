@@ -136,9 +136,19 @@ class ZtoryAnimaticViewer : public BaseViewerPanel {
 public:
   ZtoryAnimaticViewer(QWidget *parent = nullptr)
     : BaseViewerPanel(parent) {
+    setObjectName("ZtoryAnimaticViewer");
+    setMinimumWidth(200);
+    setMinimumHeight(120);
+    QGridLayout *viewerL = new QGridLayout();
+    viewerL->setContentsMargins(0, 0, 0, 0);
+    viewerL->setSpacing(0);
+    viewerL->addWidget(m_fsWidget, 0, 0);
+    viewerL->setRowStretch(0, 1);
+    viewerL->setColumnStretch(0, 1);
+    m_mainLayout->insertLayout(0, viewerL, 1);
+    setLayout(m_mainLayout);
+    m_visiblePartsFlag = VPPARTS_None;
     m_sceneViewer->setAlwaysMainXsheet(true);
-    // Disconnetti il segnale activeViewerChanged — non vogliamo che questo viewer
-    // diventi il viewer attivo globale
     disconnect(TApp::instance(), SIGNAL(activeViewerChanged()),
                this, SLOT(onActiveViewerChanged()));
   }
@@ -172,6 +182,7 @@ private:
   ZtoryAnimaticRuler *m_ruler;
   ZtoryAnimaticTrack *m_track;
   ZtoryAnimaticViewer *m_animViewer;
+  ZtoryAnimaticAudioTrack *m_audioTrack;
   double m_ppf = 8.0;
   bool m_audioFilterApplied = false;
   bool m_prevCameraVisible = true;
