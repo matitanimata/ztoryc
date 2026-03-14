@@ -136,6 +136,7 @@ public:
                                                 //! space id of a known context,
   //! or
   //!< -1 if it did not attach to any known space.
+  bool isValidId(int dlSpaceId) const;  //!< Returns true if id is valid.
   TGLDisplayListsProxy *dlProxy(int dlSpaceId);  //!< Returns the display lists
                                                  //! space proxy associated to
   //! the

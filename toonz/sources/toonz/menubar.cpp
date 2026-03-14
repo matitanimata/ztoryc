@@ -305,6 +305,9 @@ void RoomTabWidget::setIsLocked(bool lock) {
 //---------------------------------------------------------------------------------
 
 void TopBar::loadMenubar() {
+  // Clear existing menus to avoid duplicates when reloading rooms/workflows.
+  m_menuBar->clear();
+
   // Menu' FILE
   QMenu *fileMenu = addMenu(ShortcutTree::tr("File"), m_menuBar);
   addMenuItem(fileMenu, MI_NewScene);
@@ -651,6 +654,13 @@ void TopBar::loadMenubar() {
   viewMenu->addSeparator();
   addMenuItem(viewMenu, MI_MaximizePanel);
   addMenuItem(viewMenu, MI_FullScreenWindow);
+
+  // Menu' WORKFLOW
+  QMenu *workflowMenu = addMenu(ShortcutTree::tr("Workflow"), m_menuBar);
+  addMenuItem(workflowMenu, MI_WorkflowStoryboard);
+  addMenuItem(workflowMenu, MI_Workflow2D);
+  addMenuItem(workflowMenu, MI_WorkflowCutout);
+  addMenuItem(workflowMenu, MI_WorkflowStopMotion);
 
   // Menu' WINDOWS
   QMenu *windowsMenu = addMenu(ShortcutTree::tr("Panels"), m_menuBar);

@@ -56,6 +56,7 @@ class MainWindow final : public QMainWindow {
   bool m_saveSettingsOnQuit;
   bool m_shownOnce = false;
   int m_oldRoomIndex;
+  bool m_isSwitchingRooms;
   QString m_currentRoomsChoice;
   UpdateChecker *m_updateChecker;
 
@@ -237,6 +238,12 @@ protected slots:
   void deleteRoom(int index);
   void renameRoom(int index, const QString name);
   void onMenuCheckboxChanged();
+  void onWorkflowStoryboard();
+  void onWorkflow2D();
+  void onWorkflowCutout();
+  void onWorkflowStopMotion();
+  void switchRoomChoice(const QString &choice);
+  void clearRooms();
 
   // make InkCheck and Ink#1Check exclusive.
   void onInkCheckTriggered(bool on);

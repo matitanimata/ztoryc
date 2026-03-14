@@ -3883,7 +3883,9 @@ void SceneViewer::registerContext() {
       TApp::instance()->getMainWindow()->isAncestorOf(this) &&
       QThread::currentThread() == qGuiApp->thread()) {
     // obtain displaySpaceId for main thread
-    if (l_mainDisplayListsSpaceId == -1)
+    if (l_mainDisplayListsSpaceId == -1 ||
+        !TGLDisplayListsManager::instance()->isValidId(
+            l_mainDisplayListsSpaceId))
       l_mainDisplayListsSpaceId =
           TGLDisplayListsManager::instance()->storeProxy(new DummyProxy);
 
@@ -3900,4 +3902,3 @@ void SceneViewer::registerContext() {
   l_contexts.insert(tglContext);
   m_currentContext = tglContext;
 }
-

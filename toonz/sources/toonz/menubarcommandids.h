@@ -123,6 +123,10 @@
 #define MI_OpenStoryboard "MI_OpenStoryboard"
 #define MI_OpenZtoryBack "MI_OpenZtoryBack"
 #define MI_OpenZtoryAnimatic "MI_OpenZtoryAnimatic"
+#define MI_WorkflowStoryboard "MI_WorkflowStoryboard"
+#define MI_Workflow2D "MI_Workflow2D"
+#define MI_WorkflowCutout "MI_WorkflowCutout"
+#define MI_WorkflowStopMotion "MI_WorkflowStopMotion"
 #define MI_OpenSchematic "MI_OpenSchematic"
 
 #define MI_Export "MI_Export"

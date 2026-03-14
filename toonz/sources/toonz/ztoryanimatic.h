@@ -8,6 +8,8 @@
 #include "pane.h"
 #include <QWidget>
 #include <QScrollArea>
+#include "toonz/txshsoundcolumn.h"
+#include <map>
 
 class ZtoryAnimaticRuler : public QWidget {
   Q_OBJECT
@@ -26,6 +28,65 @@ private:
   double m_fps = 24.0;
   double m_ppf = 8.0; // pixels per frame
   int m_currentFrame = 0;
+};
+
+class ZtoryAnimaticAudioTrack : public QWidget {
+  Q_OBJECT
+public:
+  ZtoryAnimaticAudioTrack(QWidget *parent = nullptr);
+  void setPixelsPerFrame(double ppf) { m_ppf = ppf; updateGeometry(); update(); }
+  void setCurrentFrame(int f) { m_currentFrame = f; update(); }
+  void refreshFromScene();
+  QSize sizeHint() const override;
+
+protected:
+  void paintEvent(QPaintEvent *) override;
+  void mousePressEvent(QMouseEvent *) override;
+  void mouseMoveEvent(QMouseEvent *) override;
+  void mouseReleaseEvent(QMouseEvent *) override;
+  void contextMenuEvent(QContextMenuEvent *e) override;
+
+private:
+  struct AudioClip {
+    int col = -1;
+    int r0 = 0;
+    int r1 = 0;
+  };
+  struct AudioTrack {
+    int col = -1;
+    std::vector<AudioClip> clips;
+  };
+
+  enum DragMode {
+    DragNone = 0,
+    DragMove,
+    DragTrimStart,
+    DragTrimEnd
+  };
+
+  bool hitTestClip(const QPoint &pos, int &outTrackIdx, int &outClipIdx,
+                   QRect &outClipRect, DragMode &outMode) const;
+  void applyMoveClip(int col, int r0, int r1, int newR0);
+  void applyTrimClip(int col, int anchorRow, int delta, bool trimStart);
+  void importAudio();
+
+  double m_ppf = 8.0;
+  int m_currentFrame = 0;
+  int m_headerWidth = 80;
+  int m_trackHeight = 44;
+  int m_clipPadding = 4;
+
+  std::vector<AudioTrack> m_tracks;
+
+  DragMode m_dragMode = DragNone;
+  int m_dragTrackIdx = -1;
+  int m_dragClipIdx = -1;
+  int m_dragStartX = 0;
+  int m_origR0 = 0;
+  int m_origR1 = 0;
+  bool m_dragChanged = false;
+  int m_undoCol = -1;
+  TXshSoundColumnP m_oldColumn;
 };
 
 class ZtoryAnimaticTrack : public QWidget {
@@ -86,13 +147,17 @@ public:
   void checkOldVersionVisblePartsFlags(QSettings &) override {}
 };
 
+class XsheetViewer;
+
 class ZtoryAnimaticPanel : public TPanel {
   Q_OBJECT
 public:
   ZtoryAnimaticPanel(QWidget *parent = nullptr);
   void refreshFromScene();
+  void applyAudioColumnFilter(bool enable);
 protected:
   void showEvent(QShowEvent *e) override;
+  void hideEvent(QHideEvent *e) override;
 
 private slots:
   void onShotClicked(int col);
@@ -103,11 +168,16 @@ private slots:
   void onFrameChanged(int frame);
 
 private:
+  void importAudio();
+
   ZtoryAnimaticRuler *m_ruler;
   ZtoryAnimaticTrack *m_track;
   ZtoryAnimaticViewer *m_animViewer;
+  XsheetViewer *m_audioViewer;
   double m_ppf = 8.0;
+  bool m_audioFilterApplied = false;
+  bool m_prevCameraVisible = true;
+  std::map<int, bool> m_prevColVisibility;
 };
 
 #endif
-

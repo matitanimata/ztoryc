@@ -88,6 +88,15 @@ int TGLDisplayListsManager::displayListsSpaceId(TGlContext context) {
 
 //-----------------------------------------------------------------------------------
 
+bool TGLDisplayListsManager::isValidId(int dlSpaceId) const {
+  if (dlSpaceId < 0) return false;
+  size_t idx = (size_t)dlSpaceId;
+  if (idx >= m_proxies.nodesCount()) return false;
+  return m_proxies.isValid(idx);
+}
+
+//-----------------------------------------------------------------------------------
+
 TGLDisplayListsProxy *TGLDisplayListsManager::dlProxy(int dlSpaceId) {
   return m_proxies[dlSpaceId].m_proxy;
 }

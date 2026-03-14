@@ -24,6 +24,8 @@
 // TnzQt includes
 #include "toonzqt/gutil.h"
 #include "toonzqt/icongenerator.h"
+#include "toonzqt/selection.h"
+#include "toonz/preferencesitemids.h"
 #include "toonzqt/viewcommandids.h"
 #include "toonzqt/updatechecker.h"
 #include "toonzqt/paletteviewer.h"
@@ -165,6 +167,53 @@ void writeRoomList(std::vector<Room *> &rooms) {
   for (int i = 0; i < (int)rooms.size(); i++)
     roomPaths.push_back(rooms[i]->getPath());
   writeRoomList(roomPaths);
+}
+
+//-----------------------------------------------------------------------------
+static bool ensureStoryboardRoomsTemplate(const QString &choice) {
+  if (choice != "Storyboard") return false;
+
+  TFilePath layoutsPath =
+      ToonzFolder::getMyRoomsDir() + TFilePath("layouts.txt");
+  if (!TFileStatus(layoutsPath).doesExist()) return false;
+
+  bool hasBoard    = false;
+  bool hasAnimatic = false;
+  bool hasBrowser  = false;
+  bool hasCustom   = false;
+  Tifstream is(layoutsPath);
+  for (;;) {
+    char buffer[1024];
+    is.getline(buffer, sizeof(buffer));
+    if (is.eof()) break;
+    std::string line(buffer);
+    // Skip empty lines
+    if (line.find_first_not_of(" \t\r\n") == std::string::npos) continue;
+    if (line.find("board.ini") != std::string::npos) hasBoard = true;
+    if (line.find("animatic.ini") != std::string::npos) hasAnimatic = true;
+    if (line.find("browser.ini") != std::string::npos) hasBrowser = true;
+    // Detect custom layouts beyond the legacy room1..6
+    if (line.find("room1.ini") == std::string::npos &&
+        line.find("room2.ini") == std::string::npos &&
+        line.find("room3.ini") == std::string::npos &&
+        line.find("room4.ini") == std::string::npos &&
+        line.find("room5.ini") == std::string::npos &&
+        line.find("room6.ini") == std::string::npos) {
+      hasCustom = true;
+    }
+    if (hasBoard && hasAnimatic && hasBrowser) break;
+  }
+  if (hasBoard && hasAnimatic && hasBrowser) return false;
+  if (hasCustom) return false;
+
+  // Backup old layouts list so the new storyboard templates can be copied in.
+  TFilePath backupPath =
+      ToonzFolder::getMyRoomsDir() + TFilePath("layouts_legacy.txt");
+  if (TFileStatus(backupPath).doesExist()) {
+    TSystem::deleteFile(backupPath);
+  }
+  TSystem::renameFile(backupPath, layoutsPath, true);
+  return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -405,6 +454,7 @@ MainWindow::MainWindow(const QString &argumentLayoutFileName, QWidget *parent,
     : QMainWindow(parent, flags)
     , m_saveSettingsOnQuit(true)
     , m_oldRoomIndex(0)
+    , m_isSwitchingRooms(false)
     , m_layoutName("") {
   // store a main window pointer in advance of making its contents
   TApp::instance()->setMainWindow(this);
@@ -485,6 +535,10 @@ centralWidget->setLayout(centralWidgetLayout);*/
   setCommandHandler("MI_LoadScene", this, &MainWindow::onLoadScene);
   setCommandHandler("MI_LoadSubSceneFile", this, &MainWindow::onLoadSubScene);
   setCommandHandler("MI_ResetRoomLayout", this, &MainWindow::resetRoomsLayout);
+  setCommandHandler(MI_WorkflowStoryboard, this, &MainWindow::onWorkflowStoryboard);
+  setCommandHandler(MI_Workflow2D, this, &MainWindow::onWorkflow2D);
+  setCommandHandler(MI_WorkflowCutout, this, &MainWindow::onWorkflowCutout);
+  setCommandHandler(MI_WorkflowStopMotion, this, &MainWindow::onWorkflowStopMotion);
   setCommandHandler(MI_AutoFillToggle, this, &MainWindow::autofillToggle);
 
   setCommandHandler(MI_About, this, &MainWindow::onAbout);
@@ -681,8 +735,10 @@ void MainWindow::readSettings(const QString &argumentLayoutFileName) {
 
   /*- If the layout files were loaded from template, then save them as private
    * ones -*/
-  makePrivate(rooms);
-  writeRoomList(rooms);
+  if (!m_isSwitchingRooms) {
+    makePrivate(rooms);
+    writeRoomList(rooms);
+  }
 
   // Imposto la stanza corrente
   TFilePath fp = ToonzFolder::getRoomsFile(currentRoomFileName);
@@ -699,6 +755,11 @@ void MainWindow::readSettings(const QString &argumentLayoutFileName) {
       roomTabWidget->setCurrentIndex(index);
       m_stackedWidget->setCurrentIndex(index);
     }
+  }
+  if (m_stackedWidget->count() > 0 && roomTabWidget->currentIndex() < 0) {
+    m_oldRoomIndex = 0;
+    roomTabWidget->setCurrentIndex(0);
+    m_stackedWidget->setCurrentIndex(0);
   }
 
   RecentFiles::instance()->loadRecentFiles();
@@ -1197,6 +1258,110 @@ void MainWindow::resetRoomsLayout() {
   }
 }
 
+void MainWindow::clearRooms() {
+  // Clear current selection to avoid stale selection pointers during reload.
+  TSelection::setCurrent(0);
+
+  QTabBar *roomTabWidget = m_topBar->getRoomTabWidget();
+  QSignalBlocker tabBlocker(roomTabWidget);
+  QSignalBlocker stackBlocker(m_stackedWidget);
+  while (roomTabWidget->count() > 0) roomTabWidget->removeTab(0);
+  m_panelStates.clear();
+
+  while (m_stackedWidget->count() > 0) {
+    QWidget *w = m_stackedWidget->widget(0);
+    m_stackedWidget->removeWidget(w);
+    delete w;
+  }
+  m_oldRoomIndex = 0;
+}
+
+void MainWindow::switchRoomChoice(const QString &choice) {
+  if (choice.isEmpty()) return;
+  bool already = (Preferences::instance()->getCurrentRoomChoice() == choice);
+  bool migrated = ensureStoryboardRoomsTemplate(choice);
+  if (already && !migrated) return;
+
+  m_isSwitchingRooms = true;
+
+  QTabBar *roomTabWidget = m_topBar->getRoomTabWidget();
+  disconnect(m_stackedWidget, SIGNAL(currentChanged(int)),
+             this, SLOT(onCurrentRoomChanged(int)));
+  disconnect(roomTabWidget, SIGNAL(currentChanged(int)),
+             m_stackedWidget, SLOT(setCurrentIndex(int)));
+
+  writeSettings();
+  Preferences::instance()->setValue(CurrentRoomChoice, choice);
+  m_currentRoomsChoice = choice;
+
+  bool watchFs = Preferences::instance()->isWatchFileSystemEnabled();
+  if (watchFs) Preferences::instance()->setValue(watchFileSystemEnabled, false);
+
+  clearRooms();
+  readSettings("");
+
+  if (watchFs) Preferences::instance()->setValue(watchFileSystemEnabled, true);
+
+  // Ensure we are on a valid room after reload
+  if (m_stackedWidget->count() > 0 &&
+      (roomTabWidget->currentIndex() < 0 ||
+       roomTabWidget->currentIndex() >= m_stackedWidget->count())) {
+    roomTabWidget->setCurrentIndex(0);
+    m_stackedWidget->setCurrentIndex(0);
+    m_oldRoomIndex = 0;
+  }
+
+  update();
+  connect(m_stackedWidget, SIGNAL(currentChanged(int)),
+          SLOT(onCurrentRoomChanged(int)));
+  connect(roomTabWidget, SIGNAL(currentChanged(int)), m_stackedWidget,
+          SLOT(setCurrentIndex(int)));
+  m_isSwitchingRooms = false;
+}
+
+static bool switchToFirstRoom(MainWindow *mw, const QStringList &names) {
+  for (const QString &name : names) {
+    QString n = name;
+    if (mw->getRoomByName(n)) {
+      mw->switchToRoom(n);
+      return true;
+    }
+  }
+  return false;
+}
+
+void MainWindow::onWorkflowStoryboard() {
+  switchRoomChoice("Storyboard");
+  if (switchToFirstRoom(this, {"BOARD", "Storyboard", "ANIMATIC", "SHOTEDITOR"}))
+    return;
+
+  // If rooms are still missing, reset storyboard layouts to template once.
+  if (ensureStoryboardRoomsTemplate("Storyboard")) {
+    switchRoomChoice("Storyboard");
+    if (switchToFirstRoom(this, {"BOARD", "Storyboard", "ANIMATIC", "SHOTEDITOR"}))
+      return;
+  }
+  DVGui::warning(tr("Storyboard rooms not found.\nPlease create a BOARD/ANIMATIC room first."));
+}
+
+void MainWindow::onWorkflow2D() {
+  switchRoomChoice("Tradigital");
+  if (switchToFirstRoom(this, {"2D", "Animation", "Drawing"})) return;
+  DVGui::warning(tr("2D room not found."));
+}
+
+void MainWindow::onWorkflowCutout() {
+  switchRoomChoice("Cutout");
+  if (switchToFirstRoom(this, {"Cutout", "CUTOUT", "2D"})) return;
+  DVGui::warning(tr("Cutout room not found."));
+}
+
+void MainWindow::onWorkflowStopMotion() {
+  switchRoomChoice("StopMotion");
+  if (switchToFirstRoom(this, {"StopMotion", "Stop Motion"})) return;
+  DVGui::warning(tr("Stop Motion room not found."));
+}
+
 void MainWindow::maximizePanel() {
   DockLayout *currDockLayout = getCurrentRoom()->dockLayout();
   if (currDockLayout->getMaximized() &&
@@ -1228,6 +1393,19 @@ void MainWindow::fullScreenWindow() {
 //-----------------------------------------------------------------------------
 
 void MainWindow::onCurrentRoomChanged(int newRoomIndex) {
+  if (m_isSwitchingRooms) {
+    m_oldRoomIndex = newRoomIndex;
+    return;
+  }
+
+  if (newRoomIndex < 0 || newRoomIndex >= m_stackedWidget->count()) {
+    return;
+  }
+  if (m_oldRoomIndex < 0 || m_oldRoomIndex >= m_stackedWidget->count()) {
+    m_oldRoomIndex = newRoomIndex;
+    return;
+  }
+
   Room *oldRoom            = getRoom(m_oldRoomIndex);
   Room *newRoom            = getRoom(newRoomIndex);
   QList<TPanel *> paneList = oldRoom->findChildren<TPanel *>();
@@ -2487,6 +2665,10 @@ void MainWindow::defineActions() {
   createMenuWindowsAction(MI_OpenStoryboard, QT_TR_NOOP("&Storyboard"), "", "Storyboard");
   createMenuWindowsAction("MI_OpenZtoryBack", QT_TR_NOOP("&Ztoryc Back"), "", "ZtoryBack");
   createMenuWindowsAction("MI_OpenZtoryAnimatic", QT_TR_NOOP("&Ztoryc Animatic"), "", "ZtoryAnimatic");
+  createMenuWindowsAction(MI_WorkflowStoryboard, QT_TR_NOOP("&Storyboard Mode"), "", "");
+  createMenuWindowsAction(MI_Workflow2D, QT_TR_NOOP("&2D Tradigital Mode"), "", "");
+  createMenuWindowsAction(MI_WorkflowCutout, QT_TR_NOOP("&Cutout Digital Mode"), "", "");
+  createMenuWindowsAction(MI_WorkflowStopMotion, QT_TR_NOOP("&Stop-Motion Mode"), "", "");
   createMenuWindowsAction(MI_OpenSchematic, QT_TR_NOOP("&Schematic"), "",
                           "schematic");
   createMenuWindowsAction(MI_InsertFx, QT_TR_NOOP("&FX Browser"), "Ctrl+F",

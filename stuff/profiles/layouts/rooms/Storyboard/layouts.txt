@@ -1,0 +1,3 @@
+board.ini
+animatic.ini
+browser.ini
