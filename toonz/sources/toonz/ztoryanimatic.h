@@ -28,6 +28,7 @@ private:
   double m_fps = 24.0;
   double m_ppf = 8.0; // pixels per frame
   int m_currentFrame = 0;
+  int m_headerWidth = 80;
 };
 
 class ZtoryAnimaticAudioTrack : public QWidget {
@@ -123,6 +124,7 @@ signals:
 private:
   double m_ppf = 8.0;
   int m_currentFrame = 0;
+  int m_headerWidth = 80;
   std::vector<ShotBlock> m_blocks;
   int m_draggingCol = -1;
   int m_dragStartX = 0;

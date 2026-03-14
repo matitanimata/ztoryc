@@ -95,8 +95,8 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
   p.fillRect(rect(), QColor(40, 40, 40));
   p.setPen(QColor(180, 180, 180));
   int w = width();
-  for (int f = 0; f * m_ppf < w; f++) {
-    int x = (int)(f * m_ppf);
+  for (int f = 0; m_headerWidth + f * m_ppf < w; f++) {
+    int x = m_headerWidth + (int)(f * m_ppf);
     if (f % 24 == 0) {
       p.drawLine(x, 0, x, 16);
       p.drawText(x + 2, 14, QString::number(f));
@@ -105,20 +105,20 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
     }
   }
   // Playhead
-  int px = (int)(m_currentFrame * m_ppf);
+  int px = m_headerWidth + (int)(m_currentFrame * m_ppf);
   p.setPen(QColor(255, 100, 0));
   p.drawLine(px, 0, px, height());
 }
 
 void ZtoryAnimaticRuler::mousePressEvent(QMouseEvent *e) {
-  m_currentFrame = (int)(e->x() / m_ppf);
+  m_currentFrame = qMax(0, (int)((e->x() - m_headerWidth) / m_ppf));
   update();
   emit frameChanged(m_currentFrame);
 }
 
 void ZtoryAnimaticRuler::mouseMoveEvent(QMouseEvent *e) {
   if (e->buttons() & Qt::LeftButton) {
-    m_currentFrame = qMax(0, (int)(e->x() / m_ppf));
+    m_currentFrame = qMax(0, (int)((e->x() - m_headerWidth) / m_ppf));
     update();
     emit frameChanged(m_currentFrame);
   }
@@ -502,7 +502,7 @@ void ZtoryAnimaticTrack::refreshFromScene() {
   int totalFrames = 0;
   for (auto &b : m_blocks)
     totalFrames = qMax(totalFrames, b.startFrameInMain + (b.f1 - b.f0 + 1));
-  setMinimumWidth((int)(totalFrames * m_ppf) + 100);
+  setMinimumWidth(m_headerWidth + (int)(totalFrames * m_ppf) + 100);
   update();
 }
 
@@ -512,7 +512,7 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
 
   for (auto &b : m_blocks) {
     int duration = b.f1 - b.f0 + 1;
-    int x = (int)(b.startFrameInMain * m_ppf);
+    int x = m_headerWidth + (int)(b.startFrameInMain * m_ppf);
     int w = (int)(duration * m_ppf);
     int h = height() - 4;
 
@@ -535,7 +535,7 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
   }
 
   // Playhead
-  int px = (int)(m_currentFrame * m_ppf);
+  int px = m_headerWidth + (int)(m_currentFrame * m_ppf);
   p.setPen(QColor(255, 100, 0));
   p.drawLine(px, 0, px, height());
 }
@@ -547,7 +547,7 @@ void ZtoryAnimaticTrack::mousePressEvent(QMouseEvent *e) {
   if (e->button() == Qt::RightButton) {
     for (auto &b : m_blocks) {
       int duration = b.f1 - b.f0 + 1;
-      int x = (int)(b.startFrameInMain * m_ppf);
+      int x = m_headerWidth + (int)(b.startFrameInMain * m_ppf);
       int w = (int)(duration * m_ppf);
       if (mx >= x && mx < x + w) {
         QMenu menu(this);
@@ -563,7 +563,7 @@ void ZtoryAnimaticTrack::mousePressEvent(QMouseEvent *e) {
 
   for (auto &b : m_blocks) {
     int duration = b.f1 - b.f0 + 1;
-    int x = (int)(b.startFrameInMain * m_ppf);
+    int x = m_headerWidth + (int)(b.startFrameInMain * m_ppf);
     int w = (int)(duration * m_ppf);
     // Check handle resize
     if (mx >= x + w - 6 && mx <= x + w + 2) {
@@ -704,6 +704,7 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent) : TPanel(parent) {
     if (scene->getChildStack()->getAncestorCount() == 0) {
       int frame = TApp::instance()->getCurrentFrame()->getFrame();
       m_track->setCurrentFrame(frame);
+      m_audioTrack->setCurrentFrame(frame);
       m_ruler->update();
     }
   });
@@ -934,6 +935,7 @@ void ZtoryAnimaticPanel::onZoomChanged(double ppf) {
 }
 
 void ZtoryAnimaticPanel::onFrameChanged(int frame) {
+  m_audioTrack->setCurrentFrame(frame);
   TApp::instance()->getCurrentFrame()->setFrame(frame);
   m_track->setCurrentFrame(frame);
   m_ruler->update();
