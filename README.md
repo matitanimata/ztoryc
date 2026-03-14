@@ -1,47 +1,241 @@
-# Tahoma2D
+# Ztoryc
 
-[![](https://ci.appveyor.com/api/projects/status/mnc3mepksux9kvap/branch/master?svg=true)](https://ci.appveyor.com/project/tahoma2d/tahoma2d)
+**Open-source storyboard and pre-production software for 2D animation.**
 
-## What is Tahoma2D?
+Ztoryc is a fork of Tahoma2D 1.6.0 that introduces a fully integrated storyboard
+and animatic workflow directly inside the animation software. The goal is to
+cover the early production pipeline:
 
-Tahoma2D is a 2D and stop motion animation software.It is based on **Toonz Studio
-Ghibli Version**, originally developed in Italy by
-[Digital Video, Inc.](http://www.toonz.com/), and customized by
-[Studio Ghibli](http://www.ghibli.jp/) over many years of production.
+Storyboard → Animatic → Layout
 
-## Program Requirements
+without forcing artists to switch between multiple tools.
 
-Please refer to the Tahoma2D site at <https://tahoma2d.org/download>.
+Ztoryc explores a different idea:
 
-## Installation
+> What if the storyboard was not a separate document, but the actual structure
+> of the animation scene?
 
-Please download the latest release at <https://github.com/tahoma2d/tahoma2d/releases>.
+⚠️ Work in progress. Many features are still experimental.
 
-## How to Build Locally
+---
 
-- [Windows](./doc/how_to_build_win.md)
-- [OS X](./doc/how_to_build_macosx.md)
-- [Linux](./doc/how_to_build_linux.md)
+## Why Ztoryc
 
-For instructions on how to build stylesheets, please [see here](./doc/how_to_stylesheet.md).
+In most animation pipelines the storyboard is created in a separate application
+and later rebuilt in the animation software. This creates duplicated work,
+manual animatic timing, and loss of shot structure between departments.
 
-Can't develop but still want to help? Help us test individual Pull Requests before they are merged with [these steps](./doc/how_to_test_prs.md).
+Ztoryc experiments with a different approach: the storyboard becomes the
+foundation of the animation scene itself.
 
-## Community
+---
 
-- To share tips or to troubleshoot, join the [Google Tahoma2D Users forum](hhttps://groups.google.com/g/tahoma2d)
-- If you found a bug with the software after troubleshooting, or are a developer, search the [Github issues](https://github.com/tahoma2d/tahoma2d/issues) and post there.
+## Core Ideas
 
-## Licensing
+- Storyboard grid integrated with the animation scene
+- Animatic timeline connected to the xsheet
+- Shot-based workflow for animation pre-production
+- Shot export to standalone scenes
 
-- Files outside of the `thirdparty` and `stuff/library/mypaint brushes` directories are based on the Modified BSD License.
-  - [modified BSD license](./LICENSE.txt).
-  - Based on this license, this software may be used or changed freely for business or personal use.
-- For files in the `thirdparty` directory:
-  - Please consult with the licenses in the appropriate READMEs or source codes.
-- For files in the `stuff/library/mypaint brushes` directory:
-  - Please see the licenses in `stuff/library/mypaint brushes/Licenses.txt`.
+---
 
-### Special Thanks
+## Current Features
 
-This Open Source Program is developed from Toonz, a software originally created by Digital Video, S.p.A., Rome Italy
+**Storyboard Panel**
+
+- Panel-based storyboard grid (multiple panels per shot)
+- Auto-detection of panels from keyframes, camera moves, and drawing changes
+- Configurable grid, drag & drop shot reordering
+- Shot numbering modes: Auto / Keep / Renumber All
+- Multi-selection, copy/clone/paste, multi-shot delete
+- Thumbnail preview with automatic refresh
+- Export shots as standalone `.tnz` scenes with isolated assets
+
+**Animatic Panel**
+
+- Custom NLE-style animatic editor with integrated OpenGL viewer
+- Shot blocks generated from main xsheet timing
+- Ripple editing and timeline zoom
+- Playhead synchronized with the main timeline
+- Viewer always shows the main xsheet (independent of Edit In Place)
+
+**Data & Persistence**
+
+- Central `ZtoryModel` shared across panels
+- Project data stored in `.ztoryc` XML files saved alongside the scene
+- Custom rooms: BOARD, SHOTEDITOR, ANIMATIC
+
+---
+
+## Planned Features
+
+- PDF storyboard export
+- Animatic render export
+- Audio tracks in the animatic timeline (waveform + edit)
+- Separate frame handle for animatic viewer
+- StoryStrip panel and Order Review panel
+- Undo/Redo support
+- Keyboard shortcuts
+- Production pipeline integration
+
+---
+
+## Workflow Modes
+
+Ztoryc adds a **Workflow** menu to quickly switch between room sets without
+restarting:
+
+- Storyboard
+- 2D Tradigital
+- Cutout Digital
+- Stop-Motion
+
+These modes simply select a room by name (e.g. `BOARD`, `ANIMATIC`, `2D`). If a
+room is missing, Ztoryc will show a warning. You can customize the room layouts
+and names freely.
+
+## Room Sets (Build)
+
+Room set templates live in:
+
+`stuff/profiles/layouts/rooms/`
+
+To ship a custom set, add a new folder (e.g. `Ztoryc/`) containing `room*.ini`
+files and a `layouts.txt` list. Those templates become available in builds.
+
+---
+
+## Building
+
+Ztoryc builds like Tahoma2D. See the existing Tahoma2D build docs in `doc/`.
+
+---
+
+## About
+
+Ztoryc started as an experiment by an animator and grew with the help of
+developers. Contributions, feedback, and ideas are welcome.
+
+Based on Tahoma2D — BSD 2-Clause License.
+
+---
+
+# Ztoryc (Italiano)
+
+**Software open-source per storyboard e pre-produzione 2D.**
+
+Ztoryc è un fork di Tahoma2D 1.6.0 che integra un workflow di storyboard e
+animatic direttamente dentro il software di animazione. L’obiettivo è coprire
+le fasi iniziali della produzione:
+
+Storyboard → Animatic → Layout
+
+senza costringere gli artisti a usare strumenti separati.
+
+Ztoryc propone un’idea diversa:
+
+> E se lo storyboard non fosse un documento separato, ma la struttura stessa
+> della scena di animazione?
+
+⚠️ Progetto in sviluppo. Molte funzioni sono ancora sperimentali.
+
+---
+
+## Perché Ztoryc
+
+In molte pipeline lo storyboard nasce in un’app separata e poi viene ricostruito
+nel software di animazione. Questo porta a lavoro duplicato, timing ricreato a
+mano, e perdita della struttura degli shot.
+
+Ztoryc sperimenta un approccio diverso: lo storyboard diventa la base della
+scena di animazione.
+
+---
+
+## Idee Chiave
+
+- Griglia storyboard integrata nella scena
+- Timeline animatic collegata all’xsheet
+- Workflow per shot
+- Export shot in scene autonome
+
+---
+
+## Funzionalità Attuali
+
+**Storyboard Panel**
+
+- Griglia a pannelli (più pannelli per shot)
+- Rilevamento automatico da keyframe, camera e cambi disegno
+- Griglia configurabile, drag & drop per riordinare gli shot
+- Numerazione shot: Auto / Keep / Renumber All
+- Selezione multipla, copia/clona/incolla, eliminazione multipla
+- Thumbnail aggiornate automaticamente
+- Export shot in `.tnz` con asset isolati
+
+**Animatic Panel**
+
+- Editor animatic in stile NLE con viewer OpenGL integrato
+- Blocchi shot generati dal timing del main xsheet
+- Ripple edit e zoom timeline
+- Playhead sincronizzato con la timeline principale
+- Viewer sempre sul main xsheet (indipendente da Edit In Place)
+
+**Dati & Persistenza**
+
+- `ZtoryModel` centrale condiviso
+- Dati progetto in file `.ztoryc` (XML) accanto alla scena
+- Room dedicate: BOARD, SHOTEDITOR, ANIMATIC
+
+---
+
+## Funzionalità Pianificate
+
+- Export PDF storyboard
+- Export animatic
+- Tracce audio nella timeline animatic (waveform + edit)
+- Frame handle separato per il viewer animatic
+- StoryStrip panel e Order Review panel
+- Undo/Redo
+- Shortcut tastiera
+- Integrazione pipeline produzione
+
+---
+
+## Modalità Workflow
+
+Ztoryc aggiunge un menu **Workflow** per cambiare rapidamente set di room senza
+riavviare:
+
+- Storyboard
+- 2D Tradigital
+- Cutout Digitale
+- Stop‑Motion
+
+Queste modalità selezionano una room per nome (es. `BOARD`, `ANIMATIC`, `2D`).
+Se una room non esiste, Ztoryc mostra un avviso. Le room possono essere
+personalizzate liberamente.
+
+## Set di Room (Build)
+
+I template dei set di room si trovano in:
+
+`stuff/profiles/layouts/rooms/`
+
+Per distribuire un set personalizzato, aggiungi una nuova cartella (es. `Ztoryc/`)
+con i file `room*.ini` e un `layouts.txt`. I template diventano disponibili nella build.
+
+---
+
+## Build
+
+Ztoryc si compila come Tahoma2D. Vedi la documentazione in `doc/`.
+
+---
+
+## About
+
+Ztoryc è nato come esperimento di un animatore ed è cresciuto con il supporto
+di sviluppatori. Feedback e contributi sono benvenuti.
+
+Basato su Tahoma2D — licenza BSD 2-Clause.
