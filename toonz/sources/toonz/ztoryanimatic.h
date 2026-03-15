@@ -8,8 +8,6 @@
 #include "pane.h"
 #include <QWidget>
 #include <QScrollArea>
-#include "toonz/txshsoundcolumn.h"
-#include <map>
 
 class ZtoryAnimaticRuler : public QWidget {
   Q_OBJECT
@@ -28,66 +26,6 @@ private:
   double m_fps = 24.0;
   double m_ppf = 8.0; // pixels per frame
   int m_currentFrame = 0;
-  int m_headerWidth = 80;
-};
-
-class ZtoryAnimaticAudioTrack : public QWidget {
-  Q_OBJECT
-public:
-  ZtoryAnimaticAudioTrack(QWidget *parent = nullptr);
-  void setPixelsPerFrame(double ppf) { m_ppf = ppf; updateGeometry(); update(); }
-  void setCurrentFrame(int f) { m_currentFrame = f; update(); }
-  void refreshFromScene();
-  QSize sizeHint() const override;
-
-protected:
-  void paintEvent(QPaintEvent *) override;
-  void mousePressEvent(QMouseEvent *) override;
-  void mouseMoveEvent(QMouseEvent *) override;
-  void mouseReleaseEvent(QMouseEvent *) override;
-  void contextMenuEvent(QContextMenuEvent *e) override;
-
-private:
-  struct AudioClip {
-    int col = -1;
-    int r0 = 0;
-    int r1 = 0;
-  };
-  struct AudioTrack {
-    int col = -1;
-    std::vector<AudioClip> clips;
-  };
-
-  enum DragMode {
-    DragNone = 0,
-    DragMove,
-    DragTrimStart,
-    DragTrimEnd
-  };
-
-  bool hitTestClip(const QPoint &pos, int &outTrackIdx, int &outClipIdx,
-                   QRect &outClipRect, DragMode &outMode) const;
-  void applyMoveClip(int col, int r0, int r1, int newR0);
-  void applyTrimClip(int col, int anchorRow, int delta, bool trimStart);
-  void importAudio();
-
-  double m_ppf = 8.0;
-  int m_currentFrame = 0;
-  int m_headerWidth = 80;
-  int m_trackHeight = 44;
-  int m_clipPadding = 4;
-
-  std::vector<AudioTrack> m_tracks;
-
-  DragMode m_dragMode = DragNone;
-  int m_dragTrackIdx = -1;
-  int m_dragClipIdx = -1;
-  int m_dragStartX = 0;
-  int m_origR0 = 0;
-  int m_origR1 = 0;
-  bool m_dragChanged = false;
-  int m_undoCol = -1;
-  TXshSoundColumnP m_oldColumn;
 };
 
 class ZtoryAnimaticTrack : public QWidget {
@@ -124,7 +62,6 @@ signals:
 private:
   double m_ppf = 8.0;
   int m_currentFrame = 0;
-  int m_headerWidth = 80;
   std::vector<ShotBlock> m_blocks;
   int m_draggingCol = -1;
   int m_dragStartX = 0;
@@ -138,19 +75,9 @@ class ZtoryAnimaticViewer : public BaseViewerPanel {
 public:
   ZtoryAnimaticViewer(QWidget *parent = nullptr)
     : BaseViewerPanel(parent) {
-    setObjectName("ZtoryAnimaticViewer");
-    setMinimumWidth(200);
-    setMinimumHeight(120);
-    QGridLayout *viewerL = new QGridLayout();
-    viewerL->setContentsMargins(0, 0, 0, 0);
-    viewerL->setSpacing(0);
-    viewerL->addWidget(m_fsWidget, 0, 0);
-    viewerL->setRowStretch(0, 1);
-    viewerL->setColumnStretch(0, 1);
-    m_mainLayout->insertLayout(0, viewerL, 1);
-    setLayout(m_mainLayout);
-    m_visiblePartsFlag = VPPARTS_None;
     m_sceneViewer->setAlwaysMainXsheet(true);
+    // Disconnetti il segnale activeViewerChanged — non vogliamo che questo viewer
+    // diventi il viewer attivo globale
     disconnect(TApp::instance(), SIGNAL(activeViewerChanged()),
                this, SLOT(onActiveViewerChanged()));
   }
@@ -159,16 +86,13 @@ public:
   void checkOldVersionVisblePartsFlags(QSettings &) override {}
 };
 
-
 class ZtoryAnimaticPanel : public TPanel {
   Q_OBJECT
 public:
   ZtoryAnimaticPanel(QWidget *parent = nullptr);
   void refreshFromScene();
-  void applyAudioColumnFilter(bool enable);
 protected:
   void showEvent(QShowEvent *e) override;
-  void hideEvent(QHideEvent *e) override;
 
 private slots:
   void onShotClicked(int col);
@@ -179,16 +103,11 @@ private slots:
   void onFrameChanged(int frame);
 
 private:
-  void importAudio();
-
   ZtoryAnimaticRuler *m_ruler;
   ZtoryAnimaticTrack *m_track;
   ZtoryAnimaticViewer *m_animViewer;
-  ZtoryAnimaticAudioTrack *m_audioTrack;
   double m_ppf = 8.0;
-  bool m_audioFilterApplied = false;
-  bool m_prevCameraVisible = true;
-  std::map<int, bool> m_prevColVisibility;
 };
 
 #endif
+

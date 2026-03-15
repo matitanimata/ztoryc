@@ -809,6 +809,7 @@ void StoryboardPanel::updateColumnName(int si) {
   TStageObject *obj = xsh->getStageObjectTree()->getStageObject(TStageObjectId::ColumnId(col), false);
   if (obj) {
     obj->setName(m_shots[si].data.shotNumber.toStdString());
+    app->getCurrentXsheet()->notifyXsheetChanged();
   }
 }
 
