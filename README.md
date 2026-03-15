@@ -6,6 +6,8 @@ Ztoryc is a fork of Tahoma2D 1.6.0 built for storyboard artists, directors and s
 
 Ztoryc works for any production — animated or live action. If you use Tahoma2D or OpenToonz for 2D animation, it integrates directly into your pipeline, but it works as a standalone storyboarding tool for any workflow.
 
+![Ztoryc Storyboard Panel](docs/images/board.png)
+
 ---
 
 ## Why Ztoryc
@@ -48,6 +50,8 @@ Ztoryc, working together with Tahoma2D / OpenToonz, experiments with a different
 - Ripple editing and timeline zoom
 - Playhead synchronized with the main timeline
 - Viewer always shows the main xsheet (independent of Edit In Place)
+
+![Ztoryc Animatic Panel](docs/images/animatic.png)
 
 ### Workflow Modes
 Ztoryc adds a Workflow menu to quickly switch between room sets:
