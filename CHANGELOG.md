@@ -3,6 +3,19 @@
 ## [Unreleased]
 
 ### Fix
+- **Room layout StopMotion non caricate**: la cartella privata utente `stuff/profiles/users/francobianco/layouts/StopMotion/` conteneva vecchi file che sovrascrivevano i template. Rinominata in `StopMotion_backup` per permettere all'app di leggere i template corretti.
+
+### Aggiunto
+- **5 room workflow StopMotion** ispirate a Dragonframe, in `stuff/profiles/layouts/rooms/StopMotion/`:
+  - `capture.ini` — CAPTURE: cuore del workflow, SceneViewer + StopMotionController + FilmStrip + Xsheet
+  - `camera.ini` — CAMERA SETTINGS: StopMotionController + SceneViewer
+  - `audiolipsync.ini` — AUDIO & LIP SYNC: SceneViewer + Xsheet + FilmStrip
+  - `lighting.ini` — LIGHTING (DMX): placeholder, SceneViewer + Xsheet
+  - `motionpath.ini` — MOTION PATH: SceneViewer + Schematic + Xsheet
+  - `browser.ini` — Browser standard
+- **Documento specifica room StopMotion** (`ZtorYc_Rooms_Specification.docx`) con architettura 5 room ispirata a Dragonframe, stato implementazione, roadmap e note tecniche.
+
+### Fix
 - **Crash cambio workflow → room Storyboard**: il binario in `toonz/Tahoma2D.app` non veniva aggiornato automaticamente dopo la compilazione. La causa era che ninja compila in `toonz/build/toonz/` ma non copia il binario nel `.app` principale. Soluzione: copiare manualmente il binario e ri-firmare con `codesign --force --deep --sign -`.
 - **showEvent ZtoryAnimaticPanel**: rimosso `QTimer::singleShot` temporaneo usato come workaround. Il vero fix era aggiornare il binario.
 
