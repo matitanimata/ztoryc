@@ -223,7 +223,7 @@ MotionPathPanel::MotionPathPanel(QWidget* parent)
 
   TObjectHandle* object = TApp::instance()->getCurrentObject();
 
-  connect(object, &TObjectHandle::objectSwitched, [=]() {
+  connect(object, &TObjectHandle::objectSwitched, this, [=]() {
     if (object->isSpline()) {
       if (object->getObjectId() ==
           xsh->getXsheet()->getStageObjectTree()->getMotionPathViewerId()) {
@@ -242,7 +242,7 @@ MotionPathPanel::MotionPathPanel(QWidget* parent)
     m_graphArea->update();
   });
 
-  connect(m_graphArea, &GraphWidget::controlPointChanged, [=](bool dragging) {
+  connect(m_graphArea, &GraphWidget::controlPointChanged, this, [=](bool dragging) {
     if (m_currentSpline)
       m_currentSpline->setInterpolationStroke(m_graphArea->getPoints());
     TApp::instance()->getCurrentScene()->notifySceneChanged();
