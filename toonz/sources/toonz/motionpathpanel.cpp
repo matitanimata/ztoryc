@@ -217,9 +217,9 @@ MotionPathPanel::MotionPathPanel(QWidget* parent)
   setLayout(m_outsideLayout);
 
   TSceneHandle* scene = TApp::instance()->getCurrentScene();
-  connect(scene, &TSceneHandle::castChanged, [=]() { refreshPaths(true); });
+  connect(scene, &TSceneHandle::castChanged, this, [=]() { refreshPaths(true); });
   TXsheetHandle* xsh = TApp::instance()->getCurrentXsheet();
-  connect(xsh, &TXsheetHandle::xsheetChanged, [=]() { refreshPaths(); });
+  connect(xsh, &TXsheetHandle::xsheetChanged, this, [=]() { refreshPaths(); });
 
   TObjectHandle* object = TApp::instance()->getCurrentObject();
 

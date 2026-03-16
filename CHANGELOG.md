@@ -23,8 +23,8 @@
 - Aggiunto `build_and_deploy.sh`: script che compila, copia il binario e ri-firma il `.app` in un solo comando.
 - Aggiornato `AGENTS.md` con istruzioni di build corrette (copia binario + codesign obbligatori dopo ogni build).
 
-### Noto
-- Crash su Cmd+Q durante chiusura app — da investigare in `iocommand.cpp` / `mainwindow.cpp`. Non presente in Tahoma2D base, probabilmente introdotto da modifiche Codex.
+### Fix
+- **Crash su Cmd+Q**: `MotionPathPanel` riceveva il segnale `castChanged` durante la chiusura mentre era già in fase di distruzione. Fix: aggiunto `this` come context object nei `connect` di `motionpathpanel.cpp` — Qt disconnette automaticamente i segnali quando il panel viene distrutto.
 
 ---
 
