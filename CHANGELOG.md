@@ -6,6 +6,23 @@
 
 ---
 
+## [2026-03-19 — bug aperti da testare in sessione successiva]
+
+### Bug riportati dall'utente (non ancora investigati)
+
+1. **Doppio click shot → entra in edit solo per shot 1**: per gli shot 2, 3, ... il
+   doppio click non entra nella sub-scene. Sospetto: `onShotDoubleClicked` usa un
+   indice colonna fisso o non aggiorna `currentColumn` correttamente prima di
+   `MI_OpenChild`. File: `ztoryanimatic.cpp` ~line 820-835.
+
+2. **Ztoryc non resta collegato alla timeline animatic quando si entra in uno shot**:
+   entrando in una sub-scene, l'animatic perde il collegamento/sync con la timeline.
+   Possibile causa: `xsheetChanged` o `sceneSwitched` non viene riemesso correttamente
+   quando si esce dalla sub-scene, oppure `refreshFromScene` non viene chiamato al
+   rientro al main xsheet. File: `ztoryanimatic.cpp` connect/signal area ~line 745-765.
+
+---
+
 ## [2026-03-19] — Fix: panel rimosso + panel caricati correttamente all'apertura scena
 
 ### Fixed
