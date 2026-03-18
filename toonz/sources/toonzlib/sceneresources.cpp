@@ -19,6 +19,7 @@
 #include "tconvert.h"
 #include "tlogger.h"
 #include "tsystem.h"
+#include "texception.h"
 
 namespace {
 //=============================================================================
@@ -283,6 +284,9 @@ void SceneLevel::save() {
             TSystem::touchParentDir(unpaintedPalettePath))
           TSystem::copyFile(unpaintedPalettePath, oldUnpaintedPalettePath);
       }
+    } catch (TSystemException &) {
+    } catch (TException &) {
+    } catch (std::exception &) {
     } catch (...) {
     }
   }

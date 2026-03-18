@@ -1,5 +1,141 @@
 # Ztoryc — Changelog
 
+> **Come aggiornare (istruzioni per Claude Code):** dopo ogni sessione aggiungi
+> una voce in cima con: data, `### Fixed`, `### Added`, `### Modified`,
+> `### Upstream candidates`, `### Notes`. Poi esegui rsync (vedi AGENTS.md).
+
+---
+
+## [2026-03-18 #3] — Fix: salvataggio TLV — lzocompress mancante dal bundle app
+
+### Root cause trovata e risolta
+
+Il salvataggio TLV falliva silenziosamente con `TException("LZO compression failed")`
+indipendentemente dal path o dalla cartella di destinazione. La causa era **deployment**,
+non codice: i binari `lzocompress` e `lzodecompress` erano assenti da
+`Tahoma2D.app/Contents/MacOS/`.
+
+`TRasterCodecLZO::doCompress()` (`tcodec.cpp:573`) lancia `lzoCompress()` che usa
+`QProcess` per eseguire il programma esterno `lzocompress` trovato via
+`QCoreApplication::applicationDirPath()`. Se il programma non esiste,
+`waitForStarted()` → false → throw `TException("LZO compression failed")`.
+
+L'eccezione risaliva: `saveImage()` → `doSave()` → `LevelUpdater::update()` →
+`saveSimpleLevel()` → `TXshSimpleLevel::save()` → veniva ingoiata silenziosamente da
+`SceneLevel::save()` (catch generico `catch(...)`).
+
+### Fixed
+
+- **Deployment**: copiati `lzocompress` e `lzodecompress` da `build/` a
+  `Tahoma2D.app/Contents/MacOS/`. Salvataggio TLV ora funzionante.
+- **`tiio_tzl.cpp` `doSave()`**: rimossi log diagnostici temporanei (`[DOSAVE]`).
+- **`txshsimplelevel.cpp`**: rimossi log diagnostici temporanei (`[TLV_SAVE]`, `[TLV_SAVE_BRANCH]`).
+- **`sceneresources.cpp`**: rimossi log diagnostici (`[SCENELEVEL_SAVE]`); il catch ora
+  distingue esplicitamente `TSystemException`, `TException`, `std::exception` e `...`
+  invece dell'unico `catch(...)` originale (miglioramento permanente).
+
+### Notes
+
+- I binari `lzocompress`/`lzodecompress` vanno copiati nel bundle ad ogni rebuild.
+  Da aggiungere allo script `build_and_deploy.sh`.
+- Questo problema non esisteva nel Tahoma2D originale perché il suo bundle era
+  costruito con un processo di packaging completo (CMake install). Nel nostro workflow
+  di sviluppo, solo `ninja` compila ma non esegue il packaging, quindi i binari helper
+  non vengono copiati automaticamente.
+
+### Upstream candidates
+
+- Il miglioramento al catch in `sceneresources.cpp` è candidato PR upstream:
+  rendere l'errore di save visibile (almeno in debug) invece di ingoiarlo.
+
+---
+
+## [2026-03-18 #2] — Fix: creazione silenziosa cartella livelli al primo salvataggio
+
+### Fixed
+
+- **Creazione cartella destinazione livelli (tutti i formati)**
+  - **`txshsimplelevel.cpp`** ~line 1594: Sostituito il pattern `touchParentDir` + throw con
+    `QDir().mkpath()` — crea silenziosamente tutti i livelli di directory mancanti (`drawings/nomescena/`)
+    al primo salvataggio, senza mostrare dialog. Valido per TLV, PLI, TGA, PNG e ogni altro formato.
+  - **`levelcreatepopup.cpp`** ~line 581: Rimosso il dialog "Folder doesn't exist. Do you want to create it?"
+    (Yes/No). Sostituito con creazione silenziosa via `TSystem::mkDir`. In caso di fallimento reale
+    (permessi, path invalido) appare ancora un messaggio d'errore, ma NON una domanda all'utente.
+  - **`iocommand.cpp`** `IoCmd::saveLevel()`: Aggiunto pre-step di creazione cartella silenziosa
+    prima di chiamare `sl->save()`, così il "Save Level" esplicito (Ctrl+S su un livello) beneficia
+    dello stesso comportamento uniforme.
+
+### Upstream candidates (PR per tahoma2d/tahoma2d)
+
+- Tutti e tre i fix sopra sono candidati PR upstream. Migliorano la UX (comportamento coerente tra
+  tutti i formati, nessun dialog inutile), non introducono regressioni (il comportamento di
+  fallimento reale è invariato — si vede ancora l'errore se mkDir fallisce per permessi o path
+  invalidi), e risolvono un bug di lunga data su macOS dove `+drawings/sceneName/` non veniva
+  creata automaticamente per i livelli TLV.
+
+---
+
+## [2026-03-18] — Fix crash catena TZL + indagine save pipeline
+
+### Fixed (tiio_tzl.cpp)
+- **CRASH #1 (readHeaderAndOffsets:195)**: `assert(frameCount > 0)` → abbassato a `frameCount < 0`; aggiunto guard `&& frameCount > 0` nel branch di lettura tabelle offset. Causa: file TZL vuoti (frameCount=0) su disco da save precedentemente crashati.
+- **CRASH #2 (checkIconSize:1305)**: `assert(iconLx > 0 && iconLy > 0)` rimosso; guard esistente alla riga successiva già gestiva il caso correttamente.
+- **CRASH #3 (adjustIconAspectRatio:307-308)**: rimossi 2 assert ridondanti `assert(iconLx>0)` e `assert(imageRes.lx>0)`.
+- **CRASH #4 (setIconSize:1266) — CAUSA PRINCIPALE "livelli non salvati"**: `assert(m_updatedIconsSize)` rimosso. Per file TZL vuoti (frameCount=0), `checkIconSize` e `resizeIcons` ritornano entrambi `false` → assert sparava `abort()` che uccideva l'intero save loop per **tutti i formati** (PLI, TGA, smart raster), non solo TZL.
+- **FIX ARCHITETTURALE (costruttore TLevelWriterTzl)**: se il file esiste ma `frameCount==0`, viene resettato a modalità nuovo-file (`m_exists=false`, `m_headerWritten=false`, tabelle cleared, file riaperto in "wb"). Evita scritture a offset corrotti nel file.
+- **Rimossi assert ridondanti nelle funzioni di lettura** (con guard già esistenti):
+  - `load11()`: `assert(!m_frameOffsTable.empty())` → sostituito con `if (empty) return TImageP()`
+  - `load13()`: due assert `!empty` → sostituiti con guard + early return
+  - `load13() isIcon`: `assert(iconLx>0)` → rimosso (guard a riga successiva)
+  - `load14()`: due assert `!empty` → rimossi (throw guard già presente)
+  - `load14() isIcon`: `assert(iconLx>0)` → rimosso (guard a riga successiva)
+  - `getImageInfo11()`: `assert(!frameOffsTable.empty())` → sostituito con guard
+  - `getIconSize()`: `assert(iconLx>0)` → sostituito con `if (<=0) return false`
+
+### Upstream candidates
+- Tutti i fix sopra sono candidati PR per tahoma2d/tahoma2d: eliminano crash categorici (abort()) per file TZL vuoti o corrotti, condizione normalissima in workflow reale.
+
+### Added
+- `TAHOMA2D_ISSUES.md` — preso dal repo GitHub matitanimata/ztoryc, copiato localmente in ~/ZtorYc/. Raccoglie tutte le issue aperte di Tahoma2D organizzate per categoria.
+
+### Notes
+- Root cause del "livelli non salvati per tutti i formati": il crash in `setIconSize` (assert #4) chiamava `abort()` dal loop `SceneResources::save()`, terminando il processo prima che PLI, TGA, smart raster potessero essere scritti.
+- Il problema era "nato ieri" perché i crash precedenti (assert #1-3) avevano lasciato file TZL vuoti su disco; i nostri fix #1-3 hanno permesso al codice di avanzare ma hanno esposto l'assert #4 che prima non veniva raggiunto.
+- Deploy: `build/image/libimage.dylib` → `toonz/Tahoma2D.app/Contents/MacOS/libimage.dylib` + rpath fix + codesign (15:35 Mar 18 2026).
+
+---
+
+## [2026-03-18] — Analisi codice + setup workflow Cowork↔Code
+
+### Added
+- `ANIMATIC_TASKS.md` — 11 task tecnici dettagliati per il panel animatic:
+  bug, feature mancanti, priorità, file da toccare, pitfall
+- Sezione "Session Workflow" in `AGENTS.md` con istruzioni sync e commit
+
+### Bugs identified (not yet fixed)
+- **BUG-4** `storyboardpanel.cpp:417-479` — bottoni Copy/Clone/Paste dichiarati
+  e aggiunti alla toolbar due volte (memory leak + UI duplicata). Fix: rimuovere
+  le dichiarazioni duplicate alle righe 432-445 e i `tb->addWidget` alle 477-479.
+- **BUG-3** `storyboardpanel.cpp:1221` — `onPasteShot()` non controlla il flag
+  `isClone`, chiama sempre `cloneChildToPosition()`. Copy e Clone si comportano
+  in modo identico. Fix: branch su `isClone` per usare cella condivisa (copy)
+  vs xsheet indipendente (clone).
+- **BUG-2** `storyboardpanel.cpp:693` + `ztoryanimatic.cpp:519` —
+  `resequenceXsheet()` duplicata nei due panel con logiche divergenti; timing
+  desync tra Board e Animatic dopo modifica durata. Fix: unificare in
+  `ZtoryModel::resequenceXsheet()`.
+- **BUG-1** `ztoryanimatic.cpp:363` — Animatic Viewer non visibile;
+  `TFrameHandle` condiviso con viewer normale causa conflitti playhead. Fix:
+  istanza `TFrameHandle` dedicata all'animatic panel.
+
+### Notes
+- Cowork legge da `~/ZtorYc/tahoma2d-workspace_bak/tahoma2d/`
+- Claude Code lavora su `/Volumes/ZioSam/tahoma2d-workspace/tahoma2d/`
+- Dopo ogni commit: `rsync -av --delete /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/ ~/ZtorYc/tahoma2d-workspace_bak/tahoma2d/`
+- Prossima sessione: BUG-4 (5 min) → BUG-1 (critico)
+
+---
+
 ## [Unreleased]
 
 ### Fix

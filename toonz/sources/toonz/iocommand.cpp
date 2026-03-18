@@ -1802,6 +1802,23 @@ bool IoCmd::saveLevel(const TFilePath &fp, TXshSimpleLevel *sl,
     }
   }
 
+  // Pre-create the destination folder tree silently before saving.
+  // This ensures all level formats (TLV, PLI, raster) behave consistently:
+  // no dialog is shown — the folder is simply created if it does not exist.
+  {
+    ToonzScene *scene =
+        TApp::instance()->getCurrentScene()->getScene();
+    TFilePath dDstPath  = scene->decodeFilePath(fp);
+    TFilePath dstParent = dDstPath.getParentDir();
+    if (!dstParent.isEmpty() && !TFileStatus(dstParent).doesExist()) {
+      try {
+        TSystem::mkDir(dstParent);
+      } catch (...) {
+        // If we can't create the folder, sl->save() will throw with details.
+      }
+    }
+  }
+
   QApplication::setOverrideCursor(Qt::WaitCursor);
   try {
     sl->save(fp, TFilePath(), overwritePalette);

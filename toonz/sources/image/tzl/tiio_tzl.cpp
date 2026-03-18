@@ -192,11 +192,12 @@ bool readHeaderAndOffsets(FILE *chan, TzlOffsetMap &frameOffsTable,
   ly         = swapTINT32(ly);
   frameCount = swapTINT32(frameCount);
 #endif
-  assert(0 < frameCount && frameCount < 60000);
+  if (frameCount < 0 || frameCount >= 60000)
+    return false;
 
-  if (version > 10 && offsetTablePos != 0 && iconOffsetTablePos != 0) {
+  if (version > 10 && offsetTablePos != 0 && iconOffsetTablePos != 0 &&
+      frameCount > 0) {
     // assert(offsetTablePos>0);
-    assert(frameCount > 0);
 
     fseek(chan, offsetTablePos, SEEK_SET);
     TFrameId oldFid(TFrameId::EMPTY_FRAME);
@@ -303,8 +304,6 @@ bool readHeaderAndOffsets(FILE *chan, TzlOffsetMap &frameOffsTable,
 static bool adjustIconAspectRatio(TDimension &outDimension,
                                   TDimension inDimension, TDimension imageRes) {
   TINT32 iconLx = inDimension.lx, iconLy = inDimension.ly;
-  assert(iconLx > 0 && iconLy > 0);
-  assert(imageRes.lx > 0 && imageRes.ly > 0);
   if (iconLx <= 0 || iconLy <= 0 || imageRes.lx <= 0 || imageRes.ly <= 0)
     return false;
   int lx = imageRes.lx;
@@ -556,6 +555,20 @@ TLevelWriterTzl::TLevelWriterTzl(const TFilePath &path, TPropertyGroup *info)
         m_frameCountPos = 8 + 3 * sizeof(TINT32);
     }
   }
+  // If the file exists but has no frames (e.g. after a previous save crash),
+  // treat it as a new file to avoid writing frame data at garbage offsets.
+  if (m_exists && m_frameCount == 0) {
+    fclose(m_chan);
+    m_chan = nullptr;
+    m_exists        = false;
+    m_headerWritten = false;
+    m_offsetTablePos = 0;
+    m_iconOffsetTablePos = 0;
+    m_frameOffsTable.clear();
+    m_iconOffsTable.clear();
+    m_freeChunks.clear();
+  }
+
   if (!m_exists) {
     TFilePath parentDir = path.getParentDir();
     if (!TFileStatus(parentDir).doesExist()) {
@@ -1091,7 +1104,6 @@ void TLevelWriterTzl::doSave(const TImageP &img, const TFrameId &_fid) {
         TException("Saving tlv: it is not possible to create the image icon."));
   // salvo l'iconcina
   saveImage(icon, _fid, true);
-  return;
 }
 
 //-------------------------------------------------------------------
@@ -1264,7 +1276,8 @@ void TLevelWriterTzl::setIconSize(TDimension iconSize) {
       // Icons in the stored file mismatch with the
       // required size. They need to be resized.
       m_updatedIconsSize = resizeIcons(m_iconSize);
-      assert(m_updatedIconsSize);
+      // Note: resizeIcons returns false for empty/new files (no icons yet).
+      // Don't assert: new frames will be written with the correct icon size.
     }
   }
 }
@@ -1301,7 +1314,6 @@ bool TLevelWriterTzl::checkIconSize(const TDimension &newSize) {
   fseek(m_chan, currentPos,
         SEEK_SET);  // Reset to the original position in the file
 
-  assert(iconLx > 0 && iconLy > 0);
   if (iconLx <= 0 || iconLy <= 0 || iconLx > m_res.lx || iconLy > m_res.ly)
     return false;
 
@@ -1564,7 +1576,10 @@ bool TLevelReaderTzl::getIconSize(TDimension &iconSize) {
   // leggo la dimensione delle iconcine nel file
   fread(&iconLx, sizeof(TINT32), 1, m_chan);
   fread(&iconLy, sizeof(TINT32), 1, m_chan);
-  assert(iconLx > 0 && iconLy > 0);
+  if (iconLx <= 0 || iconLy <= 0) {
+    fseek(m_chan, currentPos, SEEK_SET);
+    return false;
+  }
   // return to the current position
   fseek(m_chan, currentPos, SEEK_SET);
   iconSize = TDimension(iconLx, iconLy);
@@ -1731,7 +1746,8 @@ TImageP TImageReaderTzl::load11() {
   TINT32 imgBuffSize = 0;
   UCHAR *imgBuff     = 0;
 
-  assert(!m_lrp->m_frameOffsTable.empty());
+  // Guard already below: if fid not found in table, returns 0.
+  if (m_lrp->m_frameOffsTable.empty()) return TImageP();
 
   // int pos = ftell(chan);
   /*if(m_lrp->m_frameIndex>=m_frameIndex)
@@ -1852,8 +1868,9 @@ TImageP TImageReaderTzl::load13() {
   TINT32 imgBuffSize = 0;
   UCHAR *imgBuff     = 0;
   TINT32 iconLx = 0, iconLy = 0;
-  assert(!m_lrp->m_frameOffsTable.empty());
-  assert(!m_lrp->m_iconOffsTable.empty());
+  // Guards: if fid not found in either table, return 0.
+  if (m_lrp->m_frameOffsTable.empty() || m_lrp->m_iconOffsTable.empty())
+    return TImageP();
   TzlOffsetMap::iterator it     = m_lrp->m_frameOffsTable.find(m_fid);
   TzlOffsetMap::iterator iconIt = m_lrp->m_iconOffsTable.find(m_fid);
 
@@ -1884,7 +1901,6 @@ TImageP TImageReaderTzl::load13() {
     fseek(chan, iconIt->second.m_offs, SEEK_SET);
     fread(&iconLx, sizeof(TINT32), 1, chan);
     fread(&iconLy, sizeof(TINT32), 1, chan);
-    assert(iconLx > 0 && iconLy > 0);
     if (iconLx <= 0 || iconLy <= 0) throw TException();
     fread(&actualBuffSize, sizeof(TINT32), 1, chan);
 
@@ -2081,8 +2097,6 @@ TImageP TImageReaderTzl::load14() {
   // TINT32 imgBuffSize = 0;
   UCHAR *imgBuff = 0;
   TINT32 iconLx = 0, iconLy = 0;
-  assert(!m_lrp->m_frameOffsTable.empty());
-  assert(!m_lrp->m_iconOffsTable.empty());
   if (m_lrp->m_frameOffsTable.empty())
     throw TException("Loading tlv: the frames table is empty.");
   if (m_lrp->m_iconOffsTable.empty())
@@ -2122,8 +2136,7 @@ TImageP TImageReaderTzl::load14() {
     fseek(chan, iconIt->second.m_offs, SEEK_SET);
     fread(&iconLx, sizeof(TINT32), 1, chan);
     fread(&iconLy, sizeof(TINT32), 1, chan);
-    assert(iconLx > 0 && iconLy > 0);
-    if (iconLx < 0 || iconLy < 0 || iconLx > m_lx || iconLy > m_ly)
+    if (iconLx <= 0 || iconLy <= 0 || iconLx > m_lx || iconLy > m_ly)
       throw TException("Loading tlv: bad icon size.");
     fread(&actualBuffSize, sizeof(TINT32), 1, chan);
 
@@ -2370,9 +2383,9 @@ TImageP TImageReaderTzl::load() {
 //-------------------------------------------------------------------
 
 const TImageInfo *TImageReaderTzl::getImageInfo11() const {
-  assert(!m_lrp->m_frameOffsTable.empty());
   FILE *chan = m_lrp->m_chan;
   if (!chan) return 0;
+  if (m_lrp->m_frameOffsTable.empty()) return 0;
 
   TzlOffsetMap::iterator it = m_lrp->m_frameOffsTable.find(m_fid);
 

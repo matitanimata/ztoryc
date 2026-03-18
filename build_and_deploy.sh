@@ -18,6 +18,10 @@ ninja -j4 -C "$BUILD" 2>&1 | grep -E "error:|Linking|up-to-date"
 echo "→ Copia binario..."
 cp "$BUILD/toonz/Tahoma2D.app/Contents/MacOS/Tahoma2D" "$APP/Contents/MacOS/Tahoma2D"
 
+echo "→ Copia helper LZO (richiesti da TRasterCodecLZO)..."
+cp "$BUILD/lzocompress"   "$APP/Contents/MacOS/lzocompress"
+cp "$BUILD/lzodecompress" "$APP/Contents/MacOS/lzodecompress"
+
 echo "→ Firma codice..."
 codesign --force --deep --sign - "$APP"
 

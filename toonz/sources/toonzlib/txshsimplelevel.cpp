@@ -1591,6 +1591,28 @@ void TXshSimpleLevel::save(const TFilePath &fp, const TFilePath &oldFp,
       (!oldFp.isEmpty()) ? oldFp : getScene()->decodeFilePath(m_path);
 
   TFilePath dDstPath = getScene()->decodeFilePath(fp);
+  // Silently create the destination folder tree if it does not exist.
+  // This handles the first save of any level type (TLV, PLI, raster) in a
+  // new scene without showing any dialog to the user.
+  // Uses QDir::mkpath so nested directories (e.g. drawings/sceneName/) are
+  // all created in one shot, regardless of how many levels are missing.
+  {
+    TFilePath dstParent = dDstPath.getParentDir();
+    if (!dstParent.isEmpty() && !TFileStatus(dstParent).doesExist()) {
+      QString qParent =
+          QString::fromStdWString(dstParent.getWideString());
+      if (!QDir().mkpath(qParent)) {
+        // mkpath failed — the subsequent file operations will fail with a
+        // more specific error; throw here only as a last-resort guard.
+        throw TSystemException(
+            dDstPath,
+            "The level cannot be saved: failed to create the destination "
+            "folder.");
+      }
+    }
+  }
+  // touchParentDir is now just a sanity-check (dir was just created or already
+  // existed). Fail only if something truly unexpected prevents access.
   if (!TSystem::touchParentDir(dDstPath))
     throw TSystemException(
         dDstPath,

@@ -578,20 +578,15 @@ bool LevelCreatePopup::apply() {
     return false;
   }
   parentDir = scene->decodeFilePath(parentDir);
+  // Silently create the destination folder if it does not exist.
+  // No dialog is shown: the scene path is already known, so creating the
+  // folder automatically is the correct behaviour for all level types.
   if (!TFileStatus(parentDir).doesExist()) {
-    QString question;
-    /*question = "Folder " +toQString(parentDir) +
-                                                     " doesn't exist.\nDo you
-       want to create it?";*/
-    question = tr("Folder %1 doesn't exist.\nDo you want to create it?")
-                   .arg(toQString(parentDir));
-    int ret = DVGui::MsgBox(question, QObject::tr("Yes"), QObject::tr("No"));
-    if (ret == 0 || ret == 2) return false;
     try {
       TSystem::mkDir(parentDir);
       DvDirModel::instance()->refreshFolder(parentDir.getParentDir());
     } catch (...) {
-      error(tr("Unable to create") + toQString(parentDir));
+      error(tr("Unable to create folder: %1").arg(toQString(parentDir)));
       return false;
     }
   }
