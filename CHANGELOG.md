@@ -6,6 +6,30 @@
 
 ---
 
+## [2026-03-19] — Fix: panel rimosso + panel caricati correttamente all'apertura scena
+
+### Fixed
+
+- **`storyboardpanel.cpp` `detectAndUpdatePanels()`**: aggiunto trim di `shot.data.panels`
+  quando `newPanelCount < shot.data.panels.size()`. Prima il loop `while` aggiungeva
+  panel ma non ne rimuoveva mai: cancellando un disegno dalla sub-scena i panel in
+  eccesso rimanevano nel modello e venivano ricreati come widget orfani.
+
+- **`storyboardpanel.cpp` `refreshFromScene()`**: aggiunto rebuild dei panel widget dopo
+  `loadZtoryc()`. Prima veniva creato un solo `PanelWidget` placeholder per shot, poi
+  `loadZtoryc()` caricava più panel nel data model senza creare i widget corrispondenti.
+  Ora i widget vengono distrutti e ricreati dal data model caricato, quindi i panel
+  appaiono correttamente all'apertura di una scena esistente.
+
+### Notes
+
+- ANIMATIC_TASKS.md era sostanzialmente obsoleto: task 2, 3, 4, 6a, 6c, 6d, 6e, 6f, 7, 8
+  erano già implementati in sessioni precedenti. Il bug del TFrameHandle condiviso è già
+  mitigato (guard `getAncestorCount() == 0` in `onFrameChanged`).
+- Prossima sessione: verificare i fix sopra con scene reali, aggiornare ANIMATIC_TASKS.md.
+
+---
+
 ## [2026-03-18 #3] — Fix: salvataggio TLV — lzocompress mancante dal bundle app
 
 ### Root cause trovata e risolta

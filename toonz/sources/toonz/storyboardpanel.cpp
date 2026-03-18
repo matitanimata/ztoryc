@@ -429,26 +429,6 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     "QPushButton{background:#4a3a6a;color:white;border-radius:4px;padding:4px 12px;}"
     "QPushButton:hover{background:#6a4a8a;}");
 
-  m_copyButton = new QPushButton("Copy");
-  m_copyButton->setStyleSheet(
-    "QPushButton{background:#3a4a6a;color:white;border-radius:4px;padding:4px 12px;}"
-    "QPushButton:hover{background:#4a5a8a;}");
-
-  m_cloneButton = new QPushButton("Clone");
-  m_cloneButton->setStyleSheet(
-    "QPushButton{background:#2a5a4a;color:white;border-radius:4px;padding:4px 12px;}"
-    "QPushButton:hover{background:#3a7a5a;}");
-
-  m_pasteButton = new QPushButton("Paste");
-  m_pasteButton->setStyleSheet(
-    "QPushButton{background:#4a3a6a;color:white;border-radius:4px;padding:4px 12px;}"
-    "QPushButton:hover{background:#6a4a8a;}");
-
-  m_cloneButton = new QPushButton("Clone Shot");
-  m_cloneButton->setStyleSheet(
-    "QPushButton{background:#2a5a4a;color:white;border-radius:4px;padding:4px 12px;}"
-    "QPushButton:hover{background:#3a7a5a;}");
-
   m_refreshButton = new QPushButton("Refresh Preview");
   m_refreshButton->setStyleSheet(
     "QPushButton{background:#4a4a2a;color:white;border-radius:4px;padding:4px 12px;}"
@@ -471,9 +451,6 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
 
   tb->addWidget(m_addShotButton);
   tb->addWidget(m_deleteButton);
-  tb->addWidget(m_copyButton);
-  tb->addWidget(m_cloneButton);
-  tb->addWidget(m_pasteButton);
   tb->addWidget(m_copyButton);
   tb->addWidget(m_cloneButton);
   tb->addWidget(m_pasteButton);
@@ -571,6 +548,9 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
           this, &StoryboardPanel::refreshFromScene);
   connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
           this, &StoryboardPanel::onXsheetChanged);
+  // Sync durations when ZtoryModel resequences (works even inside sub-scenes)
+  connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
+          this, &StoryboardPanel::onModelResequenced);
   // Debounce timer per refresh thumbnail
   QTimer *refreshTimer = new QTimer(this);
   refreshTimer->setSingleShot(true);
@@ -691,32 +671,7 @@ void StoryboardPanel::clearShots() {
 }
 
 void StoryboardPanel::resequenceXsheet() {
-  TApp *app = TApp::instance();
-  ToonzScene *scene = app->getCurrentScene()->getScene();
-  if (not scene) return;
-  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
-  if (not xsh) return;
-  int maxFrames = xsh->getFrameCount() + 200;
-  int startFrame = 0;
-  for (int i = 0; i < (int)m_shots.size(); i++) {
-    Shot &shot = m_shots[i];
-    int duration = shot.data.totalDuration();
-    TXshChildLevel *cl = nullptr;
-    for (int r = 0; r <= maxFrames; r++) {
-      TXshCell cell = xsh->getCell(r, i);
-      if (not cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
-        cl = cell.m_level->getChildLevel();
-        break;
-      }
-    }
-    if (not cl) { startFrame += duration; continue; }
-    for (int r = 0; r <= maxFrames; r++) xsh->clearCells(r, i);
-    for (int r = 0; r < duration; r++)
-      xsh->setCell(startFrame + r, i, TXshCell(cl, TFrameId(r + 1)));
-    startFrame += duration;
-  }
-  xsh->updateFrameCount();
-  app->getCurrentXsheet()->notifyXsheetChanged();
+  ZtoryModel::instance()->resequenceXsheet();
 }
 
 void StoryboardPanel::rebuildGrid() {
@@ -955,6 +910,7 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
   Shot &shot = m_shots[shotIdx];
   int newPanelCount = (int)panelFrames.size();
   if (newPanelCount == (int)shot.data.panels.size()) return;
+  // Add missing panels
   while ((int)shot.data.panels.size() < newPanelCount) {
     PanelData pd;
     int pidx = (int)shot.data.panels.size();
@@ -964,6 +920,9 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
                   : numFrames - panelFrames[pidx];
     shot.data.panels.push_back(pd);
   }
+  // Remove excess panels if drawings were deleted
+  while ((int)shot.data.panels.size() > newPanelCount)
+    shot.data.panels.pop_back();
   for (int i = 0; i < newPanelCount; i++) {
     shot.data.panels[i].startFrame = panelFrames[i];
     shot.data.panels[i].duration = (i+1 < newPanelCount)
@@ -1048,6 +1007,28 @@ void StoryboardPanel::assignKeepNumbers(int insertAt) {
   m_shots[insertAt].data.shotNumber = numPart + letter;
 }
 
+void StoryboardPanel::onModelResequenced() {
+  // Same as onXsheetChanged but without the ancestor-count guard, so it works
+  // even when the user is inside a sub-scene while the animatic panel resequences
+  TXsheet *xsh = TApp::instance()->getCurrentScene()->getScene()
+                   ? TApp::instance()->getCurrentScene()->getScene()->getChildStack()->getTopXsheet()
+                   : nullptr;
+  if (!xsh) return;
+  for (int si = 0; si < (int)m_shots.size(); si++) {
+    int col = m_shots[si].data.xsheetColumn;
+    TXshColumn *column = xsh->getColumn(col);
+    if (!column) continue;
+    int r0 = 0, r1 = 0;
+    column->getRange(r0, r1);
+    int duration = r1 - r0 + 1;
+    if (!m_shots[si].data.panels.empty()) {
+      m_shots[si].data.panels[0].duration = duration;
+      if (!m_shots[si].panels.empty())
+        m_shots[si].panels[0]->setDuration(duration);
+    }
+  }
+}
+
 void StoryboardPanel::onXsheetChanged() {
   // Aggiorna durata shot se siamo al main xsheet
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
@@ -1105,6 +1086,18 @@ void StoryboardPanel::refreshFromScene() {
     addPanelWidget((int)m_shots.size()-1, 0);
   }
   loadZtoryc();
+  // Rebuild panel widgets to match the panel data loaded from .ztoryc.
+  // refreshFromScene creates one placeholder widget per shot; loadZtoryc may
+  // have added more panels to shot.data.panels, so we recreate all widgets.
+  for (int si = 0; si < (int)m_shots.size(); si++) {
+    for (PanelWidget *pw : m_shots[si].panels) {
+      m_grid->removeWidget(pw);
+      delete pw;
+    }
+    m_shots[si].panels.clear();
+    for (int pi = 0; pi < (int)m_shots[si].data.panels.size(); pi++)
+      addPanelWidget(si, pi);
+  }
   renumberAll();
   rebuildGrid();
   QTimer::singleShot(500, this, [this](){
@@ -1129,6 +1122,11 @@ void StoryboardPanel::keyPressEvent(QKeyEvent *e) {
 }
 
 void StoryboardPanel::onCopyShot() {
+  // Auto-return to main xsheet before operating
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (scene)
+    while (scene->getChildStack()->getAncestorCount() > 0)
+      CommandManager::instance()->execute("MI_CloseChild");
   m_clipboard.clear();
   std::set<int> indices = m_selectedIndices;
   if (indices.empty() && m_selectedShotIndex >= 0) indices.insert(m_selectedShotIndex);
@@ -1146,6 +1144,11 @@ void StoryboardPanel::onCopyShot() {
 }
 
 void StoryboardPanel::onCloneShot() {
+  // Auto-return to main xsheet before operating
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (scene)
+    while (scene->getChildStack()->getAncestorCount() > 0)
+      CommandManager::instance()->execute("MI_CloseChild");
   m_clipboard.clear();
   std::set<int> indices = m_selectedIndices;
   if (indices.empty() && m_selectedShotIndex >= 0) indices.insert(m_selectedShotIndex);
@@ -1220,6 +1223,11 @@ static void cloneChildToPosition(int srcCol, int dstCol) {
 
 void StoryboardPanel::onPasteShot() {
   if (m_clipboard.empty()) return;
+  // Auto-return to main xsheet before pasting
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (scene)
+    while (scene->getChildStack()->getAncestorCount() > 0)
+      CommandManager::instance()->execute("MI_CloseChild");
   // Blocca segnali xsheet durante il paste per evitare rebuild intermedi
   disconnect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged, this, &StoryboardPanel::onXsheetChanged);
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
@@ -1232,7 +1240,22 @@ void StoryboardPanel::onPasteShot() {
     for (int cj = 0; cj < ci; cj++) {
       if ((insertAt + cj) <= srcCol) srcCol++;
     }
-    cloneChildToPosition(srcCol, pos);
+    if (m_clipboard[ci].isClone) {
+      // Clone: crea sub-scene indipendente
+      cloneChildToPosition(srcCol, pos);
+    } else {
+      // Copy: riusa lo stesso TXshChildLevel (shared instance)
+      TXshColumn *srcColumn = xsh->getColumn(srcCol);
+      if (srcColumn) {
+        int r0 = 0, r1 = 0;
+        srcColumn->getRange(r0, r1);
+        xsh->insertColumn(pos);
+        for (int r = r0; r <= r1; r++) {
+          TXshCell cell = xsh->getCell(r, srcCol >= pos ? srcCol + 1 : srcCol);
+          if (!cell.isEmpty()) xsh->setCell(r, pos, cell);
+        }
+      }
+    }
     // Inserisci shot nel modello Ztoryc
     Shot newShot;
     newShot.data = m_clipboard[ci].data;
