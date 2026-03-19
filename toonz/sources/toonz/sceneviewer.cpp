@@ -2197,14 +2197,17 @@ void SceneViewer::paintGL() {
 void SceneViewer::drawScene() {
   TApp *app         = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
-  int frame         = app->getCurrentFrame()->getFrame();
+  // Use dedicated frame handle when set (animatic viewer), else global
+  TFrameHandle *fh  = m_customFrameHandle ? m_customFrameHandle
+                                          : app->getCurrentFrame();
+  int frame         = fh->getFrame();
   TXsheet *xsh      = app->getCurrentXsheet()->getXsheet();
   TRect clipRect    = getActualClipRect(getViewMatrix());
   clipRect += TPoint(width() * 0.5, height() * 0.5);
 
   ChildStack *childStack = scene->getChildStack();
   bool editInPlace       = (editInPlaceToggle.getStatus() || m_alwaysMainXsheet) &&
-                     !app->getCurrentFrame()->isEditingLevel();
+                     !fh->isEditingLevel();
 
   bool fillFullColorRaster = TXshSimpleLevel::m_fillFullColorRaster;
   TXshSimpleLevel::m_fillFullColorRaster = false;
@@ -2227,12 +2230,17 @@ void SceneViewer::drawScene() {
     int xsheetLevel = 0;
     std::pair<TXsheet *, int> xr;
     if (editInPlace) {
-      xr          = childStack->getAncestor(frame);
-      xsheetLevel = childStack->getAncestorCount();
+      if (m_alwaysMainXsheet && childStack->getAncestorCount() > 0) {
+        xr          = std::make_pair(childStack->getTopXsheet(), frame);
+        xsheetLevel = 0;
+      } else {
+        xr          = childStack->getAncestor(frame);
+        xsheetLevel = childStack->getAncestorCount();
+      }
     } else
       xr = std::make_pair(xsh, frame);
 
-    TFrameHandle *frameHandle = TApp::instance()->getCurrentFrame();
+    TFrameHandle *frameHandle = fh;
 
     Stage::VisitArgs args;
     args.m_scene       = scene;
@@ -2246,7 +2254,7 @@ void SceneViewer::drawScene() {
     args.m_currentFrameId =
         app->getCurrentXsheet()
             ->getXsheet()
-            ->getCell(app->getCurrentFrame()->getFrame(), args.m_col)
+            ->getCell(frame, args.m_col)
             .getFrameId();
     args.m_isGuidedDrawingEnabled = useGuidedDrawing;
     args.m_guidedFrontStroke      = guidedFrontStroke;
@@ -2317,9 +2325,14 @@ void SceneViewer::drawScene() {
 
     TAffine viewAff = getViewMatrix();
 
-    if (editInPlace) {
+    ChildStack *cs2D = scene->getChildStack();
+    bool insideSubScene = cs2D->getAncestorCount() > 0;
+    if (editInPlace && !(m_alwaysMainXsheet && insideSubScene)) {
+      // Normal editInPlace: apply parent camera transform so the sub-scene
+      // is drawn in context. Skipped when m_alwaysMainXsheet because the
+      // animatic viewer must always show the root-level camera unchanged.
       TAffine aff;
-      if (scene->getChildStack()->getAncestorAffine(aff, frame))
+      if (cs2D->getAncestorAffine(aff, frame))
         viewAff = viewAff * aff.inv();
     }
 
@@ -2334,11 +2347,11 @@ void SceneViewer::drawScene() {
         Preferences::instance()
             ->isShowRasterImagesDarkenBlendedInViewerEnabled());
 
-    TFrameHandle *frameHandle = TApp::instance()->getCurrentFrame();
+    TFrameHandle *frameHandle = fh;
 
-    if (app->getCurrentFrame()->isEditingLevel()) {
+    if (fh->isEditingLevel()) {
       Stage::visit(painter, app->getCurrentLevel()->getLevel(),
-                   app->getCurrentFrame()->getFid(),
+                   fh->getFid(),
                    app->getCurrentOnionSkin()->getOnionSkinMask(),
                    frameHandle->isPlaying(), xsh, useGuidedDrawing,
                    guidedBackStroke, guidedFrontStroke);
@@ -2346,8 +2359,17 @@ void SceneViewer::drawScene() {
       std::pair<TXsheet *, int> xr;
       int xsheetLevel = 0;
       if (editInPlace) {
-        xr          = scene->getChildStack()->getAncestor(frame);
-        xsheetLevel = scene->getChildStack()->getAncestorCount();
+        if (m_alwaysMainXsheet && insideSubScene) {
+          // Animatic viewer: always render from root xsheet so the full
+          // animatic is visible even when the app has entered a sub-scene.
+          // getAncestor() would fail here because its row-table keys are
+          // sub-scene-local frame numbers, not main-xsheet rows.
+          xr          = std::make_pair(cs2D->getTopXsheet(), frame);
+          xsheetLevel = 0;
+        } else {
+          xr          = cs2D->getAncestor(frame);
+          xsheetLevel = cs2D->getAncestorCount();
+        }
       } else
         xr = std::make_pair(xsh, frame);
 
@@ -2365,7 +2387,7 @@ void SceneViewer::drawScene() {
         args.m_currentFrameId =
             app->getCurrentXsheet()
                 ->getXsheet()
-                ->getCell(app->getCurrentFrame()->getFrame(), args.m_col)
+                ->getCell(frame, args.m_col)
                 .getFrameId();
       args.m_isGuidedDrawingEnabled = useGuidedDrawing;
       args.m_guidedFrontStroke      = guidedFrontStroke;

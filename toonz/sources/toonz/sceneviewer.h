@@ -38,6 +38,7 @@ class QTouchEvent;
 class QOpenGLFramebufferObject;
 class LutCalibrator;
 class StopMotion;
+class TFrameHandle;
 class TStopWatch;
 class QElapsedTimer;
 
@@ -187,6 +188,7 @@ class SceneViewer final : public TTool::Viewer,
 
   bool m_editPreviewSubCamera;
   bool m_alwaysMainXsheet = false;
+  TFrameHandle *m_customFrameHandle = nullptr;  // dedicated handle for animatic
 
   // used for color calibration with 3DLUT
   QOpenGLFramebufferObject *m_fbo = NULL;
@@ -315,6 +317,8 @@ public:
   void setIsStyleShortcutSwitchable() { m_isStyleShortcutSwitchable = true; }
   void setAlwaysMainXsheet(bool v) { m_alwaysMainXsheet = v; }
   bool alwaysMainXsheet() const { return m_alwaysMainXsheet; }
+  void setCustomFrameHandle(TFrameHandle *fh) { m_customFrameHandle = fh; }
+  TFrameHandle *customFrameHandle() const { return m_customFrameHandle; }
   int getVGuideCount() override;
   int getHGuideCount() override;
   double getVGuide(int index) override;
