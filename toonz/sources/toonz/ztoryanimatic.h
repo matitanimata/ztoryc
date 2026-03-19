@@ -178,7 +178,11 @@ private:
 };
 
 // ---- ZtoryAnimaticViewer ----
-// Standalone scene viewer that always shows the main xsheet
+// Standalone scene viewer that always shows the main xsheet.
+// Overrides onDrawFrame and updateFrameRange so that playback is driven by the
+// dedicated ZtoryAnimaticController::frameHandle() instead of the global
+// TApp::getCurrentFrame().  This decouples the animatic play button from the
+// native timeline / sub-scene currently open in the editor (BUG-03 play fix).
 class ZtoryAnimaticViewer : public BaseViewerPanel {
   Q_OBJECT
 public:
@@ -187,8 +191,38 @@ public:
   void addShowHideContextMenu(QMenu *) override {}
   void checkOldVersionVisblePartsFlags(QSettings &) override {}
 
+  // Override: write frame to controller's handle, NOT TApp::getCurrentFrame().
+  // Base implementation always uses the global handle → during play it would
+  // advance the sub-scene's frame instead of the animatic frame.
+  void onDrawFrame(int frame,
+                   const ImagePainter::VisualSettings &settings,
+                   QElapsedTimer *timer     = nullptr,
+                   qint64 targetInstant     = 0) override;
+
 protected:
   void showEvent(QShowEvent *e) override;
+
+private slots:
+  // Sets FlipConsole frame range from the main xsheet (top-level), not from
+  // TApp::getCurrentFrame() which would return the sub-scene's frame count.
+  void updateAnimaticFrameRange();
+  // Sets FlipConsole in/out markers from the main xsheet play range.
+  // When in a sub-scene, clears markers so the full animatic range is used.
+  void updateAnimaticFrameMarkers();
+  // Called when FlipConsole play starts: overrides m_sound built by base
+  // onPlayingStatusChanged() (which reads from the wrong sub-scene xsheet).
+  void onAnimaticPlayingStatusChanged(bool playing);
+
+private:
+  // Rebuilds m_sound from the main xsheet (not the current/sub-scene xsheet).
+  void refreshAnimaticSound();
+  // Like BaseViewerPanel::playAudioFrame but uses ctrl->mainXsheet()->play()
+  // instead of TApp::getCurrentXsheet()->getXsheet()->play().
+  void playAnimaticAudioFrame(int frame);
+
+  // Tracks ctrl-handle connections so they aren't duplicated across show/hide.
+  QMetaObject::Connection m_frameRangeConn;
+  QMetaObject::Connection m_audioConn;
 };
 
 // ---- ZtoryAnimaticViewerPanel ----

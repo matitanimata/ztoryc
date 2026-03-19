@@ -17,6 +17,9 @@
 #include "toonz/txsheethandle.h"
 #include "toonz/tscenehandle.h"
 #include "iocommand.h"
+#include "xsheetdragtool.h"
+#include "toonz/sceneproperties.h"
+#include "toutputproperties.h"
 #include "toonzqt/gutil.h"
 #include "orientation.h"
 #include <QPainter>
@@ -29,6 +32,10 @@
 #include <QLabel>
 #include <QFileDialog>
 #include <QContextMenuEvent>
+
+// Shared label column width — must match ZtoryAudioTrack::labelW (80px).
+// Used by ZtoryAnimaticRuler and ZtoryAnimaticTrack to align with audio tracks.
+static constexpr int kLabelW = 80;
 
 // ---- ZtoryAnimaticController ----
 
@@ -67,10 +74,15 @@ ZtoryAnimaticRuler::ZtoryAnimaticRuler(QWidget *parent) : QWidget(parent) {
 void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
   QPainter p(this);
   p.fillRect(rect(), QColor(40, 40, 40));
+  // Label area (aligned with audio/video track label column)
+  p.fillRect(0, 0, kLabelW, height(), QColor(30, 30, 30));
+  p.setPen(QColor(60, 60, 60));
+  p.drawLine(kLabelW, 0, kLabelW, height());
+  // Tick marks — offset by kLabelW so columns align with tracks below
   p.setPen(QColor(180, 180, 180));
-  int w = width();
+  int w = width() - kLabelW;
   for (int f = 0; f * m_ppf < w; f++) {
-    int x = (int)(f * m_ppf);
+    int x = kLabelW + (int)(f * m_ppf);
     if (f % 24 == 0) {
       p.drawLine(x, 0, x, 16);
       p.drawText(x + 2, 14, QString::number(f));
@@ -79,20 +91,22 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
     }
   }
   // Playhead
-  int px = (int)(m_currentFrame * m_ppf);
+  int px = kLabelW + (int)(m_currentFrame * m_ppf);
   p.setPen(QColor(255, 100, 0));
   p.drawLine(px, 0, px, height());
 }
 
 void ZtoryAnimaticRuler::mousePressEvent(QMouseEvent *e) {
-  m_currentFrame = (int)(e->x() / m_ppf);
+  int mx = qMax(0, e->x() - kLabelW);
+  m_currentFrame = (int)(mx / m_ppf);
   update();
   emit frameChanged(m_currentFrame);
 }
 
 void ZtoryAnimaticRuler::mouseMoveEvent(QMouseEvent *e) {
   if (e->buttons() & Qt::LeftButton) {
-    m_currentFrame = qMax(0, (int)(e->x() / m_ppf));
+    int mx = qMax(0, e->x() - kLabelW);
+    m_currentFrame = (int)(mx / m_ppf);
     update();
     emit frameChanged(m_currentFrame);
   }
@@ -252,7 +266,7 @@ void ZtoryAnimaticTrack::refreshFromScene() {
   int totalFrames = 0;
   for (auto &b : m_blocks)
     totalFrames = qMax(totalFrames, b.startFrameInMain + (b.f1 - b.f0 + 1));
-  setMinimumWidth((int)(totalFrames * m_ppf) + 100);
+  setMinimumWidth(kLabelW + (int)(totalFrames * m_ppf) + 100);
   update();
 }
 
@@ -260,9 +274,22 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
   QPainter p(this);
   p.fillRect(rect(), QColor(30, 30, 30));
 
+  // Label column — aligned with audio track label and ruler
+  p.fillRect(0, 0, kLabelW, height(), QColor(40, 40, 40));
+  p.setPen(QColor(200, 200, 200));
+  p.setFont(QFont("Arial", 9));
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  QString sceneName = scene
+      ? QString::fromStdWString(scene->getSceneName())
+      : tr("Animatic");
+  p.drawText(4, 0, kLabelW - 4, height(),
+             Qt::AlignVCenter | Qt::AlignLeft, sceneName);
+  p.setPen(QColor(60, 60, 60));
+  p.drawLine(kLabelW, 0, kLabelW, height());
+
   for (auto &b : m_blocks) {
     int duration = b.f1 - b.f0 + 1;
-    int x = (int)(b.startFrameInMain * m_ppf);
+    int x = kLabelW + (int)(b.startFrameInMain * m_ppf);
     int w = (int)(duration * m_ppf);
     int h = height() - 4;
     bool selected = m_selectedCols.count(b.col) > 0;
@@ -273,7 +300,6 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
     p.setPen(selected ? QColor(255, 160, 0) : QColor(100, 140, 200));
     p.drawRect(x + 1, 2, w - 2, h);
     if (selected) {
-      // Doppio bordo arancione
       p.setPen(QPen(QColor(255, 160, 0), 2));
       p.drawRect(x + 2, 3, w - 4, h - 2);
     }
@@ -291,13 +317,14 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
   }
 
   // Playhead
-  int px = (int)(m_currentFrame * m_ppf);
+  int px = kLabelW + (int)(m_currentFrame * m_ppf);
   p.setPen(QColor(255, 100, 0));
   p.drawLine(px, 0, px, height());
 }
 
 void ZtoryAnimaticTrack::mousePressEvent(QMouseEvent *e) {
-  int mx = e->x();
+  int mx = e->x() - kLabelW;
+  if (mx < 0) return; // click on label area — ignore
 
   // Razor tool: split shot at click position
   if (m_tool == RazorTool && e->button() == Qt::LeftButton) {
@@ -395,7 +422,7 @@ void ZtoryAnimaticTrack::mousePressEvent(QMouseEvent *e) {
 
 void ZtoryAnimaticTrack::mouseMoveEvent(QMouseEvent *e) {
   if (m_draggingCol >= 0) {
-    int dx = e->x() - m_dragStartX;
+    int dx = (e->x() - kLabelW) - m_dragStartX;
     int delta = (int)(dx / m_ppf);
     int newF1 = qMax(m_dragOrigF1 + delta, 0);
     int newDuration = newF1 + 1;
@@ -434,7 +461,8 @@ void ZtoryAnimaticTrack::mouseReleaseEvent(QMouseEvent *) {
 }
 
 void ZtoryAnimaticTrack::mouseDoubleClickEvent(QMouseEvent *e) {
-  int mx = e->x();
+  int mx = e->x() - kLabelW;
+  if (mx < 0) return;
   for (auto &b : m_blocks) {
     int duration = b.f1 - b.f0 + 1;
     int x = (int)(b.startFrameInMain * m_ppf);
@@ -603,8 +631,168 @@ ZtoryAnimaticViewer::ZtoryAnimaticViewer(QWidget *parent)
   m_visiblePartsFlag = VPPARTS_ALL;
 }
 
+// ---- onDrawFrame override ----
+// Called by FlipConsole's internal play timer once per frame.
+// The base implementation writes the frame to TApp::getCurrentFrame() (global).
+// When a sub-scene is open, that means the sub-scene's frame advances during
+// animatic play — wrong behaviour.  We redirect to the dedicated controller
+// handle so the animatic stays isolated from the native timeline state.
+void ZtoryAnimaticViewer::onDrawFrame(
+    int frame, const ImagePainter::VisualSettings &settings,
+    QElapsedTimer * /*timer*/, qint64 /*targetInstant*/) {
+  m_sceneViewer->setVisual(settings);
+  auto *ctrl = ZtoryAnimaticController::instance();
+  if (!settings.m_drawBlankFrame) {
+    // FlipConsole uses 1-based frame numbers; controller uses 0-based.
+    ctrl->setCurrentFrame(frame - 1);
+    // frameSwitched is emitted by ctrl->frameHandle(), which is connected in
+    // the constructor to m_sceneViewer->update() — no explicit update needed.
+  } else if (settings.m_blankColor != TPixel::Transparent) {
+    if (m_sceneViewer) m_sceneViewer->update();
+  }
+}
+
+// ---- updateAnimaticFrameRange ----
+// Sets the FlipConsole play range from the MAIN xsheet total frame count.
+// The base updateFrameRange() uses TApp::getCurrentFrame()->getMaxFrameIndex()
+// which, when inside a sub-scene, returns the sub-scene's (shorter) frame
+// count — causing play to stop too early.
+void ZtoryAnimaticViewer::updateAnimaticFrameRange() {
+  auto *ctrl       = ZtoryAnimaticController::instance();
+  TXsheet *mainXsh = ctrl->mainXsheet();
+  if (!mainXsh) return;
+  int totalFrames  = mainXsh->getFrameCount();
+  if (totalFrames <= 0) totalFrames = 1;
+  int currentFrame = ctrl->currentFrame();  // 0-based
+  // FlipConsole expects 1-based from/to/current values.
+  m_flipConsole->setFrameRange(1, totalFrames, 1, currentFrame + 1);
+}
+
+// ---- updateAnimaticFrameMarkers ----
+// Sets the FlipConsole in/out markers from the MAIN xsheet play range.
+// When inside a sub-scene, ToonzScene::getPreviewProperties() has been swapped
+// by subscenecommand.cpp to the sub-scene's play range.  The animatic must
+// always use the main xsheet markers (or no markers if none are set on main).
+void ZtoryAnimaticViewer::updateAnimaticFrameMarkers() {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) {
+    m_flipConsole->setMarkers(0, -1);  // no markers → full range
+    return;
+  }
+  if (scene->getChildStack()->getAncestorCount() > 0) {
+    // Inside a sub-scene: ignore sub-scene markers, play full animatic range.
+    m_flipConsole->setMarkers(0, -1);
+  } else {
+    // At main level: use whatever play range is set on the main xsheet.
+    int r0, r1, step;
+    XsheetGUI::getPlayRange(r0, r1, step);
+    m_flipConsole->setMarkers(r0, r1);
+  }
+}
+
+// ---- refreshAnimaticSound ----
+// Builds m_sound from the MAIN xsheet's audio columns.
+// The base hasSoundtrack() uses TApp::getCurrentXsheet() which, when inside a
+// sub-scene, returns the sub-scene (no audio) → m_sound null → no playback.
+void ZtoryAnimaticViewer::refreshAnimaticSound() {
+  m_sound         = nullptr;
+  m_hasSoundtrack = false;
+  m_first         = true;
+  TXsheet *mainXsh = ZtoryAnimaticController::instance()->mainXsheet();
+  if (!mainXsh) return;
+  TXsheet::SoundProperties *prop = new TXsheet::SoundProperties();
+  if (m_sceneViewer && !m_sceneViewer->isPreviewEnabled())
+    prop->m_isPreview = true;
+  try {
+    m_sound = mainXsh->makeSound(prop);
+  } catch (...) {}
+  m_hasSoundtrack = (m_sound != nullptr);
+}
+
+// ---- playAnimaticAudioFrame ----
+// Like BaseViewerPanel::playAudioFrame but calls play()/stopScrub() on
+// ctrl->mainXsheet() instead of TApp::getCurrentXsheet()->getXsheet().
+void ZtoryAnimaticViewer::playAnimaticAudioFrame(int frame) {
+  if (!m_sound) return;
+  if (m_first) {
+    m_first         = false;
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    if (!scene) return;
+    m_fps             = scene->getProperties()->getOutputProperties()
+                            ->getFrameRate();
+    m_samplesPerFrame = m_sound->getSampleRate() / std::abs(m_fps);
+  }
+  TXsheet *mainXsh = ZtoryAnimaticController::instance()->mainXsheet();
+  if (!mainXsh) return;
+  m_viewerFps      = m_flipConsole->getCurrentFps();
+  double s0        = frame * m_samplesPerFrame;
+  double s1        = s0 + m_samplesPerFrame;
+  if (m_fps < m_viewerFps) mainXsh->stopScrub();
+  mainXsh->play(m_sound, s0, s1, false);
+}
+
+// ---- onAnimaticPlayingStatusChanged ----
+// Runs AFTER base's onPlayingStatusChanged (both connected to playStateChanged).
+// Base calls hasSoundtrack() using the sub-scene xsheet → m_sound = null.
+// We immediately override with the correct main-xsheet sound.
+void ZtoryAnimaticViewer::onAnimaticPlayingStatusChanged(bool playing) {
+  if (playing) refreshAnimaticSound();
+}
+
 void ZtoryAnimaticViewer::showEvent(QShowEvent *e) {
+  // BaseViewerPanel::showEvent connects TApp::getCurrentFrame() signals to
+  // slots such as updateFrameRange() and changeWindowTitle().  Those would
+  // set the FlipConsole range from the sub-scene's frame count (wrong).
   BaseViewerPanel::showEvent(e);
+
+  TApp *app  = TApp::instance();
+  auto *ctrl = ZtoryAnimaticController::instance();
+
+  // Remove every connection from the global frame handle to this viewer.
+  // In particular this removes frameSwitched→updateFrameRange which would
+  // continuously reset our range to the sub-scene frame count during play.
+  disconnect(app->getCurrentFrame(), nullptr, this, nullptr);
+
+  // After base's onSceneChanged() (triggered by sceneSwitched/sceneChanged)
+  // calls updateFrameRange() and updateFrameMarkers() with wrong values
+  // (sub-scene data), run our corrections right after.
+  // hideEvent() (from base) disconnects all sceneHandle→this signals, so
+  // these connections are cleaned up automatically on hide.
+  connect(app->getCurrentScene(), &TSceneHandle::sceneSwitched,
+          this, &ZtoryAnimaticViewer::updateAnimaticFrameRange);
+  connect(app->getCurrentScene(), &TSceneHandle::sceneSwitched,
+          this, &ZtoryAnimaticViewer::updateAnimaticFrameMarkers);
+  connect(app->getCurrentScene(), &TSceneHandle::sceneChanged,
+          this, &ZtoryAnimaticViewer::updateAnimaticFrameRange);
+  connect(app->getCurrentScene(), &TSceneHandle::sceneChanged,
+          this, &ZtoryAnimaticViewer::updateAnimaticFrameMarkers);
+
+  // ctrl frame handle: re-add the range-update connection, removing any
+  // previous one first to avoid accumulation across show/hide cycles.
+  if (m_frameRangeConn) disconnect(m_frameRangeConn);
+  m_frameRangeConn = connect(ctrl->frameHandle(), &TFrameHandle::frameSwitched,
+                             this, &ZtoryAnimaticViewer::updateAnimaticFrameRange);
+
+  // Audio: when play starts, override m_sound with main-xsheet sound.
+  // Disconnect first to avoid accumulation; then reconnect.
+  disconnect(m_flipConsole, SIGNAL(playStateChanged(bool)),
+             this, SLOT(onAnimaticPlayingStatusChanged(bool)));
+  connect(m_flipConsole, SIGNAL(playStateChanged(bool)),
+          this, SLOT(onAnimaticPlayingStatusChanged(bool)));
+
+  // Audio: play sound from main xsheet on each animatic frame change during play.
+  if (m_audioConn) disconnect(m_audioConn);
+  m_audioConn = connect(ctrl->frameHandle(), &TFrameHandle::frameSwitched,
+                        this, [this]() {
+    if (!m_playing || !m_playSound || !m_hasSoundtrack) return;
+    int frame = ZtoryAnimaticController::instance()->currentFrame();
+    playAnimaticAudioFrame(frame);
+  });
+
+  // Set correct range and markers immediately (overrides what base just set).
+  updateAnimaticFrameRange();
+  updateAnimaticFrameMarkers();
+
   if (m_sceneViewer) m_sceneViewer->update();
 }
 

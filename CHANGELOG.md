@@ -6,20 +6,52 @@
 
 ---
 
-## [2026-03-19 — bug aperti da testare in sessione successiva]
+## [2026-03-19 — ZtoryAnimaticController + frame handle dedicato]
 
-### Bug riportati dall'utente (non ancora investigati)
+### Added
 
-1. **Doppio click shot → entra in edit solo per shot 1**: per gli shot 2, 3, ... il
-   doppio click non entra nella sub-scene. Sospetto: `onShotDoubleClicked` usa un
-   indice colonna fisso o non aggiorna `currentColumn` correttamente prima di
-   `MI_OpenChild`. File: `ztoryanimatic.cpp` ~line 820-835.
+- **`ZtoryAnimaticController`** — singleton in `ztoryanimatic.h/.cpp` che possiede un
+  `TFrameHandle` dedicato per l'animatic, separato dal globale `TApp::getCurrentFrame()`.
+  Metodi: `mainXsheet()`, `setCurrentFrame()`, `currentFrame()`, `frameHandle()`.
 
-2. **Ztoryc non resta collegato alla timeline animatic quando si entra in uno shot**:
-   entrando in una sub-scene, l'animatic perde il collegamento/sync con la timeline.
-   Possibile causa: `xsheetChanged` o `sceneSwitched` non viene riemesso correttamente
-   quando si esce dalla sub-scene, oppure `refreshFromScene` non viene chiamato al
-   rientro al main xsheet. File: `ztoryanimatic.cpp` connect/signal area ~line 745-765.
+- **`SceneViewer::m_customFrameHandle`** — membro + setter `setCustomFrameHandle()` in
+  `sceneviewer.h/.cpp`. Quando impostato, `drawScene()` legge il frame da questo handle
+  invece che dal globale. Modifiche chirurgiche solo nelle path di rendering (3D e 2D).
+
+### Fixed
+
+- **BUG-03: TFrameHandle condiviso tra animatic e timeline nativa** — Muovere il cursore
+  nella timeline nativa non sposta più il playhead dell'animatic e viceversa.
+  - `ZtoryAnimaticViewer`: FlipConsole e SceneViewer ora usano il frame handle del controller
+  - `ZtoryAnimaticPanel`: disconnesso da `TApp::getCurrentFrame()::frameSwitched`,
+    connesso a `ZtoryAnimaticController::frameHandle()::frameSwitched`
+  - `onFrameChanged()`: scrive sul controller, non su TApp
+  - `onShotDoubleClicked()`: dopo MI_OpenChild, setta il frame del controller (non di TApp)
+
+### Modified
+
+- `sceneviewer.h` — aggiunto forward declaration `TFrameHandle`, membro `m_customFrameHandle`,
+  setter `setCustomFrameHandle()`, getter `customFrameHandle()`
+- `sceneviewer.cpp:drawScene()` — usa `fh` (custom o global) per lettura frame, isEditingLevel,
+  getFid, isPlaying. Nessuna modifica fuori da drawScene.
+- `ztoryanimatic.h` — aggiunta classe `ZtoryAnimaticController`
+- `ztoryanimatic.cpp` — implementazione controller + rewiring segnali panel/viewer
+
+### Notes
+
+- BUG-01 era già fixato nella sessione precedente (confermato dall'utente)
+- BUG-02 guard su sceneSwitched era già in place, funzionante
+- Step 2 del documento (feature FR-02→FR-11, BUG-05→07) può ora proseguire con il controller stabile
+- Il controller è pronto per ospitare `isFrameInEmptyZone()` (FR-06/FR-07) nel prossimo step
+
+---
+
+## [2026-03-19 — bug aperti investigati e fixati (BUG-01 + BUG-02)]
+
+### Fixed (sessione precedente)
+
+- **BUG-01**: `onShotDoubleClicked()` usava `getCell(0, col)` — fixato con `getRange(r0,r1)` + `getCell(r0, col)`
+- **BUG-02**: guard `ancestorCount != 0` su `sceneSwitched` e `xsheetChanged`
 
 ---
 

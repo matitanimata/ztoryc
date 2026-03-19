@@ -168,6 +168,7 @@ protected:
   void onExportShots();
   void onExportAnimatic();
   void onXsheetChanged();
+  void onModelResequenced(); // called when ZtoryModel::resequenceXsheet runs
   void onBackToBoard();
 };
 

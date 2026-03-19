@@ -1,7 +1,9 @@
 # Ztoryc — AI Agent Rules
 
 > This file is read automatically by Claude Code, Codex, Cursor, Copilot, and Windsurf.
-> CLAUDE.md is a symlink to this file: `ln -s AGENTS.md CLAUDE.md`
+> The canonical copy lives in `~/ZtorYc/AGENTS.md`.
+> In the code repo (`/Volumes/ZioSam/tahoma2d-workspace/tahoma2d/`) CLAUDE.md is a
+> symlink to this file, or a copy of it.
 
 -----
 
@@ -13,22 +15,41 @@ designed to work natively inside an animation application.
 
 - **Repository:** https://github.com/matitanimata/ztoryc
 - **Base:** Tahoma2D 1.6.0 (BSD 2-Clause License)
-- **Workspace:** `/Volumes/ZioSam/tahoma2d-workspace/tahoma2d`
+- **Code workspace (Claude Code):** `/Volumes/ZioSam/tahoma2d-workspace/tahoma2d`
+- **Code backup (Cowork):** `~/ZtorYc/tahoma2d-workspace_local/tahoma2d`
+- **Planning docs:** `~/ZtorYc/` (AGENTS.md, CHANGELOG.md, ANIMATIC_TASKS.md, DESIGN.md)
 - **Language:** C++17, Qt5
 - **Build system:** CMake + Ninja
+
+-----
+
+## Folder Structure
+
+```
+~/ZtorYc/
+├── AGENTS.md                    ← questo file (canonical)
+├── CHANGELOG.md                 ← log di tutte le sessioni
+├── ANIMATIC_TASKS.md            ← task list tecnica corrente
+├── DESIGN.md                    ← specifica funzionale
+├── README.md                    ← readme pubblico
+├── tahoma2d-workspace_local/    ← backup codice (rsync da ZioSam dopo ogni commit)
+│   └── tahoma2d/
+└── tahoma2d-workspace_bak/      ← snapshot storico (non modificare)
+    └── tahoma2d/
+```
 
 -----
 
 ## Build & Run
 
 ```bash
-# Build (always filter errors first)
+# Build (sempre filtrare gli errori)
 touch [file] && ninja -j4 -C /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/toonz/build 2>&1 | grep "error:" | head -10
 
-# Open app
+# Apri app
 open /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/toonz/Tahoma2D.app
 
-# Force recompile a specific file
+# Forza ricompilazione file specifico
 touch toonz/sources/toonz/ztoryanimatic.cpp && ninja -j4 -C /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/toonz/build 2>&1 | grep "error:" | head -10
 ```
 
@@ -204,6 +225,55 @@ cd toonz/sources && ./beautification.sh
 - Panel not removed when a drawing is deleted — `detectAndUpdatePanels` does not
   handle panel removal.
 - Panels missing on scene open — `refreshFromScene` does not load all panels correctly.
+
+-----
+
+## Session Workflow (Claude Code)
+
+### At the start of every session:
+
+Read these files for context before writing any code:
+```
+~/ZtorYc/CHANGELOG.md       — what happened in previous sessions
+~/ZtorYc/ANIMATIC_TASKS.md  — current task list with priorities
+~/ZtorYc/DESIGN.md          — functional specification
+```
+
+### After every coding session:
+
+1. **Update `~/ZtorYc/CHANGELOG.md`** — add a new entry at the top:
+   - Date + session title
+   - `### Fixed` — bugs fixed (file.cpp:line)
+   - `### Added` — new features (file.cpp)
+   - `### Modified` — changes (file.cpp)
+   - `### Upstream candidates` — fixes suitable for Tahoma2D PR
+   - `### Notes` — open issues, next session suggestions
+
+2. **Commit to Ztoryc repo:**
+   ```bash
+   cd /Volumes/ZioSam/tahoma2d-workspace/tahoma2d
+   git add -A
+   git commit -m "feat/fix/refactor: description"
+   git push
+   ```
+
+3. **Sync local backup** (so Cowork can read updated code):
+   ```bash
+   rsync -av --delete \
+     /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/ \
+     ~/ZtorYc/tahoma2d-workspace_local/tahoma2d/
+   ```
+
+4. **Copy updated planning docs to repo** (so they stay in git history):
+   ```bash
+   cp ~/ZtorYc/CHANGELOG.md /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/CHANGELOG.md
+   cp ~/ZtorYc/ANIMATIC_TASKS.md /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/ANIMATIC_TASKS.md
+   ```
+
+> **Why two locations:** Cowork (Claude desktop app) reads from `~/ZtorYc/` because
+> the external volume `/Volumes/ZioSam/` is not accessible from the Cowork sandbox.
+> `tahoma2d-workspace_local/` is the live mirror; `tahoma2d-workspace_bak/` is a
+> historical snapshot — do not overwrite it.
 
 -----
 

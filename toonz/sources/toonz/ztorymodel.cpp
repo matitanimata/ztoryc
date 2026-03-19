@@ -309,6 +309,40 @@ void ZtoryModel::load() {
   emit modelReset();
 }
 
+void ZtoryModel::resequenceXsheet() {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (!scene) return;
+  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+  if (!xsh) return;
+  int numCols = xsh->getColumnCount();
+  int maxFrames = xsh->getFrameCount() + 200;
+  int startFrame = 0;
+  for (int col = 0; col < numCols; col++) {
+    TXshColumn *column = xsh->getColumn(col);
+    if (!column || column->isEmpty()) continue;
+    int r0 = 0, r1 = 0;
+    column->getRange(r0, r1);
+    int duration = r1 - r0 + 1;
+    TXshChildLevel *cl = nullptr;
+    for (int r = r0; r <= r1; r++) {
+      TXshCell cell = xsh->getCell(r, col);
+      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+        cl = cell.m_level->getChildLevel();
+        break;
+      }
+    }
+    if (!cl) { startFrame += duration; continue; }
+    for (int r = 0; r <= maxFrames; r++) xsh->clearCells(r, col);
+    for (int r = 0; r < duration; r++)
+      xsh->setCell(startFrame + r, col, TXshCell(cl, TFrameId(r + 1)));
+    startFrame += duration;
+  }
+  xsh->updateFrameCount();
+  app->getCurrentXsheet()->notifyXsheetChanged();
+  emit modelReset();
+}
+
 void ZtoryModel::updateColumnName(int si) {
   if (si < 0 || si >= (int)m_shots.size()) return;
   TApp *app = TApp::instance();

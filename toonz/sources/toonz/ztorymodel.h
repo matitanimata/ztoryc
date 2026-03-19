@@ -74,6 +74,9 @@ public:
   void load();
   void setZtoryPath(const QString &path) { m_ztoryPath = path; }
 
+  // ── Resequencing ──────────────────────────────────────────────────────────
+  void resequenceXsheet();
+
   // ── Sincronizzazione scena ────────────────────────────────────────────────
   void onXsheetChanged();
   void onSceneChanged();

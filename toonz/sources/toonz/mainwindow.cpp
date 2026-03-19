@@ -2665,6 +2665,8 @@ void MainWindow::defineActions() {
   createMenuWindowsAction(MI_OpenStoryboard, QT_TR_NOOP("&Storyboard"), "", "Storyboard");
   createMenuWindowsAction("MI_OpenZtoryBack", QT_TR_NOOP("&Ztoryc Back"), "", "ZtoryBack");
   createMenuWindowsAction("MI_OpenZtoryAnimatic", QT_TR_NOOP("&Ztoryc Animatic"), "", "ZtoryAnimatic");
+  createMenuWindowsAction("MI_OpenZtoryAnimaticViewer", QT_TR_NOOP("&Ztoryc Viewer"), "", "ZtoryAnimaticViewer");
+  createMenuWindowsAction("MI_OpenZtoryStoryStrip", QT_TR_NOOP("&Ztoryc Story Strip"), "", "ZtoryStoryStrip");
   createMenuWindowsAction(MI_WorkflowStoryboard, QT_TR_NOOP("&Storyboard Mode"), "", "");
   createMenuWindowsAction(MI_Workflow2D, QT_TR_NOOP("&2D Tradigital Mode"), "", "");
   createMenuWindowsAction(MI_WorkflowCutout, QT_TR_NOOP("&Cutout Digital Mode"), "", "");
