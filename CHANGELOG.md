@@ -5,6 +5,60 @@
 > `### Upstream candidates`, `### Notes`. Poi esegui rsync (vedi AGENTS.md).
 
 ---
+## [2026-03-19] — FlipConsole play fix + audio animatic + BUG-05 allineamento tracce
+
+### Fixed
+
+- **Play FlipConsole animatic usa sub-scene invece del main xsheet**
+  - `ZtoryAnimaticViewer::onDrawFrame()` — override del metodo virtuale: scrive il frame
+    su `ctrl->frameHandle()` invece di `TApp::getCurrentFrame()` (globale).
+    Il drag del ruler funzionava già; il play button no perché passava per `onDrawFrame`.
+  - `ZtoryAnimaticViewer::updateAnimaticFrameRange()` — nuovo slot: legge il frame count
+    da `ctrl->mainXsheet()->getFrameCount()` invece di `TApp::getCurrentFrame()->getMaxFrameIndex()`
+    (che restituiva la durata della sub-scene aperta). Collegato a `sceneSwitched`,
+    `sceneChanged` e `ctrl->frameHandle()::frameSwitched`.
+  - `ZtoryAnimaticViewer::showEvent()` — dopo `BaseViewerPanel::showEvent()`:
+    disconnette tutte le connessioni da `TApp::getCurrentFrame()` a `this` (rimuove
+    `updateFrameRange` ad alta frequenza), aggiunge le connessioni corrette.
+
+- **Start/stop markers presi dalla sub-scene invece dell'animatic**
+  - `ZtoryAnimaticViewer::updateAnimaticFrameMarkers()` — nuovo slot: quando
+    `ancestorCount > 0` chiama `m_flipConsole->setMarkers(0, -1)` (range pieno,
+    ignora i marker della sub-scene). Al main level usa `XsheetGUI::getPlayRange()`
+    sul main xsheet. Collegato agli stessi segnali di `updateAnimaticFrameRange`.
+
+- **Audio non si sente nel viewer animatic durante il play**
+  - `ZtoryAnimaticViewer::refreshAnimaticSound()` — chiama `ctrl->mainXsheet()->makeSound()`
+    e salva in `m_sound` / `m_hasSoundtrack`. Sovrascrive quanto impostato da
+    `hasSoundtrack()` (base) che leggeva dalla sub-scene → `m_sound=null`.
+  - `ZtoryAnimaticViewer::onAnimaticPlayingStatusChanged(bool)` — slot connesso a
+    `FlipConsole::playStateChanged`, chiama `refreshAnimaticSound()` quando play parte.
+  - `ZtoryAnimaticViewer::playAnimaticAudioFrame(int)` — come `playAudioFrame` ma
+    chiama `play()`/`stopScrub()` su `ctrl->mainXsheet()` invece di `getCurrentXsheet()`.
+  - `m_audioConn` — connessione `ctrl->frameHandle()::frameSwitched` → audio play,
+    gestita con `QMetaObject::Connection` per evitare accumulo su show/hide.
+
+- **BUG-05: disallineamento visivo tracce video e audio**
+  - `kLabelW = 80` — costante condivisa in `ztoryanimatic.cpp` (uguale a
+    `ZtoryAudioTrack::labelW`).
+  - `ZtoryAnimaticRuler::paintEvent()` — area vuota 80px a sinistra, tick marks
+    e playhead offset di `kLabelW`.
+  - `ZtoryAnimaticRuler::mousePressEvent/mouseMoveEvent()` — `mx = e->x() - kLabelW`.
+  - `ZtoryAnimaticTrack::paintEvent()` — label column 80px con nome scena, shot blocks
+    e playhead offset di `kLabelW`.
+  - `ZtoryAnimaticTrack::mousePressEvent/mouseMoveEvent/mouseDoubleClickEvent()` —
+    `mx = e->x() - kLabelW`, click su label area ignorati.
+  - `refreshFromScene()` — `setMinimumWidth(kLabelW + ...)`.
+
+### Notes
+
+- BUG-01, BUG-02, BUG-03 già fixati nelle sessioni precedenti (confermati).
+- Audio scrubbing (ruler drag) non ancora implementato — audio si sente solo durante
+  il play (comportamento identico alla native timeline, non è un bug).
+- Include aggiunti a `ztoryanimatic.cpp`: `xsheetdragtool.h`, `toonz/sceneproperties.h`,
+  `toutputproperties.h`.
+- Step 2 (ZtoryAnimaticController features FR-02→FR-11, BUG-06, BUG-07) è il prossimo.
+
 
 ## [2026-03-19 — ZtoryAnimaticController + frame handle dedicato]
 

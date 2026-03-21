@@ -18,6 +18,7 @@
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
 #include <QDir>
+#include <QMessageBox>
 
 // ─── Singleton ────────────────────────────────────────────────────────────────
 
@@ -74,7 +75,19 @@ void ZtoryModel::updateAllPreviews() {
 
 // ─── Operazioni su shot ───────────────────────────────────────────────────────
 
+bool ZtoryModel::assertMainXsheet(bool showWarning) {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return false;
+  if (scene->getChildStack()->getAncestorCount() == 0) return true;
+  if (showWarning)
+    QMessageBox::warning(nullptr, QObject::tr("Ztoryc"),
+        QObject::tr("This operation is only available at the main xsheet level.\n"
+                    "Please close the current sub-scene first (double-click outside)."));
+  return false;
+}
+
 void ZtoryModel::addShot(int insertAt) {
+  if (!assertMainXsheet(true)) return;
   ShotData s;
   PanelData pd;
   s.panels.push_back(pd);
@@ -93,6 +106,7 @@ void ZtoryModel::addShot(int insertAt) {
 }
 
 void ZtoryModel::removeShot(int si) {
+  if (!assertMainXsheet(true)) return;
   if (si < 0 || si >= (int)m_shots.size()) return;
   m_shots.erase(m_shots.begin() + si);
   if (si < (int)m_previews.size())
@@ -102,6 +116,7 @@ void ZtoryModel::removeShot(int si) {
 }
 
 void ZtoryModel::moveShot(int from, int to) {
+  if (!assertMainXsheet(false)) return;
   if (from == to) return;
   if (from < 0 || from >= (int)m_shots.size()) return;
   if (to   < 0 || to   >= (int)m_shots.size()) return;
@@ -118,6 +133,7 @@ void ZtoryModel::moveShot(int from, int to) {
 }
 
 void ZtoryModel::cloneShot(int si) {
+  if (!assertMainXsheet(true)) return;
   if (si < 0 || si >= (int)m_shots.size()) return;
   ShotData s = m_shots[si];
   s.shotNumber = "";

@@ -18,6 +18,7 @@
 // Singleton that owns the dedicated frame state for the animatic timeline
 // and viewer, isolating them from TApp's global TFrameHandle.
 class TFrameHandle;
+#include "tsound.h"
 
 class ZtoryAnimaticController : public QObject {
   Q_OBJECT
@@ -27,10 +28,14 @@ public:
   TXsheet *mainXsheet() const;
   void setCurrentFrame(int frame);
   int currentFrame() const;
+  // Cached merged sound track — filled by ZtoryAnimaticViewer::refreshAnimaticSound
+  TSoundTrackP soundTrack() const { return m_soundTrack; }
+  void setSoundTrack(TSoundTrackP st) { m_soundTrack = st; }
 
 private:
   ZtoryAnimaticController();
-  TFrameHandle *m_frameHandle;
+  TFrameHandle  *m_frameHandle;
+  TSoundTrackP   m_soundTrack;
 };
 
 class ZtoryAnimaticRuler : public QWidget {
@@ -41,16 +46,22 @@ public:
   void setPixelsPerFrame(double ppf) { m_ppf = ppf; update(); }
   void setCurrentFrame(int f) { m_currentFrame = f; update(); }
   int currentFrame() const { return m_currentFrame; }
+  void initPlayRangeIfNeeded();
 protected:
   void paintEvent(QPaintEvent *) override;
   void mousePressEvent(QMouseEvent *) override;
   void mouseMoveEvent(QMouseEvent *) override;
+  void mouseReleaseEvent(QMouseEvent *) override;
+  void contextMenuEvent(QContextMenuEvent *) override;
 signals:
   void frameChanged(int frame);
 private:
   double m_fps = 24.0;
   double m_ppf = 8.0; // pixels per frame
   int m_currentFrame = 0;
+  // In/Out marker drag state (13b)
+  enum DragMode { None, DragIn, DragOut };
+  DragMode m_dragMode = None;
 };
 
 class ZtoryAnimaticTrack : public QWidget {
@@ -114,14 +125,20 @@ class ZtoryAudioTrack : public QWidget {
   Q_OBJECT
 public:
   ZtoryAudioTrack(int col, const QString &name, QWidget *parent = nullptr);
-  void setPixelsPerFrame(double ppf) { m_ppf = ppf; update(); }
+  void setPixelsPerFrame(double ppf) {
+    if (m_ppf != ppf) { m_ppf = ppf; m_waveformDirty = true; update(); }
+  }
   void setCurrentFrame(int f) { m_currentFrame = f; update(); }
+  void invalidateWaveform() { m_waveformDirty = true; update(); }
   int trackHeight() const { return m_trackHeight; }
-  void setTrackHeight(int h) { m_trackHeight = h; setFixedHeight(h); update(); }
+  void setTrackHeight(int h) { m_trackHeight = h; m_waveformDirty = true; setFixedHeight(h); update(); }
   int columnIndex() const { return m_col; }
 
 protected:
   void paintEvent(QPaintEvent *) override;
+  void mousePressEvent(QMouseEvent *) override;
+  void mouseMoveEvent(QMouseEvent *) override;
+  void mouseReleaseEvent(QMouseEvent *) override;
 
 private:
   int m_col;
@@ -129,6 +146,13 @@ private:
   double m_ppf = 8.0;
   int m_currentFrame = 0;
   int m_trackHeight = 50;
+  QPixmap m_waveformCache;
+  bool m_waveformDirty = true;
+  // Preview bar (12c)
+  int  m_previewR0        = -1;
+  int  m_previewR1        = -1;
+  bool m_draggingPreview  = false;
+  int  m_previewDragStart = -1;
 };
 
 // ---- ZtoryStoryStrip ----

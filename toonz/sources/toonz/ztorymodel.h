@@ -77,6 +77,9 @@ public:
   // ── Resequencing ──────────────────────────────────────────────────────────
   void resequenceXsheet();
 
+  // Returns true if at main xsheet level; optionally shows a warning dialog.
+  static bool assertMainXsheet(bool showWarning = true);
+
   // ── Sincronizzazione scena ────────────────────────────────────────────────
   void onXsheetChanged();
   void onSceneChanged();

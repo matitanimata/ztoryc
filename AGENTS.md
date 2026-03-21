@@ -230,48 +230,67 @@ cd toonz/sources && ./beautification.sh
 
 ## Session Workflow (Claude Code)
 
-### At the start of every session:
+### Trigger: "nuova sessione"
 
-Read these files for context before writing any code:
-```
-~/ZtorYc/CHANGELOG.md       — what happened in previous sessions
-~/ZtorYc/ANIMATIC_TASKS.md  — current task list with priorities
-~/ZtorYc/DESIGN.md          — functional specification
-```
+When the user says **"nuova sessione"**, automatically:
+1. Read `~/ZtorYc/AGENTS.md` (this file) for rules and architecture
+2. Read `~/ZtorYc/CHANGELOG.md` for context on previous sessions
+3. Read `~/ZtorYc/ANIMATIC_TASKS.md` for the current task list
+4. Report briefly: last session summary + what you'll work on today (starting from
+   the highest-priority pending task in ANIMATIC_TASKS.md)
 
-### After every coding session:
+### Context window — avviso token
 
-1. **Update `~/ZtorYc/CHANGELOG.md`** — add a new entry at the top:
-   - Date + session title
-   - `### Fixed` — bugs fixed (file.cpp:line)
-   - `### Added` — new features (file.cpp)
-   - `### Modified` — changes (file.cpp)
-   - `### Upstream candidates` — fixes suitable for Tahoma2D PR
-   - `### Notes` — open issues, next session suggestions
+Monitor the context window usage throughout the session. When you estimate that
+roughly **20–25% of the context window remains**, stop what you are doing and
+warn the user immediately:
 
-2. **Commit to Ztoryc repo:**
+> ⚠️ **Token in esaurimento** — siamo al ~75-80% del contesto. Suggerisco di
+> chiudere la sessione ora con "sessione chiusa" così aggiorno CHANGELOG e faccio
+> il commit prima di perdere il contesto.
+
+Do this **before** starting any new task or tool call that could consume the
+remaining tokens. The goal is to always have enough context left to complete
+the full "sessione chiusa" procedure (CHANGELOG + git commit + rsync + cp docs).
+
+---
+
+### Trigger: "sessione chiusa"
+
+When the user says **"sessione chiusa"**, automatically:
+
+1. **Update `~/ZtorYc/CHANGELOG.md`** — prepend a new entry:
+   ```
+   ## [YYYY-MM-DD] — title
+   ### Fixed / Added / Modified / Upstream candidates / Notes
+   ```
+
+2. **Commit and push:**
    ```bash
    cd /Volumes/ZioSam/tahoma2d-workspace/tahoma2d
    git add -A
-   git commit -m "feat/fix/refactor: description"
+   git commit -m "descrizione sintetica"
    git push
    ```
 
-3. **Sync local backup** (so Cowork can read updated code):
+3. **Sync code to local backup:**
    ```bash
    rsync -av --delete \
      /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/ \
      ~/ZtorYc/tahoma2d-workspace_local/tahoma2d/
    ```
 
-4. **Copy updated planning docs to repo** (so they stay in git history):
+4. **Copy planning docs back to repo** (keep them in git history):
    ```bash
    cp ~/ZtorYc/CHANGELOG.md /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/CHANGELOG.md
    cp ~/ZtorYc/ANIMATIC_TASKS.md /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/ANIMATIC_TASKS.md
+   cp ~/ZtorYc/AGENTS.md /Volumes/ZioSam/tahoma2d-workspace/tahoma2d/AGENTS.md
    ```
 
+5. Confirm to the user: commit hash + files synced.
+
 > **Why two locations:** Cowork (Claude desktop app) reads from `~/ZtorYc/` because
-> the external volume `/Volumes/ZioSam/` is not accessible from the Cowork sandbox.
+> `/Volumes/ZioSam/` is not accessible from the Cowork sandbox.
 > `tahoma2d-workspace_local/` is the live mirror; `tahoma2d-workspace_bak/` is a
 > historical snapshot — do not overwrite it.
 

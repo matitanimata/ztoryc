@@ -1422,6 +1422,7 @@ void StoryboardPanel::onDurationChanged(int shotIdx, int panelIdx, int frames) {
 }
 
 void StoryboardPanel::onMoveShot(int fromShot, int toShot) {
+  if (!ZtoryModel::assertMainXsheet(true)) return;   // warn: exit edit mode first
   if (fromShot == toShot) return;
   if (fromShot < 0 || fromShot >= (int)m_shots.size()) return;
   if (toShot < 0 || toShot >= (int)m_shots.size()) return;
