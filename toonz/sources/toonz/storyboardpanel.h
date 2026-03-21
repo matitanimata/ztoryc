@@ -157,6 +157,7 @@ private slots:
   void onPasteShot();
 protected:
   void keyPressEvent(QKeyEvent *e) override;
+  void mouseDoubleClickEvent(QMouseEvent *e) override;
   void onEditShot(int shotIdx);
   void onPanelClicked(int shotIdx, int panelIdx, Qt::KeyboardModifiers modifiers);
   void onDurationChanged(int shotIdx, int panelIdx, int frames);

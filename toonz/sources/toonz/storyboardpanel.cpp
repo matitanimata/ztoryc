@@ -1121,6 +1121,17 @@ void StoryboardPanel::keyPressEvent(QKeyEvent *e) {
   TPanel::keyPressEvent(e);
 }
 
+void StoryboardPanel::mouseDoubleClickEvent(QMouseEvent *e) {
+  // Double-click on the background (not on a shot card) closes the sub-scene.
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return;
+  if (scene->getChildStack()->getAncestorCount() > 0) {
+    CommandManager::instance()->execute("MI_CloseChild");
+    return;
+  }
+  TPanel::mouseDoubleClickEvent(e);
+}
+
 void StoryboardPanel::onCopyShot() {
   // Auto-return to main xsheet before operating
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();

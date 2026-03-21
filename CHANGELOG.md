@@ -5,6 +5,66 @@
 > `### Upstream candidates`, `### Notes`. Poi esegui rsync (vedi AGENTS.md).
 
 ---
+## [2026-03-21] — Design session (Cowork): marker In/Out, scrubbing, preview bar, guard sub-scene
+
+### Added (planning — non ancora implementato in codice)
+
+- **Task 1b** — Guard `ZtoryModel::assertMainXsheet()`: tutte le operazioni
+  sugli shot devono verificare `ancestorCount == 0` prima di toccare il main
+  xsheet. Silent return per drag, warning dialog per azioni esplicite.
+  Aggiunto come priorità assoluta #1.
+
+- **Task 12c** — Barra di preview audio in `ZtoryAudioTrack`: strip da 6px
+  in fondo alla traccia, click+drag seleziona range arancione, release suona
+  il range. Codice completo nel task.
+
+- **Task 13b aggiornato** — Tre bug specifici sui marker In/Out:
+  1. Marker invisibili all'apertura: `initPlayRangeIfNeeded()` inizializza
+     r0=0, r1=lastFrame quando `getPlayRange()` ritorna r0<0. Fix anche alla
+     paint condition (`r1 >= r0` invece di `r1 > r0`).
+  2. Il playhead non si deve spostare con tasto destro né con Shift/Alt+click.
+  3. `contextMenuEvent` con "Mark IN", "Mark OUT", "Reset to full range" —
+     NLE-style, frame dalla posizione cursore, nessun `setCurrentFrame()`.
+
+- **Task 12b diagnostica** — 4 cause ordinate per il bug scrubbing non
+  funzionante. Soluzione preferita: esporre `soundTrack()` da
+  `ZtoryAnimaticController` invece di chiamare `makeSound()` nel ruler.
+
+### Notes
+
+- Task 12a (waveform) confermato visibile dall'utente ✅
+- Task 1 (ZtoryAnimaticController) confermato completato ✅
+- Prossima sessione Code: Task 1b → Task 13b fix → Task 12b → Task 12c
+
+---
+## [2026-03-19] — Design: startup window + shot numbering system (Cowork session)
+
+### Added (planning / design only — not yet implemented in code)
+
+- **Task 14 in `ANIMATIC_TASKS.md`** — Startup window / New Project dialog:
+  full spec with 4 sections (Project, Camera, Workflow, Shot numbering).
+- **Shot numbering system spec**: two styles — Simple (`sh010`) and Sequence
+  (`sq01_sh010`). Configurable step (default 10), padding, prefix, start number.
+  Rationale: step-10 leaves room to insert shots between existing ones;
+  sequence prefix groups shots by act/sequence for ep/feature productions.
+- **New class spec `ZtoryStartupDialog`** in `ztorystartup.h/cpp` with inner
+  `Config` struct and `shotName(seq, idx)` generator.
+- **Integration plan** for `iocommand.cpp::newScene()`: replace current
+  `SaveSceneAsPopup` with the new dialog, apply camera settings, switch room,
+  pre-create initial shots with correct names, save scene immediately.
+- **New `ZtoryModel::addShot(QString)` method spec** for programmatic shot
+  creation from the startup dialog.
+- Task 14 added as **top priority** in the priority order.
+
+### Notes
+
+- This is a planning session (Cowork). Implementation by Claude Code.
+- The "new scene forced save" fix in `iocommand.cpp` must be replaced/adapted
+  when Task 14 is implemented — do not regress the forced-save behavior.
+- Sequence tags (Task 13c) and startup sequences are related: navigation tags
+  on the ruler will eventually map to sequences defined at project creation.
+
+---
 ## [2026-03-19] — FlipConsole play fix + audio animatic + BUG-05 allineamento tracce
 
 ### Fixed
@@ -415,3 +475,34 @@ L'eccezione risaliva: `saveImage()` → `doSave()` → `LevelUpdater::update()` 
 - [ ] Model sheet linkati ai personaggi
 - [ ] Integrazione Kitsu (Docker su Mac mini/ZioSam)
 - [ ] Pipeline: Ztoryc → Kitsu → AI → Tahoma2D
+
+---
+## [2026-03-21] — Task 1b + Task 13b fixes + Task 12b scrubbing
+
+### Fixed
+
+- **Task 1b: assertMainXsheet guard su operazioni shot**
+  - `ZtoryModel::assertMainXsheet(bool showWarning)` — nuovo metodo statico. Controlla `ancestorCount == 0`; se false e `showWarning=true` mostra QMessageBox::warning.
+  - Guard aggiunto su: `ZtoryModel::addShot`, `removeShot`, `cloneShot` (warning), `moveShot` (warning).
+  - `StoryboardPanel::onMoveShot` — guard con warning: "exit edit mode first" prima di eseguire il drag-reorder xsheet.
+
+- **Task 13b fix 1: marker IN/OUT sempre visibili**
+  - `paintEvent` ruler: rimossa dipendenza da `isPlayRangeEnabled()` per disegnare i marker. Come nel codice nativo, i marker vengono sempre mostrati: usa `getPlayRange` quando abilitato, altrimenti `0..mainXsheet()->getFrameCount()-1`.
+  - Highlight arancione con alpha ridotto (20) quando range non esplicitamente impostato.
+
+- **Task 13b fix 2: playhead non si sposta con tasto destro / Shift / Alt**
+  - `mousePressEvent`: `setCurrentFrame` solo con `Qt::LeftButton && Qt::NoModifier`.
+
+- **Task 13b fix 3: context menu su ruler**
+  - Voci: "Mark IN here", "Mark OUT here", "Set OUT to last frame", "Reset IN/OUT to full range".
+  - Frame letto dalla posizione cursore, NON dalla playhead.
+  - "Set OUT to last frame": sposta solo l'OUT al `getFrameCount()-1`, preserva IN corrente.
+
+- **Task 12b: audio scrubbing durante drag ruler**
+  - `mouseMoveEvent` e `mousePressEvent` ruler: sostituito `scrubXsheet(frame, frame, xsh, fps)` con `xsh->play(st, s0, s1, false)` usando `ctrl->soundTrack()` (track cached da `refreshAnimaticSound`). Evita il problema `makeSound()` nullptr dentro sub-scene.
+
+### Notes
+
+- Task 12c (preview bar audio) era già implementato nella sessione precedente.
+- OUT marker nasce a frame 0 per scene nuove (0 frame al momento del showEvent) — usare "Set OUT to last frame" dal menu tasto destro per allinearlo.
+- Prossima sessione: Task 6 (toolbar animatic con Add/Delete/Copy/Clone), Task 13a (onion skin markers), Task 14 (startup dialog).
