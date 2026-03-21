@@ -159,6 +159,22 @@
 - Il controller è pronto per ospitare `isFrameInEmptyZone()` (FR-06/FR-07) nel prossimo step
 
 ---
+## [2026-03-21] — Double-click su background Board chiude sub-scene
+
+### Fixed
+
+- **Double-click su background StoryboardPanel → MI_CloseChild**
+  - `StoryboardPanel::mouseDoubleClickEvent()` — nuovo override: quando `ancestorCount > 0`,
+    esegue `MI_CloseChild` e torna al main xsheet. Se già al main level, propaga l'evento.
+  - Il warning del drag-reorder ("exit edit mode first") ora ha un gesto coerente: doppio
+    click sul background del Board per uscire dalla sub-scene.
+  - File: `storyboardpanel.h/.cpp`
+
+### Thanks
+
+- 🙏 Grazie a **Simona Manganaro** per aver scoperto questo bug e segnalato
+  l'incoerenza tra il messaggio di warning e l'assenza del gesto corrispondente.
+
 
 ## [2026-03-19 — bug aperti investigati e fixati (BUG-01 + BUG-02)]
 
