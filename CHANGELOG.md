@@ -6,6 +6,32 @@
 > Voci più vecchie di ~2 settimane → spostarle in `CHANGELOG_ARCHIVE.md`.
 
 ---
+
+## [2026-05-25] — Qualità anteprime Board e Navigator
+
+### Fixed
+- **ZtoryPanelNavigator preview sfocata** (`ztoryanimatic.cpp`) — rendering fisso a
+  320×180 px indipendentemente dalla dimensione del label e dal DPR. Fix: render al
+  `label_size × devicePixelRatio` (cappato a 1280×720), pixmap taggato con
+  `setDevicePixelRatio`, display senza upscaling. Su Retina il navigator mostra
+  immagini pixel-perfect.
+- **Board thumbnails sfocate su Retina e su pannelli larghi** (`storyboardpanel.cpp`):
+  - `updatePreview()`: render a `panel_width × DPR` fisici invece di 320×180 fisso.
+  - `rescalePreview()`: ora DPR-aware — scala a pixel fisici e tagga con
+    `setDevicePixelRatio` prima di passare al QLabel.
+  - `PanelWidget::resizeEvent()`: se la larghezza fisica richiesta supera del 20%
+    quella del pixmap memorizzato, emette `previewRerenderNeeded(si, pi)`.
+  - `connectPanelWidget()`: debounce 200ms su `previewRerenderNeeded` — ri-renderizza
+    in coda solo i pannelli che ne hanno bisogno, una sola volta dopo il resize.
+
+### Added
+- **Auto-resize Board su ridimensionamento finestra** (`storyboardpanel.cpp`) —
+  `StoryboardPanel::resizeEvent` (nuovo) con debounce 150ms: ricalcola `colW` dal
+  viewport e aggiorna `setFixedWidth` su tutte le celle. Le celle si adattano in
+  tempo reale alla finestra senza toccare il numero di colonne.
+- **Dimensione minima celle ridotta a 150 px** (era 200 px) — permette più colonne
+  visibili su schermi stretti o con molti shot.
+
 ## [2026-05-24c] — Post-release fix: crash Cutout Digital + upstream candidates
 
 ### Fixed

@@ -263,6 +263,7 @@ cd toonz/sources && ./beautification.sh
    - [ ] **getPreviewButtonStates null crash** (`viewerpane.cpp`) — crash se `m_previewButton`/`m_subcameraButton` non inizializzati. Commit `d7453d1eb`.
    - [ ] **Mesh sub-scenes wrong folder** (`meshifypopup.cpp`)
    - [ ] **New Scene missing save dialog** (`iocommand.cpp`)
+   - [ ] **TSystem::memoryShortage() always returns false on macOS/Linux** (`tsystempd.cpp`) — su Mac e Linux la funzione era un no-op (`return false`), quindi TImageCache non evictava mai automaticamente anche con RAM quasi piena. Fix: macOS con `host_statistics64`, Linux con `/proc/meminfo` (MemAvailable < 15% RAM fisica). Commit `b79ba7d32`. Candidato di alta priorità: affligge tutti gli utenti Mac e Linux da sempre.
    - [ ] **macOS "Unable to create a new document" on launch** (`BundleInfo.plist.in`) — `NSQuitAlwaysKeepsWindows=false` + `NSApplicationSupportsSecureRestorableState=true`. Commit `a7a822704`.
    - [ ] **macOS CI deployment target** — senza `-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0` il binary embeds `minos` uguale al runner. Commit `940e895bc`.
 

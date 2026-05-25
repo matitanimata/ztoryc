@@ -1412,6 +1412,11 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
 
 void StoryboardPanel::assignKeepNumbers(int insertAt) {
   int total = (int)m_shots.size();
+  // When adding the very first shot there are no neighbours to inherit a label
+  // from. Return early — renumberAll() will assign a proper label afterwards.
+  // Without this guard: insertAt=0, total=1 → m_shots[insertAt-1] = m_shots[-1]
+  // → out-of-bounds crash on Windows (UB on all platforms).
+  if (total <= 1) return;
   // Assegna numeri fissi agli shot senza shotNumber basandosi sulla posizione originale
   // Gli shot prima di insertAt mantengono il loro numero, quelli dopo anche
   for (int j = 0; j < total; j++) {

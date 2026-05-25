@@ -606,6 +606,10 @@ elseif(BUILD_ENV_UNIXLIKE)
     )
 endif()
 
+# zlib — needed by ztoryscriptpanel.cpp to decompress .docx/.odt ZIP entries.
+find_package(ZLIB REQUIRED)
+target_link_libraries(Ztoryc ZLIB::ZLIB)
+
 if(BUILD_ENV_APPLE)
     # CMAKE_RUNTIME_OUTPUT_DIRECTORY should be equivalent to usage on windows despite empty
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})

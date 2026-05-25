@@ -44,6 +44,9 @@ private slots:
 private:
   // Parsing
   QString parseFdx(const QString &filePath);
+  QString parseFountain(const QString &filePath);
+  QString parseDocx(const QString &filePath);
+  QString parseOdt(const QString &filePath);
   QString parseTxt(const QString &filePath);
 
   // Search helpers
