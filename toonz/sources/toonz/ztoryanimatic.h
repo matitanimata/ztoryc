@@ -189,6 +189,8 @@ public:
   ZtoryAnimaticRuler(QWidget *parent = nullptr);
   void setFps(double fps) { m_fps = fps; update(); }
   void setPixelsPerFrame(double ppf) { m_ppf = ppf; update(); }
+  void setShowTimecode(bool on) { m_showTimecode = on; update(); }
+  bool showTimecode() const { return m_showTimecode; }
   void setCurrentFrame(int f) { m_currentFrame = f; update(); }
   int currentFrame() const { return m_currentFrame; }
   void initPlayRangeIfNeeded();
@@ -209,6 +211,7 @@ private:
   double m_fps = 24.0;
   double m_ppf = 8.0;
   int m_currentFrame = 0;
+  bool m_showTimecode = false;
   // In/Out marker drag state (13b)
   enum DragMode { None, DragIn, DragOut };
   DragMode m_dragMode = None;
@@ -789,7 +792,8 @@ private:
   QScrollArea *m_scroll    = nullptr;
   QList<ZtoryAudioTrack *> m_audioTracks;
   QSlider     *m_zoomSlider  = nullptr;
-  QToolButton *m_fitAllBtn   = nullptr;
+  QToolButton *m_fitAllBtn      = nullptr;
+  QToolButton *m_timecodeBtn    = nullptr;
   bool m_audioLinked = true;
   double m_ppf = 8.0;
   // ── Panning state (Space+drag or Middle-mouse drag) ───────────────────────

@@ -75,6 +75,13 @@ public:
 
   static DragTool *makeLoopFrameMarkerMoverTool(XsheetViewer *viewer,
                                                 bool isStart);
+
+  // Alt+Drag: swap source cell with destination cell (rolling edit, same column)
+  static DragTool *makeCellSwapperTool(XsheetViewer *viewer);
+
+  // Alt+SmartTab: move boundary between two adjacent levels without changing
+  // total frame count (true rolling edit). invert=true for upper smart tab.
+  static DragTool *makeLevelRollingTool(XsheetViewer *viewer, bool invert);
 };
 
 void setPlayRange(int r0, int r1, int step, bool withUndo = true);

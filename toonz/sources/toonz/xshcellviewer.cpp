@@ -4055,7 +4055,10 @@ void CellArea::mousePressEvent(QMouseEvent *event) {
 
     if (m_levelExtenderRect.contains(pos.x, pos.y)) {
       m_viewer->getKeyframeSelection()->selectNone();
-      if (event->modifiers() & Qt::ControlModifier)
+      if (event->modifiers() & Qt::AltModifier)
+        // Rolling edit: extend "this" level while shrinking the next one.
+        setDragTool(XsheetGUI::DragTool::makeLevelRollingTool(m_viewer, false));
+      else if (event->modifiers() & Qt::ControlModifier)
         setDragTool(
             XsheetGUI::DragTool::makeLevelExtenderTool(m_viewer, false));
       else
@@ -4063,8 +4066,12 @@ void CellArea::mousePressEvent(QMouseEvent *event) {
     } else if (event->modifiers() & Qt::ControlModifier &&
                m_upperLevelExtenderRect.contains(pos.x, pos.y)) {
       m_viewer->getKeyframeSelection()->selectNone();
-      setDragTool(
-          XsheetGUI::DragTool::makeLevelExtenderTool(m_viewer, false, true));
+      if (event->modifiers() & Qt::AltModifier)
+        // Rolling edit upward: extend "this" level while shrinking the prev one.
+        setDragTool(XsheetGUI::DragTool::makeLevelRollingTool(m_viewer, true));
+      else
+        setDragTool(
+            XsheetGUI::DragTool::makeLevelExtenderTool(m_viewer, false, true));
     } else {
       bool hasDragBar = Preferences::instance()->isShowDragBarsEnabled();
 
@@ -4136,6 +4143,26 @@ void CellArea::mousePressEvent(QMouseEvent *event) {
         if (m_viewer->getDragTool()) m_viewer->dragToolRelease(event);
       }
 
+      // Cell swap / block swap: Alt+Drag on a non-empty cell.
+      // Intercepted before the level-range selection below would widen
+      // the selection. If the clicked cell is already inside a multi-cell
+      // selection, the whole block is swapped; otherwise single-cell swap.
+      if (isInDragArea && !isCellEmpty &&
+          (event->modifiers() & Qt::AltModifier)) {
+        m_viewer->getKeyframeSelection()->selectNone();
+        m_viewer->getCellSelection()->makeCurrent();
+        // Only override selection if the cell is NOT already selected —
+        // that way a pre-selected block is preserved for block swap.
+        if (!m_viewer->getCellSelection()->isCellSelected(row, col))
+          m_viewer->getCellSelection()->selectCells(row, col, row, col);
+        TApp::instance()->getCurrentSelection()->notifySelectionChanged();
+        setDragTool(XsheetGUI::DragTool::makeCellSwapperTool(m_viewer));
+        m_viewer->dragToolClick(event);
+        event->accept();
+        update();
+        return;
+      }
+
       if (isInDragArea) {
         TXshColumn *column = xsh->getColumn(col);
         if (column && !m_viewer->getCellSelection()->isCellSelected(row, col)) {
@@ -4161,7 +4188,15 @@ void CellArea::mousePressEvent(QMouseEvent *event) {
           setDragTool(XsheetGUI::DragTool::makeLevelMoverTool(m_viewer));
       } else {
         m_viewer->getKeyframeSelection()->selectNone();
-        if (isSoundPreviewArea)
+        if (!isCellEmpty && (event->modifiers() & Qt::AltModifier)) {
+          // Rolling edit: Alt+click on cell content (drag bars on) — swap.
+          // isInDragArea was false because the user didn't click the drag bar
+          // strip; we still want to activate the swap tool.
+          m_viewer->getCellSelection()->makeCurrent();
+          m_viewer->getCellSelection()->selectCells(row, col, row, col);
+          TApp::instance()->getCurrentSelection()->notifySelectionChanged();
+          setDragTool(XsheetGUI::DragTool::makeCellSwapperTool(m_viewer));
+        } else if (isSoundPreviewArea)
           setDragTool(XsheetGUI::DragTool::makeSoundScrubTool(
               m_viewer, column->getSoundColumn()));
         else if (isSoundExtenderArea)

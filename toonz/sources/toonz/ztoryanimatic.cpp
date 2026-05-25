@@ -607,11 +607,27 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
     if ((int)(iv * m_ppf) >= 4) tickEvery = iv;
   }
 
+  // Label formatter: frame number or timecode (HH:MM:SS:FF)
+  auto fmtFrame = [&](int f) -> QString {
+    if (!m_showTimecode || m_fps <= 0) return QString::number(f);
+    int fps   = qMax(1, (int)qRound(m_fps));
+    int fr    = f % fps;
+    int total = f / fps;
+    int ss    = total % 60;
+    int mm    = (total / 60) % 60;
+    int hh    = total / 3600;
+    if (hh > 0)
+      return QString("%1:%2:%3:%4")
+          .arg(hh).arg(mm,2,10,QChar('0')).arg(ss,2,10,QChar('0')).arg(fr,2,10,QChar('0'));
+    return QString("%1:%2:%3")
+        .arg(mm,2,10,QChar('0')).arg(ss,2,10,QChar('0')).arg(fr,2,10,QChar('0'));
+  };
+
   for (int f = 0; (int)(f * m_ppf) < w; f++) {
     int x = kLabelW + (int)(f * m_ppf);
     if (f % labelEvery == 0) {
       p.drawLine(x, rulerY, x, rulerY + 12);
-      p.drawText(x + 2, rulerY + 11, QString::number(f));
+      p.drawText(x + 2, rulerY + 11, fmtFrame(f));
     } else if (tickEvery > 0 && f % tickEvery == 0) {
       p.drawLine(x, rulerY + 6, x, rulerY + 12);
     }
@@ -4063,7 +4079,62 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   connect(addShotBtn, &QToolButton::clicked,
           this, &ZtoryAnimaticPanel::onAddShot);
   tbLay->addWidget(addShotBtn);
+
+  // ── Delete — right next to Add (+ -), matching Board toolbar layout ──────
+  auto makeAnimaticBtn = [&](const char *icon, const QString &tip) {
+    QToolButton *btn = new QToolButton(toolbar);
+    btn->setIcon(createQIcon(icon));
+    btn->setIconSize(QSize(20, 20));
+    btn->setFixedSize(28, 28);
+    btn->setToolTip(tip);
+    btn->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}"
+                       "QToolButton:hover{background:#555;}");
+    return btn;
+  };
+  QToolButton *deleteBtn = makeAnimaticBtn("ztoryc_delete_shot", tr("Delete selected shots  (Del)"));
+  connect(deleteBtn, &QToolButton::clicked, this, &ZtoryAnimaticPanel::onDeleteShots);
+  tbLay->addWidget(deleteBtn);
+  tbLay->addSpacing(8);
   tbLay->addWidget(mergeBtn);
+  tbLay->addSpacing(8);
+
+  // ── Copy / Clone / Paste ─────────────────────────────────────────────────
+  auto makeAnimaticBtn2 = [&](const char *icon, const QString &tip) {
+    QToolButton *btn = new QToolButton(toolbar);
+    btn->setIcon(createQIcon(icon));
+    btn->setIconSize(QSize(20, 20));
+    btn->setFixedSize(28, 28);
+    btn->setToolTip(tip);
+    btn->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}"
+                       "QToolButton:hover{background:#555;}");
+    return btn;
+  };
+  QToolButton *copyBtn  = makeAnimaticBtn2("ztoryc_copy",  tr("Copy selected shots  (Ctrl+C)"));
+  QToolButton *cloneBtn = makeAnimaticBtn2("ztoryc_clone", tr("Clone selected shots  (Ctrl+D)"));
+  QToolButton *pasteBtn = makeAnimaticBtn2("ztoryc_paste", tr("Paste shots  (Ctrl+V)"));
+  connect(copyBtn,  &QToolButton::clicked, this, &ZtoryAnimaticPanel::onCopyShots);
+  connect(cloneBtn, &QToolButton::clicked, this, &ZtoryAnimaticPanel::onCloneShots);
+  connect(pasteBtn, &QToolButton::clicked, this, &ZtoryAnimaticPanel::onPasteShots);
+  tbLay->addWidget(copyBtn);
+  tbLay->addWidget(cloneBtn);
+  tbLay->addWidget(pasteBtn);
+  tbLay->addSpacing(8);
+
+  // Frame / Timecode toggle
+  m_timecodeBtn = new QToolButton(toolbar);
+  m_timecodeBtn->setText("TC");
+  m_timecodeBtn->setCheckable(true);
+  m_timecodeBtn->setFixedSize(32, 22);
+  m_timecodeBtn->setToolTip(tr("Toggle between frame numbers and timecode (MM:SS:FF)"));
+  m_timecodeBtn->setStyleSheet(
+      "QToolButton{background:transparent;border:1px solid #555;border-radius:3px;"
+      "color:#aaa;font-size:10px;font-weight:bold;}"
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#3a6a9a;color:#fff;border-color:#5599cc;}");
+  connect(m_timecodeBtn, &QToolButton::toggled, this, [this](bool on) {
+    m_ruler->setShowTimecode(on);
+  });
+  tbLay->addWidget(m_timecodeBtn);
   tbLay->addSpacing(8);
 
   // Auto-match toggle: when ON, automatically syncs the animatic slot
@@ -4294,6 +4365,15 @@ void ZtoryAnimaticPanel::refreshFromScene() {
   m_track->refreshFromScene();
   refreshAudioTracks();
   updateTrackWidths();
+  // Keep ruler FPS in sync so the TC toggle shows correct timecode after
+  // the user changes frame rate in Scene Settings (fires sceneChanged).
+  if (m_ruler) {
+    ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
+    if (sc) {
+      double fps = sc->getProperties()->getOutputProperties()->getFrameRate();
+      m_ruler->setFps(fps);
+    }
+  }
   m_refreshing = false;
 }
 

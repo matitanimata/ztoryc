@@ -59,6 +59,10 @@
 // TnzCore includes
 #include "tundo.h"
 
+// std includes
+#include <map>
+#include <climits>
+
 // Qt includes
 #include <QPainter>
 #include <QMouseEvent>
@@ -381,6 +385,342 @@ void XsheetGUI::shiftPlayRange(int row, int shiftAmount) {
   if (row <= playR1) playR1 += shiftAmount;
   if (playR1 < playR0) playR1 = playR0;
   XsheetGUI::setPlayRange(playR0, playR1, step, false);
+}
+
+//=============================================================================
+// CellSwapper DragTool — Alt+Drag swaps a cell range with another in the same
+// column (single-cell swap or block swap via drag bar).
+//=============================================================================
+namespace {
+
+// Undo for both single-cell and block swap: stores original content of the
+// two ranges and restores them on undo; redo re-applies the swap.
+class CellSwapUndo final : public TUndo {
+  int m_col;
+  int m_srcR0, m_srcR1;  // source range (inclusive)
+  int m_dstR0;           // destination range start (same length as src range)
+  std::vector<TXshCell> m_srcCells; // original content of source range
+  std::vector<TXshCell> m_dstCells; // original content of destination range
+
+  void apply(const std::vector<TXshCell> &toSrc,
+             const std::vector<TXshCell> &toDst) const {
+    TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    int len = m_srcR1 - m_srcR0 + 1;
+    for (int i = 0; i < len; i++) {
+      xsh->setCell(m_srcR0 + i, m_col, toSrc[i]);
+      xsh->setCell(m_dstR0 + i, m_col, toDst[i]);
+    }
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+
+public:
+  CellSwapUndo(int col,
+               int srcR0, int srcR1,
+               int dstR0,
+               std::vector<TXshCell> srcCells,
+               std::vector<TXshCell> dstCells)
+      : m_col(col)
+      , m_srcR0(srcR0), m_srcR1(srcR1), m_dstR0(dstR0)
+      , m_srcCells(std::move(srcCells)), m_dstCells(std::move(dstCells)) {}
+
+  void undo() const override { apply(m_srcCells, m_dstCells); }
+  void redo() const override { apply(m_dstCells, m_srcCells); }
+
+  int getSize() const override {
+    return sizeof(*this) +
+           (int)(m_srcCells.size() + m_dstCells.size()) * (int)sizeof(TXshCell);
+  }
+  QString getHistoryString() override { return QObject::tr("Swap Cells"); }
+};
+
+class CellSwapperTool final : public XsheetGUI::DragTool {
+  int  m_srcR0, m_srcR1; // source range rows
+  int  m_srcCol;
+  int  m_dstRow;         // destination anchor (top of the destination range)
+  bool m_valid;
+
+  int rangeLen() const { return m_srcR1 - m_srcR0 + 1; }
+
+public:
+  explicit CellSwapperTool(XsheetViewer *viewer)
+      : XsheetGUI::DragTool(viewer)
+      , m_srcR0(-1), m_srcR1(-1), m_srcCol(-1), m_dstRow(-1), m_valid(false) {}
+
+  void onClick(const CellPosition &pos) override {
+    m_srcCol = pos.layer();
+    int clickRow = pos.frame();
+
+    // If the clicked cell is inside an existing selection, use that range
+    // (block swap); otherwise fall back to single-cell swap.
+    int sr0, sc0, sr1, sc1;
+    getViewer()->getCellSelection()->getSelectedCells(sr0, sc0, sr1, sc1);
+    if (clickRow >= sr0 && clickRow <= sr1 &&
+        m_srcCol >= sc0 && m_srcCol <= sc1) {
+      m_srcR0 = sr0;
+      m_srcR1 = sr1;
+    } else {
+      m_srcR0 = m_srcR1 = clickRow;
+    }
+    m_dstRow = m_srcR0;
+    m_valid  = true;
+  }
+
+  void onDrag(const CellPosition &pos) override {
+    if (!m_valid) return;
+    int newDst = pos.frame();
+    if (newDst == m_dstRow) return;
+    m_dstRow = newDst;
+    refreshCellsArea();
+  }
+
+  void onRelease(const CellPosition &pos) override {
+    if (!m_valid) return;
+    m_dstRow = pos.frame();
+    m_valid  = false;
+
+    if (m_dstRow == m_srcR0) return; // no-op: dropped on origin
+
+    int len = rangeLen();
+    TXsheet *xsh = getViewer()->getXsheet();
+
+    std::vector<TXshCell> srcCells(len), dstCells(len);
+    for (int i = 0; i < len; i++) {
+      srcCells[i] = xsh->getCell(m_srcR0 + i, m_srcCol);
+      dstCells[i] = xsh->getCell(m_dstRow + i, m_srcCol);
+    }
+
+    // Swap the two ranges
+    for (int i = 0; i < len; i++) {
+      xsh->setCell(m_srcR0 + i, m_srcCol, dstCells[i]);
+      xsh->setCell(m_dstRow + i, m_srcCol, srcCells[i]);
+    }
+
+    TUndoManager::manager()->add(
+        new CellSwapUndo(m_srcCol, m_srcR0, m_srcR1, m_dstRow,
+                         std::move(srcCells), std::move(dstCells)));
+    TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+
+    // Move selection to where the block landed
+    getViewer()->getCellSelection()->selectCells(
+        m_dstRow, m_srcCol, m_dstRow + len - 1, m_srcCol);
+    TApp::instance()->getCurrentSelection()->notifySelectionChanged();
+
+    refreshCellsArea();
+  }
+
+  void drawCellsArea(QPainter &p) override {
+    if (!m_valid || m_dstRow < 0 || m_dstRow == m_srcR0) return;
+
+    const Orientation *o = getViewer()->orientation();
+    int len = rangeLen();
+    QRect screen;
+    if (o->isVerticalTimeline())
+      screen = getViewer()->rangeToXYRect(
+          CellRange(CellPosition(m_dstRow,       m_srcCol),
+                    CellPosition(m_dstRow + len,  m_srcCol + 1)));
+    else
+      screen = getViewer()->rangeToXYRect(
+          CellRange(CellPosition(m_dstRow,       m_srcCol),
+                    CellPosition(m_dstRow + len,  m_srcCol - 1)));
+
+    // Amber highlight spanning the full destination range
+    p.setPen(QColor(255, 180, 0));
+    for (int i = 0; i < 3; i++)
+      p.drawRect(QRect(screen.topLeft() + QPoint(i, i),
+                       screen.size() - QSize(2 * i, 2 * i)));
+  }
+};
+
+}  // namespace
+
+XsheetGUI::DragTool *XsheetGUI::DragTool::makeCellSwapperTool(
+    XsheetViewer *viewer) {
+  return new CellSwapperTool(viewer);
+}
+
+
+//=============================================================================
+// RollingEdit DragTool — Alt+SmartTab moves the boundary between two adjacent
+// levels without changing the total frame count (true rolling edit).
+//=============================================================================
+namespace {
+
+class RollingEditUndo final : public TUndo {
+  int m_col, m_r0, m_r1;
+  std::vector<TXshCell> m_before, m_after;
+
+  void apply(const std::vector<TXshCell> &cells) const {
+    TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    for (int r = m_r0; r <= m_r1; r++)
+      xsh->setCell(r, m_col, cells[r - m_r0]);
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+
+public:
+  RollingEditUndo(int col, int r0, int r1,
+                  std::vector<TXshCell> before, std::vector<TXshCell> after)
+      : m_col(col), m_r0(r0), m_r1(r1)
+      , m_before(std::move(before)), m_after(std::move(after)) {}
+
+  void undo() const override { apply(m_before); }
+  void redo() const override { apply(m_after); }
+  int getSize() const override {
+    return sizeof(*this) +
+           (int)(m_before.size() + m_after.size()) * (int)sizeof(TXshCell);
+  }
+  QString getHistoryString() override { return QObject::tr("Rolling Edit"); }
+};
+
+class RollingEditTool final : public XsheetGUI::DragTool {
+  int      m_col;
+  bool     m_invert;       // true = upper smart tab (rolling upward)
+  int      m_origBoundary; // boundary at onClick (r1 for bottom, r0 for top)
+  int      m_boundary;     // current boundary during drag
+  int      m_clampLo, m_clampHi;
+  TXshCell m_thisCell;     // drawing on "this" level's side of the boundary
+  TXshCell m_otherCell;    // drawing on the adjacent level's side
+  std::map<int, TXshCell> m_originalCells; // lazily-saved pre-drag state
+
+  void saveBefore(int r) {
+    if (!m_originalCells.count(r))
+      m_originalCells[r] = getViewer()->getXsheet()->getCell(r, m_col);
+  }
+
+  // Apply the rolling boundary move to newBoundary, clamped to valid range.
+  void applyTo(int newBoundary) {
+    TXsheet *xsh = getViewer()->getXsheet();
+    newBoundary  = qBound(m_clampLo, newBoundary, m_clampHi);
+    if (newBoundary == m_boundary) return;
+
+    if (!m_invert) {
+      // Bottom boundary: last frame of "this" level.
+      // Moving down → overwrite next level's cells with thisCell.
+      // Moving up   → overwrite this level's trailing cells with otherCell.
+      if (newBoundary > m_boundary) {
+        for (int r = m_boundary + 1; r <= newBoundary; r++) {
+          saveBefore(r);
+          xsh->setCell(r, m_col, m_thisCell);
+        }
+      } else {
+        for (int r = newBoundary + 1; r <= m_boundary; r++) {
+          saveBefore(r);
+          xsh->setCell(r, m_col, m_otherCell);
+        }
+      }
+    } else {
+      // Top boundary: first frame of "this" level.
+      // Moving up   → overwrite prev level's trailing cells with thisCell.
+      // Moving down → overwrite this level's leading cells with otherCell.
+      if (newBoundary < m_boundary) {
+        for (int r = newBoundary; r < m_boundary; r++) {
+          saveBefore(r);
+          xsh->setCell(r, m_col, m_thisCell);
+        }
+      } else {
+        for (int r = m_boundary; r < newBoundary; r++) {
+          saveBefore(r);
+          xsh->setCell(r, m_col, m_otherCell);
+        }
+      }
+    }
+    m_boundary = newBoundary;
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+
+public:
+  explicit RollingEditTool(XsheetViewer *viewer, bool invert)
+      : XsheetGUI::DragTool(viewer)
+      , m_col(-1), m_invert(invert)
+      , m_origBoundary(-1), m_boundary(-1)
+      , m_clampLo(0), m_clampHi(INT_MAX) {}
+
+  void onClick(const CellPosition &pos) override {
+    int r0, c0, r1, c1;
+    getViewer()->getCellSelection()->getSelectedCells(r0, c0, r1, c1);
+    m_col = pos.layer();
+    m_originalCells.clear();
+
+    TXsheet *xsh = getViewer()->getXsheet();
+    if (!m_invert) {
+      // Bottom smart tab: pos.frame() == r1+1 (the tab sits below selection).
+      // Boundary = r1 = last frame of "this" level.
+      m_origBoundary = r1;
+      m_boundary     = r1;
+      m_thisCell     = xsh->getCell(r1,     m_col);
+      m_otherCell    = xsh->getCell(r1 + 1, m_col);
+      m_clampLo      = r0;       // keep at least 1 frame in "this" level
+      m_clampHi      = INT_MAX;
+    } else {
+      // Upper smart tab: pos.frame() == r0-1 (the tab sits above selection).
+      // Boundary = r0 = first frame of "this" level.
+      m_origBoundary = r0;
+      m_boundary     = r0;
+      m_thisCell     = xsh->getCell(r0,     m_col);
+      m_otherCell    = xsh->getCell(r0 - 1, m_col);
+      m_clampLo      = 0;
+      m_clampHi      = r1;       // keep at least 1 frame in "this" level
+    }
+  }
+
+  void onDrag(const CellPosition &pos) override {
+    applyTo(pos.frame());
+    refreshCellsArea();
+  }
+
+  void onRelease(const CellPosition &pos) override {
+    applyTo(pos.frame());
+
+    if (m_originalCells.empty()) return; // no change
+
+    int lo = m_originalCells.begin()->first;
+    int hi = m_originalCells.rbegin()->first;
+
+    TXsheet *xsh = getViewer()->getXsheet();
+    std::vector<TXshCell> before, after;
+    before.reserve(hi - lo + 1);
+    after.reserve(hi - lo + 1);
+    for (int r = lo; r <= hi; r++) {
+      auto it = m_originalCells.find(r);
+      before.push_back(it != m_originalCells.end()
+                           ? it->second
+                           : xsh->getCell(r, m_col));
+      after.push_back(xsh->getCell(r, m_col));
+    }
+
+    TUndoManager::manager()->add(
+        new RollingEditUndo(m_col, lo, hi,
+                            std::move(before), std::move(after)));
+    TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+
+    refreshCellsArea();
+  }
+
+  void drawCellsArea(QPainter &p) override {
+    if (m_boundary < 0 || m_boundary == m_origBoundary) return;
+    const Orientation *o = getViewer()->orientation();
+    // Draw a line at the new boundary position
+    int drawRow = m_invert ? m_boundary : m_boundary + 1;
+    if (drawRow < 0) return;
+    QRect screen;
+    if (o->isVerticalTimeline())
+      screen = getViewer()->rangeToXYRect(
+          CellRange(CellPosition(drawRow,     m_col),
+                    CellPosition(drawRow + 1, m_col + 1)));
+    else
+      screen = getViewer()->rangeToXYRect(
+          CellRange(CellPosition(drawRow,     m_col),
+                    CellPosition(drawRow + 1, m_col - 1)));
+    p.setPen(QPen(QColor(0, 200, 140), 2));
+    p.drawLine(screen.topLeft(), screen.topRight());
+  }
+};
+
+}  // namespace
+
+XsheetGUI::DragTool *XsheetGUI::DragTool::makeLevelRollingTool(
+    XsheetViewer *viewer, bool invert) {
+  return new RollingEditTool(viewer, invert);
 }
 
 //=============================================================================
