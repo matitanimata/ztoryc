@@ -11,7 +11,6 @@
 #include "columncommand.h"
 #include "tapp.h"
 #include "toonz/toonzscene.h"
-#include "toonz/preferences.h"
 #include "toonz/childstack.h"
 #include "toonz/txsheet.h"
 #include "toonz/txshchildlevel.h"
@@ -6080,20 +6079,17 @@ void ZtoryAnimaticPanel::resequenceXsheet() {
 
 // ── syncStopFrameHolds ────────────────────────────────────────────────────────
 // Connected to ZtoryModel::modelReset (fires after every resequenceXsheet()).
-// When the ZtoryAutoStopFrameHold preference is ON, inserts a Stop Frame Hold
-// cell at the boundary row (r1+1) of each shot column so that implicit hold
-// terminates cleanly at the shot boundary instead of bleeding into the next
-// shot during main-xsheet animatic playback.
+// Inserts a Stop Frame Hold cell at the boundary row (r1+1) of each shot
+// column so that implicit hold terminates cleanly at the shot boundary instead
+// of bleeding into the next shot during main-xsheet animatic playback.
 //
 // ZtoryModel::resequenceXsheet() clears ALL cells (0..maxFrames) in every
 // child-level column before repositioning them, so this function always starts
 // from a clean slate — no stale SFH cells can survive a resequence.
 //
-// When the preference is OFF this function is a no-op, so the connection to
-// modelReset has negligible cost in normal (non-Ztoryc) workflows.
+// Filters for child-level columns only, so it is a no-op on scenes without
+// Ztoryc sub-scene shots.
 void ZtoryAnimaticPanel::syncStopFrameHolds() {
-  if (!Preferences::instance()->isZtoryAutoStopFrameHoldEnabled()) return;
-
   TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
   if (!xsh) return;
 

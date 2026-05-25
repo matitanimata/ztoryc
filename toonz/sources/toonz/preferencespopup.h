@@ -134,7 +134,6 @@ private:
   QWidget* createColorsPage();
   QWidget* createVersionControlPage();
   QWidget* createTouchTabletPage();
-  QWidget* createZtoryPage();
   QWidget* createImportPrefsPage();
 
   //--- callbacks ---

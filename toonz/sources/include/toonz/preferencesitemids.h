@@ -239,11 +239,6 @@ enum PreferencesItemId {
 
   doNotShowPopupSaveScene,
 
-  //----------
-  // Ztoryc
-  ztoryAutoStopFrameHold,
-  ztoryUseInOutMarkers,
-
   PreferencesItemCount
 };
 
