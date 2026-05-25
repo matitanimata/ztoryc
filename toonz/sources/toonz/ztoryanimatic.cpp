@@ -73,7 +73,12 @@ extern ToggleCommandHandler mainAudioToggle;
 
 // Shared label column width — must match ZtoryAudioTrack::labelW (80px).
 // Used by ZtoryAnimaticRuler and ZtoryAnimaticTrack to align with audio tracks.
-static constexpr int kLabelW = 80;
+static constexpr int    kLabelW  = 80;
+// Zoom limits (pixels per frame).
+// kMinPpf = 0.02 supports a 26-minute episode (37 440 frames) in a ~750 px
+// viewport without scrolling.  kMaxPpf = 200 gives single-frame editing.
+static constexpr double kMinPpf  = 0.02;
+static constexpr double kMaxPpf  = 200.0;
 
 // Find the live StoryboardPanel instance for undo/redo from the Animatic.
 // Searches the whole widget tree since the Board can be embedded or floating.
@@ -575,18 +580,39 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
   }
 
   // ---- Tick marks ----
-  p.setFont(QFont());
+  // Choose label interval dynamically: smallest "nice" interval (in frames) such
+  // that adjacent labels are at least kMinLabelPx apart.
+  // Intervals follow animation-friendly units: frames → seconds (×24) → minutes.
+  p.setFont(QFont("", 8));
   p.setPen(QColor(180, 180, 180));
   int w = width() - kLabelW;
-  int tickEvery = 1;
-  if (m_ppf < 4)       tickEvery = 24;
-  else if (m_ppf < 12) tickEvery = 6;
-  for (int f = 0; f * m_ppf < w; f++) {
+  // Fully adaptive tick spacing — fps-agnostic, works in both directions:
+  //   zoom in  → labels every 1/2/5/10 frames (frame-accurate at high zoom)
+  //   zoom out → labels every 25/50/100/250/... frames (no crowding)
+  // Series: 1 2 5 10 25 50 100 250 500 1000 ... (base-10/5, universally readable)
+  p.setFont(QFont());  // use application default font (same as original)
+  static const int kNice[] = {
+      1, 2, 5, 10, 25, 50, 100, 250, 500,
+      1000, 2500, 5000, 10000, 25000, 50000
+  };
+  const int kMinLabelPx = 40;  // minimum pixels between two label centres
+  int labelEvery = kNice[0];
+  for (int iv : kNice) {
+    if ((int)(iv * m_ppf) >= kMinLabelPx) { labelEvery = iv; break; }
+  }
+  // Minor ticks: next finer level, at least 4 px apart (0 = no minor ticks)
+  int tickEvery = 0;
+  for (int iv : kNice) {
+    if (iv >= labelEvery) break;
+    if ((int)(iv * m_ppf) >= 4) tickEvery = iv;
+  }
+
+  for (int f = 0; (int)(f * m_ppf) < w; f++) {
     int x = kLabelW + (int)(f * m_ppf);
-    if (f % 24 == 0) {
+    if (f % labelEvery == 0) {
       p.drawLine(x, rulerY, x, rulerY + 12);
       p.drawText(x + 2, rulerY + 11, QString::number(f));
-    } else if (f % tickEvery == 0) {
+    } else if (tickEvery > 0 && f % tickEvery == 0) {
       p.drawLine(x, rulerY + 6, x, rulerY + 12);
     }
   }
@@ -800,7 +826,7 @@ void ZtoryAnimaticRuler::contextMenuEvent(QContextMenuEvent *e) {
 void ZtoryAnimaticRuler::wheelEvent(QWheelEvent *e) {
   int delta = e->angleDelta().y();
   double factor = (delta > 0) ? 1.15 : (1.0 / 1.15);
-  double newPpf = qBound(2.0, m_ppf * factor, 64.0);
+  double newPpf = qBound(kMinPpf, m_ppf * factor, kMaxPpf);
   emit zoomChanged(newPpf);
   e->accept();
 }
@@ -1277,6 +1303,18 @@ bool ZtoryAudioTrack::event(QEvent *e) {
     return true;
   }
   return QWidget::event(e);
+}
+
+void ZtoryAudioTrack::wheelEvent(QWheelEvent *e) {
+  if (e->modifiers() & Qt::ControlModifier) {
+    int delta = e->angleDelta().y();
+    double factor = (delta > 0) ? 1.15 : (1.0 / 1.15);
+    double newPpf = qBound(kMinPpf, m_ppf * factor, kMaxPpf);
+    emit zoomChanged(newPpf);
+    e->accept();
+  } else {
+    e->ignore();  // plain scroll → scroll area
+  }
 }
 
 void ZtoryAudioTrack::mousePressEvent(QMouseEvent *e) {
@@ -2209,7 +2247,16 @@ void ZtoryAnimaticTrack::mouseDoubleClickEvent(QMouseEvent *e) {
 }
 
 void ZtoryAnimaticTrack::wheelEvent(QWheelEvent *e) {
-  e->ignore();  // zoom is handled by the ruler only
+  if (e->modifiers() & Qt::ControlModifier) {
+    // Ctrl+Scroll: zoom in/out, keeping the frame under the cursor fixed.
+    int delta = e->angleDelta().y();
+    double factor = (delta > 0) ? 1.15 : (1.0 / 1.15);
+    double newPpf = qBound(kMinPpf, m_ppf * factor, kMaxPpf);
+    emit zoomChanged(newPpf);
+    e->accept();
+  } else {
+    e->ignore();  // plain scroll → horizontal pan via scroll area
+  }
 }
 
 // ---- ZtoryStoryStrip ----
@@ -3937,12 +3984,23 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   QLabel *zoomLabel = new QLabel("Zoom:", toolbar);
   zoomLabel->setStyleSheet("color:#ccc; font-size:11px;");
   m_zoomSlider = new QSlider(Qt::Horizontal, toolbar);
-  m_zoomSlider->setRange(2, 640);   // min 0.2 ppf — allows seeing very long audio tracks
-  m_zoomSlider->setValue((int)(m_ppf * 10));
+  m_zoomSlider->setRange(2, 20000);  // 0.02–200 ppf (×100 scale)
+  m_zoomSlider->setValue((int)(m_ppf * 100));
   m_zoomSlider->setMaximumWidth(160);
   m_zoomSlider->setToolTip("Zoom (pixels per frame)");
   tbLay->addWidget(zoomLabel);
   tbLay->addWidget(m_zoomSlider);
+
+  // Fit All: zoom out to show the entire animatic in one view
+  m_fitAllBtn = new QToolButton(toolbar);
+  m_fitAllBtn->setText("[]");
+  m_fitAllBtn->setFixedSize(26, 22);
+  m_fitAllBtn->setToolTip(tr("Fit All — zoom to show the entire animatic (Ctrl+0)"));
+  m_fitAllBtn->setStyleSheet(
+      "QToolButton{background:transparent;border:1px solid #555;border-radius:3px;"
+      "color:#ccc;font-size:10px;font-weight:bold;}"
+      "QToolButton:hover{background:#555;}");
+  tbLay->addWidget(m_fitAllBtn);
   tbLay->addSpacing(12);
 
   QToolButton *selectBtn = new QToolButton(toolbar);
@@ -4120,8 +4178,9 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   connect(m_ruler, &ZtoryAnimaticRuler::zoomChanged,
           this, &ZtoryAnimaticPanel::onZoomChanged);
   connect(m_zoomSlider, &QSlider::valueChanged, this, [this](int v){
-    onZoomChanged(v / 10.0);
+    onZoomChanged(v / 100.0);
   });
+  connect(m_fitAllBtn, &QToolButton::clicked, this, &ZtoryAnimaticPanel::onFitAll);
   connect(m_track, &ZtoryAnimaticTrack::matchSubsceneDuration,
           this, &ZtoryAnimaticPanel::onMatchSubsceneDuration);
   connect(m_track, &ZtoryAnimaticTrack::razorRequested,
@@ -4372,6 +4431,9 @@ void ZtoryAnimaticPanel::refreshAudioTracks() {
 
     connect(at, &ZtoryAudioTrack::razorRequested,
             this, &ZtoryAnimaticPanel::onAudioRazorRequested);
+    // Ctrl+Scroll on audio track: zoom the whole animatic (same as ruler/video track)
+    connect(at, &ZtoryAudioTrack::zoomChanged,
+            this, &ZtoryAnimaticPanel::onZoomChanged);
     // segmentMoved: audio segment was dragged. Notify the xsheet via a queued
     // (deferred) call so we are NOT inside the widget's event handler when
     // notifyXsheetChanged fires — that would trigger refreshAudioTracks() and
@@ -4826,6 +4888,13 @@ void ZtoryAnimaticPanel::keyPressEvent(QKeyEvent *e) {
   // Cmd+N — add new shot after selection
   if (cmd && e->key() == Qt::Key_N) {
     onAddShot();
+    e->accept();
+    return;
+  }
+
+  // Ctrl+0 — Fit All: zoom to show the entire animatic
+  if (cmd && e->key() == Qt::Key_0) {
+    onFitAll();
     e->accept();
     return;
   }
@@ -5968,6 +6037,21 @@ void ZtoryAnimaticPanel::onMatchSubsceneDuration(int col) {
   onShotDurationChanged(col, newDuration - 1);
 }
 
+void ZtoryAnimaticPanel::onFitAll() {
+  // Compute the ppf that fits all video blocks into the current viewport width.
+  int maxFrame = 0;
+  for (auto &b : m_track->blocks())
+    maxFrame = qMax(maxFrame, b.startFrameInMain + (b.f1 - b.f0 + 1));
+  if (maxFrame <= 0) return;
+  int vpW = m_scroll ? m_scroll->viewport()->width() - kLabelW : 800;
+  if (vpW <= 0) vpW = 800;
+  double fitPpf = qBound(kMinPpf, (double)vpW / maxFrame, kMaxPpf);
+  onZoomChanged(fitPpf);
+  // Scroll back to frame 0 so the whole timeline is in view from the start.
+  if (m_scroll)
+    m_scroll->horizontalScrollBar()->setValue(0);
+}
+
 void ZtoryAnimaticPanel::onZoomChanged(double ppf) {
   // Zoom-to-cursor: compute cursor position in content coords BEFORE changing ppf.
   int oldScrollX = m_scroll ? m_scroll->horizontalScrollBar()->value() : 0;
@@ -5987,7 +6071,7 @@ void ZtoryAnimaticPanel::onZoomChanged(double ppf) {
   // Sync slider without triggering another valueChanged
   if (m_zoomSlider) {
     m_zoomSlider->blockSignals(true);
-    m_zoomSlider->setValue((int)(ppf * 10));
+    m_zoomSlider->setValue((int)(ppf * 100));
     m_zoomSlider->blockSignals(false);
   }
   updateTrackWidths();

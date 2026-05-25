@@ -349,6 +349,7 @@ public:
   void setEffectiveMuted(bool on) { m_effectiveMuted = on; update(); }
 
 signals:
+  void zoomChanged(double ppf);   // Ctrl+Scroll on this track
   void razorRequested(int col, int frame);
   void segmentMoved();
   void segmentDroppedOutside(int srcCol, int origR0, int origR1, int dragOffset, QPoint globalPos);
@@ -363,6 +364,7 @@ public slots:
 protected:
   bool event(QEvent *) override;
   void paintEvent(QPaintEvent *) override;
+  void wheelEvent(QWheelEvent *) override;
   void mousePressEvent(QMouseEvent *) override;
   void mouseMoveEvent(QMouseEvent *) override;
   void mouseReleaseEvent(QMouseEvent *) override;
@@ -757,6 +759,7 @@ private slots:
   void onAddShot();
   void resequenceXsheet();
   void onZoomChanged(double ppf);
+  void onFitAll();
   void onMatchSubsceneDuration(int col);
   void onFrameChanged(int frame);
   void onAudioRazorRequested(int col, int frame);
@@ -785,7 +788,8 @@ private:
   QVBoxLayout *m_scrollLay = nullptr;
   QScrollArea *m_scroll    = nullptr;
   QList<ZtoryAudioTrack *> m_audioTracks;
-  QSlider *m_zoomSlider = nullptr;
+  QSlider     *m_zoomSlider  = nullptr;
+  QToolButton *m_fitAllBtn   = nullptr;
   bool m_audioLinked = true;
   double m_ppf = 8.0;
   // ── Panning state (Space+drag or Middle-mouse drag) ───────────────────────

@@ -7,6 +7,34 @@
 
 ---
 
+## [2026-05-25c] — Animatic: zoom Ctrl+Scroll, Fit All, ruler adattivo
+
+### Added
+- **Ctrl+Scroll zoom** su tutto l'animatic — funziona su video track, audio track
+  e ruler (prima solo sul ruler). Ctrl+Scroll → zoom, scroll plain → pan.
+- **Pulsante Fit All `[]`** nella toolbar animatic — calcola il ppf esatto per
+  vedere tutta la timeline in un click. Anche shortcut **Ctrl+0**.
+- **Limiti zoom estesi**: min `0.02 ppf` (supporta 26 minuti a 24fps in ~750px),
+  max `200 ppf` (editing frame-per-frame). Slider ricalibrato ×100.
+- **`ZtoryAudioTrack::zoomChanged` signal** — connesso a `onZoomChanged` del panel.
+
+### Fixed
+- **Ruler adattivo** — label spacing completamente adattivo in entrambe le
+  direzioni con serie base-10/5 (fps-agnostica: 1,2,5,10,25,50,100,250,500…):
+  - Zoom in alto: label su ogni frame
+  - Zoom normale (~8ppf): label ogni 5-10 frame
+  - Zoom out estremo (26min): label ogni 2500-5000 frame senza accavallamento
+  - Font ripristinato al default app (era `QFont("",8)` → spaziatura anomala)
+- **`assignKeepNumbers()` crash su board vuota** (Windows) — accesso
+  `m_shots[-1]` con board vuota. Fix: `if (total <= 1) return` early.
+
+### Notes
+- Thumbnail quality Board + Navigator: render a risoluzione fisica (ppf × DPR),
+  rescalePreview DPR-aware, auto-resize su ridimensionamento finestra (150ms debounce),
+  re-render su resize con previewRerenderNeeded signal + 200ms debounce.
+- Min cella Board: 200→150px.
+
+
 ## [2026-05-25b] — Fix crash Board + su scena vuota (Windows)
 
 ### Fixed
