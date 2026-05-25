@@ -7,6 +7,61 @@
 
 ---
 
+## [2026-05-25b] — Fix crash Board + su scena vuota (Windows)
+
+### Fixed
+- **`assignKeepNumbers()` crash su board vuota** (`storyboardpanel.cpp`) — con il
+  primo shot (total=1, insertAt=0), la condizione `insertAt >= total-1` (0>=0) era
+  vera e accedeva a `m_shots[-1]` → segfault su Windows (UB silenzioso su macOS).
+  Fix: early return `if (total <= 1)` — nessun vicino da ereditare, ci pensa
+  `renumberAll()`. In uso normale non si manifesta perché Ztoryc parte con uno shot
+  già creato dalla startup dialog.
+
+### Notes
+- Build locale aggiornata; CI non triggerata (fix non urgente per utenti normali).
+
+
+## [2026-05-25] — Script panel: import multi-formato (.fdx, .fountain, .docx, .odt, .txt)
+
+### Added
+- **`parseFountain()`** (`ztoryscriptpanel.cpp`) — parser completo del formato Fountain
+  (open standard per sceneggiature): scene heading, character, dialogue, parenthetical,
+  action, transition, lyrics, boneyard, note inline. Title page saltata automaticamente.
+- **`parseDocx()`** — parser cross-platform per `.docx` (Word 2007+): estrae
+  `word/document.xml` dallo ZIP con un lettore zlib custom (nessuna dipendenza esterna),
+  legge gli stili di paragrafo Word. Se nessuno stile è riconosciuto come screenplay,
+  ricade sull'euristica di `parseTxt()`.
+- **`parseOdt()`** — parser cross-platform per `.odt` (LibreOffice/OpenDocument): estrae
+  `content.xml`, gestisce `<text:span>` annidati tramite `readElementText()`, stili ODF.
+  Stesso fallback euristico di DOCX.
+- **`parseTxt()` migliorato** — ora rileva automaticamente se il testo è una
+  sceneggiatura (conta le scene heading SC\d+ / INT. / EXT.): se sì applica la
+  formattazione visiva identica a FDX; se no restituisce il testo grezzo.
+- **zlib linkata esplicitamente** (`toonz/sources/toonz/CMakeLists.txt`) al target
+  Ztoryc via `find_package(ZLIB REQUIRED)` — necessaria per il decompressore ZIP dei
+  parser DOCX/ODT.
+- **Word wrap** nel panel script — `WidgetWidth` invece di `NoWrap`: le righe si
+  adattano alla larghezza del panel mantenendo la formattazione (indentazioni, dialoghi).
+- **Conversione .doc → .fdx** via script Python standalone (`/tmp/convert_fdx.py`):
+  usato in sessione per convertire "Il Palazzo Scomparso v7.doc" → `.fdx`.
+
+### Fixed
+- **DOCX fallback**: paragrafi vuoti ora inclusi nel flat text → l'euristica riceve
+  le righe vuote separatrici indispensabili per distinguere i blocchi dialogo/azione.
+- **ODT**: il `continue` iniziale nel loop XML filtrava tutti gli `isCharacters()` →
+  testo completamente vuoto. Fix: rimosso il filtro; `<text:span>` gestito con
+  `readElementText(IncludeChildElements)`.
+- **ODT style-name**: attributo ora letto correttamente via namespace URI esplicito
+  (`urn:oasis:names:tc:opendocument:xmlns:text:1.0`) invece di `contains("text")`.
+
+### Notes
+- `.doc` (formato binario legacy) non supportato cross-platform: mostra messaggio
+  che invita a riesportare come `.docx`.
+- File dialog e drag & drop ora accettano: `.fdx`, `.fountain`, `.docx`, `.odt`,
+  `.doc`, `.txt`.
+
+---
+
 ## [2026-05-25] — Qualità anteprime Board e Navigator
 
 ### Fixed
