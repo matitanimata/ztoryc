@@ -59,6 +59,8 @@
 #include <QGroupBox>
 #include <QCheckBox>
 
+#include "ztorymodel.h"
+
 using namespace DVGui;
 
 //*******************************************************************************************
@@ -1499,7 +1501,13 @@ QString PreferencesPopup::getUIString(PreferencesItemId id) {
       {useQtNativeWinInk,
        tr("Use Qt's Native Windows Ink Support*\n(CAUTION: This options is for "
           "maintenance purpose. \n Do not activate this option or the tablet "
-          "won't work properly.)")}};
+          "won't work properly.")},
+
+      // Ztoryc
+      {ztoryAutoStopFrameHold,
+       tr("Insert Stop Frame Hold at Shot Boundary")},
+      {ztoryUseInOutMarkers,
+       tr("Use Sub-Scene In/Out Markers as Shot Duration")}};
 
   return uiStringTable.value(id, QString());
 }
@@ -1647,7 +1655,8 @@ PreferencesPopup::PreferencesPopup()
              << tr("Loading") << tr("Saving") << tr("Drawing") << tr("Tools")
              << tr("Scene") << tr("Animation") << tr("Preview")
              << tr("Onion Skin") << tr("Colors") << tr("3rd Party Apps")
-             << tr("Version Control") << tr("Touch/Tablet Settings");
+             << tr("Version Control") << tr("Touch/Tablet Settings")
+             << tr("Ztoryc");
   m_categoryList->addItems(categories);
   m_categoryList->setFixedWidth(160);
   m_categoryList->setCurrentRow(0);
@@ -1669,6 +1678,7 @@ PreferencesPopup::PreferencesPopup()
   m_stackedWidget->addWidget(createImportExportPage());
   m_stackedWidget->addWidget(createVersionControlPage());
   m_stackedWidget->addWidget(createTouchTabletPage());
+  m_stackedWidget->addWidget(createZtoryPage());
   // createImportPrefsPage() must always be last
   m_stackedWidget->addWidget(createImportPrefsPage());
 
@@ -2463,6 +2473,49 @@ QWidget* PreferencesPopup::createTouchTabletPage() {
                        SLOT(setChecked(bool)));
 
   assert(ret);
+
+  return widget;
+}
+
+//-----------------------------------------------------------------------------
+
+QWidget* PreferencesPopup::createZtoryPage() {
+  QWidget* widget  = new QWidget(this);
+  QGridLayout* lay = new QGridLayout();
+  setupLayout(lay);
+
+  QGridLayout* sfhLay = insertGroupBox(tr("Animatic Playback"), lay);
+  {
+    insertUI(ztoryAutoStopFrameHold, sfhLay);
+    if (auto *cb = getUI<QCheckBox *>(ztoryAutoStopFrameHold))
+      cb->setToolTip(tr(
+          "Automatically inserts a Stop Frame Hold in the main xsheet at the "
+          "frame immediately after each shot ends.\n"
+          "Prevents implicit hold from bleeding between shots during animatic "
+          "playback. Has no effect if Enable Implicit Hold is disabled."));
+
+    insertUI(ztoryUseInOutMarkers, sfhLay);
+    if (auto *cb = getUI<QCheckBox *>(ztoryUseInOutMarkers)) {
+      cb->setToolTip(tr(
+          "When enabled, the animatic uses each sub-scene's playback range "
+          "markers to determine shot length instead of the last drawn frame.\n"
+          "(Placeholder — not yet implemented.)"));
+      // UI only: wired to preference storage but has no effect.
+      // Do not touch In/Out marker logic until the developer documents it.
+      cb->setEnabled(false);
+    }
+  }
+
+  lay->setRowStretch(lay->rowCount(), 1);
+  widget->setLayout(lay);
+
+  // When Toggle A changes, trigger a resequence so syncStopFrameHolds()
+  // either places or omits Stop Frame Holds according to the new setting.
+  if (auto *cb = getUI<QCheckBox *>(ztoryAutoStopFrameHold)) {
+    connect(cb, &QCheckBox::toggled, [](bool) {
+      ZtoryModel::instance()->resequenceXsheet();
+    });
+  }
 
   return widget;
 }

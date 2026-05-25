@@ -331,6 +331,12 @@ public:
   bool isImplicitHoldEnabled() const {
     return getBoolValue(EnableImplicitHold);
   }
+  bool isZtoryAutoStopFrameHoldEnabled() const {
+    return getBoolValue(ztoryAutoStopFrameHold);
+  }
+  bool isZtoryUseInOutMarkersEnabled() const {
+    return getBoolValue(ztoryUseInOutMarkers);
+  }
   bool isCreationInHoldCellsEnabled() const {
     return getBoolValue(EnableCreationInHoldCells);
   }

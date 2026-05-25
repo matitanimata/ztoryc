@@ -819,6 +819,10 @@ private:
   void applyMuteSolo();
   // Restore muted/solo/locked state onto freshly-created track widgets
   void restoreTrackStates();
+  // Place a Stop Frame Hold at the boundary row of each shot column so that
+  // implicit hold does not bleed into the next shot during animatic playback.
+  // Connected to ZtoryModel::modelReset; no-op when the preference is OFF.
+  void syncStopFrameHolds();
 };
 
 #endif

@@ -605,6 +605,9 @@ void Preferences::definePreferenceItems() {
   define(NumberingSystem, "NumberingSystem", QMetaType::Int, 0);  // Incremental
   define(EnableAutoStretch, "EnableAutoStretch", QMetaType::Bool, false);
   define(EnableImplicitHold, "EnableImplicitHold", QMetaType::Bool, true);
+  // Ztoryc: auto Stop Frame Hold at shot boundaries (off by default)
+  define(ztoryAutoStopFrameHold, "ZtoryAutoStopFrameHold", QMetaType::Bool, false);
+  define(ztoryUseInOutMarkers,   "ZtoryUseInOutMarkers",   QMetaType::Bool, false);
   define(EnableCreationInHoldCells, "EnableCreationInHoldCells",
          QMetaType::Bool, true);
   define(EnableAutoRenumber, "EnableAutoRenumber", QMetaType::Bool, true);

@@ -808,7 +808,9 @@ void ZtoryModel::resequenceXsheet() {
     TXshColumn *column = xsh->getColumn(col);
     if (!column || column->isEmpty()) continue;
     int r0 = 0, r1 = 0;
-    column->getRange(r0, r1);
+    // ignoreLastStop=true: skip any Ztoryc-managed SFH at the boundary row
+    // so it does not inflate the shot's duration during repacking.
+    column->getRange(r0, r1, /*ignoreLastStop=*/true);
     int duration = r1 - r0 + 1;
     TXshChildLevel *cl = nullptr;
     for (int r = r0; r <= r1; r++) {
