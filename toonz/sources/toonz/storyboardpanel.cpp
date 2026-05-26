@@ -1521,7 +1521,7 @@ void StoryboardPanel::onModelResequenced() {
     TXshColumn *column = xsh->getColumn(col);
     if (!column) continue;
     int r0 = 0, r1 = 0;
-    column->getRange(r0, r1, /*ignoreLastStop=*/true);
+    column->getRange(r0, r1);
     int duration = r1 - r0 + 1;
     if (!m_shots[si].data.panels.empty()) {
       m_shots[si].data.panels[0].duration = duration;

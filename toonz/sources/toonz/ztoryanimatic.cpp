@@ -189,7 +189,7 @@ static int videoFrameCount(TXsheet *xsh) {
     TXshColumn *col = xsh->getColumn(c);
     if (!col || col->getSoundColumn()) continue;
     int r0, r1;
-    if (col->getRange(r0, r1, /*ignoreLastStop=*/true)) maxFrame = std::max(maxFrame, r1 + 1);
+    if (col->getRange(r0, r1)) maxFrame = std::max(maxFrame, r1 + 1);
   }
   return maxFrame > 0 ? maxFrame : 1;
 }
@@ -1808,8 +1808,7 @@ void ZtoryAnimaticTrack::refreshFromScene() {
     TXshColumn *column = mainXsh->getColumn(col);
     if (!column || column->isEmpty()) continue;
     int r0 = 0, r1 = 0;
-    // ignoreLastStop=true: a Ztoryc-managed SFH at r1+1 must not inflate duration.
-    column->getRange(r0, r1, /*ignoreLastStop=*/true);
+    column->getRange(r0, r1);
     if (r1 < r0) continue;
     // Cerca child level per identificare lo shot
     TXshChildLevel *cl = nullptr;
@@ -4156,13 +4155,6 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
           ZtoryModel::instance(), &ZtoryModel::setAutoMatch);
   connect(ZtoryModel::instance(), &ZtoryModel::autoMatchChanged,
           m_autoMatchBtn, &QToolButton::setChecked);
-
-  // After every resequence, place Stop Frame Holds at shot boundaries when
-  // the preference is ON.  DirectConnection so the cells are set before any
-  // subsequent notifyXsheetChanged() re-renders the xsheet viewer.
-  connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
-          this, &ZtoryAnimaticPanel::syncStopFrameHolds);
-
   tbLay->addSpacing(12);
   tbLay->addStretch(1);
 
@@ -5812,7 +5804,7 @@ void ZtoryAnimaticPanel::onRollEdit(int colA, int newDurA, int colB, int newDurB
     TXshColumn *column = xsh->getColumn(col);
     if (!column || column->isEmpty()) return;
     int r0 = 0, r1 = 0;
-    column->getRange(r0, r1, /*ignoreLastStop=*/true);
+    column->getRange(r0, r1);
     int curDur = r1 - r0 + 1;
     TXshCell typeCell;
     for (int r = r0; r <= r1; r++) {
@@ -5906,7 +5898,7 @@ void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
   TXshColumn *column = mainXsh->getColumn(col);
   if (!column || column->isEmpty()) return;
   int r0 = 0, r1 = 0;
-  column->getRange(r0, r1, /*ignoreLastStop=*/true);
+  column->getRange(r0, r1);
   int currentDuration = r1 - r0 + 1;
 
   // Trova tipo cella
@@ -6075,56 +6067,6 @@ void ZtoryAnimaticPanel::resequenceXsheet() {
   ZtoryAnimaticController::instance()->invalidateSoundTrack();
 
   xsh->updateFrameCount();
-}
-
-// ── syncStopFrameHolds ────────────────────────────────────────────────────────
-// Connected to ZtoryModel::modelReset (fires after every resequenceXsheet()).
-// Inserts a Stop Frame Hold cell at the boundary row (r1+1) of each shot
-// column so that implicit hold terminates cleanly at the shot boundary instead
-// of bleeding into the next shot during main-xsheet animatic playback.
-//
-// ZtoryModel::resequenceXsheet() clears ALL cells (0..maxFrames) in every
-// child-level column before repositioning them, so this function always starts
-// from a clean slate — no stale SFH cells can survive a resequence.
-//
-// Filters for child-level columns only, so it is a no-op on scenes without
-// Ztoryc sub-scene shots.
-void ZtoryAnimaticPanel::syncStopFrameHolds() {
-  TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
-  if (!xsh) return;
-
-  bool modified = false;
-  for (int col = 0; col < xsh->getColumnCount(); col++) {
-    TXshColumn *column = xsh->getColumn(col);
-    if (!column || column->isEmpty()) continue;
-
-    int r0 = 0, r1 = 0;
-    // ignoreLastStop=true: exclude any trailing SFH from the range so the
-    // boundary calculation is based on actual content frames only.
-    column->getRange(r0, r1, /*ignoreLastStop=*/true);
-    if (r1 < r0) continue;
-
-    // Only process child-level (shot sub-scene) columns.
-    TXshChildLevel *cl = nullptr;
-    for (int r = r0; r <= r1; r++) {
-      TXshCell cell = xsh->getCell(r, col);
-      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
-        cl = cell.m_level->getChildLevel();
-        break;
-      }
-    }
-    if (!cl) continue;
-
-    // Place SFH at the frame immediately after the shot ends.
-    // TXshChildLevel inherits TXshLevel, matching the StopFrameHoldUndo API.
-    xsh->setCell(r1 + 1, col, TXshCell(cl, TFrameId(TFrameId::STOP_FRAME)));
-    modified = true;
-  }
-
-  if (modified) {
-    xsh->updateFrameCount();
-    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
-  }
 }
 
 void ZtoryAnimaticPanel::onMatchSubsceneDuration(int col) {
