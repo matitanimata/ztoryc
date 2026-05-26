@@ -107,6 +107,7 @@ set(MOC_HEADERS
     storyboardpanel.h
     ztorymodel.h
     ztoryanimatic.h
+    ztorymonitorpanel.h
     ztoryscriptpanel.h
     ztorystartup.h
     trackerpopup.h
@@ -240,6 +241,7 @@ set(SOURCES
     storyboardpanel.cpp
     ztorymodel.cpp
     ztoryanimatic.cpp
+    ztorymonitorpanel.cpp
     ztoryscriptpanel.cpp
     ztorystartup.cpp
     xshcellmover.cpp

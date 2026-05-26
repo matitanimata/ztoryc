@@ -189,7 +189,11 @@ static int videoFrameCount(TXsheet *xsh) {
     TXshColumn *col = xsh->getColumn(c);
     if (!col || col->getSoundColumn()) continue;
     int r0, r1;
-    if (col->getRange(r0, r1)) maxFrame = std::max(maxFrame, r1 + 1);
+    // ignoreLastStop=true: skip the trailing SFH placed by
+    // ZtoryModel::resequenceXsheet() so total video frame count reflects
+    // the animatic's actual play length, not +1 per shot.
+    if (col->getRange(r0, r1, /*ignoreLastStop=*/true))
+      maxFrame = std::max(maxFrame, r1 + 1);
   }
   return maxFrame > 0 ? maxFrame : 1;
 }
@@ -1808,7 +1812,10 @@ void ZtoryAnimaticTrack::refreshFromScene() {
     TXshColumn *column = mainXsh->getColumn(col);
     if (!column || column->isEmpty()) continue;
     int r0 = 0, r1 = 0;
-    column->getRange(r0, r1);
+    // ignoreLastStop=true: the SFH placed by ZtoryModel::resequenceXsheet()
+    // at row r1+1 must not inflate the shot block's duration in the animatic
+    // track (otherwise every shot would render 1 frame too long).
+    column->getRange(r0, r1, /*ignoreLastStop=*/true);
     if (r1 < r0) continue;
     // Cerca child level per identificare lo shot
     TXshChildLevel *cl = nullptr;
@@ -2652,7 +2659,11 @@ void ZtoryAnimaticViewer::updateAnimaticFrameRange() {
     TXshColumn *col = mainXsh->getColumn(c);
     if (!col || col->getSoundColumn()) continue; // skip audio
     int r0, r1;
-    if (col->getRange(r0, r1)) totalFrames = std::max(totalFrames, r1 + 1);
+    // ignoreLastStop=true: keep total length aligned with videoFrameCount()
+    // (which also skips the trailing SFH).  Mismatched counts would let the
+    // playhead overshoot mark-out by 1 frame per shot.
+    if (col->getRange(r0, r1, /*ignoreLastStop=*/true))
+      totalFrames = std::max(totalFrames, r1 + 1);
   }
   if (totalFrames <= 0) totalFrames = mainXsh->getFrameCount();
   if (totalFrames <= 0) totalFrames = 1;
@@ -2764,7 +2775,10 @@ void ZtoryAnimaticViewer::onAnimaticPlayingStatusChanged(bool playing) {
         TXshColumn *col = mainXsh->getColumn(c);
         if (!col || col->getSoundColumn()) continue;
         int r0, r1;
-        if (col->getRange(r0, r1)) videoFrames = std::max(videoFrames, r1 + 1);
+        // ignoreLastStop=true: align with videoFrameCount() / totalFrames so
+        // the post-stop clamp doesn't leave the playhead past mark-out.
+        if (col->getRange(r0, r1, /*ignoreLastStop=*/true))
+          videoFrames = std::max(videoFrames, r1 + 1);
       }
       if (videoFrames > 0) {
         int cur = ctrl2->currentFrame();
@@ -5012,7 +5026,9 @@ void ZtoryAnimaticPanel::onShotDoubleClicked(int col) {
   // BUG-01 fix: shots 2+ start at row r0 > 0; getCell(0,col) returned an
   // empty cell for them, so MI_OpenChild never fired.
   int r0 = 0, r1 = 0;
-  column->getRange(r0, r1);
+  // ignoreLastStop=true: skip the trailing SFH so the sub-scene's play
+  // range mark-out matches the shot's actual animatic length, not +1.
+  column->getRange(r0, r1, /*ignoreLastStop=*/true);
   TXshCell cell = xsh->getCell(r0, col);
   if (cell.m_level && cell.m_level->getChildLevel()) {
     app->getCurrentFrame()->setFrame(r0);
@@ -5088,29 +5104,43 @@ static void addRazorKeyframes(TXshChildLevel *cl, int frame) {
 // frames are "held" (empty in storage but rendered as the previous drawing).
 // Before trimming/shifting we must make held frames explicit so that neither
 // shot ends up with empty columns at the cut boundary.
-// |duration| = total number of frames that the child xsheet must cover.
-void materializeCells(TXshChildLevel *cl, int duration) {
+// |duration|   = total number of frames that the child xsheet must cover.
+// |fillToEnd|  = when true, fill implicit holds all the way to duration-1
+//                (needed for split so shiftChildXsheetBy has real cells to
+//                shift even if the last drawing is before the cut point).
+//                When false (default, merge), stop at lastContent to avoid
+//                spurious held frames in merged sub-scenes where columns have
+//                different time ranges.
+void materializeCells(TXshChildLevel *cl, int duration, bool fillToEnd = false) {
   if (!cl) return;
   TXsheet *xsh = cl->getXsheet();
   if (!xsh) return;
   int nCols = xsh->getColumnCount();
   for (int c = 0; c < nCols; c++) {
     // Find the last row that actually has content in this column.
-    // We must NOT fill beyond it: in a merged sub-scene, old columns end at
-    // dstDuration and new columns start at dstDuration.  Filling old columns
-    // past their last content row would create spurious held frames that
-    // overlap with the new columns after a subsequent razor cut.
     int lastContent = -1;
     for (int r = std::min(duration, xsh->getFrameCount()) - 1; r >= 0; r--) {
       if (!xsh->getCell(r, c).isEmpty()) { lastContent = r; break; }
     }
     if (lastContent < 0) continue;  // column entirely empty up to duration
 
+    // fillToEnd=true: fill holds all the way to duration-1 so that
+    // shiftChildXsheetBy can find real cells even past lastContent.
+    // fillToEnd=false (merge): stop at lastContent to avoid filling old
+    // columns past their range in merged sub-scenes.
+    int fillEnd = fillToEnd ? (duration - 1) : lastContent;
+
     TXshCell last;
-    for (int r = 0; r <= lastContent; r++) {
+    for (int r = 0; r <= fillEnd; r++) {
       TXshCell cell = xsh->getCell(r, c);
       if (!cell.isEmpty()) {
-        last = cell;
+        if (cell.getFrameId().isStopFrame()) {
+          // SFH terminates the implicit hold chain — do NOT propagate it into
+          // subsequent empty frames; reset the carry cell.
+          last = TXshCell();
+        } else {
+          last = cell;
+        }
       } else if (!last.isEmpty()) {
         // Held frame: write the last explicit cell so it becomes explicit.
         xsh->setCell(r, c, last);
@@ -5318,7 +5348,9 @@ void ZtoryAnimaticPanel::onMergeShots() {
   TXshColumn *dstColumn = xsh->getColumn(dstCol);
   if (!dstColumn) return;
   int dstR0 = 0, dstR1 = 0;
-  dstColumn->getRange(dstR0, dstR1);
+  // ignoreLastStop=true: skip trailing SFH so dstDuration and appendAt are exact.
+  // appendAt = dstR1+1 = SFH position → new cells overwrite it cleanly.
+  dstColumn->getRange(dstR0, dstR1, /*ignoreLastStop=*/true);
 
   // Find child level of destination
   TXshChildLevel *dstCl = nullptr;
@@ -5347,7 +5379,9 @@ void ZtoryAnimaticPanel::onMergeShots() {
     TXshColumn *srcColumn = xsh->getColumn(srcCol);
     if (!srcColumn) continue;
     int r0 = 0, r1 = 0;
-    srcColumn->getRange(r0, r1);
+    // ignoreLastStop=true: exclude the trailing SFH from the merged shot's
+    // duration so the merge keeps the source's real frame count.
+    srcColumn->getRange(r0, r1, /*ignoreLastStop=*/true);
     int duration = r1 - r0 + 1;
 
     // Find src child level
@@ -5481,7 +5515,8 @@ void ZtoryAnimaticPanel::onMergeWithNext(int col) {
   TXshColumn *dstColumn = xsh->getColumn(col);
   if (!dstColumn) return;
   int dstR0 = 0, dstR1 = 0;
-  dstColumn->getRange(dstR0, dstR1);
+  // ignoreLastStop=true: skip trailing SFH so dstDuration and appendAt are exact.
+  dstColumn->getRange(dstR0, dstR1, /*ignoreLastStop=*/true);
 
   // Find next shot column
   int nextCol = -1;
@@ -5517,7 +5552,8 @@ void ZtoryAnimaticPanel::onMergeWithNext(int col) {
   TXshChildLevel *srcCl = nullptr;
   TXshColumn *srcColumn = xsh->getColumn(nextCol);
   int srcR0 = 0, srcR1 = 0;
-  srcColumn->getRange(srcR0, srcR1);
+  // ignoreLastStop=true: skip trailing SFH so srcDuration is the real frame count.
+  srcColumn->getRange(srcR0, srcR1, /*ignoreLastStop=*/true);
   for (int r = srcR0; r <= srcR1; r++) {
     TXshCell cell = xsh->getCell(r, nextCol);
     if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
@@ -5578,7 +5614,9 @@ void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
   TXshColumn *srcColumn = mainXsh->getColumn(col);
   if (!srcColumn) return;
   int r0 = 0, r1 = 0;
-  srcColumn->getRange(r0, r1);
+  // ignoreLastStop=true: exclude the trailing SFH placed by resequenceXsheet()
+  // so that totalDuration and secondHalf are the real frame counts.
+  srcColumn->getRange(r0, r1, /*ignoreLastStop=*/true);
   // splitRel = # frames that stay in the original shot (rows r0..splitFrame-1)
   int splitRel = splitFrame - r0;
   if (splitRel <= 0 || splitRel >= r1 - r0 + 1) return;
@@ -5600,7 +5638,9 @@ void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
   // Tahoma2D stores drawing cells only at transition points; intermediate
   // frames are empty in storage ("held"). We must make them explicit so that
   // after trim/shift neither shot has gaps at the cut boundary.
-  materializeCells(origCL, totalDuration);
+  // fillToEnd=true: fill holds all the way to totalDuration-1 so that
+  // shiftChildXsheetBy can find real cells even when splitRel > lastContent.
+  materializeCells(origCL, totalDuration, /*fillToEnd=*/true);
 
   // ── Step 2: bake boundary keyframes BEFORE cloning ────────────────────────
   // Adding keyframes to origCL now means the clone inherits them automatically.
@@ -5626,6 +5666,36 @@ void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
   // ── Step 4: Trim original child xsheet to splitRel frames ─────────────────
   // Also removes stage-object keyframes beyond the cut point.
   trimChildXsheetTo(origCL, splitRel);
+
+  // ── Step 4b: Place SFH at frame splitRel in Shot 1's sub-scene columns ─────
+  // After materialization + trim, every frame 0..splitRel-1 that had content
+  // is a real cell. Placing STOP_FRAME at splitRel prevents the last drawing
+  // from bleeding as an implicit hold if the sub-scene is opened for editing.
+  // onMatchSubsceneDuration correctly skips it via ignoreLastStop=true.
+  {
+    TXsheet *origXsh = origCL->getXsheet();
+    int origNCols = origXsh->getColumnCount();
+    for (int c = 0; c < origNCols; c++) {
+      TXshColumn *oc = origXsh->getColumn(c);
+      if (!oc || oc->isEmpty()) continue;
+      int cr0 = 0, cr1 = 0;
+      oc->getRange(cr0, cr1);
+      if (cr1 < 0) continue;
+      // Find any real drawing cell to get the level pointer for the SFH.
+      TXshLevelP sfhLevel;
+      for (int r = cr0; r <= cr1; r++) {
+        TXshCell cell = origXsh->getCell(r, c);
+        if (!cell.isEmpty() && !cell.getFrameId().isStopFrame() && cell.m_level) {
+          sfhLevel = cell.m_level;
+          break;
+        }
+      }
+      if (sfhLevel)
+        origXsh->setCell(splitRel, c,
+                         TXshCell(sfhLevel, TFrameId(TFrameId::STOP_FRAME)));
+    }
+    origXsh->updateFrameCount();
+  }
 
   // ── Step 5: Shift clone child xsheet left by splitRel ─────────────────────
   // Cells and keyframes at [splitRel..end] become [0..secondHalf-1].
@@ -5804,7 +5874,10 @@ void ZtoryAnimaticPanel::onRollEdit(int colA, int newDurA, int colB, int newDurB
     TXshColumn *column = xsh->getColumn(col);
     if (!column || column->isEmpty()) return;
     int r0 = 0, r1 = 0;
-    column->getRange(r0, r1);
+    // ignoreLastStop=true: skip the trailing SFH so curDur is the shot's
+    // actual animatic length.  Without this, rolling edit would think the
+    // shot is +1 frame longer than it really is and miscompute the delta.
+    column->getRange(r0, r1, /*ignoreLastStop=*/true);
     int curDur = r1 - r0 + 1;
     TXshCell typeCell;
     for (int r = r0; r <= r1; r++) {
@@ -5898,7 +5971,11 @@ void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
   TXshColumn *column = mainXsh->getColumn(col);
   if (!column || column->isEmpty()) return;
   int r0 = 0, r1 = 0;
-  column->getRange(r0, r1);
+  // ignoreLastStop=true: skip the trailing SFH so currentDuration is the
+  // shot's actual length, not +1.  Otherwise the trim math would compare
+  // newDuration against an inflated count and add/remove the wrong number
+  // of cells (off-by-one shrinking, missing growth).
+  column->getRange(r0, r1, /*ignoreLastStop=*/true);
   int currentDuration = r1 - r0 + 1;
 
   // Trova tipo cella
@@ -6096,11 +6173,14 @@ void ZtoryAnimaticPanel::onMatchSubsceneDuration(int col) {
     int r0 = 0, r1 = 0;
     TXshColumn *column = subXsh->getColumn(c);
     if (!column) continue;
-    column->getRange(r0, r1);
-    // Cerca l'ultimo frame con cella non vuota
+    // ignoreLastStop=true: skip trailing SFH so r1 lands on the last real
+    // drawing, not on the stop-frame cell (which is NOT empty and would
+    // inflate lastFrame by +1 → empty frame at mark-out).
+    column->getRange(r0, r1, /*ignoreLastStop=*/true);
+    // Cerca l'ultimo frame con cella non vuota e non SFH (doppia protezione)
     for (int r = r1; r >= r0; r--) {
       TXshCell sc = subXsh->getCell(r, c);
-      if (!sc.isEmpty()) {
+      if (!sc.isEmpty() && !sc.getFrameId().isStopFrame()) {
         lastFrame = qMax(lastFrame, r);
         break;
       }

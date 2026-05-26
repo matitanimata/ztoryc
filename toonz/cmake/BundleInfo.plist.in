@@ -56,8 +56,6 @@
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
-			<key>NSDocumentClass</key>
-			<string>ZtoryScene</string>
 		</dict>
 	</array>
 </dict>

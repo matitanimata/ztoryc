@@ -2821,6 +2821,7 @@ void MainWindow::defineActions() {
   createMenuWindowsAction("MI_OpenZtoryAnimatic", QT_TR_NOOP("&Ztoryc Animatic"), "", "ZtoryAnimatic");
   createMenuWindowsAction("MI_OpenZtoryAnimaticViewer", QT_TR_NOOP("&Ztoryc Viewer"), "", "ZtoryAnimaticViewer");
 
+  createMenuWindowsAction(MI_OpenZtoryMonitor, QT_TR_NOOP("&Ztoryc Monitor"), "", "ZtoryMonitorPanel");
   createMenuWindowsAction("MI_OpenZtoryScript", QT_TR_NOOP("&Ztoryc Script"), "", "ZtoryScriptPanel");
   createMenuWindowsAction("MI_OpenZtoryLeftPanel", QT_TR_NOOP("&Ztoryc Board/XSheet"), "", "ZtoryLeftPanel");
   createMenuWindowsAction("MI_OpenZtoryRightPanel", QT_TR_NOOP("&Ztoryc Script/Palette"), "", "ZtoryRightPanel");

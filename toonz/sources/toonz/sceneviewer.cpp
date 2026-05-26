@@ -2703,15 +2703,17 @@ TAffine SceneViewer::getViewMatrix() const {
                      : SCENE_VIEWMODE;
   if (is3DView()) return TAffine();
   if (m_referenceMode == CAMERA_REFERENCE) {
-    // Always use the global frame handle and the current xsheet for camera
-    // lookup.  When inside a sub-scene, getCurrentFrame() returns the local
-    // sub-scene frame and getCurrentXsheet() returns the sub-scene xsheet, so
-    // getCameraAff() gives the correct sub-scene camera at the correct local
-    // time.  The animatic viewer's m_customFrameHandle is used only in
-    // drawScene() to render the root xsheet at the right animatic frame; it
-    // must NOT be used here because it carries the main-xsheet frame, which
-    // would address the wrong keyframe on a sub-scene camera.
-    int frame    = TApp::instance()->getCurrentFrame()->getFrame();
+    // Use the custom frame handle when set (animatic viewer), otherwise fall
+    // back to the global handle.  The animatic viewer has m_alwaysMainXsheet=true
+    // so it always renders the root xsheet; its custom frame handle carries the
+    // correct root-xsheet frame.  Without this, getViewMatrix() would compute
+    // the camera inverse at the global (possibly wrong) frame while drawBuildVars()
+    // computes cameraPlacement at the animatic frame — the mismatch means
+    // cameraAff.inv() * cameraPlacement ≠ identity and the camera rect appears
+    // to drift instead of staying fixed in Camera View mode.
+    TFrameHandle *fh = m_customFrameHandle ? m_customFrameHandle
+                                           : TApp::instance()->getCurrentFrame();
+    int frame    = fh->getFrame();
     TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
     TAffine aff  = xsh->getCameraAff(frame);
     return m_viewAff[viewMode] * aff.inv();

@@ -808,7 +808,23 @@ void ZtoryModel::resequenceXsheet() {
     TXshColumn *column = xsh->getColumn(col);
     if (!column || column->isEmpty()) continue;
     int r0 = 0, r1 = 0;
+    // STEP 1 — strip the SFH we placed in the previous resequence.
+    // Why explicit strip instead of getRange(ignoreLastStop=true)?
+    // After a trim/removeCells the cell layout can be:
+    //     [real cells] [empty rows] [trailing SFH]
+    // ignoreLastStop=true just decrements r1 by 1 — landing on an EMPTY
+    // row.  duration would then = old_duration (wrong, shot doesn't shrink).
+    // By physically removing the SFH first we let getRange skip the empty
+    // rows backward and find the actual last drawing.
     column->getRange(r0, r1);
+    if (r1 >= 0) {
+      TXshCell lastCell = xsh->getCell(r1, col);
+      if (lastCell.getFrameId().isStopFrame()) {
+        xsh->clearCells(r1, col, 1);
+        // Re-read after stripping the SFH.
+        column->getRange(r0, r1);
+      }
+    }
     int duration = r1 - r0 + 1;
     TXshChildLevel *cl = nullptr;
     for (int r = r0; r <= r1; r++) {
@@ -830,6 +846,16 @@ void ZtoryModel::resequenceXsheet() {
     for (int r = 0; r <= maxFrames; r++) xsh->clearCells(r, col);
     for (int r = 0; r < duration; r++)
       xsh->setCell(startFrame + r, col, TXshCell(cl, TFrameId(r + 1)));
+    // Stop Frame Hold at startFrame+duration: prevents the shot's last
+    // drawing from "bleeding" via implicit hold into the next shot during
+    // animatic playback/render.  The shot's duration in the main xsheet IS
+    // the sub-scene's mark-out+1 (Ztoryc convention), so the SFH sits at
+    // row markOut+1 within this column — exactly between this shot's last
+    // cell and the next shot's column space.  Re-applied every resequence
+    // (match-duration / trim / rolling-edit / add / delete / merge) so it
+    // stays glued to the current boundary.
+    xsh->setCell(startFrame + duration, col,
+                 TXshCell(cl, TFrameId(TFrameId::STOP_FRAME)));
     startFrame += duration;
   }
   xsh->updateFrameCount();

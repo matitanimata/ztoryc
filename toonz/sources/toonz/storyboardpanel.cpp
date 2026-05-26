@@ -93,7 +93,7 @@ static QString stripAlphaPrefix(const QString &s, QString *prefix = nullptr) {
 }
 
 // Merge helpers defined in ztoryanimatic.cpp (non-static so they can be shared)
-void materializeCells(TXshChildLevel *cl, int duration);
+void materializeCells(TXshChildLevel *cl, int duration, bool fillToEnd = false);
 void trimChildXsheetTo(TXshChildLevel *cl, int keepFrames);
 void mergeChildXsheetContent(TXshChildLevel *dstCl, TXshChildLevel *srcCl,
                               int dstOffset, int srcDuration);
@@ -1521,7 +1521,10 @@ void StoryboardPanel::onModelResequenced() {
     TXshColumn *column = xsh->getColumn(col);
     if (!column) continue;
     int r0 = 0, r1 = 0;
-    column->getRange(r0, r1);
+    // ignoreLastStop=true: skip the trailing Stop Frame Hold placed by
+    // ZtoryModel::resequenceXsheet() so the duration shown in the Board
+    // matches the shot's actual animatic length (not inflated by +1).
+    column->getRange(r0, r1, /*ignoreLastStop=*/true);
     int duration = r1 - r0 + 1;
     if (!m_shots[si].data.panels.empty()) {
       m_shots[si].data.panels[0].duration = duration;
@@ -2332,7 +2335,10 @@ std::vector<ZtoryShotSnap> StoryboardPanel::captureSnapshot() {
       int frameCount = xsh->getFrameCount();
       for (int r = 0; r <= frameCount; r++) {
         TXshCell cell = xsh->getCell(r, col);
-        if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+        if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()
+            && !cell.getFrameId().isStopFrame()) {
+          // Skip SFH cells: they have a valid child-level pointer but are not
+          // real frames — counting them would inflate s.duration by 1.
           if (!s.level) s.level = cell.m_level;
           s.duration++;
         } else if (s.duration > 0) {

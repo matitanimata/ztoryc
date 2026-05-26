@@ -91,6 +91,7 @@
     <item>MI_OpenLevelView</item>
     <item>MI_OpenXshView</item>
     <item>MI_OpenZtoryAnimatic</item>
+    <item>MI_OpenZtoryMonitor</item>
     <item>MI_OpenZtoryShotBoard</item>
     <item>MI_OpenZtoryDrawLeftPanel</item>
     <item>MI_OpenTimelineView</item>

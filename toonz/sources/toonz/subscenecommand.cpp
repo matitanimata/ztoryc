@@ -1201,7 +1201,11 @@ void openSubXsheet() {
     TXsheet *newXsh = app->getCurrentXsheet()->getXsheet();
     int r0col = 0, r1col = 0;
     TXshColumn *shotColPtr = currentXsheet->getColumn(openedCol);
-    if (shotColPtr) shotColPtr->getRange(r0col, r1col);
+    // ignoreLastStop=true: in Ztoryc, ZtoryModel::resequenceXsheet() places a
+    // trailing Stop Frame Hold at r1+1 of every shot column to block implicit-
+    // hold bleed.  Without this flag, shotDuration would be inflated by 1 and
+    // the sub-scene's mark-out would land one frame past the actual content.
+    if (shotColPtr) shotColPtr->getRange(r0col, r1col, /*ignoreLastStop=*/true);
     int shotDuration = (r1col >= r0col) ? (r1col - r0col + 1)
                                         : newXsh->getFrameCount();
     int markIn = 0;
