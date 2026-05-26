@@ -63,6 +63,7 @@
 | 12c | Export Animatic: label read-only | 2026-05-01 |
 | 12d | BUG Audio toggle in sub-scena | 2026-05-01 |
 | 13 | Undo/Redo: UndoBoardState snapshot-based | 2026-05-01 |
+| 13b | BUG Undo Razor non ripristina sub-scena: UndoBoardState salva TXshLevelP ma il child xsheet viene modificato da materializeCells/trimChildXsheetTo/shiftChildXsheetBy prima che il clone sia separato → undo ripristina Board/animatic OK ma sub-scena resta troncata. Fix: undo dedicato che salva snapshot del child xsheet (TXsheet serializzato) prima delle modifiche. | 2026-05-26 |
 | 14b | FIX Mark-out a fine timeline all'avvio | 2026-05-01 |
 | 15b | FIX Onion skin rimosso toolbar | 2026-05-01 |
 | 16b | NEW Workflow startup page | 2026-05-02 |

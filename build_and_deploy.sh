@@ -10,14 +10,21 @@ SCRIPT_DIR="${0:A:h}"
 DEFAULT_WS="/Volumes/ZioSam/tahoma2d-workspace/tahoma2d"
 if [[ -n "${ZTORYC_WORKSPACE:-}" ]]; then
   WORKSPACE="$ZTORYC_WORKSPACE"
-elif [[ -d "$DEFAULT_WS/toonz/build" ]]; then
-  WORKSPACE="$DEFAULT_WS"
 else
-  WORKSPACE="$SCRIPT_DIR"
+  WORKSPACE="$DEFAULT_WS"
 fi
 
-BUILD="$WORKSPACE/toonz/build"
-# Bundle prodotto da Ninja: toonz/build/toonz/Ztoryc.app (legacy: toonz/Ztoryc.app accanto a build/)
+# Individua la directory di build: se build.ninja è nella root del workspace
+# (layout attuale), BUILD = WORKSPACE.  Altrimenti usa toonz/build (layout legacy).
+if [[ -f "$WORKSPACE/build.ninja" ]]; then
+  BUILD="$WORKSPACE"
+elif [[ -d "$WORKSPACE/toonz/build" ]]; then
+  BUILD="$WORKSPACE/toonz/build"
+else
+  BUILD="$WORKSPACE"
+fi
+
+# Bundle prodotto da Ninja: toonz/Ztoryc.app (root layout) o toonz/build/toonz/Ztoryc.app (legacy).
 if [[ -d "$WORKSPACE/toonz/Ztoryc.app" ]]; then
   APP="$WORKSPACE/toonz/Ztoryc.app"
 else
@@ -86,6 +93,15 @@ xattr -cr "$APP" 2>/dev/null || true
 # che non fanno parte del bundle sigillato
 rm -rf "$APP/profiles" "$APP/cache" "$APP/logs" 2>/dev/null || true
 
+# ztorycstuff è una directory nella root del bundle (non in Contents/) usata
+# da Ztoryc a runtime. codesign la vede come "unsealed contents" e fallisce.
+# Soluzione: spostala fuori temporaneamente, firma, poi rimettila.
+ZTORY_STUFF_TMP=""
+if [[ -d "$APP/ztorycstuff" ]]; then
+  ZTORY_STUFF_TMP="/tmp/ztorycstuff_deploy_$$"
+  mv "$APP/ztorycstuff" "$ZTORY_STUFF_TMP"
+fi
+
 echo "→ Firma codice (dylib prima, poi bundle)..."
 # Prima firma ogni dylib singolarmente
 setopt nullglob
@@ -98,6 +114,9 @@ codesign --force --sign - "$MACOS/lzocompress"   2>/dev/null
 codesign --force --sign - "$MACOS/lzodecompress" 2>/dev/null
 # Infine firma il bundle completo (senza --deep per evitare re-firma ricorsiva)
 codesign --force --sign - --entitlements "$WORKSPACE/Ztoryc.entitlements" "$APP"
+
+# Ripristina ztorycstuff dopo la firma
+[[ -n "$ZTORY_STUFF_TMP" && -d "$ZTORY_STUFF_TMP" ]] && mv "$ZTORY_STUFF_TMP" "$APP/ztorycstuff"
 
 echo "✓ Fatto. Apertura app..."
 open "$APP"
