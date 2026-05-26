@@ -7,6 +7,59 @@
 
 ---
 
+## [2026-05-27b] — ANIMATIC_TASKS: arrow tool feature requests
+
+### Added (task list only)
+- **Task 35** — Storyboard Arrow Tool: freccia vettoriale disegnabile su arco/curva
+  Bézier con arrowhead auto-calcolato dalla tangente dell'endpoint; opzioni
+  inizio/fine/entrambi; integrazione con tool arco Tahoma2D.
+- **Task 36** — Frecce 3D / Prospettiva: estensione del task 35 con frecce
+  foreshortened per comunicare movimenti sull'asse Z. Variante 1 (2D stilizzata)
+  prioritaria, variante 2 (gizmo 3D con proiezione camera) come futura iterazione.
+- **Task 37** — Indicatore Direzione Luce: overlay non distruttivo nel panel
+  per posizionare la sorgente di luce in 3D (angleH + angleV). Salvato nel .ztoryc
+  come metadato, disegnato in PanelWidget::paintEvent() sopra il thumbnail.
+
+### Notes
+- Nessuna modifica al codice sorgente in questa sessione.
+
+---
+
+## [2026-05-27] — ZtoryMonitorPanel + camera view fix + RAM/performance fixes
+
+### Added
+- **ZtoryMonitorPanel** — nuovo pannello "Ztoryc Monitor" (secondo monitor): combina
+  `ZtoryAnimaticViewer` + `ZtoryAnimaticRuler` + `ZtoryAnimaticTrack` in un QSplitter
+  verticale. Doppio click cerca il frame (seek only, non apre sub-scene).
+  Registrato in CMakeLists, menubar (`MI_OpenZtoryMonitor`), tpanels.cpp, mainwindow.cpp.
+
+### Fixed
+- **Camera rect drift in Camera View** — `SceneViewer::getViewMatrix()` usava il frame
+  handle globale invece di `m_customFrameHandle`, causando disallineamento nel viewer
+  animatico. Fix: usa `m_customFrameHandle` quando impostato.
+- **RAM 50GB su apertura scena** (root cause 1) — `ZtoryAnimaticTrack::refreshFromScene()`
+  usava `found = !b.thumbnail.isNull()`: se l'icona non era in cache iterava ogni cella
+  × ogni layer della sub-xsheet → fino a 240.000 `getIcon()` calls per scena complessa.
+  Fix: `found = true` alla prima cella trovata.
+- **RAM 50GB su apertura scena** (root cause 2) — `onRefreshPreviews()` renderizzava tutti
+  i pannelli (631 per la scena messina HARMONYA). Fix: sostituito con `updateVisiblePreviews()`.
+- **SFH explosion repair** — `loadZtoryc()` rileva e collassa automaticamente i pannelli
+  SFH-esplosi (> 20 pannelli, durata media ≤ 5 frame) → collassa a 1 pannello e riscrive
+  il `.ztoryc` su disco. Soglia aggiornata: usa media invece di "tutti a 1 frame".
+- **Scroll lento nel Board** — connessione `scrollBar::valueChanged → updateVisiblePreviews`
+  debounced a 250ms. Prima: `renderXsheetFrame()` sincrono ad ogni tick dello scroll.
+- **Skip thumbnail esistenti** — `updateVisiblePreviews()` salta i pannelli che hanno già
+  un pixmap, evitando re-render inutili durante lo scroll di ritorno.
+- **Freeze al caricamento con scene dense** — placeholder usa CSS + emoji 🎥 invece di
+  `QPixmap(640×360)`. Prima: 631 allocazioni QPixmap sincrone nel loop `rebuildGrid()`
+  bloccavano il main thread per ~6 secondi.
+- **No auto-render all'apertura** — rimosso `QTimer::singleShot(500ms, updateVisiblePreviews)`
+  da `refreshFromScene()`. Thumbnails renderizzati solo su scroll stop o "Refresh Previews".
+
+### Notes
+- v0.3.3 CI triggerato su GitHub Actions (macOS + Windows)
+- `build_and_deploy.sh` fix: rilevamento automatico directory di build
+
 ## [2026-05-26] — SFH pipeline + split/merge/undo fixes + startup popup fix
 
 ### Fixed

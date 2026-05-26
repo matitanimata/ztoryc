@@ -649,6 +649,151 @@ File: ztoryanimatic.h/.cpp.
 
 ---
 
+### NEW — Storyboard Arrow Tool (task 35)
+
+**Priorita: MEDIA | Tipo: NEW | Stima: 2-4h**
+
+Richiesta Claudio (2026-05-27): strumento freccia vettoriale per indicare
+la direzione del movimento nei panel storyboard. Usato insieme allo strumento
+arco (arc) è fondamentale per comunicare traiettorie, entrate/uscite campo,
+e movimenti di camera.
+
+**Funzionamento:**
+- Disegna un tratto (linea retta o curva Bézier/arco) con punta di freccia
+  auto-calcolata dalla tangente dell'endpoint
+- Opzione arrowhead: inizio / fine / entrambi
+- Spessore, colore, stile tratteggio configurabili nel tool options bar
+- Si integra con lo strumento arco esistente di Tahoma2D (TBenderTool o
+  analogo) oppure come tool standalone
+
+**Implementazione suggerita (Opzione B — tool dedicato):**
+
+```cpp
+// ZtoryArrowTool: Tool che disegna stroke + arrowhead triangolare
+class ZtoryArrowTool : public TTool {
+    TPointD m_startPt, m_endPt;
+    std::vector<TPointD> m_ctrlPts;  // per curva Bézier
+    bool m_drawAtStart = false;
+    bool m_drawAtEnd   = true;
+    double m_arrowSize = 20.0;       // px, scalato con zoom
+
+    void addArrowhead(TVectorImage *vi, const TPointD &tip,
+                      const TPointD &tangent) {
+        // tangente normalizzata → 3 punti triangolo → TStroke chiusa
+        TPointD perp = TPointD(-tangent.y, tangent.x) * (m_arrowSize * 0.4);
+        TPointD base = tip - tangent * m_arrowSize;
+        // costruisce triangolo filled
+    }
+};
+```
+
+**Varianti arrowhead:**
+- Standard: triangolo pieno, 30° angolo
+- Open: "V" aperta (a chevron, come frecce da NLE)
+- Double: freccia doppia (per movimenti bidirezionali)
+
+Edge cases:
+- Stroke troppo corta: nessun arrowhead se length < arrowSize × 2
+- Zoom estremo: arrowSize clampato tra 5px e 100px schermo
+- Colore: eredita dal pennello corrente (FG color)
+- Undo: TUndoManager standard su leftButton release
+
+File: nuovi file `toonz/sources/tools/ztoryarrowtool.h/.cpp`,
+registrazione in `toonz/sources/tools/tooloptions.cpp`,
+icona `ztoryc_arrow.svg`.
+
+---
+
+### NEW — Frecce 3D / Prospettiva (task 36)
+
+**Priorita: BASSA | Tipo: NEW | Stima: 4-8h**
+
+Estensione del task 35: frecce che comunicano movimenti in profondità (asse Z),
+utili per storyboard con movimenti in prospettiva (dolly, zoom ottico,
+personaggio che si avvicina/allontana dalla camera).
+
+**Concept:**
+
+Due modalità:
+
+1. **Freccia foreshortened** (2D stilizzata):
+   - Asse lungo accorciato progressivamente verso la punta per simulare
+     la prospettiva dell'asse Z
+   - Arrowhead più piccolo della base: rapporto size_tip / size_base
+     controllato da un parametro "depth" (0=piatta, 1=massima prospettiva)
+   - Implementabile come shape parametrica 2D — no matrici 3D reali
+
+2. **Widget freccia 3D** (avanzato, futura iterazione):
+   - Gizmo interattivo a 3 assi (X/Y/Z) posizionabile nel panel
+   - Proietta la freccia 3D sulla prospettiva del panel usando
+     la camera della sub-scena (TCamera → matrice proiezione)
+   - Più complesso: richiede integrazione con sistema camera Tahoma2D
+
+**Priorità implementazione:** variante 1 (2D foreshortened) prima,
+variante 2 (gizmo 3D) come futura estensione.
+
+Parametri UI: slider "depth" (0-100%), toggle direzione (verso/lontano camera),
+colore + spessore ereditati da ZtoryArrowTool.
+
+File: `ztoryarrowtool.h/.cpp` (estensione task 35), tool options.
+
+---
+
+### NEW — Indicatore Direzione Luce (task 37)
+
+**Priorita: BASSA | Tipo: NEW | Stima: 4-6h**
+
+Richiesta Claudio (2026-05-27): freccia speciale per indicare la sorgente
+di luce nel panel storyboard. Posizionabile in 3D nello spazio del panel.
+
+**Concept:**
+
+- Widget "sole/luce" posizionabile nel panel: icona + freccia che punta
+  verso il soggetto (o verso il punto di incidenza della luce)
+- Modalità: point light (raggi concentrici), directional (freccia singola),
+  area light (fascio di frecce parallele)
+- Colore freccia indica temperatura colore: bianco/giallo caldo, blu freddo
+- Salvato come oggetto nel panel .ztoryc (non come stroke TLV, ma come
+  metadato visualizzato sopra il disegno)
+
+**Struttura dati:**
+```cpp
+struct LightIndicator {
+    TPointD position;    // posizione nel panel (coord normalizz. 0-1)
+    double  angleH;      // angolo orizzontale (0=destra, 90=alto)
+    double  angleV;      // angolo verticale (elevazione 0-90°)
+    double  distance;    // distanza simulata (influenza foreshortening)
+    QColor  color;       // temperatura colore
+    int     type;        // 0=directional, 1=point, 2=area
+};
+```
+
+**Rendering:**
+- Disegnato in `PanelWidget::paintEvent()` sopra il thumbnail
+- Non parte del disegno TLV: è un overlay non distruttivo
+- Toggle visibilità rapido (shortcut L nel panel)
+- Export PDF/immagine: opzionale (flag "includi overlay")
+
+**Posizionamento 3D semplificato:**
+- angleH + angleV determinano la proiezione 2D della freccia:
+  ```
+  dir2D.x = cos(angleH) * cos(angleV)
+  dir2D.y = sin(angleV)   // prospettiva Z compressa sull'asse Y
+  ```
+- L'utente regola angleH/V con drag direttamente nel panel
+  (cursore speciale: doppio arco orizzontale/verticale)
+
+Edge cases:
+- Luce direttamente sopra (angleV=90°): freccia punta verso il basso, corta
+- Multiple luci per panel: lista LightIndicator[], UI to add/remove
+- Copy shot: gli indicatori luce vengono copiati con il panel
+- Export: se export_overlays=false, non incluso nell'immagine esportata
+
+File: `storyboardpanel.h/.cpp` (PanelWidget overlay), `ztorymodel.h`
+(LightIndicator struct in PanelData), `.ztoryc` save/load.
+
+---
+
 ## Ordine implementazione consigliato
 
 1. MOD UI Headers contestuali -- rapido, impatto visivo immediato
@@ -674,6 +819,9 @@ File: ztoryanimatic.h/.cpp.
 31. PERF/BUG Saturazione RAM (CRITICA) -- fix immediati prima, poi investigazione leak
 29. ~~BUG Script Panel~~ ✅ DONE 2026-05-22
 30. PERF Board thumbnail cache (ALTA)
+35. NEW Storyboard Arrow Tool (MEDIA) -- freccia vettoriale su arco/curva
+36. NEW Frecce 3D / Prospettiva (BASSA) -- foreshortened, poi gizmo 3D
+37. NEW Indicatore Direzione Luce (BASSA) -- overlay non distruttivo, posizionabile in 3D
 20. NEW Audio cut/copy/paste tastiera
 21. NEW Volume traccia audio
 22. NEW Transizioni
