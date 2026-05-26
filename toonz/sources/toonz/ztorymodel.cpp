@@ -858,12 +858,13 @@ void ZtoryModel::onXsheetChanged() { /* thumbnails updated via frameSwitched deb
 void ZtoryModel::onSceneChanged()  { refreshFromScene(); load(); }
 
 void ZtoryModel::activateShotForViewing(int col) {
-  // Clear TImageCache on shot switch: on macOS memoryShortage() now works
-  // but the cache may still hold the previous shot's frames.  Releasing
-  // them proactively avoids unbounded RAM growth during long sessions.
-  // The small per-frame re-render cost on first display is negligible vs
-  // the alternative of saturating RAM with hundreds of cached frames.
-  TImageCache::instance()->clear();
+  // NOTE: do NOT call TImageCache::instance()->clear() here.  It wipes the
+  // ENTIRE app-wide image cache, including the still-needed images of the
+  // shot we're switching into and any levels the user is actively drawing
+  // on — causing drawings to "disappear" and the red-dot cursor (cache
+  // miss on the current cell).  Memory pressure is now handled by
+  // TSystem::memoryShortage() (implemented for macOS/Linux) which lets
+  // TImageCache evict naturally when RAM gets low.
   emit shotActivatedForViewing(col);
 }
 void ZtoryModel::requestReturnToViewer()         { emit returnToViewerMainRequested(); }

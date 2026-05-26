@@ -1128,42 +1128,53 @@ void BaseViewerPanel::onPreviewStatusChanged() {
 // sync preview commands and buttons states when the viewer becomes active
 
 void BaseViewerPanel::onActiveViewerChanged() {
+  // Some viewer panels (e.g. ZtoryAnimaticViewer) don't create the preview
+  // buttons. Guard each connect/disconnect with a null check to avoid
+  // assertion failures / aborts in debug builds.
   bool ret = true;
   if (TApp::instance()->getActiveViewer() == m_sceneViewer) {
-    ret = ret &&
-          connect(m_previewButton, SIGNAL(toggled(bool)),
-                  CommandManager::instance()->getAction(MI_ToggleViewerPreview),
-                  SLOT(trigger()));
-    ret = ret &&
-          connect(CommandManager::instance()->getAction(MI_ToggleViewerPreview),
-                  SIGNAL(triggered(bool)), m_previewButton,
-                  SLOT(setPressed(bool)));
-    ret        = ret && connect(m_subcameraPreviewButton, SIGNAL(toggled(bool)),
-                                CommandManager::instance()->getAction(
-                             MI_ToggleViewerSubCameraPreview),
-                                SLOT(trigger()));
-    ret        = ret && connect(CommandManager::instance()->getAction(
-                             MI_ToggleViewerSubCameraPreview),
-                                SIGNAL(triggered(bool)), m_subcameraPreviewButton,
-                                SLOT(setPressed(bool)));
+    if (m_previewButton) {
+      ret = ret && connect(m_previewButton, SIGNAL(toggled(bool)),
+                           CommandManager::instance()->getAction(
+                               MI_ToggleViewerPreview),
+                           SLOT(trigger()));
+      ret = ret && connect(CommandManager::instance()->getAction(
+                               MI_ToggleViewerPreview),
+                           SIGNAL(triggered(bool)), m_previewButton,
+                           SLOT(setPressed(bool)));
+    }
+    if (m_subcameraPreviewButton) {
+      ret = ret && connect(m_subcameraPreviewButton, SIGNAL(toggled(bool)),
+                           CommandManager::instance()->getAction(
+                               MI_ToggleViewerSubCameraPreview),
+                           SLOT(trigger()));
+      ret = ret && connect(CommandManager::instance()->getAction(
+                               MI_ToggleViewerSubCameraPreview),
+                           SIGNAL(triggered(bool)), m_subcameraPreviewButton,
+                           SLOT(setPressed(bool)));
+    }
     m_isActive = true;
   } else if (m_isActive) {
-    ret = ret && disconnect(m_previewButton, SIGNAL(toggled(bool)),
-                            CommandManager::instance()->getAction(
-                                MI_ToggleViewerPreview),
-                            SLOT(trigger()));
-    ret = ret &&
-          disconnect(
-              CommandManager::instance()->getAction(MI_ToggleViewerPreview),
-              SIGNAL(triggered(bool)), m_previewButton, SLOT(setPressed(bool)));
-    ret = ret && disconnect(m_subcameraPreviewButton, SIGNAL(toggled(bool)),
-                            CommandManager::instance()->getAction(
-                                MI_ToggleViewerSubCameraPreview),
-                            SLOT(trigger()));
-    ret = ret && disconnect(CommandManager::instance()->getAction(
-                                MI_ToggleViewerSubCameraPreview),
-                            SIGNAL(triggered(bool)), m_subcameraPreviewButton,
-                            SLOT(setPressed(bool)));
+    if (m_previewButton) {
+      ret = ret && disconnect(m_previewButton, SIGNAL(toggled(bool)),
+                              CommandManager::instance()->getAction(
+                                  MI_ToggleViewerPreview),
+                              SLOT(trigger()));
+      ret = ret && disconnect(CommandManager::instance()->getAction(
+                                  MI_ToggleViewerPreview),
+                              SIGNAL(triggered(bool)), m_previewButton,
+                              SLOT(setPressed(bool)));
+    }
+    if (m_subcameraPreviewButton) {
+      ret = ret && disconnect(m_subcameraPreviewButton, SIGNAL(toggled(bool)),
+                              CommandManager::instance()->getAction(
+                                  MI_ToggleViewerSubCameraPreview),
+                              SLOT(trigger()));
+      ret = ret && disconnect(CommandManager::instance()->getAction(
+                                  MI_ToggleViewerSubCameraPreview),
+                              SIGNAL(triggered(bool)), m_subcameraPreviewButton,
+                              SLOT(setPressed(bool)));
+    }
     m_isActive = false;
   }
   assert(ret);
