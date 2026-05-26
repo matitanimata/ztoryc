@@ -607,6 +607,13 @@ elseif(BUILD_ENV_UNIXLIKE)
 endif()
 
 # zlib — needed by ztoryscriptpanel.cpp to decompress .docx/.odt ZIP entries.
+# On Windows the thirdparty ZLIB uses a versioned filename that CMake's FindZLIB
+# won't locate automatically — hint it explicitly before calling find_package.
+if(BUILD_ENV_MSVC)
+    set(ZLIB_INCLUDE_DIR "${SDKROOT}/zlib-1.2.8" CACHE PATH "ZLIB include directory" FORCE)
+    set(ZLIB_LIBRARY     "${SDKROOT}/zlib-1.2.8/lib/zlib-1.2.8_${MSVC_LIB_VERSION}${PLATFORM2}.lib"
+                         CACHE FILEPATH "ZLIB library" FORCE)
+endif()
 find_package(ZLIB REQUIRED)
 target_link_libraries(Ztoryc ZLIB::ZLIB)
 
