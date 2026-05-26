@@ -175,6 +175,7 @@ struct Shot {
   void resequenceXsheet();
   void clearShots();
   void updatePreview(int shotIdx, int panelIdx);
+  void updateVisiblePreviews();
   void rebuildGrid();
   void selectShot(int shotIdx);
   int  currentShotIndex() const;

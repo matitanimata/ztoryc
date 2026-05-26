@@ -1840,7 +1840,17 @@ void ZtoryAnimaticTrack::refreshFromScene() {
         mainXsh->getStageObject(mainXsh->getColumnObjectId(col))->getName());
     b.shotNumber = colName.isEmpty() ? QString("%1").arg(col + 1, 2, 10, QChar('0')) : colName;
 
-    // Generate thumbnail from the first drawing in the sub-scene
+    // Generate thumbnail from the first drawing found in the sub-scene.
+    // IMPORTANT: exit on the FIRST cell found regardless of whether the icon is
+    // already in cache (i.e. set found=true unconditionally).
+    // The previous code checked `found = !b.thumbnail.isNull()` which meant:
+    // if the icon hasn't been rendered yet (returns null), keep iterating to the
+    // next cell.  On a fresh scene open NO icons are in cache, so the loop would
+    // walk every cell × every column of every sub-xsheet — potentially tens of
+    // thousands of getIcon() calls, each queuing a background render job.
+    // For a 393-frame shot with 20 layers this produced ~8 000 queued jobs per
+    // shot × 30 shots = 240 000 jobs, flooding the IconGenerator thread pool and
+    // causing the scene to hang for minutes while consuming gigabytes of RAM.
     if (cl) {
       TXsheet *subXsh = cl->getXsheet();
       if (subXsh) {
@@ -1855,7 +1865,7 @@ void ZtoryAnimaticTrack::refreshFromScene() {
             if (!cell.isEmpty() && cell.getSimpleLevel()) {
               b.thumbnail = IconGenerator::instance()->getIcon(
                 cell.m_level.getPointer(), cell.getFrameId());
-              found = !b.thumbnail.isNull();
+              found = true;  // stop at FIRST cell — icon may still be loading
             }
           }
         }

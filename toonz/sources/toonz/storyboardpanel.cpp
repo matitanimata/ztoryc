@@ -271,6 +271,12 @@ PanelWidget::PanelWidget(QWidget *parent)
   connect(m_notesField, &QTextEdit::textChanged,
           [this](){ emit dataChanged(m_shotIndex, m_panelIndex); });
   setDuration(24);
+  // Show the camera placeholder immediately so the panel never looks "blank".
+  // rescalePreview() checks m_previewPixmap.isNull() and draws the placeholder
+  // when no thumbnail has been rendered yet.  A proper QResizeEvent will re-call
+  // this once the widget has its final geometry, so the placeholder is always
+  // sized correctly.
+  QTimer::singleShot(0, this, [this](){ rescalePreview(); });
 }
 
 QLabel* PanelWidget::makeFieldLabel(const QString &text) {
@@ -317,7 +323,19 @@ void PanelWidget::rescalePreview() {
     QPixmap scaled = m_previewPixmap.scaled(
         physTarget, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     scaled.setDevicePixelRatio(dpr);
+    // Clear placeholder text/style before setting the real thumbnail.
+    m_previewLabel->setText(QString());
+    m_previewLabel->setStyleSheet("QLabel{background:#f0f0eb;border:none;color:#bbb;}");
     m_previewLabel->setPixmap(scaled);
+  } else {
+    // Placeholder: pure CSS + Unicode camera glyph — zero QPixmap allocation.
+    // Avoids the 5-10s freeze caused by creating 600+ QPixmap(640×360) objects
+    // synchronously in the rebuildGrid() loop on scenes with many panels.
+    m_previewLabel->setPixmap(QPixmap());  // clear any stale pixmap
+    m_previewLabel->setText("\U0001F3A5");  // 🎥 film camera
+    m_previewLabel->setStyleSheet(
+      "QLabel{background:#1e1e1e;color:#555;font-size:28px;"
+      "border:none;qproperty-alignment:AlignCenter;}");
   }
 }
 
@@ -659,6 +677,20 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_grid->setContentsMargins(8, 8, 8, 8);
   m_grid->setAlignment(Qt::AlignTop | Qt::AlignLeft);
   m_scrollArea->setWidget(m_container);
+  // Lazy thumbnail loading: refresh visible panels after scrolling stops.
+  // Connecting valueChanged → updateVisiblePreviews() directly calls
+  // renderXsheetFrame() on every scroll tick, which blocks the main thread
+  // and makes scrolling sluggish on complex scenes.  Debounce: wait 250 ms
+  // after the last scroll event before rendering the newly visible panels.
+  {
+    QTimer *scrollDebounce = new QTimer(this);
+    scrollDebounce->setSingleShot(true);
+    scrollDebounce->setInterval(250);
+    connect(scrollDebounce, &QTimer::timeout,
+            this, [this](){ updateVisiblePreviews(); });
+    connect(m_scrollArea->verticalScrollBar(), &QScrollBar::valueChanged,
+            this, [scrollDebounce](int){ scrollDebounce->start(); });
+  }
 
   // ---- EDIT PAGE (lazy - comboViewer created on first use) ----
   QWidget *editPage = new QWidget();
@@ -700,8 +732,11 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     for (int si = 0; si < (int)m_shots.size(); si++) {
       if (m_shots[si].data.xsheetColumn == col) {
         detectAndUpdatePanels(si);
-        for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
-          updatePreview(si, pi);
+        // Lazy: render only the panels of this shot that are visible in the
+        // scroll area.  Shots with many panels (e.g. SFH-exploded shots with
+        // hundreds of 1-frame panels) would otherwise load every drawing into
+        // memory.
+        updateVisiblePreviews();
         break;
       }
     }
@@ -777,8 +812,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     int col = node->m_col;
     for (int si = 0; si < (int)m_shots.size(); si++) {
       if (m_shots[si].data.xsheetColumn == col) {
-        for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
-          updatePreview(si, pi);
+        updateVisiblePreviews();  // lazy: only render panels visible in viewport
         break;
       }
     }
@@ -1073,6 +1107,32 @@ void StoryboardPanel::selectShot(int shotIdx) {
       pw->setSelected(true);
 }
 
+void StoryboardPanel::updateVisiblePreviews() {
+  // Render thumbnails only for PanelWidgets whose geometry intersects the
+  // scroll-area viewport AND that don't already have a thumbnail.
+  // Skipping panels with existing pixmaps avoids redundant heavy renders when
+  // the user scrolls back to already-loaded panels.
+  // updatePreview() is called explicitly (e.g. from previewRerenderNeeded) when
+  // a higher-resolution re-render is needed after a panel resize.
+  if (!m_scrollArea) return;
+  QRect vpRect = m_scrollArea->viewport()->rect();
+
+  for (int si = 0; si < (int)m_shots.size(); si++) {
+    for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++) {
+      PanelWidget *pw = m_shots[si].panels[pi];
+      if (!pw) continue;
+      // Skip if already has a thumbnail — re-render only on explicit request
+      // (window resize → previewRerenderNeeded) or manual refresh.
+      if (!pw->previewPixmap().isNull()) continue;
+      // Map the panel widget rect to viewport coordinates.
+      QRect widgetRect = QRect(pw->mapTo(m_scrollArea->viewport(),
+                                         QPoint(0, 0)), pw->size());
+      if (vpRect.intersects(widgetRect))
+        updatePreview(si, pi);
+    }
+  }
+}
+
 void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   Shot &shot = m_shots[shotIdx];
@@ -1268,6 +1328,56 @@ void StoryboardPanel::loadZtoryc() {
     }
   }
   file.close();
+
+  // ── SFH-explosion repair ─────────────────────────────────────────────────
+  // The Stop-Frame-Hold bug (fixed in v0.2.x) wrote one PanelData entry per
+  // animation frame for every resequenceXsheet() call.  This turned a 393-frame
+  // shot into 393 single-frame panels in the .ztoryc file.  Opening such a scene
+  // creates hundreds of PanelWidgets (each with 3 QTextEdit + 2 QSpinBox), which
+  // can easily consume 20-50 GB of RAM through Qt layout machinery.
+  //
+  // Detection: any shot with > kSFHExplosionThreshold panels where ALL panels
+  // have duration ≤ 1 frame.  That pattern cannot occur naturally (meaningful
+  // storyboard panels are at least a few frames long).
+  // Repair: collapse to a single panel that covers the shot's full duration.
+  // The repair is also written back to disk so opening the scene is fast next time.
+  // Detection thresholds for SFH-exploded shots:
+  // kSFHPanelMin  — minimum panel count to even consider repair (safe floor)
+  // kSFHAvgMaxDur — if avg panel duration ≤ this, the shot is SFH-exploded.
+  //   SFH creates one panel per animation hold (typically 1-5 frames at 24fps).
+  //   Legitimate storyboard panels are at least ~8-10 frames (1/3 of a second).
+  //   The castelfiorentino scene's densest shot (SH190, 26 panels) has avg ≈ 7 f,
+  //   so we use 5 as a conservative threshold: anything ≤ 5 f average is explosion.
+  static constexpr int kSFHPanelMin  = 20;
+  static constexpr int kSFHAvgMaxDur = 5;
+  bool sfhRepaired = false;
+  for (int i = 0; i < (int)m_shots.size(); i++) {
+    auto &panels = m_shots[i].data.panels;
+    if ((int)panels.size() <= kSFHPanelMin) continue;
+    int totalDurCheck = 0;
+    for (const PanelData &pd : panels) totalDurCheck += pd.duration;
+    int avgDur = (totalDurCheck > 0) ? totalDurCheck / (int)panels.size() : 0;
+    if (avgDur > kSFHAvgMaxDur) continue;  // legitimate dense panels — skip
+    // Compute total duration from cell data rather than trusting stale panel sums.
+    int totalDur = 0;
+    for (const PanelData &pd : panels) totalDur += pd.duration;
+    // Preserve the dialog/action/notes of panel[0] (if non-empty).
+    QString dialog = panels[0].dialog;
+    QString action = panels[0].action;
+    QString notes  = panels[0].notes;
+    panels.clear();
+    PanelData repaired;
+    repaired.startFrame = 0;
+    repaired.duration   = (totalDur > 0) ? totalDur : 1;
+    repaired.dialog     = dialog;
+    repaired.action     = action;
+    repaired.notes      = notes;
+    panels.push_back(repaired);
+    sfhRepaired = true;
+    qDebug() << "loadZtoryc: repaired SFH-exploded shot" << i
+             << "collapsed" << (int)(totalDur) << "1-frame panels → 1 panel, dur=" << repaired.duration;
+  }
+
   for (int i = 0; i < (int)m_shots.size(); i++) {
     Shot &shot = m_shots[i];
     // Rimuovi tutti i widget esistenti e ricostruisci da data
@@ -1291,6 +1401,8 @@ void StoryboardPanel::loadZtoryc() {
                                            m_shots[i].data.shotLabel,
                                            m_shots[i].data.xsheetColumn);
   m_loadingZtoryc = false;
+  // Persist the SFH-explosion repair so the scene loads cleanly next time.
+  if (sfhRepaired) saveZtoryc();
 }
 
 int StoryboardPanel::currentShotIndex() const {
@@ -1822,11 +1934,15 @@ void StoryboardPanel::refreshFromScene() {
     ZtoryModel::instance()->syncShotPanels(i, m_shots[i].data.panels,
                                            m_shots[i].data.shotLabel,
                                            m_shots[i].data.xsheetColumn);
-  QTimer::singleShot(500, this, [this](){
-    for (int si = 0; si < (int)m_shots.size(); si++)
-      for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
-        updatePreview(si, pi);
-  });
+  // Thumbnails are NOT rendered automatically on scene load.
+  // renderXsheetFrame() is synchronous and can take several seconds per panel on
+  // scenes with complex sub-xsheets (many raster layers, high resolution).
+  // Auto-rendering even the first few visible panels would freeze the UI for
+  // tens of seconds, making the scene appear to "load slowly" even though the
+  // xsheet data itself is ready instantly.
+  // Thumbnails are rendered lazily via two paths:
+  //   1. Scroll stops → 250 ms debounce → updateVisiblePreviews() (skip existing)
+  //   2. User clicks the Refresh Previews toolbar button → onRefreshPreviews()
 }
 
 // ── qApp event filter: intercept keyboard shortcuts for the Board ────────────
@@ -2921,9 +3037,12 @@ void StoryboardPanel::onNumberingConfig() {
 }
 
 void StoryboardPanel::onRefreshPreviews() {
-  for (int si = 0; si < (int)m_shots.size(); si++)
-    for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
-      updatePreview(si, pi);
+  // Render only panels that are currently visible in the scroll area.
+  // Calling updatePreview for ALL panels (e.g. 631 on a large scene) loads every
+  // drawing from every sub-xsheet into memory — easily 20-50 GB on complex
+  // projects with SFH-heavy shots.  Panels that scroll into view are handled
+  // lazily by updateVisiblePreviews() which is connected to the scroll-bar signal.
+  updateVisiblePreviews();
 }
 
 // ── Audio export helper ───────────────────────────────────────────────────────
