@@ -7,6 +7,67 @@
 
 ---
 
+## [2026-05-26] — SFH pipeline + split/merge/undo fixes + startup popup fix
+
+### Fixed
+- **Stop Frame Hold (SFH) in main xsheet** — `resequenceXsheet()` piazza ora una
+  cella `STOP_FRAME` alla fine di ogni colonna shot nel main xsheet, impedendo che
+  l'ultimo disegno di uno shot faccia implicit hold sul frame successivo durante
+  playback/render animatic.
+- **Split (Razor) durata corretta** — `ignoreLastStop=true` su `srcColumn->getRange`
+  esclude la SFH da `totalDuration`/`secondHalf`: Shot 2 aveva 1 frame in più.
+- **Split Shot 2 partiva da frame 0 invece che dal punto di taglio** — `materializeCells`
+  riempiva solo fino a `lastContent`; se il punto di split era in zona implicit hold,
+  `shiftChildXsheetBy` calcolava `keep < 0` e non spostava nulla. Aggiunto parametro
+  `fillToEnd=true` per il caso split che riempie hold fino a `duration-1`.
+- **SFH in sub-scena Shot 1 dopo split** — piazza SFH a `splitRel` in ogni colonna
+  della sub-scena di Shot 1 per terminare la catena di hold al punto di taglio.
+- **materializeCells non propaga SFH come hold** — celle SFH azzerano `last`.
+- **Merge durata corretta** — `dstColumn->getRange(ignoreLastStop=true)`;
+  `appendAt` ora sovrascrive la SFH esistente invece di appendere dopo di essa.
+- **onMatchSubsceneDuration +1 frame vuoto** — `ignoreLastStop=true` + skip SFH
+  nel backward scan: mark-out al frame precedente la SFH.
+- **captureSnapshot contava SFH come frame reale** — `s.duration` gonfiato di 1
+  → undo ricostruiva con 1 frame extra → timeline vuota. Fix: skip `isStopFrame()`.
+- **Popup "Unable to create a new document" all'avvio** — rimossa `NSDocumentClass`
+  da `CFBundleDocumentTypes` in `BundleInfo.plist.in`.
+- **openSubXsheet mark-out inflato** — `ignoreLastStop=true` in `subscenecommand.cpp`.
+
+### Notes
+- Build CI macOS + Windows lanciate su commit `ef7e934ea`.
+- Undo del razor: Board/animatic si ripristinano correttamente; contenuto interno
+  della sub-scena non viene undone (limitazione architetturale — da risolvere con
+  undo dedicato in futuro).
+
+## [2026-05-25d] — Xsheet: cell swap, block swap, rolling edit + animatic TC sync
+
+### Added
+- **Cell swap** (`xsheetdragtool.cpp`) — `⌥ Option + drag` su una singola cella
+  in xsheet: scambia il contenuto della cella sorgente con la destinazione (stessa
+  colonna). Highlight arancione sulla destinazione durante il drag. Undo/redo.
+- **Block swap** — stessa gesture con una selezione multi-frame preesistente: il
+  blocco intero viene scambiato con un range uguale alla destinazione. La selezione
+  segue il blocco dopo il rilascio.
+- **Rolling edit** (`RollingEditTool`) — `⌥ Option + smart tab inferiore`: sposta
+  il confine tra due livelli adiacenti senza cambiare la durata totale. Drag giù →
+  cel corrente si allunga, il successivo si accorcia dall'inizio (e viceversa).
+  `⌘ Cmd + ⌥ Option + smart tab superiore`: rolling edit verso l'alto. Linea
+  verde indica il confine durante il drag. Undo/redo con capture lazy pre-drag.
+
+### Fixed
+- **TC non si aggiornava al cambio FPS** (`ztoryanimatic.cpp`) — `refreshFromScene()`
+  ora chiama `m_ruler->setFps()` sincronizzando il timecode quando si modifica
+  il frame rate da Scene Settings.
+- **Delete shot nella toolbar animatic** posizionato correttamente accanto ad Add (+/-).
+
+### Notes
+- `CellSwapUndo` range-aware: gestisce sia swap singola cella che blocchi N frame.
+- `RollingEditUndo`: cattura lo stato pre-drag lazily per frame toccati; redo
+  ri-applica da stored before/after vectors.
+- Hook Alt in `mousePressEvent` (xshcellviewer.cpp) intercettato prima del blocco
+  level-range-selection per evitare che la selezione venga allargata all'intero livello.
+
+
 ## [2026-05-25c] — Animatic: zoom Ctrl+Scroll, Fit All, ruler adattivo
 
 ### Added
