@@ -743,51 +743,77 @@ File: `ztoryarrowtool.h/.cpp` (estensione task 35), tool options.
 
 **Priorita: BASSA | Tipo: NEW | Stima: 4-6h**
 
-Richiesta Claudio (2026-05-27): freccia speciale per indicare la sorgente
-di luce nel panel storyboard. Posizionabile in 3D nello spazio del panel.
+Richiesta Claudio (2026-05-27): indicatore conico della sorgente di luce
+nel panel storyboard, posizionabile in 3D. Riferimento visivo: i widget
+spotlight dei software 3D (Cinema 4D, Blender) — un cono con il vertice
+sulla sorgente di luce e la base sull'area illuminata, che mostra sia la
+direzione che l'ampiezza del fascio.
 
-**Concept:**
+**Concept — freccia conica (come i gizmo 3D di Blender/Cinema 4D):**
 
-- Widget "sole/luce" posizionabile nel panel: icona + freccia che punta
-  verso il soggetto (o verso il punto di incidenza della luce)
-- Modalità: point light (raggi concentrici), directional (freccia singola),
-  area light (fascio di frecce parallele)
-- Colore freccia indica temperatura colore: bianco/giallo caldo, blu freddo
-- Salvato come oggetto nel panel .ztoryc (non come stroke TLV, ma come
-  metadato visualizzato sopra il disegno)
+```
+  ════════╗
+  gambo   ╠══╗
+  (shaft) ║  ║╲
+          ║  ║ ╲
+          ║  ║  ★  ← punto = direzione da cui viene la luce
+          ║  ║ ╱
+          ║  ║╱
+  ════════╣  ║
+          ╚══╝
+           ↑
+        testa conica (cone head)
+```
+
+- **Gambo cilindrico** = shaft della freccia, parte dalla sorgente di luce
+- **Testa conica** = arrowhead conico appuntito, la punta indica la direzione
+  verso cui va la luce (verso il soggetto/area illuminata)
+- Identica alle frecce dei transform gizmo 3D: cilindro + cono
+- La freccia rappresenta il raggio di luce: la coda è la sorgente,
+  la punta del cono è dove arriva la luce
+- Colore indica temperatura colore: giallo caldo, bianco neutro, blu freddo
 
 **Struttura dati:**
 ```cpp
 struct LightIndicator {
-    TPointD position;    // posizione nel panel (coord normalizz. 0-1)
-    double  angleH;      // angolo orizzontale (0=destra, 90=alto)
-    double  angleV;      // angolo verticale (elevazione 0-90°)
-    double  distance;    // distanza simulata (influenza foreshortening)
+    TPointD tail;        // coda = posizione sorgente luce (coord norm. 0-1)
+    TPointD tip;         // punta del cono = dove va la luce (soggetto/area)
+    double  coneAngle;   // semi-angolo testa conica (default 20°)
+    double  coneLength;  // lunghezza testa conica rispetto a shaft (default 30%)
     QColor  color;       // temperatura colore
-    int     type;        // 0=directional, 1=point, 2=area
 };
 ```
 
-**Rendering:**
-- Disegnato in `PanelWidget::paintEvent()` sopra il thumbnail
-- Non parte del disegno TLV: è un overlay non distruttivo
+**Rendering (QPainter in PanelWidget::paintEvent):**
+```cpp
+QPointF dir    = (tip - tail).normalized();
+QPointF perp   = { -dir.y(), dir.x() };
+double  total  = QLineF(tail, tip).length();
+double  conLen = total * coneLength;          // lunghezza testa conica
+double  conRad = conLen * tan(coneAngle);     // raggio base cono
+double  shaftR = conRad * 0.3;               // raggio gambo
+
+QPointF coneBase = tip - dir * conLen;        // dove finisce il gambo
+
+// 1. rettangolo arrotondato (gambo): tail → coneBase, larghezza shaftR*2
+// 2. triangolo (testa conica): coneBase±perp*conRad → tip
+// 3. arco convesso sulla base del cono (come nello sketch)
+```
+
+- Overlay non distruttivo: non fa parte del disegno TLV
 - Toggle visibilità rapido (shortcut L nel panel)
 - Export PDF/immagine: opzionale (flag "includi overlay")
 
-**Posizionamento 3D semplificato:**
-- angleH + angleV determinano la proiezione 2D della freccia:
-  ```
-  dir2D.x = cos(angleH) * cos(angleV)
-  dir2D.y = sin(angleV)   // prospettiva Z compressa sull'asse Y
-  ```
-- L'utente regola angleH/V con drag direttamente nel panel
-  (cursore speciale: doppio arco orizzontale/verticale)
+**Interazione:**
+- Drag sulla coda: sposta l'intera freccia
+- Drag sulla punta: ruota e scala la freccia
+- Drag sulla base del cono: regola coneAngle (ampiezza testa)
 
 Edge cases:
-- Luce direttamente sopra (angleV=90°): freccia punta verso il basso, corta
-- Multiple luci per panel: lista LightIndicator[], UI to add/remove
-- Copy shot: gli indicatori luce vengono copiati con il panel
+- Multiple luci per panel: lista LightIndicator[], click "+" per aggiungere
+- Copy shot: gli indicatori vengono copiati con il panel
 - Export: se export_overlays=false, non incluso nell'immagine esportata
+- Freccia molto corta: coneLength clampato, gambo può sparire ma cono rimane
 
 File: `storyboardpanel.h/.cpp` (PanelWidget overlay), `ztorymodel.h`
 (LightIndicator struct in PanelData), `.ztoryc` save/load.

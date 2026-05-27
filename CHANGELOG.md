@@ -7,6 +7,34 @@
 
 ---
 
+## [2026-05-27c] — ZtoryMonitorPanel full toolbar + context chips + single-instance guard
+
+### Added
+- **ZtoryMonitorPanel full toolbar** — zoom slider, fit-all, select/trim/razor,
+  add/delete/merge/copy/clone/paste, TC toggle. Toolbar posizionata tra viewer e
+  timeline (sopra la traccia video).
+- **Double-click sul Monitor** — apre la sotto-scena nel contesto principale
+  (seek + play range + activateShotForViewing). Return button chiude la sub-scene.
+- **Audio tracks nel Monitor** — refresh con fingerprint per evitare rebuild inutili.
+- **Context chips** — badge colorati nella toolbar: "BOARD" (verde), "ANIMATIC" (blu),
+  "MONITOR" (viola).
+- **Single-instance guard** (task 33) — QLockFile in
+  `~/Library/Caches/ztoryc/ztoryc_<user>.lock`. QMessageBox se seconda istanza.
+
+### Modified
+- **ztoryanimatic.h** — slot di edit spostati a `public slots:` per forwarding dal Monitor.
+- **onDeleteShots/onCopyShots/onCutShots/onCloneShots** — usano sharedSelection come fallback.
+- **StoryboardPanel** — `m_dirtyShotCol` tracking + detectAndUpdatePanels in
+  contesto main-xsheet (legge sub-xsheet da TXshChildLevel senza iterare celle main).
+
+### Notes
+- **BUG APERTO (PRIORITÀ 1 prossima sessione):** testi Board spariscono ad ogni
+  riapertura (nei primi panel soprattutto). Root cause non trovata via code
+  inspection. Richiede test interattivo con l'app aperta. Da riprendere subito.
+- Commit: `140d790ac`
+
+---
+
 ## [2026-05-27b] — ANIMATIC_TASKS: arrow tool feature requests
 
 ### Added (task list only)
