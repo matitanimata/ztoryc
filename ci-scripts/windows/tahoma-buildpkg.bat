@@ -79,9 +79,7 @@ echo "QT_PATH=%QT_PATH%"
 IF EXIST ..\..\thirdparty\apps\ffmpeg\bin (
    echo ">>> Copying FFmpeg to Ztoryc\ffmpeg"
    IF EXIST Ztoryc\ffmpeg rmdir /S /Q Ztoryc\ffmpeg
-   mkdir Ztoryc\ffmpeg
-   copy /Y ..\..\thirdparty\apps\ffmpeg\bin\ffmpeg.exe Ztoryc\ffmpeg
-   copy /Y ..\..\thirdparty\apps\ffmpeg\bin\ffprobe.exe Ztoryc\ffmpeg
+   xcopy /Y /E /I ..\..\thirdparty\apps\ffmpeg\bin Ztoryc\ffmpeg
 )
 
 IF EXIST ..\..\thirdparty\apps\rhubarb (

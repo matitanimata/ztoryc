@@ -85,6 +85,27 @@ ZTORYCPROFILES=$STUFF/profiles
 ZTORYCCONFIG=$STUFF/config
 EOF
 
+echo "→ Copia FFmpeg nel bundle (se assente)..."
+FFMPEG_DST="$APP/Contents/Resources/ffmpeg"
+if [[ ! -f "$FFMPEG_DST/ffmpeg" ]]; then
+  # Cerca ffmpeg: prima nel bundle /Applications/Ztoryc.app (con libs/), poi Homebrew
+  FFMPEG_SRC=""
+  [[ -f "/Applications/Ztoryc.app/Contents/Resources/ffmpeg/ffmpeg" ]] && \
+    FFMPEG_SRC="/Applications/Ztoryc.app/Contents/Resources/ffmpeg"
+  if [[ -n "$FFMPEG_SRC" ]]; then
+    # Copia l'intera directory (include libs/ per @executable_path)
+    cp -R "$FFMPEG_SRC/" "$FFMPEG_DST/"
+    echo "  ffmpeg copiato da $FFMPEG_SRC"
+  elif [[ -f "$(brew --prefix 2>/dev/null)/bin/ffmpeg" ]]; then
+    mkdir -p "$FFMPEG_DST"
+    cp "$(brew --prefix)/bin/ffmpeg"  "$FFMPEG_DST/"
+    cp "$(brew --prefix)/bin/ffprobe" "$FFMPEG_DST/" 2>/dev/null || true
+    echo "  ffmpeg copiato da Homebrew (senza libs)"
+  else
+    echo "  ⚠ ffmpeg non trovato — formati video non disponibili"
+  fi
+fi
+
 echo "→ Copia helper LZO..."
 LZO_DIR="$BUILD"
 [[ -f "$BUILD/lzodriver/lzocompress" ]] && LZO_DIR="$BUILD/lzodriver"
@@ -117,6 +138,15 @@ unsetopt nullglob
 # Poi firma i binari helper
 codesign --force --sign - "$MACOS/lzocompress"   2>/dev/null
 codesign --force --sign - "$MACOS/lzodecompress" 2>/dev/null
+# Firma ffmpeg/ffprobe (e libs/) se presenti — le dylib devono essere firmate prima degli exe
+if [[ -d "$APP/Contents/Resources/ffmpeg" ]]; then
+  xattr -cr "$APP/Contents/Resources/ffmpeg" 2>/dev/null || true
+  for f in "$APP/Contents/Resources/ffmpeg/libs/"*.dylib; do
+    [[ -f "$f" ]] && codesign --force --sign - "$f" 2>/dev/null
+  done
+  codesign --force --sign - "$APP/Contents/Resources/ffmpeg/ffmpeg"  2>/dev/null
+  codesign --force --sign - "$APP/Contents/Resources/ffmpeg/ffprobe" 2>/dev/null
+fi
 # Infine firma il bundle completo (senza --deep per evitare re-firma ricorsiva)
 codesign --force --sign - --entitlements "$WORKSPACE/Ztoryc.entitlements" "$APP"
 

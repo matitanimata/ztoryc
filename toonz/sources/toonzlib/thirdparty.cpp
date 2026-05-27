@@ -10,6 +10,7 @@
 
 // QT includes
 #include <QCoreApplication>
+#include <QDir>
 #include <QEventLoop>
 #include <QTimer>
 
@@ -95,14 +96,33 @@ QString autodetectFFmpeg() {
   // Let's try and autodetect the exe included with release
   QStringList folderList;
 
+  // Relative paths (CWD-based, work when CWD == app dir)
   folderList.append(".");
-  folderList.append("./ffmpeg");      // legacy: <appDir>/ffmpeg/ffmpeg
-  folderList.append("./ffmpeg/bin");  // CI bundle: <appDir>/ffmpeg/bin/ffmpeg
+  folderList.append("./ffmpeg");
+  folderList.append("./ffmpeg/bin");
 
-  // On macOS portable, getWorkingDirectory() resolves to
-  // Ztoryc.app/Contents/Resources (parent of ztorycstuff).  CI script
-  // ci-scripts/osx/tahoma-buildpkg.sh installs FFmpeg under
-  // Contents/Resources/ffmpeg/bin/ffmpeg — search that path too.
+  // Absolute paths based on the actual executable location — reliable
+  // regardless of CWD (shortcut, Finder, shell from a different directory).
+  {
+    QString appDir = QCoreApplication::applicationDirPath();
+    folderList.append(appDir);
+    folderList.append(appDir + "/ffmpeg");
+    folderList.append(appDir + "/ffmpeg/bin");
+  }
+
+  // On macOS, applicationDirPath() = Contents/MacOS.  Standard bundle
+  // location for bundled tools is Contents/Resources/ffmpeg/.
+#ifdef MACOSX
+  {
+    QString resDir = QDir::cleanPath(
+        QCoreApplication::applicationDirPath() + "/../Resources");
+    folderList.append(resDir + "/ffmpeg");
+    folderList.append(resDir + "/ffmpeg/bin");
+  }
+#endif
+
+  // getWorkingDirectory() can differ from applicationDirPath() depending on
+  // portable layout.  CI script installs FFmpeg under <workingDir>/ffmpeg/.
   folderList.append(TEnv::getWorkingDirectory().getQString() + "/ffmpeg");
   folderList.append(TEnv::getWorkingDirectory().getQString() + "/ffmpeg/bin");
 
