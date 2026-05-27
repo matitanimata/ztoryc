@@ -157,6 +157,13 @@ struct Shot {
   // re-save that would otherwise fire when loadZtoryc() publishes the
   // screenplay path it just read.
   bool m_loadingZtoryc = false;
+  // The .ztoryc path that corresponds to the current m_shots data.
+  // Set at the end of refreshFromScene() (after loadZtoryc completes) and
+  // cleared by clearShots(). saveZtoryc() uses this instead of ztoryPath() so
+  // that a stale-m_shots / new-scene-path mismatch can never corrupt files:
+  // while m_shots is empty (being rebuilt) this is empty → saveZtoryc() returns
+  // early.  This eliminates the cross-scene text contamination bug.
+  QString m_currentZtoryPath;
   // Column index of the last shot edited while inside a sub-scene.
   // Set when xsheetChanged fires inside a sub-scene; used in showEvent to
   // invalidate that shot's stale thumbnail so it gets re-rendered on Board show.

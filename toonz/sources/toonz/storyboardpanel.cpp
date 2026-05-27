@@ -1082,6 +1082,10 @@ void StoryboardPanel::renumberAll() {
 }
 
 void StoryboardPanel::clearShots() {
+  // Clear the path FIRST so that any saveZtoryc() that fires while widgets are
+  // being destroyed (e.g. QTextEdit focusOut events during delete) returns early
+  // instead of writing stale data to the new scene's file.
+  m_currentZtoryPath.clear();
   for (Shot &shot : m_shots)
     for (PanelWidget *pw : shot.panels) {
       m_grid->removeWidget(pw);
@@ -1245,9 +1249,13 @@ void StoryboardPanel::syncWidgetsToData() {
 }
 
 void StoryboardPanel::saveZtoryc() {
+  // Use m_currentZtoryPath (set at end of refreshFromScene) instead of
+  // ztoryPath() so we never write m_shots data to a different scene's file.
+  // While m_shots is being rebuilt (clearShots clears it), this is empty →
+  // saves are suppressed, preventing cross-scene text contamination.
+  if (m_currentZtoryPath.isEmpty()) return;
   syncWidgetsToData();
-  QString path = ztoryPath();
-  if (path.isEmpty()) return;
+  QString path = m_currentZtoryPath;
   QFile file(path);
   if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
   QXmlStreamWriter xml(&file);
@@ -1432,7 +1440,13 @@ void StoryboardPanel::loadZtoryc() {
                                            m_shots[i].data.xsheetColumn);
   m_loadingZtoryc = false;
   // Persist the SFH-explosion repair so the scene loads cleanly next time.
-  if (sfhRepaired) saveZtoryc();
+  // m_currentZtoryPath is still empty here (set by refreshFromScene after we
+  // return), so temporarily anchor it so saveZtoryc() can write.
+  if (sfhRepaired) {
+    m_currentZtoryPath = ztoryPath();
+    saveZtoryc();
+    m_currentZtoryPath.clear();  // refreshFromScene will set it authoritatively
+  }
 }
 
 int StoryboardPanel::currentShotIndex() const {
@@ -2015,6 +2029,12 @@ void StoryboardPanel::refreshFromScene() {
   // Thumbnails are rendered lazily via two paths:
   //   1. Scroll stops → 250 ms debounce → updateVisiblePreviews() (skip existing)
   //   2. User clicks the Refresh Previews toolbar button → onRefreshPreviews()
+
+  // Anchor the save path to this scene NOW that m_shots is fully populated.
+  // Any saveZtoryc() that fired while m_currentZtoryPath was empty (during
+  // clearShots → addShots → loadZtoryc) was correctly suppressed; from this
+  // point on saves will target exactly this scene's file.
+  m_currentZtoryPath = ztoryPath();
 }
 
 // ── qApp event filter: intercept keyboard shortcuts for the Board ────────────
@@ -2605,6 +2625,8 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
   renumberAll();
   resequenceXsheet();
   rebuildGrid();
+  // Re-anchor the path after clearShots() cleared it.
+  m_currentZtoryPath = ztoryPath();
   saveZtoryc();
 }
 
