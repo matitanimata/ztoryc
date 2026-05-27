@@ -33,7 +33,7 @@
 - Release note v0.3.4 approvate dall'utente prima del commit (diff-based, categorizzate).
 - Regola stabilita: prima di release note, sempre `git diff <last-tag>..HEAD` per
   separare bug user-reported da fix interni mai arrivati all'utente.
-- PDF quality fix rimandato a 0.3.5 — richiede refactor più ampio.
+- PDF quality fix incluso in v0.3.4 (300 DPI + pre-render + re-render a risoluzione cella).
 
 ---
 
