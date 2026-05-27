@@ -251,6 +251,7 @@ cd toonz/sources && ./beautification.sh
    > Se riproducibile → aprire PR. Se già fixato → rimuovere dalla lista.
 
    **🔴 Da verificare su Tahoma2D — bug fix ad alto impatto:**
+   - [ ] **lzoCompress/lzodecompress deadlock on macOS/Linux** (`tcodec.cpp`) — `QProcess::start()` chiama `fork()`; se un segnale arriva mentre `malloc_fork_prepare` tiene il lock e il signal handler alloca memoria Qt, il fork va in deadlock (hang silenzioso al salvataggio .tlv). Fix: `sigprocmask(SIG_BLOCK, &block_mask, &old_mask)` attorno a `process.start()` e ripristino dopo. Commit `140d790ac`. Interessa **tutti** gli utenti Mac e Linux — priorità alta.
    - [ ] **ImageManager cache leak after render** (`imagemanager.cpp`, `rendercommand.cpp`) — dopo il render tutti i frame rimangono in cache (osservato: 10 GB residui su scene da 350 frame). Fix: `ImageManager::clear()` sui builder al completamento. Commit `be20f9512`.
    - [x] **TasksViewer crash on room switch** (`tasksviewer.cpp`) — `~TasksViewer()` vuoto lascia puntatore dangling in `BatchesController::m_tasksTree`; la room successiva crasha in `QHeaderView::setModel()`. Fix: `setTasksTree(nullptr)` nel distruttore. Commit `1569cf2cc`. ✅ Verificato e fixato in Ztoryc — pronto per PR upstream.
    - [ ] **requireColumnSoundTrack alloca RAM proporzionale alla durata del file audio** — file audio da 2h → ~1.3 GB per colonna. Fix: cappare `toFrame` al frame count video. Commit `69a8b9043` (il pattern è nel core audio).

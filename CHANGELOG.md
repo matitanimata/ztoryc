@@ -26,10 +26,8 @@
 - **Versione bump → 0.3.4**
 
 ### Upstream candidates
-- **`thirdparty.cpp` ffmpeg autodetect** — confermato PR candidate: `applicationDirPath`
-  + `Contents/Resources/ffmpeg` interessa Tahoma2D su macOS e Windows.
-- **`tcodec.cpp` signal deadlock** — `sigprocmask` attorno a `QProcess::start()` in
-  `lzoCompress`/`lzodecompress`. Interessa tutti gli utenti Mac/Linux di Tahoma2D.
+- **`thirdparty.cpp` ffmpeg autodetect** — ❌ NON candidato PR: bug specifico del bundle Ztoryc (`Contents/Resources/ffmpeg`). In Tahoma2D l'ffmpeg è nella stessa cartella dell'eseguibile e veniva già trovato — non affligge gli utenti Tahoma2D.
+- **`tcodec.cpp` signal deadlock** — ✅ Candidato PR: `sigprocmask` attorno a `QProcess::start()` in `lzoCompress`/`lzodecompress`. Interessa tutti gli utenti Mac/Linux di Tahoma2D. Alta priorità.
 
 ### Notes
 - Release note v0.3.4 approvate dall'utente prima del commit (diff-based, categorizzate).
