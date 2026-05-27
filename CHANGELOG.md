@@ -7,6 +7,38 @@
 
 ---
 
+## [2026-05-27e] — Release v0.3.4: Monitor keyboard, thumbnails, version bump
+
+### Added
+- **ZtoryMonitorPanel — keyboard shortcuts** — Del/Backspace, Cmd+C/X/V/D/N attivi
+  quando il track del Monitor ha il focus; ShortcutOverride per prevenire che
+  CommandManager intercetti i tasti prima del panel.
+- **Release checklist in AGENTS.md** — sezione permanente con procedura per release,
+  istruzioni macOS `xattr -cr`, e regola "diff dal tag precedente prima di scrivere note".
+
+### Fixed
+- **Monitor delete button** — implementazione diretta senza delegare a
+  `findAnimaticPanel()` (null se la stanza Animatic non era mai aperta). Undo via `UndoBoardState`.
+- **ZtoryStoryStrip thumbnails vuote** — `renderXsheetFrame()` + cache per colonna
+  (sostituisce `ZtoryModel::preview()` che restituiva null su sub-scene columns).
+
+### Modified
+- **Versione bump → 0.3.4**
+
+### Upstream candidates
+- **`thirdparty.cpp` ffmpeg autodetect** — confermato PR candidate: `applicationDirPath`
+  + `Contents/Resources/ffmpeg` interessa Tahoma2D su macOS e Windows.
+- **`tcodec.cpp` signal deadlock** — `sigprocmask` attorno a `QProcess::start()` in
+  `lzoCompress`/`lzodecompress`. Interessa tutti gli utenti Mac/Linux di Tahoma2D.
+
+### Notes
+- Release note v0.3.4 approvate dall'utente prima del commit (diff-based, categorizzate).
+- Regola stabilita: prima di release note, sempre `git diff <last-tag>..HEAD` per
+  separare bug user-reported da fix interni mai arrivati all'utente.
+- PDF quality fix rimandato a 0.3.5 — richiede refactor più ampio.
+
+---
+
 ## [2026-05-27d] — Fix cross-scene text contamination in Board
 
 ### Fixed

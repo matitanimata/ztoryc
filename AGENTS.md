@@ -392,6 +392,61 @@ When the user says **"sessione chiusa"**, automatically:
 
 -----
 
+## Release Checklist
+
+Eseguire **prima di ogni release** (trigger: utente dice "prepara release" o "chiudi sessione con release"):
+
+### 1. Diff dal tag precedente
+
+```bash
+# Trova l'ultimo tag di release
+git tag --sort=-version:refname | head -5
+
+# Tutti i commit dall'ultimo release
+git log --oneline <last-tag>..HEAD
+
+# Statistiche file modificati
+git diff <last-tag>..HEAD --stat
+```
+
+**Regola obbligatoria:** prima di scrivere le release note, classificare ogni commit:
+- **User-reported** — bug segnalato dall'utente (include nella release note pubblica)
+- **Dev-only** — fix interno a feature non ancora rilasciata (menzione breve o ometti)
+- **Tahoma2D PR candidate** — fix in file core condivisi (segnala nella sezione Upstream)
+
+### 2. Bump versione
+
+```bash
+# Unico file da modificare:
+toonz/cmake/ZtorycVersion.cmake  # incrementa ZTORYC_VERSION_PATCH (o MINOR)
+```
+
+### 3. Istruzioni macOS — da includere SEMPRE nelle release note
+
+Sezione obbligatoria in ogni release GitHub perché l'app non è notarizzata:
+
+```markdown
+**macOS — prima apertura / first launch:**
+L'app non è notarizzata. Dopo aver copiato `Ztoryc.app` in `/Applications`:
+```bash
+xattr -cr /Applications/Ztoryc.app
+```
+Poi aprire dall'app o doppio clic → Tasto destro → Apri la prima volta.
+
+*The app is not notarized. After copying `Ztoryc.app` to `/Applications`, run the command above in Terminal, then open normally.*
+```
+
+### 4. Trigger CI
+
+```bash
+git tag v0.X.Y
+git push origin v0.X.Y
+```
+
+Il workflow CI si attiva automaticamente sul tag e pubblica i binari su GitHub Releases.
+
+-----
+
 ## Do NOT
 
 - Use `SILENTLY_OVERWRITE` when saving sub-scenes (bypasses asset copy)
