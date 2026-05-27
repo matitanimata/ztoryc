@@ -7,6 +7,24 @@
 
 ---
 
+## [2026-05-27d] — Fix cross-scene text contamination in Board
+
+### Fixed
+- **Cross-scene text contamination** — aprendo la scena 1 dopo aver editato la scena 2
+  si ritrovavano i testi della scena 2. Root cause: `saveZtoryc()` usava `ztoryPath()`
+  (scena attiva) mentre `m_shots` apparteneva ancora alla scena precedente, durante il
+  window tra scene-switch e `clearShots()`. Fix: aggiunto `m_currentZtoryPath` che viene
+  azzerato da `clearShots()` e impostato solo a fine `refreshFromScene()` — qualsiasi
+  `saveZtoryc()` con `m_shots` stale diventa un no-op.
+
+### Notes
+- Regressioni da verificare nella prossima sessione:
+  - **ffmpeg non funziona** + formati video assenti tra gli output (era già stato fixato)
+  - **Risoluzione thumbnail PDF pessima** nel Board
+- Task 32, 34, 31 risultano già completati in sessioni precedenti (da verificare/aggiornare ANIMATIC_TASKS)
+
+---
+
 ## [2026-05-27c] — ZtoryMonitorPanel full toolbar + context chips + single-instance guard
 
 ### Added
