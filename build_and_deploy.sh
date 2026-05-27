@@ -38,7 +38,12 @@ if [ -n "$1" ]; then
 fi
 
 echo "→ Compilazione..."
-ninja -j4 -C "$BUILD" 2>&1 | grep -E "error:|Linking|up-to-date"
+ninja -j4 -C "$BUILD" 2>&1 | tee /tmp/ztoryc_build.log | grep -E "error:|warning:.*error|Linking|up-to-date"
+NINJA_STATUS=${pipestatus[1]}
+if [[ $NINJA_STATUS -ne 0 ]]; then
+  echo "✗ Build fallita (ninja exit $NINJA_STATUS) — app in esecuzione non toccata."
+  exit 1
+fi
 
 echo "→ Copia binario..."
 cp "$BUILD/toonz/Ztoryc.app/Contents/MacOS/Ztoryc" "$MACOS/Ztoryc"
@@ -118,5 +123,8 @@ codesign --force --sign - --entitlements "$WORKSPACE/Ztoryc.entitlements" "$APP"
 # Ripristina ztorycstuff dopo la firma
 [[ -n "$ZTORY_STUFF_TMP" && -d "$ZTORY_STUFF_TMP" ]] && mv "$ZTORY_STUFF_TMP" "$APP/ztorycstuff"
 
-echo "✓ Fatto. Apertura app..."
-open "$APP"
+echo "✓ Fatto."
+if ! pgrep -x Ztoryc > /dev/null 2>&1; then
+  echo "→ Apertura app..."
+  open "$APP"
+fi

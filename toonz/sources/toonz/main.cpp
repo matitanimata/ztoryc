@@ -90,6 +90,8 @@
 #include <QPainterPath>
 #include <QDir>
 #include <QStandardPaths>
+#include <QLockFile>
+#include <QMessageBox>
 
 #ifdef _WIN32
 #ifndef x64
@@ -435,6 +437,35 @@ int main(int argc, char *argv[]) {
 #endif
 
   ZtoryApplication a(argc, argv);
+
+  // ── Single-instance guard ───────────────────────────────────────────────
+  // Use ~/Library/Caches/ztoryc/ on macOS (avoids SIP issues with /tmp).
+  // Include the username so multiple macOS accounts on the same machine don't
+  // block each other.
+  {
+    QString lockDir;
+#ifdef MACOSX
+    lockDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    QDir().mkpath(lockDir);
+#else
+    lockDir = QDir::tempPath();
+#endif
+    QString userName = qgetenv("USER");
+    if (userName.isEmpty()) userName = qgetenv("USERNAME");
+    QString lockPath = lockDir + "/ztoryc_" + userName + ".lock";
+
+    static QLockFile lockFile(lockPath);  // static: stays alive for process lifetime
+    // 5 s: treat lock as stale if the previous instance crashed and left the file.
+    // QLockFile::tryLock() removes stale files before trying to acquire.
+    lockFile.setStaleLockTime(5000);
+    if (!lockFile.tryLock(200)) {
+      QMessageBox::warning(nullptr, "Ztoryc",
+                           "Ztoryc is already running.\n"
+                           "Please use the existing instance.");
+      return 1;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
 #ifdef MACOSX
   // Portable layout uses Contents/Resources/ztorycstuff (or legacy .../Ztoryc.app/

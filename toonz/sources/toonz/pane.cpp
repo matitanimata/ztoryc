@@ -196,8 +196,12 @@ void TPanel::restoreFloatingPanelState() {
   if (SaveLoadQSettings *persistent =
           dynamic_cast<SaveLoadQSettings *>(widget()))
     persistent->load(settings);
-  // check if it can be visible in the current screen
-  if (!(geom & this->screen()->availableGeometry()).isEmpty())
+  // check if it can be visible on any screen (supports secondary monitors with
+  // negative coordinates, e.g. a monitor positioned above the primary)
+  bool onAnyScreen = false;
+  for (QScreen *s : QGuiApplication::screens())
+    if (!(geom & s->availableGeometry()).isEmpty()) { onAnyScreen = true; break; }
+  if (onAnyScreen)
     setGeometry(geom);
 }
 

@@ -19,6 +19,9 @@
 #include <QDir>
 #include <QProcess>
 #include <QCoreApplication>
+#ifndef _WIN32
+#include <signal.h>
+#endif
 
 using namespace std;
 
@@ -573,7 +576,18 @@ bool lzoCompress(const QByteArray src, QByteArray &dst) {
   QDir exeDir(QCoreApplication::applicationDirPath());
   QString compressExe = exeDir.filePath("lzocompress");
   QProcess process;
+  // Block all signals during fork() inside QProcess::start() to prevent a
+  // deadlock: if a signal fires while malloc_fork_prepare holds the malloc
+  // lock, our signal handler calls QString (malloc) → recursive lock abort.
+#ifndef _WIN32
+  sigset_t old_mask, block_mask;
+  sigfillset(&block_mask);
+  sigprocmask(SIG_BLOCK, &block_mask, &old_mask);
+#endif
   process.start(compressExe, QStringList() << QString::number(src.size()));
+#ifndef _WIN32
+  sigprocmask(SIG_SETMASK, &old_mask, nullptr);
+#endif
   if (!process.waitForStarted()) return false;
   process.write(src);
   if (!process.waitForFinished()) return false;
@@ -585,8 +599,19 @@ bool lzoDecompress(const QByteArray src, int dstSize, QByteArray &dst) {
   QDir exeDir(QCoreApplication::applicationDirPath());
   QString decompressExe = exeDir.filePath("lzodecompress");
   QProcess process;
+  // Block all signals during fork() inside QProcess::start() to prevent a
+  // deadlock: if a signal fires while malloc_fork_prepare holds the malloc
+  // lock, our signal handler calls QString (malloc) → recursive lock abort.
+#ifndef _WIN32
+  sigset_t old_mask, block_mask;
+  sigfillset(&block_mask);
+  sigprocmask(SIG_BLOCK, &block_mask, &old_mask);
+#endif
   process.start(decompressExe, QStringList() << QString::number(dstSize)
                                              << QString::number(src.size()));
+#ifndef _WIN32
+  sigprocmask(SIG_SETMASK, &old_mask, nullptr);
+#endif
   if (!process.waitForStarted()) return false;
   process.write(src);
   if (!process.waitForFinished()) return false;

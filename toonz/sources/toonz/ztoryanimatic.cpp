@@ -4021,6 +4021,26 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   QHBoxLayout *tbLay = new QHBoxLayout(toolbar);
   tbLay->setContentsMargins(6, 2, 6, 2);
   tbLay->setSpacing(4);
+  // ── Context chip: "ANIMATIC" — visual orientation badge ──────────────────
+  {
+    QLabel *chip = new QLabel("ANIMATIC", toolbar);
+    chip->setStyleSheet(
+        "QLabel{"
+        "  background:#1a3a5c;"        // steel blue
+        "  color:#7ab8ef;"
+        "  font-size:9px;"
+        "  font-weight:bold;"
+        "  letter-spacing:1px;"
+        "  border-radius:3px;"
+        "  padding:1px 6px;"
+        "}");
+    chip->setFixedHeight(18);
+    chip->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    tbLay->addWidget(chip);
+    tbLay->addSpacing(8);
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   QLabel *zoomLabel = new QLabel("Zoom:", toolbar);
   zoomLabel->setStyleSheet("color:#ccc; font-size:11px;");
   m_zoomSlider = new QSlider(Qt::Horizontal, toolbar);
@@ -4689,7 +4709,10 @@ static int colDuration(TXsheet *xsh, int col) {
 
 void ZtoryAnimaticPanel::onCopyShots() {
   if (!ZtoryModel::assertMainXsheet(false)) return;
-  const std::set<int> &sel = m_track->selectedCols();
+  const std::set<int> *selPtr = &m_track->selectedCols();
+  const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
+  if (selPtr->empty() && !shared.empty()) selPtr = &shared;
+  const std::set<int> &sel = *selPtr;
   if (sel.empty()) return;
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
   std::vector<ZtoryClipEntry> clip;
@@ -4708,7 +4731,10 @@ void ZtoryAnimaticPanel::onCopyShots() {
 // so paste can restore sub-scene content without loss.
 void ZtoryAnimaticPanel::onCutShots() {
   if (!ZtoryModel::assertMainXsheet(false)) return;
-  const std::set<int> &sel = m_track->selectedCols();
+  const std::set<int> *selPtr = &m_track->selectedCols();
+  const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
+  if (selPtr->empty() && !shared.empty()) selPtr = &shared;
+  const std::set<int> &sel = *selPtr;
   if (sel.empty()) return;
 
   StoryboardPanel *board = findBoardPanel();
@@ -4825,7 +4851,10 @@ void ZtoryAnimaticPanel::onPasteShots() {
 }
 
 void ZtoryAnimaticPanel::onDeleteShots() {
-  const std::set<int> &sel = m_track->selectedCols();
+  const std::set<int> *selPtr = &m_track->selectedCols();
+  const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
+  if (selPtr->empty() && !shared.empty()) selPtr = &shared;
+  const std::set<int> &sel = *selPtr;
   if (sel.empty()) return;
   if (!ZtoryModel::assertMainXsheet(false)) return;
 
@@ -4855,7 +4884,10 @@ void ZtoryAnimaticPanel::onDeleteShots() {
 // Cmd+D: puts selected shots in clipboard as clones; Cmd+V inserts them.
 void ZtoryAnimaticPanel::onCloneShots() {
   if (!ZtoryModel::assertMainXsheet(false)) return;
-  const std::set<int> &sel = m_track->selectedCols();
+  const std::set<int> *selPtr = &m_track->selectedCols();
+  const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
+  if (selPtr->empty() && !shared.empty()) selPtr = &shared;
+  const std::set<int> &sel = *selPtr;
   if (sel.empty()) return;
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
   std::vector<ZtoryClipEntry> clip;
@@ -5456,9 +5488,11 @@ void ZtoryAnimaticPanel::onAddShot() {
 
   // Insert after the rightmost selected shot, or append at the end
   int insertAt = xsh->getColumnCount();
-  const std::set<int> &sel = m_track->selectedCols();
-  if (!sel.empty())
-    insertAt = *std::max_element(sel.begin(), sel.end()) + 1;
+  const std::set<int> *selPtr = &m_track->selectedCols();
+  const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
+  if (selPtr->empty() && !shared.empty()) selPtr = &shared;
+  if (!selPtr->empty())
+    insertAt = *std::max_element(selPtr->begin(), selPtr->end()) + 1;
 
   static const int kDefaultDuration = 24;
 

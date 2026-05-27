@@ -274,6 +274,10 @@ void DockWidget::mousePressEvent(QMouseEvent *me) {
 
     if (m_floating) {
       m_dragging = true;
+      // Grab mouse so we keep receiving events even when the cursor passes
+      // over OS-owned areas (e.g. the macOS menu bar at the top of the primary
+      // screen) while dragging toward a secondary monitor.
+      grabMouse();
       // Do not allow docking if there is a maximized widget or the layout is
       // locked
       if (m_parentLayout && !m_parentLayout->getMaximized() &&
@@ -970,9 +974,17 @@ void getClosestAvailableMousePosition(QPoint &globalPos) {
       else if (globalPos.x() > rect.right())
         globalPos.setX(rect.right());
 
-      if (globalPos.y() < rect.top())
-        globalPos.setY(rect.top());
-      else if (globalPos.y() > rect.bottom())
+      if (globalPos.y() < rect.top()) {
+        // Don't clamp if there's a screen directly above this one at this
+        // X position — allows dragging panels to monitors above the primary.
+        QPoint abovePoint(globalPos.x(), screen->geometry().top() - 1);
+        bool screenAbove = false;
+        for (auto other : QGuiApplication::screens())
+          if (other != screen && other->geometry().contains(abovePoint)) {
+            screenAbove = true; break;
+          }
+        if (!screenAbove) globalPos.setY(rect.top());
+      } else if (globalPos.y() > rect.bottom())
         globalPos.setY(rect.bottom());
     }
   }

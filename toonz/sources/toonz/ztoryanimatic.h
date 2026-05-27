@@ -744,22 +744,26 @@ protected:
   void keyPressEvent(QKeyEvent *e) override;
   bool eventFilter(QObject *obj, QEvent *e) override;
 
-private slots:
-  void onCopyShots();   // Cmd+C: store selected shots to animatic clipboard
-  void onCutShots();    // Cmd+X: store + mark for deletion on paste
-  void onPasteShots();  // Cmd+V: clone clipboard shots, delete cut originals
-  void onDeleteShots(); // Delete/Backspace: remove selected shots
-  void onCloneShots();  // Cmd+D: duplicate (clone) selected shots
-  void onShotClicked(int col);
-  void onShotDoubleClicked(int col);
-  void onReturnToMain();
+// Timeline edit operations — also called by ZtoryMonitorPanel for trim sync.
+public slots:
   void onShotDurationChanged(int col, int newF1);
   void onRollEdit(int colA, int newDurA, int colB, int newDurB);
   void onRazorRequested(int col, int splitFrame);
   void onShotMoved(int col, int newStartFrame);
-  void onMergeShots();
   void onMergeWithNext(int col);
+  // Shot edit operations — forwarded from ZtoryMonitorPanel toolbar.
+  void onCopyShots();
+  void onCutShots();
+  void onPasteShots();
+  void onDeleteShots();
+  void onCloneShots();
+  void onShotDoubleClicked(int col);
+  void onReturnToMain();
+  void onMergeShots();
   void onAddShot();
+
+private slots:
+  void onShotClicked(int col);
   void resequenceXsheet();
   void onZoomChanged(double ppf);
   void onFitAll();

@@ -551,6 +551,26 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
 
   QHBoxLayout *tb = new QHBoxLayout();
 
+  // ── Context chip: "BOARD" — visual orientation badge ─────────────────────
+  {
+    QLabel *chip = new QLabel("BOARD", main);
+    chip->setStyleSheet(
+        "QLabel{"
+        "  background:#1e5c2e;"        // forest green
+        "  color:#7defa0;"
+        "  font-size:9px;"
+        "  font-weight:bold;"
+        "  letter-spacing:1px;"
+        "  border-radius:3px;"
+        "  padding:1px 6px;"
+        "}");
+    chip->setFixedHeight(18);
+    chip->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    tb->addWidget(chip);
+    tb->addSpacing(8);
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
     m_addShotButton = new QToolButton();
   m_addShotButton->setIcon(createQIcon("ztoryc_add_shot"));
   m_addShotButton->setIconSize(QSize(20, 20));
@@ -729,13 +749,14 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     AncestorNode *node = scene->getChildStack()->getAncestorInfo(0);
     if (!node) return;
     int col = node->m_col;
+    m_dirtyShotCol = col;
     for (int si = 0; si < (int)m_shots.size(); si++) {
       if (m_shots[si].data.xsheetColumn == col) {
         detectAndUpdatePanels(si);
-        // Lazy: render only the panels of this shot that are visible in the
-        // scroll area.  Shots with many panels (e.g. SFH-exploded shots with
-        // hundreds of 1-frame panels) would otherwise load every drawing into
-        // memory.
+        // Invalidate stale thumbnails for this shot so updateVisiblePreviews()
+        // will re-render them even if a pixmap already existed.
+        for (PanelWidget *pw : m_shots[si].panels)
+          pw->setPreviewPixmap(QPixmap());
         updateVisiblePreviews();
         break;
       }
@@ -830,7 +851,14 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
     if (sc && sc->getChildStack()->getAncestorCount() > 0) {
       connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
-              this, [this](){ m_panelDetectTimer->start(); });
+              this, [this, sc](){
+        m_panelDetectTimer->start();
+        // Track which shot is being edited so showEvent can invalidate its thumbnail.
+        if (sc->getChildStack()->getAncestorCount() > 0) {
+          AncestorNode *n = sc->getChildStack()->getAncestorInfo(0);
+          if (n) m_dirtyShotCol = n->m_col;
+        }
+      });
     }
     // Refresh automatico thumbnail
     ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
@@ -840,10 +868,12 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
       // Tornati al main — refresh completo
       QTimer::singleShot(200, this, &StoryboardPanel::onRefreshPreviews);
     } else {
-      // Entrati in una sottoscena — refresh solo dello shot corrente
+      // Entrati in una sottoscena — registra quale shot è aperto (per il
+      // refresh forzato al ritorno nel Board) e aggiorna il thumbnail corrente.
       AncestorNode *node = scene->getChildStack()->getAncestorInfo(0);
       if (node) {
         int col = node->m_col;
+        m_dirtyShotCol = col;  // sempre, anche se non si disegna nulla
         for (int si = 0; si < (int)m_shots.size(); si++) {
           if (m_shots[si].data.xsheetColumn == col) {
             for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
@@ -1421,22 +1451,38 @@ int StoryboardPanel::currentShotIndex() const {
 void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   TApp *app = TApp::instance();
-  TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
-  if (!xsh) return;
-  int numCols = xsh->getColumnCount();
-  int numFrames = xsh->getFrameCount();
-  if (numFrames <= 0 || numCols <= 0) return;
-
-  // Get timeline-visible duration from the main xsheet ancestor.
-  // Sub-scene may have more frames than the column range visible on the timeline.
-  int timelineDuration = numFrames;  // fallback: full sub-scene
   ToonzScene *scene = app->getCurrentScene()->getScene();
-  if (scene && scene->getChildStack()->getAncestorCount() > 0) {
+  if (!scene) return;
+
+  int mainCol = m_shots[shotIdx].data.xsheetColumn;
+  TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+  int timelineDuration;
+
+  if (scene->getChildStack()->getAncestorCount() == 0) {
+    // Called from main-xsheet context (e.g. showEvent after sub-scene closed).
+    // Read the sub-scene xsheet directly from the shot's child level — do NOT
+    // iterate main-xsheet cells, which change m_frameId on every row and would
+    // create one panel per frame (thousands of bogus panels → hang).
+    TXsheet *mainXsh = xsh;
+    TXshColumn *mc = mainXsh ? mainXsh->getColumn(mainCol) : nullptr;
+    if (!mc) return;
+    int r0 = 0, r1 = 0;
+    mc->getRange(r0, r1);
+    timelineDuration = (r1 >= r0) ? r1 - r0 + 1 : 0;
+    if (timelineDuration <= 0) return;
+    xsh = nullptr;
+    for (int r = r0; r <= r1 && !xsh; r++) {
+      TXshCell cell = mainXsh->getCell(r, mainCol);
+      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
+        xsh = cell.m_level->getChildLevel()->getXsheet();
+    }
+    if (!xsh) return;
+  } else {
+    // Called while inside the sub-scene — existing logic.
     int depth = scene->getChildStack()->getAncestorCount();
-    // getAncestorInfo(depth-1) is the outermost ancestor (main xsheet level)
+    timelineDuration = xsh->getFrameCount();  // fallback
     AncestorNode *anc = scene->getChildStack()->getAncestorInfo(depth - 1);
     if (anc && anc->m_xsheet) {
-      int mainCol = m_shots[shotIdx].data.xsheetColumn;
       TXshColumn *mc = anc->m_xsheet->getColumn(mainCol);
       if (mc) {
         int r0 = 0, r1 = 0;
@@ -1445,6 +1491,10 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
       }
     }
   }
+
+  int numCols = xsh->getColumnCount();
+  int numFrames = xsh->getFrameCount();
+  if (numFrames <= 0 || numCols <= 0) return;
 
   // Collect keyframe change rows from sub-scene
   std::vector<int> allPanelFrames;
@@ -1853,10 +1903,25 @@ void StoryboardPanel::onXsheetChanged() {
 
 void StoryboardPanel::showEvent(QShowEvent *e) {
   TPanel::showEvent(e);
-  if (m_shots.empty())
+  if (m_shots.empty()) {
     refreshFromScene();
-  else
+  } else {
+    // If a shot was opened while the Board was hidden (m_dirtyShotCol >= 0),
+    // force-refresh it: detect panel changes (handles deleted drawings/panels)
+    // and invalidate the thumbnail so updateVisiblePreviews() re-renders it.
+    if (m_dirtyShotCol >= 0) {
+      for (int si = 0; si < (int)m_shots.size(); si++) {
+        if (m_shots[si].data.xsheetColumn == m_dirtyShotCol) {
+          detectAndUpdatePanels(si);  // safe: now handles main-xsheet context
+          for (PanelWidget *pw : m_shots[si].panels)
+            pw->setPreviewPixmap(QPixmap());
+          break;
+        }
+      }
+      m_dirtyShotCol = -1;
+    }
     QTimer::singleShot(200, this, &StoryboardPanel::onRefreshPreviews);
+  }
 }
 
 void StoryboardPanel::resizeEvent(QResizeEvent *e) {
@@ -1921,8 +1986,15 @@ void StoryboardPanel::refreshFromScene() {
       delete pw;
     }
     m_shots[si].panels.clear();
-    for (int pi = 0; pi < (int)m_shots[si].data.panels.size(); pi++)
+    for (int pi = 0; pi < (int)m_shots[si].data.panels.size(); pi++) {
       addPanelWidget(si, pi);
+      // Restore text loaded by loadZtoryc() — addPanelWidget() creates a blank
+      // widget so we must repopulate from data.panels which already has the text.
+      m_shots[si].panels[pi]->setDuration(m_shots[si].data.panels[pi].duration);
+      m_shots[si].panels[pi]->setDialog(m_shots[si].data.panels[pi].dialog);
+      m_shots[si].panels[pi]->setAction(m_shots[si].data.panels[pi].action);
+      m_shots[si].panels[pi]->setNotes(m_shots[si].data.panels[pi].notes);
+    }
   }
   renumberAll();
   rebuildGrid();

@@ -157,6 +157,10 @@ struct Shot {
   // re-save that would otherwise fire when loadZtoryc() publishes the
   // screenplay path it just read.
   bool m_loadingZtoryc = false;
+  // Column index of the last shot edited while inside a sub-scene.
+  // Set when xsheetChanged fires inside a sub-scene; used in showEvent to
+  // invalidate that shot's stale thumbnail so it gets re-rendered on Board show.
+  int  m_dirtyShotCol = -1;
   // Deferred re-render queue: panels that requested a higher-res thumbnail
   // because the window was resized. Fired 200 ms after the last resize event.
   QTimer                        *m_rerenderTimer = nullptr;

@@ -37,8 +37,11 @@ Ruler::Ruler(QWidget *parent, SceneViewer *viewer, bool vertical)
 //-----------------------------------------------------------------------------
 
 Ruler::Guides &Ruler::getGuides() const {
-  TSceneProperties *sprop =
-      TApp::instance()->getCurrentScene()->getScene()->getProperties();
+  static Guides emptyGuides;
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return emptyGuides;
+  TSceneProperties *sprop = scene->getProperties();
+  if (!sprop) return emptyGuides;
   return m_vertical ? sprop->getVGuides() : sprop->getHGuides();
 }
 
