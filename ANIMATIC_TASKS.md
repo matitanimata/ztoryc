@@ -839,13 +839,13 @@ File: `storyboardpanel.h/.cpp` (PanelWidget overlay), `ztorymodel.h`
 
 ## Priority Order
 
-32. MOD UI Headers contestuali (ALTA)
-33. NEW Single-instance guard (ALTA)
-34. NEW Room "Ztoryc T" + Panel Navigator + rinomina "Ztoryc X" + rimozione Browser (ALTA)
-31. PERF/BUG Saturazione RAM (CRITICA) -- fix immediati prima, poi investigazione leak
+~~32. MOD UI Headers contestuali~~ ✅ DONE 2026-05-27 (context chips Board/Animatic/Monitor)
+~~33. NEW Single-instance guard~~ ✅ DONE 2026-05-27 (QLockFile in ~/Library/Caches)
+~~34. NEW Room "Ztoryc T" + Panel Navigator + rinomina "Ztoryc X" + rimozione Browser~~ ✅ DONE 2026-05-27
+~~31. PERF/BUG Saturazione RAM~~ ✅ DONE 2026-05-27 (lazy load, debounce, SFH repair)
 29. ~~BUG Script Panel~~ ✅ DONE 2026-05-22
-30. PERF Board thumbnail cache (ALTA)
-35. NEW Storyboard Arrow Tool (MEDIA) -- freccia vettoriale su arco/curva
+~~30. PERF Board thumbnail cache~~ ✅ DONE 2026-05-27 (renderXsheetFrame + per-col cache)
+35. NEW Storyboard Arrow Tool (MEDIA) -- freccia vettoriale su arco/curva  ← PROSSIMO
 36. NEW Frecce 3D / Prospettiva (BASSA) -- foreshortened, poi gizmo 3D
 37. NEW Indicatore Direzione Luce (BASSA) -- overlay non distruttivo, posizionabile in 3D
 20. NEW Audio cut/copy/paste tastiera
