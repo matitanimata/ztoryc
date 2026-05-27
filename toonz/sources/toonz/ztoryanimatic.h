@@ -15,6 +15,7 @@
 #include <QHBoxLayout>
 #include <set>
 #include <QKeyEvent>
+#include <QHash>
 #include <QMap>
 #include <map>
 #include <QSet>
@@ -236,6 +237,8 @@ public:
   void setTool(Tool t) { m_tool = t; updateCursor(); }
   Tool tool() const { return m_tool; }
   void refreshFromScene();
+  // Invalidate cached thumbnails so they are re-rendered on next refresh.
+  void clearThumbCache() { m_thumbCache.clear(); }
   // Razor hover: set the absolute frame under the cursor (or -1 to clear).
   // Also called by the panel to sync the hover position across tracks.
   void setRazorHoverFrame(int frame);
@@ -292,6 +295,7 @@ private:
   QMap<int, int> m_origDurations;
   std::set<int> m_selectedCols;
   int m_lastClickedCol = -1; // for Shift+click range selection
+  QHash<int, QPixmap> m_thumbCache; // col → rendered composite thumbnail
   Tool m_tool = SelectTool;
   int m_razorHoverFrame = -1;
   // Lock button painted in paintEvent, toggled via mousePressEvent hit-test
@@ -446,6 +450,7 @@ private:
   std::vector<ThumbEntry> m_entries;
   int m_currentCol = -1;
   int m_scrollOffset = 0; // horizontal pixel offset
+  QHash<int, QPixmap> m_thumbCache; // col → rendered composite thumbnail
   static constexpr int kThumbH = 54;
   static constexpr int kThumbW = 80;
   static constexpr int kSpacing = 4;

@@ -10,8 +10,8 @@
 //   • Viewer always shows the main xsheet (no stacked-widget / shot toggle).
 //   • Double-click opens the shot sub-scene in the main application context
 //     while the monitor viewer continues to show the main animatic.
-//   • Shot edit operations (add, delete, merge, copy, paste) are forwarded to
-//     ZtoryAnimaticPanel when it is open; they are no-ops otherwise.
+//   • Delete is implemented directly (works even when Animatic room is closed).
+//   • Add/merge/copy/clone/paste forward to ZtoryAnimaticPanel when open.
 
 #include "pane.h"
 #include "ztoryanimatic.h"
@@ -30,6 +30,7 @@ public:
 
 protected:
   void showEvent(QShowEvent *e) override;
+  bool eventFilter(QObject *obj, QEvent *e) override;
 
 private slots:
   void onShotClicked(int col);
@@ -39,6 +40,7 @@ private slots:
   void onZoomChanged(double ppf);
   void onModelChanged();
   void refreshAudioTracks();
+  void doDeleteShots();
 
 private:
   ZtoryAnimaticViewer *m_viewer      = nullptr;

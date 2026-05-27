@@ -1774,6 +1774,11 @@ ZtoryAnimaticTrack::ZtoryAnimaticTrack(QWidget *parent) : QWidget(parent) {
   // ZtoryAnimaticPanel can verify focus is inside its subtree and fire shortcuts.
   setFocusPolicy(Qt::ClickFocus);
 
+  // Clear thumbnail cache on model reset (shots added/deleted/reordered) so
+  // new shots get fresh renders on the next refreshFromScene().
+  connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
+          this, &ZtoryAnimaticTrack::clearThumbCache);
+
   // Lock button is painted in paintEvent and activated via mousePressEvent
   // hit-test — no child QToolButton needed.
 }
@@ -1840,34 +1845,20 @@ void ZtoryAnimaticTrack::refreshFromScene() {
         mainXsh->getStageObject(mainXsh->getColumnObjectId(col))->getName());
     b.shotNumber = colName.isEmpty() ? QString("%1").arg(col + 1, 2, 10, QChar('0')) : colName;
 
-    // Generate thumbnail from the first drawing found in the sub-scene.
-    // IMPORTANT: exit on the FIRST cell found regardless of whether the icon is
-    // already in cache (i.e. set found=true unconditionally).
-    // The previous code checked `found = !b.thumbnail.isNull()` which meant:
-    // if the icon hasn't been rendered yet (returns null), keep iterating to the
-    // next cell.  On a fresh scene open NO icons are in cache, so the loop would
-    // walk every cell × every column of every sub-xsheet — potentially tens of
-    // thousands of getIcon() calls, each queuing a background render job.
-    // For a 393-frame shot with 20 layers this produced ~8 000 queued jobs per
-    // shot × 30 shots = 240 000 jobs, flooding the IconGenerator thread pool and
-    // causing the scene to hang for minutes while consuming gigabytes of RAM.
-    if (cl) {
+    // Thumbnail: render the composed sub-xsheet frame (all layers) at a small
+    // fixed size.  Use a per-column cache so refreshFromScene() called on every
+    // xsheetChanged does not re-render unless the shot set actually changed.
+    // Cache is cleared by clearThumbCache() which is called on model reset.
+    if (m_thumbCache.contains(col)) {
+      b.thumbnail = m_thumbCache.value(col);
+    } else if (cl) {
       TXsheet *subXsh = cl->getXsheet();
       if (subXsh) {
-        bool found = false;
-        for (int c = 0; c < subXsh->getColumnCount() && !found; c++) {
-          TXshColumn *subCol = subXsh->getColumn(c);
-          if (!subCol || subCol->isEmpty()) continue;
-          int sr0 = 0, sr1 = 0;
-          subCol->getRange(sr0, sr1);
-          for (int r = sr0; r <= sr1 && !found; r++) {
-            TXshCell cell = subXsh->getCell(r, c);
-            if (!cell.isEmpty() && cell.getSimpleLevel()) {
-              b.thumbnail = IconGenerator::instance()->getIcon(
-                cell.m_level.getPointer(), cell.getFrameId());
-              found = true;  // stop at FIRST cell — icon may still be loading
-            }
-          }
+        QPixmap px = IconGenerator::renderXsheetFrame(
+            subXsh, 0, TDimension(160, 90));
+        if (!px.isNull()) {
+          m_thumbCache.insert(col, px);
+          b.thumbnail = px;
         }
       }
     }
@@ -2298,6 +2289,8 @@ ZtoryStoryStrip::ZtoryStoryStrip(QWidget *parent) : QWidget(parent) {
   setFixedHeight(kThumbH + 8);
   setMinimumWidth(100);
   setStyleSheet("background:#1a1a1a;");
+  connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
+          this, [this]() { m_thumbCache.clear(); });
 }
 
 void ZtoryStoryStrip::refreshFromScene() {
@@ -2331,11 +2324,15 @@ void ZtoryStoryStrip::refreshFromScene() {
     QString colName = QString::fromStdString(
         xsh->getStageObject(xsh->getColumnObjectId(col))->getName());
     if (!colName.isEmpty()) e.shotNumber = colName;
-    // Grab preview from ZtoryModel if available
-    for (int si = 0; si < ZtoryModel::instance()->shotCount(); si++) {
-      if (ZtoryModel::instance()->shot(si).xsheetColumn == col) {
-        e.thumb = ZtoryModel::instance()->preview(si, 0);
-        break;
+    // Render composed frame — cache per-column so we don't re-render every refresh
+    if (m_thumbCache.contains(col)) {
+      e.thumb = m_thumbCache.value(col);
+    } else {
+      QPixmap px = IconGenerator::renderXsheetFrame(
+          cl->getXsheet(), 0, TDimension(160, 90));
+      if (!px.isNull()) {
+        m_thumbCache.insert(col, px);
+        e.thumb = px;
       }
     }
     m_entries.push_back(e);

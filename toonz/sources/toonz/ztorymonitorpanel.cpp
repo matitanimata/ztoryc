@@ -1,6 +1,9 @@
 #include "ztorymonitorpanel.h"
 
 #include "ztorymodel.h"
+#include "ztoryundo.h"
+#include "storyboardpanel.h"
+#include "columncommand.h"
 #include "tapp.h"
 #include "toonz/tscenehandle.h"
 #include "toonz/txsheethandle.h"
@@ -16,9 +19,11 @@
 #include "menubarcommandids.h"
 #include "toonzqt/gutil.h"
 #include "xsheetdragtool.h"   // XsheetGUI::setPlayRange
+#include "tundo.h"
 
 #include <QApplication>
 #include <QShowEvent>
+#include <QKeyEvent>
 #include <QTimer>
 #include <QSplitter>
 #include <QVBoxLayout>
@@ -35,6 +40,12 @@
 static ZtoryAnimaticPanel *findAnimaticPanel() {
   for (QWidget *w : QApplication::allWidgets())
     if (auto *p = qobject_cast<ZtoryAnimaticPanel *>(w)) return p;
+  return nullptr;
+}
+
+static StoryboardPanel *findBoardPanel() {
+  for (QWidget *w : QApplication::allWidgets())
+    if (auto *p = qobject_cast<StoryboardPanel *>(w)) return p;
   return nullptr;
 }
 
@@ -269,7 +280,7 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
   // ZtoryAnimaticPanel methods fall back to sharedSelection when their own
   // track has nothing selected, so they operate on the Monitor's selection.
   connect(addBtn,    &QToolButton::clicked, this, [](){ if (auto *ap = findAnimaticPanel()) ap->onAddShot(); });
-  connect(deleteBtn, &QToolButton::clicked, this, [](){ if (auto *ap = findAnimaticPanel()) ap->onDeleteShots(); });
+  connect(deleteBtn, &QToolButton::clicked, this, &ZtoryMonitorPanel::doDeleteShots);
   connect(mergeBtn,  &QToolButton::clicked, this, [](){ if (auto *ap = findAnimaticPanel()) ap->onMergeShots(); });
   connect(copyBtn,   &QToolButton::clicked, this, [](){ if (auto *ap = findAnimaticPanel()) ap->onCopyShots(); });
   connect(cloneBtn,  &QToolButton::clicked, this, [](){ if (auto *ap = findAnimaticPanel()) ap->onCloneShots(); });
@@ -335,6 +346,9 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
           this, [](int col, int newStartFrame) {
     if (auto *ap = findAnimaticPanel()) ap->onShotMoved(col, newStartFrame);
   });
+
+  // Forward keyboard events from the track to the panel's delete logic
+  m_track->installEventFilter(this);
 }
 
 //-----------------------------------------------------------------------------
@@ -358,12 +372,15 @@ void ZtoryMonitorPanel::refreshAudioTracks() {
   if (!xsh) return;
 
   // Fingerprint: avoid full rebuild when nothing changed.
+  // Must include col index so that shifts caused by shot deletion invalidate
+  // stale m_col values in existing ZtoryAudioTrack widgets.
   size_t fp = 1469598103934665603ULL;
   for (int col = 0; col < xsh->getColumnCount(); col++) {
     TXshColumn *c = xsh->getColumn(col);
     TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
     if (!sc || sc->isEmpty()) continue;
     fp = (fp ^ reinterpret_cast<size_t>(sc)) * 1099511628211ULL;
+    fp ^= (size_t)col * 2654435761ULL;  // include index: detects column shifts
   }
   if (fp == m_audioFP) return;
   m_audioFP = fp;
@@ -472,6 +489,80 @@ void ZtoryMonitorPanel::onZoomChanged(double ppf) {
 
 void ZtoryMonitorPanel::onModelChanged() {
   m_refreshTimer->start();
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoryMonitorPanel::doDeleteShots() {
+  const std::set<int> *selPtr = &m_track->selectedCols();
+  const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
+  if (selPtr->empty() && !shared.empty()) selPtr = &shared;
+  const std::set<int> &sel = *selPtr;
+  if (sel.empty()) return;
+  if (!ZtoryModel::assertMainXsheet(false)) return;
+
+  StoryboardPanel *board = findBoardPanel();
+  std::vector<ZtoryShotSnap> before;
+  if (board) before = board->captureSnapshot();
+
+  TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+  std::vector<int> cols(sel.begin(), sel.end());
+  std::sort(cols.rbegin(), cols.rend());
+  for (int col : cols) {
+    std::set<int> cs; cs.insert(col);
+    ColumnCmd::deleteColumns(cs, false, true);
+  }
+  xsh->updateFrameCount();
+  ZtoryModel::instance()->resequenceXsheet();
+  m_track->refreshFromScene();
+  m_track->setFocus(Qt::OtherFocusReason);
+
+  if (board) {
+    auto after = board->captureSnapshot();
+    TUndoManager::manager()->add(
+        new UndoBoardState(board, tr("Delete Shot"), std::move(before), std::move(after)));
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+bool ZtoryMonitorPanel::eventFilter(QObject *obj, QEvent *e) {
+  if (obj != m_track) return TPanel::eventFilter(obj, e);
+
+  const QEvent::Type t = e->type();
+  if (t != QEvent::KeyPress && t != QEvent::ShortcutOverride)
+    return TPanel::eventFilter(obj, e);
+
+  auto *ke = static_cast<QKeyEvent *>(e);
+  const Qt::KeyboardModifiers mod = ke->modifiers();
+  const bool cmd   = mod & Qt::ControlModifier;
+  const bool shift = mod & Qt::ShiftModifier;
+  const int  key   = ke->key();
+
+  const bool isDelete = !cmd && (key == Qt::Key_Delete || key == Qt::Key_Backspace);
+  const bool isCopy   = cmd && !shift && key == Qt::Key_C;
+  const bool isCut    = cmd && !shift && key == Qt::Key_X;
+  const bool isPaste  = cmd && !shift && key == Qt::Key_V;
+  const bool isClone  = cmd && !shift && key == Qt::Key_D;
+  const bool isAdd    = cmd && key == Qt::Key_N;
+
+  if (!isDelete && !isCopy && !isCut && !isPaste && !isClone && !isAdd)
+    return TPanel::eventFilter(obj, e);
+
+  if (!isPaste && m_track->selectedCols().empty()) return false;
+
+  // ShortcutOverride: claim the key before CommandManager steals it
+  if (t == QEvent::ShortcutOverride) { ke->accept(); return true; }
+
+  if (isDelete) doDeleteShots();
+  else if (isCopy)  { if (auto *ap = findAnimaticPanel()) ap->onCopyShots();  }
+  else if (isCut)   { if (auto *ap = findAnimaticPanel()) ap->onCutShots();   }
+  else if (isPaste) { if (auto *ap = findAnimaticPanel()) ap->onPasteShots(); }
+  else if (isClone) { if (auto *ap = findAnimaticPanel()) ap->onCloneShots(); }
+  else if (isAdd)   { if (auto *ap = findAnimaticPanel()) ap->onAddShot();    }
+
+  ke->accept();
+  return true;
 }
 
 //=============================================================================

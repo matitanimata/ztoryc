@@ -3553,73 +3553,104 @@ void StoryboardPanel::onExportPdf() {
 
   QPdfWriter writer(path);
   writer.setPageLayout(QPageLayout(QPageSize(QPageSize::A4),
-      QPageLayout::Landscape, QMarginsF(15, 15, 15, 15)));
-  writer.setResolution(150);
+      QPageLayout::Landscape, QMarginsF(10, 10, 10, 10)));
+  writer.setResolution(300);
 
   QPainter painter(&writer);
-  const int cols   = 3;
-  const int pageW  = writer.width();
-  const int pageH  = writer.height();
-  const int margin = 40;
-  const int cellW  = (pageW - margin * (cols + 1)) / cols;
-  const int imgH   = cellW * 9 / 16;
+  const double dpi = writer.resolution();
+  auto mm2px = [dpi](double mm) -> int { return (int)(mm * dpi / 25.4 + 0.5); };
+  auto pt2px = [dpi](double pt) -> int { return (int)(pt * dpi / 72.0 + 0.5); };
 
-  // Text area heights
-  const int labelH = 14, textH = 40, blockH = labelH + textH + 4;
-  const int cellH  = imgH + 10 + 3 * blockH;  // image + gap + 3 text blocks
+  const int cols  = 3;
+  const int pageW = writer.width();
+  const int pageH = writer.height();
 
-  // Rows per page
-  const int rowsPerPage = qMax(1, (pageH - 2 * margin) / (cellH + margin));
+  // DPI-independent cell layout
+  const int margin = mm2px(4.0);              // page interior padding
+  const int gap    = mm2px(3.5);              // gap between cells
+  const int cellW  = (pageW - 2*margin - gap*(cols-1)) / cols;
+  const int imgH   = cellW * 9 / 16;          // 16:9 thumbnail
+
+  // Text block heights — derived from font metrics, not hardcoded px
+  const int shotH  = pt2px(8 * 1.6);          // shot label row
+  const int labelH = pt2px(7 * 1.4);          // field label row
+  const int textH  = pt2px(7 * 1.4) * 2;      // 2 text lines per field
+  const int fgap   = mm2px(2.0);              // gap: thumbnail → first field
+  const int bgap   = mm2px(0.8);              // gap between fields
+  const int blockH = labelH + textH + bgap;
+  const int cellH  = shotH + imgH + fgap + 3 * blockH;
+
+  const int rowsPerPage = qMax(1, (pageH - 2*margin) / (cellH + gap));
   const int perPage     = cols * rowsPerPage;
 
-  bool firstPage = true;
   int pos = 0;
   for (int si = 0; si < (int)m_shots.size(); si++) {
     for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++) {
-      int idx  = pos % perPage;
-      int col  = idx % cols;
-      int row  = idx / cols;
+      int idx = pos % perPage;
+      int col = idx % cols;
+      int row = idx / cols;
       if (pos > 0 && idx == 0) writer.newPage();
-      firstPage = false;
 
       PanelWidget *pw = m_shots[si].panels[pi];
-      int x = margin + col * (cellW + margin);
-      int y = margin + row * (cellH + margin);
+      int x = margin + col * (cellW + gap);
+      int y = margin + row * (cellH + gap);
 
-      // Shot/panel label
+      // Shot/panel label — rect form so it never bleeds into the thumbnail
       painter.setPen(Qt::black);
       painter.setFont(QFont("Arial", 8, QFont::Bold));
-      painter.drawText(x, y - 4,
+      painter.drawText(x, y, cellW, shotH, Qt::AlignVCenter | Qt::AlignLeft,
           QString("%1  P%2/%3")
               .arg(m_shots[si].data.shotNumber)
               .arg(pi + 1)
               .arg((int)m_shots[si].panels.size()));
 
       // Thumbnail frame
+      int thumbY = y + shotH;
       painter.setPen(QPen(Qt::black, 2));
-      painter.drawRect(x, y, cellW, imgH);
+      painter.drawRect(x, thumbY, cellW, imgH);
 
-      // Render thumbnail if available
-      const QPixmap &thumb = pw->previewPixmap();
-      if (!thumb.isNull()) {
-        QPixmap scaled = thumb.scaled(cellW - 4, imgH - 4,
-            Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        int tx = x + (cellW - scaled.width())  / 2;
-        int ty = y + (imgH  - scaled.height()) / 2;
-        painter.drawPixmap(tx, ty, scaled);
-      } else {
-        // No thumbnail yet — draw a placeholder "X"
-        painter.setPen(QPen(QColor(180, 180, 180), 1));
-        painter.drawLine(x, y, x + cellW, y + imgH);
-        painter.drawLine(x + cellW, y, x, y + imgH);
+      // Render thumbnail (re-render at PDF cell size for max quality)
+      {
+        int col2 = m_shots[si].data.xsheetColumn;
+        TXsheet *subXsh = nullptr;
+        TXsheet *mainXsh = TApp::instance()->getCurrentScene()->getScene()
+                           ? TApp::instance()->getCurrentScene()->getScene()
+                             ->getChildStack()->getTopXsheet()
+                           : nullptr;
+        if (mainXsh) {
+          for (int r = 0; r <= mainXsh->getFrameCount(); r++) {
+            TXshCell cell = mainXsh->getCell(r, col2);
+            if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+              subXsh = cell.m_level->getChildLevel()->getXsheet(); break;
+            }
+          }
+        }
+        int frame = m_shots[si].data.panels.size() > (size_t)pi
+                    ? m_shots[si].data.panels[pi].startFrame : 0;
+        QPixmap hq;
+        if (subXsh)
+          hq = IconGenerator::renderXsheetFrame(subXsh, frame,
+                   TDimension(cellW - 4, imgH - 4));
+        if (hq.isNull()) hq = pw->previewPixmap();  // fallback to cached
+        if (!hq.isNull()) {
+          QPixmap scaled = hq.scaled(cellW - 4, imgH - 4,
+              Qt::KeepAspectRatio, Qt::SmoothTransformation);
+          int tx = x + (cellW - scaled.width())  / 2;
+          int ty = thumbY + (imgH - scaled.height()) / 2;
+          painter.drawPixmap(tx, ty, scaled);
+        } else {
+          painter.setPen(QPen(QColor(180, 180, 180), 1));
+          painter.drawLine(x, thumbY, x+cellW, thumbY+imgH);
+          painter.drawLine(x+cellW, thumbY, x, thumbY+imgH);
+        }
       }
 
-      // Text fields
-      int ty2 = y + imgH + 14;
+      // Text fields below thumbnail
+      int ty2 = thumbY + imgH + fgap;
       auto drawField = [&](const QString &label, const QString &text) {
         painter.setPen(Qt::black);
         painter.setFont(QFont("Arial", 7, QFont::Bold));
-        painter.drawText(x, ty2, label);
+        painter.drawText(x, ty2, cellW, labelH, Qt::AlignVCenter | Qt::AlignLeft, label);
         painter.setFont(QFont("Arial", 7));
         painter.drawText(x, ty2 + labelH, cellW, textH,
             Qt::AlignLeft | Qt::TextWordWrap, text);
