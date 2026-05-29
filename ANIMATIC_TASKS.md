@@ -96,55 +96,11 @@
 | 26 | NEW Roll Edit | 2026-05-29 |
 | 27 | NEW Slide Edit | 2026-05-29 |
 | 28 | NEW Doppio Viewer Contestuale | 2026-05-29 |
+| BUG-WIN-INSTALLER | Windows installer path fix (Ztoryc vs Tahoma2D dir) — era già fixato; crash utente era da mixed install con vecchia versione | 2026-05-29 |
 
 ---
 
 ## Task aperti
-
----
-
-### BUG — Windows installer: DLL conflict su mixed install (ALTA)
-
-**Priorità: ALTA | Tipo: BUG | Stato: confermato da utenti**
-
-#### Sintomo 1 — path di installazione errato (parzialmente confermato risolto)
-
-L'installer installa in `C:\Program Files\Tahoma2D\` invece di
-`C:\Program Files\Ztoryc\`. Confermato dall'errore: l'exe è in
-`C:\Program Files\Tahoma2D\Ztoryc.exe`. Utenti che hanno Tahoma2D già
-installato vedono questo problema; chi installa da zero potrebbe non notarlo.
-Workaround: disinstallare Tahoma2D prima, poi installare Ztoryc.
-
-#### Sintomo 2 — Entry point not found al lancio
-
-```
-Ztoryc.exe - Entry Point Not Found
-?onViewerDestroyed@TTool@@SAXPEAVViewer@1@@Z could not be located in
-the dynamic link library C:\Program Files\Tahoma2D\Ztoryc.exe.
-```
-
-Causa: Ztoryc installato nella stessa cartella di Tahoma2D trova le vecchie DLL
-di T2D (es. `toonzlib.dll`) che non hanno `TTool::onViewerDestroyed`, funzione
-aggiunta da Ztoryc. Windows carica la DLL dal PATH prima di quella in bundle.
-Fix definitivo = installer usa cartella dedicata `C:\Program Files\Ztoryc\`.
-
-#### Sintomo 3 — Crash su New Scene (Windows-specific)
-
-Sequenza: avvio OK → New Scene → crash durante creazione primo Board vuoto.
-Probabilmente correlato al DLL conflict (funzioni mancanti chiamate durante
-l'init del Board), oppure bug Windows-specific nel codice Board inizializzazione.
-Da investigare dopo aver risolto il path installer.
-
-#### Da fare
-
-1. Verificare script installer (NSIS/WiX/CPack): cambiare `INSTALL_PREFIX` da
-   `Tahoma2D` a `Ztoryc` in `CMakeLists.txt` o nel file `.nsi`/`.wxs`
-2. Assicurarsi che tutte le DLL Ztoryc-modified vengano installate nella cartella
-   Ztoryc e non cerchino quelle T2D in PATH
-3. Testare su macchina senza Tahoma2D installato (caso pulito)
-4. Se crash Board persiste dopo fix path: investigare separatamente
-
-**File:** script installer Windows (`packaging/windows/` o `CMakeLists.txt` CPack section).
 
 ---
 
@@ -336,18 +292,15 @@ nella sub-scene corretta.
 
 ## Ordine implementazione consigliato
 
-1. BUG Windows installer path — cambiare INSTALL_PREFIX in Ztoryc, evita DLL conflict
-2. BUG Windows crash Board — investigare dopo fix installer
-3. NEW In/Out Marker — prerequisito per eventuali tool di trim futuri
-4. NEW Arrow Tool (task 35) — approccio PLI brush preset
-5. NEW Room TRADITIONAL (task 38)
-6. NEW Integrazione Kitsu (M5)
+1. NEW In/Out Marker
+2. NEW Arrow Tool (task 35) — approccio PLI brush preset
+3. NEW Room TRADITIONAL (task 38)
+4. NEW Integrazione Kitsu (M5)
 
 ---
 
 ## Priority Order
 
-BUG-WIN-INSTALLER. BUG Windows installer / DLL conflict su mixed install (ALTA)
 25. NEW In/Out Marker
 35. NEW Storyboard Arrow Tool (MEDIA)
 38. NEW Room TRADITIONAL (MEDIA)
