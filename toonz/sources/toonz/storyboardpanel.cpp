@@ -2286,11 +2286,17 @@ static void cloneChildToPosition(int srcCol, int dstCol) {
   TXshChildLevel *newChildLevel = childStack->createChild(0, dstCol);
   TXsheet *newChildXsh = newChildLevel->getXsheet();
 
-  // Copia contenuto
+  // Copia contenuto colonne + camera.
+  // storeColumns() omette la camera (TStageObjectId::CameraId) — i suoi
+  // keyframe non vengono copiati. Usiamo storeObjects() con IDs espliciti
+  // che includono CameraId(0) così assignParams() copia tutti i keyframe.
   std::set<int> indices;
   for (int i = 0; i < childXsh->getColumnCount(); i++) indices.insert(i);
+  std::vector<TStageObjectId> ids;
+  for (int i : indices) ids.push_back(TStageObjectId::ColumnId(i));
+  ids.push_back(TStageObjectId::CameraId(0));   // include camera keyframes
   StageObjectsData *data = new StageObjectsData();
-  data->storeColumns(indices, childXsh, 0);
+  data->storeObjects(ids, childXsh, 0);
   data->storeColumnFxs(indices, childXsh, 0);
   std::list<int> restoredSplineIds;
   QMap<TStageObjectId, TStageObjectId> idTable;

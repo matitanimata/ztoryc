@@ -68,8 +68,14 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
     m_track->setCurrentFrame(frame);
     for (auto *at : m_audioTracks)
       at->setCurrentFrame(frame);
-    m_track->refreshFromScene();
-    refreshAudioTracks();
+    // Do NOT rebuild blocks from the sub-scene xsheet when inside a shot —
+    // getTopXsheet() would return the sub-scene, wiping the animatic track.
+    // The track already has the correct blocks from when we were at top level.
+    ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
+    if (!sc || sc->getChildStack()->getAncestorCount() == 0) {
+      m_track->refreshFromScene();
+      refreshAudioTracks();
+    }
   });
 
   // ── Viewer ────────────────────────────────────────────────────────────────
@@ -355,10 +361,15 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
 
 void ZtoryMonitorPanel::showEvent(QShowEvent *e) {
   TPanel::showEvent(e);
-  m_track->refreshFromScene();
-  m_ruler->initPlayRangeIfNeeded();
-  m_audioFP = 0;
-  refreshAudioTracks();
+  // Only rebuild from scene when at the top level — inside a sub-scene
+  // getTopXsheet() returns the sub-scene and would wipe the track blocks.
+  ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
+  if (!sc || sc->getChildStack()->getAncestorCount() == 0) {
+    m_track->refreshFromScene();
+    m_ruler->initPlayRangeIfNeeded();
+    m_audioFP = 0;
+    refreshAudioTracks();
+  }
   onModelChanged();
 }
 
