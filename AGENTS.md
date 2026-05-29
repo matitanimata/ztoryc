@@ -364,8 +364,16 @@ When the user says **"sessione chiusa"**, automatically:
    cd /Volumes/ZioSam/tahoma2d-workspace/tahoma2d
    git add -A
    git commit -m "descrizione sintetica"
-   git push
+   git push origin master   # SEMPRE esplicito: il branch traccia upstream
+                            # (Tahoma2D, push DISABLED). `git push` semplice
+                            # fallirebbe silenziosamente. Origin = fork Ztoryc.
    ```
+
+   > ⚠️ **MAI usare `git push` senza argomenti.** Il branch `master` traccia
+   > `upstream/master` (tahoma2d/tahoma2d) per poter confrontare le differenze,
+   > ma `upstream` ha push URL = `DISABLED`. Usare sempre `git push origin master`
+   > per pushare sul fork Ztoryc (`matitanimata/ztoryc`). Verificare l'esito:
+   > deve stampare `... master -> master`, non un errore `DISABLED`.
 
 3. **Sync code to local backup:**
    ```bash
