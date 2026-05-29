@@ -1,6 +1,6 @@
 # Ztoryc — Animatic Panel: Task List for Claude Code
 
-> Aggiornato 2026-05-29. Task completati ridotti a una riga.
+> Aggiornato 2026-05-29c. Task completati ridotti a una riga.
 > Per le spec storiche dei task DONE vedere ANIMATIC_TASKS_ARCHIVE_2026-05.md e git history.
 > NOTA: questo è il file canonico (puntato dal symlink ~/ZtorYc/ANIMATIC_TASKS.md);
 > sostituisce ANIMATIC_TASKS2205.md, ANIMATIC_TASKS2305.md e tutti i precedenti.
@@ -91,10 +91,60 @@
 | MONITOR | ZtoryMonitorPanel: viewer + toolbar completa (zoom/select/trim/razor/add/merge/copy/clone/paste) + audio tracks + double-click shot entry | 2026-05-27 |
 | BUG-DIRTY-SHOT | m_dirtyShotCol: detectAndUpdatePanels in contesto main-xsheet al Board show | 2026-05-27 |
 | BUG-TEXT-CROSS | Cross-scene text contamination: m_currentZtoryPath lega save path a m_shots | 2026-05-29 |
+| BUG-FFMPEG | ffmpeg regressione: bundle path + formati video output ripristinati | 2026-05-29 |
+| BUG-PDF-THUMB | Risoluzione thumbnail PDF: render apposito ignorando cache Board | 2026-05-29 |
+| 26 | NEW Roll Edit | 2026-05-29 |
+| 27 | NEW Slide Edit | 2026-05-29 |
+| 28 | NEW Doppio Viewer Contestuale | 2026-05-29 |
 
 ---
 
 ## Task aperti
+
+---
+
+### BUG — Windows installer: DLL conflict su mixed install (ALTA)
+
+**Priorità: ALTA | Tipo: BUG | Stato: confermato da utenti**
+
+#### Sintomo 1 — path di installazione errato (parzialmente confermato risolto)
+
+L'installer installa in `C:\Program Files\Tahoma2D\` invece di
+`C:\Program Files\Ztoryc\`. Confermato dall'errore: l'exe è in
+`C:\Program Files\Tahoma2D\Ztoryc.exe`. Utenti che hanno Tahoma2D già
+installato vedono questo problema; chi installa da zero potrebbe non notarlo.
+Workaround: disinstallare Tahoma2D prima, poi installare Ztoryc.
+
+#### Sintomo 2 — Entry point not found al lancio
+
+```
+Ztoryc.exe - Entry Point Not Found
+?onViewerDestroyed@TTool@@SAXPEAVViewer@1@@Z could not be located in
+the dynamic link library C:\Program Files\Tahoma2D\Ztoryc.exe.
+```
+
+Causa: Ztoryc installato nella stessa cartella di Tahoma2D trova le vecchie DLL
+di T2D (es. `toonzlib.dll`) che non hanno `TTool::onViewerDestroyed`, funzione
+aggiunta da Ztoryc. Windows carica la DLL dal PATH prima di quella in bundle.
+Fix definitivo = installer usa cartella dedicata `C:\Program Files\Ztoryc\`.
+
+#### Sintomo 3 — Crash su New Scene (Windows-specific)
+
+Sequenza: avvio OK → New Scene → crash durante creazione primo Board vuoto.
+Probabilmente correlato al DLL conflict (funzioni mancanti chiamate durante
+l'init del Board), oppure bug Windows-specific nel codice Board inizializzazione.
+Da investigare dopo aver risolto il path installer.
+
+#### Da fare
+
+1. Verificare script installer (NSIS/WiX/CPack): cambiare `INSTALL_PREFIX` da
+   `Tahoma2D` a `Ztoryc` in `CMakeLists.txt` o nel file `.nsi`/`.wxs`
+2. Assicurarsi che tutte le DLL Ztoryc-modified vengano installate nella cartella
+   Ztoryc e non cerchino quelle T2D in PATH
+3. Testare su macchina senza Tahoma2D installato (caso pulito)
+4. Se crash Board persiste dopo fix path: investigare separatamente
+
+**File:** script installer Windows (`packaging/windows/` o `CMakeLists.txt` CPack section).
 
 ---
 
@@ -169,61 +219,6 @@ Export: se inPoint==0 && outPoint==durata-1: normale; altrimenti esporta
 solo [inPoint, outPoint].
 
 **File:** `ztorymodel.h/.cpp`, `ztoryanimatic.cpp`, `storyboardpanel.cpp`, `.ztoryc`.
-
----
-
-### NEW — Roll Edit (RICHIEDE: In/Out Marker)
-
-**Priorità: MEDIA | Stima: 2-3h**
-
-Sposta il punto di taglio tra due shot adiacenti senza cambiare la durata
-totale della timeline. Contenuto interno intatto.
-UI: `ztoryc_roll.svg`, hit area ±8px sul bordo, overlay "+N/-N frames", shortcut R.
-
-```cpp
-void ZtoryAnimaticPanel::onRollDrag(int colA, int colB, int delta) {
-    ShotData& a = ZtoryModel::instance()->shotData(colA);
-    ShotData& b = ZtoryModel::instance()->shotData(colB);
-    int newOutA = a.outPoint - delta;
-    int newInB  = b.inPoint  - delta;
-    if (newOutA < a.inPoint + 1) return;
-    if (newInB  > b.outPoint - 1) return;
-    if (newOutA > subsceneDuration(colA) - 1) return;
-    if (newInB  < 0) return;
-    a.outPoint = newOutA; b.inPoint = newInB;
-    updateMainXsheetDuration(colA, newOutA - a.inPoint + 1);
-    updateMainXsheetDuration(colB, b.outPoint - newInB + 1);
-}
-```
-Wrappare in UndoBoardState. Edge cases: clamp, audio linkato, multi-selezione.
-
-**File:** `ztoryanimatic.h/.cpp`, `ztorymodel.h/.cpp`, `toonz.qrc`.
-
----
-
-### NEW — Slide Edit (RICHIEDE: In/Out Marker)
-
-**Priorità: MEDIA | Stima: 4-6h**
-
-Sposta lo shot selezionato nella timeline; i vicini A e C assorbono via marker.
-Shortcut U. Edge cases: B primo/ultimo → ForbiddenCursor; audio B linkato.
-
-**File:** `ztoryanimatic.h/.cpp`, `ztorymodel.h/.cpp`, `toonz.qrc`.
-
----
-
-### NEW — Doppio Viewer Contestuale (RICHIEDE: Roll e/o Slide)
-
-**Priorità: MEDIA**
-
-Layout automatico per modalità trim:
-- ROLL:  `| OUT (fine shot A) | IN (inizio shot B) |`
-- SLIDE: `| PREV OUT          | NEXT IN            |`
-- SLIP:  `| PROGRAM           | SOURCE IN/OUT      |`
-
-Attivazione automatica all'attivazione del tool. Scrub sincronizzato.
-
-**File:** `ztoryanimatic.h/.cpp` (ZtorySplitViewer).
 
 ---
 
@@ -341,26 +336,19 @@ nella sub-scene corretta.
 
 ## Ordine implementazione consigliato
 
-1. BUG ffmpeg regressione — verifica bundle + path (priorità: prima di ogni altra cosa)
-2. BUG PDF thumbnail risoluzione — render apposito per PDF ignorando cache Board
-3. NEW In/Out Marker — prerequisito bloccante per Roll/Slide
-4. NEW Roll Edit
-5. NEW Slide Edit
-6. NEW Doppio Viewer
-7. NEW Arrow Tool (task 35) — approccio PLI brush preset
-8. NEW Room TRADITIONAL (task 38)
-9. NEW Integrazione Kitsu (M5)
+1. BUG Windows installer path — cambiare INSTALL_PREFIX in Ztoryc, evita DLL conflict
+2. BUG Windows crash Board — investigare dopo fix installer
+3. NEW In/Out Marker — prerequisito per eventuali tool di trim futuri
+4. NEW Arrow Tool (task 35) — approccio PLI brush preset
+5. NEW Room TRADITIONAL (task 38)
+6. NEW Integrazione Kitsu (M5)
 
 ---
 
 ## Priority Order
 
-BUG-FFMPEG. BUG ffmpeg + formati video assenti (ALTA — regressione)
-BUG-PDF-THUMB. BUG risoluzione thumbnail PDF pessima (ALTA — regressione)
-25. NEW In/Out Marker (PREREQUISITO Roll/Slide)
-26. NEW Roll Edit
-27. NEW Slide Edit
-28. NEW Doppio Viewer Contestuale
+BUG-WIN-INSTALLER. BUG Windows installer / DLL conflict su mixed install (ALTA)
+25. NEW In/Out Marker
 35. NEW Storyboard Arrow Tool (MEDIA)
 38. NEW Room TRADITIONAL (MEDIA)
 20. NEW Audio cut/copy/paste tastiera
