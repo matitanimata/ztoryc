@@ -105,6 +105,108 @@
 
 ---
 
+### MOD — Feedback visivo timeline durante shot editing (task 39)
+
+**Priorità: ALTA | Tipo: MOD**
+
+Quando si entra in edit shot (double-click su uno shot), la timeline resta
+visivamente identica alla modalità animatic — l'utente perde il contesto
+di "dove si trova". Tre punti di intervento:
+
+#### A — Dimming + bordo attivo nella timeline
+
+All'entrata in edit shot:
+- Tutti i blocchi eccetto quello attivo ricevono overlay semi-trasparente scuro
+- Il blocco attivo riceve un bordo colorato (accent color Ztoryc, 2px)
+- Le tracce audio si scuriscono proporzionalmente
+- All'uscita: tutto torna normale
+
+#### B — Banner contestuale sopra la timeline
+
+Widget a tutta larghezza (~28px) visibile solo in edit shot mode:
+```
+✏️  Editing  SQ010 · SH020  —  "Titolo shot"    [Esci]
+```
+- Sfondo accent color (variante scura)
+- Label SQ/SH + titolo shot se presente
+- Bottone [Esci] equivalente al doppio-click di uscita
+
+#### C — Overlay nel viewer nativo
+
+Label testuale nell'angolo in alto a sinistra del viewer, visibile solo
+in edit shot mode. Testo bianco con ombra, font small, semi-trasparente.
+
+**File:** `ztoryanimatic.h/.cpp` (dimming + bordo + banner),
+viewer nativo (overlay label).
+
+---
+
+### BUG — Discrepanza camera main xsheet vs sub-scene
+
+**Priorità: ALTA | Tipo: BUG**
+
+Sintomo: la camera nella sub-scene ha valori diversi da quella nel main xsheet
+(es. F12 Z16 nella sub-scene vs F16 Z16 nel main), per cui l'inquadratura
+visualizzata nel main non corrisponde a quella impostata nella sotto-scena.
+
+Causa probabile: la camera del main xsheet è un oggetto separato da quella
+della sub-scene. Quando si chiude la sub-scene, i valori della camera non
+vengono propagati al main (o viceversa: la camera del main sovrascrive quella
+della sub al momento del collapse).
+
+Da investigare:
+1. Verificare come `ztoryCloseSubXsheet()` / `ztoryOpenSubXsheet()` gestisce
+   la camera: viene copiata dal main al sub all'apertura? Viene copiata
+   dal sub al main alla chiusura?
+2. Controllare se `TStageObjectTree` del main ha una camera indipendente
+   che non viene sincronizzata con quella del child xsheet
+3. Verificare se il problema si manifesta solo su certi valori di frame (F12 vs F16
+   suggerisce uno sfasamento di frame offset tra main e sub)
+
+Fix atteso: all'uscita dalla sub-scene, propagare i valori camera (posizione,
+zoom, rotazione) al corrispondente oggetto camera nel main xsheet.
+
+**File:** `ztoryanimatic.cpp` (ztoryCloseSubXsheet / onReturnToMain),
+`ztorymodel.cpp`.
+
+---
+
+### BUG — Mark-out nel main xsheet blocca il play della timeline
+
+**Priorità: ALTA | Tipo: BUG**
+
+Sintomo: c'è un mark-out impostato nel main xsheet che non corrisponde
+alla durata reale della timeline animatic. Quando si fa play dalla timeline,
+la riproduzione si ferma al mark-out del main invece di percorrere tutta
+la timeline. L'utente deve cambiare workflow, trovare il mark-out e spostarlo
+manualmente.
+
+Causa: la timeline animatic usa il play range del main xsheet (In/Out markers
+globali di Tahoma). Se questi vengono impostati o spostati accidentalmente
+(es. durante l'editing di una sub-scene), rimangono "incastrati" e
+condizionano il play dell'animatic.
+
+Soluzioni possibili:
+1. **Fix immediato**: alla fine di ogni operazione animatic che modifica
+   la durata (add shot, merge, razor, resequence), resettare il mark-out
+   del main xsheet all'ultimo frame valido
+2. **Fix strutturale**: la timeline animatic dovrebbe gestire il proprio
+   play range indipendentemente dai marker globali di Tahoma, o almeno
+   aggiornarlo automaticamente dopo ogni resequenceXsheet()
+
+Da verificare: in `resequenceXsheet()` o in `ZtoryModel`, dopo aver
+aggiornato la durata del main xsheet, aggiornare anche i marker
+In/Out globali:
+```cpp
+TApp::instance()->getCurrentXsheet()->getXsheet()
+    ->setPlayRange(0, totalDuration - 1);
+// oppure: TApp::instance()->getCurrentScene()->...
+```
+
+**File:** `ztorymodel.cpp` (resequenceXsheet), `ztoryanimatic.cpp`.
+
+---
+
 ### BUG — ffmpeg non funziona / formati video assenti nell'output (REGRESSIONE)
 
 **Priorità: ALTA | Tipo: BUG | Stato: regressione**
@@ -260,14 +362,20 @@ nella sub-scene corretta.
 
 ## Ordine implementazione consigliato
 
-1. NEW Arrow Tool (task 35) — approccio PLI brush preset
-3. NEW Room TRADITIONAL (task 38)
-4. NEW Integrazione Kitsu (M5)
+1. BUG Mark-out main blocca play timeline — fix in resequenceXsheet()
+2. BUG Discrepanza camera main vs sub-scene — propagare camera alla chiusura sub
+3. MOD Feedback visivo shot editing (task 39) — dimming + banner + overlay
+4. NEW Arrow Tool (task 35) — approccio PLI brush preset
+5. NEW Room TRADITIONAL (task 38)
+6. NEW Integrazione Kitsu (M5)
 
 ---
 
 ## Priority Order
 
+39. MOD Feedback visivo timeline shot editing (ALTA)
+BUG-CAMERA. BUG Discrepanza camera main vs sub-scene (ALTA)
+BUG-MARKOUT. BUG Mark-out main blocca play timeline (ALTA)
 35. NEW Storyboard Arrow Tool (MEDIA)
 38. NEW Room TRADITIONAL (MEDIA)
 20. NEW Audio cut/copy/paste tastiera
