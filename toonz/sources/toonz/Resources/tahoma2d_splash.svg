@@ -25,10 +25,5 @@
         fill="#888888"
         text-anchor="middle">STORYBOARD · ANIMATIC · ANIMATION</text>
 
-  <!-- Version -->
-  <text x="172" y="290"
-        font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
-        font-size="9"
-        fill="#555555"
-        text-anchor="middle">v0.2.0</text>
+  <!-- Version painted dynamically in main.cpp from ZtorycVersion.cmake -->
 </svg>

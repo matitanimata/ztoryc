@@ -87,7 +87,9 @@
 #include <QSettings>
 #include <QLibraryInfo>
 #include <QHash>
+#include <QPainter>
 #include <QPainterPath>
+#include "tversion.h"
 #include <QDir>
 #include <QStandardPaths>
 #include <QLockFile>
@@ -568,6 +570,25 @@ int main(int argc, char *argv[]) {
   // splash screen
   QPixmap splashPixmap =
       QIcon(":Resources/tahoma2d_splash.svg").pixmap(QSize(344, 344));
+
+  // Paint version string dynamically (source of truth: ZtorycVersion.cmake)
+  {
+    TVER::ToonzVersion ver;
+    QString versionStr =
+        QString("v%1.%2")
+            .arg(QString::fromStdString(ver.getAppVersionString()))
+            .arg(QString::fromStdString(ver.getAppRevisionString()));
+    QPainter p(&splashPixmap);
+    p.setRenderHint(QPainter::TextAntialiasing);
+    QFont vfont("Helvetica Neue", -1);
+    vfont.setPixelSize(9);
+    p.setFont(vfont);
+    p.setPen(QColor("#555555"));
+    // x=172 y=290 matches the original SVG text position (center-anchored)
+    p.drawText(QRect(0, 278, 344, 20), Qt::AlignHCenter | Qt::AlignVCenter,
+               versionStr);
+    p.end();
+  }
 
 #ifdef _WIN32
   QFont font("Segoe UI", -1);

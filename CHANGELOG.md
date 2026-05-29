@@ -7,6 +7,47 @@
 
 ---
 
+## [2026-05-29] — Mark-out fix, Monitor sub-scene guard, Clone camera keyframes + task reconcile
+
+### Fixed
+- **Mark-out main blocca play animatic (BUG-MARKOUT)** — la timeline animatic
+  usava `XsheetGUI::getPlayRange()` (mark-out del native xsheet) in 4 punti di
+  playback/audio. Se stale (impostato dentro una sub-scena o da sessione
+  precedente) il play si fermava al frame sbagliato. Sostituito con
+  `ZtoryAnimaticController::getAnimaticPlayRange()` (range proprio dell'animatic)
+  in tutti e 4 i punti. Aggiunto `ZtoryAnimaticRuler::clampPlayRangeToTimeline()`
+  chiamato dopo ogni `resequenceXsheet()`: riduce il mark-out se oltre la nuova
+  durata (shots cancellati/accorciati).
+- **Monitor track si azzera entrando nello shot** — `refreshFromScene()` chiamava
+  `getTopXsheet()` senza guard `ancestorCount`; dentro una sub-scena restituiva
+  la sub-scena e svuotava i blocchi della track animatic. Aggiunto guard
+  `ancestorCount == 0` nel timer callback e nello `showEvent`.
+- **Clone non copiava i keyframe camera** — `cloneChildToPosition()` usava
+  `storeColumns()` che serializza solo `ColumnId`; la camera (`CameraId(0)`) non
+  veniva mai memorizzata. Fix: `storeObjects()` con IDs espliciti incluso
+  `CameraId(0)` → `restoreObjects()` chiama `restoreCamera()` → `assignParams()`
+  copia tutti i keyframe (posizione, rotazione, zoom).
+- **Cross-scene text contamination (BUG-TEXT-CROSS)** — già committato a inizio
+  sessione: `m_currentZtoryPath` lega il save path al ciclo di vita di `m_shots`.
+
+### Modified
+- **ANIMATIC_TASKS.md riconciliato** — c'erano 3 file con date diverse (2205, 2305,
+  canonico) e numerazione task incoerente. Pulito il canonico: marcati DONE i task
+  32/33/34/30/31/25/26/27/28 + ffmpeg/PDF/Windows-installer (già fixati/superati).
+  Aggiunti task aperti: 39 (feedback visivo shot editing), BUG-CAMERA (discrepanza
+  camera main vs sub-scene), e BUG-MARKOUT (poi fixato). Priority order ora inizia
+  da task 39 + BUG-CAMERA, poi 35 (Arrow Tool), 38 (Room Traditional), Kitsu.
+
+### Notes
+- **Task 25 In/Out Marker** marcato superato: approccio semplificato con `inPoint`
+  fisso a 1, Roll/Slide funzionano via trim su `outPoint` (durata).
+- **Windows installer** — crash utente (`onViewerDestroyed` entry point not found)
+  era da mixed install: Ztoryc installato in `C:\Program Files\Tahoma2D\` con vecchie
+  DLL T2D in PATH. Bug installer già fixato; workaround utente: disinstallare T2D prima.
+- **Rimangono aperti:** task 39 (feedback visivo shot editing), BUG-CAMERA.
+
+---
+
 ## [2026-05-27e] — Release v0.3.4: Monitor keyboard, thumbnails, version bump
 
 ### Added
