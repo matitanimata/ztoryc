@@ -97,6 +97,7 @@
 | 27 | NEW Slide Edit | 2026-05-29 |
 | 28 | NEW Doppio Viewer Contestuale | 2026-05-29 |
 | BUG-WIN-INSTALLER | Windows installer path fix (Ztoryc vs Tahoma2D dir) — era già fixato; crash utente era da mixed install con vecchia versione | 2026-05-29 |
+| 25 | NEW In/Out Marker — superato: inPoint fisso a 1, Roll/Slide funzionano tramite trim su outPoint (durata) | 2026-05-29 |
 
 ---
 
@@ -144,39 +145,6 @@ File: `storyboardpanel.cpp` (onExportPdf), eventualmente `ztoryexport.h/.cpp`.
 
 ---
 
-### NEW — Sistema In/Out Marker per shot (PREREQUISITO BLOCCANTE per Roll e Slide)
-
-**Priorità: MEDIA**
-
-Modello (come DaVinci Resolve / Premiere):
-- Durata nella timeline = celle nel main xsheet
-- Contenuto reale = sub-scene sempre intatta
-- In/Out marker = porzione "attiva" della sub-scene
-
-Invariante fondamentale: `duration_in_timeline == outPoint - inPoint`
-
-Struttura dati — aggiungere a ShotData in ztorymodel.h:
-```cpp
-int inPoint  = 0;   // frame sub-scene inizio porzione attiva
-int outPoint = -1;  // frame sub-scene fine (-1 = usa durata naturale)
-```
-
-Salvataggio XML: `<Shot uuid="..." inPoint="0" outPoint="47" .../>`
-Retrocompatibilità: se mancano i tag, inPoint=0, outPoint=durata-1.
-
-Rendering timeline:
-- Triangoli/tacche ai bordi del blocco per in/out
-- Tooltip: "In: 0 | Out: 47 | Sub-scene: 72 frames"
-
-matchSubsceneDuration: legge durata sub-scene, imposta outPoint=durata-1,
-aggiorna durata nel main xsheet.
-
-Export: se inPoint==0 && outPoint==durata-1: normale; altrimenti esporta
-solo [inPoint, outPoint].
-
-**File:** `ztorymodel.h/.cpp`, `ztoryanimatic.cpp`, `storyboardpanel.cpp`, `.ztoryc`.
-
----
 
 ### NEW — Taglia/copia/incolla audio da tastiera
 
@@ -292,8 +260,7 @@ nella sub-scene corretta.
 
 ## Ordine implementazione consigliato
 
-1. NEW In/Out Marker
-2. NEW Arrow Tool (task 35) — approccio PLI brush preset
+1. NEW Arrow Tool (task 35) — approccio PLI brush preset
 3. NEW Room TRADITIONAL (task 38)
 4. NEW Integrazione Kitsu (M5)
 
@@ -301,7 +268,6 @@ nella sub-scene corretta.
 
 ## Priority Order
 
-25. NEW In/Out Marker
 35. NEW Storyboard Arrow Tool (MEDIA)
 38. NEW Room TRADITIONAL (MEDIA)
 20. NEW Audio cut/copy/paste tastiera
