@@ -97,6 +97,7 @@
 | 27 | NEW Slide Edit | 2026-05-29 |
 | 28 | NEW Doppio Viewer Contestuale | 2026-05-29 |
 | BUG-WIN-INSTALLER | Windows installer path fix (Ztoryc vs Tahoma2D dir) — era già fixato; crash utente era da mixed install con vecchia versione | 2026-05-29 |
+| BUG-MARKOUT | Mark-out main blocca play animatic: sostituito XsheetGUI::getPlayRange con animatic play range proprio in tutti e 4 i punti; aggiunto clampPlayRangeToTimeline() dopo resequence | 2026-05-29 |
 | 25 | NEW In/Out Marker — superato: inPoint fisso a 1, Roll/Slide funzionano tramite trim su outPoint (durata) | 2026-05-29 |
 
 ---
@@ -375,7 +376,8 @@ nella sub-scene corretta.
 
 39. MOD Feedback visivo timeline shot editing (ALTA)
 BUG-CAMERA. BUG Discrepanza camera main vs sub-scene (ALTA)
-BUG-MARKOUT. BUG Mark-out main blocca play timeline (ALTA)
+39. MOD Feedback visivo timeline shot editing (ALTA)
+BUG-CAMERA. BUG Discrepanza camera main vs sub-scene (ALTA)
 35. NEW Storyboard Arrow Tool (MEDIA)
 38. NEW Room TRADITIONAL (MEDIA)
 20. NEW Audio cut/copy/paste tastiera

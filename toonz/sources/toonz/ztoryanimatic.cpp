@@ -788,6 +788,22 @@ void ZtoryAnimaticRuler::resetPlayRangeToFull() {
   update();
 }
 
+void ZtoryAnimaticRuler::clampPlayRangeToTimeline() {
+  // After shots are deleted/trimmed, the mark-out may be beyond the new end.
+  // Clamp it without touching a valid mark-out that is still within range.
+  auto *ctrl = ZtoryAnimaticController::instance();
+  TXsheet *xsh = ctrl->mainXsheet();
+  if (!xsh) return;
+  int lastFrame = std::max(0, videoFrameCount(xsh) - 1);
+  int r0, r1;
+  ctrl->getAnimaticPlayRange(r0, r1);
+  if (r1 > lastFrame) {
+    ctrl->setAnimaticPlayRange(std::min(r0, lastFrame), lastFrame);
+    ctrl->notifyPlayRangeChanged();
+    update();
+  }
+}
+
 void ZtoryAnimaticRuler::initPlayRangeIfNeeded() {
   // Initialise In/Out markers to full range on first show, if not yet set.
   auto *ctrl = ZtoryAnimaticController::instance();
@@ -2580,10 +2596,14 @@ void ZtoryAnimaticViewer::onDrawFrame(
           TINT32 startSmp = (TINT32)(newStart * spf3);
           TINT32 totalSmp = (TINT32)m_sound->getSampleCount();
           int stopFr = videoFrameCount(mainXsh2);
-          if (sc3 && sc3->getChildStack()->getAncestorCount() == 0) {
-            int mr0, mr1, mstep;
-            if (XsheetGUI::getPlayRange(mr0, mr1, mstep) && mr1 >= 0)
-              stopFr = mr1 + 1;
+          // Use animatic's own play range — NOT XsheetGUI::getPlayRange which
+          // can hold a stale mark-out from a previous native-xsheet session and
+          // would cut audio short even after resequenceXsheet() updated the
+          // total duration.
+          {
+            int ar0, ar1;
+            ctrl->getAnimaticPlayRange(ar0, ar1);
+            if (ar1 >= 0) stopFr = ar1 + 1;
           }
           TINT32 endSmp = std::min((TINT32)(stopFr * spf3), totalSmp - 1);
           if (startSmp <= endSmp && TXsheet::isMainAudioEnabled()) {
@@ -2608,13 +2628,14 @@ void ZtoryAnimaticViewer::onDrawFrame(
           // Only apply the mark-out when at the top (main xsheet) level;
           // inside a sub-scene, updateAnimaticFrameMarkers() cleared markers.
           int markOut = totalFrames - 1;
+          // Use animatic's own play range for the video mark-out clamp —
+          // NOT XsheetGUI::getPlayRange which can be stale (e.g. set while
+          // inside a sub-scene or from a previous session) and stop playback
+          // prematurely even after resequenceXsheet() updated the duration.
           {
-            ToonzScene *sc2 = TApp::instance()->getCurrentScene()->getScene();
-            if (sc2 && sc2->getChildStack()->getAncestorCount() == 0) {
-              int mr0, mr1, mstep;
-              if (XsheetGUI::getPlayRange(mr0, mr1, mstep) && mr1 >= 0)
-                markOut = mr1;
-            }
+            int ar0, ar1;
+            ctrl->getAnimaticPlayRange(ar0, ar1);
+            if (ar1 >= 0) markOut = ar1;
           }
           targetFrame = std::max(0, std::min(targetFrame, markOut));
         } else {
@@ -2820,12 +2841,13 @@ void ZtoryAnimaticViewer::onAnimaticPlayingStatusChanged(bool playing) {
   // allocate/copy hundreds of MB — causing 1-3 s startup delay while the
   // PlaybackExecutor has already advanced video frames, causing A/V desync.
   int    animFrames      = videoFrameCount(mainXsh);
-  // Respect mark-out: if a play range is set at the top level, cap audio there.
+  // Cap audio at the animatic's own mark-out (NOT XsheetGUI::getPlayRange
+  // which can be stale and cut audio at the wrong frame).
   int stopFrame = animFrames;
-  if (scene->getChildStack()->getAncestorCount() == 0) {
-    int mr0, mr1, mstep;
-    if (XsheetGUI::getPlayRange(mr0, mr1, mstep) && mr1 >= 0)
-      stopFrame = mr1 + 1;  // exclusive end
+  {
+    int ar0, ar1;
+    ZtoryAnimaticController::instance()->getAnimaticPlayRange(ar0, ar1);
+    if (ar1 >= 0) stopFrame = ar1 + 1;  // exclusive end
   }
   TINT32 animEndSample   = (TINT32)(stopFrame * spf);
   TINT32 endSample       = std::min(animEndSample, totalSamples - 1);
@@ -2893,10 +2915,12 @@ void ZtoryAnimaticViewer::restartAudioIfPlaying() {
   if (startSample >= totalSamples) return;
 
   int stopFrame = videoFrameCount(mainXsh);
-  if (scene->getChildStack()->getAncestorCount() == 0) {
-    int mr0, mr1, mstep;
-    if (XsheetGUI::getPlayRange(mr0, mr1, mstep) && mr1 >= 0)
-      stopFrame = mr1 + 1;
+  // Use animatic play range, not XsheetGUI mark-out (same reasoning as
+  // refreshAnimaticSound — avoids stale mark-out cutting audio short).
+  {
+    int ar0, ar1;
+    ctrl->getAnimaticPlayRange(ar0, ar1);
+    if (ar1 >= 0) stopFrame = ar1 + 1;
   }
   TINT32 endSample = std::min((TINT32)(stopFrame * spf), totalSamples - 1);
   if (startSample > endSample) return;
@@ -6185,6 +6209,11 @@ void ZtoryAnimaticPanel::resequenceXsheet() {
   ZtoryAnimaticController::instance()->invalidateSoundTrack();
 
   xsh->updateFrameCount();
+
+  // Clamp the animatic play range mark-out to the new total duration.
+  // If shots were deleted or trimmed, the old mark-out might be beyond the
+  // end of the timeline — causing playback to stop at a phantom position.
+  m_ruler->clampPlayRangeToTimeline();
 }
 
 void ZtoryAnimaticPanel::onMatchSubsceneDuration(int col) {

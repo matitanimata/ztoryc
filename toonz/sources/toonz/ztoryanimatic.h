@@ -196,6 +196,7 @@ public:
   int currentFrame() const { return m_currentFrame; }
   void initPlayRangeIfNeeded();
   void resetPlayRangeToFull();
+  void clampPlayRangeToTimeline();  // shrinks mark-out if beyond new duration
 
 protected:
   void paintEvent(QPaintEvent *) override;
