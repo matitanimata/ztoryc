@@ -383,6 +383,29 @@ Design session necessaria per relazione con sequenze.
 
 ---
 
+### UX (bassa priorità) — Camera-view editing difficile da controllare
+
+**Priorità: BASSA | Tipo: UX | Segnalato: 2026-05-30**
+
+Comportamento storico di Toonz: stando in **camera view** e provando a modificare
+la camera (Animate tool su colonna camera), le modifiche sono quasi impossibili da
+controllare — trascinando si muove/zooma la *vista* invece dell'oggetto camera, e i
+maniglioni di trasformazione sono ambigui rispetto al frame della camera stessa.
+
+Non è un crash, è un limite di design del tool Animate quando il target è la camera
+e si è già nel sistema di riferimento camera.
+
+**Possibili approcci (da valutare):**
+- Modalità/toggle "Edit Camera" che disabilita il pan-vista mentre si trascina la
+  camera, o inverte la mappatura (drag = muovi camera, non vista).
+- Maniglioni dedicati per la camera con feedback chiaro (frame + handle distinti).
+- Eventuale gizmo camera custom (come per le annotazioni task 40).
+
+**File (presumibili):** `sceneviewer.cpp` (gestione drag in camera mode),
+`edittool.cpp` / `tool.cpp` (Animate tool su camera column).
+
+---
+
 ### BUG (da investigare) — Stack overflow ricorsione layout QScrollArea (Windows)
 
 **Priorità: MEDIA | Tipo: BUG | Segnalato: crash Windows 2026-05-28 (build 0.3.4)**
