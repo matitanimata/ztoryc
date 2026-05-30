@@ -383,7 +383,70 @@ Design session necessaria per relazione con sequenze.
 
 ---
 
-### NEW — Storyboard Arrow Tool (task 35)
+### NEW — Sistema Annotazioni Camera-Move + Light Direction (task 40) ⭐ UNIFICA 35/36/37
+
+**Priorità: MEDIA-ALTA | Tipo: NEW | Stima: multi-sessione (3 fasi)**
+
+> Design discusso e approvato 2026-05-30. **Supera e unifica i task 35, 36, 37.**
+> Sistema unico di annotazioni vettoriali per indicazioni di regia (movimenti
+> camera) + direzione luce, con libreria di simboli standard.
+
+**Decisioni approvate dall'utente:**
+1. **Simboli PARAMETRICI** (tool/helper genera i vettori al volo) — niente PLI da
+   disegnare a mano. MA prevedere anche import di `.pli` custom nella libreria.
+2. **Colonna vettoriale per SHOT** — una colonna "Annotazioni" dentro la sub-scena
+   di ogni shot, in cima a tutto, stile/colore fisso. Le annotazioni sono per-shot
+   (movimento camera dell'intero shot), NON per-panel.
+3. **Toggle on/off nel render** — default ON nel viewer; interruttore per
+   mostrarle/nasconderle nel viewer e scelta nell'export.
+
+**Libreria simboli standard (camera moves):**
+- Pan / Tilt → freccia dritta (orizzontale/verticale)
+- Truck in / Truck out → cornice con frecce verso interno/esterno
+- Zoom in / Zoom out → cornice-nella-cornice con frecce agli angoli
+- Follow pan → freccia + etichetta
+- Zip pan → freccia con linee di velocità
+- Hook up → connettore tra due panel (continuità)
+- Match speed / Match cut → etichetta + marker
+- (estendibile con PLI custom)
+
+**Architettura (riferimento API):**
+- Costruzione vettori: pattern di `geometrictool.cpp` — `new TStroke(...)` da
+  control points (TThickPoint), `vi->addStroke(stroke)`, undo dedicato.
+  `addStrokeToImage()` in geometrictool.cpp:1898 è il modello.
+- Vector image dell'annotazione: `TVectorImageP vi(TTool::getImage(true))`.
+- Helper da creare: `buildAnnotationSymbol(type, p0, p1, params) → TVectorImage`
+  (freccia = shaft quadratico + testa triangolo; cornice = rettangolo + frecce).
+
+**FASE 1 — Fondazione (MVP):**
+- Helper parametrico simboli (iniziare da freccia Pan: shaft + arrowhead).
+- Gestione colonna "Annotazioni" dedicata (crea/trova colonna vettoriale in cima
+  alla sub-scena dello shot corrente; stile fisso es. rosso/ciano).
+- Pannello "Camera Moves" (stile Ztory panel) con pulsanti simboli → stampa al
+  centro canvas; editing con tool di selezione nativo (sposta/scala/ruota/ricolora).
+
+**FASE 2 — Libreria completa + interazione:**
+- Tutti i ~12 simboli parametrici.
+- Piazzamento interattivo (click-drag per direzione/lunghezza) — eventuale
+  `ZtoryAnnotationTool : public TTool` con dropdown tipo simbolo.
+- Import `.pli` custom nella libreria (cartella `stuff/library/storyboard symbols/`).
+
+**FASE 3 — Light direction + render:**
+- Gizmo luce: freccia (gambo + testa conica) + glifo sole, handle per angolo (gradi),
+  colore = temperatura. Come tipo simbolo speciale o tool dedicato.
+- Toggle visibilità annotazioni nel viewer (default ON) + opzione nel render
+  (escludi/includi la colonna Annotazioni in fase di export animatic).
+
+**File previsti:** `toonz/sources/toonz/ztoryannotations.h/.cpp` (panel + helper),
+`ztorymodel.h` (gestione colonna/stato toggle), `geometrictool.cpp` (riferimento),
+`stuff/library/storyboard symbols/` (PLI custom futuri).
+
+**NOTA:** i task 35/36/37 sotto sono il design originale frammentato — mantenuti
+per riferimento storico ma SUPERATI da questo task 40 unificato.
+
+---
+
+### NEW — Storyboard Arrow Tool (task 35) — ⚠️ SUPERATO da task 40
 
 **Priorità: MEDIA | Tipo: NEW | Stima: 2-4h**
 
@@ -479,13 +542,15 @@ nella sub-scene corretta.
 ✅ [FATTO precedente] 20. Audio cut/copy/paste tastiera
 ✅ [FATTO precedente] 22. Transizioni
 
-35. NEW Storyboard Arrow Tool (MEDIA)
+40. NEW Sistema Annotazioni Camera-Move + Light Direction (MEDIA-ALTA) ⭐ PROSSIMO — unifica 35/36/37, design approvato, partire da FASE 1
 38. NEW Room TRADITIONAL (MEDIA)
 21. NEW Volume traccia audio
 24. NEW Startup popup hub
-36. NEW Frecce 3D / Prospettiva (BASSA)
-37. NEW Indicatore Direzione Luce (BASSA)
 Kitsu. NEW Integrazione Kitsu (M5)
+
+   ~~35. Storyboard Arrow Tool~~ → assorbito in task 40
+   ~~36. Frecce 3D / Prospettiva~~ → assorbito in task 40
+   ~~37. Indicatore Direzione Luce~~ → assorbito in task 40
 
 Milestone:
 - M2: In/Out Marker, Roll, Slide, Doppio Viewer, Export render

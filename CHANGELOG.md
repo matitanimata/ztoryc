@@ -7,6 +7,60 @@
 
 ---
 
+## [2026-06-01] — Transizioni cross-dissolve + fix timeline animatic + autofill undo/only-new
+
+### Added
+- **Transizioni cross-dissolve** (`7ccba5721`, `6c245442e`) — handle Alt+drag sul
+  bordo destro di uno shot nella timeline animatic imposta la durata della
+  dissolvenza; triangoli arancioni visualizzano l'overlap su entrambi i lati +
+  etichetta frame. Inserisce fisicamente T/2 frame extra in coda alla sub-scena A
+  e T/2 in testa a B (frame ID nel main xsheet shiftati di +T/2 così l'animatic
+  mostra ancora il contenuto originale). Colonne note SoundText `XD-out`/`XD-in`
+  marcano i frame extra in SHOTEDITOR e sono la **fonte di verità** persistente:
+  triangolo e mark-out si derivano contandole, quindi sopravvivono al reload senza
+  dipendere dal timing del `.ztoryc`. Mark-out esteso per coprire i frame della
+  dissolvenza (mark-in resta a 0). Durata board sempre al netto degli extra.
+  `detectAndUpdatePanels` salta le colonne Sound/SoundText (niente panel spurio).
+- **Multi-select tracce audio + group move** (`9699c06a7`) — Ctrl/Cmd+click
+  seleziona segmenti su più tracce; trascinando un segmento selezionato tutti si
+  spostano dello stesso delta, in un unico step di undo (`TUndoScopedBlock`).
+- **Snap (magnete)** (`8a6ad68c5`) — toggle in toolbar animatic (default ON):
+  i bordi trascinati di audio e blocchi video si agganciano (entro 8px) a confini
+  shot, playhead e bordi di altri segmenti audio. Bottone con glifo "U" segnaposto
+  (icona vera rimandata — le icone sono un capitolo a parte).
+
+### Fixed
+- **Zoom-to-cursor timeline** (`546c4712a`) — forza la larghezza del content prima
+  di riposizionare la scrollbar così `setValue` non viene clampato al massimo
+  pre-zoom: il frame sotto il cursore resta fisso.
+- **Razor — vista non salta** (`546c4712a`, `39c37bc4f`) — sia il razor video che
+  quello audio mantengono la posizione di scroll; il path audio (`onAudioRazorRequested`)
+  era quello che faceva saltare a ~1690 (estensione audio gonfiata post-taglio).
+  `refreshFromScene` ora preserva sempre lo scroll (copre paste/cut/delete/drag);
+  reset a 0 solo allo switch di scena.
+- **Incolla audio al playhead** (`39c37bc4f`) — Ctrl+V incolla alla posizione del
+  playhead invece che sulla selezione di copia persistente.
+- **Autofill undo/redo + solo forme nuove** (`25ad78f53`) — l'autofill del brush
+  smart-raster: (1) undo lasciava artefatti di riempimento e redo perdeva il fill →
+  nuovo `AutoFillUndo` dedicato (tile prima/dopo) raggruppato col tratto; (2) riempiva
+  TUTTE le regioni chiuse ad ogni tratto (anche forme preesistenti vuote) → ora
+  riempie solo le regioni il cui contorno tocca l'inchiostro del tratto corrente,
+  rilevato via flood-fill delle regioni + adiacenza all'inchiostro dentro il
+  **footprint del tratto preso dai tile dell'undo** (coordinate raster affidabili;
+  `m_strokeRect`/`m_points` erano vuoti coi brush hard/pencil).
+
+### Notes
+- **Design task 40 approvato** — Sistema Annotazioni Camera-Move + Light Direction
+  (unifica 35/36/37): simboli parametrici + libreria PLI, colonna vettoriale per
+  shot, toggle render. Piano a 3 fasi salvato in ANIMATIC_TASKS.md (prossima priorità).
+
+### Upstream candidates
+- **AutoFill undo/redo fix** (`toonzrasterbrushtool.cpp`) — il fix dell'undo che
+  lascia artefatti e del redo che perde il fill è applicabile a qualsiasi build con
+  l'autofill brush. Da valutare per PR se l'autofill è feature condivisa.
+
+---
+
 ## [2026-05-31] — BUG-CAMERA fix + audio scrub + marker timeline + sync selezione
 
 ### Fixed
