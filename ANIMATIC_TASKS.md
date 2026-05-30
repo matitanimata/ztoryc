@@ -472,15 +472,16 @@ nella sub-scene corretta.
 
 ## Priority Order
 
-39. MOD Feedback visivo timeline shot editing (ALTA)
-BUG-CAMERA. BUG Discrepanza camera main vs sub-scene (ALTA)
-39. MOD Feedback visivo timeline shot editing (ALTA)
-BUG-CAMERA. BUG Discrepanza camera main vs sub-scene (ALTA)
+✅ [FATTO 2026-05-31] BUG-CAMERA — monitor ancorato a camera main (commit 7d1746f3a)
+✅ [FATTO 2026-05-31] 39. MOD Feedback visivo — highlight shot attivo (commit 043b5020b)
+✅ [FATTO 2026-05-31] Marker/navigation tag in timeline (commit 7182b5543)
+✅ [FATTO 2026-05-31] Sync selezione Board↔Animatic (commit 7182b5543)
+✅ [FATTO precedente] 20. Audio cut/copy/paste tastiera
+✅ [FATTO precedente] 22. Transizioni
+
 35. NEW Storyboard Arrow Tool (MEDIA)
 38. NEW Room TRADITIONAL (MEDIA)
-20. NEW Audio cut/copy/paste tastiera
 21. NEW Volume traccia audio
-22. NEW Transizioni
 24. NEW Startup popup hub
 36. NEW Frecce 3D / Prospettiva (BASSA)
 37. NEW Indicatore Direzione Luce (BASSA)

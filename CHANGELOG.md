@@ -7,6 +7,56 @@
 
 ---
 
+## [2026-05-31] — BUG-CAMERA fix + audio scrub + marker timeline + sync selezione
+
+### Fixed
+- **BUG-CAMERA risolto** (`7d1746f3a`) — il monitor (viewer always-main) ora resta
+  ancorato alla camera del MAIN xsheet anche dentro uno shot, invece di usare la
+  camera della sub-scena. 6 punti in `sceneviewer.cpp`: `drawBuildVars()` (camera
+  top-xsheet), skip dell'affine ancestrale per always-main inside-sub,
+  `getViewMatrix()` CAMERA_REFERENCE (inverte la camera main, non la sub —
+  risolveva il contenuto fuori schermo su SH010 con offset x=13.4),
+  `fitToCamera()`/`fitToCameraOutline()` (rect dalla camera main), `getCameraRect()`,
+  e `drawOverlay()` con `cameraRectAff = m_drawCameraAff * TScale(main/sub size)`
+  per maschera/contorno/safe-area che `ViewerDraw::getCameraRect()` calcolava ancora
+  sulla sub.
+- **Scrub audio main da dentro lo shot muto (regressione, `06423030b`)** —
+  `onNativeFrameSwitched` usava `scrubDevice()`, un `TSoundOutputDevice` grezzo mai
+  aperto col formato audio → nessun suono. Routing su `mainXsh->play()`, stesso path
+  dello scrub del ruler animatic (che funziona). Il play funzionava perché usa il
+  device gestito di ogni colonna.
+- **Delete audio track non funzionava** — `ColumnCmd::deleteColumns` opera sulla
+  current xsheet (la sub dentro uno shot). Guard al livello main + undo +
+  `notifyXsheetSoundChanged` + refresh esplicito. Menu tasto-destro sull'area
+  etichetta della traccia audio.
+- **Cursore roll-edit nell'xsheet non compariva** — `CellArea::mouseMoveEvent`
+  reimpostava ArrowCursor ad ogni movimento. Guard `!getDragTool()` + `setCursor`
+  SplitV/SplitH ai call-site del `LevelRollingTool` (Alt sul confine tra due celle).
+- **Nomi colonne sub-scene = "SH010"** — `StoryboardPanel::updateColumnName` usava
+  `scene->getXsheet()` (la sub se dentro uno shot). Cambiato in `getTopXsheet()`.
+
+### Added
+- **Task 39 — highlight shot attivo** (`043b5020b`) — entrando in edit-shot, il blocco
+  attivo nella timeline animatic riceve glow magenta (`#E0249B`) + bordo 2px. Colonna
+  attiva da `ChildStack::getAncestorInfo(0)->m_col`; repaint su `xsheetSwitched`.
+- **Marker / navigation tag nella timeline animatic** (`7182b5543`) — i navigation tag
+  della main xsheet disegnati nel ruler con la forma nativa Tahoma
+  (`PredefinedPath::NAVIGATION_TAG`, pin a goccia). Etichetta solo in hover, click
+  sinistro posiziona il playhead, tasto-destro Add/Edit/Remove. L'edit riusa il popup
+  nativo `NavTagEditorPopup` (testo + colore). Persistono con la scena.
+- **Sync selezione Board↔Animatic** (`7182b5543`) — `ZtoryModel::setSharedSelection`
+  emette `sharedSelectionChanged()`; selezionare una clip nella timeline evidenzia lo
+  shot nel Board e viceversa. Guardie no-op anti-loop.
+
+### Upstream candidates
+- Il cursore roll-edit (SplitV/H) e il guard `!getDragTool()` in `xshcellviewer.cpp`
+  sono fix puliti riproponibili upstream.
+
+### Notes
+- `build_and_deploy.sh` riapre automaticamente l'app dopo il deploy.
+
+---
+
 ## [2026-05-30b] — Findings BUG-CAMERA (tentativo monitor-white revertato)
 
 ### Reverted
