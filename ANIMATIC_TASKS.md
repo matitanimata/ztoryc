@@ -192,6 +192,22 @@ zoom, rotazione) al corrispondente oggetto camera nel main xsheet.
   introduceva una discrepanza di inquadratura monitor vs viewer nativo. L'affine
   ancestrale serve a far combaciare il monitor con la sub-scena — va lasciato.
 
+**DIAGNOSI VISIVA (screenshot utente 2026-05-30) — root cause confermato:**
+- Nel **monitor** (camera del MAIN) il riquadro camera è spostato MOLTO a destra,
+  OLTRE il bordo del disegno, sopra l'area grigia vuota → il primo shot inquadra
+  il vuoto → **bianco**.
+- Nel **viewer nativo** (camera della SUB) il riquadro camera è correttamente
+  centrato sul contenuto.
+- Quindi NON è un edge case del frame 0: è un **offset orizzontale della camera
+  del main rispetto alla camera della sub**. Sul primo shot l'offset è massimo
+  (esce dal contenuto → bianco), sugli altri è minore (si vedono, disallineati).
+- **Direzione fix:** quando si crea/clona uno shot, la camera del MAIN xsheet alla
+  posizione di quello shot deve essere allineata alla camera della SUB (stessa
+  posizione/size/zoom). Verificare `cloneChildToPosition()`, `CAMERA-INIT`
+  (commit 2026-04-05) e come la camera del main viene posizionata per ogni shot.
+  Confrontare a runtime `xsh->getStageObject(CameraId(0))` (main) vs quello del
+  child xsheet: N/S/E/W/Z/scala.
+
 **Prossimi passi suggeriti (sessione dedicata, app aperta per test interattivo):**
 1. Confrontare il TStageObject camera del main xsheet vs quello del child xsheet
    subito dopo `cloneChildToPosition()` / creazione shot: stampare N/S/E/W/Z/scala.
