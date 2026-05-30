@@ -2401,14 +2401,7 @@ void SceneViewer::drawScene() {
 
     ChildStack *cs2D = scene->getChildStack();
     bool insideSubScene = cs2D->getAncestorCount() > 0;
-    // The always-main-xsheet viewer (Ztoryc animatic/monitor) renders the TOP
-    // xsheet with its OWN camera even from inside a sub-scene (see the
-    // m_alwaysMainXsheet branch below).  Applying the sub-scene→parent ancestor
-    // transform there would move the full-animatic content into sub-scene-local
-    // coordinates and push it off-screen — the monitor viewer goes white when
-    // you enter a shot.  Skip the ancestor affine in that case.
-    bool renderTopXsheetInPlace = m_alwaysMainXsheet && insideSubScene;
-    if (editInPlace && !renderTopXsheetInPlace) {
+    if (editInPlace) {
       // Apply parent camera transform so the sub-scene is drawn in context.
       // Always use TApp::getCurrentFrame() (sub-scene local frame) — not the
       // animatic viewer's m_customFrameHandle — because m_rowTable maps
