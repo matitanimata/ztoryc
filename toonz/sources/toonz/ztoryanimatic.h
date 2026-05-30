@@ -834,6 +834,10 @@ private:
   bool m_switchEnabled  = false;  // true in ZtoryAnimaticT (ZTORYC T room)
   bool m_refreshing = false;      // re-entrancy guard for refreshFromScene
   bool m_refreshingAudio = false; // re-entrancy guard for refreshAudioTracks
+  // While >= 0, every refreshFromScene() restores this horizontal scroll value
+  // so an edit (e.g. razor) that triggers a cascade of deferred refreshes does
+  // not let the view jump.  Set before the edit, cleared once the cascade ends.
+  int  m_restoreScrollX = -1;
   // Auto-match: when ON, onMatchSubsceneDuration fires on every xsheetChanged
   // while inside a sub-scene (debounced 300ms, re-entrancy guarded).
   // State lives in ZtoryModel::autoMatch() so ZtoryPanelNavigator can mirror it.

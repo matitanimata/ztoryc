@@ -4748,6 +4748,14 @@ void ZtoryAnimaticPanel::refreshFromScene() {
       m_ruler->setFps(fps);
     }
   }
+  // Honor a pending scroll restore (e.g. razor) so this refresh — which may be
+  // one of several deferred by xsheetChanged — does not let the view jump.
+  if (m_restoreScrollX >= 0 && m_scroll) {
+    if (m_scrollContent && m_scrollContent->layout())
+      m_scrollContent->resize(m_scrollContent->layout()->sizeHint().width(),
+                              m_scrollContent->height());
+    m_scroll->horizontalScrollBar()->setValue(m_restoreScrollX);
+  }
   m_refreshing = false;
 }
 
@@ -6005,6 +6013,13 @@ void ZtoryAnimaticPanel::onMergeWithNext(int col) {
 void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
   if (!ZtoryModel::assertMainXsheet(/*showWarning=*/true)) return;
 
+  // A razor cut does not move any absolute frame position (shot 1 keeps its
+  // frames, shot 2 takes the tail in a new column at the same frames), so the
+  // view should stay put.  notifyXsheetChanged() schedules a cascade of deferred
+  // refreshFromScene() calls; set m_restoreScrollX so each of them re-pins the
+  // scroll, then clear it once the cascade has drained.
+  if (m_scroll) m_restoreScrollX = m_scroll->horizontalScrollBar()->value();
+
   StoryboardPanel *board = findBoardPanel();
   std::vector<ZtoryShotSnap> before;
   if (board) before = board->captureSnapshot();
@@ -6161,6 +6176,12 @@ void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
           new UndoAudioEdit(e.newIdx, e.before, aft, tr("Razor Audio")));
     }
   }
+
+  // Pin the scroll now (synchronous refreshes above) and again after the whole
+  // deferred-refresh cascade drains, then stop pinning so normal scrolling works.
+  if (m_restoreScrollX >= 0 && m_scroll)
+    m_scroll->horizontalScrollBar()->setValue(m_restoreScrollX);
+  QTimer::singleShot(0, this, [this]() { m_restoreScrollX = -1; });
 }
 
 void ZtoryAnimaticPanel::onAudioRazorRequested(int col, int frame) {
@@ -6170,6 +6191,9 @@ void ZtoryAnimaticPanel::onAudioRazorRequested(int col, int frame) {
   TXshColumn *c = xsh->getColumn(col);
   TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
   if (!sc) return;
+  // Pin the scroll across the deferred refresh cascade (notifyXsheetChanged
+  // schedules refreshFromScene) so the view stays anchored on the cut point.
+  if (m_scroll) m_restoreScrollX = m_scroll->horizontalScrollBar()->value();
   TXshSoundColumn *before = dynamic_cast<TXshSoundColumn *>(sc->clone());
   splitAudioColumn(xsh, col, frame);
   TXshSoundColumn *after = dynamic_cast<TXshSoundColumn *>(sc->clone());
@@ -6177,6 +6201,10 @@ void ZtoryAnimaticPanel::onAudioRazorRequested(int col, int frame) {
       new UndoAudioEdit(col, before, after, tr("Razor Audio")));
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
   refreshAudioTracks();
+  updateTrackWidths();
+  if (m_restoreScrollX >= 0 && m_scroll)
+    m_scroll->horizontalScrollBar()->setValue(m_restoreScrollX);
+  QTimer::singleShot(0, this, [this]() { m_restoreScrollX = -1; });
 }
 
 void ZtoryAnimaticPanel::onSegmentDroppedOutside(int srcCol, int origR0,
@@ -6883,6 +6911,14 @@ void ZtoryAnimaticPanel::onZoomChanged(double ppf) {
     m_zoomSlider->blockSignals(false);
   }
   updateTrackWidths();
+
+  // Force the scroll content to its new (zoomed) width NOW, so the horizontal
+  // scrollbar's maximum is updated before we reposition it below.  Without this,
+  // setValue() is clamped to the pre-zoom maximum when zooming in, and the frame
+  // under the cursor drifts off-center.
+  if (m_scrollContent && m_scrollContent->layout())
+    m_scrollContent->resize(m_scrollContent->layout()->sizeHint().width(),
+                            m_scrollContent->height());
 
   // Adjust scrollbar so the frame under the cursor stays at the same screen position.
   if (m_scroll && oldPpf > 0 && cursorScreenX >= 0) {
