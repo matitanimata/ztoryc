@@ -1412,15 +1412,15 @@ void StoryboardPanel::loadZtoryc() {
       else if (xml.name() == QLatin1String("shot")) {
         si = xml.attributes().value("index").toInt();
         if (si < (int)m_shots.size()) {
-          m_shots[si].data.shotNumber      = xml.attributes().value("number").toString();
-          m_shots[si].data.shotLabel       = xml.attributes().value("label").toString();
-          m_shots[si].data.orderIndex      = xml.attributes().value("order").toInt();
-          m_shots[si].data.sequenceId      = xml.attributes().value("sequenceId").toString();
+          m_shots[si].data.shotNumber       = xml.attributes().value("number").toString();
+          m_shots[si].data.shotLabel        = xml.attributes().value("label").toString();
+          m_shots[si].data.orderIndex       = xml.attributes().value("order").toInt();
+          m_shots[si].data.sequenceId       = xml.attributes().value("sequenceId").toString();
           m_shots[si].data.transitionFrames = xml.attributes().value("transition").toInt();
-          if (si < ZtoryModel::instance()->shotCount()) {
-            ZtoryModel::instance()->shot(si).sequenceId      = m_shots[si].data.sequenceId;
-            ZtoryModel::instance()->shot(si).transitionFrames = m_shots[si].data.transitionFrames;
-          }
+          // sequenceId is synced here (ZtoryModel may already have shots);
+          // transitionFrames is synced later in refreshFromScene after syncShotPanels.
+          if (si < ZtoryModel::instance()->shotCount())
+            ZtoryModel::instance()->shot(si).sequenceId = m_shots[si].data.sequenceId;
           // Backward compat (v1-v2 files written by StoryboardPanel):
           // if shotLabel absent, use shotNumber
           if (m_shots[si].data.shotLabel.isEmpty())
@@ -1606,18 +1606,28 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
   int numFrames = xsh->getFrameCount();
   if (numFrames <= 0 || numCols <= 0) return;
 
+  // Sound and SoundText (note) columns must not drive panel detection: the
+  // cross-dissolve XD-out/XD-in note columns would otherwise create a spurious
+  // panel boundary where they start/end.  Skip them in both passes below.
+  auto isDrawingCol = [&](int c) -> bool {
+    TXshColumn *col = xsh->getColumn(c);
+    return col && !col->getSoundColumn() && !col->getSoundTextColumn();
+  };
+
   // Collect keyframe change rows from sub-scene
   std::vector<int> allPanelFrames;
   allPanelFrames.push_back(0);
   for (int r = 1; r < numFrames; r++) {
     bool changed = false;
     for (int c = 0; c < numCols && !changed; c++) {
+      if (!isDrawingCol(c)) continue;
       TXshCell prev = xsh->getCell(r - 1, c);
       TXshCell curr = xsh->getCell(r, c);
       if (prev.m_frameId != curr.m_frameId || prev.isEmpty() != curr.isEmpty())
         changed = true;
     }
     for (int c = 0; c < numCols && !changed; c++) {
+      if (!isDrawingCol(c)) continue;
       TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
       if (obj && obj->isKeyframe(r)) changed = true;
     }
@@ -2112,10 +2122,16 @@ void StoryboardPanel::refreshFromScene() {
   // has the final (post-renumber) shot labels and correct column indices.
   // The earlier syncShotPanels in loadZtoryc may have had empty labels for
   // scenes without a .ztoryc file; this call makes them authoritative.
-  for (int i = 0; i < (int)m_shots.size(); i++)
+  for (int i = 0; i < (int)m_shots.size(); i++) {
     ZtoryModel::instance()->syncShotPanels(i, m_shots[i].data.panels,
                                            m_shots[i].data.shotLabel,
                                            m_shots[i].data.xsheetColumn);
+    // Sync transitionFrames here (after model is fully populated) rather than
+    // inside loadZtoryc() where ZtoryModel::shotCount() may still be 0.
+    if (i < ZtoryModel::instance()->shotCount())
+      ZtoryModel::instance()->shot(i).transitionFrames =
+          m_shots[i].data.transitionFrames;
+  }
   // Thumbnails are NOT rendered automatically on scene load.
   // renderXsheetFrame() is synchronous and can take several seconds per panel on
   // scenes with complex sub-xsheets (many raster layers, high resolution).

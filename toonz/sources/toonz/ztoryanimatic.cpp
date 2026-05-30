@@ -19,6 +19,7 @@
 #include "toonz/txshcell.h"
 #include "toonz/txshsoundcolumn.h"
 #include "toonz/txshsoundlevel.h"
+#include "toonz/txshsoundtextcolumn.h"
 #include "toonz/tframehandle.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/tscenehandle.h"
@@ -83,6 +84,32 @@ static constexpr int    kLabelW  = 80;
 // viewport without scrolling.  kMaxPpf = 200 gives single-frame editing.
 static constexpr double kMinPpf  = 0.02;
 static constexpr double kMaxPpf  = 200.0;
+
+// ── Cross-dissolve note columns ──────────────────────────────────────────────
+// The XD note columns (SoundText) physically persist inside each sub-scene in
+// the .tnz, so they are the single source of truth for transitions: the .ztoryc
+// transitionFrames value is only a convenience mirror.  All display and mark-out
+// logic derives the transition length by inspecting these columns.
+static const char *kXDOutName = "XD-out"; // tail extra frames on outgoing shot A
+static const char *kXDInName  = "XD-in";  // head extra frames on incoming shot B
+
+// Returns the number of rows in the named XD note column of a sub-scene (= T/2),
+// or 0 if no such column exists.
+static int xdNoteHalfCount(TXsheet *subXsh, const char *name) {
+  if (!subXsh) return 0;
+  for (int c = 0; c < subXsh->getColumnCount(); c++) {
+    TXshColumn *col = subXsh->getColumn(c);
+    if (!col || !col->getSoundTextColumn()) continue;
+    std::string colName =
+        subXsh->getStageObject(subXsh->getColumnObjectId(c))->getName();
+    if (colName == name) {
+      int r0 = 0, r1 = 0;
+      col->getRange(r0, r1);
+      return (r1 >= r0) ? (r1 - r0 + 1) : 0;
+    }
+  }
+  return 0;
+}
 
 // Find the live StoryboardPanel instance for undo/redo from the Animatic.
 // Searches the whole widget tree since the Board can be embedded or floating.
@@ -1996,16 +2023,9 @@ void ZtoryAnimaticTrack::refreshFromScene() {
         mainXsh->getStageObject(mainXsh->getColumnObjectId(col))->getName());
     b.shotNumber = colName.isEmpty() ? QString("%1").arg(col + 1, 2, 10, QChar('0')) : colName;
 
-    // Legge transitionFrames dal model (cercando lo shot per colonna)
-    {
-      ZtoryModel *model = ZtoryModel::instance();
-      for (int si = 0; si < model->shotCount(); si++) {
-        if (model->shot(si).xsheetColumn == col) {
-          b.transitionFrames = model->shot(si).transitionFrames;
-          break;
-        }
-      }
-    }
+    // Transition length derived from the XD-out note column in this shot's
+    // sub-scene — the physical, persisted source of truth (survives reload).
+    b.transitionFrames = xdNoteHalfCount(cl->getXsheet(), kXDOutName) * 2;
 
     // Thumbnail: render the composed sub-xsheet frame (all layers) at a small
     // fixed size.  Use a per-column cache so refreshFromScene() called on every
@@ -5413,9 +5433,16 @@ void ZtoryAnimaticPanel::onShotDoubleClicked(int col) {
     // typically has fewer drawings than the animatic slot (implicit hold
     // fills the rest), so clamping would set mark-out to the drawing count
     // instead of the shot's timing.
+    //
+    // Cross-dissolve: extend the mark-out by the extra dissolve frames (XD-out
+    // tail / XD-in head) so the animator sees and works on them.  Derived from
+    // the persisted XD note columns, so it survives reload.  Mark-in stays at 0.
     {
       int durInAnimatic = r1 - r0 + 1;
-      int outF = durInAnimatic - 1;
+      TXsheet *subXsh = cell.m_level->getChildLevel()->getXsheet();
+      int xdExtra = xdNoteHalfCount(subXsh, kXDOutName) +
+                    xdNoteHalfCount(subXsh, kXDInName);
+      int outF = durInAnimatic - 1 + xdExtra;
       if (outF >= 0)
         XsheetGUI::setPlayRange(0, outF, 1, false);
     }
@@ -6325,13 +6352,96 @@ void ZtoryAnimaticPanel::onRollEdit(int colA, int newDurA, int colB, int newDurB
 }
 
 
+// ── helpers for XD note columns ──────────────────────────────────────────────
+// A SoundText column named kXDOutName / kXDInName is inserted in the sub-scene
+// to mark the extra cross-dissolve frames (tail of A / head of B).  These names
+// are declared near the top of the file (kXDOutName/kXDInName).  The column is
+// removed/recreated on every transition change so its length always matches the
+// current T/2 value, and read back via xdNoteHalfCount() to reconstruct the
+// transition after reload.
+
+static void removeXDNoteCol(TXsheet *subXsh, const std::string &name) {
+  for (int c = subXsh->getColumnCount() - 1; c >= 0; c--) {
+    TXshColumn *col = subXsh->getColumn(c);
+    if (!col || !col->getSoundTextColumn()) continue;
+    std::string colName =
+        subXsh->getStageObject(subXsh->getColumnObjectId(c))->getName();
+    if (colName == name) {
+      subXsh->removeColumn(c);
+      return;
+    }
+  }
+}
+
+static void addXDNoteCol(TXsheet *subXsh, int startRow, int count,
+                         const std::string &name) {
+  if (count <= 0) return;
+  TXshSoundTextColumn *col = new TXshSoundTextColumn();
+  col->setXsheet(subXsh);
+  QList<QString> textList;
+  textList << QString("[ %1 %2f ]")
+                  .arg(QString::fromStdString(name))
+                  .arg(count);
+  for (int i = 1; i < count; i++) textList << "";
+  col->createSoundTextLevel(startRow, textList);
+  // Append at the end so existing column indices are never shifted.
+  int insertIdx = subXsh->getColumnCount();
+  subXsh->insertColumn(insertIdx, col);
+  subXsh->getStageObject(subXsh->getColumnObjectId(insertIdx))->setName(name);
+}
+
 // ── onTransitionChanged ──────────────────────────────────────────────────────
-// Stores the cross-dissolve duration (in frames) on the outgoing shot (colA).
-// The value is saved immediately to .ztoryc so it survives reloads.
-// Frame-extra insertion into the sub-scenes is intentionally deferred to a
-// separate "Apply Transition Frames" action (planned for a future session) to
-// avoid corrupting main-xsheet cell references during this initial iteration.
+// Sets the cross-dissolve duration on the seam between colA (outgoing) and
+// colB (incoming).  T/2 hold frames are added/removed at the tail of subA and
+// at the head of subB.  For subB, the main-xsheet cell frame IDs are shifted
+// by +actualDelta so the animatic continues to show the original content.
+// Mark out of A and B is extended to cover the extra frames so the animator
+// can work on the dissolve content.  A SoundText column (XD-out / XD-in) marks
+// the extra frames visually in SHOTEDITOR.
 void ZtoryAnimaticPanel::onTransitionChanged(int colA, int colB, int frames) {
+  TApp *app = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  if (!scene) return;
+  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+  if (!xsh) return;
+
+  // Helper: find the TXsheet of a child-level column in mainXsh
+  auto getSubXsh = [&](int col) -> TXsheet * {
+    TXshColumn *c = xsh->getColumn(col);
+    if (!c || c->isEmpty()) return nullptr;
+    int r0 = 0, r1 = 0;
+    c->getRange(r0, r1);
+    for (int r = r0; r <= r1; r++) {
+      TXshCell cell = xsh->getCell(r, col);
+      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
+        return cell.m_level->getChildLevel()->getXsheet();
+    }
+    return nullptr;
+  };
+
+  // Helper: last occupied row in a sub-scene (skips audio and note columns)
+  auto subLastRow = [](TXsheet *sub) -> int {
+    int last = -1;
+    for (int c = 0; c < sub->getColumnCount(); c++) {
+      TXshColumn *sc = sub->getColumn(c);
+      if (!sc || sc->isEmpty() || sc->getSoundColumn() || sc->getSoundTextColumn()) continue;
+      int sr0 = 0, sr1 = 0;
+      sc->getRange(sr0, sr1);
+      last = qMax(last, sr1);
+    }
+    return last;
+  };
+
+  TXsheet *subA = getSubXsh(colA);
+  TXsheet *subB = (colB >= 0) ? getSubXsh(colB) : nullptr;
+
+  // Previous transition length comes from the XD-out note column (source of
+  // truth), NOT from the model which may be stale after reload.
+  int prevHalf = xdNoteHalfCount(subA, kXDOutName);
+  int newHalf  = frames / 2;
+  int delta    = newHalf - prevHalf; // >0 add, <0 remove
+
+  // Keep the model mirror in sync for any other consumer.
   ZtoryModel *model = ZtoryModel::instance();
   for (int si = 0; si < model->shotCount(); si++) {
     if (model->shot(si).xsheetColumn == colA) {
@@ -6339,9 +6449,146 @@ void ZtoryAnimaticPanel::onTransitionChanged(int colA, int colB, int frames) {
       break;
     }
   }
+
+  if (delta == 0) {
+    StoryboardPanel *board = findBoardPanel();
+    if (board) board->saveZtoryc();
+    m_track->refreshFromScene();
+    return;
+  }
+
+  // ── Tail of A: extend / shrink hold at end of sub-scene ──────────────────
+  if (subA) {
+    int lastRow = subLastRow(subA);
+    if (lastRow >= 0) {
+      if (delta > 0) {
+        for (int c = 0; c < subA->getColumnCount(); c++) {
+          TXshColumn *sc = subA->getColumn(c);
+          if (!sc || sc->isEmpty() || sc->getSoundColumn() || sc->getSoundTextColumn()) continue;
+          TXshCell lastCell;
+          for (int r = lastRow; r >= 0; r--) {
+            TXshCell cell = subA->getCell(r, c);
+            if (!cell.isEmpty()) { lastCell = cell; break; }
+          }
+          if (lastCell.isEmpty()) continue;
+          for (int i = 1; i <= delta; i++)
+            subA->setCell(lastRow + i, c, lastCell);
+        }
+      } else {
+        int toRemove = -delta;
+        for (int c = 0; c < subA->getColumnCount(); c++) {
+          TXshColumn *sc = subA->getColumn(c);
+          if (!sc || sc->isEmpty() || sc->getSoundColumn() || sc->getSoundTextColumn()) continue;
+          int sr0 = 0, sr1 = 0;
+          sc->getRange(sr0, sr1);
+          int canRemove = qMin(toRemove, sr1 - sr0); // keep at least 1 cell
+          if (canRemove > 0)
+            subA->removeCells(sr1 - canRemove + 1, c, canRemove);
+        }
+      }
+      // Mark out: extend to cover extra frames so animator can work on dissolve
+      int newLastA = subLastRow(subA);
+      if (newLastA >= 0) ztorySetShotRange(colA, 0, newLastA);
+    }
+  }
+
+  // ── Head of B: insert / remove hold at start of sub-scene ────────────────
+  int actualBDelta = 0; // actual shift applied (may be clamped per-column)
+  if (subB) {
+    if (delta > 0) {
+      actualBDelta = delta;
+      for (int c = 0; c < subB->getColumnCount(); c++) {
+        TXshColumn *sc = subB->getColumn(c);
+        if (!sc || sc->isEmpty() || sc->getSoundColumn() || sc->getSoundTextColumn()) continue;
+        subB->insertCells(0, c, delta);
+        TXshCell firstCell = subB->getCell(delta, c);
+        if (firstCell.isEmpty()) continue;
+        for (int r = 0; r < delta; r++)
+          subB->setCell(r, c, firstCell);
+      }
+    } else {
+      int toRemove = -delta;
+      // Clamp to min available across all columns so the shift is uniform
+      int minAvail = toRemove;
+      for (int c = 0; c < subB->getColumnCount(); c++) {
+        TXshColumn *sc = subB->getColumn(c);
+        if (!sc || sc->isEmpty() || sc->getSoundColumn() || sc->getSoundTextColumn()) continue;
+        int sr0 = 0, sr1 = 0;
+        sc->getRange(sr0, sr1);
+        minAvail = qMin(minAvail, sr1 - sr0); // keep at least 1 cell
+      }
+      actualBDelta = -minAvail;
+      if (minAvail > 0) {
+        for (int c = 0; c < subB->getColumnCount(); c++) {
+          TXshColumn *sc = subB->getColumn(c);
+          if (!sc || sc->isEmpty() || sc->getSoundColumn() || sc->getSoundTextColumn()) continue;
+          int sr0 = 0, sr1 = 0;
+          sc->getRange(sr0, sr1);
+          subB->removeCells(sr0, c, minAvail);
+        }
+      }
+    }
+    // Shift main-xsheet frame IDs for colB by actualBDelta
+    if (actualBDelta != 0) {
+      TXshColumn *mainColB = xsh->getColumn(colB);
+      if (mainColB && !mainColB->isEmpty()) {
+        int r0 = 0, r1 = 0;
+        mainColB->getRange(r0, r1, /*ignoreLastStop=*/true);
+        for (int r = r0; r <= r1; r++) {
+          TXshCell cell = xsh->getCell(r, colB);
+          if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+            int newId = cell.m_frameId.getNumber() + actualBDelta;
+            if (newId < 1) newId = 1;
+            cell.m_frameId = TFrameId(newId);
+            xsh->setCell(r, colB, cell);
+          }
+        }
+      }
+    }
+    // Mark out: extend to cover extra head frames (mark in stays at 0)
+    int newLastB = subLastRow(subB);
+    if (newLastB >= 0) ztorySetShotRange(colB, 0, newLastB);
+  }
+
+  // ── XD note columns: remove old, re-add if T > 0 ─────────────────────────
+  if (subA) {
+    removeXDNoteCol(subA, kXDOutName);
+    if (newHalf > 0) {
+      int lastA = subLastRow(subA);
+      if (lastA >= 0)
+        addXDNoteCol(subA, lastA - newHalf + 1, newHalf, kXDOutName);
+    }
+  }
+  if (subB) {
+    removeXDNoteCol(subB, kXDInName);
+    if (newHalf > 0)
+      addXDNoteCol(subB, 0, newHalf, kXDInName);
+  }
+
+  // Live-update the play range if colA or colB is currently open in SHOTEDITOR,
+  // so changing/clearing the transition immediately moves the mark-out without
+  // needing to reopen the shot.  Mark-out = last drawing row (extra frames
+  // included); mark-in stays at 0.
+  {
+    ChildStack *cs = scene->getChildStack();
+    if (cs && cs->getAncestorCount() == 1) {
+      TXsheet *curXsh = cs->getXsheet();
+      auto tryUpdate = [&](TXsheet *sub) {
+        if (sub && sub == curXsh) {
+          int last = subLastRow(sub);
+          if (last >= 0) XsheetGUI::setPlayRange(0, last, 1, false);
+        }
+      };
+      tryUpdate(subA);
+      tryUpdate(subB);
+    }
+  }
+
   StoryboardPanel *board = findBoardPanel();
   if (board) board->saveZtoryc();
   m_track->refreshFromScene();
+  app->getCurrentScene()->notifySceneChanged();
+  app->getCurrentXsheet()->notifyXsheetChanged();
 }
 
 void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {

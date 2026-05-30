@@ -1208,10 +1208,30 @@ void openSubXsheet() {
     if (shotColPtr) shotColPtr->getRange(r0col, r1col, /*ignoreLastStop=*/true);
     int shotDuration = (r1col >= r0col) ? (r1col - r0col + 1)
                                         : newXsh->getFrameCount();
-    int markIn = 0;
+    int markIn  = 0;
+    int markOut = shotDuration - 1; // default: animatic duration
     if (s_frameRangeMap.contains(newXsh))
       markIn = s_frameRangeMap[newXsh].first;  // ripristina solo mark-in
-    XsheetGUI::setPlayRange(markIn, qMax(markIn, shotDuration - 1), 1, false);
+    // Cross-dissolve: include the extra dissolve frames in the mark-out so the
+    // animator can work on them.  The XD note columns persist with the .tnz, so
+    // this is robust across reload (unlike s_frameRangeMap which is runtime-only).
+    // XD-out adds tail frames (shot A); XD-in adds head frames (shot B).
+    {
+      int xdExtra = 0;
+      for (int c = 0; c < newXsh->getColumnCount(); c++) {
+        TXshColumn *nc = newXsh->getColumn(c);
+        if (!nc || !nc->getSoundTextColumn()) continue;
+        std::string nm =
+            newXsh->getStageObject(newXsh->getColumnObjectId(c))->getName();
+        if (nm == "XD-out" || nm == "XD-in") {
+          int xr0 = 0, xr1 = 0;
+          nc->getRange(xr0, xr1);
+          if (xr1 >= xr0) xdExtra += (xr1 - xr0 + 1);
+        }
+      }
+      markOut += xdExtra;
+    }
+    XsheetGUI::setPlayRange(markIn, qMax(markIn, markOut), 1, false);
     changeSaveSubXsheetAsCommand();
   } else
     DVGui::error(QObject::tr("Select a sub-scene cell."));
