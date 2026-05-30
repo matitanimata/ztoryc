@@ -26,6 +26,19 @@
   dettagliati in ANIMATIC_TASKS.md. Da affrontare in sessione dedicata con test
   interattivo. NON ritoccare l'affine ancestrale in sceneviewer.cpp.
 
+### BUG-CAMERA — diagnosi completa (analisi .tnz SB_APPENNINGERS)
+- **Root cause confermato:** mismatch di `cameraSize` tra sub-scena e main. Main =
+  16×9; su 59 sub-scene, 4 sono anomale (3× `12 6.75`, 1× `12 9`). SH010 è `12×6.75`
+  con offset x=13.4 → nel monitor finisce fuori frame → bianco. Spiega "solo il
+  primo shot bianco".
+- **Decisione utente:** NON toccare i dati camera (la camera piccola è legittima,
+  l'animatic puro la mostra giusta). Il fix è SOLO nel rendering del monitor: deve
+  restare ancorato alla camera del MAIN anche dentro lo shot (come animatic puro),
+  invece di scendere in edit-in-place sulla camera della sub.
+- **Piano implementazione** (3 punti in sceneviewer.cpp: affine ancestrale, camera
+  di riferimento, re-fit on scene-switch) salvato in ANIMATIC_TASKS.md → BUG-CAMERA.
+  Richiede sessione dedicata con iterazione a test visivi su SH010.
+
 ---
 
 ## [2026-05-30] — Script per-scena: fix binding scena↔sceneggiatura
