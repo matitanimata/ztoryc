@@ -3280,6 +3280,16 @@ void ToonzRasterBrushTool::onCanvasSizeChanged() {
 //------------------------------------------------------------------
 
 void ToonzRasterBrushTool::onColorStyleChanged() {
+  // Re-entrancy guard: finishRasterBrush() below changes the palette/level
+  // (notifyImageChanged, setCell, autofill) which synchronously re-fires
+  // colorStyleChanged → onColorStyleChanged().  The nested call would re-enter
+  // finishRasterBrush() on the half-finished stroke state (m_tileSaver still
+  // set, and in the WRONG image after an xsheet switch) → use-after-free /
+  // double-free → SIGSEGV.  Seen on shot double-click in the animatic, which
+  // opens the sub-scene and switches xsheet+palette mid-stroke-state.
+  if (m_inColorStyleChanged) return;
+  m_inColorStyleChanged = true;
+
   // in case the style switched while drawing
   if (m_tileSaver) {
     bool isValid = m_enabled && m_active;
@@ -3297,6 +3307,8 @@ void ToonzRasterBrushTool::onColorStyleChanged() {
   m_isMyPaintStyleSelected = (mpbs) ? true : false;
   setWorkAndBackupImages();
   getApplication()->getCurrentTool()->notifyToolChanged();
+
+  m_inColorStyleChanged = false;
 }
 
 //------------------------------------------------------------------

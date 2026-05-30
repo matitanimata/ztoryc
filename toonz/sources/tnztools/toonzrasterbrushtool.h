@@ -245,6 +245,10 @@ protected:
   ToonzRasterBrushToolNotifier *m_notifier;
   bool m_isMyPaintStyleSelected    = false;
   MyPaintToonzBrush *m_toonz_brush = 0;
+  // Re-entrancy guard for onColorStyleChanged(): finishRasterBrush() can re-fire
+  // colorStyleChanged (palette/level switch), which must not re-enter and
+  // double-finish the same pending stroke state (SIGSEGV on shot double-click).
+  bool m_inColorStyleChanged = false;
 
   QElapsedTimer m_brushTimer;
   double m_highFreqBrushTimer;
