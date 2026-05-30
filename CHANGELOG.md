@@ -7,6 +7,27 @@
 
 ---
 
+## [2026-05-30b] — Monitor viewer bianco (parziale) + findings BUG-CAMERA
+
+### Fixed
+- **Monitor viewer bianco entrando in sub-scena (BUG-MONITOR-WHITE)** — il viewer
+  always-main-xsheet (animatic/monitor) renderizza il TOP xsheet con la sua camera
+  anche dentro una sub-scena, ma il path 2D di `sceneviewer.cpp` applicava comunque
+  l'affine ancestrale (sub→parent, calcolato dal frame globale sub-locale),
+  spingendo il contenuto fuori schermo → bianco. Fix: salta l'affine ancestrale
+  quando `m_alwaysMainXsheet && insideSubScene`. Gated sul flag Ztoryc, i viewer
+  Tahoma normali non sono toccati. Commit `5f335a295`.
+
+### Notes
+- **Parziale**: dopo il fix gli shot si vedono nel monitor MA (a) il **primo shot
+  (frame 0) resta bianco** e (b) c'è discrepanza di inquadratura tra monitor
+  (camera main) e viewer nativo (camera sub). Confermato dall'utente che i valori
+  divergenti sono lo **Stage transform della colonna camera** (N/S/E/W/Z). Entrambi
+  ricondotti a **BUG-CAMERA** (camera main ≠ camera sub) — findings dettagliati
+  registrati in ANIMATIC_TASKS.md. Richiede sessione dedicata con test interattivo.
+
+---
+
 ## [2026-05-30] — Script per-scena: fix binding scena↔sceneggiatura
 
 ### Fixed

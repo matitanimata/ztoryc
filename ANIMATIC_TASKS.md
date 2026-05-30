@@ -99,6 +99,8 @@
 | BUG-WIN-INSTALLER | Windows installer path fix (Ztoryc vs Tahoma2D dir) — era già fixato; crash utente era da mixed install con vecchia versione | 2026-05-29 |
 | BUG-MARKOUT | Mark-out main blocca play animatic: sostituito XsheetGUI::getPlayRange con animatic play range proprio in tutti e 4 i punti; aggiunto clampPlayRangeToTimeline() dopo resequence | 2026-05-29 |
 | 25 | NEW In/Out Marker — superato: inPoint fisso a 1, Roll/Slide funzionano tramite trim su outPoint (durata) | 2026-05-29 |
+| BUG-SCRIPT-CROSS | Script per-scena: import in extras/<scena>/script + load autoritativo da .ztoryc su sceneSwitched (indipendente dalla Board) | 2026-05-30 |
+| BUG-MONITOR-WHITE | Monitor viewer bianco entrando in sub-scena: skip ancestor affine quando alwaysMainXsheet+insideSubScene (parziale: primo shot ancora bianco → BUG-CAMERA) | 2026-05-30 |
 
 ---
 
@@ -169,6 +171,33 @@ zoom, rotazione) al corrispondente oggetto camera nel main xsheet.
 
 **File:** `ztoryanimatic.cpp` (ztoryCloseSubXsheet / onReturnToMain),
 `ztorymodel.cpp`.
+
+---
+
+**FINDINGS sessione 2026-05-30 (confermati dall'utente):**
+- I valori F/Z divergenti sono lo **Stage/Transform della colonna camera**
+  (N/S/E/W/Z/scala), NON la barra di stato del viewer e NON il Camera Settings.
+  Quindi è il transform dell'oggetto camera che differisce tra main e sub.
+- La discrepanza **sparisce tornando al main**, ma a volte resta una differenza
+  residua "come se la camera del main, pur senza keyframe/movimenti, avesse F/Z
+  diversi". → la camera del main non è inizializzata uguale alla sub.
+- **Collegato a shot-010-bianco nel Monitor**: entrando nel PRIMO shot (frame 0)
+  il viewer del monitor è completamente bianco (succede SOLO sul primo shot,
+  anche PRIMA del fix sceneviewer 5f335a295). Ipotesi forte: è lo stesso root
+  cause — la camera main al primo shot ha un transform talmente divergente che
+  il contenuto finisce tutto fuori inquadratura (bianco), mentre sugli altri
+  shot è solo leggermente disallineato.
+- Contesto monitor: il monitor renderizza il TOP xsheet con la camera del MAIN
+  (corretto per l'animatic = ciò che si esporta); il viewer nativo mostra la sub
+  con la camera della SUB. Vanno fatte combaciare le due camere.
+
+**Prossimi passi suggeriti (sessione dedicata, app aperta per test interattivo):**
+1. Confrontare il TStageObject camera del main xsheet vs quello del child xsheet
+   subito dopo `cloneChildToPosition()` / creazione shot: stampare N/S/E/W/Z/scala.
+2. Verificare `CAMERA-INIT` (commit 2026-04-05): forse inizializza la camera sub
+   ma non garantisce che la camera MAIN combaci, o viceversa.
+3. Caso frame 0 / primo shot: verificare il transform della camera main alla
+   riga 0 e perché il primo shot finisce fuori inquadratura.
 
 ---
 
