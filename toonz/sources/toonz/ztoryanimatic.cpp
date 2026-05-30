@@ -1996,6 +1996,17 @@ void ZtoryAnimaticTrack::refreshFromScene() {
         mainXsh->getStageObject(mainXsh->getColumnObjectId(col))->getName());
     b.shotNumber = colName.isEmpty() ? QString("%1").arg(col + 1, 2, 10, QChar('0')) : colName;
 
+    // Legge transitionFrames dal model (cercando lo shot per colonna)
+    {
+      ZtoryModel *model = ZtoryModel::instance();
+      for (int si = 0; si < model->shotCount(); si++) {
+        if (model->shot(si).xsheetColumn == col) {
+          b.transitionFrames = model->shot(si).transitionFrames;
+          break;
+        }
+      }
+    }
+
     // Thumbnail: render the composed sub-xsheet frame (all layers) at a small
     // fixed size.  Use a per-column cache so refreshFromScene() called on every
     // xsheetChanged does not re-render unless the shot set actually changed.
@@ -2120,8 +2131,57 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
     else
       p.drawText(x + 4, 2, w - 8, h, Qt::AlignBottom | Qt::AlignLeft, b.shotNumber);
 
-    // Handle resize (bordo destro)
+    // Cross-dissolve transition indicator: overlapping triangles on the right edge
+    if (b.transitionFrames > 0) {
+      int transW = qMax(4, (int)(b.transitionFrames * m_ppf / 2)); // T/2 belongs to this block
+      // Trapezoid fill (alpha blend) on the tail of block A
+      QColor transColor(255, 160, 60, 160);
+      QPolygon tri;
+      tri << QPoint(x + w - transW, 2)
+          << QPoint(x + w, 2)
+          << QPoint(x + w, h + 2);
+      p.save();
+      p.setRenderHint(QPainter::Antialiasing, true);
+      QPainterPath path;
+      path.addPolygon(tri);
+      p.fillPath(path, transColor);
+      // Right-edge tick marking the transition boundary
+      p.setPen(QPen(QColor(255, 160, 60), 2));
+      p.drawLine(x + w - transW, 2, x + w - transW, h + 2);
+      // Frame count label above the triangle
+      if (transW > 18) {
+        p.setPen(QColor(255, 220, 100));
+        p.setFont(QFont("Arial", 7));
+        p.drawText(x + w - transW + 2, 2, transW - 2, 12,
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   QString("%1f").arg(b.transitionFrames));
+      }
+      p.restore();
+    }
+
+    // Handle resize (bordo destro) — drawn on top of transition indicator
     p.fillRect(x + w - 4, 2, 4, h, QColor(180, 180, 80));
+  }
+
+  // Draw incoming-side (head) triangles for blocks that have an outgoing transition on the previous block
+  for (int bi = 1; bi < (int)m_blocks.size(); bi++) {
+    auto &prev = m_blocks[bi - 1];
+    if (prev.transitionFrames <= 0) continue;
+    auto &cur = m_blocks[bi];
+    int x  = kLabelW + (int)(cur.startFrameInMain * m_ppf);
+    int h  = height() - 4;
+    int transW = qMax(4, (int)(prev.transitionFrames * m_ppf / 2));
+    QColor transColor(255, 160, 60, 120);
+    QPolygon tri;
+    tri << QPoint(x, 2)
+        << QPoint(x + transW, 2)
+        << QPoint(x, h + 2);
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPainterPath path;
+    path.addPolygon(tri);
+    p.fillPath(path, transColor);
+    p.restore();
   }
 
   // Playhead — centered on frame like the ruler
@@ -2226,6 +2286,21 @@ void ZtoryAnimaticTrack::mousePressEvent(QMouseEvent *e) {
           }
           setCursor(Qt::SizeHorCursor);
         }
+        return;
+      }
+    }
+
+    // ── SelectTool: Alt+drag on seam → TransitionTrim ────────────────────
+    if (m_tool == SelectTool && e->button() == Qt::LeftButton &&
+        (e->modifiers() & Qt::AltModifier)) {
+      bool hasNext = (bi + 1 < (int)m_blocks.size());
+      if (hasNext && mx >= x + w - 12 && mx <= x + w + 6) {
+        m_dragMode           = TransitionTrim;
+        m_dragStartX         = mx;
+        m_dragColA           = b.col;
+        m_dragColB           = m_blocks[bi + 1].col;
+        m_dragOrigTransition = b.transitionFrames;
+        setCursor(Qt::SplitHCursor);
         return;
       }
     }
@@ -2337,15 +2412,46 @@ void ZtoryAnimaticTrack::mouseMoveEvent(QMouseEvent *e) {
     return;
   }
 
+  if (m_dragMode == TransitionTrim) {
+    int dx = mx - m_dragStartX;
+    int delta = (int)(dx / m_ppf) * 2; // drag 1 frame pixel → 2 total (T/2 each side)
+    int newTrans = qMax(0, m_dragOrigTransition + delta);
+    newTrans = (newTrans / 2) * 2; // keep even so T/2 is integer
+    // Clamp to min duration of the two shots minus 1
+    for (int bi = 0; bi < (int)m_blocks.size(); bi++) {
+      if (m_blocks[bi].col == m_dragColA) {
+        int maxA = m_blocks[bi].f1 - m_blocks[bi].f0; // durA - 1
+        int maxB = (bi + 1 < (int)m_blocks.size()) ? (m_blocks[bi+1].f1 - m_blocks[bi+1].f0) : maxA;
+        newTrans = qMin(newTrans, qMin(maxA, maxB));
+        m_blocks[bi].transitionFrames = newTrans;
+        break;
+      }
+    }
+    update();
+    return;
+  }
+
   // ── Hover cursor (no active drag) ─────────────────────────────────────
   if (m_tool == SelectTool) {
-    bool nearEdge = false;
-    for (auto &b : m_blocks) {
-      int duration = b.f1 - b.f0 + 1;
-      int bx1 = (int)((b.startFrameInMain + duration) * m_ppf);
-      if (mx >= bx1 - 6 && mx <= bx1 + 2) { nearEdge = true; break; }
+    bool nearSeam = false;
+    if (e->modifiers() & Qt::AltModifier) {
+      for (int bi = 0; bi + 1 < (int)m_blocks.size(); bi++) {
+        int duration = m_blocks[bi].f1 - m_blocks[bi].f0 + 1;
+        int bx1 = (int)((m_blocks[bi].startFrameInMain + duration) * m_ppf);
+        if (mx >= bx1 - 12 && mx <= bx1 + 6) { nearSeam = true; break; }
+      }
     }
-    setCursor(nearEdge ? Qt::SizeHorCursor : Qt::ArrowCursor);
+    if (nearSeam) {
+      setCursor(Qt::SplitHCursor);
+    } else {
+      bool nearEdge = false;
+      for (auto &b : m_blocks) {
+        int duration = b.f1 - b.f0 + 1;
+        int bx1 = (int)((b.startFrameInMain + duration) * m_ppf);
+        if (mx >= bx1 - 6 && mx <= bx1 + 2) { nearEdge = true; break; }
+      }
+      setCursor(nearEdge ? Qt::SizeHorCursor : Qt::ArrowCursor);
+    }
   } else if (m_tool == TrimTool) {
     Qt::CursorShape cur = Qt::ArrowCursor;
     for (int bi = 0; bi < (int)m_blocks.size(); bi++) {
@@ -2421,6 +2527,16 @@ void ZtoryAnimaticTrack::mouseReleaseEvent(QMouseEvent *) {
     if (newDurA > 0 && newDurB > 0 &&
         (newDurA != m_dragOrigDurA || newDurB != m_dragOrigDurB))
       emit rollEdit(m_dragColA, newDurA, m_dragColB, newDurB);
+    m_dragColA = m_dragColB = -1;
+    return;
+  }
+
+  if (finished == TransitionTrim) {
+    int newTrans = m_dragOrigTransition;
+    for (auto &b : m_blocks) {
+      if (b.col == m_dragColA) { newTrans = b.transitionFrames; break; }
+    }
+    emit transitionChanged(m_dragColA, m_dragColB, newTrans);
     m_dragColA = m_dragColB = -1;
     return;
   }
@@ -4496,6 +4612,8 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
           this, &ZtoryAnimaticPanel::onRollEdit);
   connect(m_track, &ZtoryAnimaticTrack::shotMoved,
           this, &ZtoryAnimaticPanel::onShotMoved);
+  connect(m_track, &ZtoryAnimaticTrack::transitionChanged,
+          this, &ZtoryAnimaticPanel::onTransitionChanged);
   // Video lock state — no persistence map needed (single track)
   // The lock state lives directly on m_track and survives refreshFromScene()
   // because m_track itself is not rebuilt (only its blocks are refreshed).
@@ -6206,6 +6324,25 @@ void ZtoryAnimaticPanel::onRollEdit(int colA, int newDurA, int colB, int newDurB
   }
 }
 
+
+// ── onTransitionChanged ──────────────────────────────────────────────────────
+// Stores the cross-dissolve duration (in frames) on the outgoing shot (colA).
+// The value is saved immediately to .ztoryc so it survives reloads.
+// Frame-extra insertion into the sub-scenes is intentionally deferred to a
+// separate "Apply Transition Frames" action (planned for a future session) to
+// avoid corrupting main-xsheet cell references during this initial iteration.
+void ZtoryAnimaticPanel::onTransitionChanged(int colA, int colB, int frames) {
+  ZtoryModel *model = ZtoryModel::instance();
+  for (int si = 0; si < model->shotCount(); si++) {
+    if (model->shot(si).xsheetColumn == colA) {
+      model->shot(si).transitionFrames = frames;
+      break;
+    }
+  }
+  StoryboardPanel *board = findBoardPanel();
+  if (board) board->saveZtoryc();
+  m_track->refreshFromScene();
+}
 
 void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
   // Belt-and-suspenders: if newF1 somehow arrives < 0 the duration becomes

@@ -236,6 +236,7 @@ public:
     int f0, f1;           // marker In/Out della sottoscena
     QString shotNumber;
     QPixmap thumbnail;
+    int transitionFrames = 0; // total cross-dissolve frames (T/2 tail, T/2 head)
   };
 
   ZtoryAnimaticTrack(QWidget *parent = nullptr);
@@ -289,6 +290,8 @@ signals:
   void lockedChanged(bool on);
   // Roll: colA new duration, colB new duration (colB repositioned by resequenceXsheet)
   void rollEdit(int colA, int newDurA, int colB, int newDurB);
+  // Cross-dissolve transition: colA is the outgoing shot, colB is the incoming, frames = total overlap (0 = no transition)
+  void transitionChanged(int colA, int colB, int frames);
 
 private:
   double m_ppf = 8.0;
@@ -296,14 +299,15 @@ private:
   std::vector<ShotBlock> m_blocks;
 
   // ── Drag state ────────────────────────────────────────────────────────────
-  enum DragMode { NoDrag, RippleTrim, Roll };
+  enum DragMode { NoDrag, RippleTrim, Roll, TransitionTrim };
   DragMode m_dragMode     = NoDrag;
   int m_dragStartX        = 0;   // pixel X at drag start
-  int m_dragColA          = -1;  // RippleTrim/Roll: primary col (left for Roll)
-  int m_dragColB          = -1;  // Roll: right col
+  int m_dragColA          = -1;  // RippleTrim/Roll/TransitionTrim: primary col (left for Roll/Transition)
+  int m_dragColB          = -1;  // Roll/TransitionTrim: right col
   int m_dragOrigDurA      = 0;   // original duration of colA at drag start
   int m_dragOrigDurB      = 0;   // original duration of colB at drag start
   int m_dragOrigStartB    = 0;   // original startFrameInMain of colB (Roll)
+  int m_dragOrigTransition = 0;  // original transitionFrames at drag start
   // For RippleTrim: saved positions/durations of all blocks
   QMap<int, int> m_origStarts;
   QMap<int, int> m_origDurations;
@@ -769,6 +773,7 @@ protected:
 public slots:
   void onShotDurationChanged(int col, int newF1);
   void onRollEdit(int colA, int newDurA, int colB, int newDurB);
+  void onTransitionChanged(int colA, int colB, int frames);
   void onRazorRequested(int col, int splitFrame);
   void onShotMoved(int col, int newStartFrame);
   void onMergeWithNext(int col);

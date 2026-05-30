@@ -1328,11 +1328,13 @@ void StoryboardPanel::saveZtoryc() {
   for (int si = 0; si < (int)m_shots.size(); si++) {
     const Shot &shot = m_shots[si];
     xml.writeStartElement("shot");
-    xml.writeAttribute("index",  QString::number(si));
-    xml.writeAttribute("number", shot.data.shotNumber);
-    xml.writeAttribute("label",  shot.data.shotLabel);
-    xml.writeAttribute("order",  QString::number(shot.data.orderIndex));
+    xml.writeAttribute("index",      QString::number(si));
+    xml.writeAttribute("number",     shot.data.shotNumber);
+    xml.writeAttribute("label",      shot.data.shotLabel);
+    xml.writeAttribute("order",      QString::number(shot.data.orderIndex));
     xml.writeAttribute("sequenceId", shot.data.sequenceId);
+    if (shot.data.transitionFrames > 0)
+      xml.writeAttribute("transition", QString::number(shot.data.transitionFrames));
     for (int pi = 0; pi < (int)shot.data.panels.size(); pi++) {
       const PanelData &pd = shot.data.panels[pi];
       xml.writeStartElement("panel");
@@ -1410,12 +1412,15 @@ void StoryboardPanel::loadZtoryc() {
       else if (xml.name() == QLatin1String("shot")) {
         si = xml.attributes().value("index").toInt();
         if (si < (int)m_shots.size()) {
-          m_shots[si].data.shotNumber = xml.attributes().value("number").toString();
-          m_shots[si].data.shotLabel  = xml.attributes().value("label").toString();
-          m_shots[si].data.orderIndex = xml.attributes().value("order").toInt();
-          m_shots[si].data.sequenceId = xml.attributes().value("sequenceId").toString();
-          if (si < ZtoryModel::instance()->shotCount())
-            ZtoryModel::instance()->shot(si).sequenceId = m_shots[si].data.sequenceId;
+          m_shots[si].data.shotNumber      = xml.attributes().value("number").toString();
+          m_shots[si].data.shotLabel       = xml.attributes().value("label").toString();
+          m_shots[si].data.orderIndex      = xml.attributes().value("order").toInt();
+          m_shots[si].data.sequenceId      = xml.attributes().value("sequenceId").toString();
+          m_shots[si].data.transitionFrames = xml.attributes().value("transition").toInt();
+          if (si < ZtoryModel::instance()->shotCount()) {
+            ZtoryModel::instance()->shot(si).sequenceId      = m_shots[si].data.sequenceId;
+            ZtoryModel::instance()->shot(si).transitionFrames = m_shots[si].data.transitionFrames;
+          }
           // Backward compat (v1-v2 files written by StoryboardPanel):
           // if shotLabel absent, use shotNumber
           if (m_shots[si].data.shotLabel.isEmpty())

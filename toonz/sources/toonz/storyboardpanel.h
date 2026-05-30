@@ -197,11 +197,11 @@ struct Shot {
   void assignKeepNumbers(int insertAt);
   QString ztoryPath() const;
   void    syncWidgetsToData();
-  void    saveZtoryc();
   void    updateColumnName(int si);
   void    loadZtoryc();
 public:
   explicit StoryboardPanel(QWidget *parent = nullptr);
+  void    saveZtoryc();
   void refreshFromScene();
   std::vector<ZtoryShotSnap> captureSnapshot();
   void restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap);

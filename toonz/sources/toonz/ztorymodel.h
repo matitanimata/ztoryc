@@ -71,6 +71,8 @@ struct ShotData {
   QString                sequenceId;    // uuid of parent SequenceData (may be empty)
   std::vector<PanelData> panels;
 
+  int transitionFrames = 0; // total overlap frames for cross-dissolve (T/2 tail in A, T/2 head in B)
+
   ShotData() : xsheetColumn(0) {}
 
   // Returns shotLabel if set, else shotNumber (backward compat with v1-v3 files)
