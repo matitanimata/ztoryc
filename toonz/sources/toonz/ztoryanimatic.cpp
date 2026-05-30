@@ -1918,8 +1918,9 @@ void ZtoryAudioTrack::keyPressEvent(QKeyEvent *e) {
   if (ctrl && e->key() == Qt::Key_X) { clipboardCut(this); e->accept(); return; }
   if (ctrl && e->key() == Qt::Key_C) { clipboardCopy(this); e->accept(); return; }
   if (ctrl && e->key() == Qt::Key_V) {
-    int frame = (m_selSeg.r0 >= 0) ? m_selSeg.r0 : m_currentFrame;
-    clipboardPaste(this, frame);
+    // Paste at the playhead (cursor), not at the lingering copy selection —
+    // standard NLE behaviour: position the playhead, then paste there.
+    clipboardPaste(this, m_currentFrame);
     e->accept();
     return;
   }
@@ -4653,6 +4654,9 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
     // Invalidate regardless of level — a new scene always needs fresh audio.
     ZtoryAnimaticController::instance()->invalidateSoundTrack();
     if (scene->getChildStack()->getAncestorCount() != 0) return;
+    // A new scene starts at frame 0 — reset the scroll BEFORE refreshFromScene
+    // so its scroll-preserve logic pins 0 instead of the previous scene's offset.
+    if (m_scroll) m_scroll->horizontalScrollBar()->setValue(0);
     refreshFromScene();
     m_ruler->resetPlayRangeToFull();
   });
@@ -4736,6 +4740,15 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
 void ZtoryAnimaticPanel::refreshFromScene() {
   if (m_refreshing) return;
   m_refreshing = true;
+  // Preserve the horizontal scroll across the rebuild: refreshing the tracks
+  // never changes absolute frame positions, so the view must stay put.  This
+  // covers every edit that fires notifyXsheetChanged() (razor, audio paste/cut/
+  // delete/drag).  An explicit pin (m_restoreScrollX, set before a deferred
+  // cascade) takes precedence; otherwise we re-pin the current value.  Scene
+  // switches reset the scroll to 0 separately in the sceneSwitched handler.
+  int keepScrollX = (m_restoreScrollX >= 0)
+      ? m_restoreScrollX
+      : (m_scroll ? m_scroll->horizontalScrollBar()->value() : -1);
   m_track->refreshFromScene();
   refreshAudioTracks();
   updateTrackWidths();
@@ -4748,13 +4761,11 @@ void ZtoryAnimaticPanel::refreshFromScene() {
       m_ruler->setFps(fps);
     }
   }
-  // Honor a pending scroll restore (e.g. razor) so this refresh — which may be
-  // one of several deferred by xsheetChanged — does not let the view jump.
-  if (m_restoreScrollX >= 0 && m_scroll) {
+  if (keepScrollX >= 0 && m_scroll) {
     if (m_scrollContent && m_scrollContent->layout())
       m_scrollContent->resize(m_scrollContent->layout()->sizeHint().width(),
                               m_scrollContent->height());
-    m_scroll->horizontalScrollBar()->setValue(m_restoreScrollX);
+    m_scroll->horizontalScrollBar()->setValue(keepScrollX);
   }
   m_refreshing = false;
 }
