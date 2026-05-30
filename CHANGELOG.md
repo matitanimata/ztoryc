@@ -7,6 +7,32 @@
 
 ---
 
+## [2026-05-30] — Script per-scena: fix binding scena↔sceneggiatura
+
+### Fixed
+- **Script importato condiviso tra scene (BUG-SCRIPT-CROSS)** — lo script restava
+  caricato cambiando scena e si mescolava tra progetti diversi. Due cause:
+  1. **Posizione errata** — l'import scriveva in `+extras/script/` (livello
+     progetto, condiviso da TUTTE le scene). Ma il progetto ha
+     `<folder name="extras" useScenePath="yes"/>`: gli extras sono per-scena
+     come i drawings. Ora l'import va in `+extras/<scena>/script/` replicando
+     `getDefaultLevelPath()` (`+extras + getSavePath() + "script"`).
+  2. **Load fragile** — il caricamento/clear dello script era un side-effect di
+     `StoryboardPanel::loadZtoryc()` (dipendeva dall'esistenza/refresh della
+     Board). `ZtoryScriptView` ora si connette direttamente a
+     `TSceneHandle::sceneSwitched` e legge il tag `scriptFile` dal `.ztoryc`
+     della scena corrente — autoritativo e indipendente dalla Board. Scena senza
+     script → panel vuoto.
+
+### Notes
+- **Migrazione "solo nuovo schema"**: le scene vecchie mantengono il path
+  `+extras/script/...` (risolve finché il file esiste); reimportare lo script lo
+  sposta nella cartella per-scena. Nessuna migrazione automatica dei file esistenti.
+- I file `.ztoryc` esistenti potevano avere tag `scriptFile` contaminati (3 scene
+  puntavano allo stesso "Il Palazzo Scomparso v7.fdx") — risolto al re-import.
+
+---
+
 ## [2026-05-29] — Mark-out fix, Monitor sub-scene guard, Clone camera keyframes + task reconcile
 
 ### Fixed
