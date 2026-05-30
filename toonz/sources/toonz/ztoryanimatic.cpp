@@ -13,6 +13,8 @@
 #include "toonz/toonzscene.h"
 #include "toonz/childstack.h"
 #include "toonz/txsheet.h"
+#include "toonz/navigationtags.h"
+#include "navtageditorpopup.h"
 #include "toonz/txshchildlevel.h"
 #include "toonz/txshcell.h"
 #include "toonz/txshsoundcolumn.h"
@@ -29,6 +31,7 @@
 #include "toonzqt/dvdialog.h"
 #include "orientation.h"
 #include <QPainter>
+#include <QPainterPath>
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QApplication>
@@ -40,6 +43,7 @@
 #include <QScrollBar>
 #include <QSplitter>
 #include <QMenu>
+#include <QInputDialog>
 #include <QLabel>
 #include <QWindow>
 #include <QFileDialog>
@@ -647,6 +651,51 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
     p.drawConvexPolygon(outTri);
   }
 
+  // ---- Navigation tag markers ----
+  // Drawn from the MAIN xsheet's navigation tags (Tahoma2D's native tag system),
+  // so markers persist with the scene and are shared with the native xsheet.
+  {
+    TXsheet *tagXsh = ctrl->mainXsheet();
+    NavigationTags *nav = tagXsh ? tagXsh->getNavigationTags() : nullptr;
+    if (nav) {
+      QFont mf("", 8, QFont::Bold);
+      p.setFont(mf);
+      QFontMetrics fm(mf);
+      for (auto &tag : nav->getTags()) {
+        int tx = kLabelW + (int)(tag.m_frame * m_ppf) + (int)(m_ppf / 2);
+        if (tx < kLabelW || (tx - kLabelW) > w) continue;
+        QColor c = tag.m_color.isValid() ? tag.m_color
+                                         : QColor(0xE0, 0x24, 0x9B);
+        // Faint guide line from the pin tip down to the bottom of the ruler.
+        p.setPen(QPen(c, 1));
+        p.drawLine(tx, rulerY + 13, tx, h);
+        // Downward pin — same shape as Tahoma2D's native navigation tag
+        // (PredefinedPath::NAVIGATION_TAG, horizontal-timeline variant).
+        QPainterPath pin(QPointF(tx - 3, rulerY));
+        pin.lineTo(QPointF(tx + 3, rulerY));
+        pin.lineTo(QPointF(tx + 3, rulerY + 9));
+        pin.lineTo(QPointF(tx,     rulerY + 13));
+        pin.lineTo(QPointF(tx - 3, rulerY + 9));
+        pin.closeSubpath();
+        p.setPen(QPen(Qt::black, 1));
+        p.setBrush(c);
+        p.drawPath(pin);
+        // Label shown only while hovering this marker — drawn on a translucent
+        // dark chip for readability so it never clutters the ruler otherwise.
+        if (!tag.m_label.isEmpty() && tag.m_frame == m_hoverTagFrame) {
+          int tw = fm.horizontalAdvance(tag.m_label);
+          QRect chip(tx + 6, rulerY, tw + 6, h);
+          p.setBrush(QColor(0, 0, 0, 180));
+          p.setPen(Qt::NoPen);
+          p.drawRoundedRect(chip, 2, 2);
+          p.setPen(c.lighter(140));
+          p.drawText(chip.adjusted(3, 0, -3, 0),
+                     Qt::AlignVCenter | Qt::AlignLeft, tag.m_label);
+        }
+      }
+    }
+  }
+
   // ---- Playhead — downward triangle + line ----
   static const int kPH = 8;
   int px = kLabelW + (int)(m_currentFrame * m_ppf) + (int)(m_ppf / 2);
@@ -665,8 +714,9 @@ void ZtoryAnimaticRuler::mousePressEvent(QMouseEvent *e) {
   int mx    = qMax(0, e->x() - kLabelW);
   int frame = (int)(mx / m_ppf);
 
-  // Shift+click = set In, Alt+click = set Out
   auto *ctrlR = ZtoryAnimaticController::instance();
+
+  // Shift+click = set In, Alt+click = set Out
   if (e->modifiers() & Qt::ShiftModifier) {
     int r0, r1;
     ctrlR->getAnimaticPlayRange(r0, r1);
@@ -723,8 +773,27 @@ void ZtoryAnimaticRuler::mousePressEvent(QMouseEvent *e) {
 }
 
 void ZtoryAnimaticRuler::mouseMoveEvent(QMouseEvent *e) {
-  if (!(e->buttons() & Qt::LeftButton)) return;
   int mx = qMax(0, e->x() - kLabelW);
+
+  // Hover detection for marker labels — runs with no button pressed too
+  // (the ruler has mouse tracking enabled).
+  {
+    TXsheet *tagXsh = ZtoryAnimaticController::instance()->mainXsheet();
+    NavigationTags *nav = tagXsh ? tagXsh->getNavigationTags() : nullptr;
+    int hover = -1;
+    if (nav) {
+      int best = 9;
+      for (auto &t : nav->getTags()) {
+        int tx = (int)(t.m_frame * m_ppf) + (int)(m_ppf / 2);
+        int d  = std::abs(tx - mx);
+        if (d < best) { best = d; hover = t.m_frame; }
+      }
+    }
+    if (hover != m_hoverTagFrame) { m_hoverTagFrame = hover; update(); }
+    setCursor(hover >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
+  }
+
+  if (!(e->buttons() & Qt::LeftButton)) return;
   int frame = (int)(mx / m_ppf);
 
   if (m_dragMode == DragIn) {
@@ -770,6 +839,7 @@ void ZtoryAnimaticRuler::mouseReleaseEvent(QMouseEvent *) {
 
 void ZtoryAnimaticRuler::leaveEvent(QEvent *) {
   setCursor(Qt::ArrowCursor);
+  m_hoverTagFrame = -1;  // hide the hovered marker label
   update();
 }
 
@@ -813,9 +883,39 @@ void ZtoryAnimaticRuler::initPlayRangeIfNeeded() {
   update();
 }
 
+void ZtoryAnimaticRuler::editMarker(int frame) {
+  TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
+  NavigationTags *nav = xsh ? xsh->getNavigationTags() : nullptr;
+  if (!nav) return;
+  QString label = nav->getTagLabel(frame);
+  QColor color  = nav->getTagColor(frame);
+  NavTagEditorPopup popup(frame, label, color);
+  if (popup.exec() != QDialog::Accepted) return;
+  nav->setTagLabel(frame, popup.getLabel());
+  nav->setTagColor(frame, popup.getColor());
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  update();
+}
+
 void ZtoryAnimaticRuler::contextMenuEvent(QContextMenuEvent *e) {
   int mx = qMax(0, e->x() - kLabelW);
   int frame = (int)(mx / m_ppf);  // frame under cursor, NOT playhead
+
+  auto *ctrlM = ZtoryAnimaticController::instance();
+
+  // Locate a navigation tag near the click (within ~7 px), for rename/remove.
+  TXsheet *tagXsh = ctrlM->mainXsheet();
+  NavigationTags *nav = tagXsh ? tagXsh->getNavigationTags() : nullptr;
+  int hitFrame = -1;
+  if (nav) {
+    int best = 8;
+    for (auto &t : nav->getTags()) {
+      int tx = (int)(t.m_frame * m_ppf) + (int)(m_ppf / 2);
+      int d  = std::abs(tx - mx);
+      if (d < best) { best = d; hitFrame = t.m_frame; }
+    }
+  }
 
   QMenu menu(this);
   QAction *inAct    = menu.addAction(tr("Mark IN here"));
@@ -823,9 +923,37 @@ void ZtoryAnimaticRuler::contextMenuEvent(QContextMenuEvent *e) {
   menu.addSeparator();
   QAction *autoAct  = menu.addAction(tr("Set OUT to last frame"));
   QAction *resetAct = menu.addAction(tr("Reset IN/OUT to full range"));
+  menu.addSeparator();
+  QAction *addMarkerAct = nullptr, *editMarkerAct = nullptr,
+          *removeMarkerAct = nullptr;
+  if (nav) {
+    if (hitFrame >= 0) {
+      editMarkerAct   = menu.addAction(tr("Edit Marker…"));
+      removeMarkerAct = menu.addAction(tr("Remove Marker"));
+    } else {
+      addMarkerAct = menu.addAction(tr("Add Marker here"));
+    }
+  }
 
-  auto *ctrlM = ZtoryAnimaticController::instance();
   QAction *chosen = menu.exec(e->globalPos());
+  // ---- Navigation tag actions ----
+  if (nav && chosen && (chosen == addMarkerAct ||
+                        chosen == editMarkerAct ||
+                        chosen == removeMarkerAct)) {
+    if (chosen == addMarkerAct) {
+      nav->addTag(frame);    // create, then open the editor for label + color
+      editMarker(frame);
+    } else if (chosen == editMarkerAct) {
+      editMarker(hitFrame);  // editMarker() handles dirty flag + repaint
+    } else {                 // removeMarkerAct
+      nav->removeTag(hitFrame);
+      TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+      TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+      update();
+    }
+    return;
+  }
+
   if (chosen == inAct) {
     int r0, r1;
     ctrlM->getAnimaticPlayRange(r0, r1);
@@ -4337,6 +4465,14 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   connect(m_track, &ZtoryAnimaticTrack::selectionChanged,
           [](std::set<int> sel){
               ZtoryModel::instance()->setSharedSelection(std::move(sel));
+          });
+  // Mirror selection changes coming from the Board (or elsewhere): highlight
+  // the matching clip(s) in the timeline. The no-op guard in
+  // setSelectedColsFromShared / setSharedSelection prevents an update loop.
+  connect(ZtoryModel::instance(), &ZtoryModel::sharedSelectionChanged,
+          this, [this]() {
+            m_track->setSelectedColsFromShared(
+                ZtoryModel::instance()->sharedSelection());
           });
   connect(m_track, &ZtoryAnimaticTrack::zoomChanged,
           this, &ZtoryAnimaticPanel::onZoomChanged);

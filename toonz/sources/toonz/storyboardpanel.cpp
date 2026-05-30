@@ -797,6 +797,10 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   // Reflect ZtoryModel text-field changes (typed in the Shot Board) back into
   // the Board's PanelWidgets so the two views stay in sync. m_updating guards
   // against echoes when the change originated from this Board.
+  // Mirror selection changes from the Animatic timeline onto the board grid.
+  connect(ZtoryModel::instance(), &ZtoryModel::sharedSelectionChanged, this,
+          [this]() { applySharedSelection(); });
+
   connect(ZtoryModel::instance(), &ZtoryModel::shotDataChanged, this,
           [this](int si) {
     if (m_updating) return;
@@ -1139,6 +1143,30 @@ void StoryboardPanel::selectShot(int shotIdx) {
   if (m_selectedShotIndex >= 0 && m_selectedShotIndex < (int)m_shots.size())
     for (PanelWidget *pw : m_shots[m_selectedShotIndex].panels)
       pw->setSelected(true);
+}
+
+void StoryboardPanel::applySharedSelection() {
+  const std::set<int> &cols = ZtoryModel::instance()->sharedSelection();
+  // Map xsheet columns → shot indices.
+  std::set<int> wantIdx;
+  for (int si = 0; si < (int)m_shots.size(); si++)
+    if (cols.count(m_shots[si].data.xsheetColumn)) wantIdx.insert(si);
+
+  if (wantIdx == m_selectedIndices) return;  // already in sync — no repaint
+
+  // Clear current selection visuals.
+  for (int i : m_selectedIndices)
+    if (i >= 0 && i < (int)m_shots.size())
+      for (PanelWidget *pw : m_shots[i].panels) pw->setSelected(false);
+  if (m_selectedShotIndex >= 0 && m_selectedShotIndex < (int)m_shots.size())
+    for (PanelWidget *pw : m_shots[m_selectedShotIndex].panels)
+      pw->setSelected(false);
+
+  m_selectedIndices = wantIdx;
+  for (int i : m_selectedIndices)
+    if (i >= 0 && i < (int)m_shots.size())
+      for (PanelWidget *pw : m_shots[i].panels) pw->setSelected(true);
+  m_selectedShotIndex = wantIdx.empty() ? -1 : *wantIdx.begin();
 }
 
 void StoryboardPanel::updateVisiblePreviews() {

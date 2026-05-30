@@ -189,6 +189,9 @@ struct Shot {
   void updateVisiblePreviews();
   void rebuildGrid();
   void selectShot(int shotIdx);
+  // Mirror the shared selection (set by the Animatic timeline) onto the board
+  // grid, highlighting the matching shots — without writing back to the model.
+  void applySharedSelection();
   int  currentShotIndex() const;
   void detectAndUpdatePanels(int shotIdx);
   void assignKeepNumbers(int insertAt);

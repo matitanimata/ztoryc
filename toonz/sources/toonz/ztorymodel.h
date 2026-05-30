@@ -223,7 +223,11 @@ public:
   // ── Shared selection (Board ↔ Animatic) — xsheet column indices ─────────
   // Written by whichever panel last had user interaction.
   const std::set<int>& sharedSelection() const { return m_sharedSelection; }
-  void setSharedSelection(std::set<int> s)      { m_sharedSelection = std::move(s); }
+  void setSharedSelection(std::set<int> s) {
+    if (s == m_sharedSelection) return;  // no-op guard breaks update loops
+    m_sharedSelection = std::move(s);
+    emit sharedSelectionChanged();
+  }
 
   // ── Resequencing ──────────────────────────────────────────────────────────
   void resequenceXsheet();
@@ -281,4 +285,9 @@ signals:
   // ZtoryAnimaticViewerPanel connects to these to switch stack pages.
   void shotActivatedForViewing(int col);
   void returnToViewerMainRequested();
+  // Shared selection changed — Board and Animatic listen to mirror the
+  // highlighted shot/clip across panels. The panel that caused the change
+  // must NOT re-apply (it already shows the selection); appliers must not
+  // write back to setSharedSelection or an update loop forms.
+  void sharedSelectionChanged();
 };

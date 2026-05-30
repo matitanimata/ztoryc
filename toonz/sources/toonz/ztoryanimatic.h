@@ -210,6 +210,10 @@ signals:
   void frameChanged(int frame);
   void zoomChanged(double ppf);
 private:
+  // Opens the native navigation-tag editor (label + color) for the marker at
+  // the given main-xsheet frame, then writes the result back to the xsheet.
+  void editMarker(int frame);
+
   double m_fps = 24.0;
   double m_ppf = 8.0;
   int m_currentFrame = 0;
@@ -217,6 +221,8 @@ private:
   // In/Out marker drag state (13b)
   enum DragMode { None, DragIn, DragOut };
   DragMode m_dragMode = None;
+  // Navigation-tag marker whose label is shown on hover (-1 = none).
+  int m_hoverTagFrame = -1;
 };
 
 class ZtoryAnimaticTrack : public QWidget {
@@ -246,6 +252,13 @@ public:
   // Returns the blocks vector (for panel to read cut frame positions).
   const std::vector<ShotBlock> &blocks() const { return m_blocks; }
   const std::set<int> &selectedCols() const { return m_selectedCols; }
+  // Apply a selection coming from the shared model (Board ↔ Animatic sync)
+  // WITHOUT re-emitting selectionChanged — avoids an update loop.
+  void setSelectedColsFromShared(const std::set<int> &cols) {
+    if (cols == m_selectedCols) return;
+    m_selectedCols = cols;
+    update();
+  }
   // Lock — blocks drag/resize on the video track
   bool isLocked() const { return m_locked; }
   void setLocked(bool on);
