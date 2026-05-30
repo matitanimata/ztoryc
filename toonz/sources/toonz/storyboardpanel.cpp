@@ -1300,6 +1300,31 @@ void StoryboardPanel::saveZtoryc() {
     QString sf = ZtoryModel::instance()->scriptFile();
     if (!sf.isEmpty()) xml.writeTextElement("scriptFile", sf);
   }
+  // Numbering scheme + sequence list — so the SQ/SH structure survives reload
+  // (previously only per-shot number/label were saved, so sequences were lost).
+  {
+    ZtoryModel *model = ZtoryModel::instance();
+    const NumberingConfig &cfg = model->numberingConfig();
+    xml.writeStartElement("numbering");
+    xml.writeAttribute("style",       QString::number((int)cfg.style));
+    xml.writeAttribute("shotPrefix",  cfg.shotPrefix);
+    xml.writeAttribute("seqPrefix",   cfg.seqPrefix);
+    xml.writeAttribute("panelPrefix", cfg.panelPrefix);
+    xml.writeAttribute("step",        QString::number(cfg.step));
+    xml.writeAttribute("padding",     QString::number(cfg.padding));
+    xml.writeAttribute("seqPadding",  QString::number(cfg.seqPadding));
+    xml.writeAttribute("startNumber", QString::number(cfg.startNumber));
+    xml.writeAttribute("seqNumber",   QString::number(cfg.seqNumber));
+    xml.writeAttribute("resetOnSeqChange", cfg.resetOnSeqChange ? "1" : "0");
+    xml.writeEndElement();
+    for (const SequenceData &seq : model->sequences()) {
+      xml.writeStartElement("sequence");
+      xml.writeAttribute("uuid",  seq.uuid);
+      xml.writeAttribute("label", seq.label);
+      xml.writeAttribute("order", QString::number(seq.orderIndex));
+      xml.writeEndElement();
+    }
+  }
   for (int si = 0; si < (int)m_shots.size(); si++) {
     const Shot &shot = m_shots[si];
     xml.writeStartElement("shot");
@@ -1307,6 +1332,7 @@ void StoryboardPanel::saveZtoryc() {
     xml.writeAttribute("number", shot.data.shotNumber);
     xml.writeAttribute("label",  shot.data.shotLabel);
     xml.writeAttribute("order",  QString::number(shot.data.orderIndex));
+    xml.writeAttribute("sequenceId", shot.data.sequenceId);
     for (int pi = 0; pi < (int)shot.data.panels.size(); pi++) {
       const PanelData &pd = shot.data.panels[pi];
       xml.writeStartElement("panel");
@@ -1343,6 +1369,11 @@ void StoryboardPanel::loadZtoryc() {
     m_loadingZtoryc = false;
     return;
   }
+  // Start each scene's sequence list fresh so sequences never leak across
+  // scenes. Old files (no <sequence>) leave it empty → renumberAll() recreates
+  // a default sequence if needed.
+  ZtoryModel::instance()->sequences().clear();
+
   QXmlStreamReader xml(&file);
   int si = -1, pi = -1;
   while (!xml.atEnd()) {
@@ -1351,12 +1382,40 @@ void StoryboardPanel::loadZtoryc() {
       if (xml.name() == QLatin1String("scriptFile")) {
         scriptFromFile = xml.readElementText();
       }
+      else if (xml.name() == QLatin1String("numbering")) {
+        ZtoryModel *model   = ZtoryModel::instance();
+        NumberingConfig cfg = model->numberingConfig();
+        auto a = xml.attributes();
+        cfg.style = (NumberingConfig::Style)a.value("style").toInt();
+        if (a.hasAttribute("shotPrefix"))  cfg.shotPrefix  = a.value("shotPrefix").toString();
+        if (a.hasAttribute("seqPrefix"))   cfg.seqPrefix   = a.value("seqPrefix").toString();
+        if (a.hasAttribute("panelPrefix")) cfg.panelPrefix = a.value("panelPrefix").toString();
+        if (a.hasAttribute("step"))        cfg.step        = a.value("step").toInt();
+        if (a.hasAttribute("padding"))     cfg.padding     = a.value("padding").toInt();
+        if (a.hasAttribute("seqPadding"))  cfg.seqPadding  = a.value("seqPadding").toInt();
+        if (a.hasAttribute("startNumber")) cfg.startNumber = a.value("startNumber").toInt();
+        if (a.hasAttribute("seqNumber"))   cfg.seqNumber   = a.value("seqNumber").toInt();
+        if (a.hasAttribute("resetOnSeqChange"))
+          cfg.resetOnSeqChange = a.value("resetOnSeqChange").toInt() != 0;
+        model->setNumberingConfig(cfg);
+      }
+      else if (xml.name() == QLatin1String("sequence")) {
+        SequenceData seq;
+        seq.uuid       = xml.attributes().value("uuid").toString();
+        seq.label      = xml.attributes().value("label").toString();
+        seq.orderIndex = xml.attributes().value("order").toInt();
+        if (!seq.uuid.isEmpty())
+          ZtoryModel::instance()->sequences().push_back(seq);
+      }
       else if (xml.name() == QLatin1String("shot")) {
         si = xml.attributes().value("index").toInt();
         if (si < (int)m_shots.size()) {
           m_shots[si].data.shotNumber = xml.attributes().value("number").toString();
           m_shots[si].data.shotLabel  = xml.attributes().value("label").toString();
           m_shots[si].data.orderIndex = xml.attributes().value("order").toInt();
+          m_shots[si].data.sequenceId = xml.attributes().value("sequenceId").toString();
+          if (si < ZtoryModel::instance()->shotCount())
+            ZtoryModel::instance()->shot(si).sequenceId = m_shots[si].data.sequenceId;
           // Backward compat (v1-v2 files written by StoryboardPanel):
           // if shotLabel absent, use shotNumber
           if (m_shots[si].data.shotLabel.isEmpty())
