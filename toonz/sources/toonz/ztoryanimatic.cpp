@@ -1932,12 +1932,25 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
   p.setPen(QColor(60, 60, 60));
   p.drawLine(kLabelW, 0, kLabelW, height());
 
+  // Active shot column: when the user is editing a shot (sub-scene open), the
+  // first ancestor node's column is the active shot's column in the main
+  // xsheet. -1 when at the animatic top level (no shot being edited).
+  int activeShotCol = -1;
+  if (scene) {
+    ChildStack *cs = scene->getChildStack();
+    if (cs && cs->getAncestorCount() > 0) {
+      AncestorNode *node = cs->getAncestorInfo(0);
+      if (node) activeShotCol = node->m_col;
+    }
+  }
+
   for (auto &b : m_blocks) {
     int duration = b.f1 - b.f0 + 1;
     int x = kLabelW + (int)(b.startFrameInMain * m_ppf);
     int w = (int)(duration * m_ppf);
     int h = height() - 4;
     bool selected = m_selectedCols.count(b.col) > 0;
+    bool active   = (b.col == activeShotCol);
 
     // Sfondo shot
     QColor bg = selected ? QColor(80, 110, 160) : QColor(60, 90, 130);
@@ -1946,6 +1959,15 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
     p.drawRect(x + 1, 2, w - 2, h);
     if (selected) {
       p.setPen(QPen(QColor(255, 160, 0), 2));
+      p.drawRect(x + 2, 3, w - 4, h - 2);
+    }
+    // Active shot (being edited) — magenta glow + 2px border so the user always
+    // knows which shot they are inside. Drawn on top of the selection border.
+    if (active) {
+      p.setOpacity(0.18);
+      p.fillRect(x + 1, 2, w - 2, h, QColor(0xE0, 0x24, 0x9B));
+      p.setOpacity(1.0);
+      p.setPen(QPen(QColor(0xE0, 0x24, 0x9B), 2));
       p.drawRect(x + 2, 3, w - 4, h - 2);
     }
 
@@ -4372,6 +4394,12 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
     for (auto *at : m_audioTracks)
       at->setCurrentFrame(frame);
   });
+  // Repaint the timeline whenever the current xsheet switches (entering or
+  // leaving a shot). The active-shot highlight depends on the child-stack
+  // depth, which only changes here — not on frameSwitched/xsheetChanged. A bare
+  // update() is enough: it does not rebuild blocks, just redraws them.
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched,
+          this, [this](){ m_track->update(); });
   connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
           this, [this](){
     // Defer: xsheetChanged fires mid-import (xsheet not yet stable).
