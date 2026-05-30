@@ -10,6 +10,15 @@
 ## [2026-05-31] — BUG-CAMERA fix + audio scrub + marker timeline + sync selezione
 
 ### Fixed
+- **Sequenze/numerazione non persistite nel `.ztoryc` (`871aea839`)** — `saveZtoryc()`
+  salvava solo numero/label dei singoli shot: riaprendo la scena le sequenze
+  sparivano (3 sequenze → sequenza unica). Ora il `.ztoryc` salva anche
+  `<numbering>` (NumberingConfig: stile Simple/Sequence, prefissi, step, padding,
+  seqNumber, resetOnSeqChange), gli elementi `<sequence>` (uuid/label/order) e il
+  `sequenceId` di ogni shot. `loadZtoryc()` azzera le sequenze a inizio caricamento
+  (no leak tra scene) e ripristina config/sequenze/sequenceId nel board e nel model;
+  `renumberAll()` post-load preserva il raggruppamento. File vecchi retro-compatibili.
+  ⚠️ Le scene salvate PRIMA del fix vanno ricreate+risalvate una volta.
 - **BUG-CAMERA risolto** (`7d1746f3a`) — il monitor (viewer always-main) ora resta
   ancorato alla camera del MAIN xsheet anche dentro uno shot, invece di usare la
   camera della sub-scena. 6 punti in `sceneviewer.cpp`: `drawBuildVars()` (camera
