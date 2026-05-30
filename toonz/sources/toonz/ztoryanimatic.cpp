@@ -522,25 +522,20 @@ void ZtoryAnimaticController::onNativeFrameSwitched() {
     }
     m_nativeAudioPlaying = true;
   } else {
-    // Scrub on the dedicated scrub device, merged track.
+    // Scrub: play a short (~150 ms) audible chunk of the merged main soundtrack
+    // on the MAIN xsheet's OWN sound device — exactly the path the animatic
+    // ruler scrub uses (ZtoryAnimaticRuler::mouseMoveEvent), which works.
     //
-    // Never interrupt a segment that is still playing: interrupting drops the
-    // middle of the audio, so slow scrubbing "esatto articolo tre" came out
-    // "esatto art--olo tre".  Let the current segment finish; the next idle
-    // event then plays from where the audio ended up to the new playhead
-    // position — the whole scrubbed range is heard, gaplessly, just slightly
-    // lagging the cursor.
-    if (scrubDevice()->isPlaying()) return;
-    const int kMaxScrubGap = 48;  // frames; bigger jump → resync, don't sweep
-    int from = m_scrubAudioFrame;
-    if (from < 0 || mainFrame < from || mainFrame - from > kMaxScrubGap)
-      from = mainFrame;  // first scrub / backward / big jump → resync
-    double a0 = from * spf;
-    double a1 = std::max((double)mainFrame * spf, a0 + scrubLen);
-    if (a0 >= (double)totalSamples) return;
-    if (a1 > (double)totalSamples) a1 = (double)totalSamples;
-    scrubDevice()->play(st, (TINT32)a0, (TINT32)a1, false);
-    m_scrubAudioFrame = (int)(a1 / spf);  // audio content end → next segment start
+    // The previous implementation used scrubDevice() — a bare
+    // TSoundOutputDevice that is never opened/configured with the audio format,
+    // so inside a shot it produced NO sound (play branch works because it uses
+    // each column's own managed device).  Routing through mainXsh->play()
+    // reuses the xsheet's properly-initialised player.
+    TINT32 sg0 = (TINT32)(mainFrame * spf);
+    TINT32 sg1 = (TINT32)(sg0 + scrubLen);
+    if (sg0 >= totalSamples) return;
+    if (sg1 > totalSamples) sg1 = totalSamples;
+    if (sg0 < sg1) mainXsh->play(st, sg0, sg1, false);
   }
 }
 
@@ -1578,6 +1573,18 @@ void ZtoryAudioTrack::leaveEvent(QEvent *) {
     m_razorHoverFrame = -1;
     update();
   }
+}
+
+void ZtoryAudioTrack::contextMenuEvent(QContextMenuEvent *e) {
+  // Only show the menu when right-clicking in the label area (left of the
+  // waveform), where the L/M/S buttons live — consistent with other DAW UX.
+  if (e->x() >= kLabelW) { e->ignore(); return; }
+
+  QMenu menu(this);
+  QAction *delAct = menu.addAction(tr("Delete Audio Track"));
+  delAct->setIcon(QIcon::fromTheme("edit-delete"));
+  if (menu.exec(e->globalPos()) == delAct)
+    emit deleteRequested(m_col);
 }
 
 void ZtoryAudioTrack::mouseReleaseEvent(QMouseEvent *e) {
@@ -4612,6 +4619,29 @@ void ZtoryAnimaticPanel::refreshAudioTracks() {
       else              m_colSolo.remove(col);
       applyMuteSolo();
     });
+    connect(at, &ZtoryAudioTrack::deleteRequested, this, [this](int col){
+      // Audio tracks always reference MAIN xsheet columns, but
+      // ColumnCmd::deleteColumns() operates on the CURRENT xsheet. Inside a
+      // shot the current xsheet is the sub-scene, so the delete would hit the
+      // wrong column (or nothing). Require main level.
+      TApp *app = TApp::instance();
+      ToonzScene *scene = app->getCurrentScene()->getScene();
+      if (!scene) return;
+      if (scene->getChildStack()->getAncestorCount() != 0) {
+        DVGui::warning(tr("Exit the shot (Back to Animatic) to delete an "
+                          "audio track."));
+        return;
+      }
+      std::set<int> cs; cs.insert(col);
+      // onlyColumns=false (also clears cells), withoutUndo=false (native undo).
+      ColumnCmd::deleteColumns(cs, false, false);
+      app->getCurrentXsheet()->notifyXsheetChanged();
+      app->getCurrentXsheet()->notifyXsheetSoundChanged();
+      // Rebuild the audio strip immediately so the deleted track disappears
+      // even if the deferred xsheetChanged refresh path is skipped.
+      refreshAudioTracks();
+      updateTrackWidths();
+    }, Qt::QueuedConnection);  // Queued: we are inside the track widget's event
 
     // Inserisci prima dello stretch finale
     int insertIdx = m_scrollLay->count() - 1;

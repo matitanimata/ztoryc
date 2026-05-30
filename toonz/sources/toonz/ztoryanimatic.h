@@ -365,6 +365,7 @@ signals:
   void muteToggleRequested(int col);
   void soloToggleRequested(int col);
   void selectionCleared();  // emitted when this track clears its own selection
+  void deleteRequested(int col);  // right-click → Delete Track
 
 public slots:
   void clearSelection();    // clears m_selSeg and repaints
@@ -377,6 +378,7 @@ protected:
   void mouseMoveEvent(QMouseEvent *) override;
   void mouseReleaseEvent(QMouseEvent *) override;
   void leaveEvent(QEvent *) override;
+  void contextMenuEvent(QContextMenuEvent *) override;
   void keyPressEvent(QKeyEvent *) override;
   void focusInEvent(QFocusEvent *) override;
   void focusOutEvent(QFocusEvent *) override;

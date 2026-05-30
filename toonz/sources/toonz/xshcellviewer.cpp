@@ -4055,10 +4055,13 @@ void CellArea::mousePressEvent(QMouseEvent *event) {
 
     if (m_levelExtenderRect.contains(pos.x, pos.y)) {
       m_viewer->getKeyframeSelection()->selectNone();
-      if (event->modifiers() & Qt::AltModifier)
+      if (event->modifiers() & Qt::AltModifier) {
         // Rolling edit: extend "this" level while shrinking the next one.
+        // Split cursor along the frame axis (mirrors the animatic timeline roll
+        // cursor, rotated 90° for the xsheet). Option=Alt on Windows.
         setDragTool(XsheetGUI::DragTool::makeLevelRollingTool(m_viewer, false));
-      else if (event->modifiers() & Qt::ControlModifier)
+        setCursor(o->isVerticalTimeline() ? Qt::SplitVCursor : Qt::SplitHCursor);
+      } else if (event->modifiers() & Qt::ControlModifier)
         setDragTool(
             XsheetGUI::DragTool::makeLevelExtenderTool(m_viewer, false));
       else
@@ -4066,10 +4069,11 @@ void CellArea::mousePressEvent(QMouseEvent *event) {
     } else if (event->modifiers() & Qt::ControlModifier &&
                m_upperLevelExtenderRect.contains(pos.x, pos.y)) {
       m_viewer->getKeyframeSelection()->selectNone();
-      if (event->modifiers() & Qt::AltModifier)
+      if (event->modifiers() & Qt::AltModifier) {
         // Rolling edit upward: extend "this" level while shrinking the prev one.
         setDragTool(XsheetGUI::DragTool::makeLevelRollingTool(m_viewer, true));
-      else
+        setCursor(o->isVerticalTimeline() ? Qt::SplitVCursor : Qt::SplitHCursor);
+      } else
         setDragTool(
             XsheetGUI::DragTool::makeLevelExtenderTool(m_viewer, false, true));
     } else {
@@ -4276,7 +4280,9 @@ void CellArea::mouseMoveEvent(QMouseEvent *event) {
   m_viewer->setQtModifiers(event->modifiers());
   if (m_viewer->m_panningArmed)
     setToolCursor(this, ToolCursor::PanCursor);
-  else
+  else if (!getDragTool())
+    // Don't reset to Arrow while a drag tool is active — it would override the
+    // roll-edit split cursor set in mousePressEvent on every mouse move.
     setCursor(Qt::ArrowCursor);
   QPoint pos        = event->pos();
   QRect visibleRect = visibleRegion().boundingRect();

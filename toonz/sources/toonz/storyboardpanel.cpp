@@ -1224,7 +1224,11 @@ void StoryboardPanel::updateColumnName(int si) {
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene) return;
-  TXsheet *xsh = scene->getXsheet();
+  // Always use the TOP xsheet — scene->getXsheet() returns the CURRENT
+  // (possibly sub) xsheet, which would rename the wrong columns when the
+  // user is inside a shot at the time of the update (BUG: columns inside
+  // the sub-scene were getting labeled "SH010", "SH020" etc.).
+  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
   if (!xsh) return;
   int col = si; // la colonna corrisponde all indice dello shot
   TStageObject *obj = xsh->getStageObjectTree()->getStageObject(TStageObjectId::ColumnId(col), false);
