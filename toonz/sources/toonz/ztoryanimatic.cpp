@@ -1427,6 +1427,55 @@ void ZtoryAudioTrack::clearSelection() {
   if (m_selSeg.r0 >= 0) { m_selSeg = {-1, -1}; update(); }
 }
 
+// ── Group move (multi-track) ──────────────────────────────────────────────────
+// beginGroupDrag: called by the panel on every selected track when a group drag
+// starts.  Captures the selection's origin and takes an undo snapshot.
+void ZtoryAudioTrack::beginGroupDrag() {
+  if (m_selSeg.r0 < 0) { m_groupOrigR0 = m_groupOrigR1 = -1; return; }
+  m_groupOrigR0 = m_selSeg.r0;
+  m_groupOrigR1 = m_selSeg.r1;
+  delete m_undoBefore; m_undoBefore = nullptr;
+  TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
+  TXshColumn *c = xsh ? xsh->getColumn(m_col) : nullptr;
+  TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
+  if (sc) m_undoBefore = dynamic_cast<TXshSoundColumn *>(sc->clone());
+}
+
+// previewGroupMove: visual-only move of this track's selection by deltaFrames
+// from its captured origin (clamped to >= 0).  Used for sibling tracks.
+void ZtoryAudioTrack::previewGroupMove(int deltaFrames) {
+  if (m_groupOrigR0 < 0) return;
+  int len  = m_groupOrigR1 - m_groupOrigR0;
+  int newR0 = qMax(0, m_groupOrigR0 + deltaFrames);
+  m_selSeg.r0 = newR0;
+  m_selSeg.r1 = newR0 + len;
+  update();
+}
+
+// commitGroupMove: apply the shift to the audio data and push an undo step.
+void ZtoryAudioTrack::commitGroupMove(int deltaFrames) {
+  if (m_groupOrigR0 < 0) { m_groupOrigR0 = m_groupOrigR1 = -1; return; }
+  int len   = m_groupOrigR1 - m_groupOrigR0;
+  int newR0 = qMax(0, m_groupOrigR0 + deltaFrames);
+  int applied = newR0 - m_groupOrigR0;
+  TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
+  TXshColumn *c = xsh ? xsh->getColumn(m_col) : nullptr;
+  TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
+  if (sc && applied != 0) {
+    sc->shiftLevelInRange(m_groupOrigR0, m_groupOrigR1, applied);
+    TXshSoundColumn *after = dynamic_cast<TXshSoundColumn *>(sc->clone());
+    TUndoManager::manager()->add(
+        new UndoAudioEdit(m_col, m_undoBefore, after, tr("Move Audio")));
+    m_undoBefore = nullptr;  // ownership transferred
+    invalidateWaveform();
+    m_selSeg = {newR0, newR0 + len};
+  } else {
+    delete m_undoBefore; m_undoBefore = nullptr;
+  }
+  m_groupOrigR0 = m_groupOrigR1 = -1;
+  update();
+}
+
 void ZtoryAudioTrack::focusInEvent(QFocusEvent *e) {
   m_hasFocus = true;
   update();
@@ -1575,15 +1624,20 @@ void ZtoryAudioTrack::mousePressEvent(QMouseEvent *e) {
   // Select / drag / trim segment — blocked when locked
   if (e->button() == Qt::LeftButton && !m_razorActive && !m_locked) {
     setFocus(Qt::MouseFocusReason);
+    // Ctrl/Cmd adds to the cross-track selection instead of replacing it.
+    bool additive = (e->modifiers() & (Qt::ControlModifier | Qt::MetaModifier));
     int frame = frameAtX(e->x());
     int mx = e->x();
     auto segs = findSegments();
+    Segment prevSel = m_selSeg;  // remember selection state before this click
     m_selSeg = {-1, -1};
     m_dragMode = NoDrag;
     delete m_undoBefore; m_undoBefore = nullptr;
+    bool wasSelected = false;
     for (auto &s : segs) {
       if (frame < s.r0 || frame > s.r1) continue;
       m_selSeg = s;
+      wasSelected = (prevSel.r0 == s.r0 && prevSel.r1 == s.r1);
       m_dragOrigR0 = s.r0;
       m_dragOrigR1 = s.r1;
       m_dragStartFrame = frame;
@@ -1607,8 +1661,19 @@ void ZtoryAudioTrack::mousePressEvent(QMouseEvent *e) {
       }
       break;
     }
-    // If clicked on empty area, notify siblings to clear selection too
-    if (m_selSeg.r0 < 0) emit selectionCleared();
+    if (m_selSeg.r0 >= 0) {
+      // Plain click on an UNselected segment selects it exclusively (panel
+      // clears the other tracks).  Ctrl/Cmd adds to the selection, and a plain
+      // click on an ALREADY-selected segment keeps the multi-selection so it can
+      // be dragged as a group.
+      if (!additive && !wasSelected) emit exclusiveSelectRequested();
+      // Tell the panel to arm a group move across all selected tracks so a
+      // SegmentDrag here moves every selected segment by the same delta.
+      if (m_dragMode == SegmentDrag) { m_isGroupLeader = true; emit groupDragStarted(); }
+    } else {
+      // Clicked empty area — clear this track and notify siblings.
+      emit selectionCleared();
+    }
     update();
   }
 }
@@ -1665,6 +1730,9 @@ void ZtoryAudioTrack::mouseMoveEvent(QMouseEvent *e) {
     if (newR0 < 0) newR0 = 0;
     m_selSeg.r0 = newR0;
     m_selSeg.r1 = newR0 + segLen;
+    // Broadcast the applied delta so the panel moves every other selected
+    // track's segment by the same amount (group move).
+    emit groupDragDelta(newR0 - m_dragOrigR0);
     update();
     return;
   }
@@ -1765,6 +1833,7 @@ void ZtoryAudioTrack::mouseReleaseEvent(QMouseEvent *e) {
     // Cross-track drop: if mouse is outside this widget vertically
     QPoint localPos = e->pos();
     if (localPos.y() < 0 || localPos.y() >= height()) {
+      m_isGroupLeader = false;  // a vertical drop is a cross-track move, not a group move
       int dragOffset = m_dragStartFrame - m_dragOrigR0;
       emit segmentDroppedOutside(m_col, m_dragOrigR0, m_dragOrigR1,
                                  dragOffset, e->globalPos());
@@ -1773,6 +1842,10 @@ void ZtoryAudioTrack::mouseReleaseEvent(QMouseEvent *e) {
     }
 
     int finalDelta = m_selSeg.r0 - m_dragOrigR0;
+    m_isGroupLeader = false;
+    // Group the leader's move and every sibling's move (committed synchronously
+    // via the groupDragCommitted signal below) into one undo step.
+    TUndoScopedBlock undoBlock;
     if (finalDelta != 0 && m_dragOrigR0 >= 0) {
       TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
       TXshColumn *column = xsh ? xsh->getColumn(m_col) : nullptr;
@@ -1793,6 +1866,8 @@ void ZtoryAudioTrack::mouseReleaseEvent(QMouseEvent *e) {
     } else {
       delete m_undoBefore; m_undoBefore = nullptr;
     }
+    // Commit the same delta on every other selected (sibling) track.
+    emit groupDragCommitted(finalDelta);
     update();
     return;
   }
@@ -4977,6 +5052,27 @@ void ZtoryAnimaticPanel::refreshAudioTracks() {
     connect(src, &ZtoryAudioTrack::selectionCleared, this, [this, src]() {
       for (auto *other : m_audioTracks)
         if (other != src) other->clearSelection();
+    });
+    // Plain click on a segment selects it exclusively — clear the other tracks.
+    connect(src, &ZtoryAudioTrack::exclusiveSelectRequested, this, [this, src]() {
+      for (auto *other : m_audioTracks)
+        if (other != src) other->clearSelection();
+    });
+    // Group move: a SegmentDrag on one track moves every other selected track's
+    // segment by the same delta.  src is the leader; the siblings are armed,
+    // previewed and committed here.
+    connect(src, &ZtoryAudioTrack::groupDragStarted, this, [this, src]() {
+      for (auto *other : m_audioTracks)
+        if (other != src && other->hasSelection()) other->beginGroupDrag();
+    });
+    connect(src, &ZtoryAudioTrack::groupDragDelta, this, [this, src](int delta) {
+      for (auto *other : m_audioTracks)
+        if (other != src && other->hasSelection()) other->previewGroupMove(delta);
+    });
+    connect(src, &ZtoryAudioTrack::groupDragCommitted, this, [this, src](int delta) {
+      for (auto *other : m_audioTracks)
+        if (other != src && other->hasSelection()) other->commitGroupMove(delta);
+      ZtoryAnimaticController::instance()->invalidateSoundTrack();
     });
   }
 

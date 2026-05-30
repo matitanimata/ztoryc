@@ -355,6 +355,13 @@ public:
   bool hasSelection() const { return m_selSeg.r0 >= 0; }
   Segment selectedSegment() const { return m_selSeg; }
 
+  // ── Group move (multi-track) ────────────────────────────────────────────────
+  // Coordinated by the panel: when one track's selected segment is dragged, the
+  // same frame delta is previewed/committed on every other selected track.
+  void beginGroupDrag();                 // snapshot orig position + undo state
+  void previewGroupMove(int deltaFrames);// visual move of this track's selection
+  void commitGroupMove(int deltaFrames); // apply shift to the audio data (+undo)
+
   // Clipboard (shared across all audio tracks)
   static void clipboardCut(ZtoryAudioTrack *src);
   static void clipboardCopy(ZtoryAudioTrack *src);
@@ -383,6 +390,11 @@ signals:
   void soloToggleRequested(int col);
   void selectionCleared();  // emitted when this track clears its own selection
   void deleteRequested(int col);  // right-click → Delete Track
+  // Group move coordination (handled by ZtoryAnimaticPanel):
+  void exclusiveSelectRequested();        // plain click — clear other tracks
+  void groupDragStarted();                // SegmentDrag begun on a selected seg
+  void groupDragDelta(int deltaFrames);   // live delta during the drag
+  void groupDragCommitted(int deltaFrames);// final delta on release
 
 public slots:
   void clearSelection();    // clears m_selSeg and repaints
@@ -442,6 +454,13 @@ private:
   bool m_hasFocus = false;
   // Undo snapshot taken at drag/trim start; committed in mouseReleaseEvent
   TXshSoundColumn *m_undoBefore = nullptr;
+  // Group-move: orig position of this track's selection captured at drag start.
+  // -1 when this track is not part of an active group move.
+  int m_groupOrigR0 = -1;
+  int m_groupOrigR1 = -1;
+  // True while THIS track is the one being dragged (drives group broadcast) so
+  // it commits itself; sibling tracks are committed by the panel.
+  bool m_isGroupLeader = false;
 };
 
 // ---- ZtoryStoryStrip ----
