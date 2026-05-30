@@ -383,6 +383,41 @@ Design session necessaria per relazione con sequenze.
 
 ---
 
+### BUG (PRIORITÀ ALTA) — Animatic camera ≠ shot camera (caso generale) ⚠️ RIAPERTO
+
+**Priorità: ALTA | Tipo: BUG | Riaperto: 2026-05-30 (scena SB_APPENNINGERS)**
+
+Il fix BUG-CAMERA di 2026-05-31 (commit `7d1746f3a`) ancorò i viewer always-main
+(animatic + monitor) alla camera del **MAIN xsheet** anche dentro uno shot, per
+risolvere un caso specifico: contenuto fuori schermo su SH010 (camera sub con
+offset x=13.4). 6 punti in `sceneviewer.cpp`.
+
+**Problema riaperto:** se gli shot hanno **camere diverse** (ognuno inquadrato a
+modo suo nella propria sub-scena), usare SEMPRE la camera MAIN fa sì che l'animatic
+mostri tutti gli shot con la stessa inquadratura → **non corrispondono alla camera
+del singolo shot**. Confermato su ENTRAMBI i viewer (animatic + monitor), su più
+shot, camere sia statiche che animate. Il fix precedente ha ottimizzato per UNO
+shot ma ha rotto il caso generale.
+
+**Tensione di design da risolvere:**
+- Animatic DEVE riprodurre l'inquadratura (camera) di OGNI shot → serve la camera
+  della SUB-scena per il rendering del cell di quello shot.
+- Ma la camera sub causava contenuto fuori schermo (SH010) → capire PERCHÉ
+  (probabilmente compositing sub→parent: la camera sub va applicata al contenuto
+  della sub, poi il risultato piazzato nel parent; il fix invece bypassava la
+  camera sub). Va rifatto il calcolo corretto, non bypassato.
+
+**Approccio:** riprodurre con SB_APPENNINGERS (camere diverse per shot). Studiare i
+6 punti del commit `7d1746f3a` in `sceneviewer.cpp` (drawBuildVars ~1443,
+getViewMatrix CAMERA_REFERENCE ~2737, fitToCamera, getCameraRect, drawOverlay).
+Obiettivo: animatic = camera del singolo shot, SENZA reintrodurre l'off-screen di
+SH010 (capire quel caso: forse era un offset legittimo della camera sub).
+
+**File:** `toonz/sources/toonz/sceneviewer.cpp` (6 siti del fix BUG-CAMERA).
+**Crashlog/scena rif.:** project cs26_grottazzolina / SB_APPENNINGERS.
+
+---
+
 ### UX (bassa priorità) — Camera-view editing difficile da controllare
 
 **Priorità: BASSA | Tipo: UX | Segnalato: 2026-05-30**
