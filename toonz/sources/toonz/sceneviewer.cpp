@@ -1440,6 +1440,15 @@ void SceneViewer::drawBuildVars() {
   int frame    = fh->getFrame();
   TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
 
+  // For the always-main viewer inside a sub-scene, use the top (main) xsheet
+  // camera so the monitor stays anchored to the main camera regardless of what
+  // camera the sub-scene has (fixes BUG-CAMERA framing mismatch).
+  if (m_alwaysMainXsheet) {
+    ToonzScene *scene = app->getCurrentScene()->getScene();
+    ChildStack *cs    = scene->getChildStack();
+    if (cs->getAncestorCount() > 0) xsh = cs->getTopXsheet();
+  }
+
   // Camera affine
   TStageObjectId cameraId = xsh->getStageObjectTree()->getCurrentCameraId();
   TStageObject *camera    = xsh->getStageObject(cameraId);
@@ -1826,10 +1835,32 @@ void SceneViewer::drawPreview() {
 void SceneViewer::drawOverlay() {
   TApp *app = TApp::instance();
 
+  // For the always-main viewer inside a sub-scene, ViewerDraw::drawCameraMask/
+  // drawCamera/drawCameraOverlays call ViewerDraw::getCameraRect() which returns
+  // the SUB-SCENE camera size (e.g. 12×6.75 for SH010). But we want the MAIN
+  // camera size (16×9). Compute a corrected affine that pre-scales from sub to
+  // main so the drawn outline/mask matches the actual main-camera framing.
+  // Both cameras share the same aspect ratio so the correction is a uniform scale.
+  TAffine cameraRectAff = m_drawCameraAff;
+  if (m_alwaysMainXsheet) {
+    ToonzScene *scene = app->getCurrentScene()->getScene();
+    if (scene) {
+      ChildStack *cs = scene->getChildStack();
+      if (cs && cs->getAncestorCount() > 0) {
+        TCamera *mainCam = cs->getTopXsheet()->getStageObjectTree()->getCurrentCamera();
+        TCamera *subCam  = scene->getCurrentCamera();
+        if (mainCam && subCam && subCam->getSize().lx > 0) {
+          double scale = mainCam->getSize().lx / subCam->getSize().lx;
+          cameraRectAff = m_drawCameraAff * TScale(scale);
+        }
+      }
+    }
+  }
+
   // draw camera mask
   if (m_referenceMode == CAMERA_REFERENCE && !m_drawCameraTest) {
     glPushMatrix();
-    tglMultMatrix(m_drawCameraAff);
+    tglMultMatrix(cameraRectAff);
     ViewerDraw::drawCameraMask(this);
     glPopMatrix();
   }
@@ -1874,7 +1905,7 @@ void SceneViewer::drawOverlay() {
         ViewerDraw::draw3DCamera(f, m_minZ, m_phi3D);
       else {
         glPushMatrix();
-        tglMultMatrix(m_drawCameraAff);
+        tglMultMatrix(cameraRectAff);
         m_pixelSize = sqrt(tglGetPixelSize2()) * getDevPixRatio();
         ViewerDraw::drawCamera(f, m_pixelSize);
         glPopMatrix();
@@ -1882,7 +1913,7 @@ void SceneViewer::drawOverlay() {
     }
     if (fieldGuideToggle.getStatus()) {
       glPushMatrix();
-      tglMultMatrix(m_drawCameraAff);
+      tglMultMatrix(cameraRectAff);
       ViewerDraw::drawCameraOverlays(this, m_pixelSize);
       glPopMatrix();
       glPushMatrix();
@@ -1930,7 +1961,7 @@ void SceneViewer::drawOverlay() {
     if (safeAreaToggle.getStatus() && m_drawEditingLevel == false &&
         !is3DView()) {
       glPushMatrix();
-      tglMultMatrix(m_drawCameraAff);
+      tglMultMatrix(cameraRectAff);
       ViewerDraw::drawSafeArea();
       glPopMatrix();
     }
@@ -2402,17 +2433,18 @@ void SceneViewer::drawScene() {
     ChildStack *cs2D = scene->getChildStack();
     bool insideSubScene = cs2D->getAncestorCount() > 0;
     if (editInPlace) {
-      // Apply parent camera transform so the sub-scene is drawn in context.
-      // Always use TApp::getCurrentFrame() (sub-scene local frame) — not the
-      // animatic viewer's m_customFrameHandle — because m_rowTable maps
-      // sub-local frames → parent frames, not the other way around.
-      // This ensures that both the regular shot viewer and the animatic viewer
-      // apply the same getAncestorAffine transform and therefore show matching
-      // camera framing when inside a sub-scene.
-      TAffine aff;
-      int ancestorFrame = TApp::instance()->getCurrentFrame()->getFrame();
-      if (cs2D->getAncestorAffine(aff, ancestorFrame))
-        viewAff = viewAff * aff.inv();
+      // For the always-main viewer inside a sub-scene we skip the ancestor
+      // affine: the camera framing is already correct because drawBuildVars()
+      // selected the TOP xsheet camera. Applying the ancestor-camera offset on
+      // top of the main camera would double-shift the viewport (BUG-CAMERA).
+      // For all other viewers apply the parent-camera transform so the
+      // sub-scene is drawn in context.
+      if (!(m_alwaysMainXsheet && insideSubScene)) {
+        TAffine aff;
+        int ancestorFrame = TApp::instance()->getCurrentFrame()->getFrame();
+        if (cs2D->getAncestorAffine(aff, ancestorFrame))
+          viewAff = viewAff * aff.inv();
+      }
     }
 
     m_visualSettings.m_showBBox = viewBBoxToggle.getStatus();
@@ -2715,6 +2747,17 @@ TAffine SceneViewer::getViewMatrix() const {
                                            : TApp::instance()->getCurrentFrame();
     int frame    = fh->getFrame();
     TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    // For the always-main viewer inside a sub-scene, invert the MAIN xsheet
+    // camera, not the sub-scene camera. Otherwise the sub-camera offset
+    // (e.g. x=13.4 for SH010) would shift the viewport away from the content
+    // (BUG-CAMERA — the camera rect appears in the wrong position / off-screen).
+    if (m_alwaysMainXsheet) {
+      ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+      if (scene) {
+        ChildStack *cs = scene->getChildStack();
+        if (cs && cs->getAncestorCount() > 0) xsh = cs->getTopXsheet();
+      }
+    }
     TAffine aff  = xsh->getCameraAff(frame);
     return m_viewAff[viewMode] * aff.inv();
   } else
@@ -3140,8 +3183,17 @@ void SceneViewer::fitToCamera() {
   m_isFlippedX = tempIsFlippedX;
   m_isFlippedY = tempIsFlippedY;
 
-  TXsheet *xsh            = TApp::instance()->getCurrentXsheet()->getXsheet();
-  int frame               = TApp::instance()->getCurrentFrame()->getFrame();
+  TApp *app               = TApp::instance();
+  TXsheet *xsh            = app->getCurrentXsheet()->getXsheet();
+  int frame               = app->getCurrentFrame()->getFrame();
+  if (m_alwaysMainXsheet) {
+    ToonzScene *scene = app->getCurrentScene()->getScene();
+    ChildStack *cs    = scene->getChildStack();
+    if (cs->getAncestorCount() > 0) {
+      xsh   = cs->getTopXsheet();
+      frame = m_customFrameHandle ? m_customFrameHandle->getFrame() : frame;
+    }
+  }
   TStageObjectId cameraId = xsh->getStageObjectTree()->getCurrentCameraId();
   TStageObject *camera    = xsh->getStageObject(cameraId);
   TAffine cameraPlacement = camera->getPlacement(frame);
@@ -3149,8 +3201,12 @@ void SceneViewer::fitToCamera() {
   TAffine cameraAff =
       getViewMatrix() * cameraPlacement * TScale((1000 + cameraZ) / 1000);
 
-  QRect viewRect    = rect();
-  TRectD cameraRect = ViewerDraw::getCameraRect();
+  QRect viewRect = rect();
+  // Use the same xsheet's camera size for the fit rect so it matches the
+  // placement we used above (fixes BUG-CAMERA: always-main viewer was fitting
+  // to the sub-scene camera size while placing with the main camera).
+  TCamera *tcamera  = xsh->getStageObjectTree()->getCurrentCamera();
+  TRectD cameraRect = tcamera ? tcamera->getStageRect() : ViewerDraw::getCameraRect();
   TPointD P00       = cameraAff * cameraRect.getP00();
   TPointD P10       = cameraAff * cameraRect.getP10();
   TPointD P01       = cameraAff * cameraRect.getP01();
@@ -3185,8 +3241,17 @@ void SceneViewer::fitToCamera() {
 //-----------------------------------------------------------------------------
 
 void SceneViewer::fitToCameraOutline() {
-  TXsheet *xsh            = TApp::instance()->getCurrentXsheet()->getXsheet();
-  int frame               = TApp::instance()->getCurrentFrame()->getFrame();
+  TApp *app    = TApp::instance();
+  TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+  int frame    = app->getCurrentFrame()->getFrame();
+  if (m_alwaysMainXsheet) {
+    ToonzScene *scene = app->getCurrentScene()->getScene();
+    ChildStack *cs    = scene->getChildStack();
+    if (cs->getAncestorCount() > 0) {
+      xsh   = cs->getTopXsheet();
+      frame = m_customFrameHandle ? m_customFrameHandle->getFrame() : frame;
+    }
+  }
   TStageObjectId cameraId = xsh->getStageObjectTree()->getCurrentCameraId();
   TStageObject *camera    = xsh->getStageObject(cameraId);
   TAffine cameraPlacement = camera->getPlacement(frame);
@@ -3195,7 +3260,8 @@ void SceneViewer::fitToCameraOutline() {
       getViewMatrix() * cameraPlacement * TScale((1000 + cameraZ) / 1000);
 
   QRect viewRect    = rect();
-  TRectD cameraRect = ViewerDraw::getCameraRect();
+  TCamera *tcamera  = xsh->getStageObjectTree()->getCurrentCamera();
+  TRectD cameraRect = tcamera ? tcamera->getStageRect() : ViewerDraw::getCameraRect();
   TPointD P00       = cameraAff * cameraRect.getP00();
   TPointD P10       = cameraAff * cameraRect.getP10();
   TPointD P01       = cameraAff * cameraRect.getP01();
@@ -3928,12 +3994,22 @@ TRectD SceneViewer::getGeometry() const {
 //-----------------------------------------------------------------------------
 
 TRectD SceneViewer::getCameraRect() const {
-  TRectD cameraRect = TApp::instance()
-                          ->getCurrentScene()
-                          ->getScene()
-                          ->getCurrentCamera()
-                          ->getStageRect();
+  TCamera *cam = nullptr;
+  // For the always-main viewer inside a sub-scene, use the TOP xsheet camera
+  // size so the drawn camera outline matches the main framing (BUG-CAMERA).
+  if (m_alwaysMainXsheet) {
+    ToonzScene *scene =
+        TApp::instance()->getCurrentScene()->getScene();
+    if (scene) {
+      ChildStack *cs = scene->getChildStack();
+      if (cs && cs->getAncestorCount() > 0)
+        cam = cs->getTopXsheet()->getStageObjectTree()->getCurrentCamera();
+    }
+  }
+  if (!cam)
+    cam = TApp::instance()->getCurrentScene()->getScene()->getCurrentCamera();
 
+  TRectD cameraRect = cam->getStageRect();
   // return m_drawCameraAff * TRectD(cameraRect.x0, cameraRect.y0, cameraRect.x1
   // - m_pixelSize, cameraRect.y1 - m_pixelSize);
   return m_drawCameraAff * cameraRect;
