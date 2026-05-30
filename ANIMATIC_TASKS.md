@@ -228,6 +228,38 @@ zoom, rotazione) al corrispondente oggetto camera nel main xsheet.
   esistenti: azione per riallineare le camere sub al main (con avviso che reframma
   gli shot anomali).
 
+**DECISIONE UTENTE (2026-05-30) — NON toccare i dati camera:**
+- La camera della sub, se è più piccola (es. 12×6.75), **deve restare tale** — è una
+  scelta legittima dell'animatore e l'animatic PURO la mostra correttamente.
+- Quindi NIENTE forzatura sub=main, NIENTE repair distruttivo. (Le opzioni 1 e 2
+  proposte sono SCARTATE.)
+- **Il fix è SOLO nel rendering del MONITOR**: il viewer del monitor deve restare
+  ancorato al **livello/camera del MAIN** anche quando si è dentro uno shot — cioè
+  comportarsi ESATTAMENTE come in animatic puro (che funziona), invece di scendere
+  in edit-in-place sulla sub.
+
+**MECCANISMO (perché solo dentro lo shot e solo su shot con camera ≠ main):**
+- In animatic puro la camera corrente È quella del main → tutto ok.
+- Entrando nello shot, la "camera corrente" diventa quella della SUB. Il monitor
+  (always-main-xsheet) renderizza il contenuto del MAIN ma si riferisce/inquadra
+  sulla camera SUB. Per gli shot con sub=16×9 all'origine ≈ main → si vedono; per
+  SH010 (sub 12×6.75 a x=13.4) → inquadra a destra mentre il contenuto main è
+  centrato → fuori frame → BIANCO.
+
+**PIANO IMPLEMENTAZIONE (sessione dedicata, iterare con test visivi):**
+Orientare 3 punti in `sceneviewer.cpp` perché l'always-main-xsheet viewer, quando
+`insideSubScene`, si comporti come al top level (camera del MAIN):
+1. **Affine ancestrale** (~riga 2404, `if (editInPlace) ... getAncestorAffine`):
+   non applicarlo per `m_alwaysMainXsheet && insideSubScene`. (Già provato in
+   `5f335a295`, da solo NON bastava → vedi punti 2-3.)
+2. **Camera di riferimento / box** (`getCurrentCameraId()` su `getCurrentXsheet()`
+   ~righe 1444, 962, 2579): per l'always-main viewer usare la camera del TOP xsheet,
+   non quella corrente (sub).
+3. **Re-fit on scene switch**: verificare se entrando nello shot il monitor rifà il
+   fit sulla camera sub (BaseViewerPanel::onSceneSwitched / fit-to-camera). Se sì,
+   impedirlo per l'always-main viewer (mantenere il fit sulla camera main).
+Test: SH010 (sub 12×6.75 offset) deve vedersi nel monitor identico all'animatic puro.
+
 **Prossimi passi suggeriti (sessione dedicata, app aperta per test interattivo):**
 1. Confrontare il TStageObject camera del main xsheet vs quello del child xsheet
    subito dopo `cloneChildToPosition()` / creazione shot: stampare N/S/E/W/Z/scala.
