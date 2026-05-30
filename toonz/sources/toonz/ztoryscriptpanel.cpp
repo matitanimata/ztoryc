@@ -111,6 +111,15 @@ ZtoryScriptView::ZtoryScriptView(QWidget *parent)
   // screenplay or clears the panel.
   connect(ZtoryModel::instance(), &ZtoryModel::scriptFileChanged,
           this, &ZtoryScriptView::reloadFromModel);
+
+  // Authoritative per-scene sync.  StoryboardPanel also sets the scriptFile on
+  // load, but that path is fragile (depends on the Board panel existing and
+  // refreshing).  Connecting here guarantees the screenplay always matches the
+  // current scene's .ztoryc — loading it or clearing the panel — even when the
+  // Board never refreshed.  Both writers set the same value, so the model
+  // guard makes whichever runs second a harmless no-op.
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
+          this, &ZtoryScriptView::onSceneSwitched);
 }
 
 //-----------------------------------------------------------------------------
@@ -124,9 +133,15 @@ void ZtoryScriptView::importScreenplay(const QString &srcPath) {
     loadFile(srcPath);
     return;
   }
-  // Destination: the project's extras/script folder.
-  QString destDir =
-      scene->decodeFilePath(TFilePath("+extras")).getQString() + "/script";
+  // Destination: the PER-SCENE extras folder, so the screenplay is bound to
+  // THIS scene and never bleeds into sibling scenes.  The project setting
+  // <folder name="extras" useScenePath="yes"/> means extras is per-scene, just
+  // like drawings.  We mirror ToonzScene::getDefaultLevelPath():
+  //     +extras + getSavePath() + "script"  →  extras/<scene>/script
+  // (getSavePath() is the scene's path relative to the scenes root.)
+  TFilePath extrasRoot = scene->decodeFilePath(TFilePath("+extras"));
+  TFilePath perSceneDir = extrasRoot + scene->getSavePath() + TFilePath("script");
+  QString destDir = perSceneDir.getQString();
   QString fileName = QFileInfo(srcPath).fileName();
   QString destPath = destDir + "/" + fileName;
 
@@ -182,6 +197,38 @@ void ZtoryScriptView::reloadFromModel() {
     clear();
     m_currentFilePath.clear();
   }
+}
+
+//-----------------------------------------------------------------------------
+
+QString ZtoryScriptView::readScriptFileFromZtoryc() const {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return QString();
+  TFilePath sp = scene->getScenePath();
+  if (sp.isEmpty()) return QString();
+  QString path = QString::fromStdWString(sp.getWideString());
+  if (!path.endsWith(".tnz", Qt::CaseInsensitive)) return QString();
+  path.chop(4);
+  path += ".ztoryc";
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return QString();
+  QXmlStreamReader xml(&file);
+  while (!xml.atEnd()) {
+    xml.readNext();
+    if (xml.isStartElement() && xml.name() == QLatin1String("scriptFile"))
+      return xml.readElementText();
+  }
+  return QString();
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoryScriptView::onSceneSwitched() {
+  // Push THIS scene's screenplay binding (read straight from its .ztoryc) into
+  // the model.  setScriptFile() emits scriptFileChanged → reloadFromModel,
+  // which loads the file or clears the panel.  An empty string clears it, so a
+  // scene with no screenplay never inherits the previous scene's one.
+  ZtoryModel::instance()->setScriptFile(readScriptFileFromZtoryc());
 }
 
 //-----------------------------------------------------------------------------

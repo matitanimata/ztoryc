@@ -40,8 +40,16 @@ private slots:
   void onSearchTextChanged(const QString &text);
   void onSearchNext();
   void onSearchPrev();
+  // Authoritative per-scene reload: on scene switch, read the scriptFile tag
+  // from the current scene's .ztoryc and update the model (clears when none).
+  // Independent of StoryboardPanel so the screenplay is always scene-correct.
+  void onSceneSwitched();
 
 private:
+  // Read the <scriptFile> tag from the current scene's .ztoryc (project-relative
+  // path, or "" if the scene has none / is unsaved).
+  QString readScriptFileFromZtoryc() const;
+
   // Parsing
   QString parseFdx(const QString &filePath);
   QString parseFountain(const QString &filePath);
