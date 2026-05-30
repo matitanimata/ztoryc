@@ -383,6 +383,32 @@ Design session necessaria per relazione con sequenze.
 
 ---
 
+### BUG (da investigare) — Stack overflow ricorsione layout QScrollArea (Windows)
+
+**Priorità: MEDIA | Tipo: BUG | Segnalato: crash Windows 2026-05-28 (build 0.3.4)**
+
+Crash `EXCEPTION_STACK_OVERFLOW` su Windows 10. Backtrace = ricorsione infinita
+`QScrollArea::eventFilter → QWidget::resize → setGeometry_sys → QScrollArea::eventFilter`
+ripetuta ~480+ volte. In cima allo stack: `QLabel::setWordWrap / sizeHint /
+QTextEngine::itemize` → un **QLabel word-wrap dentro una QScrollArea** il cui
+height-for-width oscilla (la larghezza dipende dalla scroll area che si ridimensiona
+in base al sizeHint del label → loop).
+
+**Contesto:** l'utente aveva installato 0.3.4 SOPRA un'installazione precedente
+(file stale nella stessa cartella + config/layout `rooms` per-utente in AppData).
+Possibile trigger: layout salvato incompatibile. **Workaround utente: clean install.**
+
+**Da fare:** cercare nei pannelli Ztory una `QScrollArea` con dentro un `QLabel`
+word-wrap senza larghezza fissata (candidati: StoryboardPanel grid, Script panel,
+PanelWidget con label). Fix tipico: `label->setMinimumWidth()` o
+`setWordWrap` + size policy fissa, oppure rompere il feedback con
+`QScrollArea::setWidgetResizable` / gestione esplicita del resize.
+Non riproducibile finora su Mac (probabilmente layout-file-specifico).
+
+**Crashlog:** `SamDrive/Ztoryc/crash_windows/Crash-20260528-191004.log`
+
+---
+
 ### NEW — Sistema Annotazioni Camera-Move + Light Direction (task 40) ⭐ UNIFICA 35/36/37
 
 **Priorità: MEDIA-ALTA | Tipo: NEW | Stima: multi-sessione (3 fasi)**
