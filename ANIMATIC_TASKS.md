@@ -208,6 +208,26 @@ zoom, rotazione) al corrispondente oggetto camera nel main xsheet.
   Confrontare a runtime `xsh->getStageObject(CameraId(0))` (main) vs quello del
   child xsheet: N/S/E/W/Z/scala.
 
+**ROOT CAUSE DEFINITIVO (analisi .tnz `SB_APPENNINGERS` 2026-05-30):**
+- È un **mismatch di `cameraSize` tra sub-scena e main**, NON un problema di rendering.
+- Camera MAIN: `16 9` (default, origine, nessun keyframe).
+- Su 59 sub-scene: 29 hanno camera `16 9` (= main, si vedono bene), ma **4 sono
+  anomale**: 3 × `12 6.75` e 1 × `12 9`. La camera del primo shot SH010 è `12 6.75`
+  con offset x=13.4, scale 0.52, z 0→333 (camera move) → nel main 16×9 finisce
+  fuori inquadratura → BIANCO. Gli altri 3 anomali sono solo disallineati.
+- Spiega PERFETTAMENTE "solo il primo è bianco": è uno dei 4 con camera ≠ main.
+- `onAddShot` (ztoryanimatic.cpp ~5544) GIÀ fa `childCamera->setSize/setRes =
+  parentCamera` — ma evidentemente il path di creazione di QUESTI shot (import/clone
+  dal Board) NON sincronizza la camera. Da trovare e fixare quel path.
+- **Nota:** 12×6.75 ha lo stesso aspect di 16×9 (16:9, solo più piccola); 12×9 è
+  4:3 (aspect diverso). Cambiare la size della sub a posteriori RICALCOLA
+  l'inquadratura (i keyframe camera erano tarati su 12×6.75) → repair destruttivo,
+  serve decisione utente.
+- **Fix in 2 parti:** (1) PREVENZIONE: tutti i path di creazione shot (Board import/
+  clone) devono forzare sub cameraSize/Res = main, come onAddShot. (2) REPAIR scene
+  esistenti: azione per riallineare le camere sub al main (con avviso che reframma
+  gli shot anomali).
+
 **Prossimi passi suggeriti (sessione dedicata, app aperta per test interattivo):**
 1. Confrontare il TStageObject camera del main xsheet vs quello del child xsheet
    subito dopo `cloneChildToPosition()` / creazione shot: stampare N/S/E/W/Z/scala.
