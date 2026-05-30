@@ -2197,6 +2197,37 @@ void ToonzRasterBrushTool::leftButtonUp(const TPointD &pos,
 }
 
 //---------------------------------------------------------------------------------------------------------------
+// AutoFillUndo: undo/redo for the brush AutoFill.  Stores the fill region's
+// pixels before (undo) and after (redo) the fill so one step reverts/re-applies
+// the autofill.  Grouped with the stroke's undo in finishRasterBrush, so a
+// single Ctrl+Z reverts stroke + fill and Ctrl+Shift+Z restores both.
+class AutoFillUndo final : public ToolUtils::TRasterUndo {
+  TTileSetCM32 *m_after;  // fill-region tiles to paste on redo
+public:
+  AutoFillUndo(TTileSetCM32 *before, TTileSetCM32 *after,
+               TXshSimpleLevel *level, const TFrameId &frameId)
+      : ToolUtils::TRasterUndo(before, level, frameId, false, false, 0)
+      , m_after(after) {}
+  ~AutoFillUndo() { delete m_after; }
+  void redo() const override {
+    if (m_after && m_after->getTileCount() > 0) {
+      TToonzImageP image = getImage();
+      if (!image) return;
+      ToonzImageUtils::paste(image, m_after);
+      ToolUtils::updateSaveBox(m_level, m_frameId);
+    }
+    TTool::Application *app = TTool::getApplication();
+    if (app) app->getCurrentXsheet()->notifyXsheetChanged();
+    notifyImageChanged();
+  }
+  int getSize() const override {
+    return ToolUtils::TRasterUndo::getSize() +
+           (m_after ? m_after->getMemorySize() : 0);
+  }
+  QString getToolName() override { return QString("Auto Fill"); }
+};
+
+//---------------------------------------------------------------------------------------------------------------
 /*!
  * ドラッグ中にツールが切り替わった場合に備え、onDeactivate時とMouseRelease時にと同じ終了処理を行う
  */
@@ -2212,6 +2243,12 @@ void ToonzRasterBrushTool::finishRasterBrush(const TPointD &pos,
   TTool::Application *app   = TTool::getApplication();
   TXshLevel *level          = app->getCurrentLevel()->getLevel();
   TXshSimpleLevelP simLevel = level->getSimpleLevel();
+
+  // When AutoFill is on, group the stroke's undo and the AutoFill undo into one
+  // step so a single Ctrl+Z reverts both.  RAII: the block closes on any return.
+  std::unique_ptr<TUndoScopedBlock> autoFillBlock;
+  if (m_autoFill.getValue())
+    autoFillBlock.reset(new TUndoScopedBlock());
 
   bool isEditingLevel = m_application->getCurrentFrame()->isEditingLevel();
   bool renameColumn   = m_isFrameCreated;
@@ -2538,10 +2575,11 @@ void ToonzRasterBrushTool::finishRasterBrush(const TPointD &pos,
 
   /*-- FIdを指定して、描画中にフレームが動いても、
   　　描画開始時のFidのサムネイルが更新されるようにする。--*/
-  // AutoFill: flood-fill all enclosed unpainted regions after each stroke.
-  // Algorithm: inverse flood-fill from the 4 image corners marks all pixels
-  // reachable from outside (exterior). Any unpainted pixel NOT reachable from
-  // outside is enclosed by ink → fill it with the current paint style.
+  // AutoFill: fill ONLY the regions newly enclosed by THIS stroke (regions that
+  // were reachable from outside before the stroke but are enclosed after).
+  // A dedicated AutoFillUndo (before/after tiles) makes the fill undo & redo
+  // correctly; it is grouped with the stroke's undo via the block opened at the
+  // top of leftButtonUp when AutoFill is on, so one Ctrl+Z reverts stroke+fill.
   if (m_autoFill.getValue()) {
     TToonzImageP ti = TImageP(getImage(true));
     if (ti) {
@@ -2611,14 +2649,113 @@ void ToonzRasterBrushTool::finishRasterBrush(const TPointD &pos,
               fillStyleId = styleId;
           }
 
-          // Fill all enclosed interior pixels: any pixel not reachable from
-          // the scan area border (exterior=0) with no existing paint.
-          for (int ry = 0; ry < sh; ry++) {
-            TPixelCM32 *row = ras->pixels(y0 + ry) + x0;
-            for (int rx = 0; rx < sw; rx++) {
-              if (!exterior[ry * sw + rx] && row[rx].getPaint() == 0)
-                row[rx].setPaint(fillStyleId);
+          // ── Only NEW shapes ──────────────────────────────────────────────
+          // Fill an enclosed region ONLY if its boundary includes ink drawn by
+          // THIS stroke — i.e. it is 4-adjacent to an ink pixel inside the
+          // current stroke's footprint (the undo tiles it touched).  Pre-existing
+          // closed shapes the stroke didn't touch are left alone.  This is
+          // coordinate-robust (no pre-stroke raster reconstruction).
+          //
+          // Pass 1: region-flood the enclosed unpainted pixels and collect the
+          // indices of regions whose boundary touches stroke ink.
+          //
+          // Stroke bounding box (raster coords) from the stroke path points —
+          // m_strokeRect is already emptied at this point, but m_points still
+          // holds the path the undo was built from.
+          // Stroke footprint (raster coords): the union of the undo tiles the
+          // stroke saver touched while drawing.  This is reliable across all
+          // brush modes (m_points / m_strokeRect are already cleared here for
+          // hard/pencil brushes) and coordinate-correct (tile bounds are raster
+          // space).  m_points are used to tighten it when available.
+          TRect strokeBox;
+          bool haveStrokeBox = false;
+          if (m_tileSet) {
+            for (int i = 0; i < m_tileSet->getTileCount(); i++) {
+              TRect tb = m_tileSet->getTile(i)->m_rasterBounds;
+              strokeBox = haveStrokeBox ? (strokeBox + tb) : tb;
+              haveStrokeBox = true;
             }
+          }
+          if (!haveStrokeBox) {
+            double maxTh = 1.0;
+            for (const TThickPoint &p : m_points) {
+              int px = (int)std::floor(p.x), py = (int)std::floor(p.y);
+              TRect pr(px, py, px, py);
+              strokeBox = haveStrokeBox ? (strokeBox + pr) : pr;
+              haveStrokeBox = true;
+              if (p.thick > maxTh) maxTh = p.thick;
+            }
+            if (haveStrokeBox)
+              strokeBox = strokeBox.enlarge((int)std::ceil(maxTh) + 2);
+          }
+          if (!haveStrokeBox && !m_strokeRect.isEmpty()) {
+            strokeBox = m_strokeRect.enlarge(2);
+            haveStrokeBox = true;
+          }
+          auto inStroke = [&](int ax, int ay) {
+            if (!haveStrokeBox) return true;  // unknown stroke → fill all enclosed
+            return ax >= strokeBox.x0 && ax <= strokeBox.x1 &&
+                   ay >= strokeBox.y0 && ay <= strokeBox.y1;
+          };
+          auto inkAt = [&](int rx, int ry) -> bool {
+            if (rx < 0 || ry < 0 || rx >= sw || ry >= sh) return false;
+            return ras->pixels(y0 + ry)[x0 + rx].getInk() != 0;
+          };
+          std::vector<uint8_t> visited(sw * sh, 0);
+          std::vector<int> toFill;   // pixel indices to paint
+          std::vector<int> region, stack;
+          for (int sry = 0; sry < sh; sry++) {
+            TPixelCM32 *srow = ras->pixels(y0 + sry) + x0;
+            for (int srx = 0; srx < sw; srx++) {
+              int seed = sry * sw + srx;
+              if (visited[seed] || exterior[seed] || srow[srx].getPaint() != 0)
+                continue;
+              region.clear(); stack.clear();
+              stack.push_back(seed); visited[seed] = 1;
+              bool touchesStroke = false;
+              while (!stack.empty()) {
+                int si = stack.back(); stack.pop_back();
+                int rx = si % sw, ry = si / sw;
+                region.push_back(si);
+                const int nx[4] = {rx-1, rx+1, rx, rx};
+                const int ny[4] = {ry, ry, ry-1, ry+1};
+                for (int k = 0; k < 4; k++) {
+                  if (inkAt(nx[k], ny[k])) {
+                    if (inStroke(x0 + nx[k], y0 + ny[k])) touchesStroke = true;
+                  } else if (nx[k] >= 0 && ny[k] >= 0 && nx[k] < sw && ny[k] < sh) {
+                    int ni = ny[k] * sw + nx[k];
+                    if (!visited[ni] && !exterior[ni] &&
+                        ras->pixels(y0 + ny[k])[x0 + nx[k]].getPaint() == 0) {
+                      visited[ni] = 1; stack.push_back(ni);
+                    }
+                  }
+                }
+              }
+              if (touchesStroke)
+                toFill.insert(toFill.end(), region.begin(), region.end());
+            }
+          }
+
+          if (!toFill.empty()) {
+            // Bounding rect of the pixels to fill.
+            TRect fillRect;
+            for (size_t i = 0; i < toFill.size(); i++) {
+              int rx = toFill[i] % sw, ry = toFill[i] / sw;
+              TRect px(x0 + rx, y0 + ry, x0 + rx, y0 + ry);
+              fillRect = (i == 0) ? px : (fillRect + px);
+            }
+            fillRect = fillRect.enlarge(1) * ras->getBounds();
+            // Snapshot BEFORE, apply fill, snapshot AFTER → undo/redo.
+            TTileSetCM32 *beforeTiles = new TTileSetCM32(ras->getSize());
+            beforeTiles->add(ras, fillRect);
+            for (int si : toFill) {
+              int rx = si % sw, ry = si / sw;
+              ras->pixels(y0 + ry)[x0 + rx].setPaint(fillStyleId);
+            }
+            TTileSetCM32 *afterTiles = new TTileSetCM32(ras->getSize());
+            afterTiles->add(ras, fillRect);
+            TUndoManager::manager()->add(new AutoFillUndo(
+                beforeTiles, afterTiles, simLevel.getPointer(), frameId));
           }
         }
         ras->unlock();
