@@ -100,7 +100,6 @@
 | BUG-MARKOUT | Mark-out main blocca play animatic: sostituito XsheetGUI::getPlayRange con animatic play range proprio in tutti e 4 i punti; aggiunto clampPlayRangeToTimeline() dopo resequence | 2026-05-29 |
 | 25 | NEW In/Out Marker — superato: inPoint fisso a 1, Roll/Slide funzionano tramite trim su outPoint (durata) | 2026-05-29 |
 | BUG-SCRIPT-CROSS | Script per-scena: import in extras/<scena>/script + load autoritativo da .ztoryc su sceneSwitched (indipendente dalla Board) | 2026-05-30 |
-| BUG-MONITOR-WHITE | Monitor viewer bianco entrando in sub-scena: skip ancestor affine quando alwaysMainXsheet+insideSubScene (parziale: primo shot ancora bianco → BUG-CAMERA) | 2026-05-30 |
 
 ---
 
@@ -181,15 +180,17 @@ zoom, rotazione) al corrispondente oggetto camera nel main xsheet.
 - La discrepanza **sparisce tornando al main**, ma a volte resta una differenza
   residua "come se la camera del main, pur senza keyframe/movimenti, avesse F/Z
   diversi". → la camera del main non è inizializzata uguale alla sub.
-- **Collegato a shot-010-bianco nel Monitor**: entrando nel PRIMO shot (frame 0)
-  il viewer del monitor è completamente bianco (succede SOLO sul primo shot,
-  anche PRIMA del fix sceneviewer 5f335a295). Ipotesi forte: è lo stesso root
-  cause — la camera main al primo shot ha un transform talmente divergente che
-  il contenuto finisce tutto fuori inquadratura (bianco), mentre sugli altri
-  shot è solo leggermente disallineato.
-- Contesto monitor: il monitor renderizza il TOP xsheet con la camera del MAIN
-  (corretto per l'animatic = ciò che si esporta); il viewer nativo mostra la sub
-  con la camera della SUB. Vanno fatte combaciare le due camere.
+- **shot-010-bianco nel Monitor**: entrando nel PRIMO shot (frame 0) il viewer del
+  monitor è completamente bianco. Succede SOLO sul primo shot, gli altri si vedono
+  normalmente. Preesistente e indipendente da qualsiasi fix di sessione.
+  Ipotesi: la camera main alla riga 0 ha un transform che manda il contenuto fuori
+  inquadratura, oppure è un edge case di rendering del frame 0 nel viewer
+  always-main-xsheet.
+- ⚠️ **NON ritoccare l'affine ancestrale in `sceneviewer.cpp`** (righe ~2404,
+  `if (editInPlace) ... getAncestorAffine`). Un tentativo di skipparlo
+  (`5f335a295`) è stato REVERTATO (`6901cd844`): non risolveva il bianco e
+  introduceva una discrepanza di inquadratura monitor vs viewer nativo. L'affine
+  ancestrale serve a far combaciare il monitor con la sub-scena — va lasciato.
 
 **Prossimi passi suggeriti (sessione dedicata, app aperta per test interattivo):**
 1. Confrontare il TStageObject camera del main xsheet vs quello del child xsheet

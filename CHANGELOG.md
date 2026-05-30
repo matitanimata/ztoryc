@@ -7,24 +7,24 @@
 
 ---
 
-## [2026-05-30b] — Monitor viewer bianco (parziale) + findings BUG-CAMERA
+## [2026-05-30b] — Findings BUG-CAMERA (tentativo monitor-white revertato)
 
-### Fixed
-- **Monitor viewer bianco entrando in sub-scena (BUG-MONITOR-WHITE)** — il viewer
-  always-main-xsheet (animatic/monitor) renderizza il TOP xsheet con la sua camera
-  anche dentro una sub-scena, ma il path 2D di `sceneviewer.cpp` applicava comunque
-  l'affine ancestrale (sub→parent, calcolato dal frame globale sub-locale),
-  spingendo il contenuto fuori schermo → bianco. Fix: salta l'affine ancestrale
-  quando `m_alwaysMainXsheet && insideSubScene`. Gated sul flag Ztoryc, i viewer
-  Tahoma normali non sono toccati. Commit `5f335a295`.
+### Reverted
+- **Tentativo fix monitor-bianco (`5f335a295`) revertato in `6901cd844`** — era
+  basato su una premessa sbagliata: credevo che TUTTI gli shot fossero bianchi nel
+  monitor entrando in sub-scena, ma l'utente ha confermato che **solo il primo shot
+  (frame 0) è sempre stato bianco**, sia prima che dopo. Rimuovendo l'affine
+  ancestrale in `sceneviewer.cpp` non ho risolto il bianco e ho introdotto una
+  discrepanza di inquadratura monitor vs viewer nativo. Ripristinato il codice
+  originale (l'affine ancestrale fa combaciare il monitor con la sub-scena).
 
 ### Notes
-- **Parziale**: dopo il fix gli shot si vedono nel monitor MA (a) il **primo shot
-  (frame 0) resta bianco** e (b) c'è discrepanza di inquadratura tra monitor
-  (camera main) e viewer nativo (camera sub). Confermato dall'utente che i valori
-  divergenti sono lo **Stage transform della colonna camera** (N/S/E/W/Z). Entrambi
-  ricondotti a **BUG-CAMERA** (camera main ≠ camera sub) — findings dettagliati
-  registrati in ANIMATIC_TASKS.md. Richiede sessione dedicata con test interattivo.
+- **Confermato dall'utente:** solo il **primo shot (frame 0)** diventa bianco nel
+  monitor, comportamento preesistente e indipendente dai fix di questa sessione.
+- I valori camera divergenti (F/Z) sono lo **Stage transform della colonna camera**
+  (N/S/E/W/Z) — è **BUG-CAMERA** (camera main ≠ camera sub), preesistente. Findings
+  dettagliati in ANIMATIC_TASKS.md. Da affrontare in sessione dedicata con test
+  interattivo. NON ritoccare l'affine ancestrale in sceneviewer.cpp.
 
 ---
 
