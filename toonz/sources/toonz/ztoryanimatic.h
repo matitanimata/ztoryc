@@ -264,6 +264,10 @@ public:
   bool isLocked() const { return m_locked; }
   void setLocked(bool on);
 
+  // Snap (magnet): frames to snap dragged shot boundaries to.
+  void setSnapEnabled(bool on) { m_snapEnabled = on; }
+  void setSnapFrames(const QVector<int> &f) { m_snapFrames = f; }
+
 protected:
   void paintEvent(QPaintEvent *) override;
   void wheelEvent(QWheelEvent *e) override;
@@ -318,6 +322,9 @@ private:
   int m_razorHoverFrame = -1;
   // Lock button painted in paintEvent, toggled via mousePressEvent hit-test
   bool m_locked = false;
+  // Snap (magnet)
+  bool m_snapEnabled = false;
+  QVector<int> m_snapFrames;
 
   void updateCursor();
 };
@@ -361,6 +368,10 @@ public:
   void beginGroupDrag();                 // snapshot orig position + undo state
   void previewGroupMove(int deltaFrames);// visual move of this track's selection
   void commitGroupMove(int deltaFrames); // apply shift to the audio data (+undo)
+
+  // Snap (magnet): targets are frames to snap dragged edges to.
+  void setSnapEnabled(bool on) { m_snapEnabled = on; }
+  void setSnapFrames(const QVector<int> &f) { m_snapFrames = f; }
 
   // Clipboard (shared across all audio tracks)
   static void clipboardCut(ZtoryAudioTrack *src);
@@ -461,6 +472,9 @@ private:
   // True while THIS track is the one being dragged (drives group broadcast) so
   // it commits itself; sibling tracks are committed by the panel.
   bool m_isGroupLeader = false;
+  // Snap (magnet)
+  bool m_snapEnabled = false;
+  QVector<int> m_snapFrames;
 };
 
 // ---- ZtoryStoryStrip ----
@@ -823,6 +837,9 @@ public:
   void refreshAudioTracks();
   void updateTrackWidths();
   void updateCutFrames();
+  // Snap (magnet): rebuild the target frame list (shot boundaries, playhead,
+  // audio-segment edges) and push it + the enabled state to every track.
+  void updateSnapFrames();
 
 protected:
   void contextMenuEvent(QContextMenuEvent *e) override;
@@ -843,6 +860,8 @@ private:
   QSlider     *m_zoomSlider  = nullptr;
   QToolButton *m_fitAllBtn      = nullptr;
   QToolButton *m_timecodeBtn    = nullptr;
+  QToolButton *m_snapBtn        = nullptr;
+  bool m_snapEnabled = true;   // magnet on by default
   bool m_audioLinked = true;
   double m_ppf = 8.0;
   // ── Panning state (Space+drag or Middle-mouse drag) ───────────────────────

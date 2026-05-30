@@ -111,6 +111,24 @@ static int xdNoteHalfCount(TXsheet *subXsh, const char *name) {
   return 0;
 }
 
+// ── Snap ──────────────────────────────────────────────────────────────────────
+// Snap a frame to the nearest target within kSnapPx screen pixels.  Used by the
+// audio tracks and the video track when the magnet toggle is on.  Targets are
+// shot boundaries, the playhead and other audio-segment edges (computed by the
+// panel and pushed to each widget).
+static constexpr int kSnapPx = 8;
+static int snapToTargets(int frame, double ppf, const QVector<int> &targets,
+                         bool enabled) {
+  if (!enabled || targets.isEmpty() || ppf <= 0.0) return frame;
+  int best = frame;
+  double bestDistPx = kSnapPx + 1.0;
+  for (int t : targets) {
+    double distPx = std::abs((double)(frame - t) * ppf);
+    if (distPx < bestDistPx) { bestDistPx = distPx; best = t; }
+  }
+  return (bestDistPx <= kSnapPx) ? best : frame;
+}
+
 // Find the live StoryboardPanel instance for undo/redo from the Animatic.
 // Searches the whole widget tree since the Board can be embedded or floating.
 static StoryboardPanel *findBoardPanel() {
@@ -1728,6 +1746,20 @@ void ZtoryAudioTrack::mouseMoveEvent(QMouseEvent *e) {
         newR0 = s.r0 - segLen - 1;
     }
     if (newR0 < 0) newR0 = 0;
+    // Snap: align the start or the end edge (whichever is closer) to a target.
+    if (m_snapEnabled && !m_snapFrames.isEmpty()) {
+      int endR = newR0 + segLen + 1;  // one-past-end
+      int sStart = snapToTargets(newR0, m_ppf, m_snapFrames, true);
+      int sEnd   = snapToTargets(endR,  m_ppf, m_snapFrames, true);
+      int corrStart = sStart - newR0;
+      int corrEnd   = sEnd - endR;
+      int corr = 0;
+      if (corrStart != 0 && (corrEnd == 0 || std::abs(corrStart) <= std::abs(corrEnd)))
+        corr = corrStart;
+      else if (corrEnd != 0)
+        corr = corrEnd;
+      newR0 = qMax(0, newR0 + corr);
+    }
     m_selSeg.r0 = newR0;
     m_selSeg.r1 = newR0 + segLen;
     // Broadcast the applied delta so the panel moves every other selected
@@ -1743,12 +1775,14 @@ void ZtoryAudioTrack::mouseMoveEvent(QMouseEvent *e) {
     int delta = frame - m_dragStartFrame;
     if (m_dragMode == TrimLeft) {
       int newR0 = m_dragOrigR0 + delta;
+      newR0 = snapToTargets(newR0, m_ppf, m_snapFrames, m_snapEnabled);
       if (newR0 < 0) newR0 = 0;
       if (newR0 > m_dragOrigR1 - 1) newR0 = m_dragOrigR1 - 1;
       m_selSeg.r0 = newR0;
       m_selSeg.r1 = m_dragOrigR1;
     } else {
       int newR1 = m_dragOrigR1 + delta;
+      newR1 = snapToTargets(newR1 + 1, m_ppf, m_snapFrames, m_snapEnabled) - 1;
       if (newR1 < m_dragOrigR0 + 1) newR1 = m_dragOrigR0 + 1;
       m_selSeg.r0 = m_dragOrigR0;
       m_selSeg.r1 = newR1;
@@ -2469,6 +2503,12 @@ void ZtoryAnimaticTrack::mouseMoveEvent(QMouseEvent *e) {
     int delta = (int)(dx / m_ppf);
     int origDur = m_dragOrigDurA;
     int newDuration = qMax(origDur + delta, 1);
+    // Snap the dragged (right) edge to a target (playhead / audio edge / boundary).
+    if (m_snapEnabled && !m_snapFrames.isEmpty()) {
+      int startA  = m_origStarts.value(m_dragColA, 0);
+      int snapped = snapToTargets(startA + newDuration, m_ppf, m_snapFrames, true);
+      newDuration = qMax(1, snapped - startA);
+    }
     int newF1 = newDuration - 1;  // f0 is always 0 for RippleTrim
 
     // Aggiorna durata shot draggato e ricalcola posizioni successive
@@ -2490,6 +2530,12 @@ void ZtoryAnimaticTrack::mouseMoveEvent(QMouseEvent *e) {
   if (m_dragMode == Roll) {
     int dx = mx - m_dragStartX;
     int delta = (int)(dx / m_ppf);
+    // Snap the seam (boundary between colA and colB) to a target.
+    if (m_snapEnabled && !m_snapFrames.isEmpty()) {
+      int seam    = m_dragOrigStartB + delta;
+      int snapped = snapToTargets(seam, m_ppf, m_snapFrames, true);
+      delta = snapped - m_dragOrigStartB;
+    }
     // Clamp: each side must keep at least 1 frame
     delta = qMax(delta, -(m_dragOrigDurA - 1));
     delta = qMin(delta,   m_dragOrigDurB - 1);
@@ -4571,6 +4617,27 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   tbLay->addWidget(m_timecodeBtn);
   tbLay->addSpacing(8);
 
+  // Snap (magnet) toggle: snap dragged shot/audio edges to shot boundaries,
+  // the playhead and other audio-segment edges.
+  m_snapBtn = new QToolButton(toolbar);
+  m_snapBtn->setText("U");  // simple magnet glyph stand-in
+  m_snapBtn->setCheckable(true);
+  m_snapBtn->setChecked(m_snapEnabled);
+  m_snapBtn->setFixedSize(26, 22);
+  m_snapBtn->setToolTip(tr("Snap (magnet) — snap dragged edges to shot "
+                           "boundaries, the playhead and audio clip edges"));
+  m_snapBtn->setStyleSheet(
+      "QToolButton{background:transparent;border:1px solid #555;border-radius:3px;"
+      "color:#aaa;font-size:11px;font-weight:bold;}"
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#3a6a9a;color:#fff;border-color:#5599cc;}");
+  connect(m_snapBtn, &QToolButton::toggled, this, [this](bool on) {
+    m_snapEnabled = on;
+    updateSnapFrames();
+  });
+  tbLay->addWidget(m_snapBtn);
+  tbLay->addSpacing(8);
+
   // Auto-match toggle: when ON, automatically syncs the animatic slot
   // duration to the sub-scene's drawing content whenever it changes.
   m_autoMatchBtn = new QToolButton(toolbar);
@@ -4746,6 +4813,7 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
     m_track->setCurrentFrame(frame);
     for (auto *at : m_audioTracks)
       at->setCurrentFrame(frame);
+    updateSnapFrames();  // keep the playhead snap target current
   });
   // Repaint the timeline whenever the current xsheet switches (entering or
   // leaving a shot). The active-shot highlight depends on the child-stack
@@ -4870,6 +4938,32 @@ void ZtoryAnimaticPanel::updateCutFrames() {
   }
   for (auto *at : m_audioTracks)
     at->setCutFrames(cutFrames);
+  updateSnapFrames();
+}
+
+void ZtoryAnimaticPanel::updateSnapFrames() {
+  // Build the snap-target list: shot boundaries (start + end of every block),
+  // the playhead, and every audio segment edge (start + one-past-end).
+  QVector<int> targets;
+  for (auto &b : m_track->blocks()) {
+    int dur = b.f1 - b.f0 + 1;
+    targets.append(b.startFrameInMain);
+    targets.append(b.startFrameInMain + dur);
+  }
+  targets.append(ZtoryAnimaticController::instance()->currentFrame());
+  for (auto *at : m_audioTracks) {
+    for (const auto &s : at->findSegments()) {
+      targets.append(s.r0);
+      targets.append(s.r1 + 1);
+    }
+  }
+  // Push to every track.
+  m_track->setSnapEnabled(m_snapEnabled);
+  m_track->setSnapFrames(targets);
+  for (auto *at : m_audioTracks) {
+    at->setSnapEnabled(m_snapEnabled);
+    at->setSnapFrames(targets);
+  }
 }
 
 void ZtoryAnimaticPanel::applyMuteSolo() {
