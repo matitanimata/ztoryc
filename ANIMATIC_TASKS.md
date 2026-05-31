@@ -709,7 +709,15 @@ nella sub-scene corretta.
 21. NEW Volume traccia audio
 24. NEW Startup popup hub
 Kitsu. NEW Integrazione Kitsu (M5)
-41. NEW Cache RAM threshold configurabile (BASSA) — attualmente hardcoded al 25% in tsystempd.cpp. Implementare rilevamento automatico per classe di macchina (≤8GB→35%, 16GB→25%, 32GB+→15%) + preferenza utente opzionale per sovrascrivere. File: `tsystempd.cpp`, `preferences.cpp/h`.
+41. NEW Cache RAM threshold configurabile (BASSA) — ora a 14.3% shipped in `tsystempd.cpp` (il tentativo di alzarlo al 25% è stato revertito perché l'eviction aggressiva crashava il Save All su scene pesanti, raster liberato durante `TRasterCodecLZO::compress`). Rifarlo in modo MIRATO: non toccare l'eviction globale durante i save; semmai rilevamento per classe di macchina (≤8GB→più aggressivo) + opzione utente. ⚠️ Collegato: cache-leak post-render (frame restano in cache, ~17GB su scena pesante; fix upstream `be20f9512` da portare).
+
+42. 🔴 CRASH palette-switch ri-entrante (ALTA, pre-esistente) — SIGSEGV cliccando colonna / aprendo sub-scena mentre è attivo un tool di disegno o pannello palette. Cascata: `TApp::updateXshLevel → TPaletteHandle::setPalette → (emit paletteSwitched) → PaletteController::editLevelPalette → setPalette → (emit) → slot del tool/pannello → deref stato transitorio → crash`. Connessione chiave: `palettecontroller.cpp:65-66` (paletteSwitched→editLevelPalette). Slot che crashano osservati: `StyleEditor::onStyleSwitched`, `ToonzRasterBrushTool::onColorStyleChanged`, `GeometricToolNotifier::onColorStyleChanged`, `PaletteViewer::onFrameSwitched`/`TPalette::setFrame`. Dump 0-byte = la variante stack-overflow. WORKAROUND utente: selezionare lo strumento freccia/Animate prima di operazioni che fanno openSubXsheet. ⚠️ NON patchare a scatola chiusa (tentativi del 2026-05-31 — TPaletteHandle ref forte + guard onStyleSwitched + TPaletteP — hanno causato REGRESSIONE: crash al disegno su scene nuove → tutto revertito). Affrontare con BUILD DI DEBUG + lldb per vedere lo stato reale dell'oggetto al crash, poi una sola fix mirata. File: `tpalettehandle.cpp`, `palettecontroller.cpp`, `styleeditor.cpp`, `geometrictool.cpp`, `toonzrasterbrushtool.cpp`, `paletteviewer.cpp`.
+
+43. NEW Fix export animatic — 4 bug (MEDIA, da `onExportAnimatic`/`onExportShots` in storyboardpanel.cpp):
+    (a) clip del PRIMO shot mancante in "one clip per shot" — indagare `shotFrameRange(0)` / loop righe ~3661.
+    (b) AUDIO parte dal frame 1 su tutte le clip invece del proprio segmento — il render di range `[r0,r1]` non offsetta l'audio (lo prende da inizio timeline). Bug più delicato, richiede test output audio.
+    (c) NOME FILE col UUID (`SB_APPENNINGERS_8a231e55-..._sh020`) — FIX CHIARO: l'export usa `m_shots[si].data.sequenceId` (che è l'UUID, vedi `ztorymodel.h:71`) nel nome; va risolto nell'etichetta leggibile via `ZtoryModel::findSequence(sequenceId)->label` (come già fa storyboardpanel.cpp:919). Righe ~3665-3667.
+    (d) Export FULL: a un certo punto il video si ferma — indagare (memoria/swap sul render unico, o frame che fallisce). Nota: "one clip per shot" NON serializza (lancia tutti gli MI_Render insieme, righe 3661-3675) — valutare serializzazione se serve il beneficio memoria.
 
    ~~35. Storyboard Arrow Tool~~ → assorbito in task 40
    ~~36. Frecce 3D / Prospettiva~~ → assorbito in task 40
