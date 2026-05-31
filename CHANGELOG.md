@@ -7,7 +7,7 @@
 
 ---
 
-## [2026-05-31] — Audio flicker fix + autoMatch perf + RAM threshold + Task 40 FASE 1 + BUG-CAMERA chiuso
+## [2026-05-31] — Windows Storyboard startup crash fix + audio flicker + autoMatch perf + Render Tile default + workflow anti-flicker + Task 40 FASE 1
 
 ### Fixed
 - **Flicker tracce audio durante operazioni** (`ztoryanimatic.cpp/.h`) —
@@ -21,9 +21,28 @@
   la colonna corrispondente alla sub-scena aperta era O(col × righe): controllava
   ogni frame di ogni colonna ad ogni `xsheetChanged`. Fix: O(col) — controlla solo
   la prima cella per colonna (tutte le celle di un shot puntano allo stesso livello).
-- **Cache RAM threshold troppo bassa** (`tsystempd.cpp`) — eviction scattava solo
-  sotto il 14.3% di RAM disponibile (÷7): su un Mac da 16 GB il processo arrivava a
-  ~13.7 GB prima di rilasciare. Alzato al 25% (÷4) su macOS e Linux.
+- **Crash avvio Windows entrando nel workflow Storyboard** (`storyboardpanel.cpp`)
+  — `m_scrollArea` usava la policy default `ScrollBarAsNeeded`. L'altezza dei
+  `PanelWidget` dipende dalla larghezza (preview con aspect-ratio): la scrollbar
+  verticale che appare/sparisce cambia la larghezza del viewport → larghezza
+  pannello → altezza pannello → ri-toggle scrollbar, oscillando. Su Windows
+  l'eventFilter interno di `QScrollArea` (setWidgetResizable) gira sincrono e
+  ricorsivo → stack overflow → uscita silenziosa + dump 0 byte. Si manifestava
+  solo alla geometria transitoria d'avvio (Storyboard scelto dal popup iniziale;
+  passare alla room dopo, a finestra dimensionata, non crashava). Fix: pinnare le
+  policy (verticale AlwaysOn = larghezza costante, orizzontale AlwaysOff). Stessa
+  classe del fix già presente sui QTextEdit del file. Diagnosi confermata via
+  backtrace `QScrollArea::eventFilter ↔ resize` ×446 + repro tester. Commit `5af4a994f`.
+- **Sfarfallio grafico al cambio workflow** (`mainwindow.cpp`) — `switchRoomChoice`
+  fa `clearRooms()`+`readSettings()` e `Room::load()` chiama `processEvents()`,
+  quindi ogni stato intermedio delle room veniva dipinto (le "ghost windows"
+  ansiogene, evidenti su Windows). Fix: `setUpdatesEnabled(false/true)` attorno
+  alla ricostruzione → si dipinge solo lo stato finale.
+- **NON modificata la soglia RAM cache** (`tsystempd.cpp`) — un tentativo di
+  alzarla 14.3%→25% per contenere l'uso RAM su scene pesanti rendeva l'eviction
+  troppo aggressiva e **crashava il Save All** (raster liberato durante
+  `TRasterCodecLZO::compress`). **Revertito** al 14.3% shipped. L'ottimizzazione
+  RAM va rifatta in modo mirato (task 41) senza toccare l'eviction durante i save.
 - **BUG-CAMERA — dati stale in SB_APPENNINGERS.tnz** — 4 sub-scene avevano
   `cameraSize: 12 6.75` (valore baked prima del fix). Corretto via script Python
   → tutte e 46 le camere ora `16 9`. Backup `.tnz.rtkcam` conservato.
@@ -31,7 +50,12 @@
   main e sub-scena corrispondono perfettamente anche cambiando F e Z. Era un
   problema di dati stale, non di codice.
 
-### Added
+### Added / Changed
+- **Render Tile default = Small** (`outputproperties.cpp`) — il default era
+  `None` (frame intero), che su scene di minuti fa gonfiare la cache immagini
+  oltre la RAM fisica fino allo swap (osservato: 17 GB su Mac da 16 GB durante
+  un render full). Small tiene basso il footprint per-operazione. Solo per scene
+  nuove; le esistenti mantengono il valore salvato nel `.tnz`.
 - **Task 40 FASE 1 — Pannello Camera Moves** (`ztoryannotations.h/.cpp`) —
   Pannello "Ztoryc Camera Moves" nel menu Panels → Ztoryc con 8 pulsanti
   freccia Pan (4 ortogonali + 4 diagonali). Crea automaticamente una colonna

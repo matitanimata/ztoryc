@@ -1367,6 +1367,18 @@ void MainWindow::switchRoomChoice(const QString &choice) {
 
   m_isSwitchingRooms = true;
 
+  // Freeze repaints for the whole destroy+rebuild below.  clearRooms() tears
+  // down every room widget and readSettings() recreates them; Room::load()
+  // pumps qApp->processEvents(), so without this each intermediate room/panel
+  // state gets painted one after another → the flickering "ghost windows" seen
+  // when switching workflow (especially noticeable on Windows).  Disabling
+  // updates on the main window suppresses painting of it and all descendants
+  // until we re-enable and do a single update() at the end.
+  // No early return exists between here and the restore below, so a plain
+  // pair is safe; updatesEnabled() is captured to restore the prior state.
+  bool prevUpdatesEnabled = updatesEnabled();
+  setUpdatesEnabled(false);
+
   QTabBar *roomTabWidget = m_topBar->getRoomTabWidget();
   disconnect(m_stackedWidget, SIGNAL(currentChanged(int)),
              this, SLOT(onCurrentRoomChanged(int)));
@@ -1394,6 +1406,8 @@ void MainWindow::switchRoomChoice(const QString &choice) {
     m_oldRoomIndex = 0;
   }
 
+  // Re-enable painting and repaint once: only the final room state is shown.
+  setUpdatesEnabled(prevUpdatesEnabled);
   update();
   connect(m_stackedWidget, SIGNAL(currentChanged(int)),
           SLOT(onCurrentRoomChanged(int)));

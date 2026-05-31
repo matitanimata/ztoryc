@@ -242,11 +242,10 @@ bool TSystem::memoryShortage() {
        vmStats.purgeable_count) *
       (uint64_t)pageSize;
 
-  // Shortage when less than 25% of physical RAM is readily available.
-  // Raised from 14.3% (÷7): on a 16 GB Mac, 14.3% meant the process could
-  // reach ~13.7 GB before eviction kicked in. 25% keeps the working set
-  // under ~12 GB and avoids thrashing on machines with unified memory.
-  return available < total / 4;  // 25%
+  // Shortage when less than 15% of physical RAM is readily available.
+  // (A 25% threshold was tried but made image-cache eviction too aggressive on
+  // heavy scenes, racing with TLV save → SIGSEGV/SIGABRT in TRasterCodecLZO.)
+  return available < total / 7;  // ~14.3%
 
 #elif defined(LINUX)
 
@@ -270,8 +269,8 @@ bool TSystem::memoryShortage() {
   fclose(f);
   if (!memTotal) return false;
   uint64_t available = memAvailable ? memAvailable : memFree;
-  // Shortage when less than 25% of physical RAM is readily available.
-  return available < memTotal / 4;  // 25%
+  // Shortage when less than 15% of physical RAM is readily available.
+  return available < memTotal / 7;  // ~14.3%
 
 #elif defined(FREEBSD)
 

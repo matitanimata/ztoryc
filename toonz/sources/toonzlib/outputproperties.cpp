@@ -40,7 +40,12 @@ TOutputProperties::TOutputProperties()
     , m_multimediaRendering(0)
     , m_renderKeysOnly(false)
     , m_renderToFolders(false)
-    , m_maxTileSizeIndex(0)
+    // Ztoryc default: Small render tiles (index 3 = None/Large/Medium/Small).
+    // Ztoryc scenes are minutes long, so rendering whole frames (None) lets the
+    // image cache balloon past physical RAM into swap on heavy scenes.  Small
+    // tiles keep the per-operation footprint low.  Existing scenes keep their
+    // saved value (loaded from the .tnz); this only changes new scenes.
+    , m_maxTileSizeIndex(3)
     , m_threadIndex(2)
     , m_subcameraPreview(false)
     , m_boardSettings(new BoardSettings())
