@@ -684,6 +684,21 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
 
   m_scrollArea = new QScrollArea();
   m_scrollArea->setWidgetResizable(true);
+  // Pin the scroll-bar policies to stable states to avoid the
+  // QAbstractScrollArea layout-recursion crash (same class as the QTextEdit
+  // fix above).  PanelWidget height tracks its width (aspect-ratio preview);
+  // with the default ScrollBarAsNeeded the vertical scrollbar appearing/
+  // disappearing changes the viewport WIDTH → changes panel width → changes
+  // panel HEIGHT → re-toggles the scrollbar, oscillating forever.  On Windows
+  // QScrollArea's internal setWidgetResizable eventFilter runs this loop
+  // synchronously and recursively → stack overflow (0-byte crash dump, silent
+  // exit).  It only bites at the transient tiny window geometry during startup
+  // (Storyboard workflow chosen from the launch popup), which is why switching
+  // to the room AFTER the window is sized does not crash.
+  // Vertical AlwaysOn keeps the viewport width constant; Horizontal AlwaysOff
+  // since the grid always reflows to the available width.
+  m_scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+  m_scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   m_scrollArea->setStyleSheet("QScrollArea{background:#1e1e1e;border:none;}");
   // StrongFocus so that setFocus() on the scroll area works: the QShortcuts
   // installed on StoryboardPanel (WidgetWithChildrenShortcut) fire when any
