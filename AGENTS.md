@@ -430,9 +430,18 @@ git diff <last-tag>..HEAD --stat
 toonz/cmake/ZtorycVersion.cmake  # incrementa ZTORYC_VERSION_PATCH (o MINOR)
 ```
 
-### 3. Istruzioni macOS — da includere SEMPRE nelle release note
+### 3. Release note — SEMPRE bilingue (🇮🇹 IT + 🇬🇧 EN) + istruzioni macOS
 
-Sezione obbligatoria in ogni release GitHub perché l'app non è notarizzata:
+**Regola obbligatoria:** le release note GitHub devono essere **bilingue** —
+sezioni Novità/Fix sia in **Italiano** che in **English** (es. blocchi
+`### 🇮🇹 Italiano` e `### 🇬🇧 English`). Anche le note macOS e Windows sotto
+vanno in entrambe le lingue.
+
+> Il workflow CI pubblica la release con **body vuoto**: le note vanno scritte/
+> aggiornate a mano con `gh release edit v0.X.Y --notes-file <file>` dopo che la
+> release è creata.
+
+La sezione macOS è obbligatoria in ogni release perché l'app non è notarizzata:
 
 ```markdown
 **macOS — prima apertura / first launch:**
@@ -443,6 +452,11 @@ xattr -cr /Applications/Ztoryc.app
 Poi aprire dall'app o doppio clic → Tasto destro → Apri la prima volta.
 
 *The app is not notarized. After copying `Ztoryc.app` to `/Applications`, run the command above in Terminal, then open normally.*
+
+**Windows — installazione / installation:**
+Si raccomanda un'**installazione pulita**: disinstallare eventuali versioni precedenti prima di installare (installare sopra una vecchia versione può lasciare file/layout stale e causare instabilità).
+
+*A **clean install** is recommended: uninstall any previous version before installing (installing over an old version may leave stale files/layout and cause instability).*
 ```
 
 ### 4. Trigger CI
