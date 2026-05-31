@@ -383,7 +383,36 @@ Design session necessaria per relazione con sequenze.
 
 ---
 
-### BUG (PRIORITÀ ALTA) — Animatic camera ≠ shot camera (il fix BUG-CAMERA va RIPROGETTATO)
+### BUG (PRIORITÀ ALTA) — Animatic camera ≠ shot camera = CAMERA FIELD INCOERENTE ✅ CAUSA TROVATA
+
+**Priorità: ALTA | Tipo: BUG | Causa radice trovata: 2026-05-31 (SB_APPENNINGERS)**
+
+> 🎯 **CAUSA RADICE (confermata dall'utente):** NON è un bug di rendering. È il
+> **field guide della camera incoerente**: main a **12 fld**, shot a **16 fld** (o
+> mix). Field diverso = coverage/zoom diverso → l'animatic (camera main) non combacia
+> con lo shot (camera sub). Il fix BUG-CAMERA `7d1746f3a` NON è da buttare: se main e
+> shot hanno lo stesso field, l'animatic COMBACIA.
+>
+> **PERCHÉ alcuni shot a 12 e altri a 16:** ogni shot copia `res`+`size` (il field)
+> dalla camera del MAIN **al momento della creazione**:
+> - Add Shot → `ztoryanimatic.cpp:6092-6093`
+> - Collapse → `subscenecommand.cpp:1531-1532`
+> - Split/clone (razor) → eredita dallo shot sorgente, non dal main
+> Se il field del main cambia nel tempo (12→16), gli shot creati prima/dopo divergono.
+>
+> **FIX (semplice, basso rischio — NON toccare il rendering):**
+> 1. Utility "**Sync camere shot → main**": itera tutti gli shot, imposta
+>    `subCamera->setRes/setSize` = camera main corrente. Un click sistema le scene
+>    esistenti. (pulsante nel Board o comando)
+> 2. (Opzionale) Bloccare il field alla creazione / avvisare se il main cambia field
+>    con shot già esistenti.
+> 3. Verificare poi se, con field coerente, il fix BUG-CAMERA va bene così com'è o
+>    se serve comunque la camera sub per il POSIZIONAMENTO (non solo il field).
+>
+> **Test di conferma (da rifare su scena nuova, già impostato con l'utente):**
+> A) crea shot → field = main; cambia field main; crea 2° shot → ha il nuovo field;
+>    il 1° shot resta col vecchio. B) field coerente → animatic combacia. C) razor di
+>    uno shot → i pezzi ereditano dal sorgente, non dal main.
 
 **Priorità: ALTA | Tipo: BUG | A/B confermato: 2026-05-31 (scena SB_APPENNINGERS)**
 
