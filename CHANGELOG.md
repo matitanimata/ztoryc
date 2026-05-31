@@ -92,6 +92,17 @@
 ## [2026-05-31] — BUG-CAMERA fix + audio scrub + marker timeline + sync selezione
 
 ### Fixed
+- **Preset camera vuoto + prevenzione camere sub non standard (`09dc82463`)** — il
+  combo preset in Camera Settings restava vuoto anche con camera = preset (es. HD
+  1920x1080): `updatePresetListOm()` faceva solo il reset a `<custom>`, mai il
+  forward-match. Ora cerca e seleziona il preset corrispondente (estratto in
+  `presetMatchesFields()`, con fx/fy init a -1 per i preset a 3 token). Stesso
+  forward-match aggiunto alla Startup popup su nuova scena. **Prevenzione causa
+  radice BUG-CAMERA**: ogni path che crea una sub-scena nuova/vuota ora forza la
+  camera della sub = camera del main (res+size). Logica estratta in
+  `syncChildCameraToMain`/`animSyncChildCameraToMain` e applicata ai paste-fallback
+  prima scoperti. Clone NON toccato (reincornicerebbe i keyframe), sub esistenti
+  non modificate. Candidato PR upstream: il forward-match in `camerasettingswidget.cpp`.
 - **Sequenze/numerazione non persistite nel `.ztoryc` (`871aea839`)** — `saveZtoryc()`
   salvava solo numero/label dei singoli shot: riaprendo la scena le sequenze
   sparivano (3 sequenze → sequenza unica). Ora il `.ztoryc` salva anche
