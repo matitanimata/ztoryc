@@ -512,6 +512,11 @@ void RenderCommand::rasterRender(bool isPreview) {
     r1 = std::max(r1, TApp::instance()->getCurrentFrame()->getFrameIndex());
   rs.m_lastFrame = r1;
 
+  // Pin the audio range NOW, before output properties can be modified by a
+  // sequential batch (e.g. per-shot animatic export updates props for the next
+  // shot while this render is still running on background threads).
+  if (!isPreview) movieRenderer.setAudioRange(r0, r1);
+
   // Build
 
   /*-- RenderSettings --*/

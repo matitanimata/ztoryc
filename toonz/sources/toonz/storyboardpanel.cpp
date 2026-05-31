@@ -3657,21 +3657,26 @@ void StoryboardPanel::onExportAnimatic() {
     CommandManager::instance()->execute(MI_Render);
 
   } else {
-    // One clip per shot — each render job captures its own path/range via init()
+    // One clip per shot — the audio range is now pinned inside MovieRenderer at
+    // the time rasterRender() reads it (via movieRenderer.setAudioRange(r0,r1)
+    // in rendercommand.cpp), so updating props for the next shot while a render
+    // is running on background threads no longer corrupts the audio.
     for (int si = 0; si < (int)m_shots.size(); si++) {
       auto [r0, r1] = shotFrameRange(si);
       QString shotNum = m_shots[si].data.shotNumber;
-      // Build Kitsu-compatible filename: sceneName_SQ01_SH010.mp4
-      QString seqPart = m_shots[si].data.sequenceId.isEmpty()
-                        ? QString() : m_shots[si].data.sequenceId + "_";
+      // sequenceId is a UUID — resolve to human-readable label
+      QString seqPart;
+      if (!m_shots[si].data.sequenceId.isEmpty()) {
+        const SequenceData *seq =
+            ZtoryModel::instance()->findSequence(m_shots[si].data.sequenceId);
+        seqPart = (seq ? seq->label : m_shots[si].data.sequenceId) + "_";
+      }
       QString fname = sceneName + "_" + seqPart + shotNum + "." + ext;
       TFilePath outPath = TFilePath(outDir.toStdWString()) +
                           TFilePath(fname.toStdWString());
       prop->setPath(outPath);
       prop->setRange(r0, r1, 1);
       CommandManager::instance()->execute(MI_Render);
-      // init() inside doRender() captures path+range before returning —
-      // safe to update props for the next shot.
     }
   }
 

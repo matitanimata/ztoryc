@@ -63,6 +63,11 @@ public:
   void setRenderSettings(const TRenderSettings &renderData);
   void setDpi(double xDpi, double yDpi);
 
+  // Fix for sequential batch renders: capture the audio range at setup time
+  // instead of re-reading it from TOutputProperties at render completion, which
+  // would pick up a different shot's range if properties were updated meanwhile.
+  void setAudioRange(int r0, int r1);
+
   void addListener(Listener *listener);
 
   void enablePrecomputing(bool on);

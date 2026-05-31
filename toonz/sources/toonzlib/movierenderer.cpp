@@ -132,6 +132,10 @@ public:
 
   int m_renderSessionId;
   long m_whiteSample;
+  // Audio range pinned at setup time via setAudioRange().  -1 means "not set"
+  // → fall back to reading TOutputProperties (legacy behaviour).
+  int m_audioFrom = -1;
+  int m_audioTo   = -1;
 
   int m_nextFrameIdxToSave;
   int m_savingThreadsCount;
@@ -545,12 +549,19 @@ void MovieRenderer::Imp::doRenderRasterCompleted(const RenderData &renderData) {
     int boardDuration = addBoard();
 
     int from, to;
-    getRange(m_scene, false, from, to);
-
-    TLevelP oldLevel(m_levelUpdaterA->getInputLevel());
-    if (oldLevel) {
-      from = std::min(from, oldLevel->begin()->first.getNumber() - 1);
-      to   = std::max(to, (--oldLevel->end())->first.getNumber() - 1);
+    if (m_audioFrom >= 0 && m_audioTo >= m_audioFrom) {
+      // Range was pinned at setup time (e.g. sequential batch export) — use it
+      // directly so that updating TOutputProperties for the next shot in the
+      // batch does not corrupt the audio of a still-running render.
+      from = m_audioFrom;
+      to   = m_audioTo;
+    } else {
+      getRange(m_scene, false, from, to);
+      TLevelP oldLevel(m_levelUpdaterA->getInputLevel());
+      if (oldLevel) {
+        from = std::min(from, oldLevel->begin()->first.getNumber() - 1);
+        to   = std::max(to, (--oldLevel->end())->first.getNumber() - 1);
+      }
     }
 
     addSoundtrack(
@@ -886,6 +897,11 @@ MovieRenderer::MovieRenderer(ToonzScene *scene, const TFilePath &moviePath,
 MovieRenderer::~MovieRenderer() { m_imp->release(); }
 
 //---------------------------------------------------------
+
+void MovieRenderer::setAudioRange(int r0, int r1) {
+  m_imp->m_audioFrom = r0;
+  m_imp->m_audioTo   = r1;
+}
 
 void MovieRenderer::setRenderSettings(const TRenderSettings &renderSettings) {
   m_imp->m_renderSettings = renderSettings;
