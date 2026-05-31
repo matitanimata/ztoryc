@@ -680,32 +680,41 @@ TDimension CameraSettingsWidget::getRes() const {
   return TDimension(xRes, yRes);
 }
 
-void CameraSettingsWidget::updatePresetListOm() {
-  if (m_presetListOm->currentIndex() == 0) return;
-  bool match = false;
+// Returns true if the given preset string matches the current camera fields.
+// fx/fy are initialised to -1 so 3-token presets (no explicit size) match on
+// resolution alone — the original code left them uninitialised.
+bool CameraSettingsWidget::presetMatchesFields(const QString &presetStr) {
   int xres, yres;
-  QString name, arStr;
-
-  double fx, fy;
-  QString xoffset, yoffset;
-  double ar;
-
-  if (parsePresetString(m_presetListOm->currentText(), name, xres, yres, fx, fy,
-                        xoffset, yoffset, ar, m_forCleanup)) {
-    double eps = 1.0e-6;
-    if (m_forCleanup && m_offsX && m_offsY) {
-      match = xres == m_xResFld->getValue() && yres == m_yResFld->getValue() &&
-              (fx < 0.0 || fx == m_lxFld->getValue()) &&
-              (fy < 0.0 || fy == m_lyFld->getValue()) &&
-              (xoffset.isEmpty() || xoffset == m_offsX->text()) &&
-              (yoffset.isEmpty() || yoffset == m_offsY->text());
-    } else {
-      match = xres == m_xResFld->getValue() && yres == m_yResFld->getValue() &&
+  QString name, xoffset, yoffset;
+  double fx = -1.0, fy = -1.0, ar = 0.0;
+  if (!parsePresetString(presetStr, name, xres, yres, fx, fy, xoffset, yoffset,
+                         ar, m_forCleanup))
+    return false;
+  bool base = xres == m_xResFld->getValue() && yres == m_yResFld->getValue() &&
               (fx < 0.0 || fx == m_lxFld->getValue()) &&
               (fy < 0.0 || fy == m_lyFld->getValue());
+  if (m_forCleanup && m_offsX && m_offsY)
+    base = base && (xoffset.isEmpty() || xoffset == m_offsX->text()) &&
+           (yoffset.isEmpty() || yoffset == m_offsY->text());
+  return base;
+}
+
+void CameraSettingsWidget::updatePresetListOm() {
+  // Keep the current preset selected if it still matches the fields.
+  if (m_presetListOm->currentIndex() > 0 &&
+      presetMatchesFields(m_presetListOm->currentText()))
+    return;
+  // Otherwise forward-match: select the first preset that matches the current
+  // camera, so the combo reflects the real camera (e.g. shows "HD 1920x1080"
+  // on load instead of staying blank/<custom>). Falls back to <custom>.
+  for (int i = 1; i < m_presetListOm->count(); i++) {
+    if (presetMatchesFields(m_presetListOm->itemText(i))) {
+      if (m_presetListOm->currentIndex() != i)
+        m_presetListOm->setCurrentIndex(i);
+      return;
     }
   }
-  if (!match) m_presetListOm->setCurrentIndex(0);
+  m_presetListOm->setCurrentIndex(0);
 }
 
 // ly,ar => lx

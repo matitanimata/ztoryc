@@ -632,6 +632,24 @@ void StartupPopup::showEvent(QShowEvent *) {
   m_resYFld->setDecimals(0);
   // m_dpiFld->setValue(m_dpi);
 
+  // Select the preset matching the current resolution so the combo reflects the
+  // real camera (e.g. "HD 1920x1080") instead of staying on "..." on new scene.
+  {
+    int sel = 0;
+    for (int i = 1; i < m_presetCombo->count(); i++) {
+      QString pname, xoff, yoff;
+      int pxr = 0, pyr = 0;
+      double pfx = -1.0, pfy = -1.0, par = 0.0;
+      if (parsePresetString(m_presetCombo->itemText(i), pname, pxr, pyr, pfx,
+                            pfy, xoff, yoff, par, false) &&
+          pxr == m_xRes && pyr == m_yRes) {
+        sel = i;
+        break;
+      }
+    }
+    m_presetCombo->setCurrentIndex(sel);
+  }
+
   int boxWidth  = m_scenesTab->width();
   int boxHeight = m_scenesTab->height();
   m_scenesTab->setFixedWidth(boxWidth);

@@ -169,6 +169,7 @@ protected:
   void computeResOrDpi();
 
   void updatePresetListOm();
+  bool presetMatchesFields(const QString &presetStr);
 
   void setArFld(double ar);
 

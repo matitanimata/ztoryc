@@ -5205,6 +5205,35 @@ void ZtoryAnimaticPanel::showAnimaticTimeline() {
 // Helper: returns shot index in ZtoryModel for a given xsheet column, or -1.
 
 
+// Force a freshly-created sub-scene's camera(s) to match the MAIN xsheet camera
+// (res + size). Prevents new shots from getting a non-standard camera that no
+// longer matches the main (root cause of BUG-CAMERA framing mismatch). Only for
+// brand-new empty sub-scenes — not for clones with camera animation.
+static void animSyncChildCameraToMain(TXsheet *parentXsh, TXshChildLevel *cl) {
+  if (!parentXsh || !cl) return;
+  TXsheet *childXsh = cl->getXsheet();
+  if (!childXsh) return;
+  TStageObjectTree *parentTree = parentXsh->getStageObjectTree();
+  TStageObjectTree *childTree  = childXsh->getStageObjectTree();
+  int tmpCamId = 0;
+  for (int cam = 0; cam < parentTree->getCameraCount();) {
+    TStageObject *parentCamera =
+        parentTree->getStageObject(TStageObjectId::CameraId(tmpCamId), false);
+    if (!parentCamera) { tmpCamId++; continue; }
+    if (parentCamera->getCamera()) {
+      TStageObject *childObj =
+          childTree->getStageObject(TStageObjectId::CameraId(tmpCamId));
+      TCamera *childCamera = childObj ? childObj->getCamera() : nullptr;
+      if (childCamera) {
+        childCamera->setRes(parentCamera->getCamera()->getRes());
+        childCamera->setSize(parentCamera->getCamera()->getSize());
+      }
+    }
+    tmpCamId++; cam++;
+  }
+  childTree->setCurrentCameraId(parentTree->getCurrentCameraId());
+}
+
 // ── Clone a sub-scene column into a new adjacent column ──────────────────────
 // Mirrors StoryboardPanel::cloneChildToPosition (static there; static here too).
 static void animCloneChildToPosition(int srcCol, int dstCol) {
@@ -5354,9 +5383,11 @@ static void pasteFromClip(const std::vector<ZtoryClipEntry> &clip,
           xsh->setCell(r, pos, TXshCell(ce.cutLevel, TFrameId(r+1)));
       } else if (scene) {
         TXshLevel *xl = scene->createNewLevel(CHILD_XSHLEVEL);
-        if (xl && xl->getChildLevel())
+        if (xl && xl->getChildLevel()) {
+          animSyncChildCameraToMain(xsh, xl->getChildLevel());
           for (int r = 0; r < ce.duration; r++)
             xsh->setCell(r, pos, TXshCell(xl->getChildLevel(), TFrameId(r+1)));
+        }
       }
     } else if (ce.isClone) {
       int srcCol = ce.srcCol;
@@ -6076,27 +6107,7 @@ void ZtoryAnimaticPanel::onAddShot() {
   xsh->updateFrameCount();
 
   // Copy camera resolution/size from parent to sub-scene
-  TXsheet *childXsh = cl->getXsheet();
-  if (childXsh) {
-    TStageObjectTree *parentTree = xsh->getStageObjectTree();
-    TStageObjectTree *childTree  = childXsh->getStageObjectTree();
-    int tmpCamId = 0;
-    for (int cam = 0; cam < parentTree->getCameraCount();) {
-      TStageObject *parentCamera = parentTree->getStageObject(
-          TStageObjectId::CameraId(tmpCamId), false);
-      if (!parentCamera) { tmpCamId++; continue; }
-      if (parentCamera->getCamera()) {
-        TCamera *childCamera = childTree->getStageObject(
-            TStageObjectId::CameraId(tmpCamId))->getCamera();
-        if (childCamera) {
-          childCamera->setRes(parentCamera->getCamera()->getRes());
-          childCamera->setSize(parentCamera->getCamera()->getSize());
-        }
-      }
-      tmpCamId++; cam++;
-    }
-    childTree->setCurrentCameraId(parentTree->getCurrentCameraId());
-  }
+  animSyncChildCameraToMain(xsh, cl);
 
   app->getCurrentXsheet()->notifyXsheetChanged();
   ZtoryModel::instance()->resequenceXsheet();

@@ -2373,6 +2373,37 @@ void StoryboardPanel::onCloneShot() {
   }
 }
 
+// Force a freshly-created sub-scene's camera(s) to match the MAIN xsheet's
+// camera (resolution + size in inches). Without this, new shots can end up with
+// a non-standard camera (e.g. 12.5×6") that no longer matches the main 16×9 →
+// framing mismatch in the monitor (root cause of BUG-CAMERA). Only safe for
+// BRAND-NEW empty sub-scenes — never call on a clone with camera animation, as
+// changing the size would reframe its keyframes destructively.
+static void syncChildCameraToMain(TXsheet *parentXsh, TXshChildLevel *cl) {
+  if (!parentXsh || !cl) return;
+  TXsheet *childXsh = cl->getXsheet();
+  if (!childXsh) return;
+  TStageObjectTree *parentTree = parentXsh->getStageObjectTree();
+  TStageObjectTree *childTree  = childXsh->getStageObjectTree();
+  int tmpCamId = 0;
+  for (int cam = 0; cam < parentTree->getCameraCount();) {
+    TStageObject *parentCamera =
+        parentTree->getStageObject(TStageObjectId::CameraId(tmpCamId), false);
+    if (!parentCamera) { tmpCamId++; continue; }
+    if (parentCamera->getCamera()) {
+      TStageObject *childObj =
+          childTree->getStageObject(TStageObjectId::CameraId(tmpCamId));
+      TCamera *childCamera = childObj ? childObj->getCamera() : nullptr;
+      if (childCamera) {
+        childCamera->setRes(parentCamera->getCamera()->getRes());
+        childCamera->setSize(parentCamera->getCamera()->getSize());
+      }
+    }
+    tmpCamId++; cam++;
+  }
+  childTree->setCurrentCameraId(parentTree->getCurrentCameraId());
+}
+
 static void cloneChildToPosition(int srcCol, int dstCol) {
   TApp *app          = TApp::instance();
   ToonzScene *scene  = app->getCurrentScene()->getScene();
@@ -2453,6 +2484,7 @@ static void pasteSharedClipToBoard(const std::vector<ZtoryClipEntry> &clip,
         TXshLevel *xl = scene->createNewLevel(CHILD_XSHLEVEL);
         if (xl && xl->getChildLevel()) {
           TXshChildLevel *cl = xl->getChildLevel();
+          syncChildCameraToMain(xsh, cl);  // new empty sub → match main camera
           for (int r = 0; r < ce.duration; r++)
             xsh->setCell(r, pos, TXshCell(cl, TFrameId(r + 1)));
         }
@@ -2555,6 +2587,7 @@ void StoryboardPanel::onPasteShot() {
         TXshLevel *xl = scene->createNewLevel(CHILD_XSHLEVEL);
         if (xl && xl->getChildLevel()) {
           TXshChildLevel *cl = xl->getChildLevel();
+          syncChildCameraToMain(xsh, cl);  // new empty sub → match main camera
           for (int r = 0; r < duration; r++)
             xsh->setCell(r, pos, TXshCell(cl, TFrameId(r + 1)));
         }
@@ -2837,27 +2870,7 @@ void StoryboardPanel::onAddShot() {
       xsh->updateFrameCount();
 
       // Inizializza camera della sottoscena copiando quella del main
-      TXsheet *childXsh = cl->getXsheet();
-      if (childXsh) {
-        TStageObjectTree *parentTree = xsh->getStageObjectTree();
-        TStageObjectTree *childTree  = childXsh->getStageObjectTree();
-        int tmpCamId = 0;
-        for (int cam = 0; cam < parentTree->getCameraCount();) {
-          TStageObject *parentCamera = parentTree->getStageObject(
-              TStageObjectId::CameraId(tmpCamId), false);
-          if (!parentCamera) { tmpCamId++; continue; }
-          if (parentCamera->getCamera()) {
-            TCamera *childCamera = childTree->getStageObject(
-                TStageObjectId::CameraId(tmpCamId))->getCamera();
-            if (childCamera) {
-              childCamera->setRes(parentCamera->getCamera()->getRes());
-              childCamera->setSize(parentCamera->getCamera()->getSize());
-            }
-          }
-          tmpCamId++; cam++;
-        }
-        childTree->setCurrentCameraId(parentTree->getCurrentCameraId());
-      }
+      syncChildCameraToMain(xsh, cl);
 
       app->getCurrentXsheet()->notifyXsheetChanged();
     }
