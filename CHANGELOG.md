@@ -7,7 +7,35 @@
 
 ---
 
-## [2026-06-01] — Transizioni cross-dissolve + fix timeline animatic + autofill undo/only-new
+## [2026-05-31] — Release v0.3.5 + crash fix brush + diagnosi BUG-CAMERA
+
+### Released
+- **Ztoryc v0.3.5** pubblicata (Windows + macOS via CI) con tutto il lavoro sotto.
+  Release note con sezione macOS `xattr` + raccomandazione clean install Windows.
+  Bump `ZtorycVersion.cmake` 0.3.4 → 0.3.5 (`5fb3ea3e7`).
+
+### Fixed
+- **Crash SIGSEGV al doppio-click su uno shot col brush raster attivo** (`8f8740628`)
+  — `onShotDoubleClicked → openSubXsheet → switch xsheet/palette →
+  ToonzRasterBrushTool::onColorStyleChanged()` rientrante su stato di tratto pendente
+  (`m_tileSaver` ancora set, immagine sbagliata post-switch) → use-after-free.
+  Aggiunta guardia `m_inColorStyleChanged`.
+
+### Notes (da riprendere)
+- **BUG-CAMERA RIAPERTO (priorità ALTA)** — A/B test (baseline `e8d4a1466`) ha
+  confermato che l'animatic-camera ≠ shot-camera **NON è una regressione recente**:
+  è il design del fix `7d1746f3a` (animatic forzato sulla camera MAIN). Prima del fix
+  l'animatic usava la camera SUB e combaciava (ma SH010 off-screen, offset x=13.4).
+  Fix corretto da fare: usare la camera SUB risolvendo il compositing sub→parent di
+  SH010, senza ri-ancorare al main. Diagnosi completa in ANIMATIC_TASKS.
+- **Crash StyleEditor su click shot** (`Crash-20260531-015855`) — famiglia
+  palette-switch, diversa da quella del brush (non coperta dal fix). Da indagare.
+- **Bug QScrollArea layout-recursion (Windows)** e **UX camera-view editing** —
+  segnalati in ANIMATIC_TASKS.
+
+---
+
+## [2026-05-31] — Transizioni cross-dissolve + fix timeline animatic + autofill undo/only-new
 
 ### Added
 - **Transizioni cross-dissolve** (`7ccba5721`, `6c245442e`) — handle Alt+drag sul
