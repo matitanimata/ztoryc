@@ -94,6 +94,7 @@
     <item>MI_OpenZtoryMonitor</item>
     <item>MI_OpenZtoryShotBoard</item>
     <item>MI_OpenZtoryDrawLeftPanel</item>
+    <item>MI_OpenZtoryCameraMoves</item>
     <item>MI_OpenTimelineView</item>
 
 

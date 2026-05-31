@@ -4020,11 +4020,17 @@ void ZtoryRightPanel::showShotMode(int /*col*/) {
 
     m_stack->addWidget(shotSplit);  // page 1
   }
-  m_stack->setCurrentIndex(1);
-  m_toggleBtn->blockSignals(true);
-  m_toggleBtn->setChecked(true);
-  m_toggleBtn->setText(tr("PALETTE | SCRIPT"));
-  m_toggleBtn->blockSignals(false);
+  // Defer the stack switch so the sub-scene palette is fully loaded before
+  // PaletteViewer::showEvent → onPaletteSwitched → updateTabBar runs.
+  // Showing the palette viewer before the palette handle is populated causes
+  // a null-deref crash inside updateTabBar.
+  QTimer::singleShot(0, this, [this]() {
+    m_stack->setCurrentIndex(1);
+    m_toggleBtn->blockSignals(true);
+    m_toggleBtn->setChecked(true);
+    m_toggleBtn->setText(tr("PALETTE | SCRIPT"));
+    m_toggleBtn->blockSignals(false);
+  });
 }
 
 // ---- ZtoryLeftPanel ----
@@ -4842,20 +4848,18 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
     TXsheet *curXsh  = scene->getChildStack()->getXsheet();
     TXsheet *mainXsh = scene->getChildStack()->getTopXsheet();
     if (!curXsh || !mainXsh) return;
+    // Optimization: all cells in a shot column point to the same child level,
+    // so checking only the first non-empty cell is sufficient — O(cols) not O(cols×rows).
     int foundCol = -1;
     for (int col = 0; col < mainXsh->getColumnCount() && foundCol < 0; col++) {
       TXshColumn *c = mainXsh->getColumn(col);
       if (!c) continue;
       int r0 = 0, r1 = 0;
       c->getRange(r0, r1);
-      for (int r = r0; r <= r1; r++) {
-        TXshCell cell = mainXsh->getCell(r, col);
-        if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel() &&
-            cell.m_level->getChildLevel()->getXsheet() == curXsh) {
-          foundCol = col;
-          break;
-        }
-      }
+      TXshCell cell = mainXsh->getCell(r0, col);
+      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel() &&
+          cell.m_level->getChildLevel()->getXsheet() == curXsh)
+        foundCol = col;
     }
     if (foundCol < 0) return;
     m_autoMatchCol = foundCol;

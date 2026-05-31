@@ -2827,6 +2827,7 @@ void MainWindow::defineActions() {
   createMenuWindowsAction("MI_OpenZtoryRightPanel", QT_TR_NOOP("&Ztoryc Script/Palette"), "", "ZtoryRightPanel");
   createMenuWindowsAction("MI_OpenZtoryDrawLeftPanel", QT_TR_NOOP("&Ztoryc Board/Shot (T)"), "", "ZtoryDrawLeftPanel");
   createMenuWindowsAction("MI_OpenZtoryShotBoard", QT_TR_NOOP("&Ztoryc Shot Board"), "", "ZtoryPanelNavigator");
+  createMenuWindowsAction("MI_OpenZtoryCameraMoves", QT_TR_NOOP("&Ztoryc Camera Moves"), "", "ZtoryCameraMoves");
   // Workflow actions — checkable so the active mode shows a checkmark in the menu.
   // setCheckable must be called after createMenuWindowsAction (which creates the QAction).
   for (const char *id : {MI_WorkflowStoryboard, MI_Workflow2D,
