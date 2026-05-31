@@ -1286,6 +1286,14 @@ void StoryboardPanel::saveZtoryc() {
   // While m_shots is being rebuilt (clearShots clears it), this is empty →
   // saves are suppressed, preventing cross-scene text contamination.
   if (m_currentZtoryPath.isEmpty()) return;
+  // Scene-switch race guard: on sceneSwitched the Script panel rebinds
+  // scriptFile to the NEW scene (clearing it when that scene has no screenplay)
+  // BEFORE this panel rebinds m_currentZtoryPath/m_shots.  Without this check a
+  // saveZtoryc() fired by that scriptFileChanged would write the cleared
+  // scriptFile onto the PREVIOUS scene's .ztoryc — losing its imported script.
+  // Only persist when m_currentZtoryPath still matches the scene that is
+  // actually open (i.e. the data in m_shots/m_scriptFile belongs to it).
+  if (ztoryPath() != m_currentZtoryPath) return;
   syncWidgetsToData();
   QString path = m_currentZtoryPath;
   QFile file(path);
