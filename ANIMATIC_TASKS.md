@@ -704,7 +704,10 @@ nella sub-scene corretta.
 ✅ [FATTO precedente] 20. Audio cut/copy/paste tastiera
 ✅ [FATTO precedente] 22. Transizioni
 
-40. NEW Sistema Annotazioni Camera-Move + Light Direction (MEDIA-ALTA) ⭐ PROSSIMO — unifica 35/36/37, design approvato, partire da FASE 1
+43b. 🔴 FIX Export clip per-shot — audio parte dal frame 1 invece del segmento corretto ⭐ PROSSIMO (blocca il workflow di export)
+43c. FIX Export clip per-shot — nome file con UUID invece di label sequenza (fix 2 righe, basso rischio)
+43a. FIX Export clip per-shot — prima clip mancante
+40. NEW Sistema Annotazioni Camera-Move + Light Direction (MEDIA-ALTA) — unifica 35/36/37, design approvato, partire da FASE 1
 38. NEW Room TRADITIONAL (MEDIA)
 21. NEW Volume traccia audio
 24. NEW Startup popup hub
