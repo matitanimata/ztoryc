@@ -383,9 +383,27 @@ Design session necessaria per relazione con sequenze.
 
 ---
 
-### BUG (PRIORITÀ ALTA) — Animatic camera ≠ shot camera (caso generale) ⚠️ RIAPERTO
+### BUG (PRIORITÀ ALTA) — Animatic camera ≠ shot camera (il fix BUG-CAMERA va RIPROGETTATO)
 
-**Priorità: ALTA | Tipo: BUG | Riaperto: 2026-05-30 (scena SB_APPENNINGERS)**
+**Priorità: ALTA | Tipo: BUG | A/B confermato: 2026-05-31 (scena SB_APPENNINGERS)**
+
+> ⚠️ **CONCLUSIONE A/B (decisiva):** ricompilato il baseline `e8d4a1466` (post-fix
+> BUG-CAMERA, PRIMA di tutto il lavoro del 30-31/05) → **il bug è presente anche lì**.
+> Quindi **NON è una regressione del lavoro recente**: è il design del fix
+> `7d1746f3a` stesso che è sbagliato per il caso generale.
+>
+> **Comportamento corretto da ripristinare (parole utente):** PRIMA del fix,
+> tornando sul main l'animatic viewer **si aggiustava e combaciava con lo shot**
+> (usava la camera SUB). Il fix l'ha fatto passare alla camera MAIN → ora resta
+> "leggermente più stretto" e NON combacia (e non in modo uniforme su tutti gli
+> shot). Post-fix è PEGGIO del pre-fix per il caso generale.
+>
+> **Vera direzione del fix:** l'animatic DEVE usare la camera della SUB-scena di
+> ogni shot (così combacia) — MA capire e risolvere PERCHÉ con la camera sub SH010
+> andava off-screen (offset x=13.4). Probabile doppio-conteggio dell'offset camera
+> sub nel compositing sub→parent. NON ri-ancorare alla camera main (rompe tutti gli
+> altri shot). Studiare se l'offset x=13.4 di SH010 era legittimo (shot inquadrato
+> off-center) o un artefatto.
 
 Il fix BUG-CAMERA di 2026-05-31 (commit `7d1746f3a`) ancorò i viewer always-main
 (animatic + monitor) alla camera del **MAIN xsheet** anche dentro uno shot, per
@@ -415,6 +433,31 @@ SH010 (capire quel caso: forse era un offset legittimo della camera sub).
 
 **File:** `toonz/sources/toonz/sceneviewer.cpp` (6 siti del fix BUG-CAMERA).
 **Crashlog/scena rif.:** project cs26_grottazzolina / SB_APPENNINGERS.
+
+---
+
+### BUG (da investigare) — Crash palette-switch su click/apertura shot (macOS)
+
+**Priorità: MEDIA-ALTA | Tipo: BUG | Segnalato: 2026-05-31 (SB_APPENNINGERS)**
+
+Famiglia di SIGSEGV quando si seleziona/apre uno shot dall'animatic: lo switch di
+colonna/xsheet aggiorna la palette del livello corrente → oggetti che ascoltano la
+palette crashano mid-switch (palette/livello stale). Due varianti osservate:
+
+- `shotClicked → onColumnIndexSwitched → updateXshLevel → setPalette →
+  editLevelPalette → setPalette → StyleEditor::onStyleSwitched()` → SIGSEGV
+  (Crash-20260531-015855). Core Tahoma (libtoonzqt).
+- `onShotDoubleClicked → openSubXsheet → onXsheetSwitched → updateXshLevel →
+  setPalette → ToonzRasterBrushTool::onColorStyleChanged()` re-entrante → SIGSEGV
+  (Crash-20260530-231701). **GIÀ FIXATO** in `8f8740628` (guardia re-entrancy).
+
+Lo StyleEditor variant NON è coperto dal fix del brush. Pattern comune: il rapido
+cambio colonna/xsheet dall'animatic emette un cascata di setPalette mentre il
+livello/palette puntano a dati transitori. Possibile fix Ztoryc-side: deferire
+(QTimer 0) il cambio colonna/palette in `shotClicked`/`onShotDoubleClicked`, o
+guardia anti-reentrancy lato chiamante. Da indagare con SB_APPENNINGERS.
+
+**Crashlog:** `Crash-20260531-015855.log` (StyleEditor), `Crash-20260530-231701.log` (brush, fixato).
 
 ---
 
