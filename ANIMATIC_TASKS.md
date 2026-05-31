@@ -543,59 +543,65 @@ Non riproducibile finora su Mac (probabilmente layout-file-specifico).
 
 **Priorità: MEDIA-ALTA | Tipo: NEW | Stima: multi-sessione (3 fasi)**
 
-> Design discusso e approvato 2026-05-30. **Supera e unifica i task 35, 36, 37.**
-> Sistema unico di annotazioni vettoriali per indicazioni di regia (movimenti
-> camera) + direzione luce, con libreria di simboli standard.
+> Design rivalutato 2026-05-31. **Supera e unifica i task 35, 36, 37.**
 
-**Decisioni approvate dall'utente:**
-1. **Simboli PARAMETRICI** (tool/helper genera i vettori al volo) — niente PLI da
-   disegnare a mano. MA prevedere anche import di `.pli` custom nella libreria.
-2. **Colonna vettoriale per SHOT** — una colonna "Annotazioni" dentro la sub-scena
-   di ogni shot, in cima a tutto, stile/colore fisso. Le annotazioni sono per-shot
-   (movimento camera dell'intero shot), NON per-panel.
-3. **Toggle on/off nel render** — default ON nel viewer; interruttore per
-   mostrarle/nasconderle nel viewer e scelta nell'export.
+**REDESIGN 2026-05-31 — Annotazioni automatiche da camera animation:**
 
-**Libreria simboli standard (camera moves):**
-- Pan / Tilt → freccia dritta (orizzontale/verticale)
-- Truck in / Truck out → cornice con frecce verso interno/esterno
-- Zoom in / Zoom out → cornice-nella-cornice con frecce agli angoli
-- Follow pan → freccia + etichetta
-- Zip pan → freccia con linee di velocità
-- Hook up → connettore tra due panel (continuità)
-- Match speed / Match cut → etichetta + marker
-- (estendibile con PLI custom)
+Idea chiave approvata: le annotazioni di camera move possono essere **generate
+automaticamente** leggendo i parametri del Camera1 pegbar nella sub-scena:
+- **Scale** cambia → Zoom in / Zoom out
+- **Z** (posizione sull'asse profondità) cambia → Truck in / Truck out
+- **X** dominante → Pan (destra/sinistra)
+- **Y** dominante → Tilt (su/giù)
+- Combinazioni → es. Pan + Zoom
 
-**Architettura (riferimento API):**
-- Costruzione vettori: pattern di `geometrictool.cpp` — `new TStroke(...)` da
-  control points (TThickPoint), `vi->addStroke(stroke)`, undo dedicato.
-  `addStrokeToImage()` in geometrictool.cpp:1898 è il modello.
-- Vector image dell'annotazione: `TVectorImageP vi(TTool::getImage(true))`.
-- Helper da creare: `buildAnnotationSymbol(type, p0, p1, params) → TVectorImage`
-  (freccia = shaft quadratico + testa triangolo; cornice = rettangolo + frecce).
+Vantaggio: l'animazione di camera esiste già — l'annotazione è un riassunto
+visivo automatico del movimento reale, non un'indicazione manuale che può
+disallinearsi dall'animazione.
 
-**FASE 1 — Fondazione (MVP):**
-- Helper parametrico simboli (iniziare da freccia Pan: shaft + arrowhead).
-- Gestione colonna "Annotazioni" dedicata (crea/trova colonna vettoriale in cima
-  alla sub-scena dello shot corrente; stile fisso es. rosso/ciano).
-- Pannello "Camera Moves" (stile Ztory panel) con pulsanti simboli → stampa al
-  centro canvas; editing con tool di selezione nativo (sposta/scala/ruota/ricolora).
+**Architettura ripensata (3 livelli separati):**
 
-**FASE 2 — Libreria completa + interazione:**
-- Tutti i ~12 simboli parametrici.
-- Piazzamento interattivo (click-drag per direzione/lunghezza) — eventuale
-  `ZtoryAnnotationTool : public TTool` con dropdown tipo simbolo.
-- Import `.pli` custom nella libreria (cartella `stuff/library/storyboard symbols/`).
+1. **Camera moves automatici** — overlay leggero sul thumbnail nel BOARD.
+   Non una colonna PLI separata. Si rigenera al cambio camera.
+   API: legge `TStageObject` del Camera1 pegbar nella sub-scena.
+
+2. **Simboli manuali** — colonna "Annotazioni" (PLI) nella sub-scena per
+   indicazioni non derivabili dalla camera: match cut, hook up, zip pan, ecc.
+   Pannello `ZtoryCameraMovesPanel` già creato (FASE 1 in corso).
+
+3. **Light direction** — gizmo 3D dedicato, completamente separato. FASE 3.
+
+**Simboli standard:**
+- Pan / Tilt → freccia dritta
+- Truck in / Truck out → cornice + frecce interno/esterno
+- Zoom in / Zoom out → cornice-nella-cornice + frecce angoli
+- Zip pan → freccia + linee velocità
+- Hook up → connettore tra panel
+- Match cut / Match speed → tag testuale + marker
+
+**FASE 1 — Fondazione manuale (IN CORSO 2026-05-31):**
+- ✅ Pannello `ZtoryCameraMovesPanel` (`ztoryannotations.h/.cpp`)
+- ✅ Colonna PLI "Annotazioni" auto-creata nella sub-scena
+- ✅ Frecce Pan (8 direzioni) inseribili al centro canvas
+- ✅ Crash fix: `sl->setScene(scene)` prima di `setFrame`
+- ✅ Aggiunta a menu Panels → Ztoryc (fix: richiede 4 file — vedi memoria)
+- 🔲 UI/UX da rifinire (scala frecce, posizione, palette visibile)
+- 🔲 Simboli Truck In/Out, Zoom In/Out, Match Cut, Hook Up
+
+**FASE 2 — Rilevamento automatico da camera:**
+- Leggere keyframe Camera1 pegbar (X, Y, Z, scale) nella sub-scena
+- Calcolare tipo mossa dominante confrontando primo e ultimo frame
+- Overlay icona/freccia automatica sul thumbnail BOARD
+- Aggiornamento on `xsheetChanged` della sub-scena (con debounce)
+- API: `TStageObject::getParam(TStageObject::T_X)` ecc.
 
 **FASE 3 — Light direction + render:**
-- Gizmo luce: freccia (gambo + testa conica) + glifo sole, handle per angolo (gradi),
-  colore = temperatura. Come tipo simbolo speciale o tool dedicato.
-- Toggle visibilità annotazioni nel viewer (default ON) + opzione nel render
-  (escludi/includi la colonna Annotazioni in fase di export animatic).
+- Gizmo luce: freccia conica + glifo sole, handle per angolo (gradi)
+- Toggle visibilità annotazioni nel viewer + opzione export animatic
 
-**File previsti:** `toonz/sources/toonz/ztoryannotations.h/.cpp` (panel + helper),
-`ztorymodel.h` (gestione colonna/stato toggle), `geometrictool.cpp` (riferimento),
-`stuff/library/storyboard symbols/` (PLI custom futuri).
+**File esistenti:** `toonz/sources/toonz/ztoryannotations.h/.cpp`
+**File da aggiungere (FASE 2):** overlay in `storyboardpanel.cpp`,
+lettura pegbar in `ztoryannotations.cpp`
 
 **NOTA:** i task 35/36/37 sotto sono il design originale frammentato — mantenuti
 per riferimento storico ma SUPERATI da questo task 40 unificato.
@@ -703,6 +709,7 @@ nella sub-scene corretta.
 21. NEW Volume traccia audio
 24. NEW Startup popup hub
 Kitsu. NEW Integrazione Kitsu (M5)
+41. NEW Cache RAM threshold configurabile (BASSA) — attualmente hardcoded al 25% in tsystempd.cpp. Implementare rilevamento automatico per classe di macchina (≤8GB→35%, 16GB→25%, 32GB+→15%) + preferenza utente opzionale per sovrascrivere. File: `tsystempd.cpp`, `preferences.cpp/h`.
 
    ~~35. Storyboard Arrow Tool~~ → assorbito in task 40
    ~~36. Frecce 3D / Prospettiva~~ → assorbito in task 40

@@ -346,6 +346,8 @@ public:
   int trackHeight() const { return m_trackHeight; }
   void setTrackHeight(int h) { m_trackHeight = h; m_waveformDirty = true; setFixedHeight(h); update(); }
   int columnIndex() const { return m_col; }
+  void setColumnIndex(int col) { m_col = col; }  // update after column shift
+  TXshSoundColumn *soundColumn() const { return m_soundCol; }
   void setRazorActive(bool on);
   // Cut frame markers — drawn as bright separator lines in the waveform.
   // Set by the panel after every shot change; frame indices are absolute
@@ -427,6 +429,7 @@ private:
   // L/M/S buttons are drawn in paintEvent and clicked via hit-test in mousePressEvent
 
   int m_col;
+  TXshSoundColumn *m_soundCol = nullptr;  // stable pointer — survives column shifts
   QString m_name;
   double m_ppf = 8.0;
   int m_currentFrame = 0;
@@ -534,6 +537,7 @@ class ZtoryAnimaticViewer : public BaseViewerPanel {
   Q_OBJECT
 public:
   ZtoryAnimaticViewer(QWidget *parent = nullptr);
+  ~ZtoryAnimaticViewer() override;
   void stopAudio();
   void updateShowHide() override {}
   void addShowHideContextMenu(QMenu *) override {}

@@ -1046,11 +1046,14 @@ ZtoryAudioTrack::ZtoryAudioTrack(int col, const QString &name, QWidget *parent)
   setAttribute(Qt::WA_Hover);
 
   // Read initial volume from the underlying audio column (saved in the .tnz).
+  // Also cache the TXshSoundColumn* — this pointer is stable across column
+  // index shifts (insertColumn / deleteColumn renumber indices but don't
+  // recreate the column object), so it can be used as a stable identity key.
   TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
   if (xsh) {
     TXshColumn *column = xsh->getColumn(m_col);
-    TXshSoundColumn *sc = column ? column->getSoundColumn() : nullptr;
-    if (sc) m_volume = sc->getVolume();
+    m_soundCol = column ? column->getSoundColumn() : nullptr;
+    if (m_soundCol) m_volume = m_soundCol->getVolume();
   }
 
   // L/M/S state is driven purely via paintEvent + mousePressEvent hit-test.
@@ -2837,6 +2840,15 @@ void ZtoryStoryStrip::wheelEvent(QWheelEvent *e) {
 }
 
 // ---- ZtoryAnimaticViewer (standalone) ----
+
+ZtoryAnimaticViewer::~ZtoryAnimaticViewer() {
+  // Stop FlipConsole's internal play timer/thread before Qt destroys child
+  // widgets. QThread::~QThread calls abort() if the thread is still running,
+  // which crashes the app on room switch or panel close while playing.
+  stopAudio();
+  if (m_flipConsole && ZtoryAnimaticController::instance()->frameHandle()->isPlaying())
+    m_flipConsole->pressButton(FlipConsole::ePause);
+}
 
 ZtoryAnimaticViewer::ZtoryAnimaticViewer(QWidget *parent)
     : BaseViewerPanel(parent) {
@@ -5038,6 +5050,39 @@ void ZtoryAnimaticPanel::refreshAudioTracks() {
 
   m_refreshingAudio = true;
 
+  // ── Fast path: match by TXshSoundColumn* pointer ─────────────────────────
+  // Column indices shift whenever shots are added/removed, but the SC pointer
+  // is stable (insert/delete renumbers indices, does not recreate objects).
+  // Build SC→newCol map, then update existing tracks in-place if all SCs match.
+  // This eliminates flicker for any operation that doesn't add/remove audio tracks.
+  {
+    QMap<TXshSoundColumn*, int> scToCol;
+    for (int col = 0; col < xsh->getColumnCount(); col++) {
+      TXshColumn *c = xsh->getColumn(col);
+      if (!c) continue;
+      TXshSoundColumn *sc = c->getSoundColumn();
+      if (sc) scToCol[sc] = col;
+    }
+    // Check that every existing track's SC is still present (no add/remove)
+    bool canReuse = (scToCol.size() == m_audioTracks.size());
+    if (canReuse) {
+      for (auto *at : m_audioTracks)
+        if (!scToCol.contains(at->soundColumn())) { canReuse = false; break; }
+    }
+    if (canReuse) {
+      // Update column indices (may have shifted) and repaint in-place — no flicker
+      for (auto *at : m_audioTracks) {
+        at->setColumnIndex(scToCol[at->soundColumn()]);
+        at->invalidateWaveform();
+      }
+      updateTrackWidths();
+      restoreTrackStates();
+      m_refreshingAudio = false;
+      return;
+    }
+  }
+
+  // ── Full rebuild: column structure changed ────────────────────────────────
   // Rimuovi tracce audio esistenti.
   // cancelDrag() prevents spurious shiftLevelInRange commits on stale widgets.
   // deleteLater() (not delete) defers destruction until after the current

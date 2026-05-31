@@ -7,6 +7,65 @@
 
 ---
 
+## [2026-05-31] — Audio flicker fix + autoMatch perf + RAM threshold + Task 40 FASE 1 + BUG-CAMERA chiuso
+
+### Fixed
+- **Flicker tracce audio durante operazioni** (`ztoryanimatic.cpp/.h`) —
+  `refreshAudioTracks()` distruggeva e ricreava tutti i widget traccia ad ogni
+  modello cambiato (anche aggiungendo/clonando shot, che NON tocca l'audio),
+  causando lo sfarfallio. Fix: fast-path che matcha le tracce esistenti per
+  puntatore `TXshSoundColumn*` (stabile agli shift di indice colonna) e aggiorna
+  in-place (`setColumnIndex` + `invalidateWaveform`) senza ricreare i widget.
+  Rebuild completo solo se la struttura delle colonne audio cambia davvero.
+- **Lentezza con autoMatch attivo** (`ztoryanimatic.cpp`) — il loop che cerca
+  la colonna corrispondente alla sub-scena aperta era O(col × righe): controllava
+  ogni frame di ogni colonna ad ogni `xsheetChanged`. Fix: O(col) — controlla solo
+  la prima cella per colonna (tutte le celle di un shot puntano allo stesso livello).
+- **Cache RAM threshold troppo bassa** (`tsystempd.cpp`) — eviction scattava solo
+  sotto il 14.3% di RAM disponibile (÷7): su un Mac da 16 GB il processo arrivava a
+  ~13.7 GB prima di rilasciare. Alzato al 25% (÷4) su macOS e Linux.
+- **BUG-CAMERA — dati stale in SB_APPENNINGERS.tnz** — 4 sub-scene avevano
+  `cameraSize: 12 6.75` (valore baked prima del fix). Corretto via script Python
+  → tutte e 46 le camere ora `16 9`. Backup `.tnz.rtkcam` conservato.
+- **BUG-CAMERA — confermato risolto nel codice** — test su scena nuova: camera
+  main e sub-scena corrispondono perfettamente anche cambiando F e Z. Era un
+  problema di dati stale, non di codice.
+
+### Added
+- **Task 40 FASE 1 — Pannello Camera Moves** (`ztoryannotations.h/.cpp`) —
+  Pannello "Ztoryc Camera Moves" nel menu Panels → Ztoryc con 8 pulsanti
+  freccia Pan (4 ortogonali + 4 diagonali). Crea automaticamente una colonna
+  PLI "Annotazioni" nella sub-scena corrente (con `sl->setScene(scene)` prima
+  di `setFrame` per evitare crash). Frecce vettoriali centrate nel frame,
+  editabili con tool di selezione nativo.
+
+### Reverted (regressione introdotta e annullata in sessione)
+- **Patch crash palette/style ritirate** — durante la sessione ho tentato di
+  fixare il crash `StyleEditor::onStyleSwitched` (famiglia palette-switch
+  ri-entrante) con modifiche a `TPaletteHandle` (riferimento forte), guard di
+  re-entrancy in `onStyleSwitched`, `PaletteViewer::onFrameSwitched`,
+  `toonzrasterbrushtool`, `tooloptions`. Queste patch hanno introdotto una
+  **regressione** (crash al disegno anche su scene nuove) e sono state **tutte
+  revertite** al baseline. Lezione: non patchare a scatola chiusa un cascade core
+  complesso deployando build a metà.
+
+### Notes
+- **Crash StyleEditor (pre-esistente) ancora aperto** — re-entrancy nella cascata
+  `updateXshLevel → setPalette → editLevelPalette → setPalette → onStyleSwitched`
+  (palettecontroller.cpp:65). Da affrontare con build di debug + lldb, NON a
+  tentativi. Il crash inseguito in sessione era in gran parte causato dalle mie
+  patch parziali già deployate: al baseline la scena non crasha più.
+- **Task 40 REDESIGN** — FASE 2 riprogettata: annotazioni camera-move automatiche
+  leggendo i parametri del Camera1 pegbar (X/Y→Pan/Tilt, Z→Truck, Scale→Zoom).
+  Overlay sul thumbnail BOARD, non colonna PLI separata. Vedi ANIMATIC_TASKS.
+- **Regola memoria: aggiungere pannelli al menu Panels richiede 4 file** —
+  `tpanels.cpp` (OpenFloatingPanel), `menubar.cpp` (sottomenu Ztoryc hardcoded),
+  `stuff/profiles/layouts/menubar.xml`, e
+  `~/Library/Application Support/Ztoryc/Ztoryc/profiles/layouts/menubar.xml`.
+  Documentato in memory/feedback_ztoryc_panel_menu.md.
+
+---
+
 ## [2026-05-31] — Release v0.3.5 + crash fix brush + diagnosi BUG-CAMERA
 
 ### Released
