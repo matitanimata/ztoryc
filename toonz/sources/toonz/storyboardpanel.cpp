@@ -2452,15 +2452,16 @@ static void cloneChildToPosition(int srcCol, int dstCol) {
   TXshChildLevel *newChildLevel = childStack->createChild(0, dstCol);
   TXsheet *newChildXsh = newChildLevel->getXsheet();
 
-  // Copia contenuto colonne + camera.
-  // storeColumns() omette la camera (TStageObjectId::CameraId) — i suoi
-  // keyframe non vengono copiati. Usiamo storeObjects() con IDs espliciti
-  // che includono CameraId(0) così assignParams() copia tutti i keyframe.
+  // Copia contenuto colonne.  NON instradiamo la camera tramite
+  // StageObjectsData: ogni child xsheet creato da createChild() ha già una
+  // Camera 0 di default, quindi restoreCamera() la trova "occupata" e crea una
+  // Camera 1 FANTASMA con i keyframe, lasciando la Camera 0 (quella usata per il
+  // rendering) senza animazione — ecco perché lo shot clonato perdeva le chiavi
+  // di camera.  La camera la copiamo a mano sotto, direttamente Camera 0→Camera 0.
   std::set<int> indices;
   for (int i = 0; i < childXsh->getColumnCount(); i++) indices.insert(i);
   std::vector<TStageObjectId> ids;
   for (int i : indices) ids.push_back(TStageObjectId::ColumnId(i));
-  ids.push_back(TStageObjectId::CameraId(0));   // include camera keyframes
   StageObjectsData *data = new StageObjectsData();
   data->storeObjects(ids, childXsh, 0);
   data->storeColumnFxs(indices, childXsh, 0);
@@ -2470,6 +2471,29 @@ static void cloneChildToPosition(int srcCol, int dstCol) {
   data->restoreObjects(indices, restoredSplineIds, newChildXsh,
                        StageObjectsData::eDoClone, idTable, fxTable);
   delete data;
+
+  // Stage objects non-colonna (camera, pegbar): copia params (keyframe/
+  // animazione) sull'oggetto con lo STESSO id già esistente nel clone.  Le
+  // colonne sono già state ricreate da restoreObjects(); qui copiamo camera e
+  // pegbar — che altrimenti andrebbero persi (la camera finirebbe su una Camera
+  // fantasma via restoreCamera; i pegbar non verrebbero animati).  Mirror della
+  // logica stock cloneXsheetTStageObjectTree() (in namespace anonimo, non
+  // richiamabile da qui).
+  {
+    TStageObjectTree *srcTree = childXsh->getStageObjectTree();
+    for (int i = 0; i < srcTree->getStageObjectCount(); i++) {
+      TStageObject *srcObj = srcTree->getStageObject(i);
+      TStageObjectId id    = srcObj->getId();
+      if (id.isColumn()) continue;  // colonne già gestite da restoreObjects
+      TStageObject *dstObj = newChildXsh->getStageObject(id);
+      if (!dstObj) continue;
+      if (id.isCamera()) *(dstObj->getCamera()) = *(srcObj->getCamera());
+      TStageObjectParams *p = srcObj->getParams();
+      dstObj->assignParams(p, /*doParametersClone=*/true);
+      delete p;
+      dstObj->setParent(childXsh->getStageObjectParent(id));
+    }
+  }
 
   newChildXsh->getFxDag()->getXsheetFx()->getAttributes()->setDagNodePos(
       childXsh->getFxDag()->getXsheetFx()->getAttributes()->getDagNodePos());

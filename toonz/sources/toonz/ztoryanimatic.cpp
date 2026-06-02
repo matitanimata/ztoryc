@@ -5320,6 +5320,28 @@ static void animCloneChildToPosition(int srcCol, int dstCol) {
                        StageObjectsData::eDoClone, idTable, fxTable);
   delete data;
 
+  // Stage objects non-colonna (camera, pegbar): storeColumns() li omette del
+  // tutto, quindi copiamo i params (keyframe/animazione) sull'oggetto con lo
+  // STESSO id già esistente nel clone.  Mirror della logica stock
+  // cloneXsheetTStageObjectTree() (in namespace anonimo, non richiamabile da
+  // qui).  Vedi StoryboardPanel::cloneChildToPosition per i dettagli sul perché
+  // NON si usa StageObjectsData per la camera (Camera fantasma).
+  {
+    TStageObjectTree *srcTree = childXsh->getStageObjectTree();
+    for (int i = 0; i < srcTree->getStageObjectCount(); i++) {
+      TStageObject *srcObj = srcTree->getStageObject(i);
+      TStageObjectId id    = srcObj->getId();
+      if (id.isColumn()) continue;  // colonne già gestite da restoreObjects
+      TStageObject *dstObj = newChildXsh->getStageObject(id);
+      if (!dstObj) continue;
+      if (id.isCamera()) *(dstObj->getCamera()) = *(srcObj->getCamera());
+      TStageObjectParams *p = srcObj->getParams();
+      dstObj->assignParams(p, /*doParametersClone=*/true);
+      delete p;
+      dstObj->setParent(childXsh->getStageObjectParent(id));
+    }
+  }
+
   newChildXsh->updateFrameCount();
 
   xsh->removeCells(0, dstCol);

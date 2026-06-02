@@ -7,6 +7,91 @@
 
 ---
 
+## [2026-06-02] — CLONE shot: fix perdita keyframe camera (e pegbar)
+
+### Fixed
+- **CLONE shot perdeva i keyframe di camera** (`storyboardpanel.cpp`,
+  `ztoryanimatic.cpp`). Causa radice in `restoreCamera()`
+  (`stageobjectsdata.cpp`): ogni child xsheet creato da `createChild()` ha già
+  una Camera 0 di default; ripristinando la camera via `StageObjectsData` il
+  codice la trova "occupata" e crea una **Camera 1 fantasma** con i keyframe,
+  lasciando la Camera 0 (usata per il rendering) vuota → chiavi apparentemente
+  perse. Due path affetti:
+  - **Board** (`cloneChildToPosition`): includeva `CameraId(0)` negli ids →
+    camera fantasma.
+  - **Animatic** (`animCloneChildToPosition`): usava `storeColumns()` che
+    **omette del tutto** la camera → nessun keyframe copiato.
+- **Fix**: dopo `restoreObjects`, copia manuale degli stage object non-colonna
+  (camera + pegbar) sull'oggetto con lo **stesso id** già esistente nel clone
+  (`assignParams` keyframe + copia `TCamera` + parent). Mirror della logica
+  stock `cloneXsheetTStageObjectTree()` (in namespace anonimo, non richiamabile
+  da fuori). Esteso ai **pegbar** così anche i rig cutout mantengono
+  l'animazione.
+
+### Notes
+- **COPY shot** verificato OK: condivide lo stesso `TXshChildLevel`
+  (sub-scene condivisa) → camera = stesso oggetto, nessuna perdita possibile.
+- Il razor/split usa lo stock `ColumnCmd::cloneChild` (già corretto via
+  `cloneXsheetTStageObjectTree`) — non toccato.
+- Non coperto: camera su spline (motion path) — caso edge raro; i keyframe di
+  posizione/rotazione/scala/zoom sono comunque coperti.
+
+---
+
+## [2026-06-02] — Mark In/Out persistenti per-xsheet (tutti i workflow)
+
+### Fixed
+- **Mark In/Out delle sotto-scene non persistevano dopo save+reload**
+  (`txsheet.h/.cpp`, `subscenecommand.cpp`, `iocommand.cpp`). Causa: il play
+  range "live" è in `scene preview properties`, ed è **globale e unico** —
+  condiviso tra main xsheet e tutte le sotto-scene. La vecchia `s_frameRangeMap`
+  era runtime-only (chiave `TXsheet*`, invalidata al reload). Inoltre il
+  preview-range globale veniva serializzato così com'era: se l'ultimo range
+  attivo era quello di una sotto-scena (o si salvava da dentro una sotto-scena),
+  al reload il **main ereditava** quel range (bug nidificazione: con main/-1/-2
+  il main si ritrovava i marker di -2).
+- **Fix strutturale — marker In/Out per-xsheet persistiti nel `.tnz`:**
+  - `TXsheet`: nuovi campi `m_markerIn`/`m_markerOut` (-1 = unset), API
+    `get/setInOutMarkers()` + `hasInOutMarkers()`, serializzati in
+    `saveData`/`loadData` con tag `<inOutMarkers>` (assente nei file vecchi →
+    default unset, retrocompatibile).
+  - `openSubXsheet` (scendendo): salva il range dell'xsheet che si lascia sia in
+    cache sia nei marker persistenti (`prevXsh->setInOutMarkers`). Risalendo:
+    priorità di ripristino = marker persistenti → cache di sessione → fallback
+    auto (durata shot + cross-dissolve XD).
+  - `closeSubXsheet`: scrive i marker dell'xsheet che si chiude nel TXsheet +
+    dirty flag.
+  - `IoCmd::saveScene`: sincronizza il play range live → marker dell'xsheet
+    **corrente** prima di serializzare (copre il caso "imposto un range e salvo
+    senza entrare/uscire da una sub").
+  - `IoCmd::loadScene`: il **main xsheet diventa autoritativo** — il play range
+    live viene inizializzato dai marker del main (o disabilitato se assenti),
+    sovrascrivendo il preview-range stantio ereditato da una sotto-scena.
+    Elimina il leak alla radice. Funziona in **ogni workflow** e a qualsiasi
+    profondità di nidificazione.
+
+### Upstream candidates
+- **Per-xsheet In/Out markers** — la parte `txsheet.h/.cpp` (campi + API +
+  serializzazione `<inOutMarkers>`) è pulita e proponibile a Tahoma2D così
+  com'è. Gli agganci in `iocommand.cpp`/`subscenecommand.cpp` sono la logica di
+  sync; la parte cross-dissolve (XD-in/XD-out) resta Ztoryc-specifica. Era già
+  in lista come feature request — ora c'è un'implementazione di riferimento.
+
+### Notes
+- `ztorymodel.cpp` includeva una modifica **pre-esistente non committata**
+  (pinning del play range a `[0, lastFrame]` in `resequenceXsheet`, + include
+  `xsheetdragtool.h`) — inclusa in questo commit.
+- **Bug aperto (bassa priorità)**: importando un `.psd` da Affinity (40 layer,
+  blocco `Lr16` 16-bit, nomi layer vuoti) come libreria personaggio, e poi
+  caricando quella scena come **sotto-scena** in un'altra, il layer più in basso
+  risulta "not found". La scena originale aperta direttamente è OK; anche
+  importare il PSD direttamente in una sotto-scena è OK. Da indagare
+  (`tiio_psd.cpp` `REF_LAYER_BY_NAME`/`getLevelIdByName`, `psd.cpp` blocco
+  `Lr16`). Workaround utente: aggiungere un layer sacrificale come primo (più in
+  basso). Da loggare in `ANIMATIC_TASKS.md`.
+
+---
+
 ## [2026-05-31] — Windows Storyboard startup crash fix + audio flicker + autoMatch perf + Render Tile default + workflow anti-flicker + Task 40 FASE 1
 
 ### Fixed
