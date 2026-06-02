@@ -47,10 +47,26 @@
   via `xsheetdragtool`; nell'animatic i marker passano per `subscenecommand::setPlayRange`, quindi il
   sync potrebbe non scattare lì. Da collegare esplicitamente se serve.
 
+### Altri crash/bug emersi durante l'uso (pre-esistenti, NON da merge)
+- 🟡 **Crash Plastic Tool intermittente** (`Crash-20260602-172557.log`, sull'app PRE-merge) —
+  SIGSEGV in `PlasticTool::onColumnSwitched → storeDeformation → onSelectionChanged` (ricorsivo)
+  attivando il tool via shortcut. Raro ma l'utente usa il Plastic tantissimo. Le funzioni del crash
+  NON sono toccate dal merge (upstream cambia solo la parte "animate Set Key" del Plastic, 315 righe),
+  quindi il crash persiste anche nel merge. Ipotesi: deref durante cambio colonna/attivazione su stato
+  transitorio. File: `plastictool.cpp`.
+- 🟡 **Disallineamento mesh↔skeleton Plastic SOLO in sotto-scena importata** — animando una gamba,
+  la mesh non segue lo skeleton (i bone "scappano" fuori dalla mesh). **Nella libreria ORIGINALE non
+  succede** → il rig è integro; il problema nasce nell'import come child level: `ChildLevelResourceImporter`
+  non preserva/rimappa fedelmente i dati del Plastic deformer (binding mesh↔skeleton + rest pose).
+  **Stessa classe del bug PSD task 44b** (asset persi/sfasati caricando scene come sotto-scena).
+  Workaround: animare nella scena originale. Da indagare: `iocommand.cpp` (loadChildLevel /
+  ChildLevelResourceImporter), storage del Plastic deformer (mesh/rest pose).
+
 ### Ripresa (sessione nuova)
 1. Test riproducibilità crash keyframe (scsh120 vs scena nuova)
 2. Fix crash Drawing Number su scene pre-esistenti
 3. `git checkout master && git merge merge/upstream-nightly` → push origin master → rsync → rebuild app principale
+4. (minori) crash Plastic intermittente + disallineamento mesh in sotto-scena (entrambi pre-esistenti)
 
 ---
 
