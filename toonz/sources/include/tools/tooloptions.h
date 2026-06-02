@@ -705,7 +705,7 @@ public:
                       ToolHandle *toolHandle);
 
   void updateStatus() override;
-  void onStageObjectChange() override;
+  void onStageObjectChange(bool isDragging = false) override;
 
 protected slots:
 

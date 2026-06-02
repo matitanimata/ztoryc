@@ -103,6 +103,7 @@ set(MOC_HEADERS
     testpanel.h
     timestretchpopup.h
     toolbar.h
+    maintoolbar.h
     tpanels.h
     storyboardpanel.h
     ztorymodel.h
@@ -225,6 +226,7 @@ set(SOURCES
     scanlist.cpp
     tapp.cpp
     toolbar.cpp
+    maintoolbar.cpp
     batchserversviewer.cpp
     castviewer.cpp
     exportlevelpopup.cpp

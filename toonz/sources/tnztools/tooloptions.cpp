@@ -3380,7 +3380,7 @@ void BrushToolOptionsBox::onPaletteSwitched() {
 
 //-----------------------------------------------------------------------------
 
-void BrushToolOptionsBox::onStageObjectChange() {
+void BrushToolOptionsBox::onStageObjectChange(bool isDragging) {
   // Called from ToolOptions::onStageObjectChange() on xshLevelSwitched.
   // ArrowToolOptionsBox already does widget ops from this same entry point
   // without crashing, so it is safe here too.
