@@ -1656,10 +1656,26 @@ bool IoCmd::saveScene(const TFilePath &path, int flags) {
         scene->getProperties()->getCleanupParameters());
   }
 
+  // Persist the live play range into the CURRENT xsheet's In/Out markers before
+  // serializing, so the markers stored in the .tnz always match what the user
+  // sees.  This covers the case of setting a range on an xsheet (main or sub)
+  // and saving without ever entering/leaving a sub-scene (which is the other
+  // moment markers get synced, in open/closeSubXsheet).
+  {
+    TXsheet *curXsh = app->getCurrentXsheet()->getXsheet();
+    if (curXsh) {
+      int r0, r1, step;
+      bool enabled = scene->getProperties()->getPreviewProperties()->getRange(
+          r0, r1, step);
+      if (r0 > r1) enabled = false;
+      curXsh->setInOutMarkers(enabled ? r0 : 0, enabled ? r1 : -1);
+    }
+  }
+
   // Must wait for current save to finish, just in case
   while (TApp::instance()->isSaveInProgress())
     ;
-  
+
   TApp::instance()->setSaveInProgress(true);
   try {
     scene->save(scenePath, xsheet);
@@ -2288,8 +2304,28 @@ bool IoCmd::loadScene(const TFilePath &path, bool updateRecentFile,
     LevelCmd::loadAllUsedRasterLevelsAndPutInCache(cacheRasterBehavior ==
                                                    2);  // "All Icons & Images"
 
+  // In/Out play-range markers are stored per-xsheet (TXsheet::m_markerIn/Out)
+  // and serialized in the .tnz.  The scene's live play range (preview
+  // properties) is GLOBAL and shared between the main xsheet and every
+  // sub-xsheet, so whatever range was active at save time (possibly inside a
+  // sub-scene) would otherwise leak onto the main xsheet on reload.  Make the
+  // MAIN xsheet authoritative: initialize the live play range from its markers
+  // (or disable it when the main has none).
+  {
+    TXsheet *mainXsh = scene->getXsheet();
+    int in = 0, out = -1;
+    if (mainXsh) mainXsh->getInOutMarkers(in, out);
+    int oldR0, oldR1, step;
+    scene->getProperties()->getPreviewProperties()->getRange(oldR0, oldR1, step);
+    if (step < 1) step = 1;
+    if (out >= 0)
+      scene->getProperties()->getPreviewProperties()->setRange(in, out, step);
+    else  // unset → disable play range
+      scene->getProperties()->getPreviewProperties()->setRange(0, -1, step);
+  }
+
   printf("%s:%s loadScene() completed :\n", __FILE__, __FUNCTION__);
-  
+
   TApp::instance()->getPaletteController()->editLevelPalette();
   return true;
 }

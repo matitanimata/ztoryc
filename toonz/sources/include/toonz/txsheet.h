@@ -168,6 +168,15 @@ private:
 
   bool m_currentDrawingOnTop;
 
+  // Per-xsheet In/Out play-range markers.  Tahoma2D stores a single play range
+  // per scene (in the preview properties), shared between the main xsheet and
+  // every sub-xsheet, so the range is lost when switching context.  Storing it
+  // here — and serializing it with the xsheet — makes the In/Out markers of each
+  // (sub-)xsheet persist across save+reload, in every workflow.
+  // m_markerOut == -1 means "unset" (caller falls back to full/auto range).
+  int m_markerIn  = 0;
+  int m_markerOut = -1;
+
   DECLARE_CLASS_CODE
 
 public:
@@ -626,6 +635,18 @@ in TXsheetImp.
   NavigationTags *getNavigationTags() const { return m_navigationTags; }
   bool isFrameTagged(int frame) const;
   void toggleTaggedFrame(int frame);
+
+  // Per-xsheet In/Out play-range markers (persisted with the xsheet).
+  // markerOut == -1 means "unset".  See m_markerIn/m_markerOut.
+  void getInOutMarkers(int &in, int &out) const {
+    in  = m_markerIn;
+    out = m_markerOut;
+  }
+  void setInOutMarkers(int in, int out) {
+    m_markerIn  = in;
+    m_markerOut = out;
+  }
+  bool hasInOutMarkers() const { return m_markerOut >= 0; }
 
   bool isCurrentDrawingOnTop() { return m_currentDrawingOnTop; }
   void setCurrentDrawingOnTop(bool onTop) { m_currentDrawingOnTop = onTop; }

@@ -1518,6 +1518,8 @@ void TXsheet::loadData(TIStream &is) {
       m_notes->loadData(is);
     } else if (tagName == "navigationTags") {
       m_navigationTags->loadData(is);
+    } else if (tagName == "inOutMarkers") {
+      is >> m_markerIn >> m_markerOut;
     } else {
       throw TException("xsheet, unknown tag: " + tagName);
     }
@@ -1587,6 +1589,9 @@ void TXsheet::saveData(TOStream &os) {
     navigationTags->saveData(os);
     os.closeChild();
   }
+
+  // Per-xsheet In/Out play-range markers (only when a range is actually set)
+  if (m_markerOut >= 0) os.child("inOutMarkers") << m_markerIn << m_markerOut;
 }
 
 //-----------------------------------------------------------------------------

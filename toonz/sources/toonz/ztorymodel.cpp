@@ -1,4 +1,5 @@
 #include "ztorymodel.h"
+#include "xsheetdragtool.h"   // XsheetGUI::setPlayRange
 #include "tapp.h"
 #include "toonz/toonzscene.h"
 #include "toonz/txsheet.h"
@@ -859,6 +860,19 @@ void ZtoryModel::resequenceXsheet() {
     startFrame += duration;
   }
   xsh->updateFrameCount();
+
+  // Always pin the main xsheet mark-out to the last occupied frame (video OR
+  // audio, whichever is further).  This prevents a stale native mark-out from
+  // blocking the animatic playhead: the FlipConsole stops at m_markerTo which
+  // comes from the native play range whenever the two are out of sync.
+  // Using xsh->getFrameCount() (not videoFrameCount) here so that a long audio
+  // column that extends past the last shot is also covered.
+  {
+    int lastFrame = xsh->getFrameCount() - 1;
+    if (lastFrame >= 0)
+      XsheetGUI::setPlayRange(0, lastFrame, 1, false);
+  }
+
   app->getCurrentXsheet()->notifyXsheetChanged();
   emit modelReset();
 }

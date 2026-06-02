@@ -23,7 +23,9 @@
 #include <QMap>
 #include <QPair>
 
-// Mappa per salvare i frame range per ogni xsheet
+// Mappa per salvare i frame range per ogni xsheet (cache di sessione; la
+// persistenza su .tnz avviene via TXsheet::setInOutMarkers, serializzata
+// nell'xsheet stesso).
 static QMap<TXsheet*, QPair<int,int>> s_frameRangeMap;
 #include "toonz/toonzscene.h"
 #include "toonz/childstack.h"
@@ -1185,38 +1187,58 @@ void openSubXsheet() {
     if (TSelection::getCurrent()) TSelection::getCurrent()->selectNone();
 
     TUndoManager::manager()->add(new OpenChildUndo());
-    // Salva play range xsheet corrente
+    // Salva play range dello xsheet che stiamo lasciando, sia nella cache di
+    // sessione sia nei marker persistenti dell'xsheet (serializzati nel .tnz).
+    // Così, ad es., il range impostato sul main viene preservato quando si
+    // scende in una sotto-scena e poi si salva da lì.
     TXsheet *prevXsh = app->getCurrentXsheet()->getXsheet();
     int f0, f1, step;
-    XsheetGUI::getPlayRange(f0, f1, step);
-    s_frameRangeMap[prevXsh] = QPair<int,int>(f0, f1);
+    bool rangeEnabled = XsheetGUI::getPlayRange(f0, f1, step);
+    int prevIn  = rangeEnabled ? f0 : 0;
+    int prevOut = rangeEnabled ? f1 : -1;
+    s_frameRangeMap[prevXsh] = QPair<int,int>(prevIn, prevOut);
+    if (prevXsh) prevXsh->setInOutMarkers(prevIn, prevOut);
     app->getCurrentXsheet()->setXsheet(scene->getXsheet());
     app->getCurrentXsheet()->notifyXsheetChanged();
     app->getCurrentColumn()->setColumnIndex(0);
     app->getCurrentFrame()->setFrameIndex(subXsheetFrame);
     // Ripristina play range sottoscena.
-    // Mark-out = sempre la durata animatic dello shot (colonna nel main xsheet),
-    // così rispecchia modifiche di rolling edit / trim fatte nel frattempo.
-    // Mark-in = 0 (o ripristinato da mappa se era stato spostato).
     TXsheet *newXsh = app->getCurrentXsheet()->getXsheet();
-    int r0col = 0, r1col = 0;
-    TXshColumn *shotColPtr = currentXsheet->getColumn(openedCol);
-    // ignoreLastStop=true: in Ztoryc, ZtoryModel::resequenceXsheet() places a
-    // trailing Stop Frame Hold at r1+1 of every shot column to block implicit-
-    // hold bleed.  Without this flag, shotDuration would be inflated by 1 and
-    // the sub-scene's mark-out would land one frame past the actual content.
-    if (shotColPtr) shotColPtr->getRange(r0col, r1col, /*ignoreLastStop=*/true);
-    int shotDuration = (r1col >= r0col) ? (r1col - r0col + 1)
-                                        : newXsh->getFrameCount();
-    int markIn  = 0;
-    int markOut = shotDuration - 1; // default: animatic duration
-    if (s_frameRangeMap.contains(newXsh))
-      markIn = s_frameRangeMap[newXsh].first;  // ripristina solo mark-in
-    // Cross-dissolve: include the extra dissolve frames in the mark-out so the
-    // animator can work on them.  The XD note columns persist with the .tnz, so
-    // this is robust across reload (unlike s_frameRangeMap which is runtime-only).
-    // XD-out adds tail frames (shot A); XD-in adds head frames (shot B).
-    {
+    int markIn = 0, markOut = -1;
+
+    // Priorità 1 — marker persistenti salvati nell'xsheet (.tnz).  Funziona in
+    // TUTTI i workflow e in Tahoma2D puro: i marker In/Out di ogni (sotto-)xsheet
+    // sopravvivono a save+reload perché serializzati con l'xsheet stesso.
+    if (newXsh->hasInOutMarkers()) {
+      newXsh->getInOutMarkers(markIn, markOut);
+      int lastFrame = qMax(0, newXsh->getFrameCount() - 1);
+      markIn  = qBound(0, markIn, lastFrame);
+      markOut = qBound(markIn, markOut, lastFrame);
+    }
+    // Priorità 2 — cache di sessione (marker spostati ma non ancora salvati).
+    else if (s_frameRangeMap.contains(newXsh)) {
+      markIn  = s_frameRangeMap[newXsh].first;
+      markOut = s_frameRangeMap[newXsh].second;
+    }
+    // Fallback (nessun marker) — auto: durata dello shot dalla colonna nel
+    // parent xsheet, + frame extra di cross-dissolve (Ztoryc).  Per sotto-scene
+    // generiche corrisponde alla durata piena del blocco celle nel parent.
+    else {
+      int r0col = 0, r1col = 0;
+      TXshColumn *shotColPtr = currentXsheet->getColumn(openedCol);
+      // ignoreLastStop=true: in Ztoryc, ZtoryModel::resequenceXsheet() places a
+      // trailing Stop Frame Hold at r1+1 of every shot column to block implicit-
+      // hold bleed.  Without this flag, shotDuration would be inflated by 1 and
+      // the sub-scene's mark-out would land one frame past the actual content.
+      if (shotColPtr)
+        shotColPtr->getRange(r0col, r1col, /*ignoreLastStop=*/true);
+      int shotDuration =
+          (r1col >= r0col) ? (r1col - r0col + 1) : newXsh->getFrameCount();
+      markIn  = 0;
+      markOut = shotDuration - 1;
+      // Cross-dissolve: include the extra dissolve frames in the mark-out so the
+      // animator can work on them.  XD-out adds tail frames (shot A); XD-in adds
+      // head frames (shot B).
       int xdExtra = 0;
       for (int c = 0; c < newXsh->getColumnCount(); c++) {
         TXshColumn *nc = newXsh->getColumn(c);
@@ -1261,11 +1283,25 @@ void closeSubXsheet(int dlevel) {
   }
   if (cells.empty()) return;
   TUndoManager::manager()->add(new CloseChildUndo(cells));
-  // Salva play range sottoscena corrente
+  // Salva play range sottoscena corrente.  Lo memorizziamo SIA nella cache di
+  // sessione SIA nell'xsheet stesso (m_markerIn/m_markerOut): quest'ultimo viene
+  // serializzato nel .tnz, quindi i marker In/Out sopravvivono a save+reload in
+  // ogni workflow.  Marca la scena dirty così il salvataggio li persiste.
   TXsheet *currXsh = app->getCurrentXsheet()->getXsheet();
   int f0, f1, step;
-  XsheetGUI::getPlayRange(f0, f1, step);
-  s_frameRangeMap[currXsh] = QPair<int,int>(f0, f1);
+  bool rangeEnabled = XsheetGUI::getPlayRange(f0, f1, step);
+  // Range disabilitato → marker "unset" (markOut = -1), così al reload si torna
+  // al fallback automatico invece di ripristinare valori spuri (-1/-2).
+  int newIn  = rangeEnabled ? f0 : 0;
+  int newOut = rangeEnabled ? f1 : -1;
+  s_frameRangeMap[currXsh] = QPair<int,int>(newIn, newOut);
+  int prevIn, prevOut;
+  currXsh->getInOutMarkers(prevIn, prevOut);
+  if (prevIn != newIn || prevOut != newOut) {
+    currXsh->setInOutMarkers(newIn, newOut);
+    app->getCurrentScene()->setDirtyFlag(true);
+  }
+
   app->getCurrentXsheet()->setXsheet(scene->getXsheet());
   app->getCurrentXsheet()->notifyXsheetChanged();
   app->getCurrentColumn()->setColumnIndex(cells[0].second);
