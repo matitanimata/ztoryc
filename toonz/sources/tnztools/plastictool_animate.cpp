@@ -221,6 +221,12 @@ void PlasticTool::addContextMenuActions_animate(QMenu *menu) {
 void PlasticTool::keyFunc_undo(void (PlasticTool::*keyFunc)()) {
   assert(m_svSel.objects().size() <= 1);
 
+  // Guard: the Set Key / Set Rest Key actions (added upstream for the Plastic
+  // Tool) are reachable via shortcut even when there is no active deformation
+  // (m_sd == nullptr, e.g. the tool is active but no skeleton/mesh is current),
+  // which crashed in m_sd->getKeyframeAt(). Bail out instead of dereferencing.
+  if (!m_sd) return;
+
   double frame = ::frame();
 
   AnimateValuesUndo *undo = new AnimateValuesUndo(m_svSel);
