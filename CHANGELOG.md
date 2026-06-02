@@ -54,13 +54,14 @@
   NON sono toccate dal merge (upstream cambia solo la parte "animate Set Key" del Plastic, 315 righe),
   quindi il crash persiste anche nel merge. Ipotesi: deref durante cambio colonna/attivazione su stato
   transitorio. File: `plastictool.cpp`.
-- 🟡 **Disallineamento mesh↔skeleton Plastic SOLO in sotto-scena importata** — animando una gamba,
-  la mesh non segue lo skeleton (i bone "scappano" fuori dalla mesh). **Nella libreria ORIGINALE non
-  succede** → il rig è integro; il problema nasce nell'import come child level: `ChildLevelResourceImporter`
-  non preserva/rimappa fedelmente i dati del Plastic deformer (binding mesh↔skeleton + rest pose).
-  **Stessa classe del bug PSD task 44b** (asset persi/sfasati caricando scene come sotto-scena).
-  Workaround: animare nella scena originale. Da indagare: `iocommand.cpp` (loadChildLevel /
-  ChildLevelResourceImporter), storage del Plastic deformer (mesh/rest pose).
+- 🟡 **Disallineamento mesh↔skeleton Plastic — TRANSITORIO** — animando una gamba la mesh non seguiva
+  lo skeleton (bone "fuori" dalla mesh). ⚠️ CORREZIONE: **NON dipende dall'import come sotto-scena**
+  (reimportando la libreria torna a funzionare) → i dati NON sono corrotti, è uno stato transitorio.
+  Ipotesi più probabile: **glitch di refresh/invalidazione del viewer** — la mesh deformata non viene
+  ridisegnata in sync con lo skeleton; reload forza il ridisegno. Coerente con gli altri problemi di
+  refresh osservati (monitor panel; view mode all'ingresso shot che parte in camera view). Possibile
+  pattern comune: **invalidazione viewer mancante entrando/lavorando nelle sotto-scene** in Ztoryc.
+  Da indagare: refresh/invalidate del viewer Ztoryc su enter sub-xsheet, deformazione Plastic.
 
 ### Ripresa (sessione nuova)
 1. Test riproducibilità crash keyframe (scsh120 vs scena nuova)
