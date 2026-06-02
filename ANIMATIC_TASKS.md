@@ -704,9 +704,9 @@ nella sub-scene corretta.
 ✅ [FATTO precedente] 20. Audio cut/copy/paste tastiera
 ✅ [FATTO precedente] 22. Transizioni
 
-43b. 🔴 FIX Export clip per-shot — audio parte dal frame 1 invece del segmento corretto ⭐ PROSSIMO (blocca il workflow di export)
-43c. FIX Export clip per-shot — nome file con UUID invece di label sequenza (fix 2 righe, basso rischio)
-43a. FIX Export clip per-shot — prima clip mancante
+✅ [FATTO 2026-05-31] 43b. Audio export clip per-shot — pinned in MovieRenderer::setAudioRange (commit 20f8f3e3b)
+✅ [FATTO 2026-05-31] 43c. Nome file UUID → label leggibile sequenza (commit 20f8f3e3b)
+43a. FIX Export clip per-shot — prima clip mancante (non riprodotto con certezza)
 40. NEW Sistema Annotazioni Camera-Move + Light Direction (MEDIA-ALTA) — unifica 35/36/37, design approvato, partire da FASE 1
 38. NEW Room TRADITIONAL (MEDIA)
 21. NEW Volume traccia audio
@@ -725,6 +725,8 @@ Kitsu. NEW Integrazione Kitsu (M5)
    ~~35. Storyboard Arrow Tool~~ → assorbito in task 40
    ~~36. Frecce 3D / Prospettiva~~ → assorbito in task 40
    ~~37. Indicatore Direzione Luce~~ → assorbito in task 40
+
+44b. INVESTIGATE PSD bottom-layer "not found" caricando come sub-scene (BASSA) — una scena libreria personaggio (.tnz) creata importando un PSD da Affinity Designer (modalità "Columns + layers in a group as frames in a column", senza sub-xsheet), quando viene caricata come child level (sub-scene) in un'altra scena, mostra il layer PSD più in basso (posizione visiva più bassa nello stack, prima colonna nell'xsheet) come "not found" subito dopo l'import. Bug Tahoma2D confermato. Caso: `CH_sibilllaCat.psd` — 40 layer nel blocco `Lr16` (estensione 16-bit di Affinity), tutti i nomi layer sono stringhe vuote nel campo nome Pascal. Compare immediatamente (no save+reload necessario). Solo con PSD esportati da Affinity — da verificare con PSD di Krita e Photoshop. I nomi layer vuoti nel blocco `Lr16` potrebbero interagire con `REF_LAYER_BY_NAME` / `getLevelIdByName` in `tiio_psd.cpp`: `getLevelIdByName(layerStr)` lancia `TImageException("Layer ID not exists")` se nessun level ha nome corrispondente — eccezione catturata silenziosamente in `ChildLevelResourceImporter::process`. WORKAROUND: aggiungere un layer dummy/sacrificale come primo (bottom) layer in Affinity prima dell'export. File da investigare: `toonz/sources/image/psd/tiio_psd.cpp` (costruttore, blocco REF_LAYER_BY_NAME), `toonz/sources/common/psdlib/psd.cpp` (getLevelIdByName, gestione blocco Lr16).
 
 Milestone:
 - M2: In/Out Marker, Roll, Slide, Doppio Viewer, Export render
