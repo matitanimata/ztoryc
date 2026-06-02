@@ -7,6 +7,53 @@
 
 ---
 
+## [2026-06-02] — Merge upstream Tahoma2D nightly (WIP su branch `merge/upstream-nightly`)
+
+> ⚠️ **NON ancora su `master`** — lavoro su branch dedicato + worktree isolato.
+> Da finalizzare dopo la risoluzione del crash qui sotto.
+
+### Merged
+- **Merge `upstream/master` (nightly, post-v1.6.1)** nel branch `merge/upstream-nightly`.
+  - merge-base: `c8b768aa3` (10 mar 2026). Ztoryc 333 commit / upstream 154 (46 fix, 10 feat).
+  - **Solo 17 conflitti**, hotspot (mainwindow, txsheet, xshcellviewer, tooloptions,
+    flipconsole) **auto-mergeati**. Conflitti risolti: 15 infra/branding → `ours`;
+    `CMakeLists.txt` → ours (scartato `set(VERSION 1.6.1)`, Ztoryc usa `ZtorycVersion.cmake`);
+    `cellselectioncommand.cpp` → **upstream** (il loro fix "set key" su peg column rende
+    ridondante il mio PR candidate).
+  - **2 fix post-merge** (`b2ca7abb4`): (a) `onStageObjectChange` — upstream ha aggiunto
+    `bool isDragging` alla virtuale, allineata la firma dell'override Ztoryc; (b) `maintoolbar.h/.cpp`
+    riaggiunti al CMakeLists (persi col `--ours`, causavano undefined `MainToolbar::MainToolbar`).
+  - **Build pulita** + deploy isolato funzionante (`merge-1.6.1/toonz/Ztoryc.app`, `ZTORYC_WORKSPACE`).
+- Novità upstream verificate presenti e funzionanti: **Render Settings** (ex Output Settings),
+  **Sync with Play Range**, Animate tool (Reset Center/Set Key/Pick mode), Master Toolbar,
+  Drawing Number/Mark.
+
+### Da risolvere PRIMA del merge su master
+- 🔴 **CRASH muovendo keyframe nella xsheet** (`Crash-20260602-161810.log`) — SIGSEGV in
+  `TStageObject::setKeyframeWithoutUndo → TDoubleParam::setKeyframe`, via `KeyframeMover::moveKeyframes`.
+  **NON è regressione del merge**: `keyframemover.cpp` è identico a upstream puro (mai toccato da Ztoryc).
+  È un bug upstream nightly: muovendo un keyframe su **colonna di livello** in una scena **esistente**
+  (`scsh120.tnz`, salvata pre-Drawing-Number), il canale nuovo `T_DrawingNumber` viene copiato con dati
+  non inizializzati → crash. Il fix noto upstream `cf52a1776` ("moving non-column based channel keys")
+  è già incluso ma non copre questo path. **TODO**: (1) ripro su scsh120 vs scena nuova; (2) guard/init
+  difensivo del canale Drawing Number al load o in `setKeyframeWithoutUndo`. File: `tstageobject.cpp`,
+  `tparam.cpp` (TDoubleParam::setKeyframe).
+
+### Notes
+- Bug pre-esistenti (non da merge) osservati: (a) glitch refresh monitor panel (tracce video/audio,
+  solo scene vecchie finora); (b) entrando in uno shot il viewer ignora il view mode corrente e parte
+  in camera view invece di camera-stand (serve toggle per refresh). Entrambi da loggare/indagare.
+- Integrazione fine "Sync with Play Range" ↔ marker In/Out dell'animatic: il sync si aggancia al drag
+  via `xsheetdragtool`; nell'animatic i marker passano per `subscenecommand::setPlayRange`, quindi il
+  sync potrebbe non scattare lì. Da collegare esplicitamente se serve.
+
+### Ripresa (sessione nuova)
+1. Test riproducibilità crash keyframe (scsh120 vs scena nuova)
+2. Fix crash Drawing Number su scene pre-esistenti
+3. `git checkout master && git merge merge/upstream-nightly` → push origin master → rsync → rebuild app principale
+
+---
+
 ## [2026-06-02] — CLONE shot: fix perdita keyframe camera (e pegbar)
 
 ### Fixed
