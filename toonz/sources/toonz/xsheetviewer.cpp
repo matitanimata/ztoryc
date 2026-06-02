@@ -1210,7 +1210,8 @@ void XsheetViewer::showEvent(QShowEvent *) {
                        SLOT(onXsheetChanged()));
   ret = ret && connect(xsheetHandle, SIGNAL(xsheetChanged()), this,
                        SLOT(changeWindowTitle()));
-
+  ret = ret && connect(xsheetHandle, SIGNAL(xsheetSwitched()), this,
+                       SLOT(updateDrawingNumberObservers()));
   ret = ret &&
         connect(app->getCurrentSelection(),
                 SIGNAL(selectionSwitched(TSelection *, TSelection *)), this,
@@ -1264,6 +1265,8 @@ void XsheetViewer::hideEvent(QHideEvent *) {
   TXsheetHandle *xsheetHandle = app->getCurrentXsheet();
   disconnect(xsheetHandle, SIGNAL(xsheetSwitched()), this,
              SLOT(updateAllAree()));
+  disconnect(xsheetHandle, SIGNAL(xsheetSwitched()), this,
+             SLOT(updateDrawingNumberObservers()));
   disconnect(xsheetHandle, SIGNAL(xsheetChanged()), this,
              SLOT(onXsheetChanged()));
   disconnect(xsheetHandle, SIGNAL(xsheetChanged()), this,
@@ -1776,6 +1779,19 @@ void XsheetViewer::updateAllAree(bool isDragging) {
     m_columnArea->update(m_columnArea->visibleRegion());
   }
   m_toolbar->update(m_toolbar->visibleRegion());
+}
+
+//-----------------------------------------------------------------------------
+
+void XsheetViewer::updateDrawingNumberObservers() {
+  TApp *app                   = TApp::instance();
+  TXsheetHandle *xsheetHandle = app->getCurrentXsheet();
+  if (xsheetHandle && xsheetHandle->getXsheet()) {
+    xsheetHandle->getXsheet()->addDrawingNumberObserversAll();
+    xsheetHandle->getXsheet()->updateNonZeroDrawingNumberCellsBox(
+        app->getCurrentFrame()->getFrame(), 0,
+        xsheetHandle->getXsheet()->getColumnCount() - 1);
+  }
 }
 
 //-----------------------------------------------------------------------------

@@ -351,6 +351,10 @@ void XsheetGUI::setPlayRange(int r0, int r1, int step, bool withUndo) {
   }
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   scene->getProperties()->getPreviewProperties()->setRange(r0, r1, step);
+  if (scene->getProperties()
+          ->getOutputProperties()
+          ->isSyncWithPlayRangeEnabled())
+    scene->getProperties()->getOutputProperties()->setRange(r0, r1, step);
   TApp::instance()->getCurrentScene()->notifySceneChanged();
 }
 
@@ -901,7 +905,7 @@ public:
           xsh->setCell(r, col, TXshCell());
         else {
           xsh->setCell(r, col, m_cells[k]);
-          if (column->isLoopStart(r + 1)) {
+          if (column && column->isLoopStart(r + 1)) {
             column->shiftStartLoop(r + 1, r0 - (r + 1));
           } 
         }
@@ -1249,7 +1253,7 @@ public:
         bool isSountTextColumn = (column && column->getSoundTextColumn());
         if (m_insert) {
           xsh->insertCells(m_r1 + 1, m_c0 + c, dr);
-          if (column->isLoopEnd(m_r1)) {
+          if (column && column->isLoopEnd(m_r1)) {
             xsh->shiftLoopMarkers(m_r1, m_c0 + c, dr);
             xsh->shiftCellMarks(m_r1 + 1, m_c0 + c, dr);
           } else
@@ -1331,7 +1335,7 @@ public:
             xsh->setCell(r, m_c0 + c, TXshCell());
           else {
             xsh->setCell(r, m_c0 + c, m_columns[c].generate(r));
-            if (column->isLoopStart(r + 1)) {
+            if (column && column->isLoopStart(r + 1)) {
               if (m_origStartLoop == -1) m_origStartLoop = r + 1;
               column->shiftStartLoop(r + 1, -1);
             }
@@ -3127,7 +3131,7 @@ public:
   void undo() const override {
     TXsheet *xsh       = TApp::instance()->getCurrentXsheet()->getXsheet();
     TXshColumn *column = xsh->getColumn(m_col);
-
+    if (!column) return;
     column->removeLoop(m_newLoop);
     column->addLoop(m_oldLoop);
 
@@ -3137,7 +3141,7 @@ public:
   void redo() const override {
     TXsheet *xsh       = TApp::instance()->getCurrentXsheet()->getXsheet();
     TXshColumn *column = xsh->getColumn(m_col);
-
+    if (!column) return;
     column->removeLoop(m_oldLoop);
     column->addLoop(m_newLoop);
 
@@ -3172,6 +3176,7 @@ public:
     m_markerRow        = row;
     TXsheet *xsh       = TApp::instance()->getCurrentXsheet()->getXsheet();
     TXshColumn *column = xsh->getColumn(m_targetCol);
+    if (!column) return;
     m_newLoop          = column->getLoopWithRow(m_markerRow);
     m_oldLoop          = m_newLoop;
     refreshCellsArea();
@@ -3194,6 +3199,7 @@ public:
 
     TXsheet *xsh       = TApp::instance()->getCurrentXsheet()->getXsheet();
     TXshColumn *column = xsh->getColumn(m_targetCol);
+    if (!column) return;
 
     QList<std::pair<int, int>> loops = column->getLoops();
 

@@ -5,12 +5,14 @@
 #include "tapp.h"
 #include "menubarcommandids.h"
 #include "commandbarpopup.h"
+#include "tsystem.h"
 
 // TnzLib includes
 #include "toonz/preferences.h"
 #include "toonz/toonzscene.h"
 #include "toonz/tscenehandle.h"
 #include "toonz/childstack.h"
+#include "toonz/toonzfolders.h"
 
 // Qt includes
 #include <QWidgetAction>
@@ -24,8 +26,9 @@ namespace XsheetGUI {
 //-----------------------------------------------------------------------------
 
 QuickToolbar::QuickToolbar(XsheetViewer *parent, Qt::WindowFlags flags,
-                             bool isCollapsible)
-    : CommandBar(parent, flags, isCollapsible, true), m_viewer(parent) {
+                           bool isCollapsible)
+    : CommandBar(parent, flags, isCollapsible, CommandBarType::Quick)
+    , m_viewer(parent) {
   setObjectName("cornerWidget");
   setFixedHeight(29);
   setObjectName("QuickToolbar");
@@ -60,23 +63,42 @@ void QuickToolbar::showEvent(QShowEvent *e) {
 //-----------------------------------------------------------------------------
 
 void QuickToolbar::contextMenuEvent(QContextMenuEvent *event) {
-  QMenu *menu = new QMenu(this);
-  QAction *customizeCommandBar =
-      menu->addAction(tr("Customize Quick Toolbar"));
+  QMenu *menu                  = new QMenu(this);
+  QAction *customizeCommandBar = menu->addAction(tr("Customize Quick Toolbar"));
   connect(customizeCommandBar, SIGNAL(triggered()),
           SLOT(doCustomizeCommandBar()));
+
+  menu->addSeparator();
+
+  QAction *resetCommandBar = menu->addAction(tr("Reset Quick Toolbar"));
+  connect(resetCommandBar, SIGNAL(triggered()), SLOT(doResetCommandBar()));
+
+  resetCommandBar->setEnabled(!isDefault());
+
   menu->exec(event->globalPos());
 }
 
 //-----------------------------------------------------------------------------
 
 void QuickToolbar::doCustomizeCommandBar() {
-  CommandBarPopup *cbPopup = new CommandBarPopup("", true);
+  CommandBarPopup *cbPopup = new CommandBarPopup("", CommandBarType::Quick);
 
   if (cbPopup->exec()) {
-    fillToolbar(this, true);
+    fillToolbar(this, CommandBarType::Quick);
   }
   delete cbPopup;
+}
+
+//-----------------------------------------------------------------------------
+
+void QuickToolbar::doResetCommandBar() {
+  TFilePath personalPath =
+      ToonzFolder::getMyModuleDir() + TFilePath("quicktoolbar.xml");
+
+  if (TSystem::doesExistFileOrLevel(personalPath))
+    TSystem::deleteFile(personalPath);
+
+  fillToolbar(this, CommandBarType::Quick);
 }
 
 //============================================================

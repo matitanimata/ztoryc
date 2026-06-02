@@ -985,7 +985,7 @@ void FullColorBrushTool::leftButtonDrag(const TPointD &pos,
     TDimension size   = m_workRaster->getSize();
     TPointD rasCenter = TPointD(size.lx * 0.5, size.ly * 0.5);
     TThickPoint thickPoint(
-        pos + rasCenter, thickness,
+        point, thickness,
         (m_brushTip.getBrushTip() && m_brushTip.isAutoRotate() ? m_tiltAngle
                                                                : 0));
     std::vector<TThickPoint> pts;
@@ -1288,7 +1288,6 @@ void FullColorBrushTool::leftButtonUp(const TPointD &pos,
   TXshSimpleLevelP simLevel = level->getSimpleLevel();
 
   if (m_tileSet->getTileCount() > 0) {
-    delete m_tileSaver;
     TFrameId frameId = getCurrentFid();
     TRasterP subras  = ras->extract(m_strokeRect)->clone();
     TUndoManager::manager()->add(new FullColorBrushUndo(
@@ -1314,11 +1313,13 @@ void FullColorBrushTool::leftButtonUp(const TPointD &pos,
 
   notifyImageChanged();
   m_strokeRect.empty();
+  delete m_tileSaver;
   m_mousePressed     = false;
   m_isStraight       = false;
   m_oldPressure      = -1.0;
   m_perspectiveIndex = -1;
   m_tiltAngle        = 0;
+  m_tileSaver        = 0;
 }
 
 //---------------------------------------------------------------------------------------------------------------

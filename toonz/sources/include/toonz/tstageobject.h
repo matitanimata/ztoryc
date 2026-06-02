@@ -14,12 +14,15 @@
 
 // TnzLib includes
 #include "tstageobjectid.h"
+#include "toonz/txshcell.h"
+#include "toonz/txsheet.h"
 
 // tcg includes
 #include "tcg/tcg_controlled_access.h"
 
 // Qt includes
 #include <QStack>
+#include <QQueue>
 
 #undef DVAPI
 #undef DVVAR
@@ -100,6 +103,18 @@ public:
 Used to describe the object status - ie how the object can move.
 The default value is XY.
 */
+  using DrawingNumberCallback = std::function<void(const TParamChange&)>;
+
+  class DrawingNumberObserver final : TParamObserver {
+
+    public:
+    DrawingNumberCallback m_callback;
+    DrawingNumberObserver() {}; 
+    void onChange(const TParamChange &c) override;
+  };
+  DrawingNumberObserver m_drawingNumberObserver; 
+  void setDrawingNumberCallback(DrawingNumberCallback callback);
+
   enum Status {
     XY,            //!< The object can move freely on a plane
     PATH     = 1,  //!< The movement take place on a spline
@@ -131,7 +146,8 @@ The default value is XY.
              //! of the spline
     T_ShearX,  //!< Shear along x-axis
     T_ShearY,  //!< Shear along y-axis
-    T_ChannelCount
+    T_DrawingNumber,
+    T_ChannelCount,
   };
 
   /*!
@@ -295,9 +311,10 @@ object.
 
   //! Sets the center of the \e frame to \e center.
   void setCenter(double frame, const TPointD &centerPoint,
-                 const TPointD &frameCenter);
-  void setCenter(double frame, const TPointD &center) {
-    setCenter(frame, center, center);
+                 const TPointD &frameCenter, bool resetOrigin = false);
+  void setCenter(double frame, const TPointD &center,
+                 bool resetOrigin = false) {
+    setCenter(frame, center, center, resetOrigin);
   }
 
   //! Returns the center of the \e frame.
@@ -323,6 +340,9 @@ object.
   //! Returns true if \e frame is a keyframe for all channels with execption of
   //! global scale channel.
   bool is52FullKeyframe(int frame) const;
+
+  bool hasDrawingNumberKey(int frame) const;
+  bool isChannelInterpolated(TStageObject::Channel channel, int frame);
 
   /*!
 Retrieves from the list of the keyframes a keyframe object
@@ -356,6 +376,8 @@ with the frame.
   /** Gets a range of keyframes */
   void getKeyframes(KeyframeMap &keyframes) const;
   bool getKeyframeRange(int &r0, int &r1) const;
+  void getSDKeyframes(KeyframeMap &keyframes) const;
+  bool getSDKeyframeRange(int &r0, int &r1) const;
 
   bool getKeyframeSpan(int row, int &r0, double &ease0, int &r1,
                        double &ease1) const;
@@ -371,6 +393,11 @@ Returns the object's depth at specified frame.
 
   //!	Returns the object's stacking order at specified frame.
   double getSO(double frame);
+
+  //!	Returns the object's drawing number at specified frame.
+  double getDrawingNumber(double frame);
+
+  TParamP getDrawingNumberParamP() { return m_drawingnumber;  }
 
   //! Returns the absolute depth with no scale factor.
   double getGlobalNoScaleZ() const;
@@ -528,7 +555,7 @@ private:
   Status m_status;
 
   TDoubleParamP m_x, m_y, m_z, m_so, m_rot, m_scalex, m_scaley, m_scale,
-      m_posPath, m_shearx, m_sheary;
+      m_posPath, m_shearx, m_sheary, m_drawingnumber; 
 
   PlasticSkeletonDeformationP
       m_skeletonDeformation;  //!< Deformation curves for a plastic skeleton
@@ -612,7 +639,7 @@ public:
   std::string m_handle, m_parentHandle;
   TPinnedRangeSet *m_pinnedRangeSet;
   TDoubleParamP m_x, m_y, m_z, m_so, m_rot, m_scalex, m_scaley, m_scale,
-      m_posPath, m_shearx, m_sheary;
+      m_posPath, m_shearx, m_sheary, m_drawingnumber;
   PlasticSkeletonDeformationP
       m_skeletonDeformation;  //!< Deformation curves for a plastic skeleton
   double m_noScaleZ;

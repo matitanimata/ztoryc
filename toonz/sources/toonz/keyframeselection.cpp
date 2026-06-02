@@ -65,6 +65,7 @@ bool shiftKeyframesWithoutUndo(int r0, int r1, int c0, int c1, bool cut,
     }
     isShifted = stObj->moveKeyframes(keyToShift, delta);
   }
+  xsh->updateNonZeroDrawingNumberCellsBox(r0, c0, c1);
   return isShifted;
 }
 
@@ -112,6 +113,9 @@ bool deleteKeyframesWithoutUndo(
     areAllColumnLocked = false;
     assert(pegbar);
     pegbar->removeKeyframeWithoutUndo(row);
+    // Move frame center back to origin
+    TPointD center = pegbar->getCenter(row);
+    if (center != TPointD()) pegbar->setCenter(row, center, true);
   }
   if (areAllColumnLocked) return false;
 
@@ -345,9 +349,16 @@ void TKeyframeSelection::setKeyframes() {
   if (!pegbar) return;
   if (pegbar->isKeyframe(row)) {
     TStageObject::Keyframe key = pegbar->getKeyframe(row);
+
     pegbar->removeKeyframeWithoutUndo(row);
+
+    // Move frame center back to origin
+    TPointD center, offset;
+    pegbar->getCenterAndOffset(center, offset);
+    if (center != TPointD()) pegbar->setCenter(row, center, true);
+
     UndoRemoveKeyFrame *undo =
-        new UndoRemoveKeyFrame(id, row, key, xsheetHandle);
+        new UndoRemoveKeyFrame(id, row, key, center, offset, xsheetHandle);
     undo->setObjectHandle(app->getCurrentObject());
     TUndoManager::manager()->add(undo);
   } else {
@@ -449,6 +460,33 @@ void TKeyframeSelection::pasteKeyframesWithShift(int r0, int r1, int c0,
   TXsheet *xsh           = TApp::instance()->getCurrentXsheet()->getXsheet();
   oldData->setKeyframes(positions, xsh);
 
+  bool hasDrawingKeys = false;
+  std::map<int, std::set<double>> oldKeyRange;
+  std::map<int, std::vector<TXshCell>> undoFrames;
+
+  foreach (auto keyData, data->m_keyData) {
+    int r = keyData.second.m_channels->m_frame;
+    int c = keyData.first.second;
+    if (c < 0 || oldKeyRange.find(c) != oldKeyRange.end()) continue;
+    TStageObject *stObj = xsh->getStageObject(xsh->getColumnObjectId(c));
+    if (!stObj->hasDrawingNumberKey(r)) continue;
+    hasDrawingKeys = true;
+
+    TStageObject::KeyframeMap keyframes;
+    stObj->getKeyframes(keyframes);
+    std::set<double> range;
+    range.insert(keyframes.begin()->first);
+    range.insert(keyframes.rbegin()->first);
+    oldKeyRange[c] = range;
+
+    int cr0, cr1;
+    xsh->getCellRange(c, cr0, cr1);
+    int n = cr1 + 1;
+    std::vector<TXshCell> cells(n);
+    xsh->getCells(0, c, n, &cells[0], false, false);
+    undoFrames[c] = cells;
+  }
+
   bool isShift = shiftKeyframesWithoutUndo(r0, r1, c0, c1, false, true);
   bool isPaste = pasteKeyframesWithoutUndo(data, &m_positions);
   if (!isPaste && !isShift) {
@@ -459,8 +497,28 @@ void TKeyframeSelection::pasteKeyframesWithShift(int r0, int r1, int c0,
   TKeyframeData *newData = new TKeyframeData();
   newData->setKeyframes(m_positions, xsh);
   TKeyframeSelection *selection = new TKeyframeSelection(m_positions);
+
+  if (hasDrawingKeys) {
+    TUndoManager::manager()->beginBlock();
+
+    std::map<int, std::set<double>>::iterator it(oldKeyRange.begin()),
+        itEnd(oldKeyRange.end());
+    std::map<int, std::vector<TXshCell>>::iterator cit(undoFrames.begin());
+    for (; it != itEnd; it++, cit++) {
+      int c               = cit->first;
+      TStageObject *stObj = xsh->getStageObject(xsh->getColumnObjectId(c));
+      TStageObject::KeyframeMap keyframes;
+      stObj->getKeyframes(keyframes);
+      foreach (auto key, keyframes) {
+        int r = key.first;
+        xsh->addUndoDrawingNumberChange(r, c, it->second, cit->second);
+      }
+    }
+  }
   TUndoManager::manager()->add(
       new PasteKeyframesUndo(selection, newData, oldData, r0, r1, c0, c1));
+  if (hasDrawingKeys) TUndoManager::manager()->endBlock();
+
   TApp::instance()->getCurrentScene()->setDirtyFlag(true);
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
 }

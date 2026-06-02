@@ -59,6 +59,48 @@
 
 //---------------------------------------------------------
 
+namespace {
+TFilePath appendVersionSequence(TFilePath fp) {
+  int seq = 0;
+
+  TFilePathSet fileList;
+  QString filePattern = ((TFileType::getInfo(fp) == TFileType::RASTER_IMAGE ||
+                          TFileType::getInfo(fp) == TFileType::RASTER_LEVEL) &&
+                                 !fp.isFfmpegType()
+                             ? "*.*.*."
+                             : "*.*.") +
+                        QString::fromStdString(fp.getType());
+  QDir patternDir(fp.getParentDir().getQString());
+  patternDir.setNameFilters(QStringList(filePattern));
+  TSystem::readDirectory(fileList, patternDir, false);
+
+  TFilePathSet::iterator it;
+  for (it = fileList.begin(); it != fileList.end(); it++) {
+    std::string filename = it->getName();
+    QString seqStr = QString::fromStdString(filename).section('.', 1, 1);
+    bool ok;
+    int fileSeq = seqStr.toInt(&ok);
+    if (ok && fileSeq > seq) seq = fileSeq;
+  }
+
+  seq++;
+
+  QString seqStr = QString("%1").arg(seq, 4, 10, QChar('0'));
+  QString newName = QString::fromStdString(fp.getName()) + "." + seqStr;
+
+  return fp.withName(newName.toStdWString());
+}
+
+TFilePath appendVersionTimestamp(TFilePath fp) {
+  QDateTime date  = QDateTime::currentDateTime();
+  QString dateStr = date.toString("yyyyMMddThhmmss");
+
+  QString newName = QString::fromStdString(fp.getName()) + "." + dateStr;
+
+  return fp.withName(newName.toStdWString());
+}
+}  // namespace
+
 //=========================================================
 
 class OnRenderCompleted final : public TThread::Message {
@@ -274,9 +316,18 @@ sprop->getOutputProperties()->setRenderSettings(rso);*/
   if (fp.getWideName() == L"")
     fp = fp.withName(scene->getScenePath().getName());
   /*-- For raster images, add the frame number to the filename --*/
-  if (TFileType::getInfo(fp) == TFileType::RASTER_IMAGE) 
+  if (TFileType::getInfo(fp) == TFileType::RASTER_IMAGE)
     fp = fp.withFrame(TFrameId::EMPTY_FRAME);
-  fp   = scene->decodeFilePath(fp);
+  fp = scene->decodeFilePath(fp);
+
+  switch (outputSettings.getAppendVersionFormat()) {
+  case TOutputProperties::AppendVersionFormat::Sequence:
+    fp = appendVersionSequence(fp);
+    break;
+  case TOutputProperties::AppendVersionFormat::Timestamp:
+    fp = appendVersionTimestamp(fp);
+    break;
+  }
 
   // make sure there is a destination to write to.
   if (!TFileStatus(fp.getParentDir()).doesExist()) {

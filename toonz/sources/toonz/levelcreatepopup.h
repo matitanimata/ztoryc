@@ -11,6 +11,7 @@
 // forward declaration
 class QLabel;
 class QComboBox;
+class QCheckBox;
 // class DVGui::MeasuredDoubleLineEdit;
 
 //=============================================================================
@@ -37,6 +38,8 @@ class LevelCreatePopup final : public DVGui::Dialog {
   QLabel *m_rasterFormatLabel;
   QComboBox *m_rasterFormatOm;
   QPushButton *m_frameFormatBtn;
+
+  QCheckBox *m_addInNewCol;
 
 public:
   LevelCreatePopup();

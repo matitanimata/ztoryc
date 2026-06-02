@@ -53,6 +53,12 @@
 #include <QPropertyAnimation>
 #include <QSpacerItem>
 #include <QEvent>
+#include <QRadioButton>
+#include <QButtonGroup>
+
+TEnv::IntVar SyncOutputWithPlayRange("SyncOutputWithPlayRange", 0);
+TEnv::IntVar AppendVersionFormat("AppendVersionFormat", 0);
+
 //-----------------------------------------------------------------------------
 namespace {
 
@@ -217,7 +223,7 @@ OutputSettingsPopup::OutputSettingsPopup(QWidget *parent, bool isPreview)
   addPresetButton->setObjectName("PushButton_NoPadding");
   removePresetButton->setObjectName("PushButton_NoPadding");
   QString tooltip =
-      tr("Save current output settings.\nThe parameters to be saved are:\n- "
+      tr("Save current render settings.\nThe parameters to be saved are:\n- "
          "Camera settings\n- Project folder to be saved in\n- File format\n- "
          "File options\n- Resample Balance\n- Channel width\n- Linear Color "
          "Space\n- Color Space Gamma");
@@ -325,6 +331,30 @@ void OutputSettingsPopup::onCategoryActivated(QListWidgetItem *item) {
 
 //-----------------------------------------------------------------------------
 
+void OutputSettingsPopup::onSyncWithPlayRangeChanged(int state) {
+  bool enabled = (state == Qt::Checked);
+  getProperties()->setSyncWithPlayRangeEnabled(enabled);
+  SyncOutputWithPlayRange = enabled;
+  if (enabled) {
+    int r0, r1, step;
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    scene->getProperties()->getPreviewProperties()->getRange(r0, r1, step);
+    if (r1 < r0) r1 = r0;
+    m_startFld->setValue(r0 + 1);
+    m_endFld->setValue(r1 + 1);
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+void OutputSettingsPopup::onAppendVersionFormatChanged(int formatVersion) {
+  getProperties()->setAppendVersionFormat(
+      (TOutputProperties::AppendVersionFormat)formatVersion);
+  AppendVersionFormat = formatVersion;
+}
+
+//-----------------------------------------------------------------------------
+
 QFrame *OutputSettingsPopup::createPanel(bool isPreview) {
   QFrame *panel = new QFrame(this);
 
@@ -349,7 +379,7 @@ QFrame *OutputSettingsPopup::createPanel(bool isPreview) {
 
   if (isPreview)
     m_syncColorSettingsButton =
-        new DVGui::CheckBox(tr("Sync with Output Settings"));
+        new DVGui::CheckBox(tr("Sync with Render Settings"));
 
   if (!isPreview) {
     m_showCameraSettingsButton = new QPushButton("", this);
@@ -494,6 +524,8 @@ QFrame *OutputSettingsPopup::createGeneralSettingsBox(bool isPreview) {
   // Step
   m_stepFld = new DVGui::IntLineEdit(this);
 
+  QRadioButton *vfNone = nullptr, *vfSequence = nullptr, *vfTimestamp = nullptr;
+
   if (!isPreview) {
     // Save In
     m_saveInFileFld = new DVGui::FileField(0, QString(""));
@@ -512,6 +544,32 @@ QFrame *OutputSettingsPopup::createGeneralSettingsBox(bool isPreview) {
     m_fileFormat->addItems(formats);
     m_fileFormat->setFocusPolicy(Qt::StrongFocus);
     m_fileFormat->installEventFilter(this);
+
+    m_syncWithPlayRange = new DVGui::CheckBox("Sync with Play Range", this);
+
+    m_syncWithPlayRange->setChecked(SyncOutputWithPlayRange);
+    getProperties()->setSyncWithPlayRangeEnabled(SyncOutputWithPlayRange);
+
+    vfNone      = new QRadioButton(tr("None"), this);
+    vfSequence  = new QRadioButton(tr("Sequence"), this);
+    vfTimestamp = new QRadioButton(tr("Timestamp"), this);
+
+    switch (AppendVersionFormat) {
+    case 0:
+      vfNone->setChecked(true);
+      break;
+    case 1:
+      vfSequence->setChecked(true);
+      break;
+    case 2:
+      vfTimestamp->setChecked(true);
+      break;
+    }
+
+    m_appendVersionFormatBG = new QButtonGroup;
+    m_appendVersionFormatBG->addButton(vfNone, 0);
+    m_appendVersionFormatBG->addButton(vfSequence, 1);
+    m_appendVersionFormatBG->addButton(vfTimestamp, 2);
   }
 
   //-----
@@ -539,9 +597,11 @@ QFrame *OutputSettingsPopup::createGeneralSettingsBox(bool isPreview) {
       frameStepLay->addWidget(new QLabel(tr("Step:"), this), 0, 6,
         Qt::AlignRight | Qt::AlignVCenter);
       frameStepLay->addWidget(m_stepFld, 0, 7);
-
+      frameStepLay->addItem(
+          new QSpacerItem(10, 1, QSizePolicy::Fixed, QSizePolicy::Fixed), 0, 8);
+      frameStepLay->addWidget(m_syncWithPlayRange, 0, 9);
     }
-    frameStepLay->setColumnStretch(8, 1);
+    frameStepLay->setColumnStretch(10, 1);
 
     lay->addLayout(frameStepLay);
 
@@ -566,6 +626,21 @@ QFrame *OutputSettingsPopup::createGeneralSettingsBox(bool isPreview) {
 
     lay->addLayout(fileGridLay);
 
+    // Version output
+    QGridLayout* versionLay = new QGridLayout();
+    versionLay->setContentsMargins(0, 0, 0, 0);
+    versionLay->setHorizontalSpacing(5);
+    versionLay->setVerticalSpacing(10);
+    {
+        versionLay->addWidget(new QLabel(tr("Append to Name:"), this), 0, 0,
+            Qt::AlignRight | Qt::AlignVCenter);
+        versionLay->addWidget(vfNone, 0, 1);
+        versionLay->addWidget(vfSequence, 0, 2);
+        versionLay->addWidget(vfTimestamp, 0, 3);
+    }
+    versionLay->setColumnStretch(4, 1);
+
+    lay->addLayout(versionLay);
   }
   generalSettingsBox->setLayout(lay);
 
@@ -589,6 +664,13 @@ QFrame *OutputSettingsPopup::createGeneralSettingsBox(bool isPreview) {
   ret = ret && connect(m_fileFormatButton, SIGNAL(pressed()), this,
     SLOT(openSettingsPopup()));
 
+  if (!isPreview) {
+    ret = ret && connect(m_syncWithPlayRange, SIGNAL(stateChanged(int)), this,
+                         SLOT(onSyncWithPlayRangeChanged(int)));
+
+    ret = ret && connect(m_appendVersionFormatBG, SIGNAL(idClicked(int)), this,
+                         SLOT(onAppendVersionFormatChanged(int)));
+  }
   assert(ret);
   return generalSettingsBox;
 }
@@ -762,7 +844,7 @@ QFrame *OutputSettingsPopup::createColorSettingsBox(bool isPreview) {
          "when the \"Linear Color Space\" option is enabled.");
   if (m_isPreviewSettings)
     colorSpaceGammaTooltip +=
-        tr("\nInput less than 1.0 to sync the value with the output settings.");
+        tr("\nInput less than 1.0 to sync the value with the render settings.");
   m_colorSpaceGammaFld->setToolTip(colorSpaceGammaTooltip);
 
   if (!isPreview) {
@@ -1182,6 +1264,9 @@ void OutputSettingsPopup::updateField() {
     m_renderToFolders->setChecked(prop->isRenderToFolders());
     m_renderKeysOnly->setEnabled(prop->getMultimediaRendering());
     m_renderToFolders->setEnabled(prop->getMultimediaRendering());
+
+    prop->setSyncWithPlayRangeEnabled(SyncOutputWithPlayRange);
+    prop->setAppendVersionFormat((TOutputProperties::AppendVersionFormat)(int)AppendVersionFormat);
   }
 
   // Refresh format if allow-multithread was toggled
@@ -1230,8 +1315,17 @@ void OutputSettingsPopup::updateField() {
   int r0 = 0, r1 = -1, step;
   prop->getRange(r0, r1, step);
   if (r0 > r1) {
-    r0 = 0;
-    r1 = scene->getFrameCount() - 1;
+    if (!m_isPreviewSettings && prop->isSyncWithPlayRangeEnabled()) {
+      // First time opening Render properties. If sync play range is enabled,
+      // initialize range fields to whatever the preview range is
+      TOutputProperties *p = scene->getProperties()->getPreviewProperties();
+      int ignore;
+      p->getRange(r0, r1, ignore);
+    }
+    if (r0 > r1) {
+      r0 = 0;
+      r1 = scene->getFrameCount() - 1;
+    }
     if (r1 < 0) r1 = 0;
   }
   m_startFld->setValue(r0 + 1);
@@ -1903,7 +1997,7 @@ void OutputSettingsPopup::onAddPresetButtonPressed() {
   //*-- プリセット名を取得 --*/
   bool ok;
   QString qs = DVGui::getText(
-      tr("Add preset"), tr("Enter the name for the output settings preset."),
+      tr("Add preset"), tr("Enter the name for the render settings preset."),
       "", &ok);
   if (!ok || qs.isEmpty()) return;
 
@@ -1915,7 +2009,7 @@ void OutputSettingsPopup::onAddPresetButtonPressed() {
   /*-- すでに存在する場合、上書きを確認 --*/
   if (TFileStatus(fp).doesExist()) {
     int ret = QMessageBox::question(
-        this, tr("Add output settings preset"),
+        this, tr("Add render settings preset"),
         QString(tr("The file %1 does already exist.\nDo you want to overwrite it?"))
             .arg(qs),
         QMessageBox::Save | QMessageBox::Cancel, QMessageBox::Save);

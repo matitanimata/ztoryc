@@ -21,6 +21,7 @@
 #include "shifttracetool.h"
 #include "perspectivetool.h"
 #include "symmetrytool.h"
+#include "skeletontool.h"
 
 // TnzQt includes
 #include "toonzqt/dvdialog.h"
@@ -43,6 +44,7 @@
 #include "toonz/tstageobjecttree.h"
 #include "toonz/mypaintbrushstyle.h"
 #include "toonz/tonionskinmaskhandle.h"
+#include "toonz/tstageobjectcmd.h"
 
 // TnzCore includes
 #include "tproperty.h"
@@ -93,6 +95,10 @@ ToolOptionsBox::ToolOptionsBox(QWidget *parent, bool isScrollable)
   setFrameStyle(QFrame::StyledPanel);
   setFixedHeight(26);
 
+  m_noKeyIcon      = createQIcon("key_off");
+  m_partialKeyIcon = createQIcon("key_partial");
+  m_fullKeyIcon    = createQIcon("key_on");
+
   m_layout = new QHBoxLayout;
   m_layout->setContentsMargins(0, 0, 0, 0);
   m_layout->setSpacing(5);
@@ -117,7 +123,7 @@ ToolOptionsBox::ToolOptionsBox(QWidget *parent, bool isScrollable)
     toolContainer->setSizePolicy(QSizePolicy::MinimumExpanding,
                                  QSizePolicy::Fixed);
     toolContainer->setFixedHeight(24);
-    toolContainer->setObjectName("toolOptionsPanel");
+//    toolContainer->setObjectName("toolOptionsPanel");
     toolContainer->setLayout(m_layout);
   } else
     setLayout(m_layout);
@@ -356,7 +362,7 @@ void ToolOptionControlBuilder::visit(TColorChipProperty *p) {
 
 void ToolOptionControlBuilder::visit(TStylusProperty *p) {
   ToolOptionStylusConfigButton *obj =
-      new ToolOptionStylusConfigButton(m_tool, p);
+      new ToolOptionStylusConfigButton(m_panel, m_tool, p);
   obj->setToolTip(p->getQStringName());
 
   // This should be following another control.  Remove space item added after
@@ -374,7 +380,8 @@ void ToolOptionControlBuilder::visit(TStylusProperty *p) {
 //-----------------------------------------------------------------------------
 
 void ToolOptionControlBuilder::visit(TBrushTipProperty *p) {
-  ToolOptionBrushTipButton *obj = new ToolOptionBrushTipButton(m_tool, p);
+  ToolOptionBrushTipButton *obj =
+      new ToolOptionBrushTipButton(m_panel, m_tool, p);
   obj->setToolTip(p->getQStringName());
 
   hLayout()->addWidget(obj, 100);
@@ -432,7 +439,8 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
     , m_tool(tool)
     , m_frameHandle(frameHandle)
     , m_objHandle(objHandle)
-    , m_xshHandle(xshHandle) {
+    , m_xshHandle(xshHandle)
+    , m_updateControls(true) {
   setFrameStyle(QFrame::StyledPanel);
   setObjectName("toolOptionsPanel");
   setFixedHeight(26);
@@ -495,7 +503,11 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   m_soLabel = new ClickableLabel(tr("SO:"), this);
   m_soField = new PegbarChannelField(m_tool, TStageObject::T_SO, "field",
                                      frameHandle, objHandle, xshHandle, this);
-
+  /* --- Drawing Number */
+  m_drawingNumberLabel = new ClickableLabel(tr("Drawing #:"), this);
+  m_drawingNumberField =
+      new PegbarChannelField(m_tool, TStageObject::T_DrawingNumber, "field",
+                             frameHandle, objHandle, xshHandle, this);
   /* --- Rotation --- */
   m_rotationLabel = new ClickableLabel(tr("Rotation:"), this);
   m_rotationField =
@@ -599,6 +611,8 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   m_zField->setPrecision(4);
   m_noScaleZField->setPrecision(4);
 
+  m_drawingNumberField->setPrecision(2); 
+
   m_hFlipButton = new QPushButton(this);
   m_vFlipButton = new QPushButton(this);
 
@@ -625,12 +639,34 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   m_leftRotateButton->setToolTip(tr("Rotate Object Left"));
   m_rightRotateButton->setToolTip(tr("Rotate Object Right"));
 
+  m_setKeyButton = new QPushButton(this);
+  m_setKeyButton->setFixedSize(QSize(22, 20));
+  m_setKeyButton->setIconSize(QSize(20, 20));
+  m_setKeyButton->setToolTip(tr("Set Key"));
+
+  m_interpolationCombo = new QComboBox(this);
+  m_interpolationCombo->setSizeAdjustPolicy(
+      QComboBox::SizeAdjustPolicy::AdjustToContents);
+  m_interpolationCombo->setToolTip(tr("Default Interpolation"));
+  // This list must match what's in preferences
+  m_interpolationCombo->addItem(tr("Constant"), 1);
+  m_interpolationCombo->addItem(tr("Linear"), 2);
+  m_interpolationCombo->addItem(tr("Speed In / Speed Out"), 3);
+  m_interpolationCombo->addItem(tr("Ease In / Ease Out"), 4);
+  m_interpolationCombo->addItem(tr("Ease In / Ease Out %"), 5);
+  m_interpolationCombo->addItem(tr("Exponential"), 6);
+  m_interpolationCombo->addItem(tr("Expression "), 7);
+  m_interpolationCombo->addItem(tr("File"), 8);
+
+  m_resetCenterButton = new QPushButton(this);
+  m_resetCenterButton->setIcon(createQIcon("center_reset"));
+  m_resetCenterButton->setIconSize(QSize(20, 20));
+  m_resetCenterButton->setToolTip(tr("Reset Center"));
+
   bool splined                        = isCurrentObjectSplined();
   if (splined != m_splined) m_splined = splined;
   setSplined(m_splined);
 
-  const int ITEM_SPACING  = 10;
-  const int LABEL_SPACING = 3;
   /* --- Layout --- */
   QHBoxLayout *mainLay = m_layout;
   {
@@ -648,6 +684,9 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
     }
     m_pickWidget->setLayout(pickLay);
     mainLay->addWidget(m_pickWidget, 0);
+
+    mainLay->addWidget(m_interpolationCombo, 0);
+    mainLay->addWidget(m_setKeyButton, 0);
 
     addSeparator();
 
@@ -693,6 +732,7 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
         posLay->addWidget(m_soField, 10);
 
         posLay->addSpacing(ITEM_SPACING);
+
         posLay->addWidget(new DVGui::Separator("", this, false));
 
         posLay->addStretch(1);
@@ -801,6 +841,31 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
       m_axisOptionWidgets[Shear] = shearFrame;
       mainLay->addWidget(m_axisOptionWidgets[Shear], 0);
 
+      // Drawing Number
+      QFrame *drwaingNumberFrame    = new QFrame(this);
+      QHBoxLayout *drawingNumberLay = new QHBoxLayout();
+      drawingNumberLay->setContentsMargins(0, 0, 0, 0);
+      drawingNumberLay->setSpacing(0);
+      drwaingNumberFrame->setLayout(drawingNumberLay);
+      {
+        drawingNumberLay->addWidget(
+            new SimpleIconViewField("edit_drawingnumber", tr("Drawing #"),
+                                    this),
+            0);
+        drawingNumberLay->addSpacing(LABEL_SPACING * 2);
+
+        drawingNumberLay->addWidget(m_drawingNumberLabel, 0);
+        drawingNumberLay->addSpacing(LABEL_SPACING);
+        drawingNumberLay->addWidget(m_drawingNumberField, 10); 
+
+        drawingNumberLay->addSpacing(ITEM_SPACING);
+        drawingNumberLay->addWidget(new DVGui::Separator("", this, false));
+
+        drawingNumberLay->addStretch(1);
+      }
+      m_axisOptionWidgets[DrawingNumber] = drwaingNumberFrame;
+      mainLay->addWidget(m_axisOptionWidgets[DrawingNumber], 0);
+
       // Center Position
       QFrame *centerPosFrame    = new QFrame(this);
       QHBoxLayout *centerPosLay = new QHBoxLayout();
@@ -824,6 +889,9 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
         centerPosLay->addSpacing(LABEL_SPACING);
         centerPosLay->addWidget(m_nsCenterField, 10);
         centerPosLay->addWidget(m_lockNSCenterCheckbox, 0);
+
+        centerPosLay->addSpacing(ITEM_SPACING);
+        centerPosLay->addWidget(m_resetCenterButton, 0);
 
         centerPosLay->addSpacing(ITEM_SPACING);
         centerPosLay->addWidget(new DVGui::Separator("", this, false));
@@ -862,6 +930,7 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   connectLabelAndField(m_ewPosLabel, m_ewPosField);
   connectLabelAndField(m_nsPosLabel, m_nsPosField);
   connectLabelAndField(m_zLabel, m_zField);
+  connectLabelAndField(m_drawingNumberLabel, m_drawingNumberField);
   connectLabelAndField(m_soLabel, m_soField);
   connectLabelAndField(m_rotationLabel, m_rotationField);
   connectLabelAndField(m_globalScaleLabel, m_globalScaleField);
@@ -879,10 +948,19 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   connect(m_leftRotateButton, SIGNAL(clicked()), SLOT(onRotateLeft()));
   connect(m_rightRotateButton, SIGNAL(clicked()), SLOT(onRotateRight()));
 
+  connect(m_setKeyButton, SIGNAL(clicked()), SLOT(onSetKey()));
+
+  connect(m_interpolationCombo, SIGNAL(activated(int)), this,
+          SLOT(onInterpolationComboActivated(int)));
+
+  connect(m_resetCenterButton, SIGNAL(clicked()), SLOT(onResetCenter()));
+
   connect(editTool, SIGNAL(clickFlipHorizontal()), SLOT(onFlipHorizontal()));
   connect(editTool, SIGNAL(clickFlipVertical()), SLOT(onFlipVertical()));
   connect(editTool, SIGNAL(clickRotateLeft()), SLOT(onRotateLeft()));
   connect(editTool, SIGNAL(clickRotateRight()), SLOT(onRotateRight()));
+
+  updateStatus();
 }
 
 //-----------------------------------------------------------------------------
@@ -901,7 +979,16 @@ void ArrowToolOptionsBox::connectLabelAndField(ClickableLabel *label,
 //-----------------------------------------------------------------------------
 
 void ArrowToolOptionsBox::showEvent(QShowEvent *) {
+  int interpolationType = Preferences::instance()->getKeyframeType();
+  for (int i = 0; i < m_interpolationCombo->count(); ++i)
+    if (m_interpolationCombo->itemData(i) == interpolationType) {
+      m_interpolationCombo->setCurrentIndex(i);
+      break;
+    }
+
   connect(m_frameHandle, SIGNAL(frameSwitched()), SLOT(onFrameSwitched()));
+  connect(m_frameHandle, SIGNAL(isPlayingStatusChanged()),
+          SLOT(onPlayingStatusChanged()));
   // if some stage object is added/removed, then reflect it to the combobox
   connect(m_xshHandle, SIGNAL(xsheetSwitched()), this,
           SLOT(updateStageObjectComboItems()));
@@ -921,6 +1008,8 @@ void ArrowToolOptionsBox::showEvent(QShowEvent *) {
 void ArrowToolOptionsBox::hideEvent(QShowEvent *) {
   disconnect(m_frameHandle, SIGNAL(frameSwitched()), this,
              SLOT(onFrameSwitched()));
+  disconnect(m_frameHandle, SIGNAL(isPlayingStatusChanged()), this,
+             SLOT(onPlayingStatusChanged()));
 
   disconnect(m_xshHandle, SIGNAL(xsheetSwitched()), this,
              SLOT(updateStageObjectComboItems()));
@@ -951,6 +1040,147 @@ void ArrowToolOptionsBox::setSplined(bool on) {
 bool ArrowToolOptionsBox::isCurrentObjectSplined() const {
   TStageObjectId objId = m_objHandle->getObjectId();
   return m_xshHandle->getXsheet()->getStageObject(objId)->getSpline() != 0;
+}
+
+//-----------------------------------------------------------------------------
+
+int ArrowToolOptionsBox::getKeysStatus(int axisId, bool allKeys,
+                                       TStageObject::Keyframe keys) {
+  int keyCount   = 0;
+  int keysFound  = 0;
+
+  if (axisId == AXIS::Position || allKeys) {
+    if (m_splined || m_globalKey->isChecked()) {
+      keyCount += 1;
+      if (keys.m_channels[TStageObject::T_Path].m_isKeyframe) keysFound++;
+    }
+    if (!m_splined || m_globalKey->isChecked()) {
+      keyCount += 4;
+      if (keys.m_channels[TStageObject::T_X].m_isKeyframe) keysFound++;
+      if (keys.m_channels[TStageObject::T_Y].m_isKeyframe) keysFound++;
+      if (keys.m_channels[TStageObject::T_Z].m_isKeyframe) keysFound++;
+      if (keys.m_channels[TStageObject::T_SO].m_isKeyframe) keysFound++;
+    }
+  }
+
+  if (axisId == AXIS::Rotation || allKeys) {
+    keyCount += 1;
+    if (keys.m_channels[TStageObject::T_Angle].m_isKeyframe) keysFound++;
+  }
+
+  if (axisId == AXIS::Scale || allKeys) {
+    keyCount += 3;
+    if (keys.m_channels[TStageObject::T_Scale].m_isKeyframe) keysFound++;
+    if (keys.m_channels[TStageObject::T_ScaleX].m_isKeyframe) keysFound++;
+    if (keys.m_channels[TStageObject::T_ScaleY].m_isKeyframe) keysFound++;
+  }
+
+  if (axisId == AXIS::Shear || allKeys) {
+    keyCount += 2;
+    if (keys.m_channels[TStageObject::T_ShearX].m_isKeyframe) keysFound++;
+    if (keys.m_channels[TStageObject::T_ShearY].m_isKeyframe) keysFound++;
+  }
+
+  if (axisId == AXIS::DrawingNumber) {
+    keyCount += 1;
+    if (keys.m_channels[TStageObject::T_DrawingNumber].m_isKeyframe)
+      keysFound++;
+  }
+
+  if (keysFound > 0 && keysFound == keyCount) return 2;  // Full
+  if (keysFound > 0 && keysFound != keyCount) return 1;  // Partial
+  return 0;                                              // None
+}
+
+//-----------------------------------------------------------------------------
+
+bool ArrowToolOptionsBox::canSetInterpolation(int axisId, bool allKeys,
+                                              int frame,
+                                              TStageObject *stageObj) {
+  bool canSet = true;
+  int r0, r1;
+  TStageObject::KeyframeMap keyframes;
+  stageObj->getKeyframes(keyframes);
+  stageObj->getKeyframeRange(r0, r1);
+
+  if (frame >= r0 && frame <= r1) {
+    auto it    = keyframes.lower_bound(frame);
+    bool isKey = frame == it->first;
+    if ((frame == r0 && it->first == r0) || (frame == r1 && it->first == r1))
+      canSet = getKeysStatus(axisId, allKeys, it->second) != 2;
+    else {
+      int keyCount                = 0;
+      int keysFound               = 0;
+      TStageObject::Keyframe keys = it->second;
+
+      if (axisId == AXIS::Position || allKeys) {
+        if (m_splined || m_globalKey->isChecked()) {
+          keyCount += 1;
+          if ((isKey && keys.m_channels[TStageObject::T_Path].m_isKeyframe) ||
+              stageObj->isChannelInterpolated(TStageObject::T_Path, frame))
+            keysFound++;
+        }
+        if (!m_splined || m_globalKey->isChecked()) {
+          keyCount += 4;
+          if ((isKey && keys.m_channels[TStageObject::T_X].m_isKeyframe) ||
+              stageObj->isChannelInterpolated(TStageObject::T_X, frame))
+            keysFound++;
+          if ((isKey && keys.m_channels[TStageObject::T_Y].m_isKeyframe) ||
+              stageObj->isChannelInterpolated(TStageObject::T_Y, frame))
+            keysFound++;
+          if ((isKey && keys.m_channels[TStageObject::T_Z].m_isKeyframe) ||
+              stageObj->isChannelInterpolated(TStageObject::T_Z, frame))
+            keysFound++;
+          if ((isKey && keys.m_channels[TStageObject::T_SO].m_isKeyframe) ||
+              stageObj->isChannelInterpolated(TStageObject::T_SO, frame))
+            keysFound++;
+        }
+      }
+
+      if (axisId == AXIS::Rotation || allKeys) {
+        keyCount += 1;
+        if ((isKey && keys.m_channels[TStageObject::T_Angle].m_isKeyframe) ||
+            stageObj->isChannelInterpolated(TStageObject::T_Angle, frame))
+          keysFound++;
+      }
+
+      if (axisId == AXIS::Scale || allKeys) {
+        keyCount += 3;
+        if ((isKey && keys.m_channels[TStageObject::T_Scale].m_isKeyframe) ||
+            stageObj->isChannelInterpolated(TStageObject::T_Scale, frame))
+          keysFound++;
+        if ((isKey && keys.m_channels[TStageObject::T_ScaleX].m_isKeyframe) ||
+            stageObj->isChannelInterpolated(TStageObject::T_ScaleX, frame))
+          keysFound++;
+        if ((isKey && keys.m_channels[TStageObject::T_ScaleY].m_isKeyframe) ||
+            stageObj->isChannelInterpolated(TStageObject::T_ScaleY, frame))
+          keysFound++;
+      }
+
+      if (axisId == AXIS::Shear || allKeys) {
+        keyCount += 2;
+        if ((isKey && keys.m_channels[TStageObject::T_ShearX].m_isKeyframe) ||
+            stageObj->isChannelInterpolated(TStageObject::T_ShearX, frame))
+          keysFound++;
+        if ((isKey && keys.m_channels[TStageObject::T_ShearY].m_isKeyframe) ||
+            stageObj->isChannelInterpolated(TStageObject::T_ShearY, frame))
+          keysFound++;
+      }
+
+      if (axisId == AXIS::DrawingNumber) {
+        keyCount += 1;
+        if ((isKey &&
+             keys.m_channels[TStageObject::T_DrawingNumber].m_isKeyframe) ||
+            stageObj->isChannelInterpolated(TStageObject::T_DrawingNumber,
+                                            frame))
+          keysFound++;
+      }
+
+      canSet = keyCount != keysFound;
+    }
+  }
+
+  return canSet;
 }
 
 //-----------------------------------------------------------------------------
@@ -987,6 +1217,9 @@ void ArrowToolOptionsBox::updateStatus() {
   m_lockShearHCheckbox->updateStatus();
   m_lockShearVCheckbox->updateStatus();
 
+  // Drawing Number
+  m_drawingNumberField->updateStatus();
+
   // Center Position
   m_ewCenterField->updateStatus();
   m_nsCenterField->updateStatus();
@@ -997,11 +1230,168 @@ void ArrowToolOptionsBox::updateStatus() {
 
   bool splined = isCurrentObjectSplined();
   if (splined != m_splined) setSplined(splined);
+
+  if (m_updateControls) updateControls();
+}
+
+void ArrowToolOptionsBox::updateControls() {
+  TStageObjectId objId        = m_objHandle->getObjectId();
+  TStageObject *stageObj      = m_xshHandle->getXsheet()->getStageObject(objId);
+  int frame                   = m_frameHandle->getFrameIndex();
+  TStageObject::Keyframe keys = stageObj->getKeyframe(frame);
+
+  TStageObject::KeyframeMap keyframes;
+  stageObj->getKeyframes(keyframes);
+
+  QString keyColorName       = getKeyFrameBorderColor().name();
+  QString inBetweenColorName = getInBetweenBorderColor().name();
+
+  bool isPlaying = m_frameHandle->isPlaying();
+  if (isPlaying) m_updateControls = false; // Stop updating on next pass
+  QString highlightKey =
+      isPlaying ? "" : "QLineEdit {background-color: " + keyColorName + ";}";
+  QString highlightInbetween =
+      isPlaying ? ""
+                : "QLineEdit {background-color: " + inBetweenColorName + ";}";
+
+  // Position
+  m_motionPathPosField->setStyleSheet(
+      keys.m_channels[TStageObject::T_Path].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_Path, frame)
+                 ? highlightInbetween
+                 : ""));
+  m_ewPosField->setStyleSheet(
+      keys.m_channels[TStageObject::T_X].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_X, frame)
+                 ? highlightInbetween
+                 : ""));
+  m_nsPosField->setStyleSheet(
+      keys.m_channels[TStageObject::T_Y].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_Y, frame)
+                 ? highlightInbetween
+                 : ""));
+  m_zField->setStyleSheet(
+      keys.m_channels[TStageObject::T_Z].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_Z, frame)
+                 ? highlightInbetween
+                 : ""));
+  m_soField->setStyleSheet(
+      keys.m_channels[TStageObject::T_SO].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_SO, frame)
+                 ? highlightInbetween
+                 : ""));
+
+  // Rotation
+  m_rotationField->setStyleSheet(
+      keys.m_channels[TStageObject::T_Angle].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_Angle, frame)
+                 ? highlightInbetween
+                 : ""));
+
+  // Scale
+  m_globalScaleField->setStyleSheet(
+      keys.m_channels[TStageObject::T_Scale].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_Scale, frame)
+                 ? highlightInbetween
+                 : ""));
+  m_scaleHField->setStyleSheet(
+      keys.m_channels[TStageObject::T_ScaleX].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_ScaleX, frame)
+                 ? highlightInbetween
+                 : ""));
+  m_scaleVField->setStyleSheet(
+      keys.m_channels[TStageObject::T_ScaleY].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_ScaleY, frame)
+                 ? highlightInbetween
+                 : ""));
+
+  // Shear
+  m_shearHField->setStyleSheet(
+      keys.m_channels[TStageObject::T_ShearX].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_ShearX, frame)
+                 ? highlightInbetween
+                 : ""));
+  m_shearVField->setStyleSheet(
+      keys.m_channels[TStageObject::T_ShearY].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_ShearY, frame)
+                 ? highlightInbetween
+                 : ""));
+
+  // Drawing Number
+  m_drawingNumberField->setStyleSheet(
+      keys.m_channels[TStageObject::T_DrawingNumber].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_DrawingNumber,
+                                             frame)
+                 ? highlightInbetween
+                 : ""));
+
+  int axisId   = m_chooseActiveAxisCombo->currentIndex();
+  bool allKeys = axisId == AXIS::AllAxis || m_globalKey->isChecked();
+
+  m_drawingNumberLabel->setEnabled(objId.isColumn());
+  m_drawingNumberField->setEnabled(objId.isColumn());
+
+  m_setKeyButton->setEnabled(
+      (axisId != AXIS::DrawingNumber || objId.isColumn()));
+
+  m_interpolationCombo->setVisible(false);
+
+  m_setKeyButton->setVisible(axisId != AXIS::CenterPosition);
+
+  if (axisId == AXIS::CenterPosition) return;
+
+  m_interpolationCombo->setVisible(true);
+  bool enableInterpolation =
+      (axisId != AXIS::DrawingNumber || objId.isColumn()) &&
+      canSetInterpolation(axisId, allKeys, frame, stageObj);
+  if (!isPlaying) m_interpolationCombo->setEnabled(enableInterpolation);
+
+  bool isKey = stageObj->isKeyframe(frame);
+  if (!isKey || isPlaying) {
+    m_setKeyButton->setIcon(m_noKeyIcon);
+    return;
+  }
+
+  int keysStatus = getKeysStatus(axisId, allKeys, keys);
+
+  m_setKeyButton->setIcon(
+      !keysStatus ? m_noKeyIcon
+                  : (keysStatus == 1 ? m_partialKeyIcon : m_fullKeyIcon));
 }
 
 //-----------------------------------------------------------------------------
 
-void ArrowToolOptionsBox::onStageObjectChange() { updateStatus(); }
+void ArrowToolOptionsBox::onFrameSwitched() {
+  updateStatus();
+}
+
+//-----------------------------------------------------------------------------
+
+void ArrowToolOptionsBox::onPlayingStatusChanged() {
+  if (!m_frameHandle->isPlaying()) {
+    m_updateControls = true;
+    updateStatus();
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+void ArrowToolOptionsBox::onStageObjectChange(bool isDragging) {
+  m_updateControls = !isDragging && !m_tool->isDragging();
+  updateStatus();
+}
 
 //-----------------------------------------------------------------------------
 /*! update the object list in combobox
@@ -1092,8 +1482,6 @@ void ArrowToolOptionsBox::onCurrentAxisChanged(int axisId) {
   // Show the specified axis options, hide all the others
   for (int a = 0; a != AllAxis; ++a)
     m_axisOptionWidgets[a]->setVisible(a == axisId || axisId == AllAxis);
-
-  m_pickWidget->setVisible(axisId == AllAxis);
 }
 
 //-----------------------------------------------------------------------------
@@ -1124,6 +1512,588 @@ void ArrowToolOptionsBox::onRotateRight() {
   m_rotationField->setValue(m_rotationField->getValue() - 90);
   emit m_rotationField->measuredValueChanged(
       m_rotationField->getMeasuredValue());
+}
+
+//-----------------------------------------------------------------------------
+
+void ArrowToolOptionsBox::onSetKey() {
+  int axisId = m_chooseActiveAxisCombo->currentIndex();
+  if (axisId == AXIS::CenterPosition) return;
+
+  TStageObjectId objId        = m_objHandle->getObjectId();
+  TStageObject *stageObj      = m_xshHandle->getXsheet()->getStageObject(objId);
+  int frame                   = m_frameHandle->getFrameIndex();
+  TStageObject::Keyframe keys = stageObj->getKeyframe(frame);
+
+  bool allKeys       = axisId == AXIS::AllAxis || m_globalKey->isChecked();
+
+  // keysStatus: 0 = none, 1 = partial, 2 = full
+  int keysStatus     = getKeysStatus(axisId, allKeys, keys);
+  bool removeAllKeys = keysStatus == 2;
+
+  TUndoManager::manager()->beginBlock();
+  if (axisId == AXIS::Position || allKeys) {
+    if (m_splined || m_globalKey->isChecked()) {
+      if (removeAllKeys)
+        emit m_motionPathPosField->measuredValueDeleted();
+      else
+        emit m_motionPathPosField->measuredValueChanged(
+            m_motionPathPosField->getMeasuredValue());
+    }
+    if (!m_splined || m_globalKey->isChecked()) {
+      if (removeAllKeys) {
+        emit m_ewPosField->measuredValueDeleted();
+        emit m_nsPosField->measuredValueDeleted();
+        emit m_zField->measuredValueDeleted();
+        emit m_soField->measuredValueDeleted();
+      } else {
+        if (!keys.m_channels[TStageObject::T_X].m_isKeyframe)
+          emit m_ewPosField->measuredValueChanged(
+              m_ewPosField->getMeasuredValue());
+        if (!keys.m_channels[TStageObject::T_Y].m_isKeyframe)
+          emit m_nsPosField->measuredValueChanged(
+              m_nsPosField->getMeasuredValue());
+        if (!keys.m_channels[TStageObject::T_Z].m_isKeyframe)
+          emit m_zField->measuredValueChanged(m_zField->getMeasuredValue());
+        if (!keys.m_channels[TStageObject::T_SO].m_isKeyframe)
+          emit m_soField->measuredValueChanged(m_soField->getMeasuredValue());
+      }
+    }
+  }
+
+  if (axisId == AXIS::Rotation || allKeys) {
+    if (removeAllKeys)
+      emit m_rotationField->measuredValueDeleted();
+    else
+      emit m_rotationField->measuredValueChanged(
+          m_rotationField->getMeasuredValue());
+  }
+
+  if (axisId == AXIS::Scale || allKeys) {
+    if (removeAllKeys) {
+      emit m_globalScaleField->measuredValueDeleted();
+      emit m_scaleHField->measuredValueDeleted();
+      emit m_scaleVField->measuredValueDeleted();
+    } else {
+      if (!keys.m_channels[TStageObject::T_Scale].m_isKeyframe)
+        emit m_globalScaleField->measuredValueChanged(
+            m_globalScaleField->getMeasuredValue());
+      if (!keys.m_channels[TStageObject::T_ScaleX].m_isKeyframe)
+        emit m_scaleHField->measuredValueChanged(
+            m_scaleHField->getMeasuredValue());
+      if (!keys.m_channels[TStageObject::T_ScaleY].m_isKeyframe)
+        emit m_scaleVField->measuredValueChanged(
+            m_scaleVField->getMeasuredValue());
+    }
+  }
+
+  if (axisId == AXIS::Shear || allKeys) {
+    if (removeAllKeys) {
+      emit m_shearHField->measuredValueDeleted();
+      emit m_shearVField->measuredValueDeleted();
+    } else {
+      if (!keys.m_channels[TStageObject::T_ShearX].m_isKeyframe)
+        emit m_shearHField->measuredValueChanged(
+            m_shearHField->getMeasuredValue());
+      if (!keys.m_channels[TStageObject::T_ShearY].m_isKeyframe)
+        emit m_shearVField->measuredValueChanged(
+            m_shearVField->getMeasuredValue());
+    }
+  }
+
+  if (axisId == AXIS::DrawingNumber) {
+    if (removeAllKeys) {
+      emit m_drawingNumberField->measuredValueDeleted();
+    } else {
+      if (!keys.m_channels[TStageObject::T_DrawingNumber].m_isKeyframe) {
+        m_xshHandle->getXsheet()->addUndoDrawingNumberChange(frame, objId);
+
+        emit m_drawingNumberField->measuredValueChanged(
+            m_drawingNumberField->getMeasuredValue());
+      }
+    }
+  }
+  TUndoManager::manager()->endBlock();
+
+  m_xshHandle->notifyXsheetChanged();
+}
+
+//-----------------------------------------------------------------------------
+
+void ArrowToolOptionsBox::onResetCenter() {
+  TStageObjectId id = m_objHandle->getObjectId();
+  TStageObjectCmd::resetCenterAndOffset(id, m_xshHandle);
+}
+
+//------------------------------------------------------------------------------
+
+void ArrowToolOptionsBox::onInterpolationComboActivated(int index) {
+  Preferences::instance()->setValue(keyframeType,
+                                    m_interpolationCombo->itemData(index));
+}
+
+//=============================================================================
+//
+// SkeletonToolOptionsBox
+//
+//=============================================================================
+
+SkeletonToolOptionsBox::SkeletonToolOptionsBox(QWidget *parent, TTool *tool,
+                                               TFrameHandle *frameHandle,
+                                               TObjectHandle *objHandle,
+                                               TXsheetHandle *xshHandle,
+                                               ToolHandle *toolHandle)
+    : ToolOptionsBox(parent, true)
+    , m_tool(tool)
+    , m_frameHandle(frameHandle)
+    , m_objHandle(objHandle)
+    , m_xshHandle(xshHandle)
+    , m_updateControls(true) {
+  setFrameStyle(QFrame::StyledPanel);
+  setObjectName("toolOptionsPanel");
+  setFixedHeight(26);
+
+  m_leftRotateButton = new QPushButton(this);
+  m_leftRotateButton->setFixedSize(QSize(20, 20));
+  m_leftRotateButton->setIcon(createQIcon("rotateleft"));
+  m_leftRotateButton->setIconSize(QSize(20, 20));
+  m_leftRotateButton->setToolTip(tr("Rotate Object Left"));
+
+  m_rightRotateButton = new QPushButton(this);
+  m_rightRotateButton->setFixedSize(QSize(20, 20));
+  m_rightRotateButton->setIcon(createQIcon("rotateright"));
+  m_rightRotateButton->setIconSize(QSize(20, 20));
+  m_rightRotateButton->setToolTip(tr("Rotate Object Right"));
+
+  m_setKeyButton = new QPushButton(this);
+  m_setKeyButton->setFixedSize(QSize(22, 20));
+  m_setKeyButton->setIconSize(QSize(20, 20));
+  m_setKeyButton->setToolTip(tr("Set Key"));
+
+  m_interpolationCombo = new QComboBox(this);
+  m_interpolationCombo->setSizeAdjustPolicy(
+      QComboBox::SizeAdjustPolicy::AdjustToContents);
+  m_interpolationCombo->setToolTip(tr("Default Interpolation"));
+  // This list must match what's in preferences
+  m_interpolationCombo->addItem(tr("Constant"), 1);
+  m_interpolationCombo->addItem(tr("Linear"), 2);
+  m_interpolationCombo->addItem(tr("Speed In / Speed Out"), 3);
+  m_interpolationCombo->addItem(tr("Ease In / Ease Out"), 4);
+  m_interpolationCombo->addItem(tr("Ease In / Ease Out %"), 5);
+  m_interpolationCombo->addItem(tr("Exponential"), 6);
+  m_interpolationCombo->addItem(tr("Expression "), 7);
+  m_interpolationCombo->addItem(tr("File"), 8);
+
+  // Position
+  m_ewPosLabel = new ClickableLabel(tr("X:"), this);
+  m_ewPosField =
+      new PegbarChannelField(m_tool, TStageObject::T_X, "field", frameHandle,
+                             objHandle, xshHandle, this);
+  m_nsPosLabel = new ClickableLabel(tr("Y:"), this);
+  m_nsPosField =
+      new PegbarChannelField(m_tool, TStageObject::T_Y, "field", frameHandle,
+                             objHandle, xshHandle, this);
+
+  // Rotation
+  m_rotationLabel = new ClickableLabel(tr("Rotation:"), this);
+  m_rotationField =
+      new PegbarChannelField(m_tool, TStageObject::T_Angle, "field",
+                             frameHandle, objHandle, xshHandle, this);
+
+  // Center
+  m_ewCenterLabel = new ClickableLabel(tr("X:"), this);
+  m_ewCenterField =
+      new PegbarCenterField(m_tool, 0, "field", objHandle, xshHandle, this);
+  m_nsCenterLabel = new ClickableLabel(tr("Y:"), this);
+  m_nsCenterField =
+      new PegbarCenterField(m_tool, 1, "field", objHandle, xshHandle, this);
+
+  TPropertyGroup *props = tool->getProperties(0);
+  assert(props->getPropertyCount() > 0);
+
+  ToolOptionControlBuilder builder(this, tool, nullptr, toolHandle);
+  if (tool && tool->getProperties(0)) tool->getProperties(0)->accept(builder);
+
+  m_mode = dynamic_cast<ToolOptionCombo *>(m_controls.value("Mode:"));
+  m_globalKey =
+      dynamic_cast<ToolOptionCheckbox *>(m_controls.value("Global Key"));
+
+  addSeparator();
+
+  hLayout()->addWidget(m_interpolationCombo);
+  hLayout()->addWidget(m_setKeyButton);
+
+  addSeparator();
+
+  {
+    // Keyframe
+    QFrame *keyFrame    = new QFrame(this);
+    QHBoxLayout *keyLay = new QHBoxLayout();
+    keyLay->setContentsMargins(0, 0, 0, 0);
+    keyLay->setSpacing(0);
+    keyFrame->setLayout(keyLay);
+    {
+      keyLay->addWidget(
+          new SimpleIconViewField("edit_position", tr("Position"), this), 0);
+      keyLay->addSpacing(LABEL_SPACING * 2);
+
+      keyLay->addWidget(m_ewPosLabel, 0);
+      keyLay->addSpacing(LABEL_SPACING);
+      keyLay->addWidget(m_ewPosField, 10);
+
+      keyLay->addSpacing(ITEM_SPACING);
+
+      keyLay->addWidget(m_nsPosLabel, 0);
+      keyLay->addSpacing(LABEL_SPACING);
+      keyLay->addWidget(m_nsPosField, 10);
+
+      keyLay->addSpacing(ITEM_SPACING);
+
+      keyLay->addWidget(new DVGui::Separator("", this, false));
+
+      keyLay->addWidget(
+          new SimpleIconViewField("edit_rotation", tr("Rotation"), this), 0);
+      keyLay->addSpacing(LABEL_SPACING * 2);
+      keyLay->addWidget(m_rotationLabel, 0);
+      keyLay->addSpacing(LABEL_SPACING);
+      keyLay->addWidget(m_rotationField, 10);
+      keyLay->addWidget(m_leftRotateButton);
+      keyLay->addWidget(m_rightRotateButton);
+
+      keyLay->addSpacing(ITEM_SPACING);
+
+      keyLay->addWidget(new DVGui::Separator("", this, false));
+
+      keyLay->addWidget(
+          new SimpleIconViewField("edit_center", tr("Center Position"), this),
+          0);
+      keyLay->addSpacing(LABEL_SPACING * 2);
+
+      keyLay->addWidget(m_ewCenterLabel, 0);
+      keyLay->addSpacing(LABEL_SPACING);
+      keyLay->addWidget(m_ewCenterField, 10);
+
+      keyLay->addSpacing(ITEM_SPACING);
+
+      keyLay->addWidget(m_nsCenterLabel, 0);
+      keyLay->addSpacing(LABEL_SPACING);
+      keyLay->addWidget(m_nsCenterField, 10);
+
+      keyLay->addSpacing(ITEM_SPACING);
+      keyLay->addWidget(new DVGui::Separator("", this, false));
+
+      keyLay->addStretch(1);
+    }
+    hLayout()->addWidget(keyFrame);
+  }
+
+  hLayout()->addStretch(1);
+
+  connectLabelAndField(m_ewPosLabel, m_ewPosField);
+  connectLabelAndField(m_nsPosLabel, m_nsPosField);
+  connectLabelAndField(m_rotationLabel, m_rotationField);
+  connectLabelAndField(m_ewCenterLabel, m_ewCenterField);
+  connectLabelAndField(m_nsCenterLabel, m_nsCenterField);
+
+  connect(m_mode, SIGNAL(currentIndexChanged(int)), this,
+          SLOT(onModeChanged(int)));
+  connect(m_globalKey, SIGNAL(toggled(bool)), this, SLOT(onGlobalKeyChanged(bool)));
+
+  connect(m_leftRotateButton, SIGNAL(clicked()), SLOT(onRotateLeft()));
+  connect(m_rightRotateButton, SIGNAL(clicked()), SLOT(onRotateRight()));
+
+  connect(m_setKeyButton, SIGNAL(clicked()), SLOT(onSetKey()));
+
+  connect(m_interpolationCombo, SIGNAL(activated(int)), this,
+          SLOT(onInterpolationComboActivated(int)));
+
+  onModeChanged(0);
+  onGlobalKeyChanged(m_globalKey->isChecked());
+  updateStatus();
+}
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::connectLabelAndField(ClickableLabel *label,
+                                                  MeasuredValueField *field) {
+  connect(label, SIGNAL(onMousePress(QMouseEvent *)), field,
+          SLOT(receiveMousePress(QMouseEvent *)));
+  connect(label, SIGNAL(onMouseMove(QMouseEvent *)), field,
+          SLOT(receiveMouseMove(QMouseEvent *)));
+  connect(label, SIGNAL(onMouseRelease(QMouseEvent *)), field,
+          SLOT(receiveMouseRelease(QMouseEvent *)));
+}
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::showEvent(QShowEvent *) {
+  int interpolationType = Preferences::instance()->getKeyframeType();
+  for (int i = 0; i < m_interpolationCombo->count(); ++i)
+    if (m_interpolationCombo->itemData(i) == interpolationType) {
+      m_interpolationCombo->setCurrentIndex(i);
+      break;
+    }
+
+  connect(m_frameHandle, SIGNAL(frameSwitched()), SLOT(onFrameSwitched()));
+  connect(m_frameHandle, SIGNAL(isPlayingStatusChanged()),
+          SLOT(onPlayingStatusChanged()));
+}
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::hideEvent(QShowEvent *) {
+  disconnect(m_frameHandle, SIGNAL(frameSwitched()), this,
+             SLOT(onFrameSwitched()));
+  disconnect(m_frameHandle, SIGNAL(isPlayingStatusChanged()), this,
+             SLOT(onPlayingStatusChanged()));
+}
+
+//-----------------------------------------------------------------------------
+
+int SkeletonToolOptionsBox::getKeysStatus(TStageObject::Keyframe keys) {
+  int keyCount  = 3;
+  int keysFound = 0;
+
+  if (keys.m_channels[TStageObject::T_X].m_isKeyframe) keysFound++;
+  if (keys.m_channels[TStageObject::T_Y].m_isKeyframe) keysFound++;
+
+  if (keys.m_channels[TStageObject::T_Angle].m_isKeyframe) keysFound++;
+
+  if (keysFound > 0 && keysFound == keyCount) return 2;  // Full
+  if (keysFound > 0 && keysFound != keyCount) return 1;  // Partial
+  return 0;                                              // None
+}
+
+bool SkeletonToolOptionsBox::canSetInterpolation(int frame,
+                                                 TStageObject *stageObj) {
+  bool canSet = true;
+  int r0, r1;
+  TStageObject::KeyframeMap keyframes;
+  stageObj->getKeyframes(keyframes);
+  stageObj->getKeyframeRange(r0, r1);
+
+  if (frame >= r0 && frame <= r1) {
+    auto it    = keyframes.lower_bound(frame);
+    bool isKey = frame == it->first;
+    if ((frame == r0 && it->first == r0) || (frame == r1 && it->first == r1))
+      canSet = getKeysStatus(it->second) != 2;
+    else {
+      int keyCount                = 3;
+      int keysFound               = 0;
+      TStageObject::Keyframe keys = it->second;
+
+      if ((isKey && keys.m_channels[TStageObject::T_X].m_isKeyframe) ||
+          stageObj->isChannelInterpolated(TStageObject::T_X, frame))
+        keysFound++;
+      if ((isKey && keys.m_channels[TStageObject::T_Y].m_isKeyframe) ||
+          stageObj->isChannelInterpolated(TStageObject::T_Y, frame))
+        keysFound++;
+      if ((isKey && keys.m_channels[TStageObject::T_Angle].m_isKeyframe) ||
+          stageObj->isChannelInterpolated(TStageObject::T_Angle, frame))
+        keysFound++;
+
+      canSet = keyCount != keysFound;
+    }
+  }
+
+  return canSet;
+}
+
+void SkeletonToolOptionsBox::updateStatus() {
+  // Position
+  m_ewPosField->updateStatus();
+  m_nsPosField->updateStatus();
+
+  // Rotation
+  m_rotationField->updateStatus();
+
+  // Center
+  m_ewCenterField->updateStatus();
+  m_nsCenterField->updateStatus();
+
+  if (m_updateControls) updateControls();
+}
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::updateControls() {
+  TStageObjectId objId        = m_objHandle->getObjectId();
+  TStageObject *stageObj      = m_xshHandle->getXsheet()->getStageObject(objId);
+  int frame                   = m_frameHandle->getFrameIndex();
+  TStageObject::Keyframe keys = stageObj->getKeyframe(frame);
+
+  TStageObject::KeyframeMap keyframes;
+  stageObj->getKeyframes(keyframes);
+
+  QString keyColorName       = getKeyFrameBorderColor().name();
+  QString inBetweenColorName = getInBetweenBorderColor().name();
+
+  bool isPlaying = m_frameHandle->isPlaying();
+  if (isPlaying) m_updateControls = false;  // Stop updating on next pass
+
+  QString highlightKey =
+      isPlaying ? "" : "QLineEdit {background-color: " + keyColorName + ";}";
+  QString highlightInbetween =
+      isPlaying ? ""
+                : "QLineEdit {background-color: " + inBetweenColorName + ";}";
+
+  bool buildMode    = (m_mode->getProperty()->getValue() == BUILD_SKELETON);
+  bool enableWidget = !buildMode && objId.isColumn();
+
+  m_ewPosLabel->setEnabled(enableWidget);
+  m_ewPosField->setEnabled(enableWidget);
+  m_nsPosLabel->setEnabled(enableWidget);
+  m_nsPosField->setEnabled(enableWidget);
+  m_ewPosField->setStyleSheet(
+      keys.m_channels[TStageObject::T_X].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_X, frame)
+                 ? highlightInbetween
+                 : ""));
+  m_nsPosField->setStyleSheet(
+      keys.m_channels[TStageObject::T_Y].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_Y, frame)
+                 ? highlightInbetween
+                 : ""));
+
+  m_rotationLabel->setEnabled(enableWidget);
+  m_rotationField->setEnabled(enableWidget);
+  m_leftRotateButton->setEnabled(enableWidget);
+  m_rightRotateButton->setEnabled(enableWidget);
+  m_rotationField->setStyleSheet(
+      keys.m_channels[TStageObject::T_Angle].m_isKeyframe
+          ? highlightKey
+          : (stageObj->isChannelInterpolated(TStageObject::T_Angle, frame)
+                 ? highlightInbetween
+                 : ""));
+
+  m_ewCenterLabel->setEnabled(enableWidget);
+  m_ewCenterField->setEnabled(enableWidget);
+  m_nsCenterLabel->setEnabled(enableWidget);
+  m_nsCenterField->setEnabled(enableWidget);
+
+  m_setKeyButton->setEnabled(enableWidget);
+
+  bool enableInterpolation =
+      enableWidget && canSetInterpolation(frame, stageObj);
+  if (!isPlaying) m_interpolationCombo->setEnabled(enableInterpolation);
+
+  bool isKey = stageObj->isKeyframe(frame);
+  if (!isKey || isPlaying) {
+    m_setKeyButton->setIcon(m_noKeyIcon);
+    return;
+  }
+
+  int keysStatus = getKeysStatus(keys);
+
+  m_setKeyButton->setIcon(
+      !keysStatus ? m_noKeyIcon
+                  : (keysStatus == 1 ? m_partialKeyIcon : m_fullKeyIcon));
+}
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::onStageObjectChange(bool isDragging) {
+  m_updateControls = !isDragging && !m_tool->isDragging();
+  updateStatus();
+}
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::onModeChanged(int index) { updateControls(); }
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::onGlobalKeyChanged(bool enabled) {
+  m_ewPosField->enableGlobalKeyframe(enabled);
+  m_nsPosField->enableGlobalKeyframe(enabled);
+  m_rotationField->enableGlobalKeyframe(enabled);
+}
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::onFrameSwitched() { updateStatus(); }
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::onPlayingStatusChanged() {
+  if (!m_frameHandle->isPlaying()) {
+    m_updateControls = true;
+    updateStatus();
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::onRotateLeft() {
+  m_rotationField->setValue(m_rotationField->getValue() + 90);
+  emit m_rotationField->measuredValueChanged(
+      m_rotationField->getMeasuredValue());
+}
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::onRotateRight() {
+  m_rotationField->setValue(m_rotationField->getValue() - 90);
+  emit m_rotationField->measuredValueChanged(
+      m_rotationField->getMeasuredValue());
+}
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::onSetKey() {
+  TStageObjectId objId        = m_objHandle->getObjectId();
+  TStageObject *stageObj      = m_xshHandle->getXsheet()->getStageObject(objId);
+  int frame                   = m_frameHandle->getFrameIndex();
+  TStageObject::Keyframe keys = stageObj->getKeyframe(frame);
+
+  // keysStatus: 0 = none, 1 = partial, 2 = full
+  int keysStatus     = getKeysStatus(keys);
+  bool removeAllKeys = keysStatus == 2;
+
+  TUndoManager::manager()->beginBlock();
+
+  if (removeAllKeys) {
+    emit m_ewPosField->measuredValueDeleted();
+    emit m_nsPosField->measuredValueDeleted();
+    emit m_rotationField->measuredValueDeleted();
+  } else {
+    if (!keys.m_channels[TStageObject::T_X].m_isKeyframe)
+      emit m_ewPosField->measuredValueChanged(m_ewPosField->getMeasuredValue());
+    if (!keys.m_channels[TStageObject::T_Y].m_isKeyframe)
+      emit m_nsPosField->measuredValueChanged(m_nsPosField->getMeasuredValue());
+    if (!keys.m_channels[TStageObject::T_Angle].m_isKeyframe)
+      emit m_rotationField->measuredValueChanged(
+          m_rotationField->getMeasuredValue());
+  }
+
+  // Removes all other keys
+  if (removeAllKeys) {
+    UndoSetKeyFrame *undo =
+        new UndoSetKeyFrame(stageObj->getId(), frame, m_xshHandle);
+    stageObj->getParam(TStageObject::T_Z)->deleteKeyframe(frame);
+    stageObj->getParam(TStageObject::T_SO)->deleteKeyframe(frame);
+    stageObj->getParam(TStageObject::T_Path)->deleteKeyframe(frame);
+    stageObj->getParam(TStageObject::T_ScaleX)->deleteKeyframe(frame);
+    stageObj->getParam(TStageObject::T_ScaleY)->deleteKeyframe(frame);
+    stageObj->getParam(TStageObject::T_Scale)->deleteKeyframe(frame);
+    stageObj->getParam(TStageObject::T_ShearX)->deleteKeyframe(frame);
+    stageObj->getParam(TStageObject::T_ShearY)->deleteKeyframe(frame);
+    stageObj->getParam(TStageObject::T_DrawingNumber)->deleteKeyframe(frame);
+    undo->setObjectHandle(m_objHandle);
+    TUndoManager::manager()->add(undo);
+  }
+  TUndoManager::manager()->endBlock();
+
+  m_xshHandle->notifyXsheetChanged();
+}
+
+//-----------------------------------------------------------------------------
+
+void SkeletonToolOptionsBox::onInterpolationComboActivated(int index) {
+  Preferences::instance()->setValue(keyframeType,
+                                    m_interpolationCombo->itemData(index));
 }
 
 //=============================================================================
@@ -1306,6 +2276,18 @@ SelectionToolOptionsBox::SelectionToolOptionsBox(QWidget *parent, TTool *tool,
     m_miterField->setEnabled(m_joinStyle->currentIndex() ==
                              TStroke::OutlineOptions::MITER_JOIN);
 
+    addSeparator();
+    if (tool && tool->getProperties(2)) tool->getProperties(2)->accept(builder);
+
+    m_flipStrokeButton = new QPushButton(tr("Flip Direction"), this);
+    int buttonWidth =
+        fontMetrics().horizontalAdvance(m_flipStrokeButton->text()) + 10;
+    m_flipStrokeButton->setFixedWidth(buttonWidth);
+    m_flipStrokeButton->setFixedHeight(20);
+    connect(m_flipStrokeButton, SIGNAL(clicked()), this, SLOT(onFlipDirection()));
+
+    hLayout()->addWidget(m_flipStrokeButton);
+
     onPropertyChanged();
   }
 
@@ -1358,6 +2340,8 @@ SelectionToolOptionsBox::SelectionToolOptionsBox(QWidget *parent, TTool *tool,
   connect(selectionTool, SIGNAL(clickFlipVertical()), SLOT(onFlipVertical()));
   connect(selectionTool, SIGNAL(clickRotateLeft()), SLOT(onRotateLeft()));
   connect(selectionTool, SIGNAL(clickRotateRight()), SLOT(onRotateRight()));
+
+  connect(selectionTool, SIGNAL(clickFlipDirection()), SLOT(onFlipDirection()));
 
   // assert(ret);
 
@@ -1457,6 +2441,14 @@ void SelectionToolOptionsBox::onRotateLeft() {
 void SelectionToolOptionsBox::onRotateRight() {
   m_rotationField->setValue(m_rotationField->getValue() - 90);
   m_rotationField->applyChange(true);
+}
+
+//-----------------------------------------------------------------------------
+
+void SelectionToolOptionsBox::onFlipDirection() {
+  VectorSelectionTool *vectorSelectionTool =
+      dynamic_cast<VectorSelectionTool *>(m_tool);
+  if (vectorSelectionTool) vectorSelectionTool->onPropertyChanged("FlipDirection");
 }
 
 //-----------------------------------------------------------------------------
@@ -2733,19 +3725,19 @@ TapeToolOptionsBox::TapeToolOptionsBox(QWidget *parent, TTool *tool,
   if (m_autocloseField)
     m_autocloseLabel = m_labels.value(m_autocloseField->propertyName());
   m_multiFrameMode   = dynamic_cast<ToolOptionCombo *>(m_controls.value("Frame Range:"));
+  m_lineExtAngleField = dynamic_cast<ToolOptionSlider*>(m_controls.value("LineExtAngle"));
+  if (m_lineExtAngleField) m_lineExtAngleLabel = m_labels.value(m_lineExtAngleField->propertyName());
 
   bool isNormalType = m_typeMode->getProperty()->getValue() == L"Normal";
   m_toolMode->setEnabled(isNormalType);
   m_autocloseField->setEnabled(!isNormalType);
   m_autocloseLabel->setEnabled(!isNormalType);
   m_multiFrameMode->setEnabled(!isNormalType);
-
-  bool isLineToLineMode =
-      m_toolMode->getProperty()->getValue() == L"Line to Line";
-  m_joinStrokesMode->setEnabled(!isLineToLineMode);
+  m_lineExtAngleField->setEnabled(!isNormalType);
+  m_lineExtAngleLabel->setEnabled(!isNormalType);
 
   bool isJoinStrokes = m_joinStrokesMode->isChecked();
-  m_smoothMode->setEnabled(!isLineToLineMode && isJoinStrokes);
+  m_smoothMode->setEnabled(isJoinStrokes);
 
   bool ret = connect(m_typeMode, SIGNAL(currentIndexChanged(int)), this,
                      SLOT(onToolTypeChanged(int)));
@@ -2773,25 +3765,22 @@ void TapeToolOptionsBox::onToolTypeChanged(int index) {
   m_autocloseField->setEnabled(!isNormalType);
   m_autocloseLabel->setEnabled(!isNormalType);
   m_multiFrameMode->setEnabled(!isNormalType);
+  m_lineExtAngleField->setEnabled(!isNormalType);
+  m_lineExtAngleLabel->setEnabled(!isNormalType);
 }
 
 //-----------------------------------------------------------------------------
 
 void TapeToolOptionsBox::onToolModeChanged(int index) {
-  const TEnumProperty::Range &range = m_toolMode->getProperty()->getRange();
-  bool isLineToLineMode             = range[index] == L"Line to Line";
-  m_joinStrokesMode->setEnabled(!isLineToLineMode);
   bool isJoinStrokes = m_joinStrokesMode->isChecked();
-  m_smoothMode->setEnabled(!isLineToLineMode && isJoinStrokes);
+  m_smoothMode->setEnabled(isJoinStrokes);
 }
 
 //-----------------------------------------------------------------------------
 
 void TapeToolOptionsBox::onJoinStrokesModeChanged() {
-  bool isLineToLineMode =
-      m_toolMode->getProperty()->getValue() == L"Line to Line";
   bool isJoinStrokes = m_joinStrokesMode->isChecked();
-  m_smoothMode->setEnabled(!isLineToLineMode && isJoinStrokes);
+  m_smoothMode->setEnabled(isJoinStrokes);
 }
 
 //=============================================================================
@@ -3806,17 +4795,17 @@ void ToolOptions::showEvent(QShowEvent *) {
 
   TObjectHandle *currObject = app->getCurrentObject();
   if (currObject) {
-    onStageObjectChange();
-    connect(currObject, SIGNAL(objectSwitched()), SLOT(onStageObjectChange()));
+    onStageObjectChange(false);
+    connect(currObject, SIGNAL(objectSwitched()), SLOT(onObjectSwitched()));
     connect(currObject, SIGNAL(objectChanged(bool)),
-            SLOT(onStageObjectChange()));
+            SLOT(onStageObjectChange(bool)));
   }
 
   TXshLevelHandle *currLevel = app->getCurrentLevel();
 
   if (currLevel)
     connect(currLevel, SIGNAL(xshLevelSwitched(TXshLevel *)), this,
-            SLOT(onStageObjectChange()));
+            SLOT(onXshLevelSwitched(TXshLevel *)));
 }
 
 //-----------------------------------------------------------------------------
@@ -3861,7 +4850,10 @@ void ToolOptions::onToolSwitched() {
         TPropertyGroup *pg = tool->getProperties(0);
         panel = new ArrowToolOptionsBox(0, tool, pg, currFrame, currObject,
                                         currXsheet, currTool);
-      } else if (tool->getName() == T_Selection)
+      } else if (tool->getName() == T_Skeleton)
+        panel = new SkeletonToolOptionsBox(0, tool, currFrame, currObject,
+                                           currXsheet, currTool);
+      else if (tool->getName() == T_Selection)
         panel = new SelectionToolOptionsBox(0, tool, currPalette, currTool);
       else if (tool->getName() == T_Geometric)
         panel = new GeometricToolOptionsBox(0, tool, currPalette, currTool);
@@ -3948,7 +4940,7 @@ void ToolOptions::onToolChanged() {
 
 //-----------------------------------------------------------------------------
 
-void ToolOptions::onStageObjectChange() {
+void ToolOptions::onStageObjectChange(bool isDragging) {
   TTool *tool = TTool::getApplication()->getCurrentTool()->getTool();
   if (!tool) return;
 
@@ -3956,7 +4948,16 @@ void ToolOptions::onStageObjectChange() {
   if (it == m_panels.end()) return;
 
   ToolOptionsBox *panel = it->second;
-  panel->onStageObjectChange();
+  panel->onStageObjectChange(isDragging);
+}
+//-----------------------------------------------------------------------------
+
+void ToolOptions::onObjectSwitched() { onStageObjectChange(false); }
+
+//-----------------------------------------------------------------------------
+
+void ToolOptions::onXshLevelSwitched(TXshLevel *) {
+  onStageObjectChange(false);
 }
 
 //***********************************************************************************
@@ -4030,3 +5031,17 @@ public:
     }
   }
 } rotateRightCHInstance("A_ToolOption_RotateRight");
+
+class FlipDirectionCommandHandler final : public MenuItemHandler {
+public:
+  FlipDirectionCommandHandler(CommandId cmdId) : MenuItemHandler(cmdId) {}
+  void execute() override {
+    TTool::Application *app = TTool::getApplication();
+    TTool *tool             = app->getCurrentTool()->getTool();
+    if (!tool) return;
+    if (tool->getName() == T_Selection) {
+      SelectionTool *selectionTool = dynamic_cast<SelectionTool *>(tool);
+      emit selectionTool->clickFlipDirection();
+    }
+  }
+} flipDirectionCHInstance("A_ToolOption_FlipDirection");

@@ -48,6 +48,8 @@
 #include "toonz/txshpegbarcolumn.h"
 #include "toonz/tstageobjectcmd.h"
 
+#include "../toonz/filmstripselection.h"
+
 // TnzQt includes
 #include "toonzqt/tselectionhandle.h"
 #include "toonzqt/gutil.h"
@@ -506,17 +508,16 @@ void GlobalKeyframeUndo::doInsertGlobalKeyframes(
     TStageObjectId objectId;
 
     TXshColumn *column = xsh->getColumn(c);
-    if (column && (column->getSoundColumn() || column->getFolderColumn())) continue;
+    if (!column || column->isLocked() || column->getSoundColumn() ||
+        column->getFolderColumn())
+      continue;
 
     if (c == -1)
       objectId = TStageObjectId::CameraId(xsh->getCameraColumnIndex());
-    else
+    else {
       objectId = xsh->getColumnObjectId(c);
-
-    TXshColumn *xshColumn = xsh->getColumn(c);
-    if (!xshColumn || xshColumn->isLocked() ||
-        (xshColumn->isCellEmpty(frame) && !objectId.isCamera()))
-      continue;
+      if (!objectId.isPegbar() && column->isCellEmpty(frame)) continue;
+    }
 
     TStageObject *obj = xsh->getStageObject(objectId);
     obj->setKeyframeWithoutUndo(frame);
@@ -533,17 +534,20 @@ void GlobalKeyframeUndo::doRemoveGlobalKeyframes(
     TStageObjectId objectId;
 
     TXshColumn *column = xsh->getColumn(c);
-    if (column && (column->getSoundColumn() || column->getFolderColumn())) continue;
+    if (column && (column->isLocked() || column->getSoundColumn() ||
+                   column->getFolderColumn()))
+      continue;
 
     if (c == -1)
       objectId = TStageObjectId::CameraId(xsh->getCameraColumnIndex());
     else
       objectId = xsh->getColumnObjectId(c);
 
-    if (xsh->getColumn(c) && xsh->getColumn(c)->isLocked()) continue;
-
     TStageObject *obj = xsh->getStageObject(objectId);
     obj->removeKeyframeWithoutUndo(frame);
+    // Move frame center back to origin
+    TPointD center = obj->getCenter(frame);
+    if (center != TPointD()) obj->setCenter(frame, center, true);
   }
 }
 
@@ -611,6 +615,7 @@ public:
 
 class RemoveGlobalKeyframeUndo final : public GlobalKeyframeUndo {
   std::vector<TStageObject::Keyframe> m_keyframes;
+  std::vector<std::pair<TPointD, TPointD>> m_centerData;
 
 public:
   RemoveGlobalKeyframeUndo(int frame, const std::vector<int> &columns)
@@ -628,6 +633,19 @@ public:
 
         return object->getKeyframe(r);
       }
+      static std::pair<TPointD, TPointD> getCenterData(int r, int c) {
+        TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+
+        TStageObjectId objectId =
+            (c == -1) ? TStageObjectId::CameraId(xsh->getCameraColumnIndex())
+                      : xsh->getColumnObjectId(c);
+
+        TStageObject *object = xsh->getStageObject(objectId);
+        assert(object);
+        TPointD center, offset;
+        object->getCenterAndOffset(center, offset);
+        return std::pair<TPointD, TPointD>(center, offset);
+      }
     };  // locals
 
     tcg::substitute(m_columns,
@@ -635,6 +653,10 @@ public:
 
     tcg::substitute(m_keyframes,
                     m_columns | ba::transformed([frame](int c){ return locals::getKeyframe(frame, c); }));
+
+    tcg::substitute(m_centerData, m_columns | ba::transformed([frame](int c) {
+                                    return locals::getCenterData(frame, c);
+                                 }));
   }
 
   void redo() const override {
@@ -657,6 +679,7 @@ public:
 
       TStageObject *object = xsh->getStageObject(objectId);
       object->setKeyframeWithoutUndo(m_frame, m_keyframes[c]);
+      object->setCenterAndOffset(m_centerData[c].first,m_centerData[c].second);
     }
 
     TApp::instance()->getCurrentScene()->setDirtyFlag(true);
@@ -1044,11 +1067,6 @@ public:
     TXsheetP xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
     while (c <= m_range.m_c1) {
       col = c;
-      // Convert implicit cell at end of selected range into a populated cell
-      if (xsh->isImplicitCell((m_range.m_r1 + 1), col)) {
-        TXshCell origCell = xsh->getCell((m_range.m_r1 + 1), col);
-        xsh->setCell((m_range.m_r1 + 1), col, origCell);
-      }
       while (r <= m_range.m_r1) {
         row = r;
         if (row == m_range.m_r0 || !xsh->isImplicitCell(row, col))
@@ -1200,9 +1218,9 @@ bool DrawingSubtitutionUndo::changeDrawing(int delta, int row, int col) {
   TTool::Application *app = TTool::getApplication();
   TXsheet *xsh            = app->getCurrentScene()->getScene()->getXsheet();
   TXshCell cell           = xsh->getCell(row, col);
+  TXshCell prevCell       = xsh->getCell(row - 1, col);
   bool usePrevCell        = false;
   if (cell.isEmpty()) {
-    TXshCell prevCell = xsh->getCell(row - 1, col);
     if (prevCell.isEmpty() || !(prevCell.m_level->getSimpleLevel() ||
                                 prevCell.m_level->getChildLevel() ||
                                 prevCell.m_level->getSoundTextLevel()))
@@ -1269,7 +1287,11 @@ bool DrawingSubtitutionUndo::changeDrawing(int delta, int row, int col) {
   else
     cellFrameId = TFrameId(index);
 
-  setDrawing(cellFrameId, row, col, cell, level);
+  if (Preferences::instance()->isImplicitHoldEnabled() && !prevCell.isEmpty() &&
+      prevCell.getFrameId() == cellFrameId)
+    setDrawing(TFrameId::EMPTY_FRAME, row, col, TXshCell(), nullptr);
+  else
+    setDrawing(cellFrameId, row, col, cell, level);
 
   return true;
 }
@@ -2258,18 +2280,59 @@ public:
 
     pegbar->getKeyframeSpan(row, r0, ease0, r1, ease1);
 
+    if (r0 > r1) return;
+
     KeyFrameHandleCommandUndo *undo =
         new KeyFrameHandleCommandUndo(objectId, r0, r1);
 
     TStageObject::Keyframe k0 = pegbar->getKeyframe(r0);
     TStageObject::Keyframe k1 = pegbar->getKeyframe(r1);
 
+    double segmentWidth = r1 - r0;
+    switch (m_type) {
+    case TDoubleKeyframe::SpeedInOut:
+    case TDoubleKeyframe::EaseInOut:
+    case TDoubleKeyframe::EaseInOutPercentage:
+      if (ease0 == -1 && ease1 == -1) {
+        ease0 = segmentWidth / 3.0;
+        ease1 = -ease0;
+      }
+      break;
+    default:
+      ease0 = ease1 = 0;
+      break;
+    }
+
     for (int i = 0; i < TStageObject::T_ChannelCount; i++) {
       k0.m_channels[i].m_type     = m_type;
+      k0.m_channels[i].m_speedOut  = TPointD(ease0, 0);
       k1.m_channels[i].m_prevType = m_type;
+      k1.m_channels[i].m_speedIn  = TPointD(ease1, 0);
     }
+
+    std::map<QString, SkVD::Keyframe> &vdfs0 =
+        k0.m_skeletonKeyframe.m_vertexKeyframes;
+    std::map<QString, SkVD::Keyframe> &vdfs1 =
+        k1.m_skeletonKeyframe.m_vertexKeyframes;
+
+    std::map<QString, SkVD::Keyframe>::iterator vdft0 = vdfs0.begin(),
+                                                vdfEnd0(vdfs0.end());
+    std::map<QString, SkVD::Keyframe>::iterator vdft1 = vdfs1.begin(),
+                                                vdfEnd1(vdfs1.end());
+    for (; vdft0 != vdfEnd0; ++vdft0, ++vdft1) {
+      for (int p = 0; p < SkVD::PARAMS_COUNT; ++p) {
+        TDoubleKeyframe &vkf0 = vdft0->second.m_keyframes[p];
+        TDoubleKeyframe &vkf1 = vdft1->second.m_keyframes[p];
+        vkf0.m_type           = m_type;
+        vkf0.m_speedOut       = TPointD(ease0, 0);
+        vkf1.m_prevType       = m_type;
+        vkf1.m_speedIn        = TPointD(ease1, 0);
+      }
+    }
+
     pegbar->setKeyframeWithoutUndo(r0, k0);
     pegbar->setKeyframeWithoutUndo(r1, k1);
+    pegbar->updateKeyframes();
 
     TUndoManager::manager()->add(undo);
 
@@ -2704,6 +2767,75 @@ public:
   }
 
 } ToggleXsheetOpenCloseFolderCommand;
+
+//-----------------------------------------------------------------------------
+
+class SetDrawingMarkCommand final : public MenuItemHandler {
+  int m_markId;
+
+public:
+  SetDrawingMarkCommand(int markId)
+      : MenuItemHandler(
+            ((std::string)MI_SetDrawingMark + std::to_string(markId)).c_str())
+      , m_markId(markId) {}
+
+  void execute() override {
+    TApp *app         = TApp::instance();
+    TXsheet *xsh      = app->getCurrentXsheet()->getXsheet();
+
+    TSelection *selection = app->getCurrentSelection()->getSelection();
+    if (!selection) return;
+
+    if (TApp::instance()->getCurrentFrame()->isEditingLevel()) {
+      TFilmstripSelection *filmstripSelection =
+          dynamic_cast<TFilmstripSelection *>(selection);
+      if (!filmstripSelection) return;
+
+      filmstripSelection->setDrawingMark(m_markId);
+      return;
+    }
+
+    TCellSelection *cellSelection = dynamic_cast<TCellSelection *>(selection);
+    if (!cellSelection) return;
+
+    int r0, r1, c0, c1;
+    cellSelection->getSelectedCells(r0, c0, r1, c1);
+    if (c0 < 0) c0 = 0;
+
+    std::vector<TXshCell> cells;
+
+    // Find all unique cells with a drawing
+    for (int c = c0; c <= c1; c++) {
+      for (int r = r0; r <= r1; r++) {
+        TXshCell cell = xsh->getCell(r, c, true, false);
+        if (cell.isEmpty() || cell.getFrameId().isStopFrame() ||
+            !cell.getSimpleLevel())
+          continue;
+        if (std::find(cells.begin(), cells.end(), cell) != cells.end())
+          continue;
+        cells.push_back(cell);
+      }
+    }
+
+    if (cells.empty()) return;
+
+    XsheetGUI::SetDrawingMarkUndo *undo = new XsheetGUI::SetDrawingMarkUndo(cells, m_markId);
+    undo->redo();
+    TUndoManager::manager()->add(undo);
+  }
+};
+SetDrawingMarkCommand DrawingMarkCommand0(0);
+SetDrawingMarkCommand DrawingMarkCommand1(1);
+SetDrawingMarkCommand DrawingMarkCommand2(2);
+SetDrawingMarkCommand DrawingMarkCommand3(3);
+SetDrawingMarkCommand DrawingMarkCommand4(4);
+SetDrawingMarkCommand DrawingMarkCommand5(5);
+SetDrawingMarkCommand DrawingMarkCommand6(6);
+SetDrawingMarkCommand DrawingMarkCommand7(7);
+SetDrawingMarkCommand DrawingMarkCommand8(8);
+SetDrawingMarkCommand DrawingMarkCommand9(9);
+SetDrawingMarkCommand DrawingMarkCommand10(10);
+SetDrawingMarkCommand DrawingMarkCommand11(11);
 
 //-----------------------------------------------------------------------------
 

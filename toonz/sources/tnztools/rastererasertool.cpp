@@ -86,12 +86,12 @@ TEnv::IntVar ErasePressure("InknpaintErasePressure", 1);
 
 namespace {
 
-int computeThickness(double pressure, const TIntPairProperty &property) {
-  double t   = pressure * pressure * pressure;
-  int thick0 = property.getValue().first;
-  int thick1 = property.getValue().second;
-
-  return tround(thick0 + (thick1 - thick0) * t);
+double computeThickness(double pressure, const TDoublePairProperty &property) {
+  double t      = pressure * pressure * pressure;
+  double thick0 = property.getValue().first;
+  double thick1 = property.getValue().second;
+  if (thick1 < 0.0001) thick0 = thick1 = 0.0;
+  return (thick0 + (thick1 - thick0) * t);
 }
 
 //==============================================================================
@@ -238,7 +238,7 @@ class RasterBluredEraserUndo final : public TRasterUndo {
   std::vector<TThickPoint> m_points;
   int m_styleId;
   bool m_selective;
-  int m_size;
+  double m_size;
   double m_hardness;
   std::wstring m_mode;
   TPointD m_dpiScale;
@@ -251,7 +251,7 @@ public:
   RasterBluredEraserUndo(TTileSetCM32 *tileSet,
                          const std::vector<TThickPoint> &points, int styleId,
                          bool selective, TXshSimpleLevel *level,
-                         const TFrameId &frameId, int size, double hardness,
+                         const TFrameId &frameId, double size, double hardness,
                          const std::wstring &mode, TPointD dpiScale,
                          double symmetryLines, double rotation,
                          TPointD centerPoint, bool useLineSymmetry)
@@ -652,7 +652,7 @@ void drawLine(const TPointD &point, const TPointD &centre, bool horizontal,
 
 //-------------------------------------------------------------------------------------------------------
 
-void drawEmptyCircle(int thick, const TPointD &mousePos, bool isPencil,
+void drawEmptyCircle(double thick, const TPointD &mousePos, bool isPencil,
                      bool isLxEven, bool isLyEven) {
   TPointD pos = mousePos;
   if (isLxEven) pos.x += 0.5;
@@ -662,7 +662,7 @@ void drawEmptyCircle(int thick, const TPointD &mousePos, bool isPencil,
   else {
     int x = 0, y = tround((thick * 0.5) - 0.5);
     int d           = 3 - 2 * (int)(thick * 0.5);
-    bool horizontal = true, isDecimal = thick % 2 != 0;
+    bool horizontal = true, isDecimal = (int)thick % 2 != 0;
     drawLine(TPointD(x, y), pos, horizontal, isDecimal);
     while (y > x) {
       if (d < 0) {
@@ -758,7 +758,7 @@ private:
   TPropertyGroup m_prop;
 
   TEnumProperty m_eraseType;
-  TIntPairProperty m_toolSize;
+  TDoublePairProperty m_toolSize;
   TBoolProperty m_pressure;
   TDoubleProperty m_hardness;
   TBoolProperty m_invertOption;
@@ -1017,10 +1017,10 @@ void EraserTool::draw() {
       glColor3d(0.5, 0.8, 0.8);
     else
       glColor3d(1.0, 0.0, 0.0);
-    drawEmptyCircle(tround(m_toolSize.getValue().first), m_brushPos,
+    drawEmptyCircle(m_toolSize.getValue().first, m_brushPos,
                     (m_pencil.getValue() || m_colorType.getValue() == AREAS),
                     lx % 2 == 0, ly % 2 == 0);
-    drawEmptyCircle(tround(m_toolSize.getValue().second), m_brushPos,
+    drawEmptyCircle(m_toolSize.getValue().second, m_brushPos,
                     (m_pencil.getValue() || m_colorType.getValue() == AREAS),
                     lx % 2 == 0, ly % 2 == 0);
   }
@@ -1325,10 +1325,10 @@ void EraserTool::leftButtonDown(const TPointD &pos, const TMouseEvent &e) {
     if (m_eraseType.getValue() == NORMALERASE) {
       TRasterCM32P raster = ti->getRaster();
       TPointD fixedPos    = fixMousePos(pos);
-      int maxThick        = m_toolSize.getValue().second;
-      int thickness       = (m_pressure.getValue() && e.isTablet())
-                          ? computeThickness(e.m_pressure, m_toolSize)
-                          : maxThick;
+      double maxThick     = m_toolSize.getValue().second;
+      double thickness    = (m_pressure.getValue() && e.isTablet())
+                                ? computeThickness(e.m_pressure, m_toolSize)
+                                : maxThick;
 
       TThickPoint intPos;
       /*--Areasタイプの時は常にPencilと同じ消し方にする--*/
@@ -1435,7 +1435,7 @@ void EraserTool::leftButtonDown(const TPointD &pos, const TMouseEvent &e) {
           m_polyline.push_back(pos);
       }
 
-      int maxThick = 2 * m_thick;
+      double maxThick = 2 * m_thick;
       TPointD halfThick(maxThick * 0.5, maxThick * 0.5);
       invalidateRect = TRectD(pos - halfThick, pos + halfThick);
     }
@@ -1485,10 +1485,10 @@ void EraserTool::leftButtonDrag(const TPointD &pos, const TMouseEvent &e) {
     }
     if (m_eraseType.getValue() == NORMALERASE) {
       TPointD fixedPos = fixMousePos(pos);
-      int maxThick     = m_toolSize.getValue().second;
-      int thickness    = (m_pressure.getValue() && e.isTablet())
-                          ? computeThickness(e.m_pressure, m_toolSize)
-                          : maxThick;
+      double maxThick  = m_toolSize.getValue().second;
+      double thickness = (m_pressure.getValue() && e.isTablet())
+                             ? computeThickness(e.m_pressure, m_toolSize)
+                             : maxThick;
 
       if (m_normalEraser &&
           (m_hardness.getValue() == 100 || m_pencil.getValue() ||
@@ -1764,10 +1764,10 @@ void EraserTool::leftButtonUp(const TPointD &pos, const TMouseEvent &e) {
       SymmetryTool *symmetryTool = dynamic_cast<SymmetryTool *>(
           TTool::getTool("T_Symmetry", TTool::RasterImage));
 
-      int maxThick  = m_toolSize.getValue().second;
-      int thickness = (m_pressure.getValue() && e.isTablet())
-                          ? computeThickness(e.m_pressure, m_toolSize)
-                          : maxThick;
+      double maxThick  = m_toolSize.getValue().second;
+      double thickness = (m_pressure.getValue() && e.isTablet())
+                             ? computeThickness(e.m_pressure, m_toolSize)
+                             : maxThick;
 
       if (m_normalEraser &&
           (m_hardness.getValue() == 100 || m_pencil.getValue() ||
@@ -2221,35 +2221,35 @@ void EraserTool::mouseMove(const TPointD &pos, const TMouseEvent &e) {
   struct Locals {
     EraserTool *m_this;
 
-    void setValue(TIntPairProperty &prop,
-                  const TIntPairProperty::Value &value) {
+    void setValue(TDoublePairProperty &prop,
+                  const TDoublePairProperty::Value &value) {
       prop.setValue(value);
 
       m_this->onPropertyChanged(prop.getName());
       TTool::getApplication()->getCurrentTool()->notifyToolChanged();
     }
 
-    void addMinMax(TIntPairProperty &prop, double add) {
-      const TIntPairProperty::Range &range = prop.getRange();
+    void addMinMax(TDoublePairProperty &prop, double add) {
+      if (add == 0.0) return;
+      const TDoublePairProperty::Range &range = prop.getRange();
 
-      TIntPairProperty::Value value = prop.getValue();
-      value.second =
-          tcrop<double>(value.second + add, range.first, range.second);
-      value.first = tcrop<double>(value.first + add, range.first, range.second);
+      TDoublePairProperty::Value value = prop.getValue();
+      value.first  = tcrop(value.first + add, range.first, range.second);
+      value.second = tcrop(value.second + add, range.first, range.second);
 
       setValue(prop, value);
     }
 
-    void addMinMaxSeparate(TIntPairProperty &prop, double min, double max) {
+    void addMinMaxSeparate(TDoublePairProperty &prop, double min, double max) {
       if (min == 0.0 && max == 0.0) return;
-      const TIntPairProperty::Range &range = prop.getRange();
+      const TDoublePairProperty::Range &range = prop.getRange();
 
-      TIntPairProperty::Value value = prop.getValue();
+      TDoublePairProperty::Value value = prop.getValue();
       value.first += min;
       value.second += max;
       if (value.first > value.second) value.first = value.second;
-      value.first  = tcrop<double>(value.first, range.first, range.second);
-      value.second = tcrop<double>(value.second, range.first, range.second);
+      value.first  = tcrop(value.first, range.first, range.second);
+      value.second = tcrop(value.second, range.first, range.second);
 
       setValue(prop, value);
     }
@@ -2278,7 +2278,7 @@ void EraserTool::onEnter() {
   TToonzImageP ti(getImage(false));
   if (!ti) return;
   if (m_firstTime) {
-    m_toolSize.setValue(TIntPairProperty::Value(EraseMinSize, EraseSize));
+    m_toolSize.setValue(TDoublePairProperty::Value(EraseMinSize, EraseSize));
     m_eraseType.setValue(::to_wstring(EraseType.getValue()));
     m_pressure.setValue(ErasePressure ? 1 : 0);
     m_currentStyle.setValue(EraseSelective ? 1 : 0);

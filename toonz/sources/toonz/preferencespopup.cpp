@@ -58,6 +58,8 @@
 #include <QListWidget>
 #include <QGroupBox>
 #include <QCheckBox>
+#include <QScrollArea>
+#include <QScrollBar>
 
 using namespace DVGui;
 
@@ -1150,11 +1152,17 @@ QWidget* PreferencesPopup::createUI(PreferencesItemId id,
 
 QGridLayout* PreferencesPopup::insertGroupBoxUI(PreferencesItemId id,
                                                 QGridLayout* layout) {
+  QWidgetList widgetList;
+  QString text = getUIString(id);
+    
   PreferencesItem item = m_pref->getItem(id);
   assert(item.type == QMetaType::Bool);
-  QGroupBox* box = new QGroupBox(getUIString(id), this);
+  QGroupBox* box = new QGroupBox(text, this);
   box->setCheckable(true);
   box->setChecked(item.value.toBool());
+
+  widgetList.append(box);
+  m_searchableWidgets.push_back(LabelsAndWidgets(text, widgetList));
 
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay, 5);
@@ -1177,8 +1185,13 @@ void PreferencesPopup::insertUI(PreferencesItemId id, QGridLayout* layout,
                                 bool isLineEdit, bool useMinMaxSlider) {
   PreferencesItem item = m_pref->getItem(id);
 
+  QString text;
+  QWidgetList widgetList;
+
   QWidget* widget = createUI(id, comboItems, isLineEdit, useMinMaxSlider);
   if (!widget) return;
+
+  widgetList.append(widget);
 
   bool isEditBox = false;
   if (item.type == QMetaType::QVariantMap ||
@@ -1187,11 +1200,17 @@ void PreferencesPopup::insertUI(PreferencesItemId id, QGridLayout* layout,
     isEditBox = true;
 
   // CheckBox contains label in itself
-  if (item.type == QMetaType::Bool)
+  if (item.type == QMetaType::Bool) {
     layout->addWidget(widget, layout->rowCount(), 0, 1, 3, Qt::AlignLeft);
-  else {  // insert labels for other types
+    QCheckBox* cb = dynamic_cast<QCheckBox*>(widget);
+    text          = cb->text();
+  } else {  // insert labels for other types
     int row = layout->rowCount();
-    layout->addWidget(new QLabel(getUIString(id), this), row, 0,
+    text          = getUIString(id);
+    QLabel* label = new QLabel(text, this);
+    widgetList.append(label);
+
+    layout->addWidget(label, row, 0,
                       Qt::AlignRight | Qt::AlignVCenter);
     if (isEditBox)
       layout->addWidget(widget, row, 1, 1, (isLineEdit ? 1 : 2));
@@ -1209,6 +1228,8 @@ void PreferencesPopup::insertUI(PreferencesItemId id, QGridLayout* layout,
                         Qt::AlignLeft | Qt::AlignVCenter);
     }
   }
+ 
+  m_searchableWidgets.push_back(LabelsAndWidgets(text, widgetList));
 }
 
 //-----------------------------------------------------------------------------
@@ -1220,41 +1241,59 @@ void PreferencesPopup::insertDualUIs(PreferencesItemId leftId,
                                      const QList<ComboBoxItem>& rightComboItems,
                                      bool leftMinMaxSlider,
                                      bool rightMinMaxSlider) {
+  QString leftText, rightText;
+  QWidgetList leftWidgetList, rightWidgetList;
+
   int row = layout->rowCount();
   int col = 0;
   if (m_pref->getItem(leftId).type != QMetaType::Bool) {
     col = 1;
-    layout->addWidget(new QLabel(getUIString(leftId), this), row, 0,
+    leftText = getUIString(leftId);
+    QLabel* leftLabel = new QLabel(leftText, this);
+    leftWidgetList.append(leftLabel);
+
+    layout->addWidget(leftLabel, row, 0,
                       Qt::AlignRight | Qt::AlignVCenter);
   }
   QHBoxLayout* innerLay = new QHBoxLayout();
   innerLay->setContentsMargins(0, 0, 0, 0);
   innerLay->setSpacing(5);
   {
-    innerLay->addWidget(
-        createUI(leftId, leftComboItems, false, leftMinMaxSlider), 0);
+    QWidget* leftWidget =
+        createUI(leftId, leftComboItems, false, leftMinMaxSlider);
+    leftWidgetList.append(leftWidget);
+    if (m_pref->getItem(leftId).type == QMetaType::Bool) {
+      QCheckBox* cb = dynamic_cast<QCheckBox*>(leftWidget);
+      leftText      = cb->text();
+    }
+    innerLay->addWidget(leftWidget, 0);
+
     if ((m_pref->getItem(leftId).type == QMetaType::Bool &&
          m_pref->getItem(rightId).type != QMetaType::Bool) ||
         rightMinMaxSlider)
       innerLay->addSpacing(40);
-    if (m_pref->getItem(rightId).type != QMetaType::Bool)
-      innerLay->addWidget(new QLabel(getUIString(rightId), this), 0,
-                          Qt::AlignRight | Qt::AlignVCenter);
-    innerLay->addWidget(
-        createUI(rightId, rightComboItems, false, rightMinMaxSlider), 0);
+    if (m_pref->getItem(rightId).type != QMetaType::Bool) {
+      rightText          = getUIString(rightId);
+      QLabel* rightLabel = new QLabel(rightText, this);
+      rightWidgetList.append(rightLabel);
+
+      innerLay->addWidget(rightLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
+    }
+    QWidget* rightWidget =
+        createUI(rightId, rightComboItems, false, rightMinMaxSlider);
+    rightWidgetList.append(rightWidget);
+    if (m_pref->getItem(rightId).type == QMetaType::Bool) {
+      QCheckBox* cb = dynamic_cast<QCheckBox*>(rightWidget);
+      rightText     = cb->text();
+    }
+
+    innerLay->addWidget(rightWidget, 0);
     innerLay->addStretch(1);
   }
+  m_searchableWidgets.push_back(LabelsAndWidgets(leftText, leftWidgetList));
+  m_searchableWidgets.push_back(LabelsAndWidgets(rightText, rightWidgetList));
+
   layout->addLayout(innerLay, row, col, 1, 2);
-}
-
-//-----------------------------------------------------------------------------
-
-void PreferencesPopup::insertFootNote(QGridLayout* layout) {
-  QLabel* note = new QLabel(
-      tr("* Changes will take effect the next time you run Tahoma2D"));
-  note->setStyleSheet("font-size: 10px; font: italic;");
-  layout->addWidget(note, layout->rowCount(), 0, 1, 3,
-                    Qt::AlignLeft | Qt::AlignVCenter);
 }
 
 //-----------------------------------------------------------------------------
@@ -1634,16 +1673,30 @@ inline T PreferencesPopup::getUI(PreferencesItemId id) {
 //**********************************************************************************
 
 PreferencesPopup::PreferencesPopup()
-    : Dialog(TApp::instance()->getMainWindow())
+    : Dialog(TApp::instance()->getMainWindow(), false, false)
     , m_formatProperties()
     , m_additionalStyleEdit(nullptr) {
   setWindowTitle(tr("Preferences"));
   setObjectName("PreferencesPopup");
+  resize(500, 450);
 
   m_pref = Preferences::instance();
 
+  //-------------
+  // Left Side
+  //-------------
+  m_searchLabel = new QLabel(tr("Search:"), this);
+  m_searchEdit  = new QLineEdit(this);
+
+  QHBoxLayout* searchLay = new QHBoxLayout();
+  searchLay->setContentsMargins(0, 0, 0, 0);
+  searchLay->setSpacing(5);
+  searchLay->addWidget(m_searchLabel, 0);
+  searchLay->addWidget(m_searchEdit);
+
   // Category List
-  m_categoryList = new QListWidget(this);
+  m_categoryList = new CategoryList(this);
+
   QStringList categories;
   categories << tr("General") << tr("Interface") << tr("Visualization")
              << tr("Loading") << tr("Saving") << tr("Drawing") << tr("Tools")
@@ -1652,29 +1705,58 @@ PreferencesPopup::PreferencesPopup()
              << tr("Version Control") << tr("Touch/Tablet Settings");
   m_categoryList->addItems(categories);
   m_categoryList->setFixedWidth(160);
-  m_categoryList->setCurrentRow(0);
   m_categoryList->setAlternatingRowColors(true);
 
-  m_stackedWidget = new QStackedWidget(this);
-  m_stackedWidget->addWidget(createGeneralPage());
-  m_stackedWidget->addWidget(createInterfacePage());
-  m_stackedWidget->addWidget(createVisualizationPage());
-  m_stackedWidget->addWidget(createLoadingPage());
-  m_stackedWidget->addWidget(createSavingPage());
-  m_stackedWidget->addWidget(createDrawingPage());
-  m_stackedWidget->addWidget(createToolsPage());
-  m_stackedWidget->addWidget(createXsheetPage());
-  m_stackedWidget->addWidget(createAnimationPage());
-  m_stackedWidget->addWidget(createPreviewPage());
-  m_stackedWidget->addWidget(createOnionSkinPage());
-  m_stackedWidget->addWidget(createColorsPage());
-  m_stackedWidget->addWidget(createImportExportPage());
-  m_stackedWidget->addWidget(createVersionControlPage());
-  m_stackedWidget->addWidget(createTouchTabletPage());
-  // createImportPrefsPage() must always be last
-  m_stackedWidget->addWidget(createImportPrefsPage());
-
   QPushButton* importPrefButton = new QPushButton(tr("Import Preferences"));
+
+  //-------------
+  // Right Side
+  //-------------
+  foreach (QString text, categories)
+    m_categoryBoxes.push_back(new QGroupBox(text, this));
+  // Import Preferences must be last
+  m_categoryBoxes.push_back(new QGroupBox(importPrefButton->text(), this));
+
+  m_categoryBoxes[0]->setLayout(createGeneralLayout());
+  m_categoryBoxes[1]->setLayout(createInterfaceLayout());
+  m_categoryBoxes[2]->setLayout(createVisualizationLayout());
+  m_categoryBoxes[3]->setLayout(createLoadingLayout());
+  m_categoryBoxes[4]->setLayout(createSavingLayout());
+  m_categoryBoxes[5]->setLayout(createDrawingLayout());
+  m_categoryBoxes[6]->setLayout(createToolsLayout());
+  m_categoryBoxes[7]->setLayout(createXsheetLayout());
+  m_categoryBoxes[8]->setLayout(createAnimationLayout());
+  m_categoryBoxes[9]->setLayout(createPreviewLayout());
+  m_categoryBoxes[10]->setLayout(createOnionSkinLayout());
+  m_categoryBoxes[11]->setLayout(createColorsLayout());
+  m_categoryBoxes[12]->setLayout(createImportExportLayout());
+  m_categoryBoxes[13]->setLayout(createVersionControlLayout());
+  m_categoryBoxes[14]->setLayout(createTouchTabletLayout());
+  // Import Preferences must be last
+  m_categoryBoxes[15]->setLayout(createImportPrefsLayout());
+
+  QFrame *preferencesFrame = new QFrame(this);
+
+  QVBoxLayout* preferencesLay = new QVBoxLayout();
+  preferencesLay->setContentsMargins(5, 5, 5, 5);
+  preferencesLay->setSpacing(10);
+  {
+    for (int i = 0; i < m_categoryBoxes.size(); i++)
+      preferencesLay->addWidget(m_categoryBoxes[i]);
+    preferencesLay->addStretch(1);
+  }
+  preferencesFrame->setLayout(preferencesLay);
+
+  m_preferenceScrollArea = new QScrollArea();
+  m_preferenceScrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+  m_preferenceScrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+  m_preferenceScrollArea->setWidgetResizable(true);
+  m_preferenceScrollArea->setMinimumWidth(725);
+  m_preferenceScrollArea->setWidget(preferencesFrame);
+
+  QLabel* note = new QLabel(
+      tr("* Changes will take effect the next time you run Tahoma2D"));
+  note->setStyleSheet("font-size: 12px; font: italic;");
 
   QHBoxLayout* mainLayout = new QHBoxLayout();
   mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -1685,9 +1767,16 @@ PreferencesPopup::PreferencesPopup()
     categoryLayout->setContentsMargins(5, 5, 5, 5);
     categoryLayout->setSpacing(10);
     categoryLayout->addWidget(m_categoryList, 1);
+    categoryLayout->addLayout(searchLay);
     categoryLayout->addWidget(importPrefButton, 0);
     mainLayout->addLayout(categoryLayout, 0);
-    mainLayout->addWidget(m_stackedWidget, 1);
+
+    QVBoxLayout* categoryDetailLayout = new QVBoxLayout();
+    categoryDetailLayout->setContentsMargins(5, 5, 5, 5);
+    categoryDetailLayout->setSpacing(3);
+    categoryDetailLayout->addWidget(m_preferenceScrollArea);
+    categoryDetailLayout->addWidget(note);
+    mainLayout->addLayout(categoryDetailLayout, 1);
   }
   m_topLayout->setContentsMargins(0, 0, 0, 0);
   m_topLayout->addLayout(mainLayout);
@@ -1696,22 +1785,30 @@ PreferencesPopup::PreferencesPopup()
   setWindowFlags(Qt::Tool);
 #endif
 
-  bool ret = connect(m_categoryList, SIGNAL(currentRowChanged(int)),
-                     m_stackedWidget, SLOT(setCurrentIndex(int)));
+  bool ret = connect(m_categoryList, SIGNAL(currentRowChanged(int)), this,
+                     SLOT(onCategoryListChanged(int)));
+
+  ret = ret && connect(m_categoryList, SIGNAL(selectionCleared()), this,
+                       SLOT(onSelectionCleared()));
+
+  ret = ret && connect(m_searchEdit, SIGNAL(textChanged(const QString&)), this,
+                       SLOT(onSearchTextChanged(const QString&)));
 
   ret = ret && connect(importPrefButton, SIGNAL(clicked()),
                        SLOT(onImportPreferences()));
 
   assert(ret);
+
+  onCategoryListChanged(-1);
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createGeneralPage() {
+QGridLayout* PreferencesPopup::createGeneralLayout() {
   // m_projectRootDocuments = new CheckBox(tr("My Documents/Tahoma*"), this);
   // m_projectRootDesktop   = new CheckBox(tr("Desktop/Tahoma*"), this);
   // m_projectRootCustom    = new CheckBox(tr("Custom*"), this);
-  // QWidget* customField   = new QWidget(this);
+  // QFrame* customField   = new QWidget(this);
   // QGridLayout* customLay = new QGridLayout();
   // setupLayout(customLay, 5);
   //{
@@ -1724,7 +1821,6 @@ QWidget* PreferencesPopup::createGeneralPage() {
   //}
   // customField->setLayout(customLay);
 
-  QWidget* widget  = new QWidget(this);
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
   insertUI(defaultProjectPath, lay);
@@ -1751,8 +1847,6 @@ QWidget* PreferencesPopup::createGeneralPage() {
   insertUI(showAdvancedOptions, lay);
 
   lay->setRowStretch(lay->rowCount(), 1);
-  insertFootNote(lay);
-  widget->setLayout(lay);
 
   // int projectPaths = m_pref->getIntValue(projectRoot);
   // m_projectRootDocuments->setChecked(projectPaths & 0x04);
@@ -1805,12 +1899,12 @@ QWidget* PreferencesPopup::createGeneralPage() {
   //                     SLOT(setVisible(bool)));
   assert(ret);
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createInterfacePage() {
+QGridLayout* PreferencesPopup::createInterfaceLayout() {
   QList<ComboBoxItem> styleSheetItemList;
   for (const QString& str : m_pref->getStyleSheetList()) {
     TFilePath path(str.toStdWString());
@@ -1826,12 +1920,19 @@ QWidget* PreferencesPopup::createInterfacePage() {
   for (const QString& name : m_pref->getLanguageList())
     languageItemList.push_back(ComboBoxItem(name, name));
 
-  QPushButton* check30bitBtn = new QPushButton(tr("Check Availability"));
+  QWidgetList widgetList;
 
-  QPushButton* additionalStyleSheetBtn =
-      new QPushButton(tr("Edit Additional Style Sheet.."));
+  QString text = tr("Check Availability");
+  QPushButton* check30bitBtn = new QPushButton(text);
+  widgetList.append(check30bitBtn);
+  m_searchableWidgets.push_back(LabelsAndWidgets(text, widgetList));
 
-  QWidget* widget  = new QWidget(this);
+  text                         = tr("Edit Additional Style Sheet..");
+  QPushButton* additionalStyleSheetBtn = new QPushButton(text);
+  widgetList.clear();
+  widgetList.append(additionalStyleSheetBtn);
+    m_searchableWidgets.push_back(LabelsAndWidgets(text, widgetList));
+
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
@@ -1848,9 +1949,17 @@ QWidget* PreferencesPopup::createInterfacePage() {
     insertUI(cameraUnits, lay,
              getComboItemList(linearUnits));  // share items with linearUnits
 
-    lay->addWidget(new QLabel(tr("Pixels Only:"), this), 5, 0,
+    QWidgetList widgetList;
+
+    QLabel* label = new QLabel(tr("Pixels Only:"), this);
+    widgetList.append(label);
+    lay->addWidget(label, 5, 0,
                    Qt::AlignRight | Qt::AlignVCenter);
-    lay->addWidget(createUI(pixelsOnly), 5, 1, 1, 2, Qt::AlignLeft);
+    QWidget* widget = createUI(pixelsOnly);
+    widgetList.append(widget);
+    lay->addWidget(widget, 5, 1, 1, 2, Qt::AlignLeft);
+    
+    m_searchableWidgets.push_back(LabelsAndWidgets(label->text(), widgetList));
 
     insertUI(CurrentRoomChoice, lay, roomItemList);
   }
@@ -1886,8 +1995,6 @@ QWidget* PreferencesPopup::createInterfacePage() {
   insertUI(iconSizePB, lay);
 
   lay->setRowStretch(lay->rowCount(), 1);
-  insertFootNote(lay);
-  widget->setLayout(lay);
 
   if (Preferences::instance()->isShowAdvancedOptionsEnabled() &&
       m_pref->getBoolValue(pixelsOnly)) {
@@ -1918,13 +2025,12 @@ QWidget* PreferencesPopup::createInterfacePage() {
   m_onEditedFuncMap.insert(colorCalibrationEnabled,
                            &PreferencesPopup::onColorCalibrationChanged);
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createVisualizationPage() {
-  QWidget* widget  = new QWidget(this);
+QGridLayout* PreferencesPopup::createVisualizationLayout() {
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
@@ -1933,13 +2039,12 @@ QWidget* PreferencesPopup::createVisualizationPage() {
   insertUI(rasterizeAntialias, lay);
 
   lay->setRowStretch(lay->rowCount(), 1);
-  widget->setLayout(lay);
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createLoadingPage() {
+QGridLayout* PreferencesPopup::createLoadingLayout() {
   m_levelFormatNames = new QComboBox;
   m_levelFormatNames->setSizeAdjustPolicy(QComboBox::AdjustToContents);
   m_editLevelFormat = new QPushButton(tr("Edit"));
@@ -1950,7 +2055,6 @@ QWidget* PreferencesPopup::createLoadingPage() {
   removeLevelFormat->setFixedSize(20, 20);
   rebuildFormatsList();
 
-  QWidget* widget  = new QWidget(this);
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
@@ -1967,9 +2071,19 @@ QWidget* PreferencesPopup::createLoadingPage() {
            getComboItemList(columnIconLoadingPolicy));
 
   // levelFormats,// need to be handle separately
+  QWidgetList widgetList;
+
   int row = lay->rowCount();
-  lay->addWidget(new QLabel(tr("Level Settings by File Format:")), row, 0,
+  QLabel* label = new QLabel(tr("Level Settings by File Format:"));
+  lay->addWidget(label, row, 0,
                  Qt::AlignRight | Qt::AlignVCenter);
+  widgetList.append(label);
+  widgetList.append(m_levelFormatNames);
+  widgetList.append(addLevelFormat);
+  widgetList.append(removeLevelFormat);
+  widgetList.append(m_editLevelFormat);
+  m_searchableWidgets.push_back(LabelsAndWidgets(label->text(), widgetList));
+
   QHBoxLayout* levelFormatLay = new QHBoxLayout();
   levelFormatLay->setContentsMargins(0, 0, 0, 0);
   levelFormatLay->setSpacing(5);
@@ -1983,7 +2097,6 @@ QWidget* PreferencesPopup::createLoadingPage() {
   lay->addLayout(levelFormatLay, row, 1, 1, 2);
 
   lay->setRowStretch(lay->rowCount(), 1);
-  widget->setLayout(lay);
 
   bool ret = true;
   ret      = ret &&
@@ -1997,17 +2110,20 @@ QWidget* PreferencesPopup::createLoadingPage() {
                        SLOT(onImportPolicyExternallyChanged(int)));
   assert(ret);
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createSavingPage() {
+QGridLayout* PreferencesPopup::createSavingLayout() {
   auto putLabel = [&](const QString& labelStr, QGridLayout* lay) {
-    lay->addWidget(new QLabel(labelStr, this), lay->rowCount(), 0, 1, 3,
+    QWidgetList widgetList;
+    QLabel* label = new QLabel(labelStr, this);
+    widgetList.push_back(label);
+    m_searchableWidgets.push_back(LabelsAndWidgets(labelStr, widgetList));
+    lay->addWidget(label, lay->rowCount(), 0, 1, 3,
                    Qt::AlignLeft | Qt::AlignVCenter);
   };
-  QWidget* widget  = new QWidget(this);
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
   QGridLayout* autoSaveLay = insertGroupBoxUI(autosaveEnabled, lay);
@@ -2033,24 +2149,25 @@ QWidget* PreferencesPopup::createSavingPage() {
   { insertUI(recordAsUsername, recordHistoryLay, QList<ComboBoxItem>(), true); }
 
   lay->setRowStretch(lay->rowCount(), 1);
-  insertFootNote(lay);
-  widget->setLayout(lay);
 
   m_onEditedFuncMap.insert(recordAsUsername,
                            &PreferencesPopup::onRecordAsUserChanged);
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createImportExportPage() {
+QGridLayout* PreferencesPopup::createImportExportLayout() {
   auto putLabel = [&](const QString& labelStr, QGridLayout* lay) {
-    lay->addWidget(new QLabel(labelStr, this), lay->rowCount(), 0, 1, 3,
+    QWidgetList widgetList;
+    QLabel* label = new QLabel(labelStr, this);
+    widgetList.push_back(label);
+    m_searchableWidgets.push_back(LabelsAndWidgets(labelStr, widgetList));
+    lay->addWidget(label, lay->rowCount(), 0, 1, 3,
                    Qt::AlignLeft | Qt::AlignVCenter);
   };
 
-  QWidget* widget  = new QWidget(this);
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
   putLabel(tr("External applications used by Tahoma2D.\nThese come bundled "
@@ -2076,19 +2193,20 @@ QWidget* PreferencesPopup::createImportExportPage() {
   }
 
   lay->setRowStretch(lay->rowCount(), 1);
-  insertFootNote(lay);
-  widget->setLayout(lay);
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createDrawingPage() {
-  QWidget* widget  = new QWidget(this);
+QGridLayout* PreferencesPopup::createDrawingLayout() {
   QGridLayout* lay = new QGridLayout();
+
+  QWidgetList widgetList;
 
   QPushButton* frameFormatBtn =
       new QPushButton(tr("Default Frame Filename Format"));
+  widgetList.append(frameFormatBtn);
+  m_searchableWidgets.push_back(LabelsAndWidgets(frameFormatBtn->text(), widgetList));
 
   setupLayout(lay);
 
@@ -2122,7 +2240,6 @@ QWidget* PreferencesPopup::createDrawingPage() {
     insertUI(useHigherDpiOnVectorSimplify, replaceVectorsLay);
   }
   lay->setRowStretch(lay->rowCount(), 1);
-  widget->setLayout(lay);
 
   m_onEditedFuncMap.insert(DefLevelType,
                            &PreferencesPopup::onDefLevelTypeChanged);
@@ -2142,13 +2259,12 @@ QWidget* PreferencesPopup::createDrawingPage() {
   //                          SLOT(onFrameFormatButton()));
   connect(frameFormatBtn, SIGNAL(clicked()), this, SLOT(onFrameFormatButton()));
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createToolsPage() {
-  QWidget* widget  = new QWidget(this);
+QGridLayout* PreferencesPopup::createToolsLayout() {
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
@@ -2174,20 +2290,18 @@ QWidget* PreferencesPopup::createToolsPage() {
   insertUI(toolScale, lay);
 
   lay->setRowStretch(lay->rowCount(), 1);
-  widget->setLayout(lay);
 
   //  m_onEditedFuncMap.insert(FillOnlysavebox,
   //                           &PreferencesPopup::notifySceneChanged);
   m_onEditedFuncMap.insert(levelBasedToolsDisplay,
                            &PreferencesPopup::onLevelBasedToolsDisplayChanged);
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createXsheetPage() {
-  QWidget* widget  = new QWidget(this);
+QGridLayout* PreferencesPopup::createXsheetLayout() {
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
@@ -2213,7 +2327,8 @@ QWidget* PreferencesPopup::createXsheetPage() {
   {
     insertUI(showQuickToolbar, xshToolbarLay);
     insertUI(showXsheetBreadcrumbs, xshToolbarLay);
-    insertUI(expandFunctionHeader, xshToolbarLay);
+// Obsolete. Setting is local to panel
+//    insertUI(expandFunctionHeader, xshToolbarLay);
   }
   insertUI(showColumnNumbers, lay);
   insertUI(showColumnParents, lay);
@@ -2231,8 +2346,6 @@ QWidget* PreferencesPopup::createXsheetPage() {
     insertUI(showFrameNumberWithLetters, lay);
 
   lay->setRowStretch(lay->rowCount(), 1);
-  insertFootNote(lay);
-  widget->setLayout(lay);
 
   m_onEditedFuncMap.insert(showKeyframesOnXsheetCellArea,
                            &PreferencesPopup::onShowKeyframesOnCellAreaChanged);
@@ -2250,13 +2363,12 @@ QWidget* PreferencesPopup::createXsheetPage() {
   m_onEditedFuncMap.insert(timelineLayoutPreference,
                            &PreferencesPopup::onShowDragBarsChanged);
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createAnimationPage() {
-  QWidget* widget  = new QWidget(this);
+QGridLayout* PreferencesPopup::createAnimationLayout() {
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
@@ -2265,19 +2377,17 @@ QWidget* PreferencesPopup::createAnimationPage() {
   insertUI(modifyExpressionOnMovingReferences, lay);
 
   lay->setRowStretch(lay->rowCount(), 1);
-  widget->setLayout(lay);
 
   m_onEditedFuncMap.insert(
       modifyExpressionOnMovingReferences,
       &PreferencesPopup::onModifyExpressionOnMovingReferencesChanged);
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createPreviewPage() {
-  QWidget* widget  = new QWidget(this);
+QGridLayout* PreferencesPopup::createPreviewLayout() {
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
@@ -2297,18 +2407,16 @@ QWidget* PreferencesPopup::createPreviewPage() {
 
 
   lay->setRowStretch(lay->rowCount(), 1);
-  widget->setLayout(lay);
 
   m_onEditedFuncMap.insert(blanksCount, &PreferencesPopup::onBlankCountChanged);
   m_onEditedFuncMap.insert(blankColor, &PreferencesPopup::onBlankColorChanged);
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createOnionSkinPage() {
-  QWidget* widget  = new QWidget(this);
+QGridLayout* PreferencesPopup::createOnionSkinLayout() {
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
@@ -2322,7 +2430,6 @@ QWidget* PreferencesPopup::createOnionSkinPage() {
   insertUI(animatedGuidedDrawing, lay, getComboItemList(animatedGuidedDrawing));
 
   lay->setRowStretch(lay->rowCount(), 1);
-  widget->setLayout(lay);
 
   m_onEditedFuncMap.insert(onionSkinEnabled,
                            &PreferencesPopup::onOnionSkinVisibilityChanged);
@@ -2343,13 +2450,12 @@ QWidget* PreferencesPopup::createOnionSkinPage() {
     m_controlIdMap.key(onionInksOnly)->setDisabled(true);
   }
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createColorsPage() {
-  QWidget* widget  = new QWidget(this);
+QGridLayout* PreferencesPopup::createColorsLayout() {
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
   insertUI(useThemeViewerColors, lay);
@@ -2365,7 +2471,6 @@ QWidget* PreferencesPopup::createColorsPage() {
     insertUI(transpCheckPaint, tcLay);
   }
   lay->setRowStretch(lay->rowCount(), 1);
-  widget->setLayout(lay);
 
   m_onEditedFuncMap.insert(viewerBGColor,
                            &PreferencesPopup::notifySceneChanged);
@@ -2390,13 +2495,12 @@ QWidget* PreferencesPopup::createColorsPage() {
     m_controlIdMap.key(previewBGColor)->setDisabled(true);
   }
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createVersionControlPage() {
-  QWidget* widget  = new QWidget(this);
+QGridLayout* PreferencesPopup::createVersionControlLayout() {
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
@@ -2405,17 +2509,15 @@ QWidget* PreferencesPopup::createVersionControlPage() {
   insertUI(latestVersionCheckEnabled, lay);
 
   lay->setRowStretch(lay->rowCount(), 1);
-  insertFootNote(lay);
-  widget->setLayout(lay);
 
   m_onEditedFuncMap.insert(SVNEnabled, &PreferencesPopup::onSVNEnabledChanged);
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createTouchTabletPage() {
+QGridLayout* PreferencesPopup::createTouchTabletLayout() {
   bool winInkAvailable = false;
 #if defined(_WIN32)
   winInkAvailable = KisTabletSupportWin8::isAvailable();
@@ -2424,7 +2526,6 @@ QWidget* PreferencesPopup::createTouchTabletPage() {
   QAction* touchAction =
       CommandManager::instance()->getAction(MI_TouchGestureControl);
 
-  QWidget* widget  = new QWidget(this);
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
@@ -2449,8 +2550,6 @@ QWidget* PreferencesPopup::createTouchTabletPage() {
 #endif
 
   lay->setRowStretch(lay->rowCount(), 1);
-  if (winInkAvailable) insertFootNote(lay);
-  widget->setLayout(lay);
 
 #ifdef MACOSX
   // Can only support 3-finger swipe undo/redo gestures for now
@@ -2466,13 +2565,12 @@ QWidget* PreferencesPopup::createTouchTabletPage() {
 
   assert(ret);
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
 
-QWidget* PreferencesPopup::createImportPrefsPage() {
-  QWidget* widget  = new QWidget(this);
+QGridLayout* PreferencesPopup::createImportPrefsLayout() {
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
@@ -2531,11 +2629,9 @@ QWidget* PreferencesPopup::createImportPrefsPage() {
 
   lay->setRowStretch(lay->rowCount(), 1);
 
-  widget->setLayout(lay);
-
   connect(importBtn, SIGNAL(clicked()), SLOT(onImport()));
 
-  return widget;
+  return lay;
 }
 
 //-----------------------------------------------------------------------------
@@ -2615,8 +2711,7 @@ void PreferencesPopup::onColorFieldChanged(const TPixel32& color,
 
 void PreferencesPopup::onImportPreferences() {
   m_categoryList->setCurrentRow(-1);
-  int stackedSize = m_stackedWidget->count();
-  m_stackedWidget->setCurrentIndex(stackedSize - 1);
+  onCategoryListChanged(m_categoryList->count());
 }
 
 //-----------------------------------------------------------------------------
@@ -2905,6 +3000,75 @@ void PreferencesPopup::onImport() {
   DVGui::MsgBoxInPopup(
       DVGui::MsgType(INFORMATION),
       tr("Import complete. Please restart to complete applying the changes."));
+}
+
+//-----------------------------------------------------------------------------
+
+void PreferencesPopup::onCategoryListChanged(int index) {
+  int totalCategories = m_categoryBoxes.size();
+  bool isImport       = (index + 1) >= totalCategories;
+
+  if (!m_searchEdit->text().isEmpty()) m_searchEdit->clear();
+
+  if (isImport) {
+    m_searchLabel->setEnabled(false);
+    m_searchEdit->setEnabled(false);
+  } else if (!m_searchEdit->isEnabled()) {
+    m_searchLabel->setEnabled(true);
+    m_searchEdit->setEnabled(true);
+  }
+
+  for (int i = 0; i < (totalCategories - 1); i++)
+    m_categoryBoxes[i]->setVisible(i == index || index == -1);
+  m_categoryBoxes[totalCategories - 1]->setVisible(isImport);
+}
+
+//-----------------------------------------------------------------------------
+
+void PreferencesPopup::onSelectionCleared() { onCategoryListChanged(-1); }
+
+//-----------------------------------------------------------------------------
+
+void PreferencesPopup::onSearchTextChanged(const QString& text) {
+  foreach (LabelsAndWidgets item, m_searchableWidgets) {
+    QString itemText = item.first;
+    bool matches =
+        text.isEmpty() || itemText.contains(text, Qt::CaseInsensitive);
+    foreach (QWidget* w, item.second) {
+      w->setVisible(matches);
+
+      // Check parent widget for group box
+      QWidget* pw = w->parentWidget();
+      if (pw && qobject_cast<QGroupBox*>(pw)) {
+        pw->setVisible(true);
+        if (qobject_cast<QGroupBox*>(pw->parentWidget()))
+          pw->parentWidget()->setVisible(true);
+        bool hasVisible = false;
+        foreach (QWidget* cw, pw->findChildren<QWidget*>()) {
+          if (cw->isVisible()) {
+            hasVisible = true;
+            break;
+          }
+        }
+        if (!hasVisible) pw->setVisible(false);
+
+        // Check parent's parent widget for outer group box
+        QWidget* ppw = pw->parentWidget();
+        if (ppw && qobject_cast<QGroupBox*>(ppw)) {
+          bool hasVisible2 = false;
+          foreach (QWidget* cw, ppw->findChildren<QWidget*>()) {
+            if (cw->isVisible()) {
+              hasVisible2 = true;
+              break;
+            }
+          }
+          if (!hasVisible2) ppw->setVisible(false);
+        }
+      }
+    }
+  }
+
+  if (text.isEmpty()) onCategoryListChanged(m_categoryList->currentRow());
 }
 
 //-----------------------------------------------------------------------------

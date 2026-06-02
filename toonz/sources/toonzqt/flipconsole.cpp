@@ -912,34 +912,67 @@ void FlipConsole::playNextFrame(QElapsedTimer *timer, qint64 targetInstant) {
     to   = m_stopAt;
   }
 
-  if (m_framesCount == 0 || ((m_isLoop || m_isPingPong) && from == to) ||
-      (m_isPlay && m_currentFrame == (m_reverse ? from : to))) {
+  int playFrame = m_currentFrame;
+
+  bool aborted = m_framesCount == 0 ||
+                 ((m_isLoop || m_isPingPong) && from == to) ||
+                 (m_isPlay && playFrame == (m_reverse ? from : to));
+
+  // Did we jump out of play range?
+  if (m_currentFrame < from && m_reverse) {
+    if (m_isPlay)
+      aborted = true;
+    else if (m_isPingPong)
+      m_reverse != m_reverse;
+  } else if (m_currentFrame > to && !m_reverse) {
+    if (m_isPlay)
+      aborted = true;
+    else if (m_isPingPong)
+      m_reverse != m_reverse;
+  }
+
+  if (aborted) {
     doButtonPressed(ePause);
     setChecked(m_isPlay ? ePlay : eLoop, false);
     setChecked(ePause, true);
     if (Preferences::instance()->rewindAfterPlaybackEnabled())
-      m_currentFrame = (m_reverse ? to : from);
+      playFrame = (m_reverse ? to : from);
     emit playStateChanged(false);
   } else {
     if (drawBlanks(from, to, timer, targetInstant)) return;
 
-    if (m_reverse)
-      m_currentFrame =
-          ((m_currentFrame - m_step < from) ? to : m_currentFrame - m_step);
-    else
-      m_currentFrame =
-          ((m_currentFrame + m_step > to) ? from : m_currentFrame + m_step);
+    if (m_reverse) {
+      playFrame = playFrame - m_step;
+
+      if (playFrame < from) {
+        if (m_isLoop)
+          playFrame = to;
+        else if (m_isPingPong) {
+          playFrame = playFrame + (m_step * 2);
+          m_reverse = !m_reverse;
+        }
+      }
+    } else {
+      playFrame = playFrame + m_step;
+
+      if (playFrame > to) {
+        if (m_isLoop)
+          playFrame = from;
+        else if (m_isPingPong) {
+          playFrame = playFrame - (m_step * 2);
+          m_reverse = !m_reverse;
+        }
+      }
+    }
   }
 
-  m_currFrameSlider->setValue(m_currentFrame);
-  m_editCurrFrame->setText(QString::number(m_currentFrame));
+  m_currFrameSlider->setValue(playFrame);
+  m_editCurrFrame->setText(QString::number(playFrame));
   updateCurrentTime();
   m_settings.m_blankColor        = TPixel::Transparent;
   m_settings.m_recomputeIfNeeded = true;
-  m_consoleOwner->onDrawFrame(m_currentFrame, m_settings, timer, targetInstant);
-
-  if (m_isPingPong && (m_currentFrame <= from || m_currentFrame >= to))
-    m_reverse = !m_reverse;
+  m_consoleOwner->onDrawFrame(playFrame, m_settings, timer, targetInstant);
+  m_currentFrame = playFrame;
 }
 
 //-----------------------------------------------------------------------------
@@ -1742,9 +1775,6 @@ void FlipConsole::doButtonPressed(UINT button) {
 
   bool linked = m_areLinked && m_isLinkable;
 
-  m_isLoop     = false;
-  m_isPingPong = false;
-
   switch (button) {
   case eFirst:
     m_currentFrame = from;
@@ -1807,7 +1837,7 @@ void FlipConsole::doButtonPressed(UINT button) {
           (m_currentFrame <= from ||
            m_currentFrame >=
                to))  // the first frame of the playback is drawn right now
-        m_currentFrame               = m_reverse ? to : from;
+        m_currentFrame = m_reverse ? to : from;
       m_settings.m_recomputeIfNeeded = true;
       m_consoleOwner->onDrawFrame(m_currentFrame, m_settings);
     }
@@ -1842,6 +1872,8 @@ void FlipConsole::doButtonPressed(UINT button) {
     m_stopAt       = -1;
     m_startAt      = -1;
     m_isPlay       = false;
+    m_isLoop       = false;
+    m_isPingPong   = false;
     m_blanksToDraw = 0;
 
     m_consoleOwner->swapBuffers();

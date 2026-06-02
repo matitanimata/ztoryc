@@ -438,15 +438,10 @@ void TStageObjectTree::loadData(TIStream &is, TXsheet *xsh) {
       // If there isn't a pegbar column for this pegbar, create it now
       // Assume columns have already been loaded
       if (id.isPegbar()) {
-        bool found = false;
-        int cols   = xsh->getColumnCount();
-        for (int i = 0; i < cols; i++) {
-          if (!xsh->getColumn(i) || !xsh->getColumn(i)->getPegbarColumn() ||
-              xsh->getColumn(i)->getPegbarColumn()->getPegbarObjectId() != id)
-            continue;
-          found = true;
-        }
+        TXshColumn *pegbarColumn = xsh->getColumnForPegbarObjectId(id);
+        bool found               = pegbarColumn;
         if (!found) {
+          int cols                    = xsh->getColumnCount();
           TXshPegbarColumn *pegbarCol = new TXshPegbarColumn();
           pegbarCol->setXsheet(xsh);
           pegbarCol->setPegbarObjectId(id);

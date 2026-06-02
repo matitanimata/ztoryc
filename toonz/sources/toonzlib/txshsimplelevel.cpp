@@ -16,6 +16,7 @@
 #include "toonz/levelset.h"
 #include "toonz/tcamera.h"
 #include "toonz/txshcell.h"
+#include "toonz/txsheet.h"
 
 // TnzBase includes
 #include "tenv.h"
@@ -868,6 +869,7 @@ void TXshSimpleLevel::eraseFrame(const TFrameId &fid) {
   }
 
   m_frames.erase(ft);
+  m_drawingMarks.erase(fid);
   getHookSet()->eraseFrame(fid);
 
   ImageManager *im = ImageManager::instance();
@@ -920,6 +922,7 @@ void TXshSimpleLevel::clearFrames() {
   m_editableRangeUserInfo.clear();
   m_renumberTable.clear();
   m_framesStatus.clear();
+  m_drawingMarks.clear();
 }
 
 //-----------------------------------------------------------------------------
@@ -1016,6 +1019,16 @@ void TXshSimpleLevel::loadData(TIStream &is) {
         m_properties->setColorSpaceGamma(colorSpaceGamma);
         m_properties->setVanishingPoints(vanishingPoints);
         if (isStopMotionLevel == 1) setIsReadOnly(true);
+      } else if (tagName == "drawingMarks") {
+        int markCount;
+        is >> markCount;
+        for (int i = 0; i < markCount; i++) {
+          int frameNumber, markId;
+          is >> frameNumber >> markId;
+          TFrameId fid(frameNumber);
+          setDrawingMark(fid, markId);
+        }
+        is.matchEndTag();
       } else
         throw TException("unexpected tag " + tagName);
     } else {
@@ -1517,6 +1530,15 @@ void TXshSimpleLevel::saveData(TOStream &os) {
   os.child("path") << m_path;  // fp;
   if (m_scannedPath != TFilePath())
     os.child("scannedPath") << m_scannedPath;  // fp;
+
+  if (m_drawingMarks.size()) {
+    os.openChild("drawingMarks");
+    os << (int)m_drawingMarks.size();
+    std::map<TFrameId, int>::const_iterator it;
+    for (it = m_drawingMarks.begin(); it != m_drawingMarks.end(); it++)
+      os << it->first.getNumber() << it->second;
+    os.closeChild();
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -2270,6 +2292,16 @@ void TXshSimpleLevel::renumber(const std::vector<TFrameId> &fids) {
     m_frames.insert(fid);
   }
 
+  std::map<TFrameId, int> oldDrawingMarks = m_drawingMarks;
+  m_drawingMarks.clear();
+  for (std::map<TFrameId, int>::iterator it = oldDrawingMarks.begin();
+       it != oldDrawingMarks.end(); ++it) {
+    TFrameId oldFid = it->first;
+    TFrameId newFid = table[oldFid];
+
+    m_drawingMarks[newFid] = it->second;
+  }
+
   ImageManager *im = ImageManager::instance();
   TImageCache *ic  = TImageCache::instance();
 
@@ -2621,4 +2653,22 @@ void TXshSimpleLevel::convertSingleFileToSequence(TXsheet *xsh) {
       }
     }
   }
+}
+
+//-----------------------------------------------------------------------------
+
+int TXshSimpleLevel::getDrawingMark(const TFrameId &fid) const {
+  std::map<TFrameId, int>::const_iterator it = m_drawingMarks.find(fid);
+  return (it != m_drawingMarks.end()) ? it->second : -1;
+}
+
+//-----------------------------------------------------------------------------
+
+void TXshSimpleLevel::setDrawingMark(const TFrameId &fid, int markId) {
+  if (markId < 0) {
+    if (m_drawingMarks.find(fid) != m_drawingMarks.end())
+      m_drawingMarks.erase(fid);
+    return;
+  }
+  m_drawingMarks[fid] = markId;
 }

@@ -14,6 +14,7 @@
 #include "viewerpane.h"
 #include "tooloptionsshortcutinvoker.h"
 #include "custompanelmanager.h"
+#include "maintoolbar.h"
 #include "statusbar.h"
 #include "aboutpopup.h"
 #include "filebrowserpopup.h"
@@ -85,6 +86,7 @@ TEnv::IntVar BCheckToggleAction("BCheckToggleAction", 0);
 TEnv::IntVar GCheckToggleAction("GCheckToggleAction", 0);
 TEnv::IntVar ACheckToggleAction("ACheckToggleAction", 0);
 TEnv::IntVar LinkToggleAction("LinkToggleAction", 0);
+TEnv::IntVar ShowMainToolbarAction("ShowMainToolbarAction", 1);
 TEnv::IntVar ShowStatusBarAction("ShowStatusBarAction", 1);
 // TEnv::IntVar DockingCheckToggleAction("DockingCheckToggleAction", 1);
 TEnv::IntVar ShiftTraceToggleAction("ShiftTraceToggleAction", 0);
@@ -524,6 +526,13 @@ MainWindow::MainWindow(const QString &argumentLayoutFileName, QWidget *parent,
   addToolBar(m_topBar);
   addToolBarBreak(Qt::TopToolBarArea);
 
+  m_mainToolbar = new MainToolbar(this);
+  m_mainToolbar->setVisible(ShowMainToolbarAction == 1 ? true : false);
+
+  addToolBar(m_mainToolbar);
+  addToolBarBreak(Qt::TopToolBarArea);
+
+
   m_stackedWidget = new QStackedWidget(this);
 
   // For the style sheet
@@ -615,6 +624,10 @@ centralWidget->setLayout(centralWidgetLayout);*/
 
   connect(TApp::instance(), SIGNAL(activeViewerChanged()), this,
           SLOT(onActiveViewerChanged()));
+
+  connect(TUndoManager::manager(), SIGNAL(historyChanged()), this,
+          SLOT(onHistoryChanged()));
+  onHistoryChanged();
 }
 
 //-----------------------------------------------------------------------------
@@ -1170,7 +1183,7 @@ void MainWindow::onUndo() {
   // do not use undo if tool is currently in use
   if (toolH->getTool()->isUndoable()) {
     bool ret = TUndoManager::manager()->undo();
-    if (!ret) DVGui::error(QObject::tr("No more Undo operations available."));
+//    if (!ret) DVGui::error(QObject::tr("No more Undo operations available."));
   }
 }
 
@@ -1182,7 +1195,15 @@ void MainWindow::onRedo() {
     ;
 
   bool ret = TUndoManager::manager()->redo();
-  if (!ret) DVGui::error(QObject::tr("No more Redo operations available."));
+//  if (!ret) DVGui::error(QObject::tr("No more Redo operations available."));
+}
+
+void MainWindow::onHistoryChanged() {
+  QAction *action = CommandManager::instance()->getAction(MI_Undo);
+  action->setEnabled(!TUndoManager::manager()->atBeginning());
+
+  action = CommandManager::instance()->getAction(MI_Redo);
+  action->setEnabled(!TUndoManager::manager()->atEnd());
 }
 
 //-----------------------------------------------------------------------------
@@ -1734,6 +1755,10 @@ void MainWindow::onUpdateCheckerDone(bool error) {
   int const software_version =
       get_version_code_from(TEnv::getApplicationVersion());
   QString latestVersionStr = m_updateChecker->getLatestVersion();
+  // Check result for valid version format. If we get garbage back, likely not
+  // connected to internet or other issue so skip check
+  if (!QRegularExpression("^[0-9.]*$").match(latestVersionStr).hasMatch())
+    return;
   int const latest_version =
       get_version_code_from(latestVersionStr.toStdString());
   int skip_version = get_version_code_from(SkipVersion.getValue());
@@ -2693,10 +2718,10 @@ void MainWindow::defineActions() {
   // Menu - Render
 
   createMenuRenderAction(
-      MI_OutputSettings, QT_TR_NOOP("&Output Settings..."), "Ctrl+O",
+      MI_OutputSettings, QT_TR_NOOP("&Render Settings..."), "Ctrl+O",
       "output_settings",
-      tr("Control the output settings for the current scene.") + separator +
-          tr("You can render from the output settings window also."));
+      tr("Control the render settings for the current scene.") + separator +
+          tr("You can render from the render settings window also."));
   createMenuRenderAction(
       MI_PreviewSettings, QT_TR_NOOP("&Preview Settings..."), "",
       "preview_settings",
@@ -2704,13 +2729,13 @@ void MainWindow::defineActions() {
   createMenuRenderAction(MI_Render, QT_TR_NOOP("&Render"), "Ctrl+Shift+R",
                          "render",
                          tr("Renders according to the settings and "
-                            "location set in Output Settings."));
+                            "location set in Render Settings."));
   createMenuRenderAction(
       MI_FastRender, QT_TR_NOOP("&Fast Render to MP4"), "Alt+R",
       "fast_render_mp4",
       tr("Exports an MP4 file to the location specified in the preferences.") +
           separator +
-          tr("This is quicker than going into the Output Settings "
+          tr("This is quicker than going into the Render Settings "
              "and setting up an MP4 render."));
   createMenuRenderAction(
       MI_Preview, QT_TR_NOOP("&Preview"), "Ctrl+R", "preview",
@@ -2728,7 +2753,7 @@ void MainWindow::defineActions() {
   createMenuRenderAction(
       MI_SaveAndRender, QT_TR_NOOP("&Save and Render"), "", "render",
       tr("Saves the current scene and renders according to the settings and "
-         "location set in Output Settings."));
+         "location set in Render Settings."));
 
   // Menu - View
 
@@ -2904,7 +2929,7 @@ void MainWindow::defineActions() {
                           QT_TR_NOOP("Toggle Main Window's Full Screen Mode"),
                           "Ctrl+`", "toggle_fullscreen");
   createMenuWindowsAction(MI_StartupPopup, QT_TR_NOOP("&Startup Popup..."),
-                          "Alt+S" /*, "opentoonz"*/);
+                          "Alt+S", "tahoma2d");
   createMenuWindowsAction(MI_OpenGuidedDrawingControls,
                           QT_TR_NOOP("Guided Tweening Controls"), "",
                           "guided_drawing");
@@ -3011,11 +3036,12 @@ void MainWindow::defineActions() {
   createRightClickMenuAction(MI_SetKeyframes, QT_TR_NOOP("&Set Key"), "Z",
                              "set_key");
   createRightClickMenuAction(MI_SetRestKeyframes, QT_TR_NOOP("&Set Rest Key"),
-                             "", "");
+                             "", "rest_key");
   createRightClickMenuAction(MI_SetGlobalKeyframes,
-                             QT_TR_NOOP("&Set Global Key"), "", "");
+                             QT_TR_NOOP("&Set Global Key"), "", "global_key");
   createRightClickMenuAction(MI_SetGlobalRestKeyframes,
-                             QT_TR_NOOP("&Set Global Rest Key"), "", "");
+                             QT_TR_NOOP("&Set Global Rest Key"), "",
+                             "global_rest_key");
 
   createRightClickMenuAction(MI_ShiftKeyframesDown,
                              QT_TR_NOOP("&Shift Keys Down"), "",
@@ -3296,6 +3322,8 @@ void MainWindow::defineActions() {
                ToolCommandType, "edit_shear");
   createAction(MI_EditCenter, QT_TR_NOOP("Animate Tool - Center"), "", "",
                ToolCommandType, "edit_center");
+  createAction(MI_EditDrawingNumber, QT_TR_NOOP("Animate Tool - Drawing #"), "", "",
+               ToolCommandType, "edit_drawingnumber");
   createAction(MI_EditAll, QT_TR_NOOP("Animate Tool - All"), "", "",
                ToolCommandType, "edit_all");
 
@@ -3696,6 +3724,13 @@ void MainWindow::defineActions() {
                           QT_TR_NOOP("Rotate Selection/Object Right"), "");
   createToolOptionsAction("A_ToolOption_PaintBehind", QT_TR_NOOP("Paint Behind"),
                           "");
+
+  createToolOptionsAction("A_ToolOption_ShowDirection",
+                          QT_TR_NOOP("Show Direction"), "");
+  createToolOptionsAction("A_ToolOption_FlipDirection",
+                          QT_TR_NOOP("Flip Direction"), "");
+
+
   // Visualization
 
   createViewerAction(V_ZoomIn, QT_TR_NOOP("Zoom In"), "+");
@@ -3722,6 +3757,9 @@ void MainWindow::defineActions() {
   createViewerAction(MI_ZoomOutAndFitPanel,
                      QT_TR_NOOP("Zoom Out And Fit Floating Panel"),
                      "Ctrl+Alt+-");
+  menuAct = createToggle(MI_ShowMainToolbar, QT_TR_NOOP("&Show Main Toolbar"), "",
+                         ShowMainToolbarAction ? 1 : 0, MenuViewCommandType);
+  connect(menuAct, SIGNAL(triggered(bool)), this, SLOT(toggleMainToolbar(bool)));
   menuAct = createToggle(MI_ShowStatusBar, QT_TR_NOOP("&Show Status Bar"), "",
                          ShowStatusBarAction ? 1 : 0, MenuViewCommandType);
   connect(menuAct, SIGNAL(triggered(bool)), this, SLOT(toggleStatusBar(bool)));
@@ -3823,6 +3861,16 @@ void MainWindow::defineActions() {
 
   // Special Modifier Keys
   createSpecialModifierAction(V_Scrub, QT_TR_NOOP("Viewer Scrub"), "#");
+
+  // create drawing mark actions
+  for (int markId = 0; markId < 12; markId++) {
+    std::string cmdId = (std::string)MI_SetDrawingMark + std::to_string(markId);
+    std::string labelStr =
+        QT_TR_NOOP("Set Drawing Mark ") + std::to_string(markId);
+    QAction *action = createAction(cmdId.c_str(), labelStr.c_str(), "", "",
+                                   DrawingMarkCommandType);
+    action->setData(markId);
+  }
 
   // create cell mark actions
   for (int markId = 0; markId < 12; markId++) {
@@ -3971,6 +4019,18 @@ void MainWindow::clearCacheFolder() {
 
 //-----------------------------------------------------------------------------
 
+void MainWindow::toggleMainToolbar(bool on) {
+  if (!on) {
+    m_mainToolbar->hide();
+    ShowMainToolbarAction = 0;
+  } else {
+    m_mainToolbar->show();
+    ShowMainToolbarAction = 1;
+  }
+}
+
+//-----------------------------------------------------------------------------
+
 void MainWindow::toggleStatusBar(bool on) {
   if (!on) {
     m_statusBar->hide();
@@ -4024,6 +4084,14 @@ void MainWindow::makeTransparencyDialog() {
 
   m_transparencyTogglerWindow->setLayout(togglerLayout);
 }
+
+//-----------------------------------------------------------------------------
+
+class ToggleMainToolbar final : public MenuItemHandler {
+public:
+  ToggleMainToolbar() : MenuItemHandler("MI_ShowMainToolbar") {}
+  void execute() override {}
+} ToggleMainToolbar;
 
 //-----------------------------------------------------------------------------
 

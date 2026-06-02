@@ -20,6 +20,9 @@ class EditTool final : public QObject, public TTool {
   Q_OBJECT
 
   DragTool* m_dragTool;
+  
+  int currentDrawingNumberDisplay = 0; 
+  bool isDisplayingDrawingNumber  = false; 
 
   bool m_firstTime;
 
@@ -34,6 +37,7 @@ class EditTool final : public QObject, public TTool {
     Center,
     ZTranslation,
     Shear,
+    DrawingNumber,
   };
 
   // DragInfo m_dragInfo;
@@ -54,6 +58,8 @@ class EditTool final : public QObject, public TTool {
   FxGadgetController* m_fxGadgetController;
 
   bool m_isAltPressed;
+  bool m_isShiftPressed; 
+  bool m_isShiftJustPressed; 
 
   TEnumProperty m_scaleConstraint;
   TEnumProperty m_autoSelect;
@@ -78,13 +84,14 @@ class EditTool final : public QObject, public TTool {
   TBoolProperty m_showHVscale;
   TBoolProperty m_showShear;
   TBoolProperty m_showCenterPosition;
+  TBoolProperty m_showDrawingNumber; 
 
   TEnumProperty m_activeAxis;
 
   TPropertyGroup m_prop;
 
   void drawMainHandle();
-  void onEditAllLeftButtonDown(TPointD& pos, const TMouseEvent& e);
+  void onLeftButtonPick(TPointD& pos, const TMouseEvent& e);
 
 public:
   EditTool();
@@ -111,6 +118,8 @@ public:
   void leftButtonDown(const TPointD& pos, const TMouseEvent&) override;
   void leftButtonDrag(const TPointD& pos, const TMouseEvent&) override;
   void leftButtonUp(const TPointD& pos, const TMouseEvent&) override;
+
+  bool isDragging() const override { return m_dragTool ? true : false; }
 
   void mouseMove(const TPointD&, const TMouseEvent& e) override;
 

@@ -15,6 +15,8 @@
 #include "toonz/stage2.h"
 #include "toonz/doubleparamcmd.h"
 #include "toonz/preferences.h"
+#include "toonz/txsheethandle.h"
+#include "toonz/tframehandle.h"
 
 // TnzQt includes
 #include "toonzqt/gutil.h"
@@ -512,7 +514,7 @@ void ToolOptionTextField::onValueChanged() {
 //=============================================================================
 
 ToolOptionStylusConfigButton::ToolOptionStylusConfigButton(
-    TTool *tool, TStylusProperty *property)
+    QWidget *parent, TTool *tool, TStylusProperty *property)
     : QPushButton()
     , ToolOptionControl(tool, property->getName())
     , m_property(property) {
@@ -523,7 +525,7 @@ ToolOptionStylusConfigButton::ToolOptionStylusConfigButton(
 
   m_property->addListener(this);
 
-  m_stylusConfig = new StylusConfigPopup(m_property->getQStringName(), 0);
+  m_stylusConfig = new StylusConfigPopup(m_property->getQStringName(), parent);
 
   bool useLinearCurves = m_property->useLinearCurves();
   QList<TPointD> defaultPressureCurve =
@@ -593,7 +595,6 @@ void ToolOptionStylusConfigButton::onClicked() {
 
   updateStatus();
 
-  m_stylusConfig->show();
   QPoint configPos= mapToGlobal(QPoint(0, pos().y()));
   configPos.setY(configPos.y() + height());
   m_stylusConfig->move(configPos);
@@ -615,6 +616,8 @@ void ToolOptionStylusConfigButton::onClicked() {
   if (distanceX != 0 || distanceY != 0)
     m_stylusConfig->move(m_stylusConfig->x() - distanceX,
                          m_stylusConfig->y() - distanceY);
+
+  m_stylusConfig->show();
 }
 
 //-----------------------------------------------------------------------------
@@ -646,8 +649,8 @@ void ToolOptionStylusConfigButton::onConfigCurveChanged(int configId, bool isDra
 
 //=============================================================================
 
-ToolOptionBrushTipButton::ToolOptionBrushTipButton(
-    TTool *tool, TBrushTipProperty *property)
+ToolOptionBrushTipButton::ToolOptionBrushTipButton(QWidget *parent, TTool *tool,
+                                                   TBrushTipProperty *property)
     : QPushButton()
     , ToolOptionControl(tool, property->getName())
     , m_property(property) {
@@ -657,7 +660,7 @@ ToolOptionBrushTipButton::ToolOptionBrushTipButton(
 
   m_property->addListener(this);
 
-  m_brushTips = new BrushTipPopup(0);
+  m_brushTips = new BrushTipPopup(parent);
 
   updateStatus();
 
@@ -704,7 +707,6 @@ void ToolOptionBrushTipButton::onClicked() {
 
   updateStatus();
 
-  m_brushTips->show();
   QPoint configPos = mapToGlobal(QPoint(0, pos().y()));
   configPos.setY(configPos.y() + height());
   m_brushTips->move(configPos);
@@ -726,6 +728,8 @@ void ToolOptionBrushTipButton::onClicked() {
   if (distanceX != 0 || distanceY != 0)
     m_brushTips->move(m_brushTips->x() - distanceX,
                       m_brushTips->y() - distanceY);
+
+  m_brushTips->show();
 }
 
 //-----------------------------------------------------------------------------
@@ -1209,6 +1213,8 @@ PegbarChannelField::PegbarChannelField(TTool *tool,
     , m_scaleType(eNone) {
   bool ret = connect(this, SIGNAL(measuredValueChanged(TMeasuredValue *, bool)),
                      SLOT(onChange(TMeasuredValue *, bool)));
+  ret      = ret &&
+        connect(this, SIGNAL(measuredValueDeleted(bool)), SLOT(onDelete(bool)));
   assert(ret);
   // NOTA: per le unita' di misura controlla anche tpegbar.cpp
   switch (actionId) {
@@ -1258,8 +1264,31 @@ void PegbarChannelField::onChange(TMeasuredValue *fld, bool addToUndo) {
       fld->setValue(TMeasuredValue::MainUnit, 0.0001);
     }
   }
+
+  // Do now allow drawing number to be < 0
+  if (m_actionId == TStageObject::T_DrawingNumber &&
+      fld->getValue(TMeasuredValue::MainUnit) < 0) {
+    updateStatus();
+    return;
+  }
+
   bool modifyConnectedActionId = false;
-  if (addToUndo) TUndoManager::manager()->beginBlock();
+
+  TXsheet *xsh         = m_xshHandle->getXsheet();
+  TStageObjectId objId = m_objHandle->getObjectId();
+  int frame            = m_frameHandle->getFrameIndex();
+
+  bool setDrawingKey   = false;
+  if (m_actionId == TStageObject::T_DrawingNumber) {
+    TStageObject *stgObj = xsh->getStageObject(objId);
+    TStageObject::KeyframeMap keyframes;
+    stgObj->getKeyframes(keyframes);
+    if (!keyframes.size() || frame < keyframes.begin()->first ||
+        frame > keyframes.rbegin()->first)
+      setDrawingKey = true;
+  }
+
+  if (addToUndo || setDrawingKey) TUndoManager::manager()->beginBlock();
   // m_firstMouseDrag is set to true only if addToUndo is false
   // and only for the first drag
   // This should always fire if addToUndo is true
@@ -1307,6 +1336,19 @@ void PegbarChannelField::onChange(TMeasuredValue *fld, bool addToUndo) {
     after.setValues(v, newV);
   } else
     after.setValue(v);
+  if (setDrawingKey) {
+    int col       = objId.getIndex();
+    TXshCell cell = xsh->getCell(frame, col, true, true);
+    if (!cell.isEmpty() && !cell.getFrameId().isStopFrame() &&
+        !cell.getFrameId().isNoFrame()) {
+      int frameIdNum = cell.getFrameId().getNumber();
+      m_before.setValue(frameIdNum);
+      after.setValue(frameIdNum);
+    }
+    xsh->addUndoDrawingNumberChange(frame, objId);
+    after.applyValues();
+    after.setValue(v);
+  }
   after.applyValues();
 
   TTool::Viewer *viewer = m_tool->getViewer();
@@ -1318,10 +1360,83 @@ void PegbarChannelField::onChange(TMeasuredValue *fld, bool addToUndo) {
     undo->setXsheetHandle(m_xshHandle);
     undo->setObjectHandle(m_objHandle);
     TUndoManager::manager()->add(undo);
-    TUndoManager::manager()->endBlock();
     m_firstMouseDrag = false;
   }
+  if (addToUndo || setDrawingKey) TUndoManager::manager()->endBlock();
   if (!addToUndo && !m_firstMouseDrag) m_firstMouseDrag = true;
+  m_objHandle->notifyObjectIdChanged(false);
+
+  if (m_actionId == TStageObject::T_DrawingNumber) {
+    m_tool->getXsheet()->updateNonZeroDrawingNumberCells(
+        m_tool->getColumnIndex(), m_tool->getFrame());
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+void PegbarChannelField::onDelete(bool addToUndo) {
+  if (!m_tool->isEnabled()) return;
+
+  bool modifyConnectedActionId = false;
+  if (addToUndo) TUndoManager::manager()->beginBlock();
+  // m_firstMouseDrag is set to true only if addToUndo is false
+  // and only for the first drag
+  // This should always fire if addToUndo is true
+  if (!m_firstMouseDrag) {
+    m_before = TStageObjectValues();
+    m_before.setFrameHandle(m_frameHandle);
+    m_before.setObjectHandle(m_objHandle);
+    m_before.setXsheetHandle(m_xshHandle);
+    m_before.add(m_actionId);
+    if (m_scaleType != eNone) {
+      modifyConnectedActionId = true;
+      if (m_actionId == TStageObject::T_ScaleX)
+        m_before.add(TStageObject::T_ScaleY);
+      else if (m_actionId == TStageObject::T_ScaleY)
+        m_before.add(TStageObject::T_ScaleX);
+      else
+        modifyConnectedActionId = false;
+    }
+    if (m_isGlobalKeyframe) {
+      m_before.add(TStageObject::T_Angle);
+      m_before.add(TStageObject::T_X);
+      m_before.add(TStageObject::T_Y);
+      m_before.add(TStageObject::T_Z);
+      m_before.add(TStageObject::T_SO);
+      m_before.add(TStageObject::T_ScaleX);
+      m_before.add(TStageObject::T_ScaleY);
+      m_before.add(TStageObject::T_Scale);
+      m_before.add(TStageObject::T_Path);
+      m_before.add(TStageObject::T_ShearX);
+      m_before.add(TStageObject::T_ShearY);
+    }
+    m_before.updateValues();
+  }
+
+  TTool::Viewer *viewer = m_tool->getViewer();
+  if (viewer) m_tool->invalidate();
+  setCursorPosition(0);
+
+  TStageObjectId objId   = m_objHandle->getObjectId();
+  TStageObject *stageObj = m_xshHandle->getXsheet()->getStageObject(objId);
+  int frame              = m_frameHandle->getFrameIndex();
+
+  TPointD center, offset;
+  stageObj->getCenterAndOffset(center, offset);
+
+  stageObj->getParam(m_actionId)->deleteKeyframe(frame);
+  if (center != TPointD() && !stageObj->isKeyframe(frame))
+    stageObj->setCenter(frame, center, true);
+
+  if (addToUndo) {
+    UndoChannelDelete *undo =
+        new UndoChannelDelete(m_actionId, m_before, center, offset);
+    undo->setXsheetHandle(m_xshHandle);
+    undo->setObjectHandle(m_objHandle);
+    undo->setFrameHandle(m_frameHandle);
+    TUndoManager::manager()->add(undo);
+    TUndoManager::manager()->endBlock();
+  }
   m_objHandle->notifyObjectIdChanged(false);
 }
 
@@ -1334,7 +1449,20 @@ void PegbarChannelField::updateStatus() {
   if (m_actionId == TStageObject::T_Z)
     setMeasure(objId.isCamera() ? "zdepth.cam" : "zdepth");
 
-  double v = xsh->getStageObject(objId)->getParam(m_actionId, frame);
+  TStageObject *stgObj = xsh->getStageObject(objId);
+  double v             = stgObj->getParam(m_actionId, frame);
+
+  if (m_actionId == TStageObject::T_DrawingNumber) {
+    TStageObject::KeyframeMap keyframes;
+    stgObj->getKeyframes(keyframes);
+    if (!keyframes.size() || frame < keyframes.begin()->first ||
+        frame > keyframes.rbegin()->first) {
+      int col       = m_tool->getColumnIndex();
+      TXshCell cell = xsh->getCell(frame, col);
+      if (!cell.isEmpty() && !cell.getFrameId().isStopFrame())
+        v = cell.getFrameId().getNumber();
+    }
+  }
 
   if (getValue() == v) return;
   setValue(v);

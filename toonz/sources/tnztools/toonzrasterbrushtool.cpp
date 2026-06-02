@@ -543,7 +543,7 @@ class RasterBluredBrushUndo final : public TRasterUndo {
   std::vector<TThickPoint> m_points;
   int m_styleId;
   DrawOrder m_drawOrder;
-  int m_maxThick;
+  double m_maxThick;
   double m_hardness;
   bool m_isStraight;
   bool m_modifierLockAlpha;
@@ -563,7 +563,7 @@ public:
   RasterBluredBrushUndo(
       TTileSetCM32 *tileSet, const std::vector<TThickPoint> &points,
       int styleId, DrawOrder drawOrder, bool lockAlpha, TXshSimpleLevel *level,
-      const TFrameId &frameId, int maxThick, double hardness,
+      const TFrameId &frameId, double maxThick, double hardness,
       bool isFrameCreated, bool isLevelCreated, TPointD dpiScale,
       double symmetryLines, double rotation, TPointD centerPoint,
       bool useLineSymmetry, double brushTipRotation, double brushTipSpacing,

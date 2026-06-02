@@ -24,7 +24,7 @@ class BluredBrush {
   QImage m_workImage;
   TRaster32P m_ras;
   QImage m_rasImage;
-  int m_size;
+  double m_size;
   QRadialGradient m_gradient;
   TThickPoint m_lastPoint;
   double m_oldOpacity;
@@ -43,7 +43,7 @@ class BluredBrush {
   double getNextPadPosition(const TThickQuadratic &q, double t) const;
 
 public:
-  BluredBrush(const TRaster32P &ras, int size, const QRadialGradient &gradient,
+  BluredBrush(const TRaster32P &ras, double size, const QRadialGradient &gradient,
               BrushTipData *brushTip = 0, double spacing = 1,
               double rotation = 0, bool flipH = false, bool flipV = false,
               double scatter = 0);
@@ -90,11 +90,13 @@ private:
   TPointD m_rasCenter, m_dpiScale;
 
 public:
-  RasterBlurredBrush(const TRaster32P &ras, int size,
+  RasterBlurredBrush(const TRaster32P &ras, double size,
                      const QRadialGradient &gradient,
                      BrushTipData *brushTip = 0, double spacing = 1,
                      double rotation = 0, bool flipH = false,
                      bool flipV = false, double scatter = 0);
+  
+  ~RasterBlurredBrush();
 
   void addSymmetryBrushes(double lines, double rotation, TPointD centerPoint,
                           bool useLineSymmetry, TPointD dpiScale);

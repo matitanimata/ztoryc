@@ -7,6 +7,7 @@
 
 // TnzLib includes
 #include "toonz/tframehandle.h"
+#include "toonz/tcolumnhandle.h"
 #include "toonz/doubleparamcmd.h"
 
 // TnzBase includes
@@ -21,7 +22,7 @@
 #include <QIntValidator>
 
 FunctionKeyframeNavigator::FunctionKeyframeNavigator(QWidget *parent)
-    : KeyframeNavigator(parent), m_xsheetHandle(0) {}
+    : KeyframeNavigator(parent), m_xsheetHandle(0), m_columnHandle(0) {}
 
 void FunctionKeyframeNavigator::setCurve(TDoubleParam *curve) {
   if (m_curve.getPointer() == curve) return;
@@ -50,11 +51,27 @@ void FunctionKeyframeNavigator::toggle() {
   int frame    = getCurrentFrame();
   double value = m_curve->getValue(frame);
   if (m_curve->isKeyframe(frame))
-    KeyframeSetter::removeKeyframeAt(m_curve.getPointer(), frame,
+    KeyframeSetter::removeKeyframeAt(m_curve.getPointer(), frame, m_objectHandle,
                                      m_xsheetHandle);
   else {
+    bool isDrawingNumber = m_curve->getName() == "W_DrawingNumber";
+    int frameId          = -1;
+    if (isDrawingNumber) {
+      TUndoManager::manager()->beginBlock();
+      int col  = m_columnHandle->getColumnIndex();
+      int xcol = TStageObjectId::ColumnId(col).getIndex();
+      m_xsheetHandle->getXsheet()->addUndoDrawingNumberChange(
+          frame, TStageObjectId::ColumnId(col));
+      TXshCell cell = m_xsheetHandle->getXsheet()->getCell(frame, xcol);
+      frameId       = cell.getFrameId().getNumber();
+    }
     KeyframeSetter setter(m_curve.getPointer(), m_xsheetHandle);
     setter.createKeyframe(frame);
+    if (isDrawingNumber) {
+      if (frameId >= 0) setter.setValue(frameId);
+      setter.addUndo();
+      TUndoManager::manager()->endBlock();
+    }
   }
 }
 

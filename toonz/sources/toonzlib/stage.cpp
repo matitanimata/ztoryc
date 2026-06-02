@@ -728,8 +728,8 @@ void StageBuilder::addFrame(PlayerSet &players, ToonzScene *scene, TXsheet *xsh,
                             int row, int level, bool includeUnvisible,
                             bool checkPreviewVisibility, int subSheetColIndex) {
   int columnCount        = xsh->getColumnCount();
-  unsigned int maskCount = m_masks.size();
-
+  unsigned int maskCount = m_masks.size(); 
+  
   std::vector<std::pair<double, int>> shuffle;
   for (int c = 0; c < columnCount; c++) {
     TXshColumnP column = xsh->getColumn(c);

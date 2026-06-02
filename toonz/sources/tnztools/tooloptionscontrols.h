@@ -274,7 +274,8 @@ protected:
   int m_pressureId, m_tiltId;
 
 public:
-  ToolOptionStylusConfigButton(TTool *tool, TStylusProperty *property);
+  ToolOptionStylusConfigButton(QWidget *parent, TTool *tool,
+                               TStylusProperty *property);
   void updateStatus() override;
   TStylusProperty *getProperty() { return m_property; }
 
@@ -297,7 +298,8 @@ protected:
   int m_pressureId, m_tiltId;
 
 public:
-  ToolOptionBrushTipButton(TTool *tool, TBrushTipProperty *property);
+  ToolOptionBrushTipButton(QWidget *parent, TTool *tool,
+                           TBrushTipProperty *property);
   void updateStatus() override;
   TBrushTipProperty *getProperty() { return m_property; }
 
@@ -453,6 +455,7 @@ protected slots:
 signals:
 
   void measuredValueChanged(TMeasuredValue *value, bool addToUndo = true);
+  void measuredValueDeleted(bool addToUndo = true);
 };
 //-----------------------------------------------------------------------------
 
@@ -486,6 +489,7 @@ protected slots:
   // add to undo is only false if mouse dragging to change the value
   // on mouse release, add to undo is true
   void onChange(TMeasuredValue *fld, bool addToUndo = true);
+  void onDelete(bool addToUndo = true);
 };
 
 //-----------------------------------------------------------------------------

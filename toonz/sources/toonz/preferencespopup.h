@@ -21,6 +21,8 @@
 #include <QOpenGLWidget>
 #include <QSurfaceFormat>
 #include <QOpenGLFunctions>
+#include <QListWidget>
+#include <QMouseEvent>
 
 //==============================================================
 
@@ -30,8 +32,7 @@ class QLineEdit;
 class QPushButton;
 class QLabel;
 class QGroupBox;
-class QListWidget;
-class QStackedWidget;
+class QScrollArea;
 
 //==============================================================
 
@@ -64,6 +65,9 @@ class PreferencesPopup final : public DVGui::Dialog {
   QMap<PreferencesItemId, OnEditedPopupFunc> m_onEditedFuncMap;
   QMap<PreferencesItemId, OnEditedPopupFunc> m_preEditedFuncMap;
 
+  typedef std::pair<QString, QWidgetList> LabelsAndWidgets;
+  std::vector<LabelsAndWidgets> m_searchableWidgets;
+
 public:
   PreferencesPopup();
 
@@ -71,6 +75,7 @@ private:
   class FormatProperties;
   class AdditionalStyleEdit;
   class Display30bitChecker;
+  class CategoryList;
 
 private:
   Preferences* m_pref;
@@ -82,8 +87,11 @@ private:
   QPushButton* m_editLevelFormat;
   QComboBox* m_levelFormatNames;
 
-  QListWidget* m_categoryList;
-  QStackedWidget* m_stackedWidget;
+  QLabel* m_searchLabel;
+  QLineEdit *m_searchEdit;
+  CategoryList* m_categoryList;
+  std::vector<QGroupBox *> m_categoryBoxes;
+  QScrollArea* m_preferenceScrollArea;
 
   // For importing preferences from a different installation
   DVGui::FileField* m_importPrefpath;
@@ -113,28 +121,27 @@ private:
       const QList<ComboBoxItem>& leftComboItems  = QList<ComboBoxItem>(),
       const QList<ComboBoxItem>& rightComboItems = QList<ComboBoxItem>(),
       bool leftMinMaxSlider = false, bool rightMinMaxSlider = false);
-  void insertFootNote(QGridLayout* layout);
   QString getUIString(PreferencesItemId id);
   QList<ComboBoxItem> getComboItemList(PreferencesItemId id) const;
   template <typename T>
   inline T getUI(PreferencesItemId id);
 
-  QWidget* createGeneralPage();
-  QWidget* createInterfacePage();
-  QWidget* createVisualizationPage();
-  QWidget* createLoadingPage();
-  QWidget* createSavingPage();
-  QWidget* createImportExportPage();
-  QWidget* createDrawingPage();
-  QWidget* createToolsPage();
-  QWidget* createXsheetPage();
-  QWidget* createAnimationPage();
-  QWidget* createPreviewPage();
-  QWidget* createOnionSkinPage();
-  QWidget* createColorsPage();
-  QWidget* createVersionControlPage();
-  QWidget* createTouchTabletPage();
-  QWidget* createImportPrefsPage();
+  QGridLayout* createGeneralLayout();
+  QGridLayout* createInterfaceLayout();
+  QGridLayout* createVisualizationLayout();
+  QGridLayout* createLoadingLayout();
+  QGridLayout* createSavingLayout();
+  QGridLayout* createImportExportLayout();
+  QGridLayout* createDrawingLayout();
+  QGridLayout* createToolsLayout();
+  QGridLayout* createXsheetLayout();
+  QGridLayout* createAnimationLayout();
+  QGridLayout* createPreviewLayout();
+  QGridLayout* createOnionSkinLayout();
+  QGridLayout* createColorsLayout();
+  QGridLayout* createVersionControlLayout();
+  QGridLayout* createTouchTabletLayout();
+  QGridLayout* createImportPrefsLayout();
 
   //--- callbacks ---
   // General
@@ -206,6 +213,34 @@ private slots:
   void onImportPolicyExternallyChanged(int policy);
   void onImportPreferences();
   void onImport();
+
+  void onCategoryListChanged(int);
+  void onSelectionCleared();
+  void onSearchTextChanged(const QString& text);
+};
+
+//**********************************************************************************
+//    PreferencesPopup::CategoryList  definition
+//**********************************************************************************
+
+class PreferencesPopup::CategoryList : public QListWidget {
+  Q_OBJECT
+public:
+  explicit CategoryList(QWidget* parent = nullptr) : QListWidget(parent) {};
+
+signals:
+  void selectionCleared();
+
+protected:
+  void mousePressEvent(QMouseEvent* event) override {
+    QListWidget::mousePressEvent(event);
+
+    if (!indexAt(event->pos()).isValid()) {
+      clearSelection();         // Visually deselects items
+      setCurrentItem(nullptr);  // Clears the internal "current" focus
+      emit selectionCleared();
+    }
+  }
 };
 
 //**********************************************************************************

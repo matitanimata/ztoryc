@@ -208,7 +208,7 @@ void putOnRaster(const TRaster32P &out, const TRaster32P &in) {
 //
 //=======================================================
 
-BluredBrush::BluredBrush(const TRaster32P &ras, int size,
+BluredBrush::BluredBrush(const TRaster32P &ras, double size,
                          const QRadialGradient &gradient,
                          BrushTipData *brushTip, double spacing,
                          double rotation, bool flipH, bool flipV,
@@ -658,7 +658,7 @@ TRect BluredBrush::getBoundFromPoints(
 //    Blurred Brush implementation
 //*******************************************************************************
 
-RasterBlurredBrush::RasterBlurredBrush(const TRaster32P &ras, int size,
+RasterBlurredBrush::RasterBlurredBrush(const TRaster32P &ras, double size,
                                        const QRadialGradient &gradient,
                                        BrushTipData *brushTip, double spacing,
                                        double rotation, bool flipH, bool flipV,
@@ -669,6 +669,14 @@ RasterBlurredBrush::RasterBlurredBrush(const TRaster32P &ras, int size,
   m_blurredBrushes.push_back(brush);
 
   m_rasCenter = ras->getCenterD();
+}
+
+//------------------------------------------------------------------
+
+RasterBlurredBrush::~RasterBlurredBrush() {
+  for (BluredBrush *brush : m_blurredBrushes) {
+    delete brush;
+  }
 }
 
 //------------------------------------------------------------------

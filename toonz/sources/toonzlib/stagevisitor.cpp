@@ -61,6 +61,10 @@
 #include <QGuiApplication>
 
 #include "toonz/stagevisitor.h"
+#include "../common/tvectorimage/tvectorimageP.h"
+double currentCloseFactorMin = -1.0; // Use this to track the current close distance minimum value, to know when it changes.
+double currentCloseFactor = -1.0; // Use this to track the current close distance value, to know when it changes.
+
 
 //**********************************************************************************************
 //    Stage namespace
@@ -746,7 +750,8 @@ void RasterPainter::drawRasterImages(QPainter &p, QPolygon cameraPol) {
 static void buildAutocloseImage(
     TVectorImage *vaux, TVectorImage *vi,
     const std::vector<std::pair<int, double>> &startPoints,
-    const std::vector<std::pair<int, double>> &endPoints) {
+    const std::vector<std::pair<int, double>> &endPoints,
+    const bool isLineExtensionAutoClose = false) {
   for (UINT i = 0; i < startPoints.size(); i++) {
     TThickPoint p1 = vi->getStroke(startPoints[i].first)
                          ->getThickPoint(startPoints[i].second);
@@ -756,9 +761,37 @@ static void buildAutocloseImage(
     points[0]       = p1;
     points[1]       = 0.5 * (p1 + p2);
     points[2]       = p2;
-    points[0].thick = points[1].thick = points[2].thick = 0.25;
-    TStroke *auxStroke                                  = new TStroke(points);
+    
+    if(isLineExtensionAutoClose){
+      points[1].thick = points[0].thick / 2;
+      points[2].thick = 0.0;
+    }
+    else {
+      points[0].thick = points[1].thick = points[2].thick = 0.25;
+    }
+
+    TStroke *auxStroke = new TStroke(points);
     auxStroke->setStyle(2);
+    vaux->addStroke(auxStroke);
+  }
+}
+
+static void buildLineExtensionAutocloseImage(
+  TVectorImage* vaux, TVectorImage* vi,
+  const std::vector<std::pair<std::pair<double, double>, std::pair<double, double>>> lineExtensions) {
+  double thick = 0.0;
+
+  for (UINT i = 0; i < lineExtensions.size(); i++) {
+    TThickPoint p1 = TThickPoint(lineExtensions.at(i).first.first, lineExtensions.at(i).first.second,thick);
+    TThickPoint p2 = TThickPoint(lineExtensions.at(i).second.first, lineExtensions.at(i).second.second, thick);
+
+    std::vector<TThickPoint> points(3);
+    points[0] = p1;
+    points[1] = 0.5 * (p1 + p2);
+    points[2] = p2;
+    points[0].thick = points[1].thick = points[2].thick = 0.0;
+    TStroke* auxStroke = new TStroke(points);
+    auxStroke->setStyle(3);
     vaux->addStroke(auxStroke);
   }
 }
@@ -783,6 +816,84 @@ static void drawAutocloses(TVectorImage *vi, TVectorRenderData &rd) {
   // temporarily disable fill check, to preserve the gap indicator color
   bool tCheckEnabledOriginal = rd.m_tcheckEnabled;
   rd.m_tcheckEnabled         = false;
+  // draw
+  tglDraw(rd, vaux);
+  // restore original value
+  rd.m_tcheckEnabled = tCheckEnabledOriginal;
+  delete vaux;
+}
+
+//-----------------------------------------------------------------------------
+
+/*! Draw lines for the line extension auto close method.
+*/
+static void drawLineExtensionAutocloses(TVectorImage* vi, TVectorRenderData& rd) {
+  static TPalette* plt = 0;
+  const int ROUNDINGFACTOR = 4;
+  currentCloseFactorMin = AutocloseFactorMin;
+  currentCloseFactor = AutocloseFactor;
+  int colorstyle = 0, colorstyleGapClose = 0;
+  if (!plt) {
+    plt = new TPalette();
+    const TPixelRGBM32 candidateCloseLineColor(0xFF, 0, 0xFF, 0xFF / 2); //magenta color with %50 transparency
+    colorstyleGapClose = plt->addStyle(candidateCloseLineColor);
+
+    const TPixelRGBM32 lineExtensionColor(0, 0xFF, 0xFF, 0xFF / 2); //cyan color with %50 transparency
+    colorstyle = plt->addStyle(lineExtensionColor);
+  }
+  std::vector<std::pair<int, double>> startPoints, endPoints;
+  std::vector<std::pair<std::pair<double, double>, std::pair<double, double>>> lineExtensions;
+  getLineExtensionClosingPoints(vi->getBBox(), vi, startPoints, endPoints, lineExtensions);
+  UINT strokeCount = vi->getStrokeCount();
+  TVectorImage* vaux = new TVectorImage();
+
+  rd.m_palette = plt;
+
+  buildAutocloseImage(vaux, vi, startPoints, endPoints, true);
+  
+  buildLineExtensionAutocloseImage(vaux, vi, lineExtensions);
+
+if (false){
+assert(startPoints.size() == endPoints.size());
+
+if (!startPoints.empty()) {
+
+  TVectorImage tempImage = vaux;
+  tempImage.findRegions();
+
+  int colorStyle;
+  colorStyle = 2; //temporarily set to red
+
+  std::vector<std::pair<int, double>> inScopeStrokes;
+
+  int inScopeCount = 0, outOfScopeCount = 0, reverseCount = 0;
+
+  for (std::size_t i = 0; i < startPoints.size(); ++i) {
+    TStroke* startStroke = vi->getStroke(startPoints[i].first);
+    TStroke* endStroke = vi->getStroke(endPoints[i].first);
+    inScopeCount++;
+
+    // add this close gap stroke to vi
+    std::vector<TThickPoint> points(3);
+    TThickPoint p0;
+    TThickPoint p2;
+
+    points[0] = p0;
+    points[1] = 0.5 * (p0 + p2);
+    points[2] = p2;
+    points[0].thick = points[1].thick = points[2].thick = 0.0;
+    TStroke* gapCloseStroke = new TStroke(points);
+    //gapCloseStroke->setStyle(colorstyle);
+    gapCloseStroke->setStyle(2);
+    vaux->addStroke(gapCloseStroke);
+
+  }
+}
+}
+  
+// temporarily disable fill check, to preserve the gap indicator color
+  bool tCheckEnabledOriginal = rd.m_tcheckEnabled;
+  rd.m_tcheckEnabled = false;
   // draw
   tglDraw(rd, vaux);
   // restore original value
@@ -1006,7 +1117,7 @@ void RasterPainter::onVectorImage(TVectorImage *vi,
   else
     tglDraw(rd, vi, &guidedStroke);
 
-  if (tc & ToonzCheck::eAutoclose) drawAutocloses(vi, rd);
+  if (tc & ToonzCheck::eAutoclose) drawLineExtensionAutocloses(vi, rd);;
 
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
   vPalette->setFrame(oldFrame);

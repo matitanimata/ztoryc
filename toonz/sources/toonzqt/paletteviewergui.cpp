@@ -1037,7 +1037,16 @@ void PageViewer::mousePressEvent(QMouseEvent *event) {
   m_dragStartPosition = pos;
   if (indexInPage < 0 || indexInPage >= getChipCount()) {
     if (indexInPage == getChipCount() && !m_page->getPalette()->isLocked()) {
-      PaletteCmd::createStyle(getPaletteHandle(), getPage());
+      TColorStyleP currentStyle = getPaletteHandle()->getStyle();
+
+      int newStyleIndex =
+          PaletteCmd::createStyle(getPaletteHandle(), getPage());
+
+      if (currentStyle) {
+        TPalette *palette = getPaletteHandle()->getPalette();
+        palette->setStyle(newStyleIndex, currentStyle->clone());
+      }
+
       m_styleSelection->select(pageIndex);
       m_styleSelection->select(pageIndex, indexInPage, true);
     } else {
@@ -1145,7 +1154,15 @@ void PageViewer::createMenuAction(QMenu &menu, const char *id, QString name,
 //-----------------------------------------------------------------------------
 
 void PageViewer::addNewColor() {
-  PaletteCmd::createStyle(getPaletteHandle(), getPage());
+  TColorStyleP currentStyle = getPaletteHandle()->getStyle();
+
+  int newStyleIndex = PaletteCmd::createStyle(getPaletteHandle(), getPage());
+
+  if (currentStyle) {
+    TPalette *palette = getPaletteHandle()->getPalette();
+    palette->setStyle(newStyleIndex, currentStyle->clone());
+  }
+
   computeSize();
   update();
 }

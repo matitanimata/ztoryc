@@ -42,6 +42,7 @@ protected:
 
 protected slots:
   void doCustomizeCommandBar();
+  void doResetCommandBar();
 };
 
 }  // namespace XsheetGUI

@@ -479,7 +479,6 @@ void TDoubleParam::copy(TParam *src) {
   if (!p) throw TException("invalid source for copy");
   setName(src->getName());
   m_imp->copy(p->m_imp);
-
   m_imp->notify(TParamChange(this, 0, 0, true, false, false));
 }
 
@@ -664,6 +663,8 @@ double TDoubleParam::getValue(double frame, bool leftmost) const {
     if (convertUnit) value = a->convertFrom(m_imp->m_measure, value);
   }
 
+  if (getName() == "W_DrawingNumber" && value < 0) value = 0;
+
   // if (cropped)
   //  value = tcrop(value, m_imp->m_minValue, m_imp->m_maxValue);
   return value;
@@ -690,7 +691,7 @@ bool TDoubleParam::setValue(double frame, double value) {
 
     it->m_value = value;
 
-    m_imp->notify(TParamChange(this, 0, 0, true, false, false));
+    m_imp->notify(TParamChange(this, frame, frame, true, false, false));
   }
   /*-- It is a segment, so create a new keyframe. --*/
   else {
@@ -720,7 +721,7 @@ bool TDoubleParam::setValue(double frame, double value) {
 
     index = std::distance(keyframes.begin(), it);
 
-    m_imp->notify(TParamChange(this, 0, 0, true, false, false));
+    m_imp->notify(TParamChange(this, frame, frame, true, false, false));
     created = true;
   }
   assert(0 == index || keyframes[index - 1].m_frame < keyframes[index].m_frame);
@@ -739,6 +740,9 @@ void TDoubleParam::setKeyframe(int index, const TDoubleKeyframe &k) {
   TActualDoubleKeyframe &dst        = keyframes[index];
   TActualDoubleKeyframe oldKeyframe = dst;
 
+  int minFrame = std::min(oldKeyframe.m_frame, k.m_frame);
+  int maxFrame = std::max(oldKeyframe.m_frame, k.m_frame);
+
   (TDoubleKeyframe &)dst = k;
   dst.updateUnit(m_imp->m_measure);
 
@@ -748,7 +752,7 @@ void TDoubleParam::setKeyframe(int index, const TDoubleKeyframe &k) {
   if (dst.m_type == TDoubleKeyframe::File)
     dst.m_fileData.setParams(dst.m_fileParams);
 
-  m_imp->notify(TParamChange(this, 0, 0, true, false, false));
+  m_imp->notify(TParamChange(this, minFrame, maxFrame, true, false, false));
 
   assert(0 == index || keyframes[index - 1].m_frame < keyframes[index].m_frame);
   assert(getKeyframeCount() - 1 == index ||
@@ -768,12 +772,20 @@ void TDoubleParam::setKeyframes(const std::map<int, TDoubleKeyframe> &ks) {
   DoubleKeyframeVector &keyframes = m_imp->m_keyframes;
 
   std::map<int, TDoubleKeyframe>::const_iterator it;
+  int minFrame      = INT_MAX; 
+  int maxFrame      = -1; 
+  auto updateMinMax = [&](int frame) {
+    minFrame = std::min(minFrame, frame);
+    maxFrame = std::max(maxFrame, frame);
+  };
   for (it = ks.begin(); it != ks.end(); ++it) {
     int index = it->first;
     assert(0 <= index && index < (int)keyframes.size());
 
     TActualDoubleKeyframe oldKeyframe = keyframes[index];
     TActualDoubleKeyframe &dst        = keyframes[index];
+
+    updateMinMax(oldKeyframe.m_frame);
 
     (TDoubleKeyframe &)dst = it->second;
     dst.updateUnit(m_imp->m_measure);
@@ -783,6 +795,7 @@ void TDoubleParam::setKeyframes(const std::map<int, TDoubleKeyframe> &ks) {
       dst.m_expression.setText(dst.m_expressionText);
     if (dst.m_type == TDoubleKeyframe::File)
       dst.m_fileData.setParams(dst.m_fileParams);
+    updateMinMax(dst.m_frame);
   }
   if (!keyframes.empty()) {
     keyframes[0].m_prevType = TDoubleKeyframe::None;
@@ -790,7 +803,7 @@ void TDoubleParam::setKeyframes(const std::map<int, TDoubleKeyframe> &ks) {
       keyframes[i].m_prevType = keyframes[i - 1].m_type;
   }
 
-  m_imp->notify(TParamChange(this, 0, 0, true, false, false));
+  m_imp->notify(TParamChange(this, minFrame, maxFrame, true, false, false));
 
 #ifndef NDEBUG
   for (int i = 0; i + 1 < (int)keyframes.size(); i++) {
@@ -804,6 +817,7 @@ void TDoubleParam::setKeyframes(const std::map<int, TDoubleKeyframe> &ks) {
 void TDoubleParam::setKeyframe(const TDoubleKeyframe &k) {
   DoubleKeyframeVector &keyframes = m_imp->m_keyframes;
   DoubleKeyframeVector::iterator it;
+  bool atEnd = false;
   it = std::lower_bound(keyframes.begin(), keyframes.end(), k);
   if (it != keyframes.end() && it->m_frame == k.m_frame) {
     // int index = std::distance(keyframes.begin(), it);
@@ -811,6 +825,14 @@ void TDoubleParam::setKeyframe(const TDoubleKeyframe &k) {
     (TDoubleKeyframe &)dst     = k;
     dst.updateUnit(m_imp->m_measure);
   } else {
+    if (keyframes.size()) {
+      if (it == keyframes.end()) {  // Adding after the last one
+        keyframes.rbegin()->m_type = k.m_prevType != TDoubleKeyframe::None
+                                         ? k.m_prevType
+                                         : TDoubleKeyframe::Linear;
+        atEnd                      = true;
+      }
+    }
     it = keyframes.insert(it, TActualDoubleKeyframe(k));
     // int index = std::distance(keyframes.begin(), it);
     // TDoubleKeyframe oldKeyframe = *it;
@@ -819,6 +841,8 @@ void TDoubleParam::setKeyframe(const TDoubleKeyframe &k) {
     it->updateUnit(m_imp->m_measure);
   }
   it->m_isKeyframe = true;
+
+  if (atEnd) it->m_type = TDoubleKeyframe::Linear;
 
   if (it->m_type == TDoubleKeyframe::Expression)
     it->m_expression.setText(it->m_expressionText);
@@ -833,7 +857,7 @@ void TDoubleParam::setKeyframe(const TDoubleKeyframe &k) {
 
   if (it + 1 != keyframes.end()) it[1].m_prevType = it->m_type;
 
-  m_imp->notify(TParamChange(this, 0, 0, true, false, false));
+  m_imp->notify(TParamChange(this, k.m_frame, k.m_frame, true, false, false));
 
   assert(it == keyframes.begin() || (it - 1)->m_frame < it->m_frame);
   assert(it + 1 == keyframes.end() || (it + 1)->m_frame > it->m_frame);
@@ -921,9 +945,12 @@ void TDoubleParam::deleteKeyframe(double frame) {
 
   TDoubleKeyframe::Type type = it->m_prevType;
   it                         = m_imp->m_keyframes.erase(it);
-  if (it != keyframes.end()) it->m_prevType = type;
+  if (it != keyframes.end())
+    it->m_prevType = type;
+  else if (m_imp->m_keyframes.size())  // end was deleted
+    keyframes.rbegin()->m_type = TDoubleKeyframe::Linear;
 
-  m_imp->notify(TParamChange(this, 0, 0, true, false, false));
+  m_imp->notify(TParamChange(this, frame, frame, true, false, false));
 }
 
 //---------------------------------------------------------
@@ -1053,6 +1080,14 @@ is >> m_imp->m_defaultValue;
 
   m_imp->m_keyframes.clear();
   int oldType = -1;
+  int minFrame = INT_MAX;
+  int maxFrame = -1; 
+
+  auto updateMinMax = [&](int frame) {
+    minFrame = std::min(minFrame, frame);
+    maxFrame = std::max(maxFrame, frame);
+  };
+
   while (is.matchTag(tagName)) {
     if (tagName == "type") {
       // (old) format 5.2. Since 6.0 param type is no used anymore
@@ -1075,6 +1110,7 @@ is >> m_imp->m_defaultValue;
       k.m_isKeyframe    = true;
       k.m_linkedHandles = (linkStatus & 1) != 0;
 
+      updateMinMax(k.m_frame); 
       if ((linkStatus & 1) != 0)
         k.m_type = TDoubleKeyframe::SpeedInOut;
       else if ((linkStatus & 2) != 0 || (linkStatus & 4) != 0)
@@ -1087,6 +1123,7 @@ is >> m_imp->m_defaultValue;
                          ? TDoubleKeyframe::None
                          : m_imp->m_keyframes.back().m_type;
       m_imp->m_keyframes.push_back(k);
+      updateMinMax(k.m_frame); 
     } else if (tagName == "expr") {
       // vecchio formato
       if (oldType != 1) continue;
@@ -1115,6 +1152,8 @@ is >> m_imp->m_defaultValue;
                           : m_imp->m_keyframes.back().m_type;
       m_imp->m_keyframes.push_back(k1);
       m_imp->m_keyframes.push_back(k2);
+      updateMinMax(k1.m_frame); 
+      updateMinMax(k2.m_frame); 
       continue;
     } else if (tagName == "file") {
       // vecchio formato
@@ -1143,6 +1182,8 @@ is >> m_imp->m_defaultValue;
                           : m_imp->m_keyframes.back().m_type;
       m_imp->m_keyframes.push_back(k1);
       m_imp->m_keyframes.push_back(k2);
+      updateMinMax(k1.m_frame);
+      updateMinMax(k2.m_frame); 
       continue;
     } else if (tagName == "step") {
       int step = 0;
@@ -1162,6 +1203,7 @@ is >> m_imp->m_defaultValue;
                            ? TDoubleKeyframe::None
                            : m_imp->m_keyframes.back().m_type;
         m_imp->m_keyframes.push_back(k);
+        updateMinMax(k.m_frame); 
       }
     } else {
       throw TException(tagName + " : unexpected tag");
@@ -1174,6 +1216,7 @@ is >> m_imp->m_defaultValue;
       double t, v;
       is >> t >> v;
       m_imp->m_keyframes.push_back(TActualDoubleKeyframe(t, v));
+      updateMinMax(t);
     }
     if (!m_imp->m_keyframes.empty()) {
       m_imp->m_keyframes[0].m_prevType = TDoubleKeyframe::None;
@@ -1182,7 +1225,13 @@ is >> m_imp->m_defaultValue;
     }
   }
 
-  m_imp->notify(TParamChange(this, 0, 0, true, false, false));
+  if (!m_imp->m_keyframes.empty()) {
+    // For loader scenes, ensure the last keyframe's type is set to Linear
+    if (m_imp->m_keyframes.rbegin()->m_type != TDoubleKeyframe::Linear)
+      m_imp->m_keyframes.rbegin()->m_type = TDoubleKeyframe::Linear;
+  }
+
+  m_imp->notify(TParamChange(this, minFrame, maxFrame, true, false, false));
 }
 
 //---------------------------------------------------------

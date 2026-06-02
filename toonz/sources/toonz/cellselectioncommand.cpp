@@ -34,6 +34,7 @@
 #include "toonz/tframehandle.h"
 #include "toonz/tcolumnhandle.h"
 #include "toonz/tstageobjectcmd.h"
+#include "toonz/txshpegbarcolumn.h"
 
 // TnzCore includes
 #include "tsystem.h"
@@ -199,6 +200,77 @@ void TCellSelection::swingCells() {
 
   undo->redo();
 }
+
+//*********************************************************************************
+//    Drawing Number Undo 
+//*********************************************************************************
+
+namespace {
+
+class DrawingNumberUpdateUndo final : public TUndo {
+  int m_r0, m_c0, m_r1, m_c1;
+  mutable std::vector<std::pair<TRect, TXshCell>> m_undoCells;
+
+public:
+  mutable bool m_ok;
+
+public:
+  DrawingNumberUpdateUndo(int r0, int c0, int r1, int c1)
+      : m_r0(r0), m_c0(c0), m_r1(r1), m_c1(c1), m_ok(true) {}
+
+  void redo() const override;
+  void undo() const override;
+
+  int getSize() const override { return sizeof(*this); }
+
+  QString getHistoryString() override { return QObject::tr("Autoexpose"); }
+  int getHistoryType() override { return HistoryType::Xsheet; }
+};
+
+//-----------------------------------------------------------------------------
+
+void DrawingNumberUpdateUndo::redo() const {
+  TCG_ASSERT(m_r1 >= m_r0 && m_c1 >= m_c0, return);
+
+  m_undoCells.clear();
+  m_ok = TApp::instance()
+             ->getCurrentXsheet()
+             ->getXsheet()
+             ->updateNonZeroDrawingNumberCellsBox(m_r0, m_c0, m_c1);
+
+  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+}
+
+//-----------------------------------------------------------------------------
+
+void DrawingNumberUpdateUndo::undo() const {
+  TCG_ASSERT(m_r1 >= m_r0 && m_c1 >= m_c0 && m_ok, return);
+
+  TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+
+  for (int i = m_undoCells.size() - 1; i >= 0; --i) {
+    const TRect &r = m_undoCells[i].first;
+    int size       = r.x1 - r.x0 + 1;
+
+    if (m_undoCells[i].second.getFrameId().isNoFrame())
+      xsh->removeCells(r.x0, r.y0, size);
+    else {
+      xsh->insertCells(r.x0, r.y0, size);
+      for (int j = 0; j < size; ++j) {
+        if (j > 0 && Preferences::instance()->isImplicitHoldEnabled())
+          xsh->setCell(r.x0 + j, r.y0, TXshCell(0, TFrameId::EMPTY_FRAME));
+        else
+          xsh->setCell(r.x0 + j, r.y0, m_undoCells[i].second);
+      }
+    }
+  }
+
+  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+}
+
+}  // namespace
 
 //*********************************************************************************
 //    Increment Cells  command
@@ -747,6 +819,7 @@ ReframeUndo::ReframeUndo(int r0, int r1, std::vector<int> columnIndeces,
   for (auto colIndex : m_columnIndeces) {
     int rTo                = m_r1;
     TXshCellColumn *column = xsh->getColumn(colIndex)->getCellColumn();
+    if (!column) continue;
     int colLen0, colLen1;
     column->getRange(colLen0, colLen1);
     TXshCell tmpCell = column->getCell(m_r1, true, false);
@@ -1644,14 +1717,17 @@ void TCellSelection::setKeyframes() {
 
   int row = m_range.m_r0, col = m_range.m_c0;
 
-  if (xsh->getColumn(col) && xsh->getColumn(col)->getFolderColumn()) return;
+  TXshColumn *column = xsh->getColumn(col);
+  if (column && (column->isLocked() || column->getFolderColumn() ||
+                 column->getSoundColumn() || column->getSoundTextColumn()))
+    return;
 
-  const TXshCell &cell = xsh->getCell(row, col);
-  if (cell.getSoundLevel() || cell.getSoundTextLevel()) return;
-
-  const TStageObjectId &id =
-      col >= 0 ? xsh->getColumnObjectId(col)
+  TStageObjectId id =
+      col >= 0 ? TStageObjectId::ColumnId(col)
                : TStageObjectId::CameraId(xsh->getCameraColumnIndex());
+
+  if (column && column->getPegbarColumn())
+    id = column->getPegbarColumn()->getPegbarObjectId();
 
   TStageObject *obj = xsh->getStageObject(id);
   if (!obj) return;
@@ -1659,10 +1735,11 @@ void TCellSelection::setKeyframes() {
   // Command body
   if (obj->isFullKeyframe(row)) {
     const TStageObject::Keyframe &key = obj->getKeyframe(row);
-
-    UndoRemoveKeyFrame *undo = new UndoRemoveKeyFrame(id, row, key, xshHandle);
+    TPointD center, offset;
+    obj->getCenterAndOffset(center, offset);
+    UndoRemoveKeyFrame *undo =
+        new UndoRemoveKeyFrame(id, row, key, center, offset, xshHandle);
     undo->setObjectHandle(app->getCurrentObject());
-
     TUndoManager::manager()->add(undo);
     undo->redo();
   } else {

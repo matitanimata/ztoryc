@@ -294,7 +294,6 @@ add_definitions(
     -DQT_NETWORK_LIB
     -DQT_CORE_LIB
     -DQT_SHARED
-    -DQT_DISABLE_DEPRECATED_BEFORE=0x050F02
 )
 
 # Find includes in corresponding build directories
@@ -356,6 +355,7 @@ if(BUILD_ENV_MSVC)
     )
     add_definitions(
         -DGLUT_NO_LIB_PRAGMA
+        -DQT_DISABLE_DEPRECATED_BEFORE=0x050F02
     )
 
     if(WITH_GPHOTO2)
@@ -569,10 +569,15 @@ elseif(BUILD_ENV_UNIXLIKE)
     pkg_check_modules(LZMA liblzma)
     set(TIFF_LIB ${TIFF_LIBRARY} ${LZMA_LIBRARIES})
 
-    if(GLEW-NOTFOUND)
+    if(TARGET GLEW::GLEW)
+        set(GLEW_LIB GLEW::GLEW)
+    elseif(GLEW_FOUND)
+        set(GLEW_LIB ${GLEW_LIBRARIES})
+    else()
+        find_package(PkgConfig REQUIRED)
         pkg_check_modules(GLEW REQUIRED glew)
+        set(GLEW_LIB ${GLEW_LIBRARIES})
     endif()
-    set(GLEW_LIB ${GLEW_LIBRARIES})
 
     pkg_check_modules(LZ4_LIB REQUIRED liblz4)
 

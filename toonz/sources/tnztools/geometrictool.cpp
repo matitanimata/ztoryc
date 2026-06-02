@@ -129,7 +129,7 @@ static TPointD computeSpeed(TPointD p0, TPointD p1, double factor) {
 //-----------------------------------------------------------------------------
 
 static TRect drawBluredBrush(const TRasterImageP &ri, TStroke *stroke,
-                             int thick, double hardness, double opacity) {
+                             double thick, double hardness, double opacity) {
   TStroke *s       = new TStroke(*stroke);
   TPointD riCenter = ri->getRaster()->getCenterD();
   s->transform(TTranslation(riCenter));
@@ -173,7 +173,7 @@ static TRect drawBluredBrush(const TRasterImageP &ri, TStroke *stroke,
 
 //-----------------------------------------------------------------------------
 
-static TRect drawBluredBrush(const TToonzImageP &ti, TStroke *stroke, int thick,
+static TRect drawBluredBrush(const TToonzImageP &ti, TStroke *stroke, double thick,
                              double hardness, bool selective) {
   TStroke *s       = new TStroke(*stroke);
   TPointD riCenter = ti->getRaster()->getCenterD();
@@ -409,12 +409,12 @@ public:
 //-----------------------------------------------------------------------------
 
 class FullColorBluredPrimitiveUndo final : public UndoFullColorPencil {
-  int m_thickness;
+  double m_thickness;
   double m_hardness;
 
 public:
   FullColorBluredPrimitiveUndo(TXshSimpleLevel *level, const TFrameId &frameId,
-                               TStroke *stroke, int thickness, double hardness,
+                               TStroke *stroke, double thickness, double hardness,
                                double opacity, bool doAntialias,
                                bool createdFrame, bool createdLevel)
       : UndoFullColorPencil(level, frameId, stroke, opacity, doAntialias,
@@ -449,13 +449,13 @@ public:
 //-----------------------------------------------------------------------------
 /*-- Hardness<100 のときの GeometricToolのUndo --*/
 class CMBluredPrimitiveUndo final : public UndoRasterPencil {
-  int m_thickness;
+  double m_thickness;
   double m_hardness;
   bool m_selective;
 
 public:
   CMBluredPrimitiveUndo(TXshSimpleLevel *level, const TFrameId &frameId,
-                        TStroke *stroke, int thickness, double hardness,
+                        TStroke *stroke, double thickness, double hardness,
                         bool selective, bool doAntialias, bool createdFrame,
                         bool createdLevel, std::string primitiveName)
       : UndoRasterPencil(level, frameId, stroke, selective, false, doAntialias,
@@ -495,7 +495,7 @@ class PrimitiveParam {
 
 public:
   TDoubleProperty m_toolSize;
-  TIntProperty m_rasterToolSize;
+  TDoubleProperty m_rasterToolSize;
   TDoubleProperty m_opacity;
   TDoubleProperty m_hardness;
   TEnumProperty m_type;
@@ -1943,7 +1943,7 @@ public:
                                                 filled, TConsts::infiniteRectD,
                                                 !m_param.m_pencil.getValue());
       } else {
-        int thickness = m_param.m_rasterToolSize.getValue();
+        double thickness = m_param.m_rasterToolSize.getValue();
         TUndoManager::manager()->add(new CMBluredPrimitiveUndo(
             sl, id, stroke, thickness, hardness, selective, false,
             m_isFrameCreated, m_isLevelCreated, m_primitive->getName()));
@@ -2056,7 +2056,7 @@ public:
             sl, id, stroke, opacity, true, m_isFrameCreated, m_isLevelCreated));
         savebox = TRasterImageUtils::addStroke(ri, stroke, TRectD(), opacity);
       } else {
-        int thickness = m_param.m_rasterToolSize.getValue();
+        double thickness = m_param.m_rasterToolSize.getValue();
         TUndoManager::manager()->add(new FullColorBluredPrimitiveUndo(
             sl, id, stroke, thickness, hardness, opacity, true,
             m_isFrameCreated, m_isLevelCreated));
@@ -2565,7 +2565,7 @@ void RectanglePrimitive::leftButtonDown(const TPointD &pos,
   if (m_param->m_pencil.getValue() &&
       (m_param->m_targetType & TTool::ToonzImage ||
        m_param->m_targetType & TTool::RasterImage)) {
-    if (m_param->m_rasterToolSize.getValue() % 2 != 0)
+    if ((int)m_param->m_rasterToolSize.getValue() % 2 != 0)
       m_startPoint = TPointD((int)pos.x, (int)pos.y);
     else
       m_startPoint = TPointD((int)pos.x + 0.5, (int)pos.y + 0.5);
@@ -2613,7 +2613,7 @@ void RectanglePrimitive::leftButtonDrag(const TPointD &realPos,
   if (m_param->m_pencil.getValue() &&
       (m_param->m_targetType & TTool::ToonzImage ||
        m_param->m_targetType & TTool::RasterImage)) {
-    if (m_param->m_rasterToolSize.getValue() % 2 != 0)
+    if ((int)m_param->m_rasterToolSize.getValue() % 2 != 0)
       pos = TPointD((int)pos.x, (int)pos.y);
     else
       pos = TPointD((int)pos.x + 0.5, (int)pos.y + 0.5);
@@ -3326,7 +3326,7 @@ void LinePrimitive::leftButtonDown(const TPointD &pos, const TMouseEvent &e) {
   if (m_param->m_pencil.getValue() &&
       (m_param->m_targetType & TTool::ToonzImage ||
        m_param->m_targetType & TTool::RasterImage)) {
-    if (m_param->m_rasterToolSize.getValue() % 2 != 0)
+    if ((int)m_param->m_rasterToolSize.getValue() % 2 != 0)
       _pos = TPointD((int)newPos.x, (int)newPos.y);
     else
       _pos = TPointD((int)newPos.x + 0.5, (int)newPos.y + 0.5);

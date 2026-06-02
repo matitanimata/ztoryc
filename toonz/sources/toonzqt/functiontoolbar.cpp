@@ -45,6 +45,7 @@ FunctionToolbar::FunctionToolbar(QWidget *parent)
     : DVGui::ToolBar(parent)
     , m_frameHandle(0)
     , m_xsheetHandle(0)
+    , m_columnHandle(0)
     , m_curve(0)
     , m_selection(0) {
   setFixedHeight(28);
@@ -230,6 +231,20 @@ void FunctionToolbar::setFrameHandle(TFrameHandle *frameHandle) {
 void FunctionToolbar::setXsheetHandle(TXsheetHandle *xsheetHandle) {
   m_xsheetHandle = xsheetHandle;
   if (m_keyframeNavigator) m_keyframeNavigator->setXsheetHandle(xsheetHandle);
+}
+
+//-------------------------------------------------------------------
+
+void FunctionToolbar::setColumnHandle(TColumnHandle *columnHandle) {
+  m_columnHandle = columnHandle;
+  if (m_keyframeNavigator) m_keyframeNavigator->setColumnHandle(columnHandle);
+}
+
+//-------------------------------------------------------------------
+
+void FunctionToolbar::setObjectHandle(TObjectHandle* objectHandle) {
+  m_objectHandle = objectHandle;
+  if (m_keyframeNavigator) m_keyframeNavigator->setObjectHandle(objectHandle);
 }
 
 //-------------------------------------------------------------------

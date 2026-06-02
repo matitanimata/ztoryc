@@ -133,7 +133,7 @@ public:
   void setUseLineSymmetry(bool useLineSymmetry) {
     m_symmetry.m_useLineSymmetry = useLineSymmetry;
   }
-  bool isUsingLineSymmetry() {
+  bool isUsingLineSymmetry() const {
     if ((m_symmetry.m_lines % 2) != 0) return false;
     return m_symmetry.m_useLineSymmetry;
   }
@@ -167,6 +167,8 @@ public:
   }
 
   TRectD getRotationRect() { return getControlRect(m_symmetry.m_rotationPos); }
+
+  std::vector<TAffine> getSymmetryTransforms(const TPointD& dpiScale) const;
 
 private:
   TRectD getControlRect(TPointD controlPos) {

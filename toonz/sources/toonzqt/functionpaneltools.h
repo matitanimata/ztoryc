@@ -11,6 +11,7 @@
 // class QMouseEvent;
 class KeyframeSetter;
 class TDoubleParam;
+class TXshCell;
 
 class FunctionPanel::DragTool {
 public:
@@ -79,6 +80,7 @@ class MovePointDragTool final : public FunctionPanel::DragTool {
   FunctionPanel *m_panel;
   QPoint m_startPos, m_oldPos;
   double m_deltaFrame;
+  int m_startFrame;
   // length and kIndex of speedinout handles which can change because of point
   // moving
   double m_speed0Length;
@@ -86,8 +88,11 @@ class MovePointDragTool final : public FunctionPanel::DragTool {
   double m_speed1Length;
   int m_speed1Index;
   std::vector<KeyframeSetter *> m_setters;
+  std::vector<std::set<double>> m_startFrames;
   bool m_groupEnabled;
   FunctionSelection *m_selection;
+
+  QMap<int, std::vector<TXshCell>> m_undoDrawings;
 
 public:
   MovePointDragTool(FunctionPanel *panel, TDoubleParam *curve);

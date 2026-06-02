@@ -257,6 +257,7 @@
 #define MI_BlueChannelGreyscale "MI_BlueChannelGreyscale"
 
 // #define MI_DockingCheck "MI_DockingCheck"
+#define MI_ShowMainToolbar "MI_ShowMainToolbar"
 #define MI_ShowStatusBar "MI_ShowStatusBar"
 #define MI_ToggleTransparent "MI_ToggleTransparent"
 
@@ -378,6 +379,7 @@
 #define MI_EditRotation "MI_EditRotation"
 #define MI_EditScale "MI_EditScale"
 #define MI_EditShear "MI_EditShear"
+#define MI_EditDrawingNumber "MI_EditDrawingNumber"
 #define MI_EditCenter "MI_EditCenter"
 #define MI_EditAll "MI_EditAll"
 
@@ -515,6 +517,9 @@
 #define MI_ExportTvpJson "MI_ExportTvpJson"
 #define MI_ExportXsheetPDF "MI_ExportXsheetPDF"
 #define MI_ExportCameraTrack "MI_ExportCameraTrack"
+
+// mark id is added for each actual command (i.g. MI_SetDrawingMark1)
+#define MI_SetDrawingMark "MI_SetDrawingMark"
 
 // mark id is added for each actual command (i.g. MI_SetCellMark1)
 #define MI_SetCellMark "MI_SetCellMark"

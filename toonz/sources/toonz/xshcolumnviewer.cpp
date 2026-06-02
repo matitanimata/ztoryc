@@ -2554,7 +2554,6 @@ void ColumnArea::paintEvent(QPaintEvent *event) {  // AREA
       drawFoldedColumnHead(p, col);
     } else {
       TXshColumn *column = m_viewer->getXsheet()->getColumn(col);
-
       int colType = (column && !column->isEmpty()) ? column->getColumnType()
                                                    : TXshColumn::eLevelType;
 

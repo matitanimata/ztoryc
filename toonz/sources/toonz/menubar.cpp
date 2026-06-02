@@ -651,6 +651,7 @@ void TopBar::loadMenubar() {
   viewMenu->addSeparator();
   addMenuItem(viewMenu, MI_RasterizePli);
   viewMenu->addSeparator();
+  addMenuItem(viewMenu, MI_ShowMainToolbar);
   addMenuItem(viewMenu, MI_ShowStatusBar);
   addMenuItem(viewMenu, MI_ToggleTransparent);
   viewMenu->addSeparator();

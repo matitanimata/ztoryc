@@ -395,14 +395,15 @@ public:
       // Put a keyframe at the previous cell to preserve values before current
       // frame
       TDoubleKeyframe kf(frame - 1.0, skelIdsParam->getDefaultValue());
-      kf.m_type = TDoubleKeyframe::Constant;
+      kf.m_type     = TDoubleKeyframe::Constant;
+      kf.m_prevType = TDoubleKeyframe::None;
 
       skelIdsParam->setKeyframe(kf);
       m_added1stKeyframe = true;
     }
 
     TDoubleKeyframe kf(frame, m_skelId);
-    kf.m_type = TDoubleKeyframe::Constant;
+    kf.m_type = kf.m_prevType = TDoubleKeyframe::Constant;
 
     skelIdsParam->setKeyframe(kf);
 
@@ -638,6 +639,8 @@ void PlasticTool::leftButtonUp_build(const TPointD &pos,
   if (!m_svSel.isEmpty() && m_dragged) {
     TUndoManager::manager()->add(new MoveVertexUndo_Build(
         m_svSel.objects(), m_pressedVxsPos, m_pos - m_pressedPos));
+
+    m_dragged = false;  // Turn this off now so toolbar updates
 
     ::stageObject()
         ->invalidate();  // Should be a TStageObject's implementation detail ...

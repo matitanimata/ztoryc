@@ -1042,4 +1042,38 @@ void SymmetryObject::shiftSymmetryObject(TPointD delta) {
 
 //----------------------------------------------------------------------------------------------------------
 
+std::vector<TAffine> SymmetryObject::getSymmetryTransforms(const TPointD& dpiScale) const {
+  std::vector<TAffine> transforms;
+  transforms.push_back(TAffine());  // Identity for the original
+
+  TPointD center = m_symmetry.m_centerPoint;
+  double baseAngle = m_symmetry.m_rotation;
+  int lineCount = m_symmetry.m_lines;
+  bool useMirror = isUsingLineSymmetry();
+
+  for (int i = 1; i < lineCount; ++i) {
+    double angle = i * (360.0 / lineCount);
+    TAffine rotation = TTranslation(center) *
+      TRotation(baseAngle + angle) *
+      TTranslation(-center);
+    transforms.push_back(rotation);
+  }
+
+  if (useMirror) {
+    int currentSize = transforms.size();
+    for (int i = 0; i < currentSize; ++i) {
+      TAffine mirror = TTranslation(center) *
+        TRotation(baseAngle) *
+        TScale(1, -1) *
+        TRotation(-baseAngle) *
+        TTranslation(-center);
+      transforms.push_back(mirror * transforms[i]);
+    }
+  }
+
+  return transforms;
+}
+
+//----------------------------------------------------------------------------------------------------------
+
 SymmetryTool symmetryTool;

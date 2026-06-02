@@ -101,6 +101,9 @@ void TStageObjectValues::applyValues(bool undoEnabled) const {
       KeyframeSetter setter(param, -1,
                             undoEnabled);  // Deve essere registrato l'undo
       setter.createKeyframe(m_frame);
+      if ((TStageObject::Channel)it->m_actionId ==
+          TStageObject::T_DrawingNumber)
+        setter.setValue(it->getValue());
     }
     int indexKeyframe = param->getClosestKeyframe(m_frame);
     KeyframeSetter setter(param, indexKeyframe,
@@ -196,6 +199,9 @@ QString TStageObjectValues::getStringForHistory() {
     case TStageObject::T_ShearY:
       channelStr = QObject::tr("Edit Shear Y");
       break;
+    case TStageObject::T_DrawingNumber:
+      channelStr = QObject::tr("Edit Drawing #");
+      break;
     default:
       channelStr = QObject::tr("Move");
       break;
@@ -265,11 +271,14 @@ int UndoSetKeyFrame::getSize() const {
 
 UndoRemoveKeyFrame::UndoRemoveKeyFrame(TStageObjectId objectId, int frame,
                                        TStageObject::Keyframe key,
+                                       TPointD center, TPointD offset,
                                        TXsheetHandle *xsheetHandle)
     : m_objId(objectId)
     , m_frame(frame)
     , m_xsheetHandle(xsheetHandle)
-    , m_key(key) {}
+    , m_key(key)
+    , m_center(center)
+    , m_offset(offset) {}
 
 //-----------------------------------------------------------------------------
 
@@ -281,6 +290,7 @@ void UndoRemoveKeyFrame::undo() const {
   if (TStageObject *obj = xsh->getStageObject(m_objId)) {
     obj->setKeyframeWithoutUndo(m_frame);
     obj->setKeyframeWithoutUndo(m_frame, m_key);
+    if (m_center != TPointD()) obj->setCenterAndOffset(m_center, m_offset);
   }
 
   m_xsheetHandle->notifyXsheetChanged();
@@ -294,8 +304,11 @@ void UndoRemoveKeyFrame::redo() const {
 
   assert(xsh->getStageObject(m_objId));
 
-  if (TStageObject *obj = xsh->getStageObject(m_objId))
+  if (TStageObject *obj = xsh->getStageObject(m_objId)) {
     obj->removeKeyframeWithoutUndo(m_frame);
+    // Move frame center back to origin
+    if (m_center != TPointD()) obj->setCenter(m_frame, m_center, true);
+  }
 
   m_xsheetHandle->notifyXsheetChanged();
   m_objectHandle->notifyObjectIdChanged(false);
@@ -349,7 +362,10 @@ void UndoStageObjectMove::undo() const {
 
   // Delay recalculating last scene frame, which might be due to a key, since
   // the actual removal of the key happens immediately after this.
-  QTimer::singleShot(50, [=]() { m_xsheetHandle->notifyXsheetChanged(); });
+  QTimer::singleShot(50, [=]() {
+    m_xsheetHandle->notifyXsheetChanged();
+    m_objectHandle->notifyObjectIdChanged(false);
+  });
 }
 
 //-----------------------------------------------------------------------------
@@ -386,6 +402,52 @@ void UndoStageObjectPinned::redo() const {
   TStageObject *obj = xsh->getStageObject(m_pid);
   assert(0);
   // obj->setIsPinned(m_frame,m_after);
+  m_objectHandle->notifyObjectIdChanged(false);
+}
+
+//=============================================================================
+// UndoChannelDelete
+//-----------------------------------------------------------------------------
+
+UndoChannelDelete::UndoChannelDelete(TStageObject::Channel actionId,
+                                     const TStageObjectValues &before,
+                                     TPointD center, TPointD offset)
+    : m_actionId(actionId)
+    , m_before(before)
+    , m_center(center)
+    , m_offset(offset) {}
+
+//-----------------------------------------------------------------------------
+
+void UndoChannelDelete::undo() const {
+  m_before.applyValues(false);
+
+  if (m_center != TPointD()) {
+    TStageObjectId objId   = m_objectHandle->getObjectId();
+    TStageObject *stageObj = m_xsheetHandle->getXsheet()->getStageObject(objId);
+    int frame              = m_frameHandle->getFrameIndex();
+    stageObj->setCenterAndOffset(m_center, m_offset);
+  }
+
+  m_objectHandle->notifyObjectIdChanged(false);
+
+  // Delay recalculating last scene frame, which might be due to a key, since
+  // the actual removal of the key happens immediately after this.
+  QTimer::singleShot(50, [=]() { m_xsheetHandle->notifyXsheetChanged(); });
+}
+
+//-----------------------------------------------------------------------------
+
+void UndoChannelDelete::redo() const {
+  TStageObjectId objId   = m_objectHandle->getObjectId();
+  TStageObject *stageObj = m_xsheetHandle->getXsheet()->getStageObject(objId);
+  int frame              = m_frameHandle->getFrameIndex();
+
+  stageObj->getParam(m_actionId)->deleteKeyframe(frame);
+  if (m_center != TPointD() && !stageObj->isKeyframe(frame))
+    stageObj->setCenter(frame, m_center, true);
+
+  m_xsheetHandle->notifyXsheetChanged();
   m_objectHandle->notifyObjectIdChanged(false);
 }
 

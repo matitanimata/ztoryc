@@ -14,6 +14,7 @@
 #include "toonz/tscenehandle.h"
 #include "toonz/txsheet.h"
 #include "toonz/preferences.h"
+#include "toonz/txshcell.h"
 
 // TnzCore includes
 #include "tundo.h"
@@ -46,6 +47,7 @@ TXsheet *KeyframeMover::getXsheet() const {
 void KeyframeMover::setKeyframes() {
   TXsheet *xsh = getXsheet();
   std::set<KeyframePosition>::iterator posIt;
+  std::map<int, std::pair<int, int>> oldRanges;
   for (auto const &key : m_lastKeyframes) {
     int c = key.second;
     TStageObjectId objId =
@@ -54,11 +56,55 @@ void KeyframeMover::setKeyframes() {
     TStageObject *stObj = xsh->getStageObject(objId);
     TStageObject::KeyframeMap keyframes;
     stObj->getKeyframes(keyframes);
+    if (!keyframes.size()) continue;
+
+    if (oldRanges.find(c) == oldRanges.end())
+      oldRanges[c] = std::pair(INT_MAX, -1);
+
     for (auto const &frame : keyframes) {
+      oldRanges[c].first  = std::min(oldRanges[c].first, frame.first);
+      oldRanges[c].second = std::max(oldRanges[c].second, frame.first);
       stObj->removeKeyframeWithoutUndo(frame.first);
     }
   }
   m_lastKeyframeData->getKeyframes(m_lastKeyframes, xsh);
+
+  std::map<int, std::pair<int, int>> newRanges;
+  for (auto const &key : m_lastKeyframes) {
+    int c = key.second;
+    if (newRanges.find(c) == newRanges.end()) {
+      newRanges[c] = std::pair(INT_MAX, -1);
+
+      TStageObjectId objId =
+          c >= 0 ? xsh->getColumnObjectId(c)
+                 : TStageObjectId::CameraId(xsh->getCameraColumnIndex());
+      TStageObject *stObj = xsh->getStageObject(objId);
+      TStageObject::KeyframeMap keyframes;
+      stObj->getKeyframes(keyframes);
+      if (!keyframes.size()) continue;
+
+      for (auto const &frame : keyframes) {
+        newRanges[c].first  = std::min(newRanges[c].first, frame.first);
+        newRanges[c].second = std::max(newRanges[c].second, frame.first);
+      }
+      int first = newRanges[c].first;
+      int last  = newRanges[c].second;
+      if (oldRanges.find(c) != oldRanges.end()) {
+        first = std::min(first, oldRanges[c].first);
+        last  = std::max(last, oldRanges[c].second);
+      }
+      xsh->updateNonZeroDrawingNumberCells(c, first, last);
+
+      if (m_undoDrawings.find(c) != m_undoDrawings.end()) {
+        if (oldRanges[c].first < newRanges[c].first)
+          xsh->restoreDrawings(c, oldRanges[c].first, newRanges[c].first - 1,
+                               xsh, m_undoDrawings);
+        if (oldRanges[c].second > newRanges[c].second)
+          xsh->restoreDrawings(c, newRanges[c].second + 1, oldRanges[c].second,
+                               xsh, m_undoDrawings);
+      }
+    }
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -72,10 +118,31 @@ void KeyframeMover::getKeyframes() {
                : TStageObjectId::CameraId(xsh->getCameraColumnIndex());
     TStageObject *stObj = xsh->getStageObject(objId);
     assert(stObj->isKeyframe(pos.first));
+
+    bool hasDrawingKey = false;
+
     TStageObject::KeyframeMap keyframes;
     stObj->getKeyframes(keyframes);
     for (auto const &frame : keyframes) {
+      if (pos.first == frame.first && stObj->hasDrawingNumberKey(frame.first))
+        hasDrawingKey = true;
+
       m_lastKeyframes.insert(KeyframePosition(frame.first, c));
+    }
+
+    if (hasDrawingKey) {
+      int r0, r1;
+      xsh->getCellRange(c, r0, r1);
+      int n = r1 + 1;
+      std::vector<TXshCell> cells(n);
+      xsh->getCells(0, c, n, &cells[0], false, false);
+      for (int i = 0; i < n; i++) {
+        if (cells[i].isEmpty()) continue;
+        if (stObj->hasDrawingNumberKey(i) ||
+            stObj->isChannelInterpolated(TStageObject::T_DrawingNumber, i))
+          cells[i] = TXshCell();
+      }
+      m_undoDrawings.insert(c, cells);
     }
   }
 
@@ -138,9 +205,11 @@ bool KeyframeMover::moveKeyframes(
 
     // move keys from the end of the selection on dragging forward
     if (dr > 0) {
+      std::set<TKeyframeSelection::Position>::reverse_iterator startRevIt =
+          m_startSelectedKeyframes.rbegin();
       for (std::set<TKeyframeSelection::Position>::reverse_iterator revIt =
                positions.rbegin();
-           revIt != positions.rend(); ++revIt) {
+           revIt != positions.rend(); ++revIt, ++startRevIt) {
         int c = revIt->second;
         int r = revIt->first;
         TStageObjectId objId =
@@ -152,10 +221,18 @@ bool KeyframeMover::moveKeyframes(
           stObj->setKeyframeWithoutUndo(r + dr, stObj->getKeyframe(r));
         } else
           stObj->moveKeyframe(r + dr, r);
+
+        if (r < startRevIt->first &&
+            m_undoDrawings.find(c) != m_undoDrawings.end())
+          xsh->restoreDrawings(c, r, (r + dr - 1), xsh, m_undoDrawings);
+
         newPositions.insert(TKeyframeSelection::Position(r + dr, c));
       }
     } else {  // ... and vice versa
-      for (posIt = positions.begin(); posIt != positions.end(); ++posIt) {
+      std::set<TKeyframeSelection::Position>::iterator startIt =
+          m_startSelectedKeyframes.begin();
+      for (posIt = positions.begin(); posIt != positions.end();
+           ++posIt, ++startIt) {
         int c = posIt->second;
         int r = posIt->first;
         TStageObjectId objId =
@@ -167,6 +244,11 @@ bool KeyframeMover::moveKeyframes(
           stObj->setKeyframeWithoutUndo(r + dr, stObj->getKeyframe(r));
         } else
           stObj->moveKeyframe(r + dr, r);
+
+        if (r > startIt->first &&
+            m_undoDrawings.find(c) != m_undoDrawings.end())
+          xsh->restoreDrawings(c, (r + dr + 1), r, xsh, m_undoDrawings);
+
         newPositions.insert(TKeyframeSelection::Position(r + dr, c));
       }
     }
@@ -194,8 +276,11 @@ bool KeyframeMover::moveKeyframes(
   if (notChange) return true;
 
   newPositions.clear();
+  std::set<TKeyframeSelection::Position>::iterator origIt =
+      positions.begin();
   for (posIt = m_startSelectedKeyframes.begin();
-       posIt != m_startSelectedKeyframes.end(); ++posIt) {
+       posIt != m_startSelectedKeyframes.end(); ++posIt, ++origIt) {
+    int sr = origIt->first;
     int c = posIt->second;
     int r = posIt->first;
     TStageObjectId objId =
@@ -205,15 +290,25 @@ bool KeyframeMover::moveKeyframes(
 
     if (m_qualifiers & eOverwriteKeyframes) {
       stObj->removeKeyframeWithoutUndo(r + dr);
-      if (m_qualifiers & eCopyKeyframes)
+      if (m_qualifiers & eCopyKeyframes) {
         stObj->setKeyframeWithoutUndo(r + dr, stObj->getKeyframe(r));
-      else
+      } else {
         stObj->moveKeyframe(r + dr, r);
+      }
+
+      if (sr != (r + dr) && m_undoDrawings.find(c) != m_undoDrawings.end()) {
+        int startFrame = std::min(sr, (r + dr));
+        int endFrame   = std::max(sr, (r + dr));
+        xsh->restoreDrawings(c, startFrame, endFrame, xsh, m_undoDrawings);
+      }
+
       newPositions.insert(TKeyframeSelection::Position(r + dr, c));
     } else if (m_qualifiers & eInsertKeyframes) {
       int s                           = r;
       TStageObject::Keyframe keyframe = stObj->getKeyframe(r);
-      if (!(m_qualifiers & eCopyKeyframes)) stObj->removeKeyframeWithoutUndo(r);
+      if (!(m_qualifiers & eCopyKeyframes)) {
+        stObj->removeKeyframeWithoutUndo(r);
+      }
       std::set<int> keyframeToShift;
       while (stObj->isKeyframe(s + dr) && s + dr != r) {
         keyframeToShift.insert(s + dr);
@@ -221,6 +316,13 @@ bool KeyframeMover::moveKeyframes(
       }
       stObj->moveKeyframes(keyframeToShift, 1);
       stObj->setKeyframeWithoutUndo(r + dr, keyframe);
+
+      if (sr != (r + dr) && m_undoDrawings.find(c) != m_undoDrawings.end()) {
+        int startFrame = std::min(sr, (r + dr));
+        int endFrame   = std::max(sr, (r + dr));
+        xsh->restoreDrawings(c, startFrame, endFrame, xsh, m_undoDrawings);
+      }
+
       newPositions.insert(TKeyframeSelection::Position(r + dr, c));
     }
   }
@@ -453,6 +555,7 @@ void KeyframeMoverTool::onClick(const QMouseEvent *event) {
   if (!getCellSelection()->isEmpty()) {
     cellsSelected = true;
     getCellSelection()->getSelectedCells(r0, c0, r1, c1);
+    xsheet->updateNonZeroDrawingNumberCellsBox(r0, c0, c1); 
   }
 
   if (!m_startSelection.isEmpty()) {

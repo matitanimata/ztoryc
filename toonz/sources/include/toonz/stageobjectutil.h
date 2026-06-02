@@ -156,10 +156,12 @@ class DVAPI UndoRemoveKeyFrame final : public TUndo {
       *m_objectHandle;  // OK: viene usato per notificare i cambiamenti!
 
   TStageObject::Keyframe m_key;
+  TPointD m_center, m_offset;
 
 public:
   UndoRemoveKeyFrame(TStageObjectId objectId, int frame,
-                     TStageObject::Keyframe key, TXsheetHandle *xsheetHandle);
+                     TStageObject::Keyframe key, TPointD center, TPointD offset,
+                     TXsheetHandle *xsheetHandle);
 
   void setXsheetHandle(TXsheetHandle *xsheetHandle) {
     m_xsheetHandle = xsheetHandle;
@@ -272,6 +274,43 @@ public:
   void undo() const override;
   void redo() const override;
   int getSize() const override { return sizeof(*this); }
+};
+
+//=============================================================================
+// UndoChannelDelete
+//-----------------------------------------------------------------------------
+
+class DVAPI UndoChannelDelete final : public TUndo {
+  TStageObject::Channel m_actionId;
+  TStageObjectValues m_before;
+  TXsheetHandle *m_xsheetHandle;
+  TFrameHandle *m_frameHandle;
+  TObjectHandle
+      *m_objectHandle;  // OK: viene usato per notificare i cambiamenti!
+
+  TPointD m_center, m_offset;
+
+public:
+  UndoChannelDelete(TStageObject::Channel actionId,
+                    const TStageObjectValues &before, TPointD center,
+                    TPointD offset);
+
+  void setXsheetHandle(TXsheetHandle *xsheetHandle) {
+    m_xsheetHandle = xsheetHandle;
+  }
+  void setObjectHandle(TObjectHandle *objectHandle) {
+    m_objectHandle = objectHandle;
+  }
+  void setFrameHandle(TFrameHandle *frameHandle) {
+    m_frameHandle = frameHandle;
+  }
+
+  void undo() const override;
+  void redo() const override;
+  int getSize() const override { return sizeof(*this); }
+
+  QString getHistoryString() override { return m_before.getStringForHistory(); }
+  int getHistoryType() override { return HistoryType::EditTool_Move; }
 };
 
 //=============================================================================

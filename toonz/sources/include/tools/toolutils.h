@@ -101,7 +101,7 @@ void drawRectWhitArrow(const TPointD &pos, double r);
 
 //-----------------------------------------------------------------------------
 
-QRadialGradient getBrushPad(int size, double hardness);
+QRadialGradient getBrushPad(double size, double hardness);
 
 //-----------------------------------------------------------------------------
 

@@ -56,6 +56,7 @@
 #include <QComboBox>
 #include <QPushButton>
 #include <QMainWindow>
+#include <QCheckBox>
 
 using namespace DVGui;
 
@@ -196,6 +197,8 @@ LevelCreatePopup::LevelCreatePopup()
   QPushButton *cancelBtn = new QPushButton(tr("Cancel"), this);
   QPushButton *applyBtn  = new QPushButton(tr("Apply"), this);
 
+  m_addInNewCol = new QCheckBox(tr("Create In New Column/Layer"), this);
+
   // Exclude all character which cannot fit in a filepath (Win).
   // Dots are also prohibited since they are internally managed by Toonz.
   QRegExp rx("[^\\\\/:?*.\"<>|]+");
@@ -223,6 +226,7 @@ LevelCreatePopup::LevelCreatePopup()
       Preferences::instance()->getDefRasterFormat()));
 
   okBtn->setDefault(true);
+  m_addInNewCol->setChecked(true);
 
   //--- layout
   m_topLayout->setContentsMargins(0, 0, 0, 0);
@@ -259,26 +263,28 @@ LevelCreatePopup::LevelCreatePopup()
                         Qt::AlignRight | Qt::AlignVCenter);
       guiLay->addWidget(m_levelTypeOm, 3, 1, 1, 3);
 
+      guiLay->addWidget(m_addInNewCol, 4, 1, 1, 3);
+
       // Save In
-      guiLay->addWidget(new QLabel(tr("Save In:")), 4, 0,
+      guiLay->addWidget(new QLabel(tr("Save In:")), 5, 0,
                         Qt::AlignRight | Qt::AlignVCenter);
-      guiLay->addWidget(m_pathFld, 4, 1, 1, 4);
+      guiLay->addWidget(m_pathFld, 5, 1, 1, 4);
 
       // Format options (for Raster/Scan levels)
-      guiLay->addWidget(m_rasterFormatLabel, 5, 0,
+      guiLay->addWidget(m_rasterFormatLabel, 6, 0,
                         Qt::AlignRight | Qt::AlignVCenter);
-      guiLay->addWidget(m_rasterFormatOm, 5, 1, Qt::AlignLeft);
-      guiLay->addWidget(m_frameFormatBtn, 5, 2, 1, 2, Qt::AlignLeft);
+      guiLay->addWidget(m_rasterFormatOm, 6, 1, Qt::AlignLeft);
+      guiLay->addWidget(m_frameFormatBtn, 6, 2, 1, 2, Qt::AlignLeft);
 
       // Width - Height
-      guiLay->addWidget(m_widthLabel, 6, 0, Qt::AlignRight | Qt::AlignVCenter);
-      guiLay->addWidget(m_widthFld, 6, 1);
-      guiLay->addWidget(m_heightLabel, 6, 2, Qt::AlignRight | Qt::AlignVCenter);
-      guiLay->addWidget(m_heightFld, 6, 3);
+      guiLay->addWidget(m_widthLabel, 7, 0, Qt::AlignRight | Qt::AlignVCenter);
+      guiLay->addWidget(m_widthFld, 7, 1);
+      guiLay->addWidget(m_heightLabel, 7, 2, Qt::AlignRight | Qt::AlignVCenter);
+      guiLay->addWidget(m_heightFld, 7, 3);
 
       // DPI
-      guiLay->addWidget(m_dpiLabel, 7, 0, Qt::AlignRight | Qt::AlignVCenter);
-      guiLay->addWidget(m_dpiFld, 7, 1);
+      guiLay->addWidget(m_dpiLabel, 8, 0, Qt::AlignRight | Qt::AlignVCenter);
+      guiLay->addWidget(m_dpiFld, 8, 1);
     }
     guiLay->setColumnStretch(0, 0);
     guiLay->setColumnStretch(1, 0);
@@ -388,6 +394,18 @@ void LevelCreatePopup::showEvent(QShowEvent *) {
     m_widthFld->setDecimals(4);
     m_heightFld->setDecimals(4);
   }
+
+  bool enabled       = false;
+  TApp *app          = TApp::instance();
+  ToonzScene *scene  = app->getCurrentScene()->getScene();
+  TXsheet *xsh       = scene->getXsheet();
+  int row            = app->getCurrentFrame()->getFrame();
+  int col            = app->getCurrentColumn()->getColumnIndex();
+  TXshColumn *column = col >= 0 ? xsh->getColumn(col) : nullptr;
+  // Only turn on the option to add to new column if on an empty cell in a
+  // column with a level in it already
+  if (column && !column->isEmpty() && column->isCellEmpty(row)) enabled = true;
+  m_addInNewCol->setEnabled(enabled);
 }
 
 //-----------------------------------------------------------------------------
@@ -603,7 +621,7 @@ bool LevelCreatePopup::apply() {
                     .arg(QString::fromStdWString(levelName)));
   }
 
-  /*-- これからLevelを配置しようとしているセルが空いているかどうかのチェック
+  /*-- Check if the cell where you are going to place the level is empty
    * --*/
   bool areColumnsShifted = false;
   TXshCell cell          = xsh->getCell(row, col);
@@ -622,8 +640,13 @@ bool LevelCreatePopup::apply() {
   if (!validColumn) {
     isInRange = false;
   }
+  
+  // If on blank cell and option to add to new column is checked, create a new
+  // column otherwise add to existing
+  if (isInRange && m_addInNewCol->isEnabled() && m_addInNewCol->isChecked())
+    isInRange = false;
 
-  /*-- 別のLevelに占有されていた場合、Columnを1つ右に移動 --*/
+  /*-- If occupied by another Level, shift the Column. --*/
   if (!isInRange) {
     col += 1;
     TApp::instance()->getCurrentColumn()->setColumnIndex(col);
@@ -718,6 +741,9 @@ bool LevelCreatePopup::apply() {
   // devo verfificare che sia settato il tool giusto.
   app->getCurrentTool()->onImageChanged(
       (TImage::Type)app->getCurrentImageType());
+
+  m_addInNewCol->setEnabled(false); // No longer applicable after creation
+
   return true;
 }
 

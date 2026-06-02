@@ -1482,6 +1482,7 @@ public slots:
   void updateColumnArea();
   void updateCellColumnAree();
   void updateCellRowAree();
+  void updateDrawingNumberObservers(); 
 
   void onScrubStopped();
   void onPreferenceChanged(const QString &prefName);

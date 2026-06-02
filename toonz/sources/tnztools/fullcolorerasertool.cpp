@@ -69,12 +69,12 @@ TEnv::IntVar FullcolorEraserPressure("FullcolorEraserPressure", 1);
 
 namespace {
 
-int computeThickness(double pressure, const TIntPairProperty &property) {
-  double t = pressure * pressure * pressure;
-  int thick0 = property.getValue().first;
-  int thick1 = property.getValue().second;
-
-  return tround(thick0 + (thick1 - thick0) * t);
+double computeThickness(double pressure, const TDoublePairProperty &property) {
+  double t      = pressure * pressure * pressure;
+  double thick0 = property.getValue().first;
+  double thick1 = property.getValue().second;
+  if (thick1 < 0.0001) thick0 = thick1 = 0.0;
+  return (thick0 + (thick1 - thick0) * t);
 }
 
 //----------------------------------------------------------------------------------
@@ -191,7 +191,7 @@ public:
 
 class FullColorEraserUndo final : public TFullColorRasterUndo {
   std::vector<TThickPoint> m_points;
-  int m_size;
+  double m_size;
   double m_hardness;
   double m_opacity;
   TPointD m_dpiScale;
@@ -203,7 +203,7 @@ class FullColorEraserUndo final : public TFullColorRasterUndo {
 public:
   FullColorEraserUndo(TTileSetFullColor *tileSet,
                       const std::vector<TThickPoint> &points,
-                      TXshSimpleLevel *level, const TFrameId &frameId, int size,
+                      TXshSimpleLevel *level, const TFrameId &frameId, double size,
                       double hardness, double opacity, TPointD dpiScale,
                       double symmetryLines, double rotation,
                       TPointD centerPoint, bool useLineSymmetry)
@@ -359,7 +359,7 @@ public:
 private:
   TPropertyGroup m_prop;
 
-  TIntPairProperty m_size;
+  TDoublePairProperty m_size;
   TBoolProperty m_pressure;
   TDoubleProperty m_opacity;
   TDoubleProperty m_hardness;
@@ -483,7 +483,7 @@ void FullColorEraserTool::onActivate() {
   if (m_firstTime) {
     m_firstTime = false;
     m_size.setValue(
-        TIntPairProperty::Value(FullcolorEraseMinSize, FullcolorEraseSize));
+        TDoublePairProperty::Value(FullcolorEraseMinSize, FullcolorEraseSize));
     m_opacity.setValue(FullcolorEraserOpacity);
     m_hardness.setValue(FullcolorEraseHardness);
     m_eraseType.setValue(::to_wstring(FullcolorEraserType.getValue()));
@@ -534,10 +534,10 @@ void FullColorEraserTool::leftButtonDown(const TPointD &pos,
     m_workRaster->clear();
     m_backUpRas = ras->clone();
 
-    int maxThick  = m_size.getValue().second;
-    int thickness = (m_pressure.getValue() && e.isTablet())
-                        ? computeThickness(e.m_pressure, m_size)
-                        : maxThick;
+    double maxThick   = m_size.getValue().second;
+    double thickness  = (m_pressure.getValue() && e.isTablet())
+                            ? computeThickness(e.m_pressure, m_size)
+                            : maxThick;
     TPointD rasCenter = ras->getCenterD();
     TThickPoint point(pos + rasCenter, thickness);
     TPointD halfThick(maxThick * 0.5, maxThick * 0.5);
@@ -620,7 +620,7 @@ void FullColorEraserTool::leftButtonDown(const TPointD &pos,
         m_polyline.push_back(pos);
     }
 
-    int maxThick = 2 * m_thick;
+    double maxThick = 2 * m_thick;
     TPointD halfThick(maxThick * 0.5, maxThick * 0.5);
     invalidateRect = TRectD(pos - halfThick, pos + halfThick);
   }
@@ -640,10 +640,10 @@ void FullColorEraserTool::leftButtonDrag(const TPointD &pos,
   TRasterImageP ri = (TRasterImageP)getImage(true);
   if (!ri) return;
   if (m_eraseType.getValue() == NORMALERASE) {
-    int maxThick  = m_size.getValue().second;
-    int thickness = (m_pressure.getValue() && e.isTablet())
-                        ? computeThickness(e.m_pressure, m_size)
-                        : maxThick;
+    double maxThick   = m_size.getValue().second;
+    double thickness  = (m_pressure.getValue() && e.isTablet())
+                            ? computeThickness(e.m_pressure, m_size)
+                            : maxThick;
     TDimension size   = m_workRaster->getSize();
     TPointD rasCenter = ri->getRaster()->getCenterD();
     TThickPoint point(pos + rasCenter, thickness);
@@ -732,10 +732,10 @@ void FullColorEraserTool::leftButtonUp(const TPointD &pos,
   if (m_eraseType.getValue() == NORMALERASE) {
     if (!m_brush) return;
 
-    int maxThick  = m_size.getValue().second;
-    int thickness = (m_pressure.getValue() && e.isTablet())
-                        ? computeThickness(e.m_pressure, m_size)
-                        : maxThick;
+    double maxThick  = m_size.getValue().second;
+    double thickness = (m_pressure.getValue() && e.isTablet())
+                           ? computeThickness(e.m_pressure, m_size)
+                           : maxThick;
 
     if (m_points.size() != 1) {
       TPointD rasCenter = ri->getRaster()->getCenterD();
@@ -1104,35 +1104,35 @@ void FullColorEraserTool::mouseMove(const TPointD &pos, const TMouseEvent &e) {
   struct Locals {
     FullColorEraserTool *m_this;
 
-    void setValue(TIntPairProperty &prop,
-                  const TIntPairProperty::Value &value) {
+    void setValue(TDoublePairProperty &prop,
+                  const TDoublePairProperty::Value &value) {
       prop.setValue(value);
 
       m_this->onPropertyChanged(prop.getName());
       TTool::getApplication()->getCurrentTool()->notifyToolChanged();
     }
 
-    void addMinMax(TIntPairProperty &prop, double add) {
-      const TIntPairProperty::Range &range = prop.getRange();
+    void addMinMax(TDoublePairProperty &prop, double add) {
+      if (add == 0.0) return;
+      const TDoublePairProperty::Range &range = prop.getRange();
 
-      TIntPairProperty::Value value = prop.getValue();
-      value.second =
-          tcrop<double>(value.second + add, range.first, range.second);
-      value.first = tcrop<double>(value.first + add, range.first, range.second);
+      TDoublePairProperty::Value value = prop.getValue();
+      value.first  = tcrop(value.first + add, range.first, range.second);
+      value.second = tcrop(value.second + add, range.first, range.second);
 
       setValue(prop, value);
     }
 
-    void addMinMaxSeparate(TIntPairProperty &prop, double min, double max) {
+    void addMinMaxSeparate(TDoublePairProperty &prop, double min, double max) {
       if (min == 0.0 && max == 0.0) return;
-      const TIntPairProperty::Range &range = prop.getRange();
+      const TDoublePairProperty::Range &range = prop.getRange();
 
-      TIntPairProperty::Value value = prop.getValue();
+      TDoublePairProperty::Value value = prop.getValue();
       value.first += min;
       value.second += max;
       if (value.first > value.second) value.first = value.second;
-      value.first  = tcrop<double>(value.first, range.first, range.second);
-      value.second = tcrop<double>(value.second, range.first, range.second);
+      value.first  = tcrop(value.first, range.first, range.second);
+      value.second = tcrop(value.second, range.first, range.second);
 
       setValue(prop, value);
     }

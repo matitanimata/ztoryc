@@ -40,6 +40,7 @@
 		<file>icons/dark/tools/18/edit_rotation.svg</file>
 		<file>icons/dark/tools/18/edit_scale.svg</file>
 		<file>icons/dark/tools/18/edit_shear.svg</file>
+		<file>icons/dark/tools/18/edit_drawingnumber.svg</file>
 
 		<file>icons/dark/actions/16/round_join.svg</file>
 		<file>icons/dark/actions/16/projecting_cap.svg</file>
@@ -57,7 +58,9 @@
 
     <file>icons/dark/actions/16/config.svg</file>
 
-    <!-- File / Common -->
+		<file>icons/dark/actions/16/center_reset.svg</file>
+
+		<!-- File / Common -->
 		<file>icons/dark/actions/16/menu.svg</file>
 		<file>icons/dark/actions/16/export.svg</file>
 		<file>icons/dark/actions/16/import.svg</file>
@@ -330,6 +333,8 @@
 		<file>icons/dark/actions/16/rolldown.svg</file>
 		<file>icons/dark/actions/16/remove_empty_columns.svg</file>
 		<file>icons/dark/actions/16/merge.svg</file>
+		<file>icons/dark/actions/16/rest_key.svg</file>
+		<file>icons/dark/actions/16/global_rest_key.svg</file>
 
 		<file>icons/dark/actions/16/new_level.svg</file>
 		<file>icons/dark/actions/16/new_raster_level.svg</file>
@@ -621,6 +626,7 @@
 		<file>icons/dark/actions/16/tool_options.svg</file>
 		<file>icons/dark/actions/16/view_file.svg</file>
 		<file>icons/dark/actions/16/level_strip.svg</file>
+    <file>icons/dark/actions/17/syncheader.svg</file>
     <file>icons/dark/actions/17/syncscale.svg</file>
 		<file>icons/dark/actions/16/new_project.svg</file>
 		<file>icons/dark/actions/16/project_settings.svg</file>

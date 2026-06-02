@@ -10,6 +10,7 @@
 #include "toonz/txshcell.h"
 
 class TXsheet;
+class TXshCell;
 
 //=============================================================================
 // KeyframeMover
@@ -28,6 +29,8 @@ class KeyframeMover {
   std::set<KeyframePosition> m_lastKeyframes;
   //! Store all keyframes in selected stageObject.
   TKeyframeData *m_lastKeyframeData;
+
+  QMap<int, std::vector<TXshCell>> m_undoDrawings;
 
   //! Helper method: returns the current xsheet
   TXsheet *getXsheet() const;

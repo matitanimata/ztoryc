@@ -4,9 +4,12 @@
 
 // TnzQt includes
 #include "toonzqt/functionselection.h"
+#include "toonzqt/functionsheet.h"
 
 // TnzLib includes
 #include "toonz/tframehandle.h"
+#include "toonz/tstageobject.h"
+#include "toonz/txshcell.h"
 
 // TnzCore includes
 #include "tundo.h"
@@ -133,6 +136,7 @@ MovePointDragTool::MovePointDragTool(FunctionPanel *panel, TDoubleParam *curve)
 MovePointDragTool::~MovePointDragTool() {
   for (int i = 0; i < (int)m_setters.size(); i++) delete m_setters[i];
   m_setters.clear();
+  m_startFrames.clear();
   TUndoManager::manager()->endBlock();
 }
 
@@ -196,6 +200,33 @@ void MovePointDragTool::click(QMouseEvent *e) {
   for (int i = 0; i < (int)m_setters.size(); i++) {
     KeyframeSetter *setter = m_setters[i];
     TDoubleParam *curve    = setter->getCurve();
+
+    FunctionSheet *sheet = m_panel->getFunctionSheet();
+    int col              = sheet->getColumnIndexByCurve(curve);
+    TStageObject *stObj  = sheet->getStageObject(col);
+    int xcol             = stObj ? stObj->getId().getIndex() : -1;
+
+    std::set<double> frames;
+    if (curve->getName() == "W_DrawingNumber" && xcol >= 0 &&
+        m_undoDrawings.find(xcol) == m_undoDrawings.end()) {
+      setter->getCurve()->getKeyframes(frames);
+
+      int r0, r1;
+      TXsheet *xsh        = m_panel->getXsheetHandle()->getXsheet();
+      xsh->getCellRange(xcol, r0, r1);
+      int n = r1 + 1;
+      std::vector<TXshCell> cells(n);
+      xsh->getCells(0, xcol, n, &cells[0], false, false);
+      for (int i = 0; i < n; i++) {
+        if (cells[i].isEmpty()) continue;
+        if (stObj->hasDrawingNumberKey(i) ||
+            stObj->isChannelInterpolated(TStageObject::T_DrawingNumber, i))
+          cells[i] = TXshCell();
+      }
+      m_undoDrawings.insert(xcol, cells);
+    }
+    m_startFrames.push_back(frames);
+
     setter->setPixelRatio(m_panel->getPixelRatio(curve));
     if (!m_groupEnabled) {
       int kIndex = curve->getClosestKeyframe(frame);
@@ -228,10 +259,13 @@ void MovePointDragTool::drag(QMouseEvent *e) {
   m_oldPos      = pos;
 
   // compute frame increment. it must be an integer
-  double totalDFrame =
-      tround(m_panel->xToFrame(pos.x()) - m_panel->xToFrame(m_startPos.x()));
-  double dFrame = totalDFrame - m_deltaFrame;
-  m_deltaFrame  = totalDFrame;
+  int startRow       = m_panel->xToFrame(m_startPos.x());
+  int endRow         = m_panel->xToFrame(pos.x());
+  double totalDFrame = endRow - startRow;
+  double dFrame      = totalDFrame - m_deltaFrame;
+
+  FunctionSheet *sheet = m_panel->getFunctionSheet();
+  TXsheet *xsh         = sheet->getXsheetHandle()->getXsheet();
 
   for (int i = 0; i < (int)m_setters.size(); i++) {
     KeyframeSetter *setter = m_setters[i];
@@ -241,8 +275,57 @@ void MovePointDragTool::drag(QMouseEvent *e) {
     double dValue = m_panel->yToValue(curve, pos.y()) -
                     m_panel->yToValue(curve, oldPos.y());
 
+    if (curve->getName() == "W_DrawingNumber") {
+      // For Drawing nubers, don't let anything go below 0. Find closest
+      // selected frames to 0, that will be the max vertical drop allowed
+      if (dValue < 0) {
+        double v = INT_MAX;
+        for (int i = 0; i < curve->getKeyframeCount(); i++) {
+          if (setter->isSelected(i)) {
+            v = std::min(v, curve->getKeyframe(i).m_value);
+          }
+        }
+        if (v + dValue < 0) dValue = -v;
+      }
+      if (dFrame < 0) {
+        double h = INT_MAX;
+        for (int i = 0; i < curve->getKeyframeCount(); i++) {
+          if (setter->isSelected(i)) {
+            h = std::min(h, curve->getKeyframe(i).m_frame);
+          }
+        }
+        if (h + dFrame < 0) {
+          dFrame = -h;
+          totalDFrame = dFrame + m_deltaFrame;
+        }
+      }
+    }
+
     setter->moveKeyframes(dFrame, dValue);
+
+    int c               = sheet->getColumnIndexByCurve(setter->getCurve());
+    TStageObject *stObj = sheet->getStageObject(c);
+    int colId           = stObj ? stObj->getId().getIndex() : -1;
+    if (dFrame && colId >= 0 &&
+        m_undoDrawings.find(colId) != m_undoDrawings.end()) {
+      int kCount   = setter->getCurve()->getKeyframeCount();
+      std::set<double>::iterator sit(m_startFrames[i].begin());
+      for (int j = 0; j < kCount; j++, sit++) {
+        if (!setter->isSelected(j)) continue;
+        int r = setter->getCurve()->getKeyframe(j).m_frame;
+        if (dFrame > 0 && (r - dFrame) < *sit) {
+          xsh->restoreDrawings(colId, (r - dFrame), (r - 1), xsh,
+                               m_undoDrawings);
+        } else if (dFrame < 0 && (r - dFrame) > *sit) {
+          xsh->restoreDrawings(colId, (r + 1), (r - dFrame), xsh,
+                               m_undoDrawings);
+        }
+      }
+    }
   }
+
+  m_deltaFrame = totalDFrame;
+
   if (m_selection != 0 && m_setters.size() == 1) {
     KeyframeSetter *setter = m_setters[0];
 
@@ -257,6 +340,24 @@ void MovePointDragTool::drag(QMouseEvent *e) {
 //-----------------------------------------------------------------------------
 
 void MovePointDragTool::release(QMouseEvent *e) {
+  FunctionSheet *sheet = m_panel->getFunctionSheet();
+  TXsheet *xsh         = m_panel->getXsheetHandle()->getXsheet();
+  for (int i = 0; i < (int)m_setters.size(); i++) {
+    KeyframeSetter *setter = m_setters[i];
+    TDoubleParam *curve    = setter->getCurve();
+
+    if (curve->getName() != "W_DrawingNumber") continue;
+    int c    = sheet->getColumnIndexByCurve(curve);
+    int xcol = sheet->getStageObject(c)->getId().getIndex();
+
+    int kCount = curve->getKeyframeCount();
+    for (int j = 0; j < kCount; j++) {
+      int frame = curve->getKeyframe(j).m_frame;
+      xsh->addUndoDrawingNumberChange(frame, xcol, m_startFrames[i],
+                                      m_undoDrawings[xcol]);
+    }
+  }
+
   if (m_panel->getXsheetHandle())
     m_panel->getXsheetHandle()->notifyXsheetChanged();
 }

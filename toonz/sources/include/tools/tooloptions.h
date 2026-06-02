@@ -85,6 +85,11 @@ class QStackedWidget;
 
 #define TOOL_OPTIONS_LEFT_MARGIN 5
 
+static QIcon m_noKeyIcon, m_partialKeyIcon, m_fullKeyIcon;
+
+const int ITEM_SPACING  = 10;
+const int LABEL_SPACING = 3;
+
 //=============================================================================
 
 //***********************************************************************************************
@@ -112,13 +117,20 @@ protected:
 
   QHBoxLayout *m_layout;
 
+  QColor m_keyFrameBorderColor;
+  QColor m_inBetweenBorderColor;
+  Q_PROPERTY(QColor ArrowToolKeyFrameBorderColor READ getKeyFrameBorderColor
+                 WRITE setKeyFrameBorderColor)
+  Q_PROPERTY(QColor ArrowToolInBetweenBorderColor READ getInBetweenBorderColor
+                 WRITE setInBetweenBorderColor)
+
 public:
   ToolOptionsBox(QWidget *parent, bool isScrollable = true);
   ~ToolOptionsBox();
 
   virtual void
   updateStatus();  //!< Invokes updateStatus() on all registered controls
-  virtual void onStageObjectChange() {}
+  virtual void onStageObjectChange(bool isDragging = false) {}
 
   QHBoxLayout *hLayout() { return m_layout; }
   void addControl(ToolOptionControl *control);
@@ -128,6 +140,15 @@ public:
   QLabel *addLabel(QString name);
   void addLabel(std::string propName, QLabel *label);
   void addSeparator();
+
+  void setKeyFrameBorderColor(const QColor &color) {
+    m_keyFrameBorderColor = color;
+  }
+  QColor getKeyFrameBorderColor() const { return m_keyFrameBorderColor; }
+  void setInBetweenBorderColor(const QColor &color) {
+    m_inBetweenBorderColor = color;
+  }
+  QColor getInBetweenBorderColor() const { return m_inBetweenBorderColor; }
 };
 
 //***********************************************************************************************
@@ -192,7 +213,15 @@ public:
 class ArrowToolOptionsBox final : public ToolOptionsBox {
   Q_OBJECT
 
-  enum AXIS { Position = 0, Rotation, Scale, Shear, CenterPosition, AllAxis };
+  enum AXIS {
+    Position = 0,
+    Rotation,
+    Scale,
+    Shear,
+    DrawingNumber,
+    CenterPosition,
+    AllAxis
+  };
 
   TPropertyGroup *m_pg;
   bool m_splined;
@@ -208,7 +237,7 @@ class ArrowToolOptionsBox final : public ToolOptionsBox {
   ToolOptionCombo *m_chooseActiveAxisCombo;
   ToolOptionCombo *m_pickCombo;
   // enable to choose the target pegbar from the combobox
-  QComboBox *m_currentStageObjectCombo;
+  QComboBox *m_currentStageObjectCombo, *m_interpolationCombo;
 
   // Position
   PegbarChannelField *m_motionPathPosField;
@@ -223,7 +252,9 @@ class ArrowToolOptionsBox final : public ToolOptionsBox {
 
   ToolOptionCheckbox *m_lockEWPosCheckbox;
   ToolOptionCheckbox *m_lockNSPosCheckbox;
-
+  // Drawing Number 
+  ClickableLabel *m_drawingNumberLabel;
+  PegbarChannelField *m_drawingNumberField;
   // SO = Stacked Order
   ClickableLabel *m_soLabel;
   PegbarChannelField *m_soField;
@@ -263,7 +294,9 @@ class ArrowToolOptionsBox final : public ToolOptionsBox {
 
   // Flip buttons
   QPushButton *m_hFlipButton, *m_vFlipButton, *m_leftRotateButton,
-      *m_rightRotateButton;
+      *m_rightRotateButton, *m_setKeyButton, *m_resetCenterButton;
+
+  bool m_updateControls;
 
   // enables adjusting value by dragging on the label
   void connectLabelAndField(ClickableLabel *label, MeasuredValueField *field);
@@ -274,7 +307,8 @@ public:
                       TXsheetHandle *xshHandle, ToolHandle *toolHandle);
 
   void updateStatus();
-  void onStageObjectChange();
+  void updateControls();
+  void onStageObjectChange(bool isDragging = false);
 
 protected:
   void showEvent(QShowEvent *);
@@ -282,15 +316,20 @@ protected:
 
   void setSplined(bool on);
   bool isCurrentObjectSplined() const;
+  int getKeysStatus(int axisId, bool allKeys, TStageObject::Keyframe keys);
+  bool canSetInterpolation(int axisId, bool allKeys, int frame,
+                           TStageObject *stageObj);
 
 protected slots:
-  void onFrameSwitched() { updateStatus(); }
+  void onFrameSwitched();
+  void onPlayingStatusChanged();
   // update the object list in combobox
   void updateStageObjectComboItems();
   // synchronize the current item in the combobox to the selected stage object
   void syncCurrentStageObjectComboItem();
   // change the current stage object when user changes it via combobox by hand
   void onCurrentStageObjectComboActivated(int index);
+  void onInterpolationComboActivated(int index);
 
   void onCurrentAxisChanged(int);
 
@@ -298,6 +337,65 @@ protected slots:
   void onFlipVertical();
   void onRotateLeft();
   void onRotateRight();
+  void onSetKey();
+  void onResetCenter();
+};
+
+//=============================================================================
+//
+// SkeletonToolOptionsBox
+//
+//=============================================================================
+
+class SkeletonToolOptionsBox final : public ToolOptionsBox {
+  Q_OBJECT
+
+  TTool *m_tool;
+  TFrameHandle *m_frameHandle;
+  TObjectHandle *m_objHandle;
+  TXsheetHandle *m_xshHandle;
+
+  ToolOptionCheckbox *m_globalKey;
+  ToolOptionCombo *m_mode;
+
+  QComboBox *m_interpolationCombo;
+  QPushButton *m_leftRotateButton, *m_rightRotateButton, *m_setKeyButton;
+
+  PegbarChannelField *m_ewPosField, *m_nsPosField, *m_rotationField;
+
+  PegbarCenterField  *m_ewCenterField, *m_nsCenterField;
+
+  ClickableLabel *m_ewPosLabel, *m_nsPosLabel, *m_rotationLabel,
+      *m_ewCenterLabel, *m_nsCenterLabel;
+
+  bool m_updateControls;
+
+public:
+  SkeletonToolOptionsBox(QWidget *parent, TTool *tool,
+                         TFrameHandle *frameHandle, TObjectHandle *objHandle,
+                         TXsheetHandle *xshHandle, ToolHandle *toolHandle);
+
+  void updateControls();
+  void updateStatus();
+  void onStageObjectChange(bool isDragging = false);
+
+protected:
+  void connectLabelAndField(ClickableLabel *label, MeasuredValueField *field);
+  void showEvent(QShowEvent *);
+  void hideEvent(QShowEvent *);
+
+  int getKeysStatus(TStageObject::Keyframe keys);
+  bool canSetInterpolation(int frame, TStageObject *stageObj);
+
+protected slots:
+  void onFrameSwitched();
+  void onModeChanged(int);
+  void onGlobalKeyChanged(bool);
+  void onPlayingStatusChanged();
+  void onRotateLeft();
+  void onRotateRight();
+  void onSetKey();
+  void onInterpolationComboActivated(int index);
 };
 
 //=============================================================================
@@ -398,7 +496,7 @@ class SelectionToolOptionsBox final : public ToolOptionsBox,
   ToolOptionIntSlider *m_miterField;
 
   QPushButton *m_hFlipButton, *m_vFlipButton, *m_leftRotateButton,
-      *m_rightRotateButton;
+      *m_rightRotateButton, *m_flipStrokeButton;
 
 public:
   SelectionToolOptionsBox(QWidget *parent, TTool *tool,
@@ -417,6 +515,7 @@ protected slots:
   void onFlipVertical();
   void onRotateLeft();
   void onRotateRight();
+  void onFlipDirection();
 };
 
 //=============================================================================
@@ -693,6 +792,9 @@ class TapeToolOptionsBox final : public ToolOptionsBox {
   ToolOptionCombo *m_toolMode, *m_typeMode, *m_multiFrameMode;
   QLabel *m_autocloseLabel;
   ToolOptionPairSlider *m_autocloseField;
+  QLabel* m_lineExtAngleLabel;
+  ToolOptionSlider* m_lineExtAngleField;
+
 
 public:
   TapeToolOptionsBox(QWidget *parent, TTool *tool, TPaletteHandle *pltHandle,
@@ -935,7 +1037,9 @@ public slots:
 
   void onToolSwitched();
   void onToolChanged();
-  void onStageObjectChange();
+  void onStageObjectChange(bool);
+  void onObjectSwitched();
+  void onXshLevelSwitched(TXshLevel *);
 
 signals:
   // used in ComboViewer to handle Tab focus

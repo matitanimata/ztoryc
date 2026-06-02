@@ -110,6 +110,9 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
 
   m_numericalColumns->setViewer(this);
 
+  m_selection->setFunctionSheet(m_numericalColumns);
+  m_functionGraph->setFunctionSheet(m_numericalColumns);
+
   m_toolbar->setSelection(m_selection);
   m_toolbar->setFocusPolicy(Qt::NoFocus);
 
@@ -126,7 +129,6 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
   QString layout = Preferences::instance()->getLoadedXsheetLayout();
   bool toolBarOnBottom =
       layout == QString("Minimum") &&
-      Preferences::instance()->isExpandFunctionHeaderEnabled() &&
       m_toggleStart !=
           Preferences::FunctionEditorToggle::ShowFunctionSpreadsheetInPopup;
 
@@ -137,9 +139,9 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
     if (!toolBarOnBottom) m_leftLayout->addWidget(m_toolbar);
     m_spacing = 35;
     if (layout == QString("Compact"))
-      m_spacing -= 18;
+      m_spacing = 17;
     else if (toolBarOnBottom) {
-      m_spacing = 3;  // m_spacing is used for the height of spacer widget
+      m_spacing = 0;  // m_spacing is used for the height of spacer widget
       m_leftLayout->addSpacing(m_spacing);
     }
 
@@ -212,6 +214,10 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
                 m_numericalColumns,
                 SLOT(onCurrentChannelChanged(FunctionTreeModel::Channel *)));
 
+  ret = ret && connect(m_numericalColumns, SIGNAL(syncHeaderBtnToggled(bool)),
+                       this,
+                       SLOT(onSyncHeaderBtnToggled(bool)));
+
   assert(ret);
   if (m_toggleStart ==
       Preferences::FunctionEditorToggle::ShowFunctionSpreadsheetInPopup) {
@@ -219,26 +225,14 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
     if (QSpacerItem *spacer = m_leftLayout->itemAt(0)->spacerItem())
       spacer->changeSize(0, 0);
   } else {
-    bool toolBarVisible =
-        Preferences::instance()->isShowQuickToolbarEnabled() &&
-        Preferences::instance()->isExpandFunctionHeaderEnabled();
-    bool breadcrumbsVisible =
-        Preferences::instance()->isShowXsheetBreadcrumbsEnabled() &&
-        Preferences::instance()->isExpandFunctionHeaderEnabled();
-    if (QSpacerItem *spacer = m_leftLayout->itemAt(0)->spacerItem()) {
-      spacer->changeSize(1, m_spacing + ((toolBarVisible) ? 10 : 0) +
-                                ((breadcrumbsVisible) ? 10 : 0),
-                         QSizePolicy::Fixed, QSizePolicy::Fixed);
-      spacer->invalidate();
-    } else
-      m_leftLayout->setSpacing(m_spacing + ((toolBarVisible) ? 30 : 0) +
-                               ((breadcrumbsVisible) ? 10 : 0));
+    adjustHeader();
     if (m_toggleStart ==
         Preferences::FunctionEditorToggle::ShowGraphEditorInPopup) {
       m_functionGraph->hide();
     }
   }
   m_toggleStatus = FunctionEditorToggleStatus;
+  showToggleMode(m_toggleStatus);
 }
 
 //-----------------------------------------------------------------------------
@@ -247,6 +241,7 @@ FunctionViewer::~FunctionViewer() {
   delete m_selection;
   m_toolbar->setFrameHandle(0);
   m_toolbar->setXsheetHandle(0);
+  m_toolbar->setColumnHandle(0);
 }
 
 //-----------------------------------------------------------------------------
@@ -452,7 +447,11 @@ void FunctionViewer::setObjectHandle(TObjectHandle *objectHandle) {
   FunctionTreeModel *ftModel =
       static_cast<FunctionTreeModel *>(m_treeView->model());
   if (ftModel) ftModel->setObjectHandle(objectHandle);
+
+  m_toolbar->setObjectHandle(objectHandle);
+  m_functionGraph->setObjectHandle(objectHandle);
 }
+
 //-----------------------------------------------------------------------------
 
 void FunctionViewer::setFxHandle(TFxHandle *fxHandle) {
@@ -481,6 +480,8 @@ void FunctionViewer::setColumnHandle(TColumnHandle *columnHandle) {
   if (columnHandle == m_columnHandle) return;
 
   m_columnHandle = columnHandle;
+
+  m_toolbar->setColumnHandle(m_columnHandle);
 
   if (isVisible()) m_treeView->updateAll();
 }
@@ -515,49 +516,25 @@ void FunctionViewer::toggleMode() {
   } else if (m_toggleStart == Preferences::FunctionEditorToggle::
                                   ToggleBetweenGraphAndSpreadsheet) {
     if (m_functionGraph->isVisible()) {
-      m_functionGraph->hide();
-      m_numericalColumns->show();
-      m_numericalColumns->setFocus();
-      bool toolBarVisible =
-          Preferences::instance()->isShowQuickToolbarEnabled() &&
-          Preferences::instance()->isExpandFunctionHeaderEnabled();
-      bool breadcrumbsVisible =
-          Preferences::instance()->isShowXsheetBreadcrumbsEnabled() &&
-          Preferences::instance()->isExpandFunctionHeaderEnabled();
-      if (QSpacerItem *spacer = m_leftLayout->itemAt(0)->spacerItem()) {
-        spacer->changeSize(1, m_spacing + ((toolBarVisible) ? 10 : 0) +
-                                  ((breadcrumbsVisible) ? 10 : 0),
-                           QSizePolicy::Fixed, QSizePolicy::Fixed);
-        spacer->invalidate();
-        m_numericalColumns->updateHeaderHeight();
-        m_leftLayout->setSpacing(0);
-      } else
-        m_leftLayout->setSpacing(m_spacing + ((toolBarVisible) ? 30 : 0) +
-                                 ((breadcrumbsVisible) ? 10 : 0));
-      updateGeometry();
       m_toggleStatus = 0;
     } else {
-      m_functionGraph->show();
-      m_functionGraph->setFocus();
-      m_numericalColumns->hide();
-      m_leftLayout->setSpacing(0);
-      if (QSpacerItem *spacer = m_leftLayout->itemAt(0)->spacerItem()) {
-        spacer->changeSize(0, 0);
-        spacer->invalidate();
-      }
       m_toggleStatus = 1;
     }
+    showToggleMode(m_toggleStatus);
+    FunctionEditorToggleStatus = m_toggleStatus;
   }
-  FunctionEditorToggleStatus = m_toggleStatus;
 }
 
 //-----------------------------------------------------------------------------
 
 void FunctionViewer::onCurveChanged(bool isDragging) {
-  if (m_objectHandle) m_objectHandle->notifyObjectIdChanged(isDragging);
+  int last  = -1;  // selectedFrames.back(); 
+  int first = -1;   // selectedFrames.front(); 
 
   // emit signal if the current channel belongs to Fx in order to update the
   // preview fx
+  if (m_objectHandle) m_objectHandle->notifyObjectIdChanged(isDragging);
+
   if (m_fxHandle) {
     FunctionTreeModel *ftModel =
         dynamic_cast<FunctionTreeModel *>(m_treeView->model());
@@ -676,13 +653,8 @@ void FunctionViewer::doSwitchCurrentObject(TStageObject *obj) {
     m_columnHandle->setColumnIndex(id.getIndex());
   else if (id.isPegbar()) {
     TXsheet *xsh = m_xshHandle->getXsheet();
-    for (int i = 0; i < xsh->getColumnCount(); i++) {
-      if (!xsh->getColumn(i) || !xsh->getColumn(i)->getPegbarColumn() ||
-          xsh->getColumn(i)->getPegbarColumn()->getPegbarObjectId() != id)
-        continue;
-      m_columnHandle->setColumnIndex(i);
-      break;
-    }
+    TXshColumn *pegbarColumn = xsh->getColumnForPegbarObjectId(id);
+    if (pegbarColumn) m_columnHandle->setColumnIndex(pegbarColumn->getIndex());
   } else
     m_objectHandle->setObjectId(id);
 }
@@ -693,7 +665,7 @@ void FunctionViewer::onPreferenceChanged(const QString &prefName) {
   if (prefName != "QuickToolbar" && prefName != "XsheetBreadcrumbs" &&
       !prefName.isEmpty())
     return;
-  if (!Preferences::instance()->isExpandFunctionHeaderEnabled()) return;
+  if (!m_syncHeader) return;
   if (m_toggleStart ==
       Preferences::FunctionEditorToggle::ShowFunctionSpreadsheetInPopup)
     return;
@@ -712,25 +684,9 @@ void FunctionViewer::onPreferenceChanged(const QString &prefName) {
   }
 
   // spreadsheet is shown
-  bool toolBarVisible =
-      Preferences::instance()->isShowQuickToolbarEnabled() &&
-      Preferences::instance()->isExpandFunctionHeaderEnabled();
-  bool breadcrumbsVisible =
-      Preferences::instance()->isShowXsheetBreadcrumbsEnabled() &&
-      Preferences::instance()->isExpandFunctionHeaderEnabled();
   m_functionGraph->hide();
   m_numericalColumns->show();
-  if (QSpacerItem *spacer = m_leftLayout->itemAt(0)->spacerItem()) {
-    spacer->changeSize(1, m_spacing + ((toolBarVisible) ? 10 : 0) +
-                              ((breadcrumbsVisible) ? 10 : 0),
-                       QSizePolicy::Fixed, QSizePolicy::Fixed);
-    spacer->invalidate();
-    m_numericalColumns->updateHeaderHeight();
-    m_leftLayout->setSpacing(0);
-  } else
-    m_leftLayout->setSpacing(m_spacing + ((toolBarVisible) ? 30 : 0) +
-                             ((breadcrumbsVisible) ? 30 : 0));
-  updateGeometry();
+  adjustHeader();
 }
 
 //-----------------------------------------------------------------------------
@@ -831,10 +787,11 @@ bool FunctionViewer::isExpressionPageActive() {
 //----------------------------------------------------------------------------
 
 void FunctionViewer::save(QSettings &settings, bool forPopupIni) const {
-  FunctionEditorToggleStatus = m_toggleStatus;
+//  FunctionEditorToggleStatus = m_toggleStatus;
   settings.setValue("toggleStatus", m_toggleStatus);
   settings.setValue("showIbtwnValuesInSheet",
                     m_numericalColumns->isIbtwnValueVisible());
+  settings.setValue("syncHeader", m_syncHeader);
   settings.setValue("syncSize", m_numericalColumns->isSyncSize());
 }
 
@@ -844,13 +801,17 @@ void FunctionViewer::load(QSettings &settings) {
   QVariant toggleStatus = settings.value("toggleStatus");
   if (toggleStatus.canConvert(QVariant::Int)) {
     m_toggleStatus = toggleStatus.toInt();
+    showToggleMode(m_toggleStatus);
   }
-  m_toggleStatus    = FunctionEditorToggleStatus;
+//  m_toggleStatus    = FunctionEditorToggleStatus;
   bool ibtwnVisible = settings
                           .value("showIbtwnValuesInSheet",
                                  m_numericalColumns->isIbtwnValueVisible())
                           .toBool();
   m_numericalColumns->setIbtwnValueVisible(ibtwnVisible);
+
+  m_syncHeader = settings.value("syncHeader").toBool();
+  m_numericalColumns->setSyncHeader(m_syncHeader);
 
   bool syncSize =
       settings.value("syncSize", m_numericalColumns->isSyncSize()).toBool();
@@ -867,4 +828,64 @@ QColor FunctionViewer::getCurrentTextColor() const {
                             (int)currentColumnPixel.g,
                             (int)currentColumnPixel.b, 255);
   return currentColumnColor;
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionViewer::showToggleMode(int toggleMode) {
+  if (m_toggleStart !=
+      Preferences::FunctionEditorToggle::ToggleBetweenGraphAndSpreadsheet)
+    return;
+
+  if (toggleMode == 0) {
+    m_functionGraph->hide();
+    m_numericalColumns->show();
+    m_numericalColumns->setFocus();
+    adjustHeader();
+  } else {
+    m_functionGraph->show();
+    m_functionGraph->setFocus();
+    m_numericalColumns->hide();
+    m_leftLayout->setSpacing(0);
+    if (QSpacerItem *spacer = m_leftLayout->itemAt(0)->spacerItem()) {
+      spacer->changeSize(0, 0);
+      spacer->invalidate();
+    }
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionViewer::onSyncHeaderBtnToggled(bool on) {
+  // switch the flag
+  m_syncHeader = on;
+  adjustHeader();
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionViewer::adjustHeader() {
+  if (m_toggleStart ==
+      Preferences::FunctionEditorToggle::ShowFunctionSpreadsheetInPopup)
+    return;
+
+  bool toolBarVisible =
+      Preferences::instance()->isShowQuickToolbarEnabled() && m_syncHeader;
+  bool breadcrumbsVisible =
+      Preferences::instance()->isShowXsheetBreadcrumbsEnabled() && m_syncHeader;
+
+  QString layout = Preferences::instance()->getLoadedXsheetLayout();
+  m_spacing      = (!m_syncHeader || layout == QString("Minimum") ? 0
+                    : layout == QString("Compact")                ? 17
+                                                                  : 35);
+  m_spacing += (toolBarVisible ? 29 : 0) + (breadcrumbsVisible ? 29 : 0);
+
+  if (QSpacerItem *spacer = m_leftLayout->itemAt(0)->spacerItem()) {
+    spacer->changeSize(1, m_spacing, QSizePolicy::Fixed, QSizePolicy::Fixed);
+    spacer->invalidate();
+    m_numericalColumns->updateHeaderHeight();
+    m_leftLayout->setSpacing(0);
+  } else
+    m_leftLayout->setSpacing(m_spacing);
+  updateGeometry();
 }
