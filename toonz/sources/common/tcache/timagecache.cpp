@@ -40,6 +40,7 @@
 #include "tstream.h"
 #include "tenv.h"
 #include <deque>
+#include <set>
 #include <numeric>
 #include <sstream>
 #ifdef _WIN32
@@ -1700,13 +1701,22 @@ TImageP TImageCache::get(const std::string &id, bool toBeModified) const {
 
 //------------------------------------------------------------------------------
 
-TImageP TImageCache::Imp::get(const std::string &id, bool toBeModified) {
+TImageP TImageCache::Imp::get(const std::string &id_, bool toBeModified) {
   TThread::MutexLocker sl(&m_mutex);
 
-  std::map<std::string, std::string>::const_iterator it;
-  if ((it = m_duplicatedItems.find(id)) != m_duplicatedItems.end()) {
-    assert(m_duplicatedItems.find(it->second) == m_duplicatedItems.end());
-    return get(it->second, toBeModified);
+  // Resolve the duplicate/alias chain ITERATIVELY with cycle protection.
+  // m_duplicatedItems maps id->id; a circular entry (A->B->A or A->A) would
+  // make the previous recursive `get(it->second)` recurse until the thread
+  // stack overflows (observed crashing while generating column header icons,
+  // likely when sub-scenes/columns end up with colliding icon ids).
+  std::string id = id_;
+  {
+    std::set<std::string> visited;
+    std::map<std::string, std::string>::const_iterator it;
+    while ((it = m_duplicatedItems.find(id)) != m_duplicatedItems.end()) {
+      if (!visited.insert(id).second) break;  // cycle detected -> stop
+      id = it->second;
+    }
   }
 
   TImageP img;
