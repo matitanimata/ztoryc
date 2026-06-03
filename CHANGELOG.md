@@ -7,13 +7,14 @@
 
 ---
 
-## [2026-06-02] — Merge upstream Tahoma2D nightly (WIP su branch `merge/upstream-nightly`)
+## [2026-06-03] — Merge upstream Tahoma2D nightly ✅ SU MASTER
 
-> ⚠️ **NON ancora su `master`** — lavoro su branch dedicato + worktree isolato.
-> Da finalizzare dopo la risoluzione del crash qui sotto.
+> ✅ **Mergiato su `master`** (fast-forward `b4aff742f..9d88943cf`, push origin master).
+> Lavorato su branch `merge/upstream-nightly` + worktree isolato, poi portato su master.
+> Crash keyframe (Drawing Number) rimandato a **hotfix** futuro (raro, non ripresentato).
 
 ### Merged
-- **Merge `upstream/master` (nightly, post-v1.6.1)** nel branch `merge/upstream-nightly`.
+- **Merge `upstream/master` (nightly, post-v1.6.1)** in `master`.
   - merge-base: `c8b768aa3` (10 mar 2026). Ztoryc 333 commit / upstream 154 (46 fix, 10 feat).
   - **Solo 17 conflitti**, hotspot (mainwindow, txsheet, xshcellviewer, tooloptions,
     flipconsole) **auto-mergeati**. Conflitti risolti: 15 infra/branding → `ours`;
@@ -28,7 +29,14 @@
   **Sync with Play Range**, Animate tool (Reset Center/Set Key/Pick mode), Master Toolbar,
   Drawing Number/Mark.
 
-### Da risolvere PRIMA del merge su master
+### Fixed (post-merge)
+- ✅ **CRASH Set Key Plastic Tool** (`plastictool_animate.cpp`, commit `9d88943cf`) — le azioni
+  Set Key / Set Rest Key (nuove di upstream per il Plastic) erano raggiungibili via shortcut
+  anche senza deformazione attiva (`m_sd == nullptr`) → SIGSEGV in `keyFunc_undo →
+  m_sd->getKeyframeAt()`. Aggiunta guardia `if (!m_sd) return;`. **Candidato fix upstream.**
+  Era l'unico crash *introdotto* dal merge (gli altri sono pre-esistenti).
+
+### Hotfix da fare (non bloccanti — merge già su master)
 - 🔴 **CRASH muovendo keyframe nella xsheet** (`Crash-20260602-161810.log`) — SIGSEGV in
   `TStageObject::setKeyframeWithoutUndo → TDoubleParam::setKeyframe`, via `KeyframeMover::moveKeyframes`.
   **NON è regressione del merge**: `keyframemover.cpp` è identico a upstream puro (mai toccato da Ztoryc).
