@@ -728,6 +728,37 @@ Kitsu. NEW Integrazione Kitsu (M5)
 
 44b. INVESTIGATE PSD bottom-layer "not found" caricando come sub-scene (BASSA) — una scena libreria personaggio (.tnz) creata importando un PSD da Affinity Designer (modalità "Columns + layers in a group as frames in a column", senza sub-xsheet), quando viene caricata come child level (sub-scene) in un'altra scena, mostra il layer PSD più in basso (posizione visiva più bassa nello stack, prima colonna nell'xsheet) come "not found" subito dopo l'import. Bug Tahoma2D confermato. Caso: `CH_sibilllaCat.psd` — 40 layer nel blocco `Lr16` (estensione 16-bit di Affinity), tutti i nomi layer sono stringhe vuote nel campo nome Pascal. Compare immediatamente (no save+reload necessario). Solo con PSD esportati da Affinity — da verificare con PSD di Krita e Photoshop. I nomi layer vuoti nel blocco `Lr16` potrebbero interagire con `REF_LAYER_BY_NAME` / `getLevelIdByName` in `tiio_psd.cpp`: `getLevelIdByName(layerStr)` lancia `TImageException("Layer ID not exists")` se nessun level ha nome corrispondente — eccezione catturata silenziosamente in `ChildLevelResourceImporter::process`. WORKAROUND: aggiungere un layer dummy/sacrificale come primo (bottom) layer in Affinity prima dell'export. File da investigare: `toonz/sources/image/psd/tiio_psd.cpp` (costruttore, blocco REF_LAYER_BY_NAME), `toonz/sources/common/psdlib/psd.cpp` (getLevelIdByName, gestione blocco Lr16).
 
+45. NEW Status bar hint contestuali (Board + Animatic) (MEDIA, post-beta) — riusare la
+    StatusBar nativa (`TApp::instance()->getStatusBar()`, vedi mainwindow.cpp:553) per mostrare
+    suggerimenti contestuali nella barra inferiore a seconda del contesto del cursore, come fanno i
+    tool standard. Esempi richiesti dall'utente:
+    - cursore su un panel del Board → "Doppio click per entrare nello shot"
+    - cursore su una clip nella timeline Animatic → "Doppio click per aprire · trascina i bordi per trim"
+    - comandi "nascosti" → mostrare la scorciatoia di Transizioni e Roll cel quando il contesto lo permette
+    Implementazione: su eventi hover/enter-leave del Board (storyboardpanel) e del track Animatic
+    (ztoryanimatic), chiamare getStatusBar()->showMessage(tip). Rifinire i testi col feedback dei tester.
+    Abbassa la barriera d'ingresso per i comandi poco scopribili.
+
+46. FIX Explode sub-scene con "maintain parenting" crea peg inutili (MEDIA, pre-esistente Tahoma2D) —
+    in `explodeStageObjects()` (subscenecommand.cpp ~660-723), con maintain parenting ON viene SEMPRE
+    creato un pegbar che rappresenta il "table" della sotto-scena, anche quando nessun oggetto e'
+    realmente parentato al table (caso comune importando una scena con peg propri) -> peg ridondante.
+    Inoltre tutto il contenuto esploso viene messo SEMPRE in un nuovo gruppo (righe 707-709) — intenzionale
+    ma UX discutibile. Fix candidato: creare il peg-table solo se ci sono oggetti effettivamente parentati
+    al TableId della sub-scena; valutare se rendere opzionale il raggruppamento automatico. ATTENZIONE:
+    codice core explode+parenting+undo, richiede test mirati. Candidato upstream Tahoma2D.
+
+47. INVESTIGATE Audio scrub meno reattivo dopo il merge (viewer/xsheet normale) (MEDIA) — l'utente
+    nota che col toggle audio scrub NON distingue piu' il singolo frame come prima. VERIFICATO: il fix
+    Ztoryc "widen scrub window" (scrubLen = max(samplePerFrame, sampleRate*0.15) ~150ms, commit 7b52a5e2e
+    Fase D + evoluzioni gapless 8b1e57ac1/e978d61e4) E' ANCORA PRESENTE in txsheet.cpp:2121 (merge NON
+    l'ha perso). Quindi il regresso e' in un percorso DIVERSO: lo scrub del viewer/xsheet normale usa il
+    native sound scrub (tframehandle/txshsoundcolumn/flipconsole), e il merge ha cambiato il timing del
+    frame-advance in flipconsole.cpp (auto-merge, fix upstream "changing cell during playback"/"resume
+    play"). Ipotesi: il timing del frame-switch influenza durata/frequenza dello scrub nativo. Indagare
+    con confronto A/B (build pre-merge b4aff742f vs post) + percorso onFrameSwitched -> sound scrub.
+    Riferimenti commit audio: 7b52a5e2e, 8b1e57ac1, e978d61e4, ac383df1e (native scrub sub-scene).
+
 Milestone:
 - M2: In/Out Marker, Roll, Slide, Doppio Viewer, Export render
 - M3: Quick-shot selector, Export PDF migliorato

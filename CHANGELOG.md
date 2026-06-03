@@ -7,7 +7,25 @@
 
 ---
 
-## [2026-06-03] — Merge upstream Tahoma2D nightly ✅ SU MASTER
+## [2026-06-03] — Merge upstream nightly ✅ SU MASTER + 🚀 RELEASE v0.4.0-beta.1
+
+> 🚀 **Rilasciata `v0.4.0-beta.1`** (prima beta sulla base mergeata) — binari pubblicati su
+> GitHub Releases per tutte le piattaforme: macOS Intel + Apple Silicon (DMG), Windows
+> (install .exe + portable .zip). Note bilingui IT/EN applicate, marcata prerelease.
+> Workflow: `gh workflow run macOS_build.yml/windows_build.yml -f publish_release=true -f release_tag=...`
+> (NON via git tag). Note in `~/ZtorYc/v0.4.0-beta.1_notes.md`.
+>
+> **Fix/migliorie della giornata post-merge (tutti su master):**
+> - 🔴 crash al salvataggio (`CleanupParameters`/`~TPalette`, `LastSavedParameters` morta) — risolto
+> - crash Set Key Plastic Tool (`m_sd` null in `keyFunc_undo`) — risolto
+> - default Ztoryc: Ease In/Out (era Linear), drag bars ON, implicit hold OFF
+> - rebranding Preferences + shortcut dialog (Tahoma2D→Ztoryc, lasciati import + crediti)
+> - confermati risolti DAL merge: asterisco/save dal main in storyboard; vari refresh
+>
+> **Task loggati per dopo (ANIMATIC_TASKS.md):** 45 status-bar hint contestuali; 46 explode
+> sub-scene crea peg inutili (pre-esistente); 47 audio scrub meno reattivo nel viewer normale
+> (il fix widen-scrub 150ms è SALVO in txsheet.cpp:2121 — regresso in native scrub/flipconsole timing).
+> **Crash noti rari (beta known issues):** keyframe move durante save concomitante; Plastic storeDeformation.
 
 > ✅ **Mergiato su `master`** (fast-forward `b4aff742f..9d88943cf`, push origin master).
 > Lavorato su branch `merge/upstream-nightly` + worktree isolato, poi portato su master.
