@@ -314,7 +314,12 @@ void CleanupParameters::assign(const CleanupParameters *param,
 //---------------------------------------------------------
 
 void CleanupParameters::saveData(TOStream &os) const {
-  CleanupParameters::LastSavedParameters.assign(this);
+  // NOTE: removed `LastSavedParameters.assign(this)`. That static global is
+  // never read anywhere in the codebase (dead code, leftover of an old
+  // dirty-check). Its assign() with clonePalette=true cloned the cleanup
+  // TPalette into a long-lived static and released the previous one, which
+  // crashed in ~TPalette during save (dangling styles accumulated across
+  // saves). Pre-existing Tahoma2D bug — upstream PR candidate.
 
   os.openChild("cleanupCamera");
   m_camera.saveData(os);
@@ -465,7 +470,8 @@ void CleanupParameters::loadData(TIStream &is, bool globalParams) {
     }
   }
 
-  CleanupParameters::LastSavedParameters.assign(this);
+  // LastSavedParameters removed — see note in saveData() (dead static, crashed
+  // in ~TPalette). GlobalParameters is still used, so it stays.
   if (globalParams) CleanupParameters::GlobalParameters.assign(this);
 }
 
