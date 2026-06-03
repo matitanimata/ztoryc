@@ -108,6 +108,8 @@ protected:
   void dragEnterEvent(QDragEnterEvent *e) override;
   void dragMoveEvent(QDragMoveEvent *e) override;
   void dropEvent(QDropEvent *e) override;
+  void enterEvent(QEvent *e) override;
+  void leaveEvent(QEvent *e) override;
 private slots:
   void onDurationSpinChanged(int value);
 };

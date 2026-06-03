@@ -176,7 +176,7 @@ PanelWidget::PanelWidget(QWidget *parent)
 
   m_matchButton = new QPushButton("\u21d4");  // ⇔ match timeline to sub-scene
   m_matchButton->setFixedSize(22, 18);
-  m_matchButton->setToolTip("Match timeline duration to sub-scene actual duration");
+  m_matchButton->setToolTip("Match timeline duration to shot actual duration");
   m_matchButton->setStyleSheet(
     "QPushButton{background:#444;color:#ffcc55;border-radius:3px;font-size:10px;}"
     "QPushButton:hover{background:#666;}");
@@ -521,6 +521,18 @@ void PanelWidget::dropEvent(QDropEvent *e) {
   if (fromShot != m_shotIndex)
     emit dropReceived(fromShot, m_shotIndex);
   e->acceptProposedAction();
+}
+
+void PanelWidget::enterEvent(QEvent *) {
+  TApp::instance()->showZtoryHint(
+      tr("Double-click to open the shot and draw  |  "
+         "Drag to reorder  |  Del to remove  --  "
+         "Board: draw, animate, set camera  --  "
+         "Timing & audio -> Animatic"));
+}
+
+void PanelWidget::leaveEvent(QEvent *) {
+  TApp::instance()->clearZtoryHint();
 }
 
 StoryboardPanel::StoryboardPanel(QWidget *parent)
@@ -903,6 +915,23 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
       }
     }
   });
+
+  // Install hover event filter on toolbar buttons to show contextual hints.
+  struct BtnHint { QToolButton *btn; const char *hint; };
+  for (auto bh : std::initializer_list<BtnHint>{
+    {m_addShotButton,        "Add a new empty shot at the end of the sequence"},
+    {m_deleteButton,         "Delete the selected shot (this cannot be undone)"},
+    {m_cloneButton,          "Clone shot -> creates an independent copy with the same content"},
+    {m_copyButton,           "Copy shot -- shared clipboard with the Animatic. Paste in Board or Animatic"},
+    {m_pasteButton,          "Paste the last copied shot after the current selection"},
+    {m_mergeButton,          "Merge two adjacent shots into one (durations are summed)"},
+    {m_exportPdfButton,      "Export the Board as PDF: thumbnails, dialog, and per-panel/shot durations"},
+    {m_exportShotsButton,    "Export each shot as a standalone scene"},
+    {m_exportAnimaticButton, "Export the full animatic as a video with audio"},
+  }) {
+    bh.btn->installEventFilter(this);
+    bh.btn->setProperty("ztoryHint", tr(bh.hint));
+  }
 }
 
 void StoryboardPanel::addPanelWidget(int shotIdx, int panelIdx) {
@@ -1637,6 +1666,19 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
     return col && !col->getSoundColumn() && !col->getSoundTextColumn();
   };
 
+  // A single camera keyframe means a static framing — no actual movement,
+  // so it must not create a panel boundary.  Only trigger on camera keyframes
+  // when 2+ keyframes exist (i.e. there is an actual animated transition).
+  int cameraKeyCount = 0;
+  {
+    TStageObject *cam = xsh->getStageObject(TStageObjectId::CameraId(0));
+    if (cam) {
+      for (int r = 0; r < numFrames; r++)
+        if (cam->isKeyframe(r)) cameraKeyCount++;
+    }
+  }
+  const bool useCameraKeys = (cameraKeyCount >= 2);
+
   // Collect keyframe change rows from sub-scene
   std::vector<int> allPanelFrames;
   allPanelFrames.push_back(0);
@@ -1654,7 +1696,7 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
       TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
       if (obj && obj->isKeyframe(r)) changed = true;
     }
-    if (!changed) {
+    if (!changed && useCameraKeys) {
       TStageObject *cam = xsh->getStageObject(TStageObjectId::CameraId(0));
       if (cam && cam->isKeyframe(r)) changed = true;
     }
@@ -2094,6 +2136,16 @@ void StoryboardPanel::refreshFromScene() {
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene) return;
+  // Sync fps from scene output settings — keeps timecodes correct when the
+  // user has a non-24 frame rate (e.g. 25, 30).
+  {
+    int sceneFps = (int)std::round(
+        scene->getProperties()->getOutputProperties()->getFrameRate());
+    if (sceneFps > 0) {
+      m_fps = sceneFps;
+      ZtoryModel::instance()->setFps(sceneFps);
+    }
+  }
   clearShots();
   TXsheet *xsh = scene->getChildStack()->getTopXsheet();
   if (!xsh) return;
@@ -2183,6 +2235,18 @@ void StoryboardPanel::refreshFromScene() {
 // arrives, so only Delete (which lacks a global binding in most contexts) worked.
 bool StoryboardPanel::eventFilter(QObject *obj, QEvent *e) {
   const QEvent::Type t = e->type();
+
+  // ── Toolbar button hints ──
+  if (t == QEvent::Enter || t == QEvent::Leave) {
+    QVariant hintV = obj->property("ztoryHint");
+    if (hintV.isValid()) {
+      if (t == QEvent::Enter)
+        TApp::instance()->showZtoryHint(hintV.toString());
+      else
+        TApp::instance()->clearZtoryHint();
+      return false;
+    }
+  }
 
   // ── Text field undo: capture snapshot before editing, push on focus out ──
   if (t == QEvent::FocusIn || t == QEvent::FocusOut) {
@@ -3743,6 +3807,23 @@ void StoryboardPanel::onExportPdf() {
   const double dpi = writer.resolution();
   auto mm2px = [dpi](double mm) -> int { return (int)(mm * dpi / 25.4 + 0.5); };
   auto pt2px = [dpi](double pt) -> int { return (int)(pt * dpi / 72.0 + 0.5); };
+  // Read fps from scene output settings; fall back to model value if unavailable.
+  int fps = ZtoryModel::instance()->fps();
+  if (scene) {
+    int sf = (int)std::round(
+        scene->getProperties()->getOutputProperties()->getFrameRate());
+    if (sf > 0) fps = sf;
+  }
+  auto framesToTC = [fps](int frames) -> QString {
+    int ff = frames % fps;
+    int ts = frames / fps;
+    int ss = ts % 60;
+    int mm = ts / 60;
+    return QString("%1:%2:%3")
+        .arg(mm, 2, 10, QChar('0'))
+        .arg(ss, 2, 10, QChar('0'))
+        .arg(ff, 2, 10, QChar('0'));
+  };
 
   const int cols  = 3;
   const int pageW = writer.width();
@@ -3778,14 +3859,26 @@ void StoryboardPanel::onExportPdf() {
       int x = margin + col * (cellW + gap);
       int y = margin + row * (cellH + gap);
 
-      // Shot/panel label — rect form so it never bleeds into the thumbnail
-      painter.setPen(Qt::black);
-      painter.setFont(QFont("Arial", 8, QFont::Bold));
-      painter.drawText(x, y, cellW, shotH, Qt::AlignVCenter | Qt::AlignLeft,
-          QString("%1  P%2/%3")
-              .arg(m_shots[si].data.shotNumber)
-              .arg(pi + 1)
-              .arg((int)m_shots[si].panels.size()));
+      // Shot/panel label (left) + durations (right)
+      {
+        const ShotData &sd = m_shots[si].data;
+        int panelFrames = sd.panels.size() > (size_t)pi ? sd.panels[pi].duration : 0;
+        int shotFrames  = sd.totalDuration();
+        QString leftLabel = QString("%1  P%2/%3")
+            .arg(sd.label())
+            .arg(pi + 1)
+            .arg((int)sd.panels.size());
+        // "24f 00:00:24 | T 00:01:00"
+        QString rightLabel = QString("%1f %2  |  T %3")
+            .arg(panelFrames)
+            .arg(framesToTC(panelFrames))
+            .arg(framesToTC(shotFrames));
+        painter.setPen(Qt::black);
+        painter.setFont(QFont("Arial", 8, QFont::Bold));
+        painter.drawText(x, y, cellW, shotH, Qt::AlignVCenter | Qt::AlignLeft, leftLabel);
+        painter.setFont(QFont("Arial", 7));
+        painter.drawText(x, y, cellW, shotH, Qt::AlignVCenter | Qt::AlignRight, rightLabel);
+      }
 
       // Thumbnail frame
       int thumbY = y + shotH;

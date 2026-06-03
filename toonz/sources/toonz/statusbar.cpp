@@ -76,6 +76,18 @@ void StatusBar::updateFrameText(QString text) {
 
 //-----------------------------------------------------------------------------
 
+void StatusBar::showZtoryHint(const QString &text) {
+  m_infoLabel->setStyleSheet("color: #d4a017;");
+  m_infoLabel->setText(text);
+}
+
+void StatusBar::clearZtoryHint() {
+  m_infoLabel->setStyleSheet("");
+  updateInfoText();
+}
+
+//-----------------------------------------------------------------------------
+
 void StatusBar::updateInfoText() {
   TApp* app              = TApp::instance();
   ToolHandle* toolHandle = app->getCurrentTool();

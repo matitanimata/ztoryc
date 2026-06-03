@@ -139,6 +139,7 @@ public:
   std::vector<ShotData>       &shots()       { return m_shots; }
   const std::vector<ShotData> &shots() const { return m_shots; }
   int  fps() const { return m_fps; }
+  void setFps(int fps) { if (fps > 0) m_fps = fps; }
 
   // ── Sequences ─────────────────────────────────────────────────────────────
   const std::vector<SequenceData>& sequences() const { return m_sequences; }

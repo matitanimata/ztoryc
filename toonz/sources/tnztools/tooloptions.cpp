@@ -3169,6 +3169,11 @@ BrushToolOptionsBox::BrushToolOptionsBox(QWidget *parent, TTool *tool,
 
     m_autoFillCheckbox =
         dynamic_cast<ToolOptionCheckbox *>(m_controls.value("Auto Fill"));
+    if (m_autoFillCheckbox)
+      m_autoFillCheckbox->setStatusTip(
+          tr("Auto Fill: automatically fill closed shapes with the selected "
+             "palette color after each stroke. Choose the fill color with "
+             "\"Fill Style\""));
     // AutoFill style picker — populated dynamically from palette.
     // The initial population was done above (before the builder) so the combo
     // is already correct at construction time. On palette/level switches we
@@ -3201,6 +3206,10 @@ BrushToolOptionsBox::BrushToolOptionsBox(QWidget *parent, TTool *tool,
         dynamic_cast<ToolOptionCheckbox *>(m_controls.value("Auto Group"));
     m_autoFillCheckbox =
         dynamic_cast<ToolOptionCheckbox *>(m_controls.value("Auto Fill"));
+    if (m_autoFillCheckbox)
+      m_autoFillCheckbox->setStatusTip(
+          tr("Auto Fill: automatically fill closed shapes with the selected "
+             "palette color after each stroke"));
     m_snapCheckbox =
         dynamic_cast<ToolOptionCheckbox *>(m_controls.value("Snap"));
     m_snapSensitivityCombo =
