@@ -3,8 +3,8 @@
 # Bump only ZTORYC_VERSION_MAJOR / MINOR / PATCH here.
 # =============================================================================
 set(ZTORYC_VERSION_MAJOR 0)
-set(ZTORYC_VERSION_MINOR 3)
-set(ZTORYC_VERSION_PATCH 5)
+set(ZTORYC_VERSION_MINOR 4)
+set(ZTORYC_VERSION_PATCH 0)
 set(ZTORYC_VERSION "${ZTORYC_VERSION_MAJOR}.${ZTORYC_VERSION_MINOR}.${ZTORYC_VERSION_PATCH}")
 
 # Legacy in-app float: major.minor as one decimal (see getAppVersionString %.1f).
