@@ -23,6 +23,9 @@ public:
   static void reportProjectInfo(bool enableReport);
   static void attachParentWindow(QWidget *parent);
   static bool trigger(const QString reason, bool showDialog);
+  // Call this when the app starts shutting down so the signal handler
+  // exits silently instead of trying to open a Qt dialog.
+  static void setAppExiting();
 
 public slots:
   void copyClipboard();
