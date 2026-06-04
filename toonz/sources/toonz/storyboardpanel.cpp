@@ -3543,11 +3543,15 @@ void StoryboardPanel::onExportShots() {
     if (!TFileStatus(outPath.getParentDir()).doesExist())
       TSystem::mkDir(outPath.getParentDir());
 
-    // Determina range del main xsheet per questo shot
+    // Determina range del main xsheet per questo shot.
+    // ignoreLastStop=true: exclude the trailing stop-hold frame so the audio
+    // range matches the rendered video duration exactly (stop-hold is not
+    // rendered by the video renderer).
     int shotCol = m_shots[i].data.xsheetColumn;
     int shotR0 = 0, shotR1 = 0;
     if (mainXsh && mainXsh->getColumn(shotCol))
-      mainXsh->getColumn(shotCol)->getRange(shotR0, shotR1);
+      mainXsh->getColumn(shotCol)->getRange(shotR0, shotR1,
+                                            /*ignoreLastStop=*/true);
 
     // Apri sottoscena
     TApp::instance()->getCurrentColumn()->setColumnIndex(shotCol);
