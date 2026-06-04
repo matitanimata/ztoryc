@@ -259,6 +259,7 @@ cd toonz/sources && ./beautification.sh
    - [ ] **Wrong column header thumbnail when sub-scenes share a name** (`icongenerator.cpp`) — `XsheetIconRenderer::getId` usa puntatore invece del nome → thumbnail sbagliata.
    - [ ] **Set Key (Z) not showing keyframe diamond on peg columns** (`cellselectioncommand.cpp`) — usava `ColumnId(col)` invece di `xsh->getColumnObjectId(col)`.
    - [ ] **Peg column width reset after delete** (`columnfan.cpp`, 1 riga) — la colonna successiva alla peg eliminata ereditava la larghezza ridotta. Commit `b8ddea829`.
+   - [ ] **PSD first layer lost when loaded as sub-scene** (`txshsimplelevel.cpp`, `tiio_psd.cpp`) — con PSD Affinity Designer 16-bit (nomi Pascal vuoti, import in group mode): il primo layer sparisce come "not found" quando la scena viene usata come sub-scene. Root cause: `getLevelPathAndSetNameWithPsdLevelName` rimpiazzava `##` → `#` in tutti i path PSD, trasformando `file##group.psd` (nome vuoto + group mode) nel path rotto `file#group.psd` dove "group" viene letto come nome layer → `getLevelIdByName("group")` → exception silenziosa. Fix in due parti: (1) il replace `##`→`#` ora scatta solo per token non-keyword; (2) reader fallback per path legacy già salvati con `#group`. Commit `5b8eeb3c1`.
 
    **🟠 Da verificare — bug fix medi:**
    - [ ] **getPreviewButtonStates null crash** (`viewerpane.cpp`) — crash se `m_previewButton`/`m_subcameraButton` non inizializzati. Commit `d7453d1eb`.

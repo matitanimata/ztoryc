@@ -2118,3 +2118,20 @@ Il render preview mostra bianco sia nel viewer animatico che in quello nativo.
 - `libcolorfx` e `libtnzstdfx` NON deployate: dipendono da `libimage` ma non cambiano → usano quella nel bundle già aggiornata.
 
 ---
+
+## [2026-06-05] — PSD fix, crash fix, camera overlay Phase 1
+
+### Fixed
+- **PSD first layer "not found" as sub-scene** — root cause: `getLevelPathAndSetNameWithPsdLevelName` replaced `##` → `#` unconditionally, turning `file##group.psd` (empty name + group mode, common in Affinity Designer 16-bit PSDs) into `file#group.psd` where "group" was misread as a layer name. Fix: two-part — (1) skip replace for mode keywords; (2) fallback in TLevelReaderPsd reader. Commit `5b8eeb3c1`. PR candidate upstream.
+- **Crash on quit / workflow switch (OpenGL static destructor)** — `signalHandler` tried to open QDialog during Qt static destructor teardown → abort. Fix: `s_appExiting` flag set on `aboutToQuit`. Commit `428f6c0d9`.
+- **Audio +1 frame in exported shots** — `getRange()` without `ignoreLastStop=true` included stop-hold frame. Commit `976db07c4`.
+- **PDF fps hardcoded to 24** — now reads from scene output properties. Camera single keyframe no longer creates panel boundary. `sub-scene` → `shot` in tooltips.
+
+### Added
+- **Camera move overlay on Board thumbnails (Task 40 Phase 1)**: PanelData stores camera affines at panel start/end; `computeCameraMove()` classifies Pan/Tilt/TrkIn/TrkOut; `applyCameraOverlay()` draws red IN/OUT rectangles + labels on thumbnails. Applied in Board view and PDF export. Persisted in `.ztoryc`. Commit `d19a84551`. Phase 2: backed-out wide render for Pan/Tilt.
+
+### Notes
+- PSD bug is PR candidate for Tahoma2D upstream (added to AGENTS.md).
+- Camera overlay still needs tuning (Phase 2: Pan wide render, editable label).
+
+---
