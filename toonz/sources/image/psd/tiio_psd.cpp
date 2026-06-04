@@ -44,11 +44,16 @@ TLevelReaderPsd::TLevelReaderPsd(const TFilePath &path)
 #ifdef REF_LAYER_BY_NAME
 #if (defined(x64) || defined(__LP64__))
     if (layerStr != "frames") {
+      // "group" here means list.size()==2 but the path is "file#group.psd" —
+      // a legacy broken path where an empty layer name + group mode was saved
+      // as a single "#group" suffix instead of "##group".
+      // Treat it like an empty layer name (counter=0) so the first layer is found.
+      QString effectiveStr = (layerStr == "group") ? "" : layerStr;
       QTextCodec *layerNameCodec = QTextCodec::codecForName(
           Preferences::instance()->getLayerNameEncoding().c_str());
       TPSDParser psdparser(m_path);
       m_layerId = psdparser.getLevelIdByName(
-          layerNameCodec->fromUnicode(layerStr).toStdString());
+          layerNameCodec->fromUnicode(effectiveStr).toStdString());
     } else {
       m_layerId = layerStr.toInt();
     }
