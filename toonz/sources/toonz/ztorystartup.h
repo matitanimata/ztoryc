@@ -23,6 +23,8 @@ public:
     // Section 1 — Project
     QString projectName;
     QString projectPath;
+    QString production;
+    QString title;
 
     // Section 2 — Camera
     int width, height, fps, totalFrames;
@@ -59,6 +61,8 @@ private:
   QLineEdit *m_projectName;
   QLineEdit *m_projectPath;
   QPushButton *m_browseBtn;
+  QLineEdit *m_production;
+  QLineEdit *m_title;
 
   // Section 2
   QComboBox *m_formatPreset;

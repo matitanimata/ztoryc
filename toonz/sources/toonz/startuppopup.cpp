@@ -404,6 +404,24 @@ StartupPopup::StartupPopup(Mode mode)
       m_resetOnSeqChangeCB->hide();   // shown only in Sequence mode
       numLay->addWidget(m_resetOnSeqChangeCB, 3, 0, 1, 6);
 
+      // ---- Production + Title (for PDF export header) ----
+      QFrame *metaSep = new QFrame(m_numberingBox);
+      metaSep->setFrameShape(QFrame::HLine);
+      metaSep->setStyleSheet("color:#555;");
+      numLay->addWidget(metaSep, 4, 0, 1, 6);
+
+      numLay->addWidget(new QLabel(tr("Production:")), 5, 0,
+                        Qt::AlignRight | Qt::AlignVCenter);
+      m_productionFld = new QLineEdit(m_numberingBox);
+      m_productionFld->setPlaceholderText(tr("e.g. Studio Name"));
+      numLay->addWidget(m_productionFld, 5, 1, 1, 5);
+
+      numLay->addWidget(new QLabel(tr("Title:")), 6, 0,
+                        Qt::AlignRight | Qt::AlignVCenter);
+      m_titleFld = new QLineEdit(m_numberingBox);
+      m_titleFld->setPlaceholderText(tr("e.g. Episode or Sequence Title"));
+      numLay->addWidget(m_titleFld, 6, 1, 1, 5);
+
       newSceneLay->addWidget(m_numberingBox, 8, 0, 1, 6);
 
       // Row 9: elastic empty area — absorbs space when numbering box is hidden,
@@ -1068,6 +1086,8 @@ void StartupPopup::onCreateButton() {
     numCfg.seqNumber        = 1;
     numCfg.resetOnSeqChange = m_resetOnSeqChangeCB->isChecked();
     ZtoryModel::instance()->setNumberingConfig(numCfg);
+    ZtoryModel::instance()->setProduction(m_productionFld->text().trimmed());
+    ZtoryModel::instance()->setTitle(m_titleFld->text().trimmed());
 
     // In Sequence mode, create a default "sq01" sequence and assign all
     // initial shots to it so they show the SQ field pre-populated.

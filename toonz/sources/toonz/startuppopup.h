@@ -85,6 +85,8 @@ public:
   QSpinBox *m_initialShotCountSB;
   QCheckBox *m_resetOnSeqChangeCB;
   QLabel *m_seqPrefixLabel;
+  QLineEdit *m_productionFld;
+  QLineEdit *m_titleFld;
   // Numbering widgets to show/hide based on workflow
   QWidget *m_numberingBox;
   QString m_presetListFile;

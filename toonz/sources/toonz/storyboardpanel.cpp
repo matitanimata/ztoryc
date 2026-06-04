@@ -1347,6 +1347,16 @@ void StoryboardPanel::saveZtoryc() {
   xml.writeStartDocument();
   xml.writeStartElement("ztoryc");
   xml.writeAttribute("version", "2");
+  // Project metadata (production + title entered by user at scene creation).
+  {
+    ZtoryModel *model = ZtoryModel::instance();
+    if (!model->production().isEmpty() || !model->title().isEmpty()) {
+      xml.writeStartElement("project");
+      xml.writeAttribute("production", model->production());
+      xml.writeAttribute("title",      model->title());
+      xml.writeEndElement();
+    }
+  }
   // Imported screenplay (Script panel) — project-relative path.
   {
     QString sf = ZtoryModel::instance()->scriptFile();
@@ -1423,6 +1433,11 @@ void StoryboardPanel::loadZtoryc() {
     m_loadingZtoryc = false;
     return;
   }
+  // File exists: reset project metadata so stale values from a previous scene
+  // or creation flow don't bleed into this reload. They will be repopulated
+  // below if the file contains a <project> element.
+  ZtoryModel::instance()->setProduction("");
+  ZtoryModel::instance()->setTitle("");
   // Start each scene's sequence list fresh so sequences never leak across
   // scenes. Old files (no <sequence>) leave it empty → renumberAll() recreates
   // a default sequence if needed.
@@ -1433,7 +1448,12 @@ void StoryboardPanel::loadZtoryc() {
   while (!xml.atEnd()) {
     xml.readNext();
     if (xml.isStartElement()) {
-      if (xml.name() == QLatin1String("scriptFile")) {
+      if (xml.name() == QLatin1String("project")) {
+        auto a = xml.attributes();
+        ZtoryModel::instance()->setProduction(a.value("production").toString());
+        ZtoryModel::instance()->setTitle(a.value("title").toString());
+      }
+      else if (xml.name() == QLatin1String("scriptFile")) {
         scriptFromFile = xml.readElementText();
       }
       else if (xml.name() == QLatin1String("numbering")) {
@@ -2146,6 +2166,9 @@ void StoryboardPanel::refreshFromScene() {
       ZtoryModel::instance()->setFps(sceneFps);
     }
   }
+  // Note: production/title are NOT reset here. loadZtoryc() clears them only
+  // when it finds an existing .ztoryc file, so that values set during scene
+  // creation (startup popup) survive until the first saveZtoryc() anchors them.
   clearShots();
   TXsheet *xsh = scene->getChildStack()->getTopXsheet();
   if (!xsh) return;
@@ -2222,6 +2245,12 @@ void StoryboardPanel::refreshFromScene() {
   // clearShots → addShots → loadZtoryc) was correctly suppressed; from this
   // point on saves will target exactly this scene's file.
   m_currentZtoryPath = ztoryPath();
+
+  // If production/title were set during scene creation (startup popup) but
+  // not yet saved (new scene had no .ztoryc), persist them now.
+  ZtoryModel *zm = ZtoryModel::instance();
+  if (!zm->production().isEmpty() || !zm->title().isEmpty())
+    saveZtoryc();
 }
 
 // ── qApp event filter: intercept keyboard shortcuts for the Board ────────────
@@ -3800,14 +3829,15 @@ void StoryboardPanel::onExportPdf() {
 
   QPdfWriter writer(path);
   writer.setPageLayout(QPageLayout(QPageSize(QPageSize::A4),
-      QPageLayout::Landscape, QMarginsF(10, 10, 10, 10)));
+      QPageLayout::Landscape, QMarginsF(8, 8, 8, 8)));
   writer.setResolution(300);
 
   QPainter painter(&writer);
   const double dpi = writer.resolution();
   auto mm2px = [dpi](double mm) -> int { return (int)(mm * dpi / 25.4 + 0.5); };
   auto pt2px = [dpi](double pt) -> int { return (int)(pt * dpi / 72.0 + 0.5); };
-  // Read fps from scene output settings; fall back to model value if unavailable.
+
+  // FPS from scene
   int fps = ZtoryModel::instance()->fps();
   if (scene) {
     int sf = (int)std::round(
@@ -3815,84 +3845,191 @@ void StoryboardPanel::onExportPdf() {
     if (sf > 0) fps = sf;
   }
   auto framesToTC = [fps](int frames) -> QString {
-    int ff = frames % fps;
-    int ts = frames / fps;
-    int ss = ts % 60;
-    int mm = ts / 60;
+    int ff = frames % fps, ts = frames / fps, ss = ts % 60, mm = ts / 60;
     return QString("%1:%2:%3")
-        .arg(mm, 2, 10, QChar('0'))
-        .arg(ss, 2, 10, QChar('0'))
-        .arg(ff, 2, 10, QChar('0'));
+        .arg(mm,2,10,QChar('0')).arg(ss,2,10,QChar('0')).arg(ff,2,10,QChar('0'));
   };
 
-  const int cols  = 3;
   const int pageW = writer.width();
   const int pageH = writer.height();
+  const int cols  = 3;
+  const int pad   = mm2px(2.0);   // inner text padding
 
-  // DPI-independent cell layout
-  const int margin = mm2px(4.0);              // page interior padding
-  const int gap    = mm2px(3.5);              // gap between cells
-  const int cellW  = (pageW - 2*margin - gap*(cols-1)) / cols;
-  const int imgH   = cellW * 9 / 16;          // 16:9 thumbnail
+  // Fixed bands
+  const int headerH = mm2px(14.0);
+  const int footerH = mm2px(6.0);
 
-  // Text block heights — derived from font metrics, not hardcoded px
-  const int shotH  = pt2px(8 * 1.6);          // shot label row
-  const int labelH = pt2px(7 * 1.4);          // field label row
-  const int textH  = pt2px(7 * 1.4) * 2;      // 2 text lines per field
-  const int fgap   = mm2px(2.0);              // gap: thumbnail → first field
-  const int bgap   = mm2px(0.8);              // gap between fields
-  const int blockH = labelH + textH + bgap;
-  const int cellH  = shotH + imgH + fgap + 3 * blockH;
+  // Grid occupies full width, no outer side margin
+  const int gridY = headerH;
+  const int gridH = pageH - headerH - footerH;
 
-  const int rowsPerPage = qMax(1, (pageH - 2*margin) / (cellH + gap));
+  // Cell dimensions — no gaps, pure grid
+  const int cellW    = pageW / cols;
+  // Always 1 row per page: cells fill the full grid height so thumbnails
+  // sit in the top portion and text fields expand to fill the rest.
+  const int rowsPerPage = 1;
   const int perPage     = cols * rowsPerPage;
+  const int cellH    = gridH;  // each cell spans the full grid height
+  const int subHdrH  = mm2px(6.5);
+  const int imgH     = cellW * 9 / 16;
+  // Remaining height after sub-header and thumbnail is shared among 3 fields.
+  const int fieldsH  = cellH - subHdrH - imgH;
+  const int fieldH   = fieldsH / 3;
+  const int fldLblH  = pt2px(6.5);
+  const int fldTxtH  = fieldH - fldLblH - mm2px(0.4);
+  const int fldGap   = mm2px(0.4);
 
-  int pos = 0;
-  for (int si = 0; si < (int)m_shots.size(); si++) {
-    for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++) {
-      int idx = pos % perPage;
-      int col = idx % cols;
-      int row = idx / cols;
-      if (pos > 0 && idx == 0) writer.newPage();
+  // Build flat panel list
+  struct PanelEntry { int si, pi; PanelWidget *pw; };
+  std::vector<PanelEntry> allPanels;
+  for (int si = 0; si < (int)m_shots.size(); si++)
+    for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
+      allPanels.push_back({si, pi, m_shots[si].panels[pi]});
+  const int totalPanels = (int)allPanels.size();
+  const int totalPages  = (totalPanels + perPage - 1) / perPage;
 
-      PanelWidget *pw = m_shots[si].panels[pi];
-      int x = margin + col * (cellW + gap);
-      int y = margin + row * (cellH + gap);
+  // Assets
+  QPixmap logoPixmap = QPixmap(":Resources/ztoryc_about.png")
+      .scaled(mm2px(10), mm2px(10), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+  QPixmap ftLogo = QPixmap(":Resources/ztoryc_about.png")
+      .scaled(mm2px(3.5), mm2px(3.5), Qt::KeepAspectRatio, Qt::SmoothTransformation);
 
-      // Shot/panel label (left) + durations (right)
+  // Production + Title: prefer user-set values from model; fall back to scene path.
+  QString prodName  = ZtoryModel::instance()->production();
+  QString titleName = ZtoryModel::instance()->title();
+  if (scene && (prodName.isEmpty() || titleName.isEmpty())) {
+    TFilePath sp = scene->getScenePath();
+    QString sceneName  = QString::fromStdWString(sp.getWideName());
+    QString parentDir  = QString::fromStdWString(sp.getParentDir().getWideName());
+    if (prodName.isEmpty())  prodName  = parentDir.isEmpty() ? sceneName : parentDir;
+    if (titleName.isEmpty()) titleName = sceneName;
+  }
+
+  // ── Draw header ──────────────────────────────────────────────────────────
+  auto drawHeader = [&](int pageNum) {
+    painter.fillRect(0, 0, pageW, headerH, Qt::white);
+    // Bottom border line
+    painter.setPen(QPen(Qt::black, mm2px(0.3)));
+    painter.drawLine(0, headerH - 1, pageW, headerH - 1);
+
+    // Logo
+    int cx = pad;
+    if (!logoPixmap.isNull()) {
+      int ly = (headerH - logoPixmap.height()) / 2;
+      painter.drawPixmap(cx, ly, logoPixmap);
+      cx += logoPixmap.width() + mm2px(3.0);
+    }
+
+    // Divider after logo
+    painter.setPen(QPen(QColor(180,180,180), mm2px(0.2)));
+    painter.drawLine(cx - mm2px(1.5), mm2px(2), cx - mm2px(1.5), headerH - mm2px(2));
+
+    // Production + Title fields (each takes ~1/3 of remaining width)
+    int fieldAreaW = pageW - cx - mm2px(38);
+    int secW = fieldAreaW / 2;
+
+    auto drawHdrField = [&](int x, int w, const QString &label, const QString &value) {
+      painter.setFont(QFont("Arial", 5.5));
+      painter.setPen(QColor(100,100,100));
+      painter.drawText(x, mm2px(1), w, headerH/2 - mm2px(1),
+                       Qt::AlignBottom | Qt::AlignLeft, label);
+      painter.setFont(QFont("Arial", 8, QFont::Bold));
+      painter.setPen(Qt::black);
+      painter.drawText(x, headerH/2, w, headerH/2 - mm2px(2),
+                       Qt::AlignTop | Qt::AlignLeft, value);
+      int lineY = headerH - mm2px(2);
+      painter.setPen(QPen(QColor(180,180,180), mm2px(0.2)));
+      painter.drawLine(x, lineY, x + w - mm2px(3), lineY);
+    };
+    drawHdrField(cx,        secW, tr("Production:"), prodName);
+    drawHdrField(cx + secW, secW, tr("Title:"),      titleName);
+
+    // Page box (right)
+    int pbX = pageW - mm2px(36);
+    int pbW = mm2px(36) - pad;
+    int pbH = headerH - mm2px(3);
+    int pbY = mm2px(1.5);
+    painter.setPen(QPen(Qt::black, mm2px(0.25)));
+    painter.drawRect(pbX, pbY, pbW, pbH);
+    painter.setFont(QFont("Arial", 7));
+    painter.setPen(Qt::black);
+    painter.drawText(pbX, pbY, pbW, pbH, Qt::AlignVCenter | Qt::AlignHCenter,
+        tr("Page  %1 / %2").arg(pageNum).arg(totalPages));
+  };
+
+  // ── Draw footer ──────────────────────────────────────────────────────────
+  auto drawFooter = [&]() {
+    int fy = pageH - footerH;
+    painter.fillRect(0, fy, pageW, footerH, Qt::white);
+    painter.setPen(QPen(QColor(200,200,200), mm2px(0.2)));
+    painter.drawLine(0, fy, pageW, fy);
+
+    painter.setFont(QFont("Arial", 5));
+    QFontMetrics fm(painter.font());
+    QString ftText = tr("Made with Ztoryc");
+    int tW = fm.horizontalAdvance(ftText);
+    int g2 = mm2px(1.5);
+    int totalW = (ftLogo.isNull() ? 0 : ftLogo.width() + g2) + tW;
+    int fx = (pageW - totalW) / 2;
+    if (!ftLogo.isNull()) {
+      painter.drawPixmap(fx, fy + (footerH - ftLogo.height())/2, ftLogo);
+      fx += ftLogo.width() + g2;
+    }
+    painter.setPen(QColor(160,160,160));
+    painter.drawText(fx, fy, tW + mm2px(1), footerH, Qt::AlignVCenter | Qt::AlignLeft, ftText);
+  };
+
+  // ── Pages ─────────────────────────────────────────────────────────────────
+  TXsheet *mainXsh = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
+
+  for (int pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+    if (pageIdx > 0) writer.newPage();
+    drawHeader(pageIdx + 1);
+    drawFooter();
+
+    int panelStart = pageIdx * perPage;
+    int panelEnd   = qMin(panelStart + perPage, totalPanels);
+
+    for (int idx = panelStart; idx < panelEnd; idx++) {
+      int localIdx = idx - panelStart;
+      int col      = localIdx % cols;
+      int row      = localIdx / cols;
+
+      int cx = col * cellW;
+      int cy = gridY + row * cellH;
+
+      const PanelEntry &pe = allPanels[idx];
+      const ShotData   &sd = m_shots[pe.si].data;
+      PanelWidget      *pw = pe.pw;
+
+      // ── Sub-header ───────────────────────────────────────────────────────
+      painter.fillRect(cx, cy, cellW, subHdrH, QColor(232, 232, 232));
+
+      int panelFrames = sd.panels.size() > (size_t)pe.pi
+                        ? sd.panels[pe.pi].duration : 0;
+      int shotFrames  = sd.totalDuration();
+      QString lblLeft  = QString("%1   P%2/%3")
+          .arg(sd.label())
+          .arg(pe.pi + 1)
+          .arg((int)sd.panels.size());
+      QString lblRight = QString("%1f %2   T %3")
+          .arg(panelFrames)
+          .arg(framesToTC(panelFrames))
+          .arg(framesToTC(shotFrames));
+
+      painter.setFont(QFont("Arial", 5.5, QFont::Bold));
+      painter.setPen(Qt::black);
+      painter.drawText(cx + pad, cy, cellW/2 - pad, subHdrH,
+          Qt::AlignVCenter | Qt::AlignLeft, lblLeft);
+      painter.setFont(QFont("Arial", 5.5));
+      painter.drawText(cx + cellW/2, cy, cellW/2 - pad, subHdrH,
+          Qt::AlignVCenter | Qt::AlignRight, lblRight);
+
+      // ── Thumbnail ────────────────────────────────────────────────────────
+      int thumbY = cy + subHdrH;
       {
-        const ShotData &sd = m_shots[si].data;
-        int panelFrames = sd.panels.size() > (size_t)pi ? sd.panels[pi].duration : 0;
-        int shotFrames  = sd.totalDuration();
-        QString leftLabel = QString("%1  P%2/%3")
-            .arg(sd.label())
-            .arg(pi + 1)
-            .arg((int)sd.panels.size());
-        // "24f 00:00:24 | T 00:01:00"
-        QString rightLabel = QString("%1f %2  |  T %3")
-            .arg(panelFrames)
-            .arg(framesToTC(panelFrames))
-            .arg(framesToTC(shotFrames));
-        painter.setPen(Qt::black);
-        painter.setFont(QFont("Arial", 8, QFont::Bold));
-        painter.drawText(x, y, cellW, shotH, Qt::AlignVCenter | Qt::AlignLeft, leftLabel);
-        painter.setFont(QFont("Arial", 7));
-        painter.drawText(x, y, cellW, shotH, Qt::AlignVCenter | Qt::AlignRight, rightLabel);
-      }
-
-      // Thumbnail frame
-      int thumbY = y + shotH;
-      painter.setPen(QPen(Qt::black, 2));
-      painter.drawRect(x, thumbY, cellW, imgH);
-
-      // Render thumbnail (re-render at PDF cell size for max quality)
-      {
-        int col2 = m_shots[si].data.xsheetColumn;
+        int col2 = sd.xsheetColumn;
         TXsheet *subXsh = nullptr;
-        TXsheet *mainXsh = TApp::instance()->getCurrentScene()->getScene()
-                           ? TApp::instance()->getCurrentScene()->getScene()
-                             ->getChildStack()->getTopXsheet()
-                           : nullptr;
         if (mainXsh) {
           for (int r = 0; r <= mainXsh->getFrameCount(); r++) {
             TXshCell cell = mainXsh->getCell(r, col2);
@@ -3901,44 +4038,65 @@ void StoryboardPanel::onExportPdf() {
             }
           }
         }
-        int frame = m_shots[si].data.panels.size() > (size_t)pi
-                    ? m_shots[si].data.panels[pi].startFrame : 0;
+        int frame = sd.panels.size() > (size_t)pe.pi
+                    ? sd.panels[pe.pi].startFrame : 0;
         QPixmap hq;
         if (subXsh)
           hq = IconGenerator::renderXsheetFrame(subXsh, frame,
-                   TDimension(cellW - 4, imgH - 4));
-        if (hq.isNull()) hq = pw->previewPixmap();  // fallback to cached
+                   TDimension(cellW - 2, imgH - 2));
+        if (hq.isNull()) hq = pw->previewPixmap();
         if (!hq.isNull()) {
-          QPixmap scaled = hq.scaled(cellW - 4, imgH - 4,
+          QPixmap scaled = hq.scaled(cellW - 2, imgH - 2,
               Qt::KeepAspectRatio, Qt::SmoothTransformation);
-          int tx = x + (cellW - scaled.width())  / 2;
+          int tx = cx + (cellW - scaled.width()) / 2;
           int ty = thumbY + (imgH - scaled.height()) / 2;
           painter.drawPixmap(tx, ty, scaled);
         } else {
-          painter.setPen(QPen(QColor(180, 180, 180), 1));
-          painter.drawLine(x, thumbY, x+cellW, thumbY+imgH);
-          painter.drawLine(x+cellW, thumbY, x, thumbY+imgH);
+          painter.setPen(QPen(QColor(200, 200, 200), 1));
+          painter.drawLine(cx, thumbY, cx+cellW, thumbY+imgH);
+          painter.drawLine(cx+cellW, thumbY, cx, thumbY+imgH);
         }
       }
 
-      // Text fields below thumbnail
-      int ty2 = thumbY + imgH + fgap;
+      // ── Text fields ──────────────────────────────────────────────────────
+      int ty2 = thumbY + imgH;
       auto drawField = [&](const QString &label, const QString &text) {
+        // Top separator (light)
+        painter.setPen(QPen(QColor(200, 200, 200), mm2px(0.15)));
+        painter.drawLine(cx, ty2, cx + cellW, ty2);
+        painter.setFont(QFont("Arial", 6, QFont::Bold));
         painter.setPen(Qt::black);
-        painter.setFont(QFont("Arial", 7, QFont::Bold));
-        painter.drawText(x, ty2, cellW, labelH, Qt::AlignVCenter | Qt::AlignLeft, label);
-        painter.setFont(QFont("Arial", 7));
-        painter.drawText(x, ty2 + labelH, cellW, textH,
+        painter.drawText(cx + pad, ty2, cellW - 2*pad, fldLblH,
+            Qt::AlignVCenter | Qt::AlignLeft, label);
+        painter.setFont(QFont("Arial", 6));
+        painter.drawText(cx + pad, ty2 + fldLblH, cellW - 2*pad, fldTxtH,
             Qt::AlignLeft | Qt::TextWordWrap, text);
-        ty2 += blockH;
+        ty2 += fieldH;
       };
-      drawField(tr("Dialog:"),       pw->dialog());
+      drawField(tr("Dialogue:"),     pw->dialog());
       drawField(tr("Action Notes:"), pw->action());
       drawField(tr("Notes:"),        pw->notes());
 
-      pos++;
+      // ── Cell borders ─────────────────────────────────────────────────────
+      // Vertical left: same shot as left neighbor -> thin gray, else thicker black
+      bool sameAsLeft = (col > 0 && idx > panelStart && allPanels[idx-1].si == pe.si);
+      double leftPenW = sameAsLeft ? mm2px(0.25) : mm2px(0.55);
+      QColor leftCol  = sameAsLeft ? QColor(180, 180, 180) : Qt::black;
+
+      // Outer rect (top + right + bottom always black)
+      painter.setPen(QPen(Qt::black, mm2px(0.25)));
+      painter.drawLine(cx,        cy,       cx+cellW,  cy);        // top
+      painter.drawLine(cx+cellW,  cy,       cx+cellW,  cy+cellH);  // right
+      painter.drawLine(cx,        cy+cellH, cx+cellW,  cy+cellH);  // bottom
+      // Left border (shot-aware thickness + color)
+      painter.setPen(QPen(leftCol, leftPenW));
+      painter.drawLine(cx, cy, cx, cy+cellH);
+      // Sub-header bottom separator
+      painter.setPen(QPen(Qt::black, mm2px(0.25)));
+      painter.drawLine(cx, cy+subHdrH, cx+cellW, cy+subHdrH);
     }
   }
+
   painter.end();
   QMessageBox::information(this, tr("Export PDF"),
       tr("Exported to:\n%1").arg(path));

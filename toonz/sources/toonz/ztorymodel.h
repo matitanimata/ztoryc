@@ -110,6 +110,8 @@ class ZtoryModel : public QObject {
   // script/<file>").  Persisted in the .ztoryc so the Script panel can reload
   // it when the scene is reopened.  Empty = no screenplay imported.
   QString                           m_scriptFile;
+  QString                           m_production;  // user-defined production name
+  QString                           m_title;       // user-defined project title
   ZtoryWorkflow                     m_workflow = ZtoryWorkflow::Tradigital;
   std::vector<ZtoryClipEntry>       m_sharedClip;
   std::set<int>                     m_sharedSelection;
@@ -140,6 +142,10 @@ public:
   const std::vector<ShotData> &shots() const { return m_shots; }
   int  fps() const { return m_fps; }
   void setFps(int fps) { if (fps > 0) m_fps = fps; }
+  QString production() const { return m_production; }
+  QString title()      const { return m_title; }
+  void setProduction(const QString &s) { m_production = s; }
+  void setTitle(const QString &s)      { m_title = s; }
 
   // ── Sequences ─────────────────────────────────────────────────────────────
   const std::vector<SequenceData>& sequences() const { return m_sequences; }
