@@ -7,6 +7,33 @@
 
 ---
 
+## [2026-06-04] — PDF storyboard template, hints, fix audio/crash
+
+### Added
+- **Task 45 — Status bar hints contestuali** (gold `#d4a017`):
+  - Board: hover su panel → hint workflow Board vs Animatic; hover toolbar buttons → hint specifico per ogni bottone
+  - Animatic: hint tool-aware in `mouseMoveEvent` (SelectTool, TrimTool roll/ripple, RazorTool); `leaveEvent` pulisce
+  - XSheet: `setStatusTip` su Roll Up/Down, Autofill, Auto Fill checkbox (BrushToolOptionsBox)
+  - Nuovi metodi `StatusBar::showZtoryHint` / `clearZtoryHint` + helper `TApp`
+- **PDF Export — template professionale**:
+  - Header: logo Ztoryc, Production, Title, Page X/Y
+  - 3 panel per pagina (1 riga), celle full-height; sub-header con shot label + durate
+  - Griglia senza gap: linea grigia tra panel stesso shot, nera+spessa tra shot diversi
+  - Footer: logo piccolo + "Made with Ztoryc"
+- **Metadati Production/Title**: campi in `ZtoryStartupDialog` + `StartupPopup`; persistiti in `.ztoryc`; fix race condition con `refreshFromScene`
+
+### Fixed
+- **PDF timecode fps**: leggeva fps fisso 24; ora da `scene->getProperties()->getOutputProperties()->getFrameRate()`
+- **Camera keyframe singolo**: non crea più panel boundary in `detectAndUpdatePanels`
+- **Audio +1 frame nelle scene esportate**: `getRange()` ora con `ignoreLastStop=true` in `onExportShots`
+- **Crash al quit/workflow-switch (OpenGL static destructor)**: `signalHandler` tentava QDialog su Qt già distrutto. Fix: flag `s_appExiting` su `aboutToQuit` → `_Exit(0)` silenzioso
+- **"sub-scene" → "shot"**: tooltip Auto Match Duration e Match Duration button
+
+### Notes
+- Plastic drawing invisibile (mesh visibile): intermittente, non riproducibile. Da investigare con debug build.
+
+---
+
 ## [2026-06-03] — Merge upstream nightly ✅ SU MASTER + 🚀 RELEASE v0.4.0-beta.1
 
 > 🚀 **Rilasciata `v0.4.0-beta.1`** (prima beta sulla base mergeata) — binari pubblicati su
