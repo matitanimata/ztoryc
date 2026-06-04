@@ -60,6 +60,22 @@ struct PanelData {
   QString notes;
   QString panelLabel;    // "P003" — stable identifier within shot
   int     orderIndex = 0;  // sort key (panel position)
+
+  // ── Camera movement overlay ───────────────────────────────────────────────
+  // Populated by detectAndUpdatePanels() when the panel boundary is a camera
+  // keyframe. Used to draw the IN/OUT rectangle overlay on thumbnails.
+  enum CameraMove { CamNone, CamTrkIn, CamTrkOut, CamPan, CamTilt, CamCombined };
+  CameraMove cameraMoveType = CamNone;
+  QString    cameraMoveLabel;   // auto-generated but user-editable ("Trk In" etc.)
+  // Camera affine at startFrame (a11,a12,a13, a21,a22,a23 — row-major)
+  double camA0[6] = {1,0,0, 0,1,0};
+  // Camera affine at last frame of panel
+  double camA1[6] = {1,0,0, 0,1,0};
+  // Camera physical size in stage units (from TCamera::getSize())
+  double camW = 0, camH = 0;
+  // Which frame to use for the thumbnail render (startFrame or end frame)
+  int    camRenderFrame = 0;  // absolute frame in sub-scene
+
   PanelData() : startFrame(0), duration(24) {}
 };
 

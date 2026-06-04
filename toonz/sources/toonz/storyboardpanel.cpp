@@ -12,6 +12,7 @@
 #include "toonz/tstageobjecttree.h"
 #include "columncommand.h"
 #include "toonz/tstageobject.h"
+#include "toonz/tcamera.h"
 #include "toonz/tcolumnhandle.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/txshleveltypes.h"
@@ -1239,6 +1240,10 @@ void StoryboardPanel::updateVisiblePreviews() {
   }
 }
 
+// Forward declarations — implementations just before detectAndUpdatePanels()
+static void computeCameraMove(TXsheet *, PanelData &, int, ToonzScene *);
+static void applyCameraOverlay(QPixmap &, const PanelData &);
+
 void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   Shot &shot = m_shots[shotIdx];
@@ -1261,7 +1266,11 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   TXsheet *subXsh = cl->getXsheet();
   if (!subXsh) return;
 
-  int frame = shot.data.panels[panelIdx].startFrame;
+  const PanelData &pd = shot.data.panels[panelIdx];
+  // Camera move panels render at camRenderFrame (widest view); others at startFrame.
+  int frame = (pd.cameraMoveType != PanelData::CamNone)
+              ? pd.camRenderFrame
+              : pd.startFrame;
 
   // Render at the panel widget's actual physical pixel width for crisp display
   // on both Retina and standard screens. Stored WITHOUT a DPR tag so that
@@ -1276,8 +1285,10 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   int physH = physW * 9 / 16;
 
   QPixmap px = IconGenerator::renderXsheetFrame(subXsh, frame, TDimension(physW, physH));
-  if (!px.isNull())
+  if (!px.isNull()) {
+    applyCameraOverlay(px, pd);
     shot.panels[panelIdx]->setPreviewPixmap(px);
+  }
 }
 
 QString StoryboardPanel::ztoryPath() const {
@@ -1403,6 +1414,21 @@ void StoryboardPanel::saveZtoryc() {
       xml.writeAttribute("index",      QString::number(pi));
       xml.writeAttribute("startFrame", QString::number(pd.startFrame));
       xml.writeAttribute("duration",   QString::number(pd.duration));
+      if (pd.cameraMoveType != PanelData::CamNone) {
+        xml.writeAttribute("camMove",  QString::number((int)pd.cameraMoveType));
+        xml.writeAttribute("camLabel", pd.cameraMoveLabel);
+        xml.writeAttribute("camRenderFrame", QString::number(pd.camRenderFrame));
+        xml.writeAttribute("camW", QString::number(pd.camW));
+        xml.writeAttribute("camH", QString::number(pd.camH));
+        // Store affines as space-separated doubles
+        auto affToStr = [](const double a[6]) {
+          return QString("%1 %2 %3 %4 %5 %6")
+              .arg(a[0],0,'g',10).arg(a[1],0,'g',10).arg(a[2],0,'g',10)
+              .arg(a[3],0,'g',10).arg(a[4],0,'g',10).arg(a[5],0,'g',10);
+        };
+        xml.writeAttribute("camA0", affToStr(pd.camA0));
+        xml.writeAttribute("camA1", affToStr(pd.camA1));
+      }
       xml.writeTextElement("dialog", pd.dialog);
       xml.writeTextElement("action", pd.action);
       xml.writeTextElement("notes",  pd.notes);
@@ -1507,10 +1533,24 @@ void StoryboardPanel::loadZtoryc() {
             PanelData pd;
             m_shots[si].data.panels.push_back(pd);
           }
-          m_shots[si].data.panels[pi].startFrame =
-            xml.attributes().value("startFrame").toInt();
-          m_shots[si].data.panels[pi].duration =
-            xml.attributes().value("duration").toInt();
+          PanelData &pd = m_shots[si].data.panels[pi];
+          pd.startFrame = xml.attributes().value("startFrame").toInt();
+          pd.duration   = xml.attributes().value("duration").toInt();
+          // Camera move overlay
+          if (xml.attributes().hasAttribute("camMove")) {
+            pd.cameraMoveType  = (PanelData::CameraMove)
+                xml.attributes().value("camMove").toInt();
+            pd.cameraMoveLabel = xml.attributes().value("camLabel").toString();
+            pd.camRenderFrame  = xml.attributes().value("camRenderFrame").toInt();
+            pd.camW = xml.attributes().value("camW").toDouble();
+            pd.camH = xml.attributes().value("camH").toDouble();
+            auto strToAff = [](const QString &s, double a[6]) {
+              QStringList t = s.split(' ', Qt::SkipEmptyParts);
+              for (int k = 0; k < 6 && k < t.size(); k++) a[k] = t[k].toDouble();
+            };
+            strToAff(xml.attributes().value("camA0").toString(), pd.camA0);
+            strToAff(xml.attributes().value("camA1").toString(), pd.camA1);
+          }
         }
       }
       else if (xml.name() == QLatin1String("dialog")) {
@@ -1630,6 +1670,205 @@ int StoryboardPanel::currentShotIndex() const {
   return node->m_col;
 }
 
+
+// ── Camera movement helpers ────────────────────────────────────────────────
+
+// Fills PanelData camera fields from the sub-scene xsheet + scene camera.
+// Called after panel boundaries are confirmed from camera keyframes.
+static void computeCameraMove(TXsheet *xsh, PanelData &pd,
+                              int timelineDuration, ToonzScene *scene) {
+  if (!xsh || !scene) return;
+
+  // Frame indices for start and end of this panel
+  int f0 = pd.startFrame;
+  int f1 = qMax(f0, f0 + pd.duration - 1);
+
+  TAffine a0 = xsh->getCameraAff(f0);
+  TAffine a1 = xsh->getCameraAff(f1);
+
+  // Store affines
+  pd.camA0[0]=a0.a11; pd.camA0[1]=a0.a12; pd.camA0[2]=a0.a13;
+  pd.camA0[3]=a0.a21; pd.camA0[4]=a0.a22; pd.camA0[5]=a0.a23;
+  pd.camA1[0]=a1.a11; pd.camA1[1]=a1.a12; pd.camA1[2]=a1.a13;
+  pd.camA1[3]=a1.a21; pd.camA1[4]=a1.a22; pd.camA1[5]=a1.a23;
+
+  // Camera physical size in stage units
+  TCamera *cam = scene->getCurrentCamera();
+  if (cam) {
+    const TDimensionD &sz = cam->getSize();
+    pd.camW = sz.lx;
+    pd.camH = sz.ly;
+  }
+
+  // Scale: sqrt(a11^2 + a21^2)
+  double s0 = std::sqrt(a0.a11*a0.a11 + a0.a21*a0.a21);
+  double s1 = std::sqrt(a1.a11*a1.a11 + a1.a21*a1.a21);
+  if (s0 < 1e-9) s0 = 1e-9;
+  if (s1 < 1e-9) s1 = 1e-9;
+
+  // Deltas: translation and scale change
+  double dx   = a1.a13 - a0.a13;
+  double dy   = a1.a23 - a0.a23;
+  double dscl = (s1 - s0) / s0;
+
+  // Normalise by camera world size at startFrame
+  double camUnitW = (pd.camW > 0) ? pd.camW / s0 : 1.0;
+  double camUnitH = (pd.camH > 0) ? pd.camH / s0 : 1.0;
+  double normX = std::fabs(dx) / camUnitW;
+  double normY = std::fabs(dy) / camUnitH;
+  double normS = std::fabs(dscl);
+
+  const double T = 0.03;  // 3% threshold for "significant" movement
+
+  bool hasX = normX > T;
+  bool hasY = normY > T;
+  bool hasS = normS > T;
+
+  if (!hasX && !hasY && !hasS) {
+    pd.cameraMoveType  = PanelData::CamNone;
+    pd.cameraMoveLabel = "";
+    pd.camRenderFrame  = f0;
+    return;
+  }
+
+  // Classify
+  bool trkIn  = hasS && dscl >  T;
+  bool trkOut = hasS && dscl < -T;
+  bool pan    = hasX && normX > normY;
+  bool tilt   = hasY && normY >= normX;
+
+  if ((trkIn || trkOut) && !hasX && !hasY) {
+    pd.cameraMoveType  = trkIn ? PanelData::CamTrkIn : PanelData::CamTrkOut;
+    pd.cameraMoveLabel = trkIn ? "Trk In" : "Trk Out";
+  } else if ((pan || tilt) && !hasS) {
+    pd.cameraMoveType  = pan ? PanelData::CamPan : PanelData::CamTilt;
+    pd.cameraMoveLabel = pan ? "Pan" : "Tilt";
+  } else {
+    pd.cameraMoveType  = PanelData::CamCombined;
+    QStringList parts;
+    if (trkIn)  parts << "Trk In";
+    if (trkOut) parts << "Trk Out";
+    if (pan)    parts << "Pan";
+    if (tilt)   parts << "Tilt";
+    pd.cameraMoveLabel = parts.join(" + ");
+  }
+
+  // Render at widest frame: TRK IN → startFrame (wide), TRK OUT → endFrame (wide)
+  if (pd.cameraMoveType == PanelData::CamTrkOut)
+    pd.camRenderFrame = f1;
+  else
+    pd.camRenderFrame = f0;
+}
+
+// Draws IN/OUT camera-move rectangles on top of a thumbnail pixmap.
+// inRect/outRect are in normalised [0..1] coords relative to pixmap size.
+static void applyCameraOverlay(QPixmap &px, const PanelData &pd) {
+  if (pd.cameraMoveType == PanelData::CamNone || px.isNull()) return;
+  if (pd.camW < 1e-6 || pd.camH < 1e-6) return;
+
+  int W = px.width();
+  int H = px.height();
+
+  // Scale of affines
+  double s0 = std::sqrt(pd.camA0[0]*pd.camA0[0] + pd.camA0[3]*pd.camA0[3]);
+  double s1 = std::sqrt(pd.camA1[0]*pd.camA1[0] + pd.camA1[3]*pd.camA1[3]);
+  if (s0 < 1e-9) s0 = 1e-9;
+  if (s1 < 1e-9) s1 = 1e-9;
+
+  // Translation
+  double tx0 = pd.camA0[2], ty0 = pd.camA0[5];
+  double tx1 = pd.camA1[2], ty1 = pd.camA1[5];
+
+  // Reference scale depends on which frame we rendered at
+  bool renderAtEnd = (pd.cameraMoveType == PanelData::CamTrkOut);
+  double sRef  = renderAtEnd ? s1 : s0;
+  double txRef = renderAtEnd ? tx1 : tx0;
+  double tyRef = renderAtEnd ? ty1 : ty0;
+  double sOth  = renderAtEnd ? s0 : s1;
+  double txOth = renderAtEnd ? tx0 : tx1;
+  double tyOth = renderAtEnd ? ty0 : ty1;
+
+  // Camera world size at reference frame
+  double cwRef = pd.camW / sRef;
+  double chRef = pd.camH / sRef;
+
+  // Pixels per scene unit
+  double pxPerU = W / cwRef;
+  double pyPerU = H / chRef;
+
+  // "Reference" frame always maps to full pixmap → that is the IN (or OUT) rect
+  QRectF refRect(0, 0, W, H);
+
+  // "Other" frame: size and offset relative to reference
+  double otherW = W * sRef / sOth;
+  double otherH = H * sRef / sOth;
+  double dxPx = (txOth - txRef) * pxPerU;
+  double dyPx = -(tyOth - tyRef) * pyPerU;   // Y flipped
+  double otherX = W/2.0 + dxPx - otherW/2.0;
+  double otherY = H/2.0 + dyPx - otherH/2.0;
+  QRectF otherRect(otherX, otherY, otherW, otherH);
+
+  QRectF inRect  = renderAtEnd ? otherRect : refRect;
+  QRectF outRect = renderAtEnd ? refRect   : otherRect;
+
+  QPainter p(&px);
+  p.setRenderHint(QPainter::Antialiasing, false);
+
+  // Pen: red, 1.5px, miter join, no fill
+  QPen pen(QColor(220, 30, 30), 1.5);
+  pen.setJoinStyle(Qt::MiterJoin);
+  p.setPen(pen);
+  p.setBrush(Qt::NoBrush);
+
+  // Draw both rects (clip to pixmap bounds)
+  p.setClipRect(QRect(0, 0, W, H));
+  p.drawRect(inRect);
+  p.drawRect(outRect);
+
+  // Labels: small bold text inside the rect, near bottom-left / top-right
+  QFont fnt("Arial", 0);
+  fnt.setPixelSize(qMax(9, qMin(14, W / 20)));
+  fnt.setBold(true);
+  p.setFont(fnt);
+
+  // "IN" — bottom-left of inRect
+  auto drawLabel = [&](const QRectF &r, const QString &txt, bool bottomLeft) {
+    QFontMetrics fm(fnt);
+    int tw = fm.horizontalAdvance(txt);
+    int th = fm.height();
+    int margin = 3;
+    QPointF pt;
+    if (bottomLeft)
+      pt = QPointF(r.left() + margin, r.bottom() - margin - th);
+    else
+      pt = QPointF(r.right() - tw - margin, r.top() + margin);
+    // Small background for readability
+    QRectF bg(pt.x()-1, pt.y()-1, tw+2, th+2);
+    p.fillRect(bg, QColor(0, 0, 0, 140));
+    p.setPen(QColor(220, 30, 30));
+    p.drawText(pt.x(), pt.y() + fm.ascent(), txt);
+  };
+
+  drawLabel(inRect,  "IN",  true);
+  drawLabel(outRect, "OUT", false);
+
+  // Camera move label (type name) — top-left of pixmap
+  if (!pd.cameraMoveLabel.isEmpty()) {
+    QFont lf("Arial", 0);
+    lf.setPixelSize(qMax(8, qMin(12, W / 24)));
+    lf.setBold(true);
+    p.setFont(lf);
+    QFontMetrics lfm(lf);
+    int lw = lfm.horizontalAdvance(pd.cameraMoveLabel);
+    int lh = lfm.height();
+    p.fillRect(QRectF(3, 3, lw+4, lh+2), QColor(0, 0, 0, 150));
+    p.setPen(QColor(220, 30, 30));
+    p.drawText(5, 3 + lfm.ascent(), pd.cameraMoveLabel);
+  }
+
+  p.end();
+}
+
 void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   TApp *app = TApp::instance();
@@ -1742,6 +1981,9 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
                                        : timelineDuration - panelFrames[i];
       if (i < (int)shot.panels.size())
         shot.panels[i]->setDuration(shot.data.panels[i].duration);
+      // Re-compute camera move data (duration/frame may have changed)
+      if (useCameraKeys)
+        computeCameraMove(xsh, shot.data.panels[i], timelineDuration, scene);
     }
     for (PanelWidget *pw : shot.panels)
       pw->setTotalDuration(timelineDuration);
@@ -1764,6 +2006,8 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
     shot.data.panels[i].duration   = (i+1 < newPanelCount)
                                      ? panelFrames[i+1] - panelFrames[i]
                                      : timelineDuration - panelFrames[i];
+    if (useCameraKeys)
+      computeCameraMove(xsh, shot.data.panels[i], timelineDuration, scene);
   }
   for (PanelWidget *pw : shot.panels) { m_grid->removeWidget(pw); delete pw; }
   shot.panels.clear();
@@ -4042,14 +4286,19 @@ void StoryboardPanel::onExportPdf() {
             }
           }
         }
-        int frame = sd.panels.size() > (size_t)pe.pi
-                    ? sd.panels[pe.pi].startFrame : 0;
+        const PanelData &pdRef = sd.panels[pe.pi];
+        int frame = (pdRef.cameraMoveType != PanelData::CamNone)
+                    ? pdRef.camRenderFrame
+                    : (sd.panels.size() > (size_t)pe.pi ? sd.panels[pe.pi].startFrame : 0);
         QPixmap hq;
         if (subXsh)
           hq = IconGenerator::renderXsheetFrame(subXsh, frame,
                    TDimension(cellW - 2, imgH - 2));
         if (hq.isNull()) hq = pw->previewPixmap();
         if (!hq.isNull()) {
+          // Apply camera overlay before scaling (so it's crisp at full res)
+          if (pdRef.cameraMoveType != PanelData::CamNone)
+            applyCameraOverlay(hq, pdRef);
           QPixmap scaled = hq.scaled(cellW - 2, imgH - 2,
               Qt::KeepAspectRatio, Qt::SmoothTransformation);
           int tx = cx + (cellW - scaled.width()) / 2;
