@@ -3743,6 +3743,17 @@ void StoryboardPanel::onExportPdf() {
   const double dpi = writer.resolution();
   auto mm2px = [dpi](double mm) -> int { return (int)(mm * dpi / 25.4 + 0.5); };
   auto pt2px = [dpi](double pt) -> int { return (int)(pt * dpi / 72.0 + 0.5); };
+  const int fps = ZtoryModel::instance()->fps();
+  auto framesToTC = [fps](int frames) -> QString {
+    int ff = frames % fps;
+    int ts = frames / fps;
+    int ss = ts % 60;
+    int mm = ts / 60;
+    return QString("%1:%2:%3")
+        .arg(mm, 2, 10, QChar('0'))
+        .arg(ss, 2, 10, QChar('0'))
+        .arg(ff, 2, 10, QChar('0'));
+  };
 
   const int cols  = 3;
   const int pageW = writer.width();
@@ -3778,14 +3789,26 @@ void StoryboardPanel::onExportPdf() {
       int x = margin + col * (cellW + gap);
       int y = margin + row * (cellH + gap);
 
-      // Shot/panel label — rect form so it never bleeds into the thumbnail
-      painter.setPen(Qt::black);
-      painter.setFont(QFont("Arial", 8, QFont::Bold));
-      painter.drawText(x, y, cellW, shotH, Qt::AlignVCenter | Qt::AlignLeft,
-          QString("%1  P%2/%3")
-              .arg(m_shots[si].data.shotNumber)
-              .arg(pi + 1)
-              .arg((int)m_shots[si].panels.size()));
+      // Shot/panel label (left) + durations (right)
+      {
+        const ShotData &sd = m_shots[si].data;
+        int panelFrames = sd.panels.size() > (size_t)pi ? sd.panels[pi].duration : 0;
+        int shotFrames  = sd.totalDuration();
+        QString leftLabel = QString("%1  P%2/%3")
+            .arg(sd.label())
+            .arg(pi + 1)
+            .arg((int)sd.panels.size());
+        // "24f 00:00:24 | T 00:01:00"
+        QString rightLabel = QString("%1f %2  |  T %3")
+            .arg(panelFrames)
+            .arg(framesToTC(panelFrames))
+            .arg(framesToTC(shotFrames));
+        painter.setPen(Qt::black);
+        painter.setFont(QFont("Arial", 8, QFont::Bold));
+        painter.drawText(x, y, cellW, shotH, Qt::AlignVCenter | Qt::AlignLeft, leftLabel);
+        painter.setFont(QFont("Arial", 7));
+        painter.drawText(x, y, cellW, shotH, Qt::AlignVCenter | Qt::AlignRight, rightLabel);
+      }
 
       // Thumbnail frame
       int thumbY = y + shotH;

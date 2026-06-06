@@ -700,6 +700,14 @@ bool CrashHandler::trigger(const QString reason, bool showDialog) {
     fclose(fw);
   }
 
+  // On macOS (and generally), creating a QDialog (NSWindow) from a non-main
+  // thread is illegal and throws an ObjC exception. When the crash originates
+  // on a render thread, we still write the log file above, but skip the dialog.
+  if (showDialog &&
+      QThread::currentThread() != QCoreApplication::instance()->thread()) {
+    showDialog = false;
+  }
+
   if (showDialog) {
     // Show crash handler dialog
     CrashHandler crashdialog(s_parentWindow, fpCrsh, QString::fromStdString(out));
