@@ -49,8 +49,9 @@
 
 #include <QDebug>
 
-static QWidget *s_parentWindow = NULL;
-static bool s_reportProjInfo   = false;
+static QWidget *s_parentWindow  = NULL;
+static bool s_reportProjInfo    = false;
+static volatile bool s_appExiting = false;
 #ifdef _WIN32
 static PEXCEPTION_POINTERS s_exceptionPtr = NULL;
 #endif
@@ -443,6 +444,10 @@ void signalHandler(int sig) {
     break;
   }
 
+  // During app shutdown (static destructors) Qt is already partially
+  // destroyed — opening a QDialog would abort. Exit silently instead.
+  if (s_appExiting) _Exit(0);
+
   // Avoid new signals inside the crash handler
   if (handling) return;
 
@@ -596,6 +601,10 @@ void CrashHandler::reportProjectInfo(bool enableReport) {
 
 void CrashHandler::attachParentWindow(QWidget *parent) {
   s_parentWindow = parent;
+}
+
+void CrashHandler::setAppExiting() {
+  s_appExiting = true;
 }
 
 //-----------------------------------------------------------------------------

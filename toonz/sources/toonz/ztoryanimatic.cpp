@@ -2588,6 +2588,8 @@ void ZtoryAnimaticTrack::mouseMoveEvent(QMouseEvent *e) {
     }
     if (nearSeam) {
       setCursor(Qt::SplitHCursor);
+      TApp::instance()->showZtoryHint(
+          tr("Alt-drag the seam to add or remove a transition between the two shots"));
     } else {
       bool nearEdge = false;
       for (auto &b : m_blocks) {
@@ -2596,23 +2598,40 @@ void ZtoryAnimaticTrack::mouseMoveEvent(QMouseEvent *e) {
         if (mx >= bx1 - 6 && mx <= bx1 + 2) { nearEdge = true; break; }
       }
       setCursor(nearEdge ? Qt::SizeHorCursor : Qt::ArrowCursor);
+      if (nearEdge)
+        TApp::instance()->showZtoryHint(
+            tr("Drag the right edge to ripple-trim the shot"));
+      else
+        TApp::instance()->showZtoryHint(
+            tr("Double-click to enter the shot and draw  --  "
+               "Timing and audio are edited here in the Animatic"));
     }
   } else if (m_tool == TrimTool) {
     Qt::CursorShape cur = Qt::ArrowCursor;
+    QString trimHint;
     for (int bi = 0; bi < (int)m_blocks.size(); bi++) {
       int duration = m_blocks[bi].f1 - m_blocks[bi].f0 + 1;
       int bx1 = (int)((m_blocks[bi].startFrameInMain + duration) * m_ppf);
       if (mx >= bx1 - 6 && mx <= bx1 + 6) {
         bool hasNext = (bi + 1 < (int)m_blocks.size());
         cur = hasNext ? Qt::SplitHCursor : Qt::SizeHorCursor;
+        trimHint = hasNext
+            ? tr("Roll edit: extend one side, shorten the other -- total duration unchanged")
+            : tr("Ripple trim: resize the shot, the rest of the sequence shifts accordingly");
         break;
       }
     }
     setCursor(cur);
+    if (!trimHint.isEmpty())
+      TApp::instance()->showZtoryHint(trimHint);
+    else
+      TApp::instance()->clearZtoryHint();
   }
 
   // Razor hover: snap the indicator to the nearest frame boundary
   if (m_tool == RazorTool) {
+    TApp::instance()->showZtoryHint(
+        tr("Click to split the shot into two panels  --  Total duration stays the same"));
     int frame = (mx >= 0) ? (int)(mx / m_ppf) : -1;
     // Only show hover if cursor is over a valid cut position inside a block
     int hoverFrame = -1;
@@ -2637,6 +2656,7 @@ void ZtoryAnimaticTrack::mouseMoveEvent(QMouseEvent *e) {
 
 void ZtoryAnimaticTrack::leaveEvent(QEvent *) {
   unsetCursor();
+  TApp::instance()->clearZtoryHint();
   if (m_tool == RazorTool && m_razorHoverFrame >= 0) {
     m_razorHoverFrame = -1;
     update();
@@ -3581,7 +3601,7 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
   autoMatchBtn->setFixedSize(28, 28);
   autoMatchBtn->setCheckable(true);
   autoMatchBtn->setChecked(ZtoryModel::instance()->autoMatch());
-  autoMatchBtn->setToolTip(tr("Auto Match Duration\nAutomatically resize the animatic slot\nto match drawing content."));
+  autoMatchBtn->setToolTip(tr("Auto Match Duration\nAutomatically resize the animatic slot\nto match the shot drawing content."));
   autoMatchBtn->setStyleSheet(
       "QToolButton{background:transparent;border:1px solid #555;border-radius:4px;}"
       "QToolButton:hover{background:#555;}"
@@ -4663,7 +4683,7 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   m_autoMatchBtn->setIconSize(QSize(20, 20));
   m_autoMatchBtn->setFixedSize(28, 28);
   m_autoMatchBtn->setCheckable(true);
-  m_autoMatchBtn->setToolTip(tr("Auto Match Duration\nWhen enabled, the animatic slot automatically\nresizes to match the sub-scene drawing content."));
+  m_autoMatchBtn->setToolTip(tr("Auto Match Duration\nWhen enabled, the animatic slot automatically\nresizes to match the shot drawing content."));
   m_autoMatchBtn->setStyleSheet(
       "QToolButton{background:transparent;border:none;border-radius:4px;}"
       "QToolButton:hover{background:#555;}"

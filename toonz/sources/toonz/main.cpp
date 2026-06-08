@@ -819,6 +819,10 @@ int main(int argc, char *argv[]) {
   MainWindow w(argumentLayoutFileName);
   CrashHandler::attachParentWindow(&w);
   CrashHandler::reportProjectInfo(true);
+  // Mark app as exiting on aboutToQuit so the signal handler doesn't try
+  // to open a QDialog during static destructor teardown (Qt already gone).
+  QObject::connect(&a, &QCoreApplication::aboutToQuit,
+                   []() { CrashHandler::setAppExiting(); });
 
   TFilePath fp = ToonzFolder::getModuleFile("mainwindow.ini");
   QSettings settings(toQString(fp), QSettings::IniFormat);

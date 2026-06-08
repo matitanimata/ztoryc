@@ -932,6 +932,16 @@ void TApp::showMessage(QString message, int duration) {
 
 //-----------------------------------------------------------------------------
 
+void TApp::showZtoryHint(const QString &text) {
+  if (m_statusBar) m_statusBar->showZtoryHint(text);
+}
+
+void TApp::clearZtoryHint() {
+  if (m_statusBar) m_statusBar->clearZtoryHint();
+}
+
+//-----------------------------------------------------------------------------
+
 void TApp::refreshStatusBar() {
   if (m_statusBar) m_statusBar->refreshStatusBar();
 }

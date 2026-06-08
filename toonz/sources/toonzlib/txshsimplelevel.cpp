@@ -1125,7 +1125,24 @@ static TFilePath getLevelPathAndSetNameWithPsdLevelName(
   TFilePath retfp = xshLevel->getPath();
 
   QString name        = QString::fromStdWString(retfp.getWideName());
-  bool removeFileName = name.contains("##");
+  // "##" in a PSD path means one of two things:
+  //   1. "filename##layerId"  → strip the filename, keep only layerId as level name
+  //   2. "filename##group"    → empty layer name followed by a mode keyword
+  // Case 2 must NOT have "##" replaced by "#": doing so produces "filename#group"
+  // which the reader misparses as layerName="group" (not found).
+  // Only apply the replace when what follows "##" is a numeric layer ID or a
+  // non-mode name, i.e. not the keywords "group" or "frames".
+  bool removeFileName = false;
+  if (name.contains("##")) {
+    int ddPos = name.indexOf("##");
+    QString afterDD = name.mid(ddPos + 2);
+    // Strip any trailing mode suffix (#group, #frames) to get the part after ##
+    int nextHash = afterDD.indexOf("#");
+    QString token = (nextHash >= 0) ? afterDD.left(nextHash) : afterDD;
+    // Only activate removeFileName for non-mode tokens (numeric IDs or names)
+    if (token != "group" && token != "frames")
+      removeFileName = true;
+  }
   if (removeFileName) {
     retfp = TFilePath(
         QString::fromStdWString(retfp.getWideString()).replace("##", "#"));

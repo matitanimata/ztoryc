@@ -101,6 +101,16 @@ void ZtoryStartupDialog::buildUi() {
   projGrid->addWidget(m_projectPath, 1, 1);
   projGrid->addWidget(m_browseBtn, 1, 2);
 
+  m_production = new QLineEdit(this);
+  m_production->setPlaceholderText(tr("e.g. Studio Name"));
+  projGrid->addWidget(new QLabel(tr("Production:")), 2, 0);
+  projGrid->addWidget(m_production, 2, 1, 1, 2);
+
+  m_title = new QLineEdit(this);
+  m_title->setPlaceholderText(tr("e.g. Episode Title"));
+  projGrid->addWidget(new QLabel(tr("Title:")), 3, 0);
+  projGrid->addWidget(m_title, 3, 1, 1, 2);
+
   connect(m_browseBtn, &QPushButton::clicked, this, [this]() {
     QString dir = QFileDialog::getExistingDirectory(
         this, tr("Choose project location"),
@@ -279,6 +289,8 @@ ZtoryStartupDialog::Config ZtoryStartupDialog::config() const {
   c.initialShotCount = m_initialShotCount->value();
   c.seqPrefix       = m_seqPrefix->text();
   c.shotPrefix      = m_shotPrefix->text();
+  c.production      = m_production->text().trimmed();
+  c.title           = m_title->text().trimmed();
   return c;
 }
 
@@ -299,6 +311,7 @@ void ZtoryStartupDialog::saveSettings() {
   s.setValue("initialShotCount", m_initialShotCount->value());
   s.setValue("seqPrefix",        m_seqPrefix->text());
   s.setValue("shotPrefix",       m_shotPrefix->text());
+  // Note: production/title are per-project, not persisted as defaults.
 }
 
 void ZtoryStartupDialog::loadSettings() {

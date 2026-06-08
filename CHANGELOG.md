@@ -7,6 +7,33 @@
 
 ---
 
+## [2026-06-04] — PDF storyboard template, hints, fix audio/crash
+
+### Added
+- **Task 45 — Status bar hints contestuali** (gold `#d4a017`):
+  - Board: hover su panel → hint workflow Board vs Animatic; hover toolbar buttons → hint specifico per ogni bottone
+  - Animatic: hint tool-aware in `mouseMoveEvent` (SelectTool, TrimTool roll/ripple, RazorTool); `leaveEvent` pulisce
+  - XSheet: `setStatusTip` su Roll Up/Down, Autofill, Auto Fill checkbox (BrushToolOptionsBox)
+  - Nuovi metodi `StatusBar::showZtoryHint` / `clearZtoryHint` + helper `TApp`
+- **PDF Export — template professionale**:
+  - Header: logo Ztoryc, Production, Title, Page X/Y
+  - 3 panel per pagina (1 riga), celle full-height; sub-header con shot label + durate
+  - Griglia senza gap: linea grigia tra panel stesso shot, nera+spessa tra shot diversi
+  - Footer: logo piccolo + "Made with Ztoryc"
+- **Metadati Production/Title**: campi in `ZtoryStartupDialog` + `StartupPopup`; persistiti in `.ztoryc`; fix race condition con `refreshFromScene`
+
+### Fixed
+- **PDF timecode fps**: leggeva fps fisso 24; ora da `scene->getProperties()->getOutputProperties()->getFrameRate()`
+- **Camera keyframe singolo**: non crea più panel boundary in `detectAndUpdatePanels`
+- **Audio +1 frame nelle scene esportate**: `getRange()` ora con `ignoreLastStop=true` in `onExportShots`
+- **Crash al quit/workflow-switch (OpenGL static destructor)**: `signalHandler` tentava QDialog su Qt già distrutto. Fix: flag `s_appExiting` su `aboutToQuit` → `_Exit(0)` silenzioso
+- **"sub-scene" → "shot"**: tooltip Auto Match Duration e Match Duration button
+
+### Notes
+- Plastic drawing invisibile (mesh visibile): intermittente, non riproducibile. Da investigare con debug build.
+
+---
+
 ## [2026-06-03] — Merge upstream nightly ✅ SU MASTER + 🚀 RELEASE v0.4.0-beta.1
 
 > 🚀 **Rilasciata `v0.4.0-beta.1`** (prima beta sulla base mergeata) — binari pubblicati su
@@ -2089,5 +2116,22 @@ Il render preview mostra bianco sia nel viewer animatico che in quello nativo.
 - Root cause: `libimage` e `libtnzcore` devono essere sempre della stessa build. Qualsiasi cambio di build type (Debug/RelWithDebInfo/Release) richiede di ri-deployare `libimage`.
 - `libpng` e `libjpeg` linkati via `/opt/homebrew` — risolvono correttamente a runtime.
 - `libcolorfx` e `libtnzstdfx` NON deployate: dipendono da `libimage` ma non cambiano → usano quella nel bundle già aggiornata.
+
+---
+
+## [2026-06-05] — PSD fix, crash fix, camera overlay Phase 1
+
+### Fixed
+- **PSD first layer "not found" as sub-scene** — root cause: `getLevelPathAndSetNameWithPsdLevelName` replaced `##` → `#` unconditionally, turning `file##group.psd` (empty name + group mode, common in Affinity Designer 16-bit PSDs) into `file#group.psd` where "group" was misread as a layer name. Fix: two-part — (1) skip replace for mode keywords; (2) fallback in TLevelReaderPsd reader. Commit `5b8eeb3c1`. PR candidate upstream.
+- **Crash on quit / workflow switch (OpenGL static destructor)** — `signalHandler` tried to open QDialog during Qt static destructor teardown → abort. Fix: `s_appExiting` flag set on `aboutToQuit`. Commit `428f6c0d9`.
+- **Audio +1 frame in exported shots** — `getRange()` without `ignoreLastStop=true` included stop-hold frame. Commit `976db07c4`.
+- **PDF fps hardcoded to 24** — now reads from scene output properties. Camera single keyframe no longer creates panel boundary. `sub-scene` → `shot` in tooltips.
+
+### Added
+- **Camera move overlay on Board thumbnails (Task 40 Phase 1)**: PanelData stores camera affines at panel start/end; `computeCameraMove()` classifies Pan/Tilt/TrkIn/TrkOut; `applyCameraOverlay()` draws red IN/OUT rectangles + labels on thumbnails. Applied in Board view and PDF export. Persisted in `.ztoryc`. Commit `d19a84551`. Phase 2: backed-out wide render for Pan/Tilt.
+
+### Notes
+- PSD bug is PR candidate for Tahoma2D upstream (added to AGENTS.md).
+- Camera overlay still needs tuning (Phase 2: Pan wide render, editable label).
 
 ---

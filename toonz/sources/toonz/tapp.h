@@ -218,6 +218,8 @@ public:
 
   void setStatusBar(StatusBar *statusBar);
   void setStatusBarFrameInfo(QString text);
+  void showZtoryHint(const QString &text);
+  void clearZtoryHint();
 
   void refreshStatusBar() override;
 

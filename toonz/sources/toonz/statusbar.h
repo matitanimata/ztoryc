@@ -31,6 +31,8 @@ public:
   ~StatusBar();
 
   void updateFrameText(QString text);
+  void showZtoryHint(const QString &text);
+  void clearZtoryHint();
 
   void refreshStatusBar() { updateInfoText(); }
 

@@ -2635,7 +2635,11 @@ void MainWindow::defineActions() {
   createMenuCellsAction(MI_Each3, QT_TR_NOOP("&Each 3"), "");
   createMenuCellsAction(MI_Each4, QT_TR_NOOP("&Each 4"), "");
   createMenuCellsAction(MI_Rollup, QT_TR_NOOP("&Roll Up"), "", "rollup");
+  if (QAction *a = CommandManager::instance()->getAction(MI_Rollup))
+    a->setStatusTip(tr("Roll Up: rotate the frame sequence upward -- the first frame moves to the bottom"));
   createMenuCellsAction(MI_Rolldown, QT_TR_NOOP("&Roll Down"), "", "rolldown");
+  if (QAction *a = CommandManager::instance()->getAction(MI_Rolldown))
+    a->setStatusTip(tr("Roll Down: rotate the frame sequence downward -- the last frame moves to the top"));
   createMenuCellsAction(MI_TimeStretch, QT_TR_NOOP("&Time Stretch..."), "",
                         "time_stretch");
   createMenuCellsAction(MI_CreateBlankDrawing,
@@ -2984,6 +2988,8 @@ void MainWindow::defineActions() {
       QT_TRANSLATE_NOOP("MainWindow",
                         "Toggle Autofill on Current Palette Color"),
       "Shift+A", "toggle_autofill");
+  if (QAction *a = CommandManager::instance()->getAction(MI_AutoFillToggle))
+    a->setStatusTip(tr("Autofill (Shift+A): auto-fill empty cells with the previous drawing"));
 
   // Right Click
 
