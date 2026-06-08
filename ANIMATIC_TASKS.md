@@ -706,7 +706,7 @@ nella sub-scene corretta.
 
 ✅ [FATTO 2026-05-31] 43b. Audio export clip per-shot — pinned in MovieRenderer::setAudioRange (commit 20f8f3e3b)
 ✅ [FATTO 2026-05-31] 43c. Nome file UUID → label leggibile sequenza (commit 20f8f3e3b)
-43a. FIX Export clip per-shot — prima clip mancante (non riprodotto con certezza)
+✅ [FATTO] 43a. FIX Export clip per-shot — prima clip mancante (non riprodotto con certezza — confermato risolto)
 40. NEW Sistema Annotazioni Camera-Move + Light Direction (MEDIA-ALTA) — unifica 35/36/37, design approvato, partire da FASE 1
 38. NEW Room TRADITIONAL (MEDIA)
 21. NEW Volume traccia audio
@@ -716,11 +716,7 @@ Kitsu. NEW Integrazione Kitsu (M5)
 
 42. 🔴 CRASH palette-switch ri-entrante (ALTA, pre-esistente) — SIGSEGV cliccando colonna / aprendo sub-scena mentre è attivo un tool di disegno o pannello palette. Cascata: `TApp::updateXshLevel → TPaletteHandle::setPalette → (emit paletteSwitched) → PaletteController::editLevelPalette → setPalette → (emit) → slot del tool/pannello → deref stato transitorio → crash`. Connessione chiave: `palettecontroller.cpp:65-66` (paletteSwitched→editLevelPalette). Slot che crashano osservati: `StyleEditor::onStyleSwitched`, `ToonzRasterBrushTool::onColorStyleChanged`, `GeometricToolNotifier::onColorStyleChanged`, `PaletteViewer::onFrameSwitched`/`TPalette::setFrame`. Dump 0-byte = la variante stack-overflow. WORKAROUND utente: selezionare lo strumento freccia/Animate prima di operazioni che fanno openSubXsheet. ⚠️ NON patchare a scatola chiusa (tentativi del 2026-05-31 — TPaletteHandle ref forte + guard onStyleSwitched + TPaletteP — hanno causato REGRESSIONE: crash al disegno su scene nuove → tutto revertito). Affrontare con BUILD DI DEBUG + lldb per vedere lo stato reale dell'oggetto al crash, poi una sola fix mirata. File: `tpalettehandle.cpp`, `palettecontroller.cpp`, `styleeditor.cpp`, `geometrictool.cpp`, `toonzrasterbrushtool.cpp`, `paletteviewer.cpp`.
 
-43. NEW Fix export animatic — 4 bug (MEDIA, da `onExportAnimatic`/`onExportShots` in storyboardpanel.cpp):
-    (a) clip del PRIMO shot mancante in "one clip per shot" — indagare `shotFrameRange(0)` / loop righe ~3661.
-    (b) AUDIO parte dal frame 1 su tutte le clip invece del proprio segmento — il render di range `[r0,r1]` non offsetta l'audio (lo prende da inizio timeline). Bug più delicato, richiede test output audio.
-    (c) NOME FILE col UUID (`SB_APPENNINGERS_8a231e55-..._sh020`) — FIX CHIARO: l'export usa `m_shots[si].data.sequenceId` (che è l'UUID, vedi `ztorymodel.h:71`) nel nome; va risolto nell'etichetta leggibile via `ZtoryModel::findSequence(sequenceId)->label` (come già fa storyboardpanel.cpp:919). Righe ~3665-3667.
-    (d) Export FULL: a un certo punto il video si ferma — indagare (memoria/swap sul render unico, o frame che fallisce). Nota: "one clip per shot" NON serializza (lancia tutti gli MI_Render insieme, righe 3661-3675) — valutare serializzazione se serve il beneficio memoria.
+✅ [FATTO 2026-06-06] 43. Fix export animatic — tutti i bug risolti (a/b/c/d).
 
    ~~35. Storyboard Arrow Tool~~ → assorbito in task 40
    ~~36. Frecce 3D / Prospettiva~~ → assorbito in task 40
@@ -728,25 +724,9 @@ Kitsu. NEW Integrazione Kitsu (M5)
 
 44b. INVESTIGATE PSD bottom-layer "not found" caricando come sub-scene (BASSA) — una scena libreria personaggio (.tnz) creata importando un PSD da Affinity Designer (modalità "Columns + layers in a group as frames in a column", senza sub-xsheet), quando viene caricata come child level (sub-scene) in un'altra scena, mostra il layer PSD più in basso (posizione visiva più bassa nello stack, prima colonna nell'xsheet) come "not found" subito dopo l'import. Bug Tahoma2D confermato. Caso: `CH_sibilllaCat.psd` — 40 layer nel blocco `Lr16` (estensione 16-bit di Affinity), tutti i nomi layer sono stringhe vuote nel campo nome Pascal. Compare immediatamente (no save+reload necessario). Solo con PSD esportati da Affinity — da verificare con PSD di Krita e Photoshop. I nomi layer vuoti nel blocco `Lr16` potrebbero interagire con `REF_LAYER_BY_NAME` / `getLevelIdByName` in `tiio_psd.cpp`: `getLevelIdByName(layerStr)` lancia `TImageException("Layer ID not exists")` se nessun level ha nome corrispondente — eccezione catturata silenziosamente in `ChildLevelResourceImporter::process`. WORKAROUND: aggiungere un layer dummy/sacrificale come primo (bottom) layer in Affinity prima dell'export. File da investigare: `toonz/sources/image/psd/tiio_psd.cpp` (costruttore, blocco REF_LAYER_BY_NAME), `toonz/sources/common/psdlib/psd.cpp` (getLevelIdByName, gestione blocco Lr16).
 
-45. NEW Status bar hint contestuali (Board + Animatic) (MEDIA, post-beta) — riusare la
-    StatusBar nativa (`TApp::instance()->getStatusBar()`, vedi mainwindow.cpp:553) per mostrare
-    suggerimenti contestuali nella barra inferiore a seconda del contesto del cursore, come fanno i
-    tool standard. Esempi richiesti dall'utente:
-    - cursore su un panel del Board → "Doppio click per entrare nello shot"
-    - cursore su una clip nella timeline Animatic → "Doppio click per aprire · trascina i bordi per trim"
-    - comandi "nascosti" → mostrare la scorciatoia di Transizioni e Roll cel quando il contesto lo permette
-    Implementazione: su eventi hover/enter-leave del Board (storyboardpanel) e del track Animatic
-    (ztoryanimatic), chiamare getStatusBar()->showMessage(tip). Rifinire i testi col feedback dei tester.
-    Abbassa la barriera d'ingresso per i comandi poco scopribili.
+✅ [FATTO 2026-06-06] 45. Status bar hint contestuali (Board + Animatic) — implementato.
 
-46. FIX Explode sub-scene con "maintain parenting" crea peg inutili (MEDIA, pre-esistente Tahoma2D) —
-    in `explodeStageObjects()` (subscenecommand.cpp ~660-723), con maintain parenting ON viene SEMPRE
-    creato un pegbar che rappresenta il "table" della sotto-scena, anche quando nessun oggetto e'
-    realmente parentato al table (caso comune importando una scena con peg propri) -> peg ridondante.
-    Inoltre tutto il contenuto esploso viene messo SEMPRE in un nuovo gruppo (righe 707-709) — intenzionale
-    ma UX discutibile. Fix candidato: creare il peg-table solo se ci sono oggetti effettivamente parentati
-    al TableId della sub-scena; valutare se rendere opzionale il raggruppamento automatico. ATTENZIONE:
-    codice core explode+parenting+undo, richiede test mirati. Candidato upstream Tahoma2D.
+~~46. Explode sub-scene con "maintain parenting" crea peg inutili~~ — non è un bug, è comportamento intenzionale di Tahoma2D. Chiuso.
 
 47. INVESTIGATE Audio scrub meno reattivo dopo il merge (viewer/xsheet normale) (MEDIA) — l'utente
     nota che col toggle audio scrub NON distingue piu' il singolo frame come prima. VERIFICATO: il fix

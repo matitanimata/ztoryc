@@ -7,6 +7,30 @@
 
 ---
 
+## [2026-06-06] — fix CrashHandler da render thread; verifica ImageManager leak
+
+### Fixed
+- `crashhandler.cpp`: `CrashHandler::trigger()` non mostra più la dialog quando
+  chiamato da un thread non-main (render thread). Su macOS, creare `NSWindow`
+  da un background thread lancia un'ObjC exception → abort secondario che
+  mascherava il crash reale. Ora il log file viene sempre scritto; la dialog
+  appare solo se si è sul main thread. Fix applicato in entrambi i repo
+  (`tahoma2d/` e `merge-1.6.1/`).
+
+### Notes
+- Crash render analizzato: root cause `TLevelColumnFx::doCompute` → `TRasterFx::applyAffine`
+  null ptr (0x14) dopo 2.5h render con 17.9 GB MALLOC (Plastic + PSD). Causa
+  profonda: memoria esaurita durante render lungo. Fix `be20f9512`
+  (invalidateAllCached post-render) e `b79ba7d32` (memoryShortage macOS 14.3%)
+  sono già presenti e attivi in entrambi i branch — nessun ulteriore intervento
+  necessario. Workaround: renderizzare in batch più piccoli su scene molto lunghe.
+- Analizzato anche crash Tahoma2D 1.6.1 su macOS 26.5 (beta): EXC_CRASH SIGKILL
+  Code Signature Invalid in dyld — non è un bug Ztoryc, è firma codice non valida
+  su macOS 26.5 beta con enforcement più stretto. Fix per lo sviluppatore Tahoma:
+  `codesign --deep --force --sign - Tahoma2D.app`.
+- Task 43 (export animatic a/b/c/d), 45 (status bar hints) — confermati risolti.
+- Task 46 (explode peg inutili) — chiuso, comportamento intenzionale Tahoma2D.
+
 ## [2026-06-04] — PDF storyboard template, hints, fix audio/crash
 
 ### Added

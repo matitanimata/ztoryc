@@ -4084,18 +4084,6 @@ void StoryboardPanel::onExportPdf() {
   const double dpi = writer.resolution();
   auto mm2px = [dpi](double mm) -> int { return (int)(mm * dpi / 25.4 + 0.5); };
   auto pt2px = [dpi](double pt) -> int { return (int)(pt * dpi / 72.0 + 0.5); };
-  const int fps = ZtoryModel::instance()->fps();
-  auto framesToTC = [fps](int frames) -> QString {
-    int ff = frames % fps;
-    int ts = frames / fps;
-    int ss = ts % 60;
-    int mm = ts / 60;
-    return QString("%1:%2:%3")
-        .arg(mm, 2, 10, QChar('0'))
-        .arg(ss, 2, 10, QChar('0'))
-        .arg(ff, 2, 10, QChar('0'));
-  };
-
   // FPS from scene
   int fps = ZtoryModel::instance()->fps();
   if (scene) {
