@@ -7,6 +7,38 @@
 
 ---
 
+## [2026-06-09] — v0.4.0-beta.2: libreria frecce, overlay camera-move, fix crash
+
+### Added
+- **Pannello Arrows** (ex "Camera Moves"): libreria di frecce vettoriali `.pli`
+  per indicazioni di movimento personaggi/camera. Picker a thumbnail da cartella
+  bundled (`stuff/library/directional arrows`, 16 frecce) + cartella personale
+  opzionale (QSettings). Click → stampa la freccia nella colonna "Annotazioni"
+  della sub-scena, con **colori originali** preservati (mergeImage + palette dal
+  livello PLI), strokes raggruppate, inserimento **frame-aware** (nuova cel su
+  cella vuota o in hold con "Enable Creation in Hold Cells").
+- **Overlay camera-move FASE 2** sui thumbnail Board + PDF: render "backed-out"
+  che copre START e STOP (le pan non vengono più tagliate), rettangoli + frecce
+  d'angolo (notazione classica), lettere **A→B continue** tra i panel dello shot,
+  toggle "Trk" per le label tipo movimento (persistito), label PDF a ~6pt.
+
+### Fixed
+- **Crash Geometric tool** aprendo una sub-scene (doppio-click shot in Animatic):
+  `GeometricTool::onDeactivate()` dereferenziava `m_viewer` nullo. Diagnosi lldb.
+- **Disallineamento view-mode** Animatic↔Shot (Camera Stand vs Camera View): il
+  viewer attivo ora segue sempre il button set condiviso, niente toggle manuale.
+- **Trk In/Out** invertiti nell'overlay (scala su = Out, giù = In); le label si
+  auto-correggono al caricamento di scene vecchie.
+
+### Upstream candidates (Tahoma2D)
+- Null deref in `GeometricTool::onDeactivate()` (bug core).
+
+### Notes
+- Workspace unificato (merge merge-1.6.1 in master). Release via workflow
+  (publish_release + release_tag v0.4.0-beta.2), note bilingui poi `gh release edit`.
+
+---
+
 ## [2026-06-08] — consolidamento workspace + fix crash Geometric tool (task 42)
 
 ### Modified

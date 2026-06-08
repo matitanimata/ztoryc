@@ -707,7 +707,10 @@ nella sub-scene corretta.
 ✅ [FATTO 2026-05-31] 43b. Audio export clip per-shot — pinned in MovieRenderer::setAudioRange (commit 20f8f3e3b)
 ✅ [FATTO 2026-05-31] 43c. Nome file UUID → label leggibile sequenza (commit 20f8f3e3b)
 ✅ [FATTO] 43a. FIX Export clip per-shot — prima clip mancante (non riprodotto con certezza — confermato risolto)
-40. NEW Sistema Annotazioni Camera-Move + Light Direction (MEDIA-ALTA) — unifica 35/36/37, design approvato, partire da FASE 1
+40. 🟡 IN CORSO Sistema Annotazioni Camera-Move + Light Direction (MEDIA-ALTA)
+    — FASE 1: ✅ pannello Arrows con libreria .pli (colori originali, group, frame-aware).
+    — FASE 2: ✅ overlay camera-move su Board+PDF (backed-out render, A→B, frecce, toggle Trk).
+    — FASE 3 (light direction) ancora da fare. Rilasciato in v0.4.0-beta.2 (2026-06-09). — unifica 35/36/37, design approvato, partire da FASE 1
 38. NEW Room TRADITIONAL (MEDIA)
 21. NEW Volume traccia audio
 24. NEW Startup popup hub
