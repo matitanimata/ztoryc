@@ -4,6 +4,7 @@
 #include "tapp.h"
 #include "tenv.h"
 #include "toonz/toonzscene.h"
+#include "toonz/stage.h"
 #include "toonz/txsheet.h"
 #include "toonz/tscenehandle.h"
 #include "toonz/txshcell.h"
@@ -53,6 +54,7 @@
 #include <QPushButton>
 #include <QToolButton>
 #include <QSpinBox>
+#include <QSettings>
 #include <QFrame>
 #include <QMouseEvent>
 #include <QDrag>
@@ -672,6 +674,20 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_exportAnimaticButton->setToolTip(tr("Export Animatic"));
   m_exportAnimaticButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
 
+  // Toggle: show/hide the camera-move type label (Trk In, Pan…) on thumbnails.
+  m_showCamMoveType =
+      QSettings().value("Ztoryc/ShowCamMoveType", true).toBool();
+  m_camLabelButton = new QToolButton();
+  m_camLabelButton->setText("Trk");
+  m_camLabelButton->setCheckable(true);
+  m_camLabelButton->setChecked(m_showCamMoveType);
+  m_camLabelButton->setFixedSize(28, 28);
+  m_camLabelButton->setToolTip(tr("Show camera-move labels (Trk In, Pan…)"));
+  m_camLabelButton->setStyleSheet(
+      "QToolButton{background:transparent;color:#ccc;border:none;border-radius:4px;font-size:11px;}"
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#1e5c2e;color:#7defa0;}");
+
   tb->addWidget(m_addShotButton);
   tb->addWidget(m_deleteButton);
   tb->addWidget(m_mergeButton);
@@ -685,6 +701,8 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   tb->addWidget(colLabel);
   tb->addWidget(m_columnsPerRowSpin);
   tb->addStretch();
+  tb->addWidget(m_camLabelButton);
+  tb->addSpacing(8);
   tb->addWidget(m_exportPdfButton);
   tb->addWidget(m_exportShotsButton);
   tb->addWidget(m_exportAnimaticButton);
@@ -798,6 +816,15 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   connect(m_exportPdfButton, &QToolButton::clicked, this, &StoryboardPanel::onExportPdf);
   connect(m_exportShotsButton, &QToolButton::clicked, this, &StoryboardPanel::onExportShots);
   connect(m_exportAnimaticButton, &QToolButton::clicked, this, &StoryboardPanel::onExportAnimatic);
+  connect(m_camLabelButton, &QToolButton::toggled, this, [this](bool on) {
+    m_showCamMoveType = on;
+    QSettings().setValue("Ztoryc/ShowCamMoveType", on);
+    // Invalidate thumbnails so the type label appears/disappears on re-render.
+    for (auto &shot : m_shots)
+      for (PanelWidget *pw : shot.panels)
+        if (pw) pw->setPreviewPixmap(QPixmap());
+    updateVisiblePreviews();
+  });
   connect(m_columnsPerRowSpin, QOverload<int>::of(&QSpinBox::valueChanged),
           this, &StoryboardPanel::onColumnsChanged);
   connect(m_numberingCombo, QOverload<int>::of(&QComboBox::activated),
@@ -1242,7 +1269,72 @@ void StoryboardPanel::updateVisiblePreviews() {
 
 // Forward declarations — implementations just before detectAndUpdatePanels()
 static void computeCameraMove(TXsheet *, PanelData &, int, ToonzScene *);
-static void applyCameraOverlay(QPixmap &, const PanelData &);
+static void classifyCameraMove(PanelData &);
+static void applyCameraOverlay(QPixmap &, const PanelData &, int panelIdx,
+                               bool showTypeLabel = true, double labelPxSize = 0);
+
+// Spreadsheet-style camera-position letter: 0→A, 1→B … 25→Z, 26→AA …
+static QString camLetter(int i) {
+  QString s;
+  i = qMax(0, i);
+  do { s.prepend(QChar('A' + i % 26)); i = i / 26 - 1; } while (i >= 0);
+  return s;
+}
+
+// Camera-move overlay geometry, in the RENDER camera's getCameraAff-local space
+// (Y up). The bounding box of both apertures is padded to the thumbnail aspect
+// so the backed-out render (renderXsheetFrameRegion) and the drawn START/STOP
+// rectangles share one coordinate frame and stay aligned.
+struct CamOverlayGeom {
+  bool    valid = false;
+  bool    renderedStart = true;
+  TPointD renderC[4];                 // render aperture corners (Y up)
+  TPointD otherC[4];                  // other  aperture corners (Y up)
+  double  minX = 0, minY = 0, maxX = 0, maxY = 0;  // padded bbox
+};
+
+static CamOverlayGeom computeCamOverlayGeom(const PanelData &pd,
+                                            double targetAspect) {
+  CamOverlayGeom g;
+  if (pd.cameraMoveType == PanelData::CamNone) return g;
+  if (pd.camW < 1e-6 || pd.camH < 1e-6 || targetAspect < 1e-6) return g;
+
+  const double hw = Stage::inch * pd.camW / 2.0;   // aperture in affine space
+  const double hh = Stage::inch * pd.camH / 2.0;
+
+  TAffine a0(pd.camA0[0], pd.camA0[1], pd.camA0[2],
+             pd.camA0[3], pd.camA0[4], pd.camA0[5]);
+  TAffine a1(pd.camA1[0], pd.camA1[1], pd.camA1[2],
+             pd.camA1[3], pd.camA1[4], pd.camA1[5]);
+
+  g.renderedStart = (pd.camRenderFrame == pd.startFrame);
+  TAffine aRender = g.renderedStart ? a0 : a1;
+  TAffine aOther  = g.renderedStart ? a1 : a0;
+  TAffine M       = aRender.inv() * aOther;  // other-local → render-local
+
+  TPointD loc[4] = {TPointD(-hw, hh), TPointD(hw, hh),
+                    TPointD(hw, -hh), TPointD(-hw, -hh)};
+  double minX = 1e30, minY = 1e30, maxX = -1e30, maxY = -1e30;
+  for (int i = 0; i < 4; i++) {
+    g.renderC[i] = loc[i];
+    g.otherC[i]  = M * loc[i];
+    for (const TPointD &p : {g.renderC[i], g.otherC[i]}) {
+      minX = qMin(minX, p.x); maxX = qMax(maxX, p.x);
+      minY = qMin(minY, p.y); maxY = qMax(maxY, p.y);
+    }
+  }
+  double bw = maxX - minX, bh = maxY - minY;
+  if (bw < 1e-6 || bh < 1e-6) return g;
+
+  // Pad the smaller dimension so bbox aspect == thumbnail aspect (uniform map).
+  double cx = (minX + maxX) / 2.0, cy = (minY + maxY) / 2.0;
+  if (bw / bh < targetAspect) bw = bh * targetAspect;
+  else                        bh = bw / targetAspect;
+  g.minX = cx - bw / 2.0; g.maxX = cx + bw / 2.0;
+  g.minY = cy - bh / 2.0; g.maxY = cy + bh / 2.0;
+  g.valid = true;
+  return g;
+}
 
 void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
@@ -1284,9 +1376,32 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   physW = qMin(physW, 1280);
   int physH = physW * 9 / 16;
 
-  QPixmap px = IconGenerator::renderXsheetFrame(subXsh, frame, TDimension(physW, physH));
+  QPixmap px;
+  // For camera-move panels render "backed out" to cover both START and STOP
+  // frames (so e.g. a pan shows the full traversed artwork, not a single
+  // cropped frame). The same padded bbox is used by applyCameraOverlay so the
+  // drawn rectangles align with the rendered content.
+  CamOverlayGeom g = computeCamOverlayGeom(pd, (double)physW / physH);
+  if (g.valid) {
+    // localBBox is in getCameraAff-local; renderFrame works in getPlacement-
+    // local, which differs by the camera Z scale → convert with TScale(zf).
+    TStageObjectId camId = subXsh->getStageObjectTree()->getCurrentCameraId();
+    double z  = subXsh->getZ(camId, frame);
+    double zf = (1000.0 + z) / 1000.0;
+    TRectD placedRect = TScale(zf) * TRectD(g.minX, g.minY, g.maxX, g.maxY);
+    px = IconGenerator::renderXsheetFrameRegion(subXsh, frame,
+                                                TDimension(physW, physH),
+                                                placedRect);
+  } else {
+    px = IconGenerator::renderXsheetFrame(subXsh, frame, TDimension(physW, physH));
+  }
   if (!px.isNull()) {
-    applyCameraOverlay(px, pd);
+    // Letter index = how many camera-move panels precede this one in the shot,
+    // so the first MOVE is A→B (panels without a move don't consume letters).
+    int moveOrdinal = 0;
+    for (int k = 0; k < panelIdx && k < (int)shot.data.panels.size(); k++)
+      if (shot.data.panels[k].cameraMoveType != PanelData::CamNone) moveOrdinal++;
+    applyCameraOverlay(px, pd, moveOrdinal, m_showCamMoveType);
     shot.panels[panelIdx]->setPreviewPixmap(px);
   }
 }
@@ -1550,6 +1665,9 @@ void StoryboardPanel::loadZtoryc() {
             };
             strToAff(xml.attributes().value("camA0").toString(), pd.camA0);
             strToAff(xml.attributes().value("camA1").toString(), pd.camA1);
+            // Re-derive type/label/render-frame from the affines (single source
+            // of truth) so scenes saved with an older classification self-heal.
+            classifyCameraMove(pd);
           }
         }
       }
@@ -1674,31 +1792,18 @@ int StoryboardPanel::currentShotIndex() const {
 // ── Camera movement helpers ────────────────────────────────────────────────
 
 // Fills PanelData camera fields from the sub-scene xsheet + scene camera.
-// Called after panel boundaries are confirmed from camera keyframes.
-static void computeCameraMove(TXsheet *xsh, PanelData &pd,
-                              int timelineDuration, ToonzScene *scene) {
-  if (!xsh || !scene) return;
-
-  // Frame indices for start and end of this panel
+// Classifies the camera move (type/label/render frame) purely from the affines
+// already stored in pd (pd.camA0/camA1/camW/camH/startFrame/duration).  Kept
+// separate from the xsheet read so it can also refresh stale persisted labels
+// on load (.ztoryc) — the affines are the single source of truth.
+static void classifyCameraMove(PanelData &pd) {
   int f0 = pd.startFrame;
   int f1 = qMax(f0, f0 + pd.duration - 1);
 
-  TAffine a0 = xsh->getCameraAff(f0);
-  TAffine a1 = xsh->getCameraAff(f1);
-
-  // Store affines
-  pd.camA0[0]=a0.a11; pd.camA0[1]=a0.a12; pd.camA0[2]=a0.a13;
-  pd.camA0[3]=a0.a21; pd.camA0[4]=a0.a22; pd.camA0[5]=a0.a23;
-  pd.camA1[0]=a1.a11; pd.camA1[1]=a1.a12; pd.camA1[2]=a1.a13;
-  pd.camA1[3]=a1.a21; pd.camA1[4]=a1.a22; pd.camA1[5]=a1.a23;
-
-  // Camera physical size in stage units
-  TCamera *cam = scene->getCurrentCamera();
-  if (cam) {
-    const TDimensionD &sz = cam->getSize();
-    pd.camW = sz.lx;
-    pd.camH = sz.ly;
-  }
+  TAffine a0(pd.camA0[0], pd.camA0[1], pd.camA0[2],
+             pd.camA0[3], pd.camA0[4], pd.camA0[5]);
+  TAffine a1(pd.camA1[0], pd.camA1[1], pd.camA1[2],
+             pd.camA1[3], pd.camA1[4], pd.camA1[5]);
 
   // Scale: sqrt(a11^2 + a21^2)
   double s0 = std::sqrt(a0.a11*a0.a11 + a0.a21*a0.a21);
@@ -1731,9 +1836,11 @@ static void computeCameraMove(TXsheet *xsh, PanelData &pd,
     return;
   }
 
-  // Classify
-  bool trkIn  = hasS && dscl >  T;
-  bool trkOut = hasS && dscl < -T;
+  // Classify. The camera affine scale sets the WORLD aperture size
+  // (world = cameraAff*cameraScale): scale UP → wider view → truck OUT;
+  // scale DOWN → narrower view → truck IN.
+  bool trkOut = hasS && dscl >  T;
+  bool trkIn  = hasS && dscl < -T;
   bool pan    = hasX && normX > normY;
   bool tilt   = hasY && normY >= normX;
 
@@ -1753,118 +1860,134 @@ static void computeCameraMove(TXsheet *xsh, PanelData &pd,
     pd.cameraMoveLabel = parts.join(" + ");
   }
 
-  // Render at widest frame: TRK IN → startFrame (wide), TRK OUT → endFrame (wide)
-  if (pd.cameraMoveType == PanelData::CamTrkOut)
-    pd.camRenderFrame = f1;
-  else
-    pd.camRenderFrame = f0;
+  // Render at the WIDEST view so the narrower frame sits inside it when the
+  // thumbnail is composed backed-out by applyCameraOverlay().  Use the relative
+  // transform between the two camera affines (unit-consistent): rel maps
+  // f1-local → f0-local; if f1 is smaller there, f0 is the wider view.
+  TAffine rel       = a0.inv() * a1;
+  double  relScale  = std::sqrt(std::fabs(rel.a11 * rel.a22 - rel.a12 * rel.a21));
+  pd.camRenderFrame = (relScale <= 1.0) ? f0 : f1;
 }
 
-// Draws IN/OUT camera-move rectangles on top of a thumbnail pixmap.
-// inRect/outRect are in normalised [0..1] coords relative to pixmap size.
-static void applyCameraOverlay(QPixmap &px, const PanelData &pd) {
+// Called after panel boundaries are confirmed from camera keyframes: reads the
+// camera affines from the xsheet into pd, then classifies the move.
+static void computeCameraMove(TXsheet *xsh, PanelData &pd,
+                              int timelineDuration, ToonzScene *scene) {
+  if (!xsh || !scene) return;
+
+  int f0 = pd.startFrame;
+  int f1 = qMax(f0, f0 + pd.duration - 1);
+
+  TAffine a0 = xsh->getCameraAff(f0);
+  TAffine a1 = xsh->getCameraAff(f1);
+
+  pd.camA0[0]=a0.a11; pd.camA0[1]=a0.a12; pd.camA0[2]=a0.a13;
+  pd.camA0[3]=a0.a21; pd.camA0[4]=a0.a22; pd.camA0[5]=a0.a23;
+  pd.camA1[0]=a1.a11; pd.camA1[1]=a1.a12; pd.camA1[2]=a1.a13;
+  pd.camA1[3]=a1.a21; pd.camA1[4]=a1.a22; pd.camA1[5]=a1.a23;
+
+  TCamera *cam = scene->getCurrentCamera();
+  if (cam) {
+    const TDimensionD &sz = cam->getSize();
+    pd.camW = sz.lx;
+    pd.camH = sz.ly;
+  }
+
+  classifyCameraMove(pd);
+}
+
+// Draws the classic camera-move notation over a thumbnail that was already
+// rendered "backed out" (renderXsheetFrameRegion) covering both camera frames:
+// START and STOP rectangles joined by corner arrows (motion direction → STOP).
+// Uses the SAME padded bbox as the render so the rects align with the content.
+static void applyCameraOverlay(QPixmap &px, const PanelData &pd, int panelIdx,
+                               bool showTypeLabel, double labelPxSize) {
   if (pd.cameraMoveType == PanelData::CamNone || px.isNull()) return;
-  if (pd.camW < 1e-6 || pd.camH < 1e-6) return;
 
-  int W = px.width();
-  int H = px.height();
+  const int W = px.width();
+  const int H = px.height();
 
-  // Scale of affines
-  double s0 = std::sqrt(pd.camA0[0]*pd.camA0[0] + pd.camA0[3]*pd.camA0[3]);
-  double s1 = std::sqrt(pd.camA1[0]*pd.camA1[0] + pd.camA1[3]*pd.camA1[3]);
-  if (s0 < 1e-9) s0 = 1e-9;
-  if (s1 < 1e-9) s1 = 1e-9;
+  CamOverlayGeom g = computeCamOverlayGeom(pd, (double)W / H);
+  if (!g.valid) return;
 
-  // Translation
-  double tx0 = pd.camA0[2], ty0 = pd.camA0[5];
-  double tx1 = pd.camA1[2], ty1 = pd.camA1[5];
+  // bbox aspect == W/H by construction → uniform fit, no centering offset.
+  double fit  = W / (g.maxX - g.minX);
+  auto toPx = [&](const TPointD &p) -> QPointF {        // Y flip → pixmap
+    return QPointF((p.x - g.minX) * fit, (g.maxY - p.y) * fit);
+  };
 
-  // Reference scale depends on which frame we rendered at
-  bool renderAtEnd = (pd.cameraMoveType == PanelData::CamTrkOut);
-  double sRef  = renderAtEnd ? s1 : s0;
-  double txRef = renderAtEnd ? tx1 : tx0;
-  double tyRef = renderAtEnd ? ty1 : ty0;
-  double sOth  = renderAtEnd ? s0 : s1;
-  double txOth = renderAtEnd ? tx0 : tx1;
-  double tyOth = renderAtEnd ? ty0 : ty1;
-
-  // Camera world size at reference frame
-  double cwRef = pd.camW / sRef;
-  double chRef = pd.camH / sRef;
-
-  // Pixels per scene unit
-  double pxPerU = W / cwRef;
-  double pyPerU = H / chRef;
-
-  // "Reference" frame always maps to full pixmap → that is the IN (or OUT) rect
-  QRectF refRect(0, 0, W, H);
-
-  // "Other" frame: size and offset relative to reference
-  double otherW = W * sRef / sOth;
-  double otherH = H * sRef / sOth;
-  double dxPx = (txOth - txRef) * pxPerU;
-  double dyPx = -(tyOth - tyRef) * pyPerU;   // Y flipped
-  double otherX = W/2.0 + dxPx - otherW/2.0;
-  double otherY = H/2.0 + dyPx - otherH/2.0;
-  QRectF otherRect(otherX, otherY, otherW, otherH);
-
-  QRectF inRect  = renderAtEnd ? otherRect : refRect;
-  QRectF outRect = renderAtEnd ? refRect   : otherRect;
+  QPointF renderPx[4], otherPx[4];
+  for (int i = 0; i < 4; i++) {
+    renderPx[i] = toPx(g.renderC[i]);
+    otherPx[i]  = toPx(g.otherC[i]);
+  }
 
   QPainter p(&px);
-  p.setRenderHint(QPainter::Antialiasing, false);
+  p.setRenderHint(QPainter::Antialiasing, true);
 
-  // Pen: red, 1.5px, miter join, no fill
+  QPointF *startPx = g.renderedStart ? renderPx : otherPx;
+  QPointF *stopPx  = g.renderedStart ? otherPx  : renderPx;
+
   QPen pen(QColor(220, 30, 30), 1.5);
   pen.setJoinStyle(Qt::MiterJoin);
   p.setPen(pen);
   p.setBrush(Qt::NoBrush);
 
-  // Draw both rects (clip to pixmap bounds)
-  p.setClipRect(QRect(0, 0, W, H));
-  p.drawRect(inRect);
-  p.drawRect(outRect);
+  QPolygonF startPoly, stopPoly;
+  for (int i = 0; i < 4; i++) { startPoly << startPx[i]; stopPoly << stopPx[i]; }
+  p.drawPolygon(startPoly);
+  p.drawPolygon(stopPoly);
 
-  // Labels: small bold text inside the rect, near bottom-left / top-right
+  // Corner connector arrows: START corner → STOP corner, head at STOP.
+  double ah = qMax(4.0, qMin(W, H) * 0.035);
+  for (int i = 0; i < 4; i++) {
+    QPointF a = startPx[i], b = stopPx[i];
+    QLineF  ln(a, b);
+    if (ln.length() < ah * 1.5) continue;
+    p.drawLine(ln);
+    double ang = std::atan2(b.y() - a.y(), b.x() - a.x());
+    QPointF h1(b.x() + ah * std::cos(ang + 2.618),
+               b.y() + ah * std::sin(ang + 2.618));   // ±150°
+    QPointF h2(b.x() + ah * std::cos(ang - 2.618),
+               b.y() + ah * std::sin(ang - 2.618));
+    p.drawLine(b, h1);
+    p.drawLine(b, h2);
+  }
+
+  // Small red labels with a thin white halo for legibility. The caller can
+  // request an explicit pixel size (PDF export uses ~6pt to match the text
+  // fields); on screen we fall back to a small size relative to the thumbnail.
   QFont fnt("Arial", 0);
-  fnt.setPixelSize(qMax(9, qMin(14, W / 20)));
+  fnt.setPixelSize(labelPxSize > 0 ? (int)labelPxSize : qMax(7, qMin(10, W / 28)));
   fnt.setBold(true);
   p.setFont(fnt);
-
-  // "IN" — bottom-left of inRect
-  auto drawLabel = [&](const QRectF &r, const QString &txt, bool bottomLeft) {
-    QFontMetrics fm(fnt);
-    int tw = fm.horizontalAdvance(txt);
-    int th = fm.height();
-    int margin = 3;
-    QPointF pt;
-    if (bottomLeft)
-      pt = QPointF(r.left() + margin, r.bottom() - margin - th);
-    else
-      pt = QPointF(r.right() - tw - margin, r.top() + margin);
-    // Small background for readability
-    QRectF bg(pt.x()-1, pt.y()-1, tw+2, th+2);
-    p.fillRect(bg, QColor(0, 0, 0, 140));
+  QFontMetrics fm(fnt);
+  auto haloText = [&](double bx, double by, const QString &txt) {
+    p.setPen(QColor(255, 255, 255));
+    for (int ox = -1; ox <= 1; ox++)
+      for (int oy = -1; oy <= 1; oy++)
+        if (ox || oy) p.drawText(bx + ox, by + oy, txt);
     p.setPen(QColor(220, 30, 30));
-    p.drawText(pt.x(), pt.y() + fm.ascent(), txt);
+    p.drawText(bx, by, txt);
   };
 
-  drawLabel(inRect,  "IN",  true);
-  drawLabel(outRect, "OUT", false);
+  // Camera-position letters at the top-left corner of each frame. Continuous
+  // across the shot's panels: panel i is letter(i) → letter(i+1) (A→B, B→C …),
+  // since one move's STOP is the next move's START. corner index 0 = aperture
+  // top-left (loc[0] = (-hw, hh), Y up).
+  QString startLetter = camLetter(panelIdx);
+  QString stopLetter  = camLetter(panelIdx + 1);
+  haloText(startPx[0].x() + 2, startPx[0].y() + fm.ascent() + 2, startLetter);
+  double sx = stopPx[0].x() + 2, sy = stopPx[0].y() + fm.ascent() + 2;
+  // Nudge the STOP letter down a line if its corner nearly coincides with START.
+  if (qAbs(stopPx[0].y() - startPx[0].y()) < fm.height() &&
+      qAbs(stopPx[0].x() - startPx[0].x()) < fm.horizontalAdvance(startLetter) + 4)
+    sy += fm.height();
+  haloText(sx, sy, stopLetter);
 
-  // Camera move label (type name) — top-left of pixmap
-  if (!pd.cameraMoveLabel.isEmpty()) {
-    QFont lf("Arial", 0);
-    lf.setPixelSize(qMax(8, qMin(12, W / 24)));
-    lf.setBold(true);
-    p.setFont(lf);
-    QFontMetrics lfm(lf);
-    int lw = lfm.horizontalAdvance(pd.cameraMoveLabel);
-    int lh = lfm.height();
-    p.fillRect(QRectF(3, 3, lw+4, lh+2), QColor(0, 0, 0, 150));
-    p.setPen(QColor(220, 30, 30));
-    p.drawText(5, 3 + lfm.ascent(), pd.cameraMoveLabel);
-  }
+  // Movement type — bottom-left of the thumbnail (optional, toggled in Board).
+  if (showTypeLabel && !pd.cameraMoveLabel.isEmpty())
+    haloText(4, H - fm.descent() - 3, pd.cameraMoveLabel);
 
   p.end();
 }
@@ -4290,14 +4413,34 @@ void StoryboardPanel::onExportPdf() {
                     ? pdRef.camRenderFrame
                     : (sd.panels.size() > (size_t)pe.pi ? sd.panels[pe.pi].startFrame : 0);
         QPixmap hq;
-        if (subXsh)
-          hq = IconGenerator::renderXsheetFrame(subXsh, frame,
-                   TDimension(cellW - 2, imgH - 2));
+        if (subXsh) {
+          CamOverlayGeom g =
+              computeCamOverlayGeom(pdRef, (double)(cellW - 2) / (imgH - 2));
+          if (pdRef.cameraMoveType != PanelData::CamNone && g.valid) {
+            // Backed-out render covering both frames (same as the on-screen
+            // thumbnail) so pans aren't cropped in the PDF.
+            TStageObjectId camId =
+                subXsh->getStageObjectTree()->getCurrentCameraId();
+            double z  = subXsh->getZ(camId, frame);
+            double zf = (1000.0 + z) / 1000.0;
+            TRectD placedRect = TScale(zf) * TRectD(g.minX, g.minY, g.maxX, g.maxY);
+            hq = IconGenerator::renderXsheetFrameRegion(
+                subXsh, frame, TDimension(cellW - 2, imgH - 2), placedRect);
+          } else {
+            hq = IconGenerator::renderXsheetFrame(subXsh, frame,
+                     TDimension(cellW - 2, imgH - 2));
+          }
+        }
         if (hq.isNull()) hq = pw->previewPixmap();
         if (!hq.isNull()) {
-          // Apply camera overlay before scaling (so it's crisp at full res)
-          if (pdRef.cameraMoveType != PanelData::CamNone)
-            applyCameraOverlay(hq, pdRef);
+          // Apply camera overlay before scaling (so it's crisp at full res).
+          // Labels at ~6pt to match the PDF text fields (Dialog/Action/Notes).
+          if (pdRef.cameraMoveType != PanelData::CamNone) {
+            int moveOrdinal = 0;
+            for (int k = 0; k < pe.pi && k < (int)sd.panels.size(); k++)
+              if (sd.panels[k].cameraMoveType != PanelData::CamNone) moveOrdinal++;
+            applyCameraOverlay(hq, pdRef, moveOrdinal, m_showCamMoveType, pt2px(6));
+          }
           QPixmap scaled = hq.scaled(cellW - 2, imgH - 2,
               Qt::KeepAspectRatio, Qt::SmoothTransformation);
           int tx = cx + (cellW - scaled.width()) / 2;

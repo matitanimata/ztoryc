@@ -130,6 +130,8 @@ QToolButton *m_numberingBtn;   // ⚙ Numbering config button
   QToolButton *m_exportPdfButton;
   QToolButton *m_exportShotsButton;
   QToolButton *m_exportAnimaticButton;
+  QToolButton *m_camLabelButton;   // toggle camera-move type labels on thumbnails
+  bool         m_showCamMoveType = true;  // persisted in QSettings
   QSpinBox    *m_columnsPerRowSpin;
   QComboBox   *m_numberingCombo;
   QStackedWidget   *m_stack;

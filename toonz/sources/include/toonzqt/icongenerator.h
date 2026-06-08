@@ -138,6 +138,12 @@ public:
                                            const TDimension &iconSize,
                                            const TFrameId &fid);
   static QPixmap renderXsheetFrame(TXsheet *xsheet, int row, const TDimension &size);
+  // Camera-stand render of an arbitrary region (camera-local coords at row),
+  // used by the storyboard camera-move overlay to render a "backed out" view
+  // covering both the START and STOP camera frames.
+  static QPixmap renderXsheetFrameRegion(TXsheet *xsheet, int row,
+                                         const TDimension &size,
+                                         const TRectD &placedRect);
   static TRaster32P generateSceneFileIcon(const TFilePath &path,
                                           const TDimension &iconSize, int row);
   static TRaster32P generateSplineFileIcon(const TFilePath &path,
