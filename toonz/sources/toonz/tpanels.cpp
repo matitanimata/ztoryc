@@ -425,7 +425,7 @@ OpenFloatingPanel openZtoryDrawLeftPanelCommand("MI_OpenZtoryDrawLeftPanel", "Zt
 OpenFloatingPanel openZtoryShotBoardCommand("MI_OpenZtoryShotBoard", "ZtoryPanelNavigator",
                                               QObject::tr("Ztoryc Shot Board"));
 OpenFloatingPanel openZtoryCameraMovesCommand("MI_OpenZtoryCameraMoves", "ZtoryCameraMoves",
-                                              QObject::tr("Ztoryc Camera Moves"));
+                                              QObject::tr("Ztoryc Arrows"));
 OpenFloatingPanel openZtoryAnimaticTCommand("MI_OpenZtoryAnimaticT", "ZtoryAnimaticT",
                                               QObject::tr("Ztoryc Timeline (T)"));
 
