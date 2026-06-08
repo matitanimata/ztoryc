@@ -792,6 +792,10 @@ private:
   // Overlay buttons (symmetry, perspective, safe area, field guide):
   // added to the panel title bar but only visible in shot mode.
   QList<QWidget *>     m_overlayButtons;
+  // Single source of truth for the shared view-mode button set (Camera Stand /
+  // Camera View). Tracked here and re-applied to whichever viewer becomes active
+  // on switch, so the button and the visible view never desync.
+  int m_currentRefMode = 3 /*SceneViewer::CAMERA_REFERENCE*/;
 };
 
 // ---- ZtoryAnimaticPanel ----

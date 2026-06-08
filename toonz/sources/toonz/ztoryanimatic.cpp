@@ -4231,6 +4231,12 @@ ZtoryAnimaticViewerPanel::ZtoryAnimaticViewerPanel(QWidget *parent)
   // Title bar buttons for the animatic viewer.
   m_viewer->initializeAnimaticTitleBar(getTitleBar());
 
+  // Track the shared view-mode selection (Camera Stand / Camera View) so it can
+  // be re-applied to whichever viewer becomes active on an animatic↔shot switch.
+  if (auto *bs = m_viewer->referenceModeButtonSet())
+    connect(bs, &TPanelTitleBarButtonSet::selected, this,
+            [this](int id) { m_currentRefMode = id; });
+
   // Symmetry and perspective grid buttons — only meaningful in shot edit mode.
   // Created here (hidden) so they share the panel title bar; shown/hidden by
   // enterShotMode() / restoreAnimaticButtons().
@@ -4356,15 +4362,16 @@ void ZtoryAnimaticViewerPanel::enterShotMode(int /*col*/) {
     m_shotViewer->installEventFilter(this);
   }
 
-  // Default the shot viewer to camera view — more useful than camera stand for shot editing.
-  m_shotViewer->sceneViewer()->setReferenceMode(SceneViewer::CAMERA_REFERENCE);
-
   // Redirect title bar buttons (view mode + preview) from the animatic viewer
   // to the shot viewer so they control the visible panel.
   if (auto *bs = m_viewer->referenceModeButtonSet()) {
     disconnect(bs, SIGNAL(selected(int)), m_viewer->sceneViewer(), SLOT(setReferenceMode(int)));
     connect(bs, SIGNAL(selected(int)), m_shotViewer->sceneViewer(), SLOT(setReferenceMode(int)));
   }
+
+  // Align the now-active shot viewer with the shared button selection so the
+  // visible view always matches the pressed button (no toggling needed).
+  m_shotViewer->sceneViewer()->setReferenceMode(m_currentRefMode);
   if (auto *pb = m_viewer->previewButton()) {
     disconnect(pb, SIGNAL(toggled(bool)), m_viewer, SLOT(enableFullPreview(bool)));
     connect(pb, SIGNAL(toggled(bool)), m_shotViewer, SLOT(enableFullPreview(bool)));
@@ -4398,6 +4405,8 @@ void ZtoryAnimaticViewerPanel::restoreAnimaticButtons() {
     disconnect(bs, SIGNAL(selected(int)), m_shotViewer->sceneViewer(), SLOT(setReferenceMode(int)));
     connect(bs, SIGNAL(selected(int)), m_viewer->sceneViewer(), SLOT(setReferenceMode(int)));
   }
+  // Align the animatic viewer with the shared button selection (see enterShotMode).
+  m_viewer->sceneViewer()->setReferenceMode(m_currentRefMode);
   if (auto *pb = m_viewer->previewButton()) {
     if (pb->isChecked()) pb->setPressed(false);
     disconnect(pb, SIGNAL(toggled(bool)), m_shotViewer, SLOT(enableFullPreview(bool)));
