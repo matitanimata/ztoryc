@@ -1533,13 +1533,20 @@ public:
   }
 
   void onDeactivate() override {
-    int devPixRatio = m_viewer->getDevPixRatio();
-
+    // m_viewer can be null here: opening a sub-scene (shot double-click in the
+    // animatic) rebuilds the current tool via ToolHandle::onImageChanged →
+    // setTool → onDeactivate before the tool was ever attached to a viewer.
+    // The viewer is only needed for the in-viewer rendering below, so guard it
+    // → was an unconditional null deref (EXC_BAD_ACCESS at 0x90 inside
+    // getDevPixRatio).
     if (m_isRotatingOrMoving) {
-      tglColor(m_color);
-      glLineWidth(1.0 * devPixRatio);
-      for (int i = 0; i < m_rotatedStroke.size(); i++)
-        drawStrokeCenterline(*m_rotatedStroke[i], sqrt(tglGetPixelSize2()));
+      if (m_viewer) {
+        int devPixRatio = m_viewer->getDevPixRatio();
+        tglColor(m_color);
+        glLineWidth(1.0 * devPixRatio);
+        for (int i = 0; i < m_rotatedStroke.size(); i++)
+          drawStrokeCenterline(*m_rotatedStroke[i], sqrt(tglGetPixelSize2()));
+      }
       return;
     }
     if (m_primitive) m_primitive->onDeactivate();

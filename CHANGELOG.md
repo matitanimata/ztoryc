@@ -7,6 +7,36 @@
 
 ---
 
+## [2026-06-08] — consolidamento workspace + fix crash Geometric tool (task 42)
+
+### Modified
+- **Workspace unificato**: mergiato il branch `merge/upstream-nightly` in `master`
+  (task 40 fase 1, PSD fix, PDF template, hints + CrashHandler thread-safe ora tutti
+  insieme). Worktree `merge-1.6.1` e branch `merge/upstream-nightly` dismessi.
+  Risolto conflitto in `storyboardpanel.cpp` (frammento stale) e duplicazione
+  `fps`/`framesToTC` nell'export PDF post-merge.
+
+### Fixed
+- **Task 42 — CRASH Geometric tool aprendo sub-scene** (`geometrictool.cpp`):
+  doppio-click su uno shot nell'Animatic con il Geometric tool attivo →
+  SIGSEGV. `GeometricTool::onDeactivate()` chiamava `m_viewer->getDevPixRatio()`
+  in modo incondizionato; durante l'apertura sub-scene la catena
+  `ToolHandle::onImageChanged → setTool → onDeactivate` disattiva il tool prima
+  che fosse agganciato a un viewer → `m_viewer == NULL` → null deref
+  (EXC_BAD_ACCESS @ 0x90 dentro getDevPixRatio). Fix: il viewer serve solo per
+  il rendering nel ramo `m_isRotatingOrMoving`, ora è guardato `if (m_viewer)`.
+  Diagnosi con **lldb sulla repro reale** (il crash log della release mostrava
+  "due frame setTool+316" fuorvianti — simbolicazione approssimata).
+
+### Notes
+- Il caso "raster brush" del task 42 era già coperto dal guard `m_inColorStyleChanged`
+  (commit `8f8740628`). Verificati non vulnerabili anche StyleEditor/PaletteViewer
+  (caso C non crasha). Il task 42 resta da affrontare con debug+lldb solo se emergono
+  altri percorsi (palette-switch ri-entrante puro).
+- **Candidato upstream Tahoma2D**: il null deref in `GeometricTool::onDeactivate()`
+  è un bug del core, riproducibile anche fuori da Ztoryc se onDeactivate scatta con
+  viewer nullo. Valutare PR.
+
 ## [2026-06-06] — fix CrashHandler da render thread; verifica ImageManager leak
 
 ### Fixed
