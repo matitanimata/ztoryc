@@ -3878,18 +3878,13 @@ void ZtoryPanelNavigator::setActivePanel(int panelIdx, bool updateFrame) {
 // Maps a position inside m_previewLabel to normalized 0-1 coords over the
 // DISPLAYED pixmap (which is centered in the label and aspect-correct).
 QPointF ZtoryPanelNavigator::normalizedPreviewPos(const QPoint &labelPos) const {
-  // QLabel::pixmap() returns by value in Qt 6 (Windows CI) and by pointer in
-  // Qt 5.15 (macOS build) — bridge the two signatures.
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-  const QPixmap pmObj = m_previewLabel->pixmap();
-  const QPixmap *pm   = &pmObj;
-  if (pm->isNull()) return QPointF(0.5, 0.5);
-#else
-  const QPixmap *pm = m_previewLabel->pixmap();
-  if (!pm || pm->isNull()) return QPointF(0.5, 0.5);
-#endif
-  qreal dpr = pm->devicePixelRatio() > 0 ? pm->devicePixelRatio() : 1.0;
-  QSizeF logical(pm->width() / dpr, pm->height() / dpr);
+  // Do NOT use QLabel::pixmap(): its signature differs across the Qt builds
+  // we target (pointer vs by-value — broke the Windows CI twice). The label
+  // always shows m_cachedPreview scaled into the label keeping aspect ratio,
+  // so the displayed logical size can be derived from the cache directly.
+  if (m_cachedPreview.isNull()) return QPointF(0.5, 0.5);
+  QSizeF logical(m_cachedPreview.size());
+  logical.scale(QSizeF(m_previewLabel->size()), Qt::KeepAspectRatio);
   QPointF origin((m_previewLabel->width() - logical.width()) / 2.0,
                  (m_previewLabel->height() - logical.height()) / 2.0);
   if (logical.width() <= 0 || logical.height() <= 0) return QPointF(0.5, 0.5);
