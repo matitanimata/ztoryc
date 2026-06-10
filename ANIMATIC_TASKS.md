@@ -743,7 +743,19 @@ nella sub-scene corretta.
 Kitsu. NEW Integrazione Kitsu (M5)
 41. NEW Cache RAM threshold configurabile (BASSA) — ora a 14.3% shipped in `tsystempd.cpp` (il tentativo di alzarlo al 25% è stato revertito perché l'eviction aggressiva crashava il Save All su scene pesanti, raster liberato durante `TRasterCodecLZO::compress`). Rifarlo in modo MIRATO: non toccare l'eviction globale durante i save; semmai rilevamento per classe di macchina (≤8GB→più aggressivo) + opzione utente. ⚠️ Collegato: cache-leak post-render (frame restano in cache, ~17GB su scena pesante; fix upstream `be20f9512` da portare).
 
-⚠️ AGGIORNAMENTO 2026-06-10 (task 42 residuo): nuovo crash riprodotto disegnando —
+✅ [DECLASSATO 2026-06-11] Crash palette StudioPalette→assign: NON riproducibile su
+    debug build + lldb + MallocScribble (torture test completo). Era un derivato del
+    bug undo-wipe task 48 (livelli distrutti dal restore rotto → palette corrente
+    dangling). Fixato a monte: (a) task 48 deep-copy snapshot, (b) TUndoManager
+    hardening 2026-06-11 (deferred delete dell'undo in esecuzione, tcore/tundo.cpp —
+    CANDIDATO UPSTREAM). Riaprire solo in caso di recidiva (CrashHandler a presidio).
+
+50. 🟢 MINOR Panel fantasma dopo undo che svuota uno shot (BASSA) — il Board continua
+    a mostrare i panel (vuoti) dello shot svuotato via undo; si riallinea al successivo
+    enter/exit della sub-scene. È il known issue "detectAndUpdatePanels non gestisce
+    la rimozione panel". File: storyboardpanel.cpp (m_panelDetectTimer).
+
+⚠️ AGGIORNAMENTO 2026-06-10 (task 42 residuo, storico): nuovo crash riprodotto disegnando —
     `StudioPaletteTreeViewer::loadInCurrentPalette → StudioPaletteCmd::loadIntoCurrentPalette
     → TPalette::assign → std::map<int,TColorStyleP>::destroy` SIGBUS su puntatore dentro
     la dyld shared cache __TEXT = use-after-free della palette corrente (dangling dopo

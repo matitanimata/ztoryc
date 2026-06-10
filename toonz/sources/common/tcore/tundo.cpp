@@ -113,6 +113,23 @@ struct TUndoManager::TUndoManagerImp {
   bool m_skipped;
   int m_undoMemorySize;  // in bytes
 
+  // The entry whose undo()/redo() is currently executing.  A command run from
+  // INSIDE that call can re-enter the manager (e.g. closing a sub-scene pushes
+  // a CloseChildUndo): doAdd()/beginBlock()/reset() then truncate the redo
+  // branch — which CONTAINS the executing object.  Deleting it mid-call is a
+  // use-after-free (this kept running on freed memory; observed as the Ztoryc
+  // board-wipe bug).  Deletion is deferred to the end of undo()/redo().
+  TUndo *m_executing      = nullptr;
+  TUndo *m_deferredDelete = nullptr;
+
+  // Deletes u unless it is the executing entry, which is deferred instead.
+  void safeDeleteUndo(const TUndo *u) {
+    if (u == m_executing)
+      m_deferredDelete = const_cast<TUndo *>(u);
+    else
+      delete u;
+  }
+
   std::vector<TUndoBlock *> m_blockStack;
 
 public:
@@ -181,7 +198,8 @@ void TUndoManager::TUndoManagerImp::add(TUndo *undo) {
 
 void TUndoManager::TUndoManagerImp::doAdd(TUndo *undo) {
   if (m_current != m_undoList.end()) {
-    std::for_each(m_current, m_undoList.end(), deleteUndo);
+    for (UndoListIterator u = m_current; u != m_undoList.end(); ++u)
+      safeDeleteUndo(*u);
     m_undoList.erase(m_current, m_undoList.end());
   }
 
@@ -208,7 +226,9 @@ void TUndoManager::TUndoManagerImp::doAdd(TUndo *undo) {
 
 void TUndoManager::beginBlock() {
   if (m_imp->m_current != m_imp->m_undoList.end()) {
-    std::for_each(m_imp->m_current, m_imp->m_undoList.end(), deleteUndo);
+    for (UndoListIterator u = m_imp->m_current; u != m_imp->m_undoList.end();
+         ++u)
+      m_imp->safeDeleteUndo(*u);
     m_imp->m_undoList.erase(m_imp->m_current, m_imp->m_undoList.end());
   }
 
@@ -242,7 +262,14 @@ bool TUndoManager::undo() {
   if (it != m_imp->m_undoList.begin()) {
     m_imp->m_skipped = false;
     --it;
-    (*it)->undo();
+    TUndo *executing   = *it;
+    m_imp->m_executing = executing;
+    executing->undo();
+    m_imp->m_executing = nullptr;
+    if (m_imp->m_deferredDelete) {
+      delete m_imp->m_deferredDelete;
+      m_imp->m_deferredDelete = nullptr;
+    }
     emit historyChanged();
     if (m_imp->m_skipped) {
       m_imp->m_skipped = false;
@@ -260,8 +287,15 @@ bool TUndoManager::redo() {
   UndoListIterator &it = m_imp->m_current;
   if (it != m_imp->m_undoList.end()) {
     m_imp->m_skipped = false;
-    (*it)->redo();
-    ++it;
+    TUndo *executing   = *it;
+    m_imp->m_executing = executing;
+    executing->redo();
+    m_imp->m_executing = nullptr;
+    if (m_imp->m_deferredDelete) {
+      delete m_imp->m_deferredDelete;
+      m_imp->m_deferredDelete = nullptr;
+    }
+    if (it != m_imp->m_undoList.end()) ++it;
     emit historyChanged();
     if (m_imp->m_skipped) {
       m_imp->m_skipped = false;
@@ -315,7 +349,7 @@ void TUndoManager::reset() {
   assert(m_imp->m_blockStack.empty());
   m_imp->m_blockStack.clear();
   UndoList &lst = m_imp->m_undoList;
-  std::for_each(lst.begin(), lst.end(), deleteUndo);
+  for (TUndo *u : lst) m_imp->safeDeleteUndo(u);
   lst.clear();
   m_imp->m_current = m_imp->m_undoList.end();
   Q_EMIT historyChanged();

@@ -7,6 +7,33 @@
 
 ---
 
+## [2026-06-11] — sessione stabilità: TUndoManager hardening, crash palette declassato
+
+### Fixed
+- **TUndoManager use-after-free (core, candidato upstream)**: se un comando
+  eseguito DENTRO `TUndo::undo()` rientra nel manager (es. chiusura sub-scene
+  → push di `CloseChildUndo`), `doAdd`/`beginBlock`/`reset` cancellavano il
+  ramo redo che CONTIENE l'oggetto in esecuzione → l'oggetto proseguiva su
+  memoria liberata (root cause a monte del wipe task 48). Fix in
+  `tcore/tundo.cpp`: la cancellazione dell'entry in esecuzione è deferita alla
+  fine di `undo()`/`redo()` (`m_executing`/`m_deferredDelete` +
+  `safeDeleteUndo`); guard anche su `++it` in `redo()` dopo rientranza.
+
+### Notes
+- **Crash palette DECLASSATO**: non riproducibile su build debug sotto lldb
+  nemmeno con MallocScribble (torture test: load studio palette dopo delete
+  livello, undo spam, switch sub-scene). Teoria confermata dai fatti: era un
+  derivato del bug undo-wipe (restore rotto → livelli distrutti → palette
+  corrente dangling), fixato il 2026-06-10. Si tiene il workaround note e il
+  CrashHandler a presidio; togliere dal radar salvo recidiva.
+- Build di debug permanente in `/Volumes/ZioSam/tahoma2d-workspace/debug-build`
+  (cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_POLICY_VERSION_MINIMUM=3.5, stesse
+  dipendenze homebrew). Script lldb repro in /tmp/ztory_lldb_script.txt.
+- Nuovo task minore 50: panel fantasma nel Board dopo undo che svuota uno shot
+  (si riallinea a enter/exit della sub-scene).
+
+---
+
 ## [2026-06-10] — light direction (task 40 fase 3), burn-in export, fix undo/lag
 
 ### Added
