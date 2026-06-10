@@ -641,6 +641,9 @@ public:
 protected:
   void resizeEvent(QResizeEvent *e) override;
   void showEvent(QShowEvent *e) override;
+  // Light-direction gizmo editing on the large preview (mouse events of
+  // m_previewLabel are intercepted here).
+  bool eventFilter(QObject *obj, QEvent *e) override;
 
 public slots:
   void onShotActivated(int col);
@@ -676,6 +679,19 @@ private:
   QToolButton  *m_syncBtn          = nullptr;
   QTimer       *m_refreshTimer     = nullptr;
   QPixmap       m_cachedPreview;
+
+  // ── Light-direction gizmo (task 40 FASE 3) on the large preview ──────────
+  QToolButton *m_lightEditBtn   = nullptr;  // checkable: drag-to-place mode
+  bool         m_lightDragging  = false;
+  QPointF      m_lightDragTail, m_lightDragTip;   // normalized 0-1
+  double       m_lightDragDepth  = 0.0;
+  double       m_lightDragSpread = 35.0;
+  // Debounced re-render on panel resize: the cached pixmap is rescaled
+  // immediately (cheap), the full render fires after the resize burst.
+  QTimer      *m_resizeRenderTimer = nullptr;
+  QPointF      normalizedPreviewPos(const QPoint &labelPos) const;
+  void         drawLightRubberBand();
+  void         commitLightEdit(bool remove);
 };
 
 // ---- ZtoryRightPanel ----

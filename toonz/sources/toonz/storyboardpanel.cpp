@@ -1,4 +1,5 @@
 #include "storyboardpanel.h"
+#include "ztorylightgizmo.h"
 
 #include "tundo.h"
 #include "tapp.h"
@@ -122,11 +123,11 @@ QString PanelWidget::s_lightColor    = "#FFC34D";
 // and the angle/depth/spread readout, shown only during the placement drag.
 // Coordinates are normalized 0-1 over (W, H); colour = light temperature;
 // `spreadDeg` = full beam opening angle in degrees.
-static void ztoryDrawLightGizmo(QPainter &p, double W, double H,
-                                double tailX, double tailY,
-                                double tipX, double tipY, double depth,
-                                double spreadDeg, const QColor &color,
-                                bool editing = false) {
+void ztoryDrawLightGizmo(QPainter &p, double W, double H,
+                         double tailX, double tailY,
+                         double tipX, double tipY, double depth,
+                         double spreadDeg, const QColor &color,
+                         bool editing) {
   const double kPi = 3.14159265358979323846;  // M_PI needs _USE_MATH_DEFINES on MSVC
   QPointF P0(tailX * W, tailY * H), P1(tipX * W, tipY * H);
   QPointF d  = P1 - P0;
@@ -402,11 +403,14 @@ static void ztoryDrawLightGizmo(QPainter &p, double W, double H,
   }
 }
 
-// Bakes the light gizmo onto a thumbnail pixmap (Board preview / PDF cell).
-static void applyLightOverlay(QPixmap &px, const PanelData &pd) {
+// Bakes the light gizmo onto a thumbnail/preview pixmap.
+void ztoryApplyLightOverlay(QPixmap &px, const PanelData &pd) {
   if (!pd.hasLight || px.isNull()) return;
   QPainter p(&px);
-  ztoryDrawLightGizmo(p, px.width(), px.height(),
+  // QPainter on a DPR-tagged pixmap works in logical coords — pass the
+  // logical size so the gizmo proportions stay DPI-independent.
+  qreal dpr = px.devicePixelRatio() > 0 ? px.devicePixelRatio() : 1.0;
+  ztoryDrawLightGizmo(p, px.width() / dpr, px.height() / dpr,
                       pd.lightTailX, pd.lightTailY,
                       pd.lightTipX, pd.lightTipY, pd.lightDepth,
                       pd.lightSpread, QColor(pd.lightColor));
@@ -1351,6 +1355,26 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
         dst.notes = src.notes;
         shot.panels[pi]->setNotes(src.notes);
       }
+      // Light-direction gizmo edited from the Shot Board navigator: mirror it,
+      // re-bake the thumbnail and persist (text fields are saved by their own
+      // Board flows; the navigator has no other path to the .ztoryc).
+      if (dst.hasLight != src.hasLight ||
+          dst.lightTailX != src.lightTailX || dst.lightTailY != src.lightTailY ||
+          dst.lightTipX != src.lightTipX || dst.lightTipY != src.lightTipY ||
+          dst.lightDepth != src.lightDepth ||
+          dst.lightSpread != src.lightSpread ||
+          dst.lightColor != src.lightColor) {
+        dst.hasLight    = src.hasLight;
+        dst.lightTailX  = src.lightTailX;
+        dst.lightTailY  = src.lightTailY;
+        dst.lightTipX   = src.lightTipX;
+        dst.lightTipY   = src.lightTipY;
+        dst.lightDepth  = src.lightDepth;
+        dst.lightSpread = src.lightSpread;
+        dst.lightColor  = src.lightColor;
+        updatePreview(si, pi);
+        saveZtoryc();
+      }
     }
   });
   // Debounce timer per refresh thumbnail
@@ -1885,7 +1909,7 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
     for (int k = 0; k < panelIdx && k < (int)shot.data.panels.size(); k++)
       if (shot.data.panels[k].cameraMoveType != PanelData::CamNone) moveOrdinal++;
     applyCameraOverlay(px, pd, moveOrdinal, m_showCamMoveType);
-    if (m_showLights) applyLightOverlay(px, pd);
+    if (m_showLights) ztoryApplyLightOverlay(px, pd);
     shot.panels[panelIdx]->setPreviewPixmap(px);
   }
 }
@@ -5204,7 +5228,7 @@ void StoryboardPanel::onExportPdf() {
               if (sd.panels[k].cameraMoveType != PanelData::CamNone) moveOrdinal++;
             applyCameraOverlay(hq, pdRef, moveOrdinal, m_showCamMoveType, pt2px(6));
           }
-          if (m_showLights) applyLightOverlay(hq, pdRef);
+          if (m_showLights) ztoryApplyLightOverlay(hq, pdRef);
           QPixmap scaled = hq.scaled(cellW - 2, imgH - 2,
               Qt::KeepAspectRatio, Qt::SmoothTransformation);
           int tx = cx + (cellW - scaled.width()) / 2;

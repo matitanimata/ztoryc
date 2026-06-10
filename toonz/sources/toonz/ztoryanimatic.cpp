@@ -1,5 +1,6 @@
 
 #include "ztoryanimatic.h"
+#include "ztorylightgizmo.h"
 #include "viewerpane.h"
 #include "comboviewerpane.h"
 #include "ztorymodel.h"
@@ -47,6 +48,8 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QWindow>
+#include <QSettings>
+#include <cmath>
 #include <QFileDialog>
 #include <QContextMenuEvent>
 #include "tsound.h"
@@ -3606,6 +3609,25 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
       "QToolButton{background:transparent;border:1px solid #555;border-radius:4px;}"
       "QToolButton:hover{background:#555;}"
       "QToolButton:checked{background:#c8703a;border-color:#c8703a;}");
+  // Light-direction placement (same gizmo as the Board, bigger canvas here)
+  m_lightEditBtn = new QToolButton(toggleRow);
+  m_lightEditBtn->setText(QString::fromUtf8("☀"));
+  m_lightEditBtn->setFixedSize(28, 28);
+  m_lightEditBtn->setCheckable(true);
+  m_lightEditBtn->setToolTip(
+      tr("Place light-direction arrow: drag on the preview, mouse wheel tilts "
+         "toward camera/background, Shift+wheel sets the beam spread "
+         "(right-click removes)"));
+  m_lightEditBtn->setStyleSheet(
+      "QToolButton{background:transparent;color:#ccc;border:1px solid #555;border-radius:4px;font-size:12px;}"
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#5c4a1e;color:#ffd27d;border-color:#5c4a1e;}");
+  toggleLay->addWidget(m_lightEditBtn);
+  connect(m_lightEditBtn, &QToolButton::toggled, this, [this](bool on) {
+    m_previewLabel->setCursor(on ? Qt::CrossCursor : Qt::ArrowCursor);
+  });
+  m_previewLabel->installEventFilter(this);
+
   toggleLay->addWidget(autoMatchBtn);
   lay->addWidget(toggleRow);
 
@@ -3777,6 +3799,125 @@ void ZtoryPanelNavigator::setActivePanel(int panelIdx, bool updateFrame) {
   }
 }
 
+// Maps a position inside m_previewLabel to normalized 0-1 coords over the
+// DISPLAYED pixmap (which is centered in the label and aspect-correct).
+QPointF ZtoryPanelNavigator::normalizedPreviewPos(const QPoint &labelPos) const {
+  const QPixmap *pm = m_previewLabel->pixmap();
+  if (!pm || pm->isNull()) return QPointF(0.5, 0.5);
+  qreal dpr = pm->devicePixelRatio() > 0 ? pm->devicePixelRatio() : 1.0;
+  QSizeF logical(pm->width() / dpr, pm->height() / dpr);
+  QPointF origin((m_previewLabel->width() - logical.width()) / 2.0,
+                 (m_previewLabel->height() - logical.height()) / 2.0);
+  if (logical.width() <= 0 || logical.height() <= 0) return QPointF(0.5, 0.5);
+  return QPointF(
+      qBound(0.0, (labelPos.x() - origin.x()) / logical.width(), 1.0),
+      qBound(0.0, (labelPos.y() - origin.y()) / logical.height(), 1.0));
+}
+
+// Live drag feedback: redraw the cached preview with the in-progress gizmo
+// (editing=true → sun glyph + beam + readout, like the Board rubber-band).
+void ZtoryPanelNavigator::drawLightRubberBand() {
+  if (m_cachedPreview.isNull()) return;
+  qreal dpr = 1.0;
+  if (QWindow *win = window()->windowHandle()) dpr = win->devicePixelRatio();
+  QPixmap scaled = m_cachedPreview;
+  scaled.setDevicePixelRatio(1.0);
+  scaled = scaled.scaled(m_previewLabel->size() * dpr, Qt::KeepAspectRatio,
+                         Qt::SmoothTransformation);
+  scaled.setDevicePixelRatio(dpr);
+  QPainter p(&scaled);
+  QString color = QSettings().value("Ztoryc/LightColor", "#FFC34D").toString();
+  ztoryDrawLightGizmo(p, scaled.width() / dpr, scaled.height() / dpr,
+                      m_lightDragTail.x(), m_lightDragTail.y(),
+                      m_lightDragTip.x(), m_lightDragTip.y(),
+                      m_lightDragDepth, m_lightDragSpread, QColor(color),
+                      /*editing=*/true);
+  p.end();
+  m_previewLabel->setPixmap(scaled);
+}
+
+// Writes the placed/removed gizmo into ZtoryModel and notifies — the Board
+// mirrors the change (thumbnail re-bake + .ztoryc save) via shotDataChanged.
+void ZtoryPanelNavigator::commitLightEdit(bool remove) {
+  if (m_shotIdx < 0) return;
+  auto &panels = ZtoryModel::instance()->shot(m_shotIdx).panels;
+  if (m_panelIdx < 0 || m_panelIdx >= (int)panels.size()) return;
+  PanelData &pd = panels[m_panelIdx];
+  if (remove) {
+    if (!pd.hasLight) return;
+    pd.hasLight = false;
+  } else {
+    pd.hasLight    = true;
+    pd.lightTailX  = m_lightDragTail.x();
+    pd.lightTailY  = m_lightDragTail.y();
+    pd.lightTipX   = m_lightDragTip.x();
+    pd.lightTipY   = m_lightDragTip.y();
+    pd.lightDepth  = m_lightDragDepth;
+    pd.lightSpread = m_lightDragSpread;
+    pd.lightColor  = QSettings().value("Ztoryc/LightColor", "#FFC34D").toString();
+  }
+  emit ZtoryModel::instance()->shotDataChanged(m_shotIdx);
+  refreshPreview();
+}
+
+bool ZtoryPanelNavigator::eventFilter(QObject *obj, QEvent *e) {
+  if (obj == m_previewLabel && m_lightEditBtn && m_lightEditBtn->isChecked()) {
+    switch (e->type()) {
+    case QEvent::MouseButtonPress: {
+      auto *me = static_cast<QMouseEvent *>(e);
+      if (me->button() == Qt::LeftButton) {
+        m_lightDragging  = true;
+        m_lightDragDepth = 0.0;
+        m_lightDragTail = m_lightDragTip = normalizedPreviewPos(me->pos());
+        return true;
+      }
+      if (me->button() == Qt::RightButton) {
+        commitLightEdit(/*remove=*/true);
+        return true;
+      }
+      break;
+    }
+    case QEvent::MouseMove:
+      if (m_lightDragging) {
+        m_lightDragTip = normalizedPreviewPos(
+            static_cast<QMouseEvent *>(e)->pos());
+        drawLightRubberBand();
+        return true;
+      }
+      break;
+    case QEvent::MouseButtonRelease:
+      if (m_lightDragging &&
+          static_cast<QMouseEvent *>(e)->button() == Qt::LeftButton) {
+        m_lightDragging = false;
+        QPointF d = m_lightDragTip - m_lightDragTail;
+        if (std::hypot(d.x() * m_previewLabel->width(),
+                       d.y() * m_previewLabel->height()) >= 12.0)
+          commitLightEdit(/*remove=*/false);
+        else
+          refreshPreview();  // discard the rubber-band
+        return true;
+      }
+      break;
+    case QEvent::Wheel:
+      if (m_lightDragging) {
+        auto *we = static_cast<QWheelEvent *>(e);
+        if (we->modifiers() & Qt::ShiftModifier)
+          m_lightDragSpread = qBound(12.0,
+              m_lightDragSpread + (we->angleDelta().y() > 0 ? 3.0 : -3.0), 90.0);
+        else
+          m_lightDragDepth = qBound(-1.0,
+              m_lightDragDepth + (we->angleDelta().y() > 0 ? 0.1 : -0.1), 1.0);
+        drawLightRubberBand();
+        return true;
+      }
+      break;
+    default:
+      break;
+    }
+  }
+  return TPanel::eventFilter(obj, e);
+}
+
 void ZtoryPanelNavigator::refreshPreview() {
   if (m_shotIdx < 0) return;
   const auto &shot = ZtoryModel::instance()->shot(m_shotIdx);
@@ -3792,13 +3933,25 @@ void ZtoryPanelNavigator::refreshPreview() {
   if (QWindow *win = window()->windowHandle())
     dpr = win->devicePixelRatio();
 
-  // Physical pixel size we want to render at: avail × dpr, but cap at 1280×720
-  // so we don't trigger a slow full-resolution render on very large panels.
-  QSize physSize = (avail * dpr).boundedTo(QSize(1280, 720));
-
-  // Render directly from the sub-xsheet at the exact physical resolution.
+  // Fit the render size to the CAMERA aspect inside the available label area.
+  // Rendering at the raw label size stretched the frame to the panel's
+  // arbitrary proportions (image "too big" / wrong aspect on resize); the
+  // Board never had the issue because its labels are hard-locked to 16:9.
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
+  double aspect = 16.0 / 9.0;
+  if (scene && scene->getCurrentCamera()) {
+    TDimension res = scene->getCurrentCamera()->getRes();
+    if (res.lx > 0 && res.ly > 0) aspect = (double)res.lx / res.ly;
+  }
+  QSize fit(avail.width(), qMax(1, qRound(avail.width() / aspect)));
+  if (fit.height() > avail.height())
+    fit = QSize(qMax(1, qRound(avail.height() * aspect)), avail.height());
+  // Physical pixel size, capped at 1280 wide (proportionally) so very large
+  // panels don't trigger a slow full-resolution render.
+  QSize physSize = fit * dpr;
+  if (physSize.width() > 1280)
+    physSize = QSize(1280, qMax(1, qRound(1280.0 / aspect)));
   QPixmap px;
   if (scene) {
     TXsheet *xsh = scene->getChildStack()->getTopXsheet();
@@ -3819,6 +3972,9 @@ void ZtoryPanelNavigator::refreshPreview() {
           cl->getXsheet(), frame, TDimension(physSize.width(), physSize.height()));
       // Tag with DPR so Qt maps the physical pixels back to logical coordinates.
       px.setDevicePixelRatio(dpr);
+      // Light-direction gizmo overlay (same toggle as the Board thumbnails).
+      if (QSettings().value("Ztoryc/ShowLightDirection", true).toBool())
+        ztoryApplyLightOverlay(px, shot.panels[m_panelIdx]);
     }
   }
 
@@ -3857,7 +4013,29 @@ void ZtoryPanelNavigator::showEvent(QShowEvent *e) {
 
 void ZtoryPanelNavigator::resizeEvent(QResizeEvent *e) {
   TPanel::resizeEvent(e);
-  if (m_shotIdx >= 0) refreshPreview();
+  if (m_shotIdx < 0) return;
+  // Cheap immediate feedback: rescale the cached pixmap (keeps aspect), then
+  // re-render at the new resolution only after the resize burst settles —
+  // refreshPreview() does a full sub-scene render and lagged on every tick.
+  if (!m_cachedPreview.isNull()) {
+    qreal dpr = 1.0;
+    if (QWindow *win = window()->windowHandle()) dpr = win->devicePixelRatio();
+    QPixmap scaled = m_cachedPreview;
+    scaled.setDevicePixelRatio(1.0);
+    scaled = scaled.scaled(m_previewLabel->size() * dpr, Qt::KeepAspectRatio,
+                           Qt::SmoothTransformation);
+    scaled.setDevicePixelRatio(dpr);
+    m_previewLabel->setPixmap(scaled);
+  }
+  if (!m_resizeRenderTimer) {
+    m_resizeRenderTimer = new QTimer(this);
+    m_resizeRenderTimer->setSingleShot(true);
+    m_resizeRenderTimer->setInterval(250);
+    connect(m_resizeRenderTimer, &QTimer::timeout, this, [this]() {
+      if (m_shotIdx >= 0) refreshPreview();
+    });
+  }
+  m_resizeRenderTimer->start();
 }
 
 void ZtoryPanelNavigator::refreshTextFields() {
