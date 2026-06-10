@@ -2,11 +2,27 @@
 
 **The complete solution for professional storyboarding.** From your first thumbnail to the final animatic, Ztoryc supports your creative work through every stage of pre-production — free, open source, and built by artists for artists.
 
-Ztoryc is a fork of Tahoma2D 1.6.0 built for storyboard artists, directors and studios who need a serious, professional tool to tell better stories, before a single frame is animated.
+Ztoryc is a fork of Tahoma2D built for storyboard artists, directors and studios who need a serious, professional tool to tell better stories, before a single frame is animated.
 
 Ztoryc works for any production — animated or live action. If you use Tahoma2D or OpenToonz for 2D animation, it integrates directly into your pipeline, but it works as a standalone storyboarding tool for any workflow.
 
-![Ztoryc Storyboard Panel](docs/images/board.png)
+![Ztoryc — Board, viewer, script and animatic timeline](docs/images/animatic_board.png)
+
+---
+
+## Download
+
+Grab the latest release for **macOS** and **Windows** from the [Releases page](https://github.com/matitanimata/ztoryc/releases).
+
+**macOS — first launch:** the app is not notarized yet. After copying `Ztoryc.app` to `/Applications`, run in Terminal:
+
+```bash
+xattr -cr /Applications/Ztoryc.app
+```
+
+then open normally (right-click → Open the first time).
+
+**Windows:** a clean install is recommended — uninstall any previous version first.
 
 ---
 
@@ -18,40 +34,53 @@ Professional storyboard software is either expensive, locked into proprietary ec
 
 In most pipelines the storyboard is created in a separate application and later rebuilt in the animation software. This creates duplicated work, manual animatic timing, and loss of shot structure between departments.
 
-Ztoryc, working together with Tahoma2D / OpenToonz, experiments with a different approach: the storyboard becomes the foundation of the scene itself — from first sketch to final layout.
+Ztoryc, working together with Tahoma2D / OpenToonz, takes a different approach: the storyboard becomes the foundation of the scene itself — from first sketch to final layout.
 
 ---
 
 ## Output
 
-- 📄 **PDF storyboard** — export your boards as a professional storyboard document
-- 🎬 **Animatic** — export the animatic in standard video formats
+- 📄 **PDF storyboard** — export your boards as a professional storyboard document, complete with per-panel durations, dialogue, camera moves and light-direction annotations
+- 🎬 **Animatic** — export the animatic in standard video formats with audio, optional burn-in (timecode, shot/panel names) and clapperboard
 - 🎞️ **Layouts** — for productions using Tahoma2D / OpenToonz, Ztoryc exports each shot as a ready-to-animate `.tnz` scene complete with storyboard panels, audio, and camera moves
+- 🔊 **Per-shot audio clips** — export the audio of each shot as separate files for the animation department
+
+![PDF storyboard export with camera-move annotations](docs/images/pdf_camera_moves.png)
 
 ---
 
-## Current Features
+## Features
 
-⚠️ Work in progress. Many features are still experimental.
+### Storyboard (BOARD room)
+- Panel-based storyboard grid — multiple panels per shot, auto-detected from keyframes, camera moves and drawing changes
+- Configurable grid, drag & drop shot reordering, multi-selection
+- Copy / clone / paste shots — shared clipboard with the Animatic
+- Shot numbering modes: Auto / Keep / Renumber All, with sequence support
+- **Camera-move annotations** — START/STOP framing overlay with arrows and A→B lettering, drawn automatically on thumbnails and in the PDF
+- **Light-direction gizmo** — a 3D conic arrow per panel: drag to place, mouse-wheel to tilt toward camera or background, Shift+wheel for beam spread; rendered on thumbnails and in the PDF
+- **Arrows panel** — a library of directional arrows (vector levels) for annotating motion right on the drawing
+- Per-panel dialogue/notes, durations (per-panel and per-shot)
+- Script import — `.fountain`, `.docx`, `.odt`, plain text
+- Full Undo/Redo across board operations
+- Thumbnails refresh automatically as you draw — without interrupting your strokes
 
-### Storyboard Panel
-- Panel-based storyboard grid (multiple panels per shot)
-- Auto-detection of panels from keyframes, camera moves, and drawing changes
-- Configurable grid, drag & drop shot reordering
-- Shot numbering modes: Auto / Keep / Renumber All
-- Multi-selection, copy/clone/paste, multi-shot delete
-- Thumbnail preview with automatic refresh
-- Export shots as standalone `.tnz` scenes with isolated assets
+### Animatic (ANIMATIC room)
+- NLE-style timeline editor with integrated viewer
+- Shot blocks generated from main xsheet timing — razor, ripple edit, merge, zoom-to-cursor
+- Audio tracks with waveform, volume, mute/solo
+- Transitions and navigation markers
+- Selection and clipboard shared with the Board — the two panels always stay in sync
+- Export with burn-in: timecode, shot/panel names, clapperboard
 
-### Animatic Panel
-- Custom NLE-style animatic editor with integrated OpenGL viewer
-- Shot blocks generated from main xsheet timing
-- Audio tracks with waveform visualization
-- Ripple editing and timeline zoom
-- Playhead synchronized with the main timeline
-- Viewer always shows the main xsheet (independent of Edit In Place)
+### Shot editing (SHOTEDITOR room)
+- Each shot is a real Tahoma2D sub-scene: draw, pose and time it with the full toolset
+- StoryStrip — filmstrip navigation across shots
+- Shot Board — large preview with the same camera-move and light-direction overlays as the Board
+- Monitor panel anchored to the main camera
 
-![Ztoryc Animatic Panel](docs/images/animatic.png)
+![Shot editing with horizontal timeline and Shot Board](docs/images/shoteditor_timeline.png)
+
+![Shot editing with xsheet — the animatic timeline stays visible](docs/images/shoteditor_xsheet.png)
 
 ### Workflow Modes
 Ztoryc adds a Workflow menu to quickly switch between room sets:
@@ -63,18 +92,15 @@ Ztoryc adds a Workflow menu to quickly switch between room sets:
 ### Data & Persistence
 - Central ZtoryModel shared across panels
 - Project data stored in `.ztoryc` XML files saved alongside the scene
-- Custom rooms: BOARD, SHOTEDITOR, ANIMATIC
+- Dedicated rooms: BOARD, SHOTEDITOR, ANIMATIC
 
 ---
 
-## Planned Features
+## Roadmap
 
-- Separate frame handle for animatic viewer (independent timelines for animatic and shot sub-scene)
-- PDF storyboard export
-- Animatic render export
-- StoryStrip panel and Order Review panel
-- Undo/Redo support
-- Keyboard shortcuts
+- Independent frame handle for the animatic viewer (separate timelines for animatic and shot sub-scene)
+- TRADITIONAL room for paper-based workflows
+- Startup hub (New / Load / Load as sub-scene)
 - Kitsu integration for production management
 
 ---
@@ -103,9 +129,25 @@ Based on Tahoma2D — BSD 2-Clause License.
 
 **La soluzione completa per lo storyboard professionale.** Dal primo thumbnail all'animatic finale, Ztoryc supporta il tuo lavoro creativo in ogni fase della pre-produzione — gratuito, open source, e costruito da artisti per artisti.
 
-Ztoryc è un fork di Tahoma2D 1.6.0 pensato per storyboard artist, registi e studi che hanno bisogno di uno strumento serio e professionale per raccontare storie migliori, prima che venga animato un singolo fotogramma.
+Ztoryc è un fork di Tahoma2D pensato per storyboard artist, registi e studi che hanno bisogno di uno strumento serio e professionale per raccontare storie migliori, prima che venga animato un singolo fotogramma.
 
 Ztoryc funziona per qualsiasi tipo di produzione — animata o live action. Se usi Tahoma2D o OpenToonz per l'animazione 2D, si integra direttamente nella tua pipeline, ma funziona anche come strumento autonomo per qualsiasi workflow.
+
+---
+
+## Download
+
+Scarica l'ultima release per **macOS** e **Windows** dalla [pagina Releases](https://github.com/matitanimata/ztoryc/releases).
+
+**macOS — prima apertura:** l'app non è ancora notarizzata. Dopo aver copiato `Ztoryc.app` in `/Applications`, esegui nel Terminale:
+
+```bash
+xattr -cr /Applications/Ztoryc.app
+```
+
+poi apri normalmente (tasto destro → Apri la prima volta).
+
+**Windows:** si raccomanda un'installazione pulita — disinstalla eventuali versioni precedenti.
 
 ---
 
@@ -117,38 +159,47 @@ Gli strumenti professionali per storyboard sono quasi tutti a pagamento, chiusi 
 
 In molte pipeline lo storyboard nasce in un'applicazione separata e poi viene ricostruito nel software di animazione. Questo porta a lavoro duplicato, timing ricreato a mano, e perdita della struttura degli shot tra i reparti.
 
-Ztoryc, lavorando insieme a Tahoma2D / OpenToonz, sperimenta un approccio diverso: lo storyboard diventa la base della scena stessa — dal primo schizzo al layout finale.
+Ztoryc, lavorando insieme a Tahoma2D / OpenToonz, adotta un approccio diverso: lo storyboard diventa la base della scena stessa — dal primo schizzo al layout finale.
 
 ---
 
 ## Output
 
-- 📄 **PDF storyboard** — esporta le tavole come documento storyboard professionale
-- 🎬 **Animatic** — esporta l'animatic nei principali formati video
+- 📄 **PDF storyboard** — esporta le tavole come documento storyboard professionale, completo di durate per panel, dialoghi, movimenti di camera e annotazioni di direzione luce
+- 🎬 **Animatic** — esporta l'animatic nei principali formati video con audio, burn-in opzionale (timecode, nomi shot/panel) e clapperboard
 - 🎞️ **Layout** — per le produzioni che usano Tahoma2D / OpenToonz, Ztoryc esporta ogni shot come scena `.tnz` pronta per l'animazione, completa di panels dello storyboard, audio e movimenti di camera
+- 🔊 **Clip audio per shot** — esporta l'audio di ogni shot come file separati per il reparto animazione
 
 ---
 
-## Funzionalità Attuali
+## Funzionalità
 
-⚠️ Progetto in sviluppo. Molte funzioni sono ancora sperimentali.
+### Storyboard (room BOARD)
+- Griglia a pannelli — più pannelli per shot, rilevati automaticamente da keyframe, movimenti camera e cambi disegno
+- Griglia configurabile, drag & drop per riordinare gli shot, selezione multipla
+- Copia / clona / incolla shot — clipboard condivisa con l'Animatic
+- Numerazione shot: Auto / Keep / Renumber All, con supporto sequenze
+- **Annotazioni movimenti di camera** — overlay con inquadrature START/STOP, frecce e lettere A→B, disegnato automaticamente su thumbnail e PDF
+- **Gizmo direzione luce** — freccia conica 3D per panel: trascina per posizionarla, rotella per inclinarla verso camera o fondale, Shift+rotella per l'apertura del fascio; visibile su thumbnail e PDF
+- **Pannello Arrows** — libreria di frecce direzionali (livelli vettoriali) per annotare i movimenti direttamente sul disegno
+- Dialoghi/note per panel, durate per panel e per shot
+- Import sceneggiatura — `.fountain`, `.docx`, `.odt`, testo semplice
+- Undo/Redo completo sulle operazioni del board
+- Thumbnail aggiornate automaticamente mentre disegni — senza interrompere i tratti
 
-### Storyboard Panel
-- Griglia a pannelli (più pannelli per shot)
-- Rilevamento automatico da keyframe, movimenti camera e cambi disegno
-- Griglia configurabile, drag & drop per riordinare gli shot
-- Numerazione shot: Auto / Keep / Renumber All
-- Selezione multipla, copia/clona/incolla, eliminazione multipla
-- Thumbnail aggiornate automaticamente
-- Export shot in `.tnz` con asset isolati
+### Animatic (room ANIMATIC)
+- Editor timeline in stile NLE con viewer integrato
+- Blocchi shot generati dal timing del main xsheet — razor, ripple edit, merge, zoom-to-cursor
+- Tracce audio con waveform, volume, mute/solo
+- Transizioni e marker di navigazione
+- Selezione e clipboard condivise col Board — i due panel restano sempre sincronizzati
+- Export con burn-in: timecode, nomi shot/panel, clapperboard
 
-### Animatic Panel
-- Editor animatic in stile NLE con viewer OpenGL integrato
-- Blocchi shot generati dal timing del main xsheet
-- Tracce audio con visualizzazione waveform
-- Ripple edit e zoom timeline
-- Playhead sincronizzato con la timeline principale
-- Viewer sempre sul main xsheet (indipendente da Edit In Place)
+### Lavorazione shot (room SHOTEDITOR)
+- Ogni shot è una vera sub-scene di Tahoma2D: disegna, metti in posa e dai i tempi con il toolset completo
+- StoryStrip — navigazione a filmstrip tra gli shot
+- Shot Board — anteprima grande con gli stessi overlay camera-move e direzione luce del Board
+- Monitor ancorato alla camera principale
 
 ### Modalità Workflow
 Ztoryc aggiunge un menu Workflow per cambiare rapidamente set di room:
@@ -164,14 +215,11 @@ Ztoryc aggiunge un menu Workflow per cambiare rapidamente set di room:
 
 ---
 
-## Funzionalità Pianificate
+## Roadmap
 
-- Frame handle separato per il viewer animatic (timeline indipendenti per animatic e sottoscena)
-- Export PDF storyboard
-- Export animatic
-- StoryStrip panel e Order Review panel
-- Undo/Redo
-- Shortcut tastiera
+- Frame handle indipendente per il viewer animatic (timeline separate per animatic e sottoscena)
+- Room TRADITIONAL per il workflow su carta
+- Hub di avvio (New / Load / Load as sub-scene)
 - Integrazione Kitsu per la gestione della produzione
 
 ---
