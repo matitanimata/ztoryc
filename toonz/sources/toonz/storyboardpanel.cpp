@@ -1272,6 +1272,34 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
       for (PanelWidget *pw : shot.panels)
         if (pw) pw->setPreviewPixmap(QPixmap());
     updateVisiblePreviews();
+    emit ZtoryModel::instance()->overlayDisplayChanged();
+  });
+  // Mirror overlay-display changes made from other panels (Shot Board):
+  // re-read QSettings, realign button states (blocked: no echo) and re-bake
+  // only when something actually differs from our current state.
+  connect(ZtoryModel::instance(), &ZtoryModel::overlayDisplayChanged, this,
+          [this]() {
+    bool showLights = QSettings().value("Ztoryc/ShowLightDirection", true).toBool();
+    bool showCam    = QSettings().value("Ztoryc/ShowCamMoveType", true).toBool();
+    QString color   = QSettings().value("Ztoryc/LightColor", "#FFC34D").toString();
+    PanelWidget::setLightColor(color);
+    m_lightColorButton->setStyleSheet(
+        QString("QToolButton{background:%1;border:1px solid #555;"
+                "border-radius:4px;margin:6px;}"
+                "QToolButton:hover{border:1px solid #aaa;}").arg(color));
+    if (showLights == m_showLights && showCam == m_showCamMoveType) return;
+    m_showLights      = showLights;
+    m_showCamMoveType = showCam;
+    m_lightShowButton->blockSignals(true);
+    m_lightShowButton->setChecked(showLights);
+    m_lightShowButton->blockSignals(false);
+    m_camLabelButton->blockSignals(true);
+    m_camLabelButton->setChecked(showCam);
+    m_camLabelButton->blockSignals(false);
+    for (auto &shot : m_shots)
+      for (PanelWidget *pw : shot.panels)
+        if (pw) pw->setPreviewPixmap(QPixmap());
+    updateVisiblePreviews();
   });
   connect(m_lightEditButton, &QToolButton::toggled, this, [this](bool on) {
     PanelWidget::setLightEditMode(on);
@@ -1290,6 +1318,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
       for (PanelWidget *pw : shot.panels)
         if (pw) pw->setPreviewPixmap(QPixmap());
     updateVisiblePreviews();
+    emit ZtoryModel::instance()->overlayDisplayChanged();
   });
   connect(m_lightColorButton, &QToolButton::clicked, this, [this]() {
     QColor cur(QSettings().value("Ztoryc/LightColor", "#FFC34D").toString());
@@ -1301,6 +1330,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
         QString("QToolButton{background:%1;border:1px solid #555;"
                 "border-radius:4px;margin:6px;}"
                 "QToolButton:hover{border:1px solid #aaa;}").arg(c.name()));
+    emit ZtoryModel::instance()->overlayDisplayChanged();
   });
   connect(m_columnsPerRowSpin, QOverload<int>::of(&QSpinBox::valueChanged),
           this, &StoryboardPanel::onColumnsChanged);
@@ -1843,6 +1873,36 @@ static CamOverlayGeom computeCamOverlayGeom(const PanelData &pd,
   return g;
 }
 
+// Shared Board/Shot Board panel render: backed-out camera-move framing +
+// classic overlay. Implemented here because computeCamOverlayGeom and
+// applyCameraOverlay live in this file; declared in ztorylightgizmo.h.
+QPixmap ztoryRenderPanelPreview(TXsheet *subXsh, const PanelData &pd,
+                                int physW, int physH, int moveOrdinal,
+                                bool showCamLabel, double labelPxSize) {
+  if (!subXsh || physW <= 0 || physH <= 0) return QPixmap();
+  int frame = (pd.cameraMoveType != PanelData::CamNone) ? pd.camRenderFrame
+                                                        : pd.startFrame;
+  QPixmap px;
+  CamOverlayGeom g = computeCamOverlayGeom(pd, (double)physW / physH);
+  if (g.valid) {
+    // localBBox is in getCameraAff-local; renderFrame works in getPlacement-
+    // local, which differs by the camera Z scale → convert with TScale(zf).
+    TStageObjectId camId = subXsh->getStageObjectTree()->getCurrentCameraId();
+    double z  = subXsh->getZ(camId, frame);
+    double zf = (1000.0 + z) / 1000.0;
+    TRectD placedRect = TScale(zf) * TRectD(g.minX, g.minY, g.maxX, g.maxY);
+    px = IconGenerator::renderXsheetFrameRegion(subXsh, frame,
+                                                TDimension(physW, physH),
+                                                placedRect);
+  } else {
+    px = IconGenerator::renderXsheetFrame(subXsh, frame,
+                                          TDimension(physW, physH));
+  }
+  if (!px.isNull() && pd.cameraMoveType != PanelData::CamNone)
+    applyCameraOverlay(px, pd, moveOrdinal, showCamLabel, labelPxSize);
+  return px;
+}
+
 void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   Shot &shot = m_shots[shotIdx];
@@ -1866,10 +1926,6 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   if (!subXsh) return;
 
   const PanelData &pd = shot.data.panels[panelIdx];
-  // Camera move panels render at camRenderFrame (widest view); others at startFrame.
-  int frame = (pd.cameraMoveType != PanelData::CamNone)
-              ? pd.camRenderFrame
-              : pd.startFrame;
 
   // Render at the panel widget's actual physical pixel width for crisp display
   // on both Retina and standard screens. Stored WITHOUT a DPR tag so that
@@ -1883,32 +1939,14 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   physW = qMin(physW, 1280);
   int physH = physW * 9 / 16;
 
-  QPixmap px;
-  // For camera-move panels render "backed out" to cover both START and STOP
-  // frames (so e.g. a pan shows the full traversed artwork, not a single
-  // cropped frame). The same padded bbox is used by applyCameraOverlay so the
-  // drawn rectangles align with the rendered content.
-  CamOverlayGeom g = computeCamOverlayGeom(pd, (double)physW / physH);
-  if (g.valid) {
-    // localBBox is in getCameraAff-local; renderFrame works in getPlacement-
-    // local, which differs by the camera Z scale → convert with TScale(zf).
-    TStageObjectId camId = subXsh->getStageObjectTree()->getCurrentCameraId();
-    double z  = subXsh->getZ(camId, frame);
-    double zf = (1000.0 + z) / 1000.0;
-    TRectD placedRect = TScale(zf) * TRectD(g.minX, g.minY, g.maxX, g.maxY);
-    px = IconGenerator::renderXsheetFrameRegion(subXsh, frame,
-                                                TDimension(physW, physH),
-                                                placedRect);
-  } else {
-    px = IconGenerator::renderXsheetFrame(subXsh, frame, TDimension(physW, physH));
-  }
+  // Letter index = how many camera-move panels precede this one in the shot,
+  // so the first MOVE is A→B (panels without a move don't consume letters).
+  int moveOrdinal = 0;
+  for (int k = 0; k < panelIdx && k < (int)shot.data.panels.size(); k++)
+    if (shot.data.panels[k].cameraMoveType != PanelData::CamNone) moveOrdinal++;
+  QPixmap px = ztoryRenderPanelPreview(subXsh, pd, physW, physH, moveOrdinal,
+                                       m_showCamMoveType);
   if (!px.isNull()) {
-    // Letter index = how many camera-move panels precede this one in the shot,
-    // so the first MOVE is A→B (panels without a move don't consume letters).
-    int moveOrdinal = 0;
-    for (int k = 0; k < panelIdx && k < (int)shot.data.panels.size(); k++)
-      if (shot.data.panels[k].cameraMoveType != PanelData::CamNone) moveOrdinal++;
-    applyCameraOverlay(px, pd, moveOrdinal, m_showCamMoveType);
     if (m_showLights) ztoryApplyLightOverlay(px, pd);
     shot.panels[panelIdx]->setPreviewPixmap(px);
   }

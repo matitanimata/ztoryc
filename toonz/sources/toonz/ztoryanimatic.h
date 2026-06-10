@@ -682,6 +682,8 @@ private:
 
   // ── Light-direction gizmo (task 40 FASE 3) on the large preview ──────────
   QToolButton *m_lightEditBtn   = nullptr;  // checkable: drag-to-place mode
+  QToolButton *m_lightShowBtn   = nullptr;  // checkable: visibility (mirrors Board)
+  QToolButton *m_lightColorBtn  = nullptr;  // colour swatch (mirrors Board)
   bool         m_lightDragging  = false;
   QPointF      m_lightDragTail, m_lightDragTip;   // normalized 0-1
   double       m_lightDragDepth  = 0.0;

@@ -333,6 +333,11 @@ public:
   }
 
 signals:
+  // Overlay display settings changed (light visibility/colour, camera-move
+  // label toggle — all persisted in QSettings by the emitter). Board and
+  // Shot Board listen to mirror button states and re-bake their previews,
+  // so the toggles stay in lockstep across panels.
+  void overlayDisplayChanged();
   void workflowChanged(ZtoryWorkflow workflow);
   void modelReset();                          // tutto cambiato
   void shotAdded(int shotIdx);

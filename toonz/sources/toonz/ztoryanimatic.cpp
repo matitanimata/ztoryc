@@ -49,6 +49,7 @@
 #include <QLabel>
 #include <QWindow>
 #include <QSettings>
+#include <QColorDialog>
 #include <cmath>
 #include <QFileDialog>
 #include <QContextMenuEvent>
@@ -3625,8 +3626,67 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
   toggleLay->addWidget(m_lightEditBtn);
   connect(m_lightEditBtn, &QToolButton::toggled, this, [this](bool on) {
     m_previewLabel->setCursor(on ? Qt::CrossCursor : Qt::ArrowCursor);
+    if (on && m_lightShowBtn && !m_lightShowBtn->isChecked())
+      m_lightShowBtn->setChecked(true);  // arrows must be visible to place them
   });
   m_previewLabel->installEventFilter(this);
+
+  // Colour swatch — same QSettings key as the Board, kept in lockstep.
+  auto lightSwatchStyle = [](const QString &c) {
+    return QString("QToolButton{background:%1;border:1px solid #555;"
+                   "border-radius:4px;margin:6px;}"
+                   "QToolButton:hover{border:1px solid #aaa;}").arg(c);
+  };
+  QString lightColor =
+      QSettings().value("Ztoryc/LightColor", "#FFC34D").toString();
+  m_lightColorBtn = new QToolButton(toggleRow);
+  m_lightColorBtn->setFixedSize(28, 28);
+  m_lightColorBtn->setToolTip(tr("Light colour (temperature)"));
+  m_lightColorBtn->setStyleSheet(lightSwatchStyle(lightColor));
+  toggleLay->addWidget(m_lightColorBtn);
+  connect(m_lightColorBtn, &QToolButton::clicked, this, [this, lightSwatchStyle]() {
+    QColor cur(QSettings().value("Ztoryc/LightColor", "#FFC34D").toString());
+    QColor c = QColorDialog::getColor(cur, this, tr("Light colour"));
+    if (!c.isValid()) return;
+    QSettings().setValue("Ztoryc/LightColor", c.name());
+    m_lightColorBtn->setStyleSheet(lightSwatchStyle(c.name()));
+    emit ZtoryModel::instance()->overlayDisplayChanged();
+  });
+
+  // Visibility toggle — mirrors the Board's "L" button bidirectionally.
+  m_lightShowBtn = new QToolButton(toggleRow);
+  m_lightShowBtn->setText("L");
+  m_lightShowBtn->setFixedSize(28, 28);
+  m_lightShowBtn->setCheckable(true);
+  m_lightShowBtn->setChecked(
+      QSettings().value("Ztoryc/ShowLightDirection", true).toBool());
+  m_lightShowBtn->setToolTip(tr("Show light-direction arrows"));
+  m_lightShowBtn->setStyleSheet(
+      "QToolButton{background:transparent;color:#ccc;border:1px solid #555;border-radius:4px;font-size:12px;}"
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#5c4a1e;color:#ffd27d;border-color:#5c4a1e;}");
+  toggleLay->addWidget(m_lightShowBtn);
+  connect(m_lightShowBtn, &QToolButton::toggled, this, [this](bool on) {
+    QSettings().setValue("Ztoryc/ShowLightDirection", on);
+    if (!on && m_lightEditBtn->isChecked()) m_lightEditBtn->setChecked(false);
+    refreshPreview();
+    emit ZtoryModel::instance()->overlayDisplayChanged();
+  });
+
+  // Mirror changes made from the Board (or another Shot Board instance).
+  connect(ZtoryModel::instance(), &ZtoryModel::overlayDisplayChanged, this,
+          [this, lightSwatchStyle]() {
+    QString color = QSettings().value("Ztoryc/LightColor", "#FFC34D").toString();
+    m_lightColorBtn->setStyleSheet(lightSwatchStyle(color));
+    bool show = QSettings().value("Ztoryc/ShowLightDirection", true).toBool();
+    if (show != m_lightShowBtn->isChecked()) {
+      m_lightShowBtn->blockSignals(true);
+      m_lightShowBtn->setChecked(show);
+      m_lightShowBtn->blockSignals(false);
+      if (!show && m_lightEditBtn->isChecked()) m_lightEditBtn->setChecked(false);
+    }
+    if (m_shotIdx >= 0) refreshPreview();
+  });
 
   toggleLay->addWidget(autoMatchBtn);
   lay->addWidget(toggleRow);
@@ -3967,12 +4027,18 @@ void ZtoryPanelNavigator::refreshPreview() {
       }
     }
     if (cl) {
-      int frame = shot.panels[m_panelIdx].startFrame;
-      px = IconGenerator::renderXsheetFrame(
-          cl->getXsheet(), frame, TDimension(physSize.width(), physSize.height()));
+      // Same render path as the Board thumbnails: backed-out camera-move
+      // framing + rectangles/letters overlay, then the light gizmo.
+      int moveOrdinal = 0;
+      for (int k = 0; k < m_panelIdx && k < (int)shot.panels.size(); k++)
+        if (shot.panels[k].cameraMoveType != PanelData::CamNone) moveOrdinal++;
+      bool showCamLabel =
+          QSettings().value("Ztoryc/ShowCamMoveType", true).toBool();
+      px = ztoryRenderPanelPreview(cl->getXsheet(), shot.panels[m_panelIdx],
+                                   physSize.width(), physSize.height(),
+                                   moveOrdinal, showCamLabel);
       // Tag with DPR so Qt maps the physical pixels back to logical coordinates.
       px.setDevicePixelRatio(dpr);
-      // Light-direction gizmo overlay (same toggle as the Board thumbnails).
       if (QSettings().value("Ztoryc/ShowLightDirection", true).toBool())
         ztoryApplyLightOverlay(px, shot.panels[m_panelIdx]);
     }
