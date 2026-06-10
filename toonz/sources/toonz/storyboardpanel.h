@@ -59,7 +59,22 @@ class PanelWidget final : public QFrame {
   QLabel* makeFieldLabel(const QString &text);
   QString framesToTimecode(int frames) const;
   void    updateBorderStyle();
+  // ── Light-direction gizmo editing (task 40 FASE 3) ────────────────────────
+  // Edit mode + colour are shared by all panels and driven by the Board
+  // toolbar; the drag-in-progress points are per-widget (normalized 0-1
+  // over the preview area).
+  static bool    s_lightEditMode;
+  static QString s_lightColor;
+  bool    m_lightDragging = false;
+  QPointF m_lightDragTail, m_lightDragTip;
+  double  m_lightDragDepth = 0.0;   // mouse wheel during drag: -1..+1
+  // Beam opening angle (degrees, Shift+wheel). Kept across drags so a chosen
+  // softness applies to subsequent arrows too.
+  double  m_lightDragSpread = 35.0;
+  QPointF normalizedPreviewPos(const QPoint &pos) const;
 public:
+  static void setLightEditMode(bool on)        { s_lightEditMode = on; }
+  static void setLightColor(const QString &c)  { s_lightColor = c; }
   explicit PanelWidget(QWidget *parent = nullptr);
   void setShotIndex(int si);
   void setPanelIndex(int pi, int total);
@@ -101,8 +116,17 @@ signals:
   // Emitted from resizeEvent when the stored pixmap is too small to fill the
   // panel at native (HiDPI) resolution — StoryboardPanel re-renders on receipt.
   void previewRerenderNeeded(int shotIdx, int panelIdx);
+  // Light-direction gizmo placed by drag (coords normalized 0-1, depth from
+  // mouse wheel) or removal requested by right-click in light edit mode.
+  void lightPlaced(int shotIndex, int panelIndex,
+                   double tailX, double tailY, double tipX, double tipY,
+                   double depth, double spread);
+  void lightRemoveRequested(int shotIndex, int panelIndex);
 protected:
   void mousePressEvent(QMouseEvent *e) override;
+  void mouseMoveEvent(QMouseEvent *e) override;
+  void mouseReleaseEvent(QMouseEvent *e) override;
+  void wheelEvent(QWheelEvent *e) override;
   void mouseDoubleClickEvent(QMouseEvent *e) override;
   void resizeEvent(QResizeEvent *e) override;
   void dragEnterEvent(QDragEnterEvent *e) override;
@@ -132,6 +156,11 @@ QToolButton *m_numberingBtn;   // ⚙ Numbering config button
   QToolButton *m_exportAnimaticButton;
   QToolButton *m_camLabelButton;   // toggle camera-move type labels on thumbnails
   bool         m_showCamMoveType = true;  // persisted in QSettings
+  // Light-direction gizmo (task 40 FASE 3)
+  QToolButton *m_lightEditButton  = nullptr; // checkable: drag-to-place mode
+  QToolButton *m_lightShowButton  = nullptr; // checkable: visibility (shortcut L)
+  QToolButton *m_lightColorButton = nullptr; // colour swatch → QColorDialog
+  bool         m_showLights = true; // persisted in QSettings
   QSpinBox    *m_columnsPerRowSpin;
   QComboBox   *m_numberingCombo;
   QStackedWidget   *m_stack;
@@ -240,6 +269,10 @@ protected:
   void onShotInserted(int col);   // called when razor/external op inserts a shot at col
   void onShotRemovedAt(int col);  // called when merge/external op deletes a shot at col
   void onMatchDuration(int shotIdx);  // resize timeline column to sub-scene actual duration
+  void onLightPlaced(int shotIdx, int panelIdx,
+                     double tailX, double tailY, double tipX, double tipY,
+                     double depth, double spread);
+  void onLightRemoved(int shotIdx, int panelIdx);
   void commitDurationUndo();          // fires after coalescing timer expires
   void commitTextUndo();              // fires when a text field loses focus
   void onBackToBoard();

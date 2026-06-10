@@ -76,6 +76,21 @@ struct PanelData {
   // Which frame to use for the thumbnail render (startFrame or end frame)
   int    camRenderFrame = 0;  // absolute frame in sub-scene
 
+  // ── Light-direction gizmo (task 40 FASE 3) ───────────────────────────────
+  // User-placed 3D conical arrow: tail = light source (sun glyph), tip =
+  // where the light goes.  Coordinates are normalized 0-1 over the thumbnail
+  // (origin top-left) so the gizmo survives any render size (Board, PDF).
+  bool    hasLight   = false;
+  double  lightTailX = 0.25, lightTailY = 0.25;
+  double  lightTipX  = 0.65, lightTipY  = 0.65;
+  // Z component of the direction: -1 = into the background, +1 = toward the
+  // camera, 0 = parallel to the picture plane. Drawn with foreshortening.
+  double  lightDepth = 0.0;
+  // Beam opening angle in degrees (full angle): narrow = hard spotlight,
+  // wide = soft/ambient light. Storyboard conic-arrow convention.
+  double  lightSpread = 35.0;
+  QString lightColor = "#FFC34D";  // colour = light temperature
+
   PanelData() : startFrame(0), duration(24) {}
 };
 

@@ -81,6 +81,8 @@
 #include "toutputproperties.h"
 #include "toonz/sceneproperties.h"
 #include "menubarcommandids.h"
+#include <QColorDialog>
+#include <cmath>
 
 // Persisted number of columns in the Board grid (the spin in the toolbar).
 // Stored in user env so the layout is remembered across sessions.
@@ -100,6 +102,314 @@ void materializeCells(TXshChildLevel *cl, int duration, bool fillToEnd = false);
 void trimChildXsheetTo(TXshChildLevel *cl, int keepFrames);
 void mergeChildXsheetContent(TXshChildLevel *dstCl, TXshChildLevel *srcCl,
                               int dstOffset, int srcDuration);
+
+// PanelWidget light edit-mode shared state (set from the Board toolbar).
+bool    PanelWidget::s_lightEditMode = false;
+QString PanelWidget::s_lightColor    = "#FFC34D";
+
+// ── Light-direction gizmo (task 40 FASE 3) ──────────────────────────────────
+// Storyboard conic-arrow notation for light: a translucent beam wedge spreads
+// from the source toward the subject (opening angle = soft/hard light) with a
+// solid 3D arrow along its axis (cylindrical shaft + true cone head, whose
+// silhouette is tangent to the base ellipse).  `depth` is the Z component of
+// the direction: the axis foreshortens with cos(depth·90°), so ±1 collapses to
+// a true head-on view drawn with the standard out-of-page/into-page notation
+// (⊙ toward camera, ⊗ into the background) inside a radial light halo.
+// Shading is AXIAL — as if the light itself fell along the arrow: bright at
+// the source end, falling off toward the tip.  `editing` adds the sun glyph
+// and the angle/depth/spread readout, shown only during the placement drag.
+// Coordinates are normalized 0-1 over (W, H); colour = light temperature;
+// `spreadDeg` = full beam opening angle in degrees.
+static void ztoryDrawLightGizmo(QPainter &p, double W, double H,
+                                double tailX, double tailY,
+                                double tipX, double tipY, double depth,
+                                double spreadDeg, const QColor &color,
+                                bool editing = false) {
+  const double kPi = 3.14159265358979323846;  // M_PI needs _USE_MATH_DEFINES on MSVC
+  QPointF P0(tailX * W, tailY * H), P1(tipX * W, tipY * H);
+  QPointF d  = P1 - P0;
+  double  len = std::hypot(d.x(), d.y());
+  double  ref = qMin(W, H);
+  if (len < ref * 0.06 || ref < 24) return;  // degenerate drag — nothing to draw
+
+  depth     = qBound(-1.0, depth, 1.0);
+  spreadDeg = qBound(12.0, spreadDeg, 90.0);
+  double angleDeg = std::atan2(d.y(), d.x()) * 180.0 / kPi;
+  double sunR     = qBound(5.0, ref * 0.045, 18.0);
+  // True perspective foreshortening: at depth ±1 the axis collapses entirely
+  // and the gizmo is seen head-on.
+  double cosT   = std::cos(depth * kPi / 2.0);
+  double lenEff = len * cosT;
+  // Perpendicular circles project with roundness sin(tilt): straight lines
+  // in pure side view (both the cone base and the tail cap read as flat
+  // chords), opening into full circles head-on.
+  double k      = std::fabs(std::sin(depth * kPi / 2.0));
+  double fHead  = qMax(0.45, 1.0 + 0.55 * depth);
+  double fTail  = qMax(0.45, 1.0 - 0.35 * depth);
+  double halfSpread = spreadDeg * 0.5 * kPi / 180.0;
+
+  p.save();
+  p.setRenderHint(QPainter::Antialiasing, true);
+
+  QPen outline(color.darker(220), 1.0);
+
+  // ── Head-on view (light pointing straight at the camera or the background):
+  // standard vector notation — circle with a dot (toward viewer) or a cross
+  // (away from viewer) inside a radial halo of light.
+  if (lenEff < ref * 0.05 || cosT < 0.18) {
+    bool toCamera = depth > 0;
+    double haloR = qBound(ref * 0.10, len * 0.45, ref * 0.40);
+    double symR  = haloR * 0.45;
+    QRadialGradient halo(P0, haloR);
+    QColor hc0 = color; hc0.setAlpha(120);
+    QColor hc1 = color; hc1.setAlpha(0);
+    halo.setColorAt(0.0, hc0);
+    halo.setColorAt(1.0, hc1);
+    p.setPen(Qt::NoPen);
+    p.setBrush(halo);
+    p.drawEllipse(P0, haloR, haloR);
+    // Legibility halo ring behind the symbol.
+    p.setPen(QPen(QColor(255, 255, 255, 170), 3.0));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(P0, symR, symR);
+    QRadialGradient disc(P0, symR, P0 - QPointF(symR * 0.3, symR * 0.3));
+    disc.setColorAt(0.0, color.lighter(toCamera ? 175 : 150));
+    disc.setColorAt(1.0, color);
+    p.setPen(outline);
+    p.setBrush(disc);
+    p.drawEllipse(P0, symR, symR);
+    p.setPen(QPen(color.darker(200), qMax(1.5, symR * 0.18),
+                  Qt::SolidLine, Qt::RoundCap));
+    if (toCamera) {
+      // ⊙ — the cone apex points at the viewer.
+      p.setBrush(color.darker(200));
+      p.drawEllipse(P0, symR * 0.18, symR * 0.18);
+    } else {
+      // ⊗ — the light dives into the background.
+      double c = symR * 0.55;
+      p.drawLine(P0 + QPointF(-c, -c), P0 + QPointF(c, c));
+      p.drawLine(P0 + QPointF(-c, c), P0 + QPointF(c, -c));
+    }
+    p.restore();
+    if (editing) {
+      // Readout: direction is head-on, so only depth target + spread matter.
+      QFont fnt("Arial", 0);
+      fnt.setPixelSize(qMax(7, qMin(10, (int)(W / 28))));
+      fnt.setBold(true);
+      p.setFont(fnt);
+      QString txt = (toCamera ? QChar(0x2197) : QChar(0x2198)) +
+                    QString(" 100%  %1 %2%3")
+                        .arg(QChar(0x2220)).arg(qRound(spreadDeg)).arg(QChar(0x00B0));
+      QPointF tp = P0 + QPointF(-p.fontMetrics().horizontalAdvance(txt) / 2.0,
+                                -haloR - p.fontMetrics().descent() - 2);
+      p.setPen(QColor(255, 255, 255));
+      for (int ox = -1; ox <= 1; ox++)
+        for (int oy = -1; oy <= 1; oy++)
+          if (ox || oy) p.drawText(tp + QPointF(ox, oy), txt);
+      p.setPen(color.darker(200));
+      p.drawText(tp, txt);
+    }
+    return;
+  }
+
+  p.translate(P0);
+  p.rotate(angleDeg);
+  // Local frame: x along the arrow (0 = tail/source, lenEff = tip), y = side.
+
+  double headLen = qBound(8.0, lenEff * 0.38, ref * 0.30);
+  double headR   = headLen * 0.42 * fHead;
+  double shaftRb = qMax(1.5, headLen * 0.42 * 0.42);  // base shaft radius
+  double shaftRt = qMax(1.0, shaftRb * fTail);        // at the tail
+  double shaftRh = qMax(1.0, shaftRb * fHead);        // at the cone base
+
+  double sx = editing ? sunR * 1.6 : 0.0;  // leave room for the sun while dragging
+  double bx = lenEff - headLen;            // cone base
+  if (bx <= sx) bx = sx + 1;
+  double tipX2 = lenEff;
+
+  // ── Translucent beam wedge: the illuminated area.  Opening angle = spread
+  // (narrow = hard spotlight, wide = soft light); fades out with distance.
+  // Drag feedback only — the baked arrow stays unobtrusive on the artwork.
+  if (editing) {
+    double beamLen = lenEff * 1.15;
+    double ey = qMin(beamLen * std::tan(halfSpread) * fHead, ref * 0.45);
+    double ex = qMax(1.0, ey * k);
+    QPainterPath beam;
+    beam.moveTo(0, 0);
+    beam.lineTo(beamLen, -ey);
+    beam.arcTo(QRectF(beamLen - ex, -ey, 2 * ex, 2 * ey), 90, -180);
+    beam.closeSubpath();
+    QLinearGradient bg(0, 0, beamLen, 0);
+    QColor b0 = color; b0.setAlpha(105);
+    QColor b1 = color; b1.setAlpha(0);
+    bg.setColorAt(0.0, b0);
+    bg.setColorAt(1.0, b1);
+    p.setPen(Qt::NoPen);
+    p.setBrush(bg);
+    p.drawPath(beam);
+  }
+
+  // Tapered cylinder silhouette (fTail → fHead).  The end facing away from
+  // the viewer is a straight chord (occluded or capped), the end facing the
+  // viewer bulges with the far arc of its rim ellipse so the cylinder stays
+  // round in perspective.
+  double rtk = shaftRt * k, rhk = qMax(0.5, shaftRh * k);
+  QPainterPath shaft;
+  if (depth > 0.02) {
+    // Toward the camera: the tail rim is the visible curved end.
+    shaft.moveTo(bx, -shaftRh);
+    shaft.lineTo(sx, -shaftRt);
+    shaft.arcTo(QRectF(sx - rtk, -shaftRt, 2 * rtk, 2 * shaftRt), 90, 180);
+    shaft.lineTo(bx, shaftRh);
+    shaft.closeSubpath();
+  } else {
+    // Away from the camera (or side view): the head-end rim bulges toward
+    // the tip; the tail edge is covered by the lit end-cap ellipse.
+    shaft.moveTo(sx, -shaftRt);
+    shaft.lineTo(bx, -shaftRh);
+    shaft.arcTo(QRectF(bx - rhk, -shaftRh, 2 * rhk, 2 * shaftRh), 90, -180);
+    shaft.lineTo(sx, shaftRt);
+    shaft.closeSubpath();
+  }
+
+  // True cone silhouette: the sides leave the apex TANGENT to the base
+  // ellipse (not to its vertical extremes), so the head reads as a solid
+  // cone at every tilt instead of "a triangle over a circle".
+  double ea = headR * k, eb = headR;       // base ellipse semi-axes
+  double u  = tipX2 - bx;                  // apex distance from base center
+  // Which side faces the viewer decides what is occluded: tilted toward the
+  // camera (depth > 0) you look at the apex side — the base disc and the
+  // shaft tail cap are hidden behind the solid; tilted away you see the base.
+  bool frontView = depth > 0.02;
+  QPainterPath cone;
+  bool hasCone = (u > ea * 1.05);
+  if (hasCone) {
+    double ct = ea / u;                    // tangency: cosθ = a/u
+    double txp = bx + ea * ct;             // touch point x
+    double typ = eb * std::sqrt(qMax(0.0, 1.0 - ct * ct));
+    cone.moveTo(tipX2, 0);
+    cone.lineTo(txp, -typ);
+    // Follow the ellipse between the two tangency points so the filled
+    // lateral surface meets the silhouette with no gap or overshoot.
+    // Qt arc angles are parametric: the touch point (ea·cosθ, ±eb·sinθ) is at
+    // parametric angle θ = acos(ct), not at its geometric polar angle.
+    double a0 = std::acos(qBound(-1.0, ct, 1.0)) * 180.0 / kPi;
+    QRectF er(bx - ea, -eb, 2 * ea, 2 * eb);
+    if (frontView)
+      // Apex side: silhouette closes along the FAR arc of the base ellipse.
+      cone.arcTo(er, a0, 360.0 - 2.0 * a0);
+    else
+      // Base side: lateral surface spans only the near arc (the lit base
+      // disc, drawn separately, covers the rest).
+      cone.arcTo(er, a0, -2.0 * a0);
+    cone.closeSubpath();
+  }
+
+  // Legibility halo behind the solid arrow (the beam stays untouched).
+  QPen halo(QColor(255, 255, 255, 170), 3.0);
+  p.setPen(halo);
+  p.setBrush(Qt::NoBrush);
+  p.drawPath(shaft);
+  if (hasCone) p.drawPath(cone);
+  if (editing) p.drawEllipse(QPointF(0, 0), sunR, sunR);
+
+  // Axial shading — lit at the source end, darker toward the tip.
+  QLinearGradient shaftG(sx, 0, bx, 0);
+  shaftG.setColorAt(0.0, color.lighter(155));
+  shaftG.setColorAt(1.0, color);
+  QLinearGradient coneG(bx, 0, tipX2, 0);
+  coneG.setColorAt(0.0, color);
+  coneG.setColorAt(1.0, color.darker(170));
+  p.setPen(outline);
+
+  // Painter's order follows the viewing side: toward the camera the cone is
+  // the nearest solid and covers the shaft junction; away from it the shaft
+  // (and its lit tail cap) sit in front of the cone.
+  if (frontView) {
+    p.setBrush(shaftG);
+    p.drawPath(shaft);
+    if (hasCone) {
+      p.setBrush(coneG);
+      p.drawPath(cone);
+    } else {
+      // Apex projects inside the base — nearly head-on: the lateral surface
+      // fills the whole silhouette ellipse, apex marked by a dot.
+      QLinearGradient flatG(bx - ea, 0, bx + ea, 0);
+      flatG.setColorAt(0.0, color);
+      flatG.setColorAt(1.0, color.darker(150));
+      p.setBrush(flatG);
+      p.drawEllipse(QPointF(bx, 0), ea, eb);
+      p.setBrush(color.darker(200));
+      p.drawEllipse(QPointF(tipX2, 0), eb * 0.15, eb * 0.15);
+    }
+  } else {
+    // Lit base disc first (it faces the source), lateral surface over its
+    // near arc, then the shaft on top, closed by the lit tail cap.
+    p.setBrush(color.lighter(135));
+    p.drawEllipse(QPointF(bx, 0), ea, eb);
+    if (hasCone) {
+      p.setBrush(coneG);
+      p.drawPath(cone);
+    }
+    p.setBrush(shaftG);
+    p.drawPath(shaft);
+    p.setBrush(color.lighter(165));
+    p.drawEllipse(QPointF(sx, 0), rtk, shaftRt);
+  }
+
+  // Sun glyph at the source — placement feedback only, not baked.
+  if (editing) {
+    QRadialGradient sun(QPointF(0, 0), sunR, QPointF(-sunR * 0.3, -sunR * 0.3));
+    sun.setColorAt(0.0, color.lighter(175));
+    sun.setColorAt(1.0, color);
+    p.setBrush(sun);
+    p.setPen(outline);
+    p.drawEllipse(QPointF(0, 0), sunR, sunR);
+    p.setPen(QPen(color.darker(140), qMax(1.0, sunR * 0.16)));
+    for (int i = 0; i < 8; i++) {
+      double a  = i * kPi / 4.0;
+      QPointF u2(std::cos(a), std::sin(a));
+      p.drawLine(u2 * sunR * 1.25, u2 * sunR * 1.75);
+    }
+  }
+  p.restore();
+
+  // Angle + depth + spread readout next to the source — drag feedback only.
+  if (editing) {
+    int deg = qRound(std::fmod(360.0 - angleDeg + 360.0, 360.0));
+    QFont fnt("Arial", 0);
+    fnt.setPixelSize(qMax(7, qMin(10, (int)(W / 28))));
+    fnt.setBold(true);
+    p.setFont(fnt);
+    QString txt = QString::number(deg) + QChar(0x00B0);
+    if (std::fabs(depth) > 0.01)
+      txt += QString(" %1%2%")
+                 .arg(depth > 0 ? QChar(0x2197) : QChar(0x2198))  // ↗ camera ↘ back
+                 .arg(qRound(std::fabs(depth) * 100));
+    txt += QString("  %1%2%3")
+               .arg(QChar(0x2220)).arg(qRound(spreadDeg)).arg(QChar(0x00B0));
+    QPointF tp = P0 - QPointF(d.x(), d.y()) * ((sunR * 2.2) / len);
+    tp += QPointF(-p.fontMetrics().horizontalAdvance(txt) / 2.0,
+                  p.fontMetrics().ascent() / 2.0);
+    p.setPen(QColor(255, 255, 255));
+    for (int ox = -1; ox <= 1; ox++)
+      for (int oy = -1; oy <= 1; oy++)
+        if (ox || oy) p.drawText(tp + QPointF(ox, oy), txt);
+    p.setPen(color.darker(200));
+    p.drawText(tp, txt);
+  }
+}
+
+// Bakes the light gizmo onto a thumbnail pixmap (Board preview / PDF cell).
+static void applyLightOverlay(QPixmap &px, const PanelData &pd) {
+  if (!pd.hasLight || px.isNull()) return;
+  QPainter p(&px);
+  ztoryDrawLightGizmo(p, px.width(), px.height(),
+                      pd.lightTailX, pd.lightTailY,
+                      pd.lightTipX, pd.lightTipY, pd.lightDepth,
+                      pd.lightSpread, QColor(pd.lightColor));
+  p.end();
+}
 
 PanelWidget::PanelWidget(QWidget *parent)
     : QFrame(parent)
@@ -326,6 +636,17 @@ void PanelWidget::rescalePreview() {
     QPixmap scaled = m_previewPixmap.scaled(
         physTarget, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     scaled.setDevicePixelRatio(dpr);
+    // Live rubber-band while dragging the light-direction arrow: draw the
+    // in-progress gizmo over the scaled copy (the committed one is baked into
+    // m_previewPixmap by updatePreview, so this never accumulates).
+    if (m_lightDragging) {
+      QPainter lp(&scaled);
+      ztoryDrawLightGizmo(lp, scaled.width() / dpr, scaled.height() / dpr,
+                          m_lightDragTail.x(), m_lightDragTail.y(),
+                          m_lightDragTip.x(), m_lightDragTip.y(),
+                          m_lightDragDepth, m_lightDragSpread,
+                          QColor(s_lightColor), /*editing=*/true);
+    }
     // Clear placeholder text/style before setting the real thumbnail.
     m_previewLabel->setText(QString());
     m_previewLabel->setStyleSheet("QLabel{background:#f0f0eb;border:none;color:#bbb;}");
@@ -441,6 +762,12 @@ QString PanelWidget::action()   const { return m_actionField->toPlainText(); }
 QString PanelWidget::notes()    const { return m_notesField->toPlainText(); }
 
 void PanelWidget::mouseDoubleClickEvent(QMouseEvent *e) {
+  // In light edit mode a quick re-drag can register as a double-click — it
+  // must not open the sub-scene under the user's pointer.
+  if (s_lightEditMode && m_previewLabel->geometry().contains(e->pos())) {
+    e->accept();
+    return;
+  }
   // Double-click on preview area or header (text fields consume their own
   // double-clicks and don't propagate here) — enter the shot's sub-scene.
   // Accept the event so it does NOT bubble up to StoryboardPanel::mouseDoubleClickEvent,
@@ -471,7 +798,33 @@ void PanelWidget::onDurationSpinChanged(int value) {
   emit durationChanged(m_shotIndex, m_panelIndex, value);
 }
 
+// Maps a widget-local position to normalized 0-1 coordinates over the preview
+// area (clamped). The preview pixmap fills the label (both are 16:9).
+QPointF PanelWidget::normalizedPreviewPos(const QPoint &pos) const {
+  QRect r = m_previewLabel->geometry();
+  if (r.width() <= 0 || r.height() <= 0) return QPointF(0.5, 0.5);
+  return QPointF(qBound(0.0, double(pos.x() - r.x()) / r.width(),  1.0),
+                 qBound(0.0, double(pos.y() - r.y()) / r.height(), 1.0));
+}
+
 void PanelWidget::mousePressEvent(QMouseEvent *e) {
+  // Light edit mode: clicks on the preview place/remove the light gizmo
+  // instead of starting the shot drag-reorder.
+  if (s_lightEditMode && m_previewLabel->geometry().contains(e->pos())) {
+    if (e->button() == Qt::LeftButton) {
+      emit clicked(m_shotIndex, m_panelIndex, e->modifiers());
+      m_lightDragging = true;
+      m_lightDragDepth = 0.0;
+      m_lightDragTail = m_lightDragTip = normalizedPreviewPos(e->pos());
+      e->accept();
+      return;
+    }
+    if (e->button() == Qt::RightButton) {
+      emit lightRemoveRequested(m_shotIndex, m_panelIndex);
+      e->accept();
+      return;
+    }
+  }
   if (e->button() == Qt::LeftButton) {
     emit clicked(m_shotIndex, m_panelIndex, e->modifiers());
     // Avvia drag solo senza modifier
@@ -490,6 +843,54 @@ void PanelWidget::mousePressEvent(QMouseEvent *e) {
     }
   }
   QFrame::mousePressEvent(e);
+}
+
+void PanelWidget::mouseMoveEvent(QMouseEvent *e) {
+  if (m_lightDragging) {
+    m_lightDragTip = normalizedPreviewPos(e->pos());
+    rescalePreview();   // cheap: scale + paint, no scene re-render
+    e->accept();
+    return;
+  }
+  QFrame::mouseMoveEvent(e);
+}
+
+void PanelWidget::mouseReleaseEvent(QMouseEvent *e) {
+  if (m_lightDragging && e->button() == Qt::LeftButton) {
+    m_lightDragging = false;
+    QPointF d = m_lightDragTip - m_lightDragTail;
+    // Commit only a real drag — a bare click would create a degenerate arrow.
+    double pxLen = std::hypot(d.x() * m_previewLabel->width(),
+                              d.y() * m_previewLabel->height());
+    if (pxLen >= 12.0)
+      emit lightPlaced(m_shotIndex, m_panelIndex,
+                       m_lightDragTail.x(), m_lightDragTail.y(),
+                       m_lightDragTip.x(), m_lightDragTip.y(),
+                       m_lightDragDepth, m_lightDragSpread);
+    else
+      rescalePreview();  // discard the rubber-band
+    e->accept();
+    return;
+  }
+  QFrame::mouseReleaseEvent(e);
+}
+
+void PanelWidget::wheelEvent(QWheelEvent *e) {
+  // While dragging the light arrow the wheel tilts it in Z — toward the
+  // camera (wheel up) or into the background (wheel down). With Shift it
+  // adjusts the beam opening angle instead (narrow = hard, wide = soft).
+  if (m_lightDragging) {
+    if (e->modifiers() & Qt::ShiftModifier)
+      m_lightDragSpread = qBound(12.0,
+          m_lightDragSpread + (e->angleDelta().y() > 0 ? 3.0 : -3.0), 90.0);
+    else
+      m_lightDragDepth = qBound(-1.0,
+          m_lightDragDepth + (e->angleDelta().y() > 0 ? 0.1 : -0.1), 1.0);
+    rescalePreview();
+    e->accept();
+    return;
+  }
+  QFrame::wheelEvent(e);
 }
 
 void PanelWidget::resizeEvent(QResizeEvent *e) {
@@ -688,6 +1089,43 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
       "QToolButton:hover{background:#555;}"
       "QToolButton:checked{background:#1e5c2e;color:#7defa0;}");
 
+  // ── Light-direction gizmo controls (task 40 FASE 3) ──
+  const QString lightBtnStyle =
+      "QToolButton{background:transparent;color:#ccc;border:none;border-radius:4px;font-size:12px;}"
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#5c4a1e;color:#ffd27d;}";
+  m_lightEditButton = new QToolButton();
+  m_lightEditButton->setText(QString::fromUtf8("☀"));  // ☀
+  m_lightEditButton->setCheckable(true);
+  m_lightEditButton->setFixedSize(28, 28);
+  m_lightEditButton->setToolTip(
+      tr("Place light-direction arrow: drag on a panel, mouse wheel tilts it "
+         "toward camera/background, Shift+wheel sets the beam spread "
+         "(right-click removes)"));
+  m_lightEditButton->setStyleSheet(lightBtnStyle);
+
+  m_showLights = QSettings().value("Ztoryc/ShowLightDirection", true).toBool();
+  m_lightShowButton = new QToolButton();
+  m_lightShowButton->setText("L");
+  m_lightShowButton->setCheckable(true);
+  m_lightShowButton->setChecked(m_showLights);
+  m_lightShowButton->setFixedSize(28, 28);
+  m_lightShowButton->setToolTip(tr("Show light-direction arrows (L)"));
+  m_lightShowButton->setStyleSheet(lightBtnStyle);
+
+  QString lightColor =
+      QSettings().value("Ztoryc/LightColor", "#FFC34D").toString();
+  PanelWidget::setLightColor(lightColor);
+  m_lightColorButton = new QToolButton();
+  m_lightColorButton->setFixedSize(28, 28);
+  m_lightColorButton->setToolTip(tr("Light colour (temperature)"));
+  auto lightSwatchStyle = [](const QString &c) {
+    return QString("QToolButton{background:%1;border:1px solid #555;"
+                   "border-radius:4px;margin:6px;}"
+                   "QToolButton:hover{border:1px solid #aaa;}").arg(c);
+  };
+  m_lightColorButton->setStyleSheet(lightSwatchStyle(lightColor));
+
   tb->addWidget(m_addShotButton);
   tb->addWidget(m_deleteButton);
   tb->addWidget(m_mergeButton);
@@ -701,6 +1139,10 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   tb->addWidget(colLabel);
   tb->addWidget(m_columnsPerRowSpin);
   tb->addStretch();
+  tb->addWidget(m_lightEditButton);
+  tb->addWidget(m_lightColorButton);
+  tb->addWidget(m_lightShowButton);
+  tb->addSpacing(8);
   tb->addWidget(m_camLabelButton);
   tb->addSpacing(8);
   tb->addWidget(m_exportPdfButton);
@@ -824,6 +1266,35 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
       for (PanelWidget *pw : shot.panels)
         if (pw) pw->setPreviewPixmap(QPixmap());
     updateVisiblePreviews();
+  });
+  connect(m_lightEditButton, &QToolButton::toggled, this, [this](bool on) {
+    PanelWidget::setLightEditMode(on);
+    // Arrows must be visible while placing them.
+    if (on && !m_lightShowButton->isChecked()) m_lightShowButton->setChecked(true);
+    for (auto &shot : m_shots)
+      for (PanelWidget *pw : shot.panels)
+        if (pw) pw->setCursor(on ? Qt::CrossCursor : Qt::ArrowCursor);
+  });
+  connect(m_lightShowButton, &QToolButton::toggled, this, [this](bool on) {
+    m_showLights = on;
+    QSettings().setValue("Ztoryc/ShowLightDirection", on);
+    if (!on && m_lightEditButton->isChecked()) m_lightEditButton->setChecked(false);
+    // Re-bake thumbnails with/without the light gizmo.
+    for (auto &shot : m_shots)
+      for (PanelWidget *pw : shot.panels)
+        if (pw) pw->setPreviewPixmap(QPixmap());
+    updateVisiblePreviews();
+  });
+  connect(m_lightColorButton, &QToolButton::clicked, this, [this]() {
+    QColor cur(QSettings().value("Ztoryc/LightColor", "#FFC34D").toString());
+    QColor c = QColorDialog::getColor(cur, this, tr("Light colour"));
+    if (!c.isValid()) return;
+    QSettings().setValue("Ztoryc/LightColor", c.name());
+    PanelWidget::setLightColor(c.name());
+    m_lightColorButton->setStyleSheet(
+        QString("QToolButton{background:%1;border:1px solid #555;"
+                "border-radius:4px;margin:6px;}"
+                "QToolButton:hover{border:1px solid #aaa;}").arg(c.name()));
   });
   connect(m_columnsPerRowSpin, QOverload<int>::of(&QSpinBox::valueChanged),
           this, &StoryboardPanel::onColumnsChanged);
@@ -956,6 +1427,9 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     {m_exportPdfButton,      "Export the Board as PDF: thumbnails, dialog, and per-panel/shot durations"},
     {m_exportShotsButton,    "Export each shot as a standalone scene"},
     {m_exportAnimaticButton, "Export the full animatic as a video with audio"},
+    {m_lightEditButton,      "Light direction: drag to place the conic arrow (tail = source); wheel tilts it toward camera/background, Shift+wheel sets the beam spread (hard/soft light). Right-click removes it"},
+    {m_lightShowButton,      "Show or hide the light-direction arrows on thumbnails and PDF (shortcut L)"},
+    {m_lightColorButton,     "Pick the light colour -- use warm/cool tones to note the light temperature"},
   }) {
     bh.btn->installEventFilter(this);
     bh.btn->setProperty("ztoryHint", tr(bh.hint));
@@ -1006,6 +1480,13 @@ void StoryboardPanel::connectPanelWidget(PanelWidget *pw) {
   });
   connect(pw, &PanelWidget::clicked, this, &StoryboardPanel::onPanelClicked);
   connect(pw, &PanelWidget::dropReceived, this, &StoryboardPanel::onMoveShot);
+  connect(pw, &PanelWidget::lightPlaced, this, &StoryboardPanel::onLightPlaced);
+  connect(pw, &PanelWidget::lightRemoveRequested, this,
+          &StoryboardPanel::onLightRemoved);
+  // Widgets created while light edit mode is already active (grid rebuilds)
+  // must pick up the placement cursor too.
+  if (m_lightEditButton && m_lightEditButton->isChecked())
+    pw->setCursor(Qt::CrossCursor);
   // Re-render at higher resolution when the panel grows beyond its stored pixmap.
   connect(pw, &PanelWidget::previewRerenderNeeded, this,
           [this](int si, int pi) {
@@ -1402,6 +1883,7 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
     for (int k = 0; k < panelIdx && k < (int)shot.data.panels.size(); k++)
       if (shot.data.panels[k].cameraMoveType != PanelData::CamNone) moveOrdinal++;
     applyCameraOverlay(px, pd, moveOrdinal, m_showCamMoveType);
+    if (m_showLights) applyLightOverlay(px, pd);
     shot.panels[panelIdx]->setPreviewPixmap(px);
   }
 }
@@ -1544,6 +2026,15 @@ void StoryboardPanel::saveZtoryc() {
         xml.writeAttribute("camA0", affToStr(pd.camA0));
         xml.writeAttribute("camA1", affToStr(pd.camA1));
       }
+      if (pd.hasLight) {
+        xml.writeAttribute("lightTail", QString("%1 %2")
+            .arg(pd.lightTailX, 0, 'g', 6).arg(pd.lightTailY, 0, 'g', 6));
+        xml.writeAttribute("lightTip", QString("%1 %2")
+            .arg(pd.lightTipX, 0, 'g', 6).arg(pd.lightTipY, 0, 'g', 6));
+        xml.writeAttribute("lightDepth", QString::number(pd.lightDepth, 'g', 4));
+        xml.writeAttribute("lightSpread", QString::number(pd.lightSpread, 'g', 4));
+        xml.writeAttribute("lightColor", pd.lightColor);
+      }
       xml.writeTextElement("dialog", pd.dialog);
       xml.writeTextElement("action", pd.action);
       xml.writeTextElement("notes",  pd.notes);
@@ -1668,6 +2159,23 @@ void StoryboardPanel::loadZtoryc() {
             // Re-derive type/label/render-frame from the affines (single source
             // of truth) so scenes saved with an older classification self-heal.
             classifyCameraMove(pd);
+          }
+          // Light-direction gizmo
+          if (xml.attributes().hasAttribute("lightTail")) {
+            auto strToPt = [](const QString &s, double &x, double &y) {
+              QStringList t = s.split(' ', Qt::SkipEmptyParts);
+              if (t.size() >= 2) { x = t[0].toDouble(); y = t[1].toDouble(); }
+            };
+            strToPt(xml.attributes().value("lightTail").toString(),
+                    pd.lightTailX, pd.lightTailY);
+            strToPt(xml.attributes().value("lightTip").toString(),
+                    pd.lightTipX, pd.lightTipY);
+            pd.lightDepth = xml.attributes().value("lightDepth").toDouble();
+            if (xml.attributes().hasAttribute("lightSpread"))
+              pd.lightSpread = xml.attributes().value("lightSpread").toDouble();
+            QString lc = xml.attributes().value("lightColor").toString();
+            if (!lc.isEmpty()) pd.lightColor = lc;
+            pd.hasLight = true;
           }
         }
       }
@@ -2714,6 +3222,14 @@ bool StoryboardPanel::eventFilter(QObject *obj, QEvent *e) {
 }
 
 void StoryboardPanel::keyPressEvent(QKeyEvent *e) {
+  // L toggles light-direction arrow visibility (task 40 FASE 3). Text fields
+  // never propagate plain keys here, so typing "l" in notes is unaffected.
+  if (e->key() == Qt::Key_L && e->modifiers() == Qt::NoModifier &&
+      m_lightShowButton) {
+    m_lightShowButton->toggle();
+    e->accept();
+    return;
+  }
   TPanel::keyPressEvent(e);
 }
 
@@ -3430,6 +3946,51 @@ void StoryboardPanel::onEditShot(int shotIdx) {
   CommandManager::instance()->execute("MI_OpenChild");
   // Switch the viewer panel to shot view (ZtoryAnimaticViewerPanel listens).
   ZtoryModel::instance()->activateShotForViewing(col);
+}
+
+// ── Light-direction gizmo placement/removal (task 40 FASE 3) ────────────────
+
+void StoryboardPanel::onLightPlaced(int shotIdx, int panelIdx,
+                                    double tailX, double tailY,
+                                    double tipX, double tipY,
+                                    double depth, double spread) {
+  if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
+  Shot &shot = m_shots[shotIdx];
+  if (panelIdx < 0 || panelIdx >= (int)shot.data.panels.size()) return;
+  auto before = captureSnapshot();
+  PanelData &pd = shot.data.panels[panelIdx];
+  pd.hasLight   = true;
+  pd.lightTailX = tailX;
+  pd.lightTailY = tailY;
+  pd.lightTipX  = tipX;
+  pd.lightTipY  = tipY;
+  pd.lightDepth  = depth;
+  pd.lightSpread = spread;
+  pd.lightColor  = QSettings().value("Ztoryc/LightColor", "#FFC34D").toString();
+  ZtoryModel::instance()->syncShotPanels(shotIdx, shot.data.panels,
+                                         shot.data.shotLabel,
+                                         shot.data.xsheetColumn);
+  saveZtoryc();
+  updatePreview(shotIdx, panelIdx);
+  TUndoManager::manager()->add(new UndoBoardState(
+      this, tr("Light Direction"), std::move(before), captureSnapshot()));
+}
+
+void StoryboardPanel::onLightRemoved(int shotIdx, int panelIdx) {
+  if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
+  Shot &shot = m_shots[shotIdx];
+  if (panelIdx < 0 || panelIdx >= (int)shot.data.panels.size()) return;
+  PanelData &pd = shot.data.panels[panelIdx];
+  if (!pd.hasLight) return;
+  auto before = captureSnapshot();
+  pd.hasLight = false;
+  ZtoryModel::instance()->syncShotPanels(shotIdx, shot.data.panels,
+                                         shot.data.shotLabel,
+                                         shot.data.xsheetColumn);
+  saveZtoryc();
+  updatePreview(shotIdx, panelIdx);
+  TUndoManager::manager()->add(new UndoBoardState(
+      this, tr("Remove Light Direction"), std::move(before), captureSnapshot()));
 }
 
 void StoryboardPanel::onMatchDuration(int shotIdx) {
@@ -4441,6 +5002,7 @@ void StoryboardPanel::onExportPdf() {
               if (sd.panels[k].cameraMoveType != PanelData::CamNone) moveOrdinal++;
             applyCameraOverlay(hq, pdRef, moveOrdinal, m_showCamMoveType, pt2px(6));
           }
+          if (m_showLights) applyLightOverlay(hq, pdRef);
           QPixmap scaled = hq.scaled(cellW - 2, imgH - 2,
               Qt::KeepAspectRatio, Qt::SmoothTransformation);
           int tx = cx + (cellW - scaled.width()) / 2;
