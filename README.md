@@ -98,6 +98,7 @@ Ztoryc adds a Workflow menu to quickly switch between room sets:
 
 ## Roadmap
 
+- **Brush feel** — drawing responsiveness and quality as a top priority: lower stroke latency, a serious adjustable stabilizer, custom brush presets (save/organize/share), and fuller use of the built-in MyPaint brush engine (per-parameter pressure curves, `.myb` import)
 - Kitsu integration for production management
 
 ---
@@ -214,6 +215,7 @@ Ztoryc aggiunge un menu Workflow per cambiare rapidamente set di room:
 
 ## Roadmap
 
+- **Brush feel** — reattività e qualità del disegno come priorità assoluta: meno latenza sul tratto, uno stabilizzatore serio e regolabile, preset pennello personalizzati (salva/organizza/condividi), e pieno sfruttamento del motore MyPaint integrato (curve di pressione per parametro, import `.myb`)
 - Integrazione Kitsu per la gestione della produzione
 
 ---
