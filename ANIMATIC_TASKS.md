@@ -730,17 +730,38 @@ nella sub-scene corretta.
     rientra nell'oggetto undo liberato dopo add() — UB, possibile parente crash
     random (famiglia task 42).
 
-49. 🟠 INVESTIGATE Lag sui primi tratti di disegno (MEDIA-ALTA)
-    — Presente anche SENZA auto-match. Il lag da auto-match è stato ridotto
-    (2026-06-10: guardia no-op in onMatchSubsceneDuration quando la durata già
-    corrisponde), ma i primi tratti laggano ancora. L'utente ricorda che era già
-    stato risolto pre-merge → cercare il fix perso in CHANGELOG_ARCHIVE (merge
-    1.6.1). Candidati: m_panelDetectTimer (detectAndUpdatePanels + invalidazione
-    thumbnail su xsheetChanged in sub-scene), icon generation del nuovo livello.
-38. NEW Room TRADITIONAL (MEDIA)
-21. NEW Volume traccia audio
-24. NEW Startup popup hub
-Kitsu. NEW Integrazione Kitsu (M5)
+✅ [FATTO 2026-06-10] 49. Lag/scatto sul secondo tratto di disegno — RISOLTO
+    (commit e7676d620). Root cause: il detect timer (1s) partiva a ogni
+    xsheetChanged in sub-scene e scattava a metà del tratto successivo
+    (detectAndUpdatePanels + render thumbnail sincroni sul thread UI).
+    Fix: xsheetChanged in sub-scene marca solo m_dirtyShotCol; detect+render
+    solo su frameSwitched / ritorno al Board / showEvent, più guardia
+    mouse-premuto sul timeout del timer.
+✅ [FATTO 2026-06-10] 50. Panel fantasma dopo undo che svuota uno shot —
+    verificato risolto (test utente) dopo i fix task 48 + TUndoManager.
+✅ [GIÀ FATTO — rimosso 2026-06-10] 21. Volume traccia audio — già implementato
+    (volume/mute/solo sulle tracce audio dell'Animatic).
+✅ [GIÀ FATTO — rimosso 2026-06-10] 24. Startup popup hub — già implementato
+    (ZtoryStartup).
+✅ [GIÀ FATTO — rimosso 2026-06-10] Frame handle separato per l'animatic viewer —
+    risolto di fatto col panel Monitor ancorato alla camera main.
+51. 🔴 NEW Brush feel — reattività e qualità del pennello (ALTA — priorità strategica)
+    Obiettivo: feel paragonabile a TVPaint. È la cosa che si giudica nei primi
+    30 secondi di prova ed è il motivo per cui studi boardano in TVPaint pur
+    senza modulo storyboard. Decisione: NON attingere codice da Krita (GPL-3
+    incompatibile con BSD + engine inestricabile) — le idee sì (stabilizer
+    pull-string, curve di pressione, preset UX). Tahoma2D ha già libmypaint
+    (ISC, sotto-sfruttato). Piano in 4 fasi, in ordine:
+    1. AUDIT LATENZA stroke (prossima sessione): strumentare la pipeline
+       tablet event → dab → schermo; cercare coalescing eventi Qt perso,
+       repaint completi invece che incrementali, lavoro estraneo durante il
+       drag (famiglia del fix task 49). I fix valgono come PR upstream.
+    2. STABILIZZATORE serio: peso regolabile stile Krita/CSP (riimplementato).
+    3. PRESET pennelli: salva/organizza/condividi (UX migliore di Tahoma2D).
+    4. MYPAINT: esporre curve di pressione per parametro, import .myb della
+       community. Deformatori e assistant tool: capitolo successivo.
+38. NEW Room TRADITIONAL (BASSA — "vedremo", declassata 2026-06-10)
+Kitsu. NEW Integrazione Kitsu (M5) — unica voce roadmap pubblica nel README
 41. NEW Cache RAM threshold configurabile (BASSA) — ora a 14.3% shipped in `tsystempd.cpp` (il tentativo di alzarlo al 25% è stato revertito perché l'eviction aggressiva crashava il Save All su scene pesanti, raster liberato durante `TRasterCodecLZO::compress`). Rifarlo in modo MIRATO: non toccare l'eviction globale durante i save; semmai rilevamento per classe di macchina (≤8GB→più aggressivo) + opzione utente. ⚠️ Collegato: cache-leak post-render (frame restano in cache, ~17GB su scena pesante; fix upstream `be20f9512` da portare).
 
 ✅ [DECLASSATO 2026-06-11] Crash palette StudioPalette→assign: NON riproducibile su
@@ -750,10 +771,6 @@ Kitsu. NEW Integrazione Kitsu (M5)
     hardening 2026-06-11 (deferred delete dell'undo in esecuzione, tcore/tundo.cpp —
     CANDIDATO UPSTREAM). Riaprire solo in caso di recidiva (CrashHandler a presidio).
 
-50. 🟢 MINOR Panel fantasma dopo undo che svuota uno shot (BASSA) — il Board continua
-    a mostrare i panel (vuoti) dello shot svuotato via undo; si riallinea al successivo
-    enter/exit della sub-scene. È il known issue "detectAndUpdatePanels non gestisce
-    la rimozione panel". File: storyboardpanel.cpp (m_panelDetectTimer).
 
 ⚠️ AGGIORNAMENTO 2026-06-10 (task 42 residuo, storico): nuovo crash riprodotto disegnando —
     `StudioPaletteTreeViewer::loadInCurrentPalette → StudioPaletteCmd::loadIntoCurrentPalette

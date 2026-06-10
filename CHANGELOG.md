@@ -1,3 +1,47 @@
+## [2026-06-10b] — New Shot After Current, fix task 49/50, README, release v0.4.1
+
+### Added
+- **New Shot After Current (Shift+N)** — comando globale MI_ZtoryNewShotAfter:
+  da dentro una sub-scene chiude, crea lo shot subito dopo quello in editing
+  e ci entra direttamente (l'artista resta nello SHOTEDITOR col pennello in
+  mano). Dal Board/Animatic aggiunge dopo la selezione senza entrare.
+  Rimappabile da Configure Shortcuts. Bottone "+" anche sullo Shot Board
+  (room T); il "+" della timeline animatic dentro una sub-scene ora delega
+  al comando invece del warning "main xsheet only".
+- Timeline animatic si ricostruisce su modelReset anche con sub-scene aperta
+  (refreshFromScene legge il TOP xsheet) — prima restava stale dopo Shift+N.
+
+### Fixed
+- **Task 49 — scatto sul secondo tratto di disegno** (commit e7676d620):
+  il detect timer (1s) partiva a ogni xsheetChanged in sub-scene e scattava
+  a metà del tratto successivo (detect + render thumbnail sincroni sul thread
+  UI corrompevano la linea). Ora xsheetChanged marca solo m_dirtyShotCol;
+  detect+render solo su frameSwitched / ritorno al Board / showEvent, più
+  guardia mouse-premuto sul timeout.
+- **Task 50 — panel fantasma dopo undo che svuota uno shot**: verificato
+  risolto (test utente) dopo i fix task 48 + TUndoManager hardening.
+
+### Modified
+- **README riscritto** (f8791f070, 4d3a625c8): sezione Download, feature per
+  room (camera-move, light gizmo, Arrows, burn-in, import sceneggiatura…),
+  4 screenshot nuovi (animatic+board, 2× shot editing, pagina PDF con camera
+  move), roadmap ridotta a Kitsu.
+- ANIMATIC_TASKS: chiusi 49/50; rimossi come già-fatti 21 (volume audio),
+  24 (startup hub), frame handle separato (risolto dal Monitor); TRADITIONAL
+  declassata; nuovo task 51 Brush feel (ALTA, strategica) con piano in 4 fasi
+  (audit latenza → stabilizzatore → preset → MyPaint). NO codice da Krita
+  (GPL); libmypaint già in casa.
+
+### Release
+- **v0.4.1** — bump ZtorycVersion.cmake, prima stabile della linea 0.4.
+  Diff da v0.4.0-beta.2: light gizmo (fase 3) Board+Shot Board, burn-in
+  export, New Shot After Current, fix task 48/49/50, TUndoManager hardening
+  (candidato upstream), parità Board↔Shot Board, README nuovo.
+
+### Notes
+- gh CLI: risolti i 401 intermittenti — c'erano 4 voci keychain duplicate
+  `gh:github.com`; pulite tutte + login fresco. Un solo token ora.
+
 # Ztoryc — Changelog
 
 > **Come aggiornare (istruzioni per Claude Code):** dopo ogni sessione aggiungi
