@@ -3878,8 +3878,16 @@ void ZtoryPanelNavigator::setActivePanel(int panelIdx, bool updateFrame) {
 // Maps a position inside m_previewLabel to normalized 0-1 coords over the
 // DISPLAYED pixmap (which is centered in the label and aspect-correct).
 QPointF ZtoryPanelNavigator::normalizedPreviewPos(const QPoint &labelPos) const {
+  // QLabel::pixmap() returns by value in Qt 6 (Windows CI) and by pointer in
+  // Qt 5.15 (macOS build) — bridge the two signatures.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+  const QPixmap pmObj = m_previewLabel->pixmap();
+  const QPixmap *pm   = &pmObj;
+  if (pm->isNull()) return QPointF(0.5, 0.5);
+#else
   const QPixmap *pm = m_previewLabel->pixmap();
   if (!pm || pm->isNull()) return QPointF(0.5, 0.5);
+#endif
   qreal dpr = pm->devicePixelRatio() > 0 ? pm->devicePixelRatio() : 1.0;
   QSizeF logical(pm->width() / dpr, pm->height() / dpr);
   QPointF origin((m_previewLabel->width() - logical.width()) / 2.0,
