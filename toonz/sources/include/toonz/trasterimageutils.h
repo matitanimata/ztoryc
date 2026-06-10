@@ -42,6 +42,11 @@ DVAPI void addSceneNumbering(const TRasterImageP &ri, int globalIndex,
                              const std::wstring &sceneName, int sceneIndex);
 DVAPI void addGlobalNumbering(const TRasterImageP &ri,
                               const std::wstring &sceneName, int globalIndex);
+// Ztoryc animatic burn-in: shot/panel label at the top-left and timecode at
+// the bottom-right, in semi-transparent boxes (Storyboard Pro-style overlay).
+// Either string may be empty — its box is skipped.
+DVAPI void addBurnIn(const TRasterImageP &ri, const std::wstring &label,
+                     const std::wstring &timecode);
 }  // namespace
 
 #endif  // TRASTERIMAGE_UTILS_INCLUDED

@@ -7178,6 +7178,16 @@ void ZtoryAnimaticPanel::onMatchSubsceneDuration(int col) {
   if (lastFrame < 0) return;  // sottoscena completamente vuota
   int newDuration = lastFrame + 1;
 
+  // No-op guard: while drawing inside the sub-scene every stroke burst lands
+  // here (xsheetChanged → auto-match debounce), but the duration almost never
+  // changes. Without this check each burst ran a full column resize +
+  // resequenceXsheet + refreshFromScene, lagging the brush badly.
+  {
+    int m0 = 0, m1 = 0;
+    mainCol->getRange(m0, m1, /*ignoreLastStop=*/true);
+    if (m1 - m0 + 1 == newDuration) return;
+  }
+
   // Apply new duration. Call directly — the signal connection would cause a
   // double execution since onShotDurationChanged is also connected to
   // m_track::shotDurationChanged.  The track visuals are rebuilt by

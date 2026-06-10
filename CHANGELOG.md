@@ -7,6 +7,60 @@
 
 ---
 
+## [2026-06-10] — light direction (task 40 fase 3), burn-in export, fix undo/lag
+
+### Added
+- **Gizmo Light Direction (task 40 FASE 3 — COMPLETA il task 40)**: freccia
+  conica 3D per-panel nel Board. Bottone ☀ → drag sul thumbnail (coda =
+  sorgente), rotella = inclinazione Z (a ±100% notazione ⊙ verso camera /
+  ⊗ verso fondo), Shift+rotella = apertura fascio (12–90°, hard/soft light).
+  Cono con silhouette tangente all'ellisse di base, occlusione corretta
+  front/back, basi piatte di profilo (roundness = sin(tilt)), shading assiale
+  (luce che cade lungo la freccia). Fascio conico traslucido + sole + readout
+  gradi solo durante il drag. Right-click rimuove. Toggle visibilità (bottone
+  L + shortcut L), swatch colore temperatura. Persistenza `.ztoryc`
+  (lightTail/Tip/Depth/Spread/Color), undo via UndoBoardState, anche su PDF.
+  Commit `d498c010b`.
+- **Burn-in export animatic (stile Storyboard Pro)**: nel dialog Export
+  Animatic gruppo "Burn-in" — timecode di sequenza (basso-dx), nome
+  SQ_SH_P per-panel (alto-sx), checkbox Clapperboard (mirror live del Board
+  setting nativo). Architettura: `TRasterImageUtils::addBurnIn` (toonzlib) +
+  `MovieRenderer::setBurnIn` pinnato al setup (stesso pattern del fix audio
+  task 43) + `ZtoryBurnInConfig` in ZtoryModel letta da rendercommand.cpp.
+  Bottone "Render Settings…" nel dialog con riepilogo formato live (poll
+  700ms); estensione file riletta alla conferma.
+
+### Fixed
+- **Dialog Export Animatic bloccava l'Output Settings popup**: era
+  WindowModal (blocca tutta la catena del main window). Ora non-modale con
+  QEventLoop locale.
+- **Undo svuotava lo storyboard** (parziale — vedi Known issues):
+  `captureSnapshot()` usava l'xsheet CORRENTE → dentro una sub-scene snapshot
+  con level tutti nulli → `restoreFromSnapshot` rimuoveva tutte le colonne e
+  salvava `.ztoryc` vuoto. Fix: snapshot sempre dal TOP xsheet + guardia che
+  rifiuta snapshot senza alcun level valido.
+- **Lag disegno con auto-match attivo**: ogni burst di tratti eseguiva resize
+  colonna + resequence + refresh anche a durata invariata. Aggiunta guardia
+  no-op in `onMatchSubsceneDuration`.
+
+### Known issues (prossima sessione — DEBUG BUILD + LLDB)
+1. **Crash palette** — `StudioPaletteCmd::loadIntoCurrentPalette →
+   TPalette::assign → destroy mappa stili` SIGBUS su puntatore garbage
+   (use-after-free, famiglia task 42 residuo). Report:
+   `Ztoryc-2026-06-10-112817.ips`.
+2. **Undo ripetuto → Board ancora svuotato** all'improvviso nonostante il fix
+   snapshot: esiste un secondo percorso. Da riprodurre con logging su
+   clearShots/refreshFromScene/restoreFromSnapshot.
+3. **Lag sui primi tratti** (anche senza auto-match) — già risolto in versioni
+   pre-merge, forse fix perso col merge 1.6.1: cercare nel CHANGELOG_ARCHIVE.
+   Candidati: m_panelDetectTimer/refresh thumbnail su xsheetChanged in sub.
+
+### Notes
+- Burn-in testato e funzionante (raffinamenti rimandati); clapperboard da
+  verificare con Board configurato nei render settings.
+
+---
+
 ## [2026-06-09] — v0.4.0-beta.2: libreria frecce, overlay camera-move, fix crash
 
 ### Added

@@ -116,6 +116,23 @@ struct ShotData {
   }
 };
 
+// ─── Animatic export burn-in ──────────────────────────────────────────────────
+// Set by the export-animatic dialog right before MI_Render and cleared after.
+// rendercommand.cpp reads it at render SETUP time and pins it into the
+// MovieRenderer (so async/batch renders can't pick up a stale config).
+
+struct ZtoryBurnInSeg {
+  int     from = 0, to = 0;   // inclusive scene-frame range
+  QString label;              // e.g. "SQ010_SH020_P001"
+};
+
+struct ZtoryBurnInConfig {
+  bool timecode  = false;
+  bool shotNames = false;
+  std::vector<ZtoryBurnInSeg> segments;
+  bool isActive() const { return timecode || shotNames; }
+};
+
 // ─── Workflow ─────────────────────────────────────────────────────────────────
 // Authoritative global workflow state.  Set via ZtoryModel::setWorkflow() at
 // every transition point; query via ZtoryModel::currentWorkflow().
@@ -147,6 +164,7 @@ class ZtoryModel : public QObject {
   std::vector<ZtoryClipEntry>       m_sharedClip;
   std::set<int>                     m_sharedSelection;
   NumberingConfig                   m_numberingConfig;
+  ZtoryBurnInConfig                 m_burnIn;
 
   // Side-panel toggle: which panel types to show in animatic vs shot mode.
   // Defaults are reasonable; user can customise via ZtoryModel API.
@@ -301,6 +319,10 @@ public:
   QStringList shotSidePanels()      const { return m_shotSidePanels; }
   void        setAnimaticSidePanels(const QStringList &l) { m_animaticSidePanels = l; }
   void        setShotSidePanels(const QStringList &l)     { m_shotSidePanels = l; }
+
+  // Animatic export burn-in config (see ZtoryBurnInConfig above).
+  ZtoryBurnInConfig       &burnIn()       { return m_burnIn; }
+  const ZtoryBurnInConfig &burnIn() const { return m_burnIn; }
 
   // Auto-match toggle — shared between ANIMATIC toolbar and SHOTEDITOR navigator
   bool autoMatch() const { return m_autoMatch; }

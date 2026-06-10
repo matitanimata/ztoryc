@@ -80,8 +80,10 @@
 #include <QButtonGroup>
 #include "toutputproperties.h"
 #include "toonz/sceneproperties.h"
+#include "toonz/boardsettings.h"
 #include "menubarcommandids.h"
 #include <QColorDialog>
+#include <QEventLoop>
 #include <cmath>
 
 // Persisted number of columns in the Board grid (the spin in the toolbar).
@@ -3705,7 +3707,14 @@ void StoryboardPanel::onPasteShot() {
 
 std::vector<ZtoryShotSnap> StoryboardPanel::captureSnapshot() {
   syncWidgetsToData();
-  TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+  // ALWAYS read the TOP xsheet. Snapshots can be captured while the user is
+  // inside a sub-scene (Match button, text-field focusOut, coalescing duration
+  // timer firing late…): the CURRENT xsheet would then be the sub-xsheet,
+  // whose cells are not child levels → every ZtoryShotSnap.level would be
+  // null, and restoring such a snapshot wipes the whole storyboard
+  // (restoreFromSnapshot removes all shot columns and re-inserts nothing).
+  ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+  TXsheet *xsh = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
   std::vector<ZtoryShotSnap> snap;
   snap.reserve(m_shots.size());
   for (const Shot &shot : m_shots) {
@@ -3738,6 +3747,16 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene) return;
+  // Safety net: a non-empty snapshot where NO entry has a valid sub-scene
+  // level is broken (e.g. captured against the wrong xsheet by an older
+  // build). Applying it would destroy every shot column and save an empty
+  // .ztoryc — refuse instead of wiping the storyboard.
+  if (!snap.empty()) {
+    bool anyLevel = false;
+    for (const ZtoryShotSnap &s : snap)
+      if (s.level && s.level->getChildLevel()) { anyLevel = true; break; }
+    if (!anyLevel) return;
+  }
   // Ensure we are at the top-level xsheet before modifying it.
   while (scene->getChildStack()->getAncestorCount() > 0)
     CommandManager::instance()->execute("MI_CloseChild");
@@ -4581,22 +4600,34 @@ void StoryboardPanel::onExportAnimatic() {
   connect(radioRange, &QRadioButton::toggled,
           rangeWidget, &QWidget::setEnabled);
 
-  // Read-only format summary — user configures format via Render > Output Settings
-  {
-    double fps    = prop->getFrameRate();
-    TFilePath ppath = prop->getPath();
-    QString ext   = QString::fromStdString(ppath.getType()).toUpper();
-    if (ext.isEmpty()) ext = "MP4";
-    auto *fmtNote = new QLabel(
-        tr("Format: %1  |  %2 fps  |  %3×%4   "
-           "(change via Render > Output Settings)")
-            .arg(ext)
-            .arg(fps, 0, 'f', 0)
+  // Render format comes from the native Render Settings — the dialog shows a
+  // live summary and a button to open them. The label refreshes while the
+  // (non-modal) Output Settings popup is used, so the user always confirms
+  // the actual format before exporting.
+  auto *fmtNote = new QLabel(&dlg);
+  auto refreshFormatNote = [this, fmtNote, prop, scene]() {
+    QString e = QString::fromStdString(prop->getPath().getType()).toUpper();
+    if (e.isEmpty()) e = "MP4";
+    fmtNote->setText(
+        tr("Format: %1  |  %2 fps  |  %3×%4")
+            .arg(e)
+            .arg(prop->getFrameRate(), 0, 'f', 0)
             .arg(scene->getCurrentCamera()->getRes().lx)
-            .arg(scene->getCurrentCamera()->getRes().ly),
-        &dlg);
-    fmtNote->setStyleSheet("color:#aaa; font-size:11px;");
-    mainLay->addWidget(fmtNote);
+            .arg(scene->getCurrentCamera()->getRes().ly));
+  };
+  refreshFormatNote();
+  fmtNote->setStyleSheet("color:#ddd; font-size:11px;");
+  {
+    auto *fmtRow = new QHBoxLayout;
+    fmtRow->addWidget(fmtNote, 1);
+    auto *rsBtn = new QPushButton(tr("Render Settings…"), &dlg);
+    rsBtn->setToolTip(tr("Set the output format, codec, fps and resolution "
+                         "before exporting"));
+    connect(rsBtn, &QPushButton::clicked, &dlg, []() {
+      CommandManager::instance()->execute(MI_OutputSettings);
+    });
+    fmtRow->addWidget(rsBtn);
+    mainLay->addLayout(fmtRow);
   }
 
   // Output folder
@@ -4645,6 +4676,50 @@ void StoryboardPanel::onExportAnimatic() {
   optLay->addWidget(chkAudio);
   mainLay->addLayout(optLay);
 
+  // Burn-in overlays (Storyboard Pro-style)
+  auto *burnGroup = new QGroupBox(tr("Burn-in"), &dlg);
+  auto *burnLay   = new QVBoxLayout(burnGroup);
+  auto *chkTC     = new QCheckBox(tr("Timecode (bottom right)"), burnGroup);
+  auto *chkNames  = new QCheckBox(tr("Shot / panel name (top left, e.g. SQ010_SH010_P001)"),
+                                  burnGroup);
+  auto *chkClap   = new QCheckBox(tr("Clapperboard at start (Render Settings > Board)"),
+                                  burnGroup);
+  chkTC->setChecked(QSettings().value("Ztoryc/BurnInTimecode", false).toBool());
+  chkNames->setChecked(QSettings().value("Ztoryc/BurnInShotNames", false).toBool());
+  BoardSettings *boardSettings = prop->getBoardSettings();
+  chkClap->setChecked(boardSettings && boardSettings->isActive());
+  chkClap->setToolTip(tr("Prepends the clapperboard configured in Render Settings\n"
+                         "(Board tab) to each exported clip. This toggles the same\n"
+                         "scene setting as the Output Settings popup."));
+  // Two-way live mirror of the scene's Board setting: toggling here applies
+  // immediately; changing it from the Output Settings popup updates the
+  // checkbox on the next poll tick. No divergence is possible.
+  connect(chkClap, &QCheckBox::toggled, &dlg, [boardSettings](bool on) {
+    if (boardSettings) boardSettings->setActive(on);
+  });
+  burnLay->addWidget(chkTC);
+  burnLay->addWidget(chkNames);
+  burnLay->addWidget(chkClap);
+  mainLay->addWidget(burnGroup);
+
+  // Poll while the dialog is open: the Output Settings popup is a separate
+  // non-modal window, so format and Board changes made there must be
+  // reflected here live.
+  {
+    QTimer *pollTimer = new QTimer(&dlg);
+    pollTimer->setInterval(700);
+    connect(pollTimer, &QTimer::timeout, &dlg,
+            [refreshFormatNote, chkClap, boardSettings]() {
+      refreshFormatNote();
+      if (boardSettings) {
+        chkClap->blockSignals(true);
+        chkClap->setChecked(boardSettings->isActive());
+        chkClap->blockSignals(false);
+      }
+    });
+    pollTimer->start();
+  }
+
   // Buttons
   auto *btnBox = new QDialogButtonBox(
       QDialogButtonBox::Cancel | QDialogButtonBox::Ok, &dlg);
@@ -4653,10 +4728,74 @@ void StoryboardPanel::onExportAnimatic() {
   connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
   mainLay->addWidget(btnBox);
 
-  // WindowModal blocks only the parent window, so the Output Settings popup
-  // (a separate top-level window) remains fully interactive.
-  dlg.setWindowModality(Qt::WindowModal);
-  if (dlg.exec() != QDialog::Accepted) return;
+  // The dialog must be truly NON-modal: the Output Settings popup parents to
+  // the same main window, so any window-modal dialog in that chain would
+  // freeze it (unusable, unclosable). show() + a local event loop keeps the
+  // export flow blocking for this function while every other window stays
+  // interactive.
+  dlg.setWindowModality(Qt::NonModal);
+  {
+    QEventLoop loop;
+    connect(&dlg, &QDialog::finished, &loop, &QEventLoop::quit);
+    dlg.show();
+    dlg.raise();
+    dlg.activateWindow();
+    loop.exec();
+  }
+  if (dlg.result() != QDialog::Accepted) return;
+
+  // Re-read the extension: the user may have changed the output format from
+  // the Render Settings popup while this dialog was open.
+  ext = QString::fromStdString(prop->getPath().getType());
+  if (ext.isEmpty()) ext = "mp4";
+
+  // Burn-in checkboxes → persisted defaults + scene board setting.
+  QSettings().setValue("Ztoryc/BurnInTimecode",  chkTC->isChecked());
+  QSettings().setValue("Ztoryc/BurnInShotNames", chkNames->isChecked());
+  // (Clapperboard already applied live by the chkClap toggled connection.)
+
+  // Publish the burn-in config consumed by rendercommand.cpp at render setup.
+  {
+    ZtoryBurnInConfig bi;
+    bi.timecode  = chkTC->isChecked();
+    bi.shotNames = chkNames->isChecked();
+    if (bi.shotNames) {
+      for (int si = 0; si < (int)m_shots.size(); si++) {
+        // Shot frame range in the main xsheet (same scan as shotFrameRange,
+        // which is declared below — duplicated here to keep diff local).
+        TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+        int col = m_shots[si].data.xsheetColumn;
+        int s0 = 0, s1 = 0;
+        for (int r = 0; r < xsh->getFrameCount(); r++)
+          if (!xsh->getCell(r, col).isEmpty()) { s0 = r; break; }
+        for (int r = xsh->getFrameCount() - 1; r >= 0; r--)
+          if (!xsh->getCell(r, col).isEmpty()) { s1 = r; break; }
+        // Label prefix: SQ label (if any) + shot label.
+        QString prefix;
+        if (!m_shots[si].data.sequenceId.isEmpty()) {
+          const SequenceData *seq =
+              ZtoryModel::instance()->findSequence(m_shots[si].data.sequenceId);
+          if (seq) prefix = seq->label + "_";
+        }
+        prefix += m_shots[si].data.label();
+        const auto &panels = m_shots[si].data.panels;
+        for (int pi = 0; pi < (int)panels.size(); pi++) {
+          ZtoryBurnInSeg seg;
+          seg.from  = s0 + panels[pi].startFrame;
+          seg.to    = (pi + 1 < (int)panels.size())
+                          ? s0 + panels[pi + 1].startFrame - 1
+                          : s1;
+          seg.to    = qMin(seg.to, s1);
+          seg.label = prefix + "_" +
+                      (panels[pi].panelLabel.isEmpty()
+                           ? QString("P%1").arg(pi + 1, 3, 10, QChar('0'))
+                           : panels[pi].panelLabel);
+          if (seg.from <= seg.to) bi.segments.push_back(seg);
+        }
+      }
+    }
+    ZtoryModel::instance()->burnIn() = bi;
+  }
 
   // ── Collect parameters ─────────────────────────────────���────────────────
   int mode       = btnGroup->checkedId();  // 0=full, 1=range, 2=each
@@ -4728,6 +4867,11 @@ void StoryboardPanel::onExportAnimatic() {
       CommandManager::instance()->execute(MI_Render);
     }
   }
+
+  // Clear the burn-in config so later renders (menu Render, preview…) are
+  // unaffected. Safe even with renders still running: rendercommand.cpp
+  // copied it into the MovieRenderer at setup time.
+  ZtoryModel::instance()->burnIn() = ZtoryBurnInConfig();
 
   // Restore original output properties
   prop->setPath(origPath);

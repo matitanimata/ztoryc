@@ -2,6 +2,7 @@
 
 // Tnz6 includes
 #include "tapp.h"
+#include "ztorymodel.h"
 #include "mainwindow.h"
 #include "formatsettingspopups.h"
 #include "fileviewerpopup.h"
@@ -567,6 +568,20 @@ void RenderCommand::rasterRender(bool isPreview) {
   // sequential batch (e.g. per-shot animatic export updates props for the next
   // shot while this render is still running on background threads).
   if (!isPreview) movieRenderer.setAudioRange(r0, r1);
+
+  // Ztoryc animatic burn-in: pinned here at setup time (set by the export
+  // dialog right before MI_Render, cleared right after — normal renders see an
+  // inactive config and are unaffected).
+  if (!isPreview) {
+    const ZtoryBurnInConfig &bi = ZtoryModel::instance()->burnIn();
+    if (bi.isActive()) {
+      std::vector<MovieRenderer::BurnInSegment> segs;
+      if (bi.shotNames)
+        for (const ZtoryBurnInSeg &s : bi.segments)
+          segs.push_back({s.from, s.to, s.label.toStdWString()});
+      movieRenderer.setBurnIn(bi.timecode, prop->getFrameRate(), segs);
+    }
+  }
 
   // Build
 

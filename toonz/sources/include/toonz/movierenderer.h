@@ -6,6 +6,9 @@
 #include <QObject>
 #include "trenderer.h"
 
+#include <string>
+#include <vector>
+
 #undef DVAPI
 #undef DVVAR
 #ifdef TOONZLIB_EXPORTS
@@ -67,6 +70,16 @@ public:
   // instead of re-reading it from TOutputProperties at render completion, which
   // would pick up a different shot's range if properties were updated meanwhile.
   void setAudioRange(int r0, int r1);
+
+  // Ztoryc animatic burn-in: overlay timecode and/or shot-name labels on every
+  // saved frame.  Pinned at setup time (same rationale as setAudioRange).
+  // Segments map inclusive scene-frame ranges to labels (e.g. SQ010_SH020_P001).
+  struct BurnInSegment {
+    int from, to;
+    std::wstring label;
+  };
+  void setBurnIn(bool timecode, double fps,
+                 const std::vector<BurnInSegment> &segments);
 
   void addListener(Listener *listener);
 

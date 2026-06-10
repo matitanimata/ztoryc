@@ -137,6 +137,11 @@ public:
   int m_audioFrom = -1;
   int m_audioTo   = -1;
 
+  // Ztoryc burn-in config pinned at setup time via setBurnIn().
+  bool   m_burnInTimecode = false;
+  double m_burnInFps      = 24.0;
+  std::vector<MovieRenderer::BurnInSegment> m_burnInSegments;
+
   int m_nextFrameIdxToSave;
   int m_savingThreadsCount;
   bool m_firstCompletedRaster;
@@ -181,6 +186,7 @@ public:
   //! Saves the specified rasters at the specified time; returns whether the
   //! frames were successfully saved, and
   //! the associated time-adjusted level frame.
+  void applyBurnIn(const TRasterImageP &img, int sceneFrame);
   std::pair<bool, int> saveFrame(double frame,
                                  const std::pair<TRasterP, TRasterP> &rasters);
   std::string getRenderCacheId();
@@ -425,6 +431,36 @@ void MovieRenderer::Imp::postProcessImage(const TRasterImageP &img,
 
 //---------------------------------------------------------------------
 
+// Ztoryc animatic burn-in: stamps the shot/panel label (top-left) and the
+// scene timecode (bottom-right) configured via MovieRenderer::setBurnIn().
+// `sceneFrame` is the 0-based scene frame being saved (clapperboard frames are
+// prepended by addBoard and never pass through here, so they stay clean).
+void MovieRenderer::Imp::applyBurnIn(const TRasterImageP &img,
+                                     int sceneFrame) {
+  if (!m_burnInTimecode && m_burnInSegments.empty()) return;
+
+  std::wstring label;
+  for (const MovieRenderer::BurnInSegment &seg : m_burnInSegments)
+    if (sceneFrame >= seg.from && sceneFrame <= seg.to) {
+      label = seg.label;
+      break;
+    }
+
+  std::wstring tc;
+  if (m_burnInTimecode) {
+    int ifps = std::max(1, (int)(m_burnInFps + 0.5));
+    int ff = sceneFrame % ifps, tot = sceneFrame / ifps;
+    int ss = tot % 60, mm = (tot / 60) % 60, hh = tot / 3600;
+    wchar_t buf[16];
+    swprintf(buf, 16, L"%02d:%02d:%02d:%02d", hh, mm, ss, ff);
+    tc = buf;
+  }
+
+  TRasterImageUtils::addBurnIn(img, label, tc);
+}
+
+//---------------------------------------------------------------------
+
 std::pair<bool, int> MovieRenderer::Imp::saveFrame(
     double frame, const std::pair<TRasterP, TRasterP> &rasters) {
   bool success = false;
@@ -491,6 +527,7 @@ result in subsequent frames
                        m_toBeAppliedGamma[frame], writingGamma,
                        m_renderSettings.m_colorSpaceGamma,
                        m_renderSettings.m_mark, fid.getNumber());
+      applyBurnIn(imgA, fr);
 
       m_levelUpdaterA->update(fid, imgA);
 
@@ -500,6 +537,7 @@ result in subsequent frames
                          m_toBeAppliedGamma[frame], writingGamma,
                          m_renderSettings.m_colorSpaceGamma,
                          m_renderSettings.m_mark, fid.getNumber());
+        applyBurnIn(imgB, fr);
 
         m_levelUpdaterB->update(fid, imgB);
       }
@@ -901,6 +939,15 @@ MovieRenderer::~MovieRenderer() { m_imp->release(); }
 void MovieRenderer::setAudioRange(int r0, int r1) {
   m_imp->m_audioFrom = r0;
   m_imp->m_audioTo   = r1;
+}
+
+//---------------------------------------------------------
+
+void MovieRenderer::setBurnIn(bool timecode, double fps,
+                              const std::vector<BurnInSegment> &segments) {
+  m_imp->m_burnInTimecode = timecode;
+  m_imp->m_burnInFps      = fps > 0 ? fps : 24.0;
+  m_imp->m_burnInSegments = segments;
 }
 
 void MovieRenderer::setRenderSettings(const TRenderSettings &renderSettings) {

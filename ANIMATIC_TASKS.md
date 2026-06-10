@@ -707,15 +707,47 @@ nella sub-scene corretta.
 ✅ [FATTO 2026-05-31] 43b. Audio export clip per-shot — pinned in MovieRenderer::setAudioRange (commit 20f8f3e3b)
 ✅ [FATTO 2026-05-31] 43c. Nome file UUID → label leggibile sequenza (commit 20f8f3e3b)
 ✅ [FATTO] 43a. FIX Export clip per-shot — prima clip mancante (non riprodotto con certezza — confermato risolto)
-40. 🟡 IN CORSO Sistema Annotazioni Camera-Move + Light Direction (MEDIA-ALTA)
+✅ [FATTO 2026-06-10] 40. Sistema Annotazioni Camera-Move + Light Direction — COMPLETO
     — FASE 1: ✅ pannello Arrows con libreria .pli (colori originali, group, frame-aware).
     — FASE 2: ✅ overlay camera-move su Board+PDF (backed-out render, A→B, frecce, toggle Trk).
-    — FASE 3 (light direction) ancora da fare. Rilasciato in v0.4.0-beta.2 (2026-06-09). — unifica 35/36/37, design approvato, partire da FASE 1
+    — FASE 3: ✅ gizmo light direction (commit d498c010b): freccia conica 3D per-panel,
+      drag + rotella (Z) + Shift+rotella (apertura fascio), ⊙/⊗ head-on, persistenza
+      .ztoryc, undo, PDF. Fasi 1-2 rilasciate in v0.4.0-beta.2.
+
+✅ [FATTO 2026-06-10] Burn-in export animatic (stile SBPro) — timecode + nome SQ_SH_P
+    per-panel + checkbox clapperboard (mirror Board setting nativo) + bottone Render
+    Settings nel dialog (non-modale, riepilogo formato live). Architettura:
+    TRasterImageUtils::addBurnIn + MovieRenderer::setBurnIn pinnato al setup +
+    ZtoryBurnInConfig in ZtoryModel. Raffinamenti estetici rimandati.
+
+48. 🔴 INVESTIGATE Undo ripetuto svuota lo storyboard (ALTA — DEBUG BUILD + LLDB)
+    — Cmd+Z ripetuto dentro una sub-scene → a un certo punto il Board butta tutti
+    gli shot. PRIMO percorso fixato 2026-06-10: captureSnapshot() usava l'xsheet
+    corrente (in sub-scene → snapshot con level nulli → restoreFromSnapshot rimuoveva
+    tutte le colonne e salvava .ztoryc vuoto); ora snapshot dal TOP xsheet + guardia
+    anti-snapshot-rotto. MA il wipe si ripresenta → esiste un SECONDO percorso.
+    Riprodurre con logging su clearShots/refreshFromScene/restoreFromSnapshot.
+    File: storyboardpanel.cpp, ztoryundo.h/.cpp.
+
+49. 🟠 INVESTIGATE Lag sui primi tratti di disegno (MEDIA-ALTA)
+    — Presente anche SENZA auto-match. Il lag da auto-match è stato ridotto
+    (2026-06-10: guardia no-op in onMatchSubsceneDuration quando la durata già
+    corrisponde), ma i primi tratti laggano ancora. L'utente ricorda che era già
+    stato risolto pre-merge → cercare il fix perso in CHANGELOG_ARCHIVE (merge
+    1.6.1). Candidati: m_panelDetectTimer (detectAndUpdatePanels + invalidazione
+    thumbnail su xsheetChanged in sub-scene), icon generation del nuovo livello.
 38. NEW Room TRADITIONAL (MEDIA)
 21. NEW Volume traccia audio
 24. NEW Startup popup hub
 Kitsu. NEW Integrazione Kitsu (M5)
 41. NEW Cache RAM threshold configurabile (BASSA) — ora a 14.3% shipped in `tsystempd.cpp` (il tentativo di alzarlo al 25% è stato revertito perché l'eviction aggressiva crashava il Save All su scene pesanti, raster liberato durante `TRasterCodecLZO::compress`). Rifarlo in modo MIRATO: non toccare l'eviction globale durante i save; semmai rilevamento per classe di macchina (≤8GB→più aggressivo) + opzione utente. ⚠️ Collegato: cache-leak post-render (frame restano in cache, ~17GB su scena pesante; fix upstream `be20f9512` da portare).
+
+⚠️ AGGIORNAMENTO 2026-06-10 (task 42 residuo): nuovo crash riprodotto disegnando —
+    `StudioPaletteTreeViewer::loadInCurrentPalette → StudioPaletteCmd::loadIntoCurrentPalette
+    → TPalette::assign → std::map<int,TColorStyleP>::destroy` SIGBUS su puntatore dentro
+    la dyld shared cache __TEXT = use-after-free della palette corrente (dangling dopo
+    switch livello/sub-scene). Crash report: Ztoryc-2026-06-10-112817.ips. Stessa famiglia
+    del residuo: affrontare con DEBUG BUILD + LLDB, non patchare alla cieca.
 
 42. ✅ [FATTO 2026-06-08] CRASH Geometric tool aprendo sub-scene (era "palette-switch ri-entrante")
     — root cause REALE diversa da quella ipotizzata: `GeometricTool::onDeactivate()` deref `m_viewer` nullo durante openSubXsheet. Fix in `geometrictool.cpp` (guard `if (m_viewer)`). Diagnosi via lldb. Il caso raster brush era già fixato (`8f8740628`). RESIDUO (pre-esistente, ALTA) — SIGSEGV cliccando colonna / aprendo sub-scena mentre è attivo un tool di disegno o pannello palette. Cascata: `TApp::updateXshLevel → TPaletteHandle::setPalette → (emit paletteSwitched) → PaletteController::editLevelPalette → setPalette → (emit) → slot del tool/pannello → deref stato transitorio → crash`. Connessione chiave: `palettecontroller.cpp:65-66` (paletteSwitched→editLevelPalette). Slot che crashano osservati: `StyleEditor::onStyleSwitched`, `ToonzRasterBrushTool::onColorStyleChanged`, `GeometricToolNotifier::onColorStyleChanged`, `PaletteViewer::onFrameSwitched`/`TPalette::setFrame`. Dump 0-byte = la variante stack-overflow. WORKAROUND utente: selezionare lo strumento freccia/Animate prima di operazioni che fanno openSubXsheet. ⚠️ NON patchare a scatola chiusa (tentativi del 2026-05-31 — TPaletteHandle ref forte + guard onStyleSwitched + TPaletteP — hanno causato REGRESSIONE: crash al disegno su scene nuove → tutto revertito). Affrontare con BUILD DI DEBUG + lldb per vedere lo stato reale dell'oggetto al crash, poi una sola fix mirata. File: `tpalettehandle.cpp`, `palettecontroller.cpp`, `styleeditor.cpp`, `geometrictool.cpp`, `toonzrasterbrushtool.cpp`, `paletteviewer.cpp`.

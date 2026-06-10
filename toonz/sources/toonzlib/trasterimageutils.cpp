@@ -433,3 +433,48 @@ void TRasterImageUtils::addGlobalNumbering(const TRasterImageP &ri,
   p.drawText(2 * offset, ly - 2 * offset, globalNumberingString);
   p.end();
 }
+
+//-------------------------------------------------------------------
+
+void TRasterImageUtils::addBurnIn(const TRasterImageP &ri,
+                                  const std::wstring &label,
+                                  const std::wstring &timecode) {
+  if (!ri || (label.empty() && timecode.empty())) return;
+  TRasterP raster = ri->getRaster();
+  // rasterToQImage maps 32-bit rasters only; movie formats always are.
+  if (raster->getPixelSize() != 4) return;
+  int lx = raster->getLx(), ly = raster->getLy();
+  QImage image = rasterToQImage(raster, true, false);
+  QPainter p(&image);
+  QFont font = QFont();
+  font.setPixelSize(std::max(9, (int)(ly * 0.04)));
+  font.setBold(true);
+  p.setFont(font);
+  // The raster is bottom-up: flip Y like the numbering overlays above.
+  QTransform transform;
+  p.setTransform(transform.translate(0, ly).scale(1, -1), true);
+  QFontMetrics fm = p.fontMetrics();
+  int fontHeight  = fm.height();
+  int offset      = fontHeight * 0.3;
+  auto drawBox = [&](int x, int y, const QString &txt) {
+    int w = fm.horizontalAdvance(txt);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0, 0, 0, 130));
+    p.drawRect(x - offset, y - fm.ascent() - offset / 2, w + offset * 2,
+               fontHeight + offset);
+    p.setPen(Qt::white);
+    p.drawText(x, y, txt);
+  };
+  // Shot/panel label — top-left.
+  if (!label.empty()) {
+    QString txt = QString::fromStdWString(label);
+    drawBox(2 * offset, 2 * offset + fm.ascent(), txt);
+  }
+  // Timecode — bottom-right.
+  if (!timecode.empty()) {
+    QString txt = QString::fromStdWString(timecode);
+    int w = fm.horizontalAdvance(txt);
+    drawBox(lx - w - 2 * offset, ly - 2 * offset - fm.descent(), txt);
+  }
+  p.end();
+}
