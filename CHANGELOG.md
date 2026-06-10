@@ -43,14 +43,26 @@
   colonna + resequence + refresh anche a durata invariata. Aggiunta guardia
   no-op in `onMatchSubsceneDuration`.
 
+### Fixed (addendum sera — task 48 RISOLTO)
+- **Undo-wipe definitivo (use-after-free)**: con Cmd+Z da DENTRO una sub-scene,
+  `restoreFromSnapshot` eseguiva `MI_CloseChild` → `closeChild` pusha un
+  `CloseChildUndo` → `TUndoManager::add()` durante un undo() attivo tronca il
+  ramo redo e DISTRUGGE l'`UndoBoardState` in esecuzione → la reference al suo
+  `m_before` (lo snapshot) diventava dangling → re-insert leggeva memoria
+  liberata → tutti i level "nulli" → Board svuotato. Diagnosi via logging
+  [ZTORY] su repro reale. Fix: deep-copy dello snapshot come prima istruzione
+  (le TXshLevelP della copia tengono vivi anche i livelli). In più: firewall in
+  saveZtoryc (mai persistere .ztoryc con 0 shot se l'xsheet ha colonne child) e
+  logging diagnostico permanente su refreshFromScene/restore/resequence.
+
 ### Known issues (prossima sessione — DEBUG BUILD + LLDB)
 1. **Crash palette** — `StudioPaletteCmd::loadIntoCurrentPalette →
    TPalette::assign → destroy mappa stili` SIGBUS su puntatore garbage
    (use-after-free, famiglia task 42 residuo). Report:
    `Ztoryc-2026-06-10-112817.ips`.
-2. **Undo ripetuto → Board ancora svuotato** all'improvviso nonostante il fix
-   snapshot: esiste un secondo percorso. Da riprodurre con logging su
-   clearShots/refreshFromScene/restoreFromSnapshot.
+2. **TUndoManager UB residuo**: quando `add()` distrugge l'undo in esecuzione,
+   il manager rientra in un oggetto liberato — oggi innocuo in release, ma è
+   UB e possibile parente dei crash random. Da verificare sotto lldb.
 3. **Lag sui primi tratti** (anche senza auto-match) — già risolto in versioni
    pre-merge, forse fix perso col merge 1.6.1: cercare nel CHANGELOG_ARCHIVE.
    Candidati: m_panelDetectTimer/refresh thumbnail su xsheetChanged in sub.

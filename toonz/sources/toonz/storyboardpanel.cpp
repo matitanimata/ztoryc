@@ -1948,6 +1948,30 @@ void StoryboardPanel::saveZtoryc() {
   // Only persist when m_currentZtoryPath still matches the scene that is
   // actually open (i.e. the data in m_shots/m_scriptFile belongs to it).
   if (ztoryPath() != m_currentZtoryPath) return;
+  // DATA-LOSS FIREWALL (task 48): never overwrite the .ztoryc with ZERO shots
+  // while the top xsheet still contains child-level columns.  An empty m_shots
+  // in that state is always a transient/buggy display wipe (e.g. the undo-wipe
+  // bug), not a real user action — persisting it would destroy every label,
+  // dialog and note.
+  if (m_shots.empty()) {
+    ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+    TXsheet *topXsh = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
+    if (topXsh) {
+      for (int c = 0; c < topXsh->getColumnCount(); c++) {
+        TXshColumn *column = topXsh->getColumn(c);
+        if (!column || column->isEmpty()) continue;
+        int cr0 = 0, cr1 = 0;
+        column->getRange(cr0, cr1);
+        TXshCell cell = topXsh->getCell(cr0, c);
+        if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+          qWarning("[ZTORY] saveZtoryc BLOCKED: m_shots empty but xsheet has "
+                   "child columns (col %d) — refusing to wipe %s",
+                   c, m_currentZtoryPath.toUtf8().constData());
+          return;
+        }
+      }
+    }
+  }
   syncWidgetsToData();
   QString path = m_currentZtoryPath;
   QFile file(path);
@@ -2757,6 +2781,8 @@ void StoryboardPanel::onModelResequenced() {
     }
   }
   if (xshShotCount != (int)m_shots.size()) {
+    qWarning("[ZTORY] onModelResequenced: xshShotCount=%d != shots=%d -> full rebuild",
+             xshShotCount, (int)m_shots.size());
     refreshFromScene();
     return;
   }
@@ -3033,6 +3059,10 @@ void StoryboardPanel::refreshFromScene() {
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene) return;
+  // Diagnostic for the undo-wipe bug (task 48): if the Board empties, the
+  // console shows who rebuilt it and what the xsheet looked like.
+  qWarning("[ZTORY] refreshFromScene: shots(before)=%d ancestors=%d",
+           (int)m_shots.size(), scene->getChildStack()->getAncestorCount());
   // Sync fps from scene output settings — keeps timecodes correct when the
   // user has a non-24 frame rate (e.g. 25, 30).
   {
@@ -3743,10 +3773,28 @@ std::vector<ZtoryShotSnap> StoryboardPanel::captureSnapshot() {
   return snap;
 }
 
-void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap) {
+void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snapRef) {
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene) return;
+  // CRITICAL — deep-copy the snapshot BEFORE anything else.  `snapRef` lives
+  // inside the UndoBoardState being executed; when the user is inside a
+  // sub-scene the MI_CloseChild below pushes a CloseChildUndo, and
+  // TUndoManager::add() during an active undo() truncates the redo branch of
+  // the stack, DELETING the executing UndoBoardState — the reference would
+  // dangle and the re-insert loop would read freed memory (observed: every
+  // level "null" → all shot columns removed, nothing re-inserted → storyboard
+  // wiped).  The copy's TXshLevelP refs also keep the sub-scene levels alive
+  // regardless of who frees the undo object.
+  const std::vector<ZtoryShotSnap> snap = snapRef;
+  {
+    int valid = 0;
+    for (const ZtoryShotSnap &s : snap)
+      if (s.level && s.level->getChildLevel()) valid++;
+    qWarning("[ZTORY] restoreFromSnapshot: snap=%d validLevels=%d shots=%d ancestors=%d",
+             (int)snap.size(), valid, (int)m_shots.size(),
+             scene->getChildStack()->getAncestorCount());
+  }
   // Safety net: a non-empty snapshot where NO entry has a valid sub-scene
   // level is broken (e.g. captured against the wrong xsheet by an older
   // build). Applying it would destroy every shot column and save an empty
@@ -3762,6 +3810,9 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
     CommandManager::instance()->execute("MI_CloseChild");
   TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
   if (!xsh) return;
+  qWarning("[ZTORY] restore: xsh==top? %d  cols=%d frames=%d",
+           xsh == scene->getChildStack()->getTopXsheet() ? 1 : 0,
+           xsh->getColumnCount(), xsh->getFrameCount());
 
   disconnect(app->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
              this, &StoryboardPanel::onXsheetChanged);
@@ -3789,12 +3840,19 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
     xsh->removeColumn(0);
 
   // Re-insert columns from snapshot.
+  qWarning("[ZTORY] restore: removed %d shot cols", currentShotCols);
   for (int i = 0; i < (int)snap.size(); i++) {
     const ZtoryShotSnap &s = snap[i];
     if (!s.level || !s.level->getChildLevel()) continue;
     xsh->insertColumn(i);
+    bool okSet = true;
     for (int r = 0; r < s.duration; r++)
-      xsh->setCell(r, i, TXshCell(s.level.getPointer(), TFrameId(r + 1)));
+      okSet &= xsh->setCell(r, i, TXshCell(s.level.getPointer(), TFrameId(r + 1)));
+    qWarning("[ZTORY] restore: col %d dur=%d setCell ok=%d cellChild=%d",
+             i, s.duration, okSet ? 1 : 0,
+             (!xsh->getCell(0, i).isEmpty() &&
+              xsh->getCell(0, i).m_level &&
+              xsh->getCell(0, i).m_level->getChildLevel()) ? 1 : 0);
   }
   xsh->updateFrameCount();
 

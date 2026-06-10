@@ -720,14 +720,15 @@ nella sub-scene corretta.
     TRasterImageUtils::addBurnIn + MovieRenderer::setBurnIn pinnato al setup +
     ZtoryBurnInConfig in ZtoryModel. Raffinamenti estetici rimandati.
 
-48. 🔴 INVESTIGATE Undo ripetuto svuota lo storyboard (ALTA — DEBUG BUILD + LLDB)
-    — Cmd+Z ripetuto dentro una sub-scene → a un certo punto il Board butta tutti
-    gli shot. PRIMO percorso fixato 2026-06-10: captureSnapshot() usava l'xsheet
-    corrente (in sub-scene → snapshot con level nulli → restoreFromSnapshot rimuoveva
-    tutte le colonne e salvava .ztoryc vuoto); ora snapshot dal TOP xsheet + guardia
-    anti-snapshot-rotto. MA il wipe si ripresenta → esiste un SECONDO percorso.
-    Riprodurre con logging su clearShots/refreshFromScene/restoreFromSnapshot.
-    File: storyboardpanel.cpp, ztoryundo.h/.cpp.
+✅ [FATTO 2026-06-10 sera] 48. Undo svuotava lo storyboard — RISOLTO. Root cause:
+    use-after-free dello snapshot. Cmd+Z dentro una sub-scene → restoreFromSnapshot
+    → MI_CloseChild → closeChild pusha CloseChildUndo → TUndoManager::add() durante
+    undo() attivo tronca il redo e DISTRUGGE l'UndoBoardState in esecuzione → la
+    reference a m_before dangla → re-insert legge memoria liberata. Fix: deep-copy
+    dello snapshot a inizio restoreFromSnapshot + firewall anti-wipe in saveZtoryc
+    + fix captureSnapshot (TOP xsheet). RESIDUO per sessione lldb: TUndoManager
+    rientra nell'oggetto undo liberato dopo add() — UB, possibile parente crash
+    random (famiglia task 42).
 
 49. 🟠 INVESTIGATE Lag sui primi tratti di disegno (MEDIA-ALTA)
     — Presente anche SENZA auto-match. Il lag da auto-match è stato ridotto
