@@ -98,9 +98,6 @@ Ztoryc adds a Workflow menu to quickly switch between room sets:
 
 ## Roadmap
 
-- Independent frame handle for the animatic viewer (separate timelines for animatic and shot sub-scene)
-- TRADITIONAL room for paper-based workflows
-- Startup hub (New / Load / Load as sub-scene)
 - Kitsu integration for production management
 
 ---
@@ -217,9 +214,6 @@ Ztoryc aggiunge un menu Workflow per cambiare rapidamente set di room:
 
 ## Roadmap
 
-- Frame handle indipendente per il viewer animatic (timeline separate per animatic e sottoscena)
-- Room TRADITIONAL per il workflow su carta
-- Hub di avvio (New / Load / Load as sub-scene)
 - Integrazione Kitsu per la gestione della produzione
 
 ---
