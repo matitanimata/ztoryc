@@ -238,6 +238,11 @@ public:
   void refreshFromScene();
   std::vector<ZtoryShotSnap> captureSnapshot();
   void restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap);
+  // Global "New Shot After Current" command (MI_ZtoryNewShotAfter): adds a
+  // shot after the selected/open one and, if invoked from inside a sub-scene,
+  // enters the new shot directly so drawing can continue without leaving
+  // the SHOTEDITOR room.
+  void newShotAfterCurrent();
 protected:
   void showEvent(QShowEvent *e) override;
   void resizeEvent(QResizeEvent *e) override;

@@ -5358,6 +5358,36 @@ public:
   }
   void initialize(TPanel *panel) override { assert(0); }
 } storyboardPanelFactory;
+
+//=============================================================================
+// New Shot After Current — global command (works from any room, including
+// inside a sub-scene: the artist never has to go back to the Board/Animatic
+// just to say "next shot").
+//-----------------------------------------------------------------------------
+
+void StoryboardPanel::newShotAfterCurrent() {
+  if (!ZtoryModel::assertMainXsheet(/*showWarning=*/false)) {
+    // Inside a sub-scene: remember it so we re-enter the freshly created
+    // shot and the artist keeps drawing without a room/context switch.
+    onAddShot();  // closes the sub-scene, inserts after the edited shot
+    if (m_selectedShotIndex >= 0) onEditShot(m_selectedShotIndex);
+    return;
+  }
+  onAddShot();
+}
+
+class ZtoryNewShotAfterCommand final : public MenuItemHandler {
+public:
+  ZtoryNewShotAfterCommand() : MenuItemHandler(MI_ZtoryNewShotAfter) {}
+  void execute() override {
+    for (QWidget *w : QApplication::allWidgets()) {
+      if (auto *board = qobject_cast<StoryboardPanel *>(w)) {
+        board->newShotAfterCurrent();
+        return;
+      }
+    }
+  }
+} ztoryNewShotAfterCommand;
  
  
  

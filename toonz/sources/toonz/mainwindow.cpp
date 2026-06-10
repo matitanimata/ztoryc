@@ -2535,6 +2535,9 @@ void MainWindow::defineActions() {
                          "", "camera_settings");
   createMenuXsheetAction(MI_OpenChild, QT_TR_NOOP("&Open Sub-Scene"), "",
                          "sub_enter");
+  createMenuXsheetAction(MI_ZtoryNewShotAfter,
+                         QT_TR_NOOP("New Shot After Current"), "Shift+N",
+                         "sub_enter");
   createMenuXsheetAction(MI_CloseChild, QT_TR_NOOP("&Close Sub-Scene"), "",
                          "sub_leave");
   createMenuXsheetAction(MI_ExplodeChild, QT_TR_NOOP("Explode Sub-Scene"), "",

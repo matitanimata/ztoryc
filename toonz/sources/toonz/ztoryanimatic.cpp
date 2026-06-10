@@ -3610,6 +3610,22 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
       "QToolButton{background:transparent;border:1px solid #555;border-radius:4px;}"
       "QToolButton:hover{background:#555;}"
       "QToolButton:checked{background:#c8703a;border-color:#c8703a;}");
+  // New Shot After Current — same as Shift+N: from inside a shot it adds the
+  // new shot right after this one and enters it directly.
+  auto *newShotBtn = new QToolButton(toggleRow);
+  newShotBtn->setText("+");
+  newShotBtn->setFixedSize(28, 28);
+  newShotBtn->setToolTip(
+      tr("New shot after this one (Shift+N).\nCreated right after the shot "
+         "you are editing; you enter it directly and keep drawing."));
+  newShotBtn->setStyleSheet(
+      "QToolButton{background:transparent;color:#ccc;border:1px solid #555;border-radius:4px;font-size:15px;}"
+      "QToolButton:hover{background:#555;}");
+  toggleLay->addWidget(newShotBtn);
+  connect(newShotBtn, &QToolButton::clicked, this, [](){
+    CommandManager::instance()->execute(MI_ZtoryNewShotAfter);
+  });
+
   // Light-direction placement (same gizmo as the Board, bigger canvas here)
   m_lightEditBtn = new QToolButton(toggleRow);
   m_lightEditBtn->setText(QString::fromUtf8("☀"));
@@ -5112,6 +5128,16 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   // update() is enough: it does not rebuild blocks, just redraws them.
   connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched,
           this, [this](){ m_track->update(); });
+  // Rebuild the blocks on every model resequence, even while a sub-scene is
+  // open (the xsheetChanged refresh below is guarded by ancestorCount == 0):
+  // covers New Shot After Current invoked from inside a shot, which would
+  // otherwise leave the timeline stale. refreshFromScene() reads the TOP
+  // xsheet, so the open sub-scene is irrelevant. Deferred: modelReset can
+  // fire mid-operation while the xsheet is not yet stable.
+  connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
+          this, [this](){
+    QTimer::singleShot(0, this, [this](){ refreshFromScene(); });
+  });
   connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
           this, [this](){
     // Defer: xsheetChanged fires mid-import (xsheet not yet stable).
@@ -6418,7 +6444,14 @@ void ZtoryAnimaticPanel::onMergeShots() {
 
 // ---- Add Shot ----
 void ZtoryAnimaticPanel::onAddShot() {
-  if (!ZtoryModel::assertMainXsheet(/*showWarning=*/true)) return;
+  if (!ZtoryModel::assertMainXsheet(/*showWarning=*/false)) {
+    // Inside a sub-scene: instead of refusing with a warning, behave like the
+    // global New Shot After Current — add after the shot being edited and
+    // re-enter it so the artist keeps drawing.
+    if (StoryboardPanel *board = findBoardPanel())
+      board->newShotAfterCurrent();
+    return;
+  }
 
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();

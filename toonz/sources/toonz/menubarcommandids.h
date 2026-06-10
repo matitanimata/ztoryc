@@ -574,4 +574,6 @@
 
 #define MI_OpenCrashReportFolder "MI_OpenCrashReportFolder"
 
+#define MI_ZtoryNewShotAfter "MI_ZtoryNewShotAfter"
+
 #endif
