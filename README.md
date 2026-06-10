@@ -60,7 +60,7 @@ Ztoryc, working together with Tahoma2D / OpenToonz, takes a different approach: 
 - **Light-direction gizmo** — a 3D conic arrow per panel: drag to place, mouse-wheel to tilt toward camera or background, Shift+wheel for beam spread; rendered on thumbnails and in the PDF
 - **Arrows panel** — a library of directional arrows (vector levels) for annotating motion right on the drawing
 - Per-panel dialogue/notes, durations (per-panel and per-shot)
-- Script import — `.fountain`, `.docx`, `.odt`, plain text
+- Script import — `.fdx` (Final Draft), `.fountain`, `.docx`, `.odt`, plain text
 - Full Undo/Redo across board operations
 - Thumbnails refresh automatically as you draw — without interrupting your strokes
 
@@ -181,7 +181,7 @@ Ztoryc, lavorando insieme a Tahoma2D / OpenToonz, adotta un approccio diverso: l
 - **Gizmo direzione luce** — freccia conica 3D per panel: trascina per posizionarla, rotella per inclinarla verso camera o fondale, Shift+rotella per l'apertura del fascio; visibile su thumbnail e PDF
 - **Pannello Arrows** — libreria di frecce direzionali (livelli vettoriali) per annotare i movimenti direttamente sul disegno
 - Dialoghi/note per panel, durate per panel e per shot
-- Import sceneggiatura — `.fountain`, `.docx`, `.odt`, testo semplice
+- Import sceneggiatura — `.fdx` (Final Draft), `.fountain`, `.docx`, `.odt`, testo semplice
 - Undo/Redo completo sulle operazioni del board
 - Thumbnail aggiornate automaticamente mentre disegni — senza interrompere i tratti
 
