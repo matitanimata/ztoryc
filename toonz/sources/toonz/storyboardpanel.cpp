@@ -1238,6 +1238,13 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_panelDetectTimer->setSingleShot(true);
   m_panelDetectTimer->setInterval(1000);
   connect(m_panelDetectTimer, &QTimer::timeout, this, [this](){
+    // If a stroke is in progress (mouse/stylus button down), the synchronous
+    // detect + thumbnail render would stall the UI thread mid-stroke and
+    // corrupt the line (task 49). Requeue and try again after the release.
+    if (QApplication::mouseButtons() != Qt::NoButton) {
+      m_panelDetectTimer->start();
+      return;
+    }
     ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
     if (!scene || scene->getChildStack()->getAncestorCount() == 0) return;
     AncestorNode *node = scene->getChildStack()->getAncestorInfo(0);
@@ -1432,14 +1439,15 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
                this, nullptr);
     connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
             this, &StoryboardPanel::onXsheetChanged);
-    // While inside a sub-scene, each xsheet change (drawing, erasing) restarts
-    // the detect timer so the Board thumbnail stays in sync without flooding renders.
+    // While inside a sub-scene, each xsheet change (drawing, erasing) only
+    // marks the shot dirty — NO detect-timer restart (task 49): the 1s timer
+    // fired mid-stroke and the synchronous detect+render stalled the line.
+    // Detect runs on frameSwitched, on return to the Board, and in showEvent
+    // (m_dirtyShotCol) — every moment a stale thumbnail could actually be seen.
     ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
     if (sc && sc->getChildStack()->getAncestorCount() > 0) {
       connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
               this, [this, sc](){
-        m_panelDetectTimer->start();
-        // Track which shot is being edited so showEvent can invalidate its thumbnail.
         if (sc->getChildStack()->getAncestorCount() > 0) {
           AncestorNode *n = sc->getChildStack()->getAncestorInfo(0);
           if (n) m_dirtyShotCol = n->m_col;
@@ -1455,18 +1463,14 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
       QTimer::singleShot(200, this, &StoryboardPanel::onRefreshPreviews);
     } else {
       // Entrati in una sottoscena — registra quale shot è aperto (per il
-      // refresh forzato al ritorno nel Board) e aggiorna il thumbnail corrente.
+      // refresh forzato al ritorno nel Board (showEvent + m_dirtyShotCol).
+      // NON avviare updatePreview subito: renderXsheetFrame è sincrono e
+      // blocca l'UI thread mentre l'utente disegna i primi tratti (task 49).
+      // Il m_panelDetectTimer (1000ms) parte già da frameSwitched e aggiornerà
+      // il thumbnail dopo la prima pausa dal disegno.
       AncestorNode *node = scene->getChildStack()->getAncestorInfo(0);
       if (node) {
-        int col = node->m_col;
-        m_dirtyShotCol = col;  // sempre, anche se non si disegna nulla
-        for (int si = 0; si < (int)m_shots.size(); si++) {
-          if (m_shots[si].data.xsheetColumn == col) {
-            for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++)
-              QTimer::singleShot(300, this, [this, si, pi](){ updatePreview(si, pi); });
-            break;
-          }
-        }
+        m_dirtyShotCol = node->m_col;
       }
     }
   });
@@ -2634,7 +2638,27 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
 
   int numCols = xsh->getColumnCount();
   int numFrames = xsh->getFrameCount();
-  if (numFrames <= 0 || numCols <= 0) return;
+  if (numFrames <= 0 || numCols <= 0) {
+    // Sub-scene completely empty (e.g. all drawings undone). Collapse to 1 panel
+    // so ghost widgets from a previous multi-panel state are removed (task 50).
+    Shot &shot = m_shots[shotIdx];
+    if ((int)shot.data.panels.size() != 1) {
+      while ((int)shot.data.panels.size() > 1) shot.data.panels.pop_back();
+      if (shot.data.panels.empty()) { PanelData pd; shot.data.panels.push_back(pd); }
+      shot.data.panels[0].startFrame = 0;
+      shot.data.panels[0].duration   = timelineDuration;
+      for (PanelWidget *pw : shot.panels) { m_grid->removeWidget(pw); delete pw; }
+      shot.panels.clear();
+      addPanelWidget(shotIdx, 0);
+      renumberAll();
+      rebuildGrid();
+      ZtoryModel::instance()->syncShotPanels(shotIdx, shot.data.panels,
+                                             shot.data.shotLabel,
+                                             shot.data.xsheetColumn);
+      saveZtoryc();
+    }
+    return;
+  }
 
   // Sound and SoundText (note) columns must not drive panel detection: the
   // cross-dissolve XD-out/XD-in note columns would otherwise create a spurious
