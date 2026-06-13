@@ -293,6 +293,26 @@ public:
 
 //=============================================================================
 
+// Toggle: "Keyframes Follow Exposure".  Quando ON, i keyframe restano incollati
+// alle loro celle: selezione+drag li includono e le operazioni di
+// insert/remove/extend frame li slittano insieme.  Backing store = Preference
+// (persistente, leggibile anche dal core TXsheet).
+class ToggleKeyframesFollowExposureCommand final : public MenuItemHandler {
+public:
+  ToggleKeyframesFollowExposureCommand()
+      : MenuItemHandler(MI_ToggleKeyframesFollowExposure) {}
+  void execute() override {
+    bool current = Preferences::instance()->isKeyframesFollowExposureEnabled();
+    if (CommandManager::instance()
+            ->getAction(MI_ToggleKeyframesFollowExposure)
+            ->isChecked() == current)
+      return;
+    Preferences::instance()->setValue(KeyframesFollowExposure, !current);
+  }
+} ToggleKeyframesFollowExposureCommand;
+
+//=============================================================================
+
 class ToggleCreationInHoldCellsCommand final : public MenuItemHandler {
 public:
   ToggleCreationInHoldCellsCommand()

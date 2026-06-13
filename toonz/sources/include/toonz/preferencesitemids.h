@@ -100,6 +100,7 @@ enum PreferencesItemId {
   DefLevelDpi,
   // AutocreationType,// deprecated
   EnableAutocreation,
+  KeyframesFollowExposure,  // i keyframe seguono le celle in insert/remove/extend
   NumberingSystem,
   EnableAutoStretch,
   EnableImplicitHold,

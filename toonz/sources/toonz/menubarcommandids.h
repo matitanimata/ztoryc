@@ -576,4 +576,7 @@
 
 #define MI_ZtoryNewShotAfter "MI_ZtoryNewShotAfter"
 
+// Toggle: i keyframe seguono le celle (insert/remove/extend + selezione/drag)
+#define MI_ToggleKeyframesFollowExposure "MI_ToggleKeyframesFollowExposure"
+
 #endif

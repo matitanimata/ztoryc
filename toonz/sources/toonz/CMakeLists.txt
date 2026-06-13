@@ -157,7 +157,6 @@ set(HEADERS
     ${MOC_HEADERS}
     celldata.h
     cellkeyframedata.h
-    cellkeyframemode.h
     cellkeyframeselection.h
     cellselection.h
     columncommand.h

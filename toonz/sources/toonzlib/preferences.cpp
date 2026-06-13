@@ -602,6 +602,8 @@ void Preferences::definePreferenceItems() {
          0.1, std::numeric_limits<double>::max());
 
   define(EnableAutocreation, "EnableAutocreation", QMetaType::Bool, true);
+  define(KeyframesFollowExposure, "KeyframesFollowExposure", QMetaType::Bool,
+         false);
   define(NumberingSystem, "NumberingSystem", QMetaType::Int, 0);  // Incremental
   define(EnableAutoStretch, "EnableAutoStretch", QMetaType::Bool, false);
   define(EnableImplicitHold, "EnableImplicitHold", QMetaType::Bool,

@@ -4242,9 +4242,16 @@ void CellArea::mousePressEvent(QMouseEvent *event) {
       bool isCellEmpty =
           (xsh->getCell(row, col).isEmpty() || xsh->isImplicitCell(row, col));
 
-      bool isKeySelection = hasDragBar
-                                ? event->modifiers() & Qt::ControlModifier
-                                : event->modifiers() & Qt::AltModifier;
+      // "Keyframes Follow Exposure" (Preference): quando ON la selezione include
+      // sempre i keyframe (→ TCellKeyframeSelection, mover combinato), senza
+      // tenere Ctrl/Alt.  OFF = euristica corrente.
+      bool isKeySelection;
+      if (Preferences::instance()->isKeyframesFollowExposureEnabled())
+        isKeySelection = true;
+      else
+        isKeySelection = hasDragBar
+                             ? (event->modifiers() & Qt::ControlModifier)
+                             : (event->modifiers() & Qt::AltModifier);
 
       // When no drag bars..
       if (!isSoundPreviewArea && !isSoundExtenderArea && !hasDragBar) {

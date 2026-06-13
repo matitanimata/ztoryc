@@ -483,6 +483,24 @@ void TXsheet::insertCells(int row, int col, int rowCount) {
   // aggiorno il frame count
   int fc = xshColumn->getMaxFrame(true) + 1;
   if (fc > m_imp->m_frameCount) m_imp->m_frameCount = fc;
+
+  // "Keyframes follow exposure" (Preference, default off): i keyframe della
+  // colonna a partire da `row` slittano in basso di `rowCount`, così restano
+  // incollati alle loro celle.  Simmetrico con removeCells() → undo-safe perché
+  // le operazioni (Level Extender, Insert…) rieseguono il do/undo passando da
+  // queste primitive.
+  if (rowCount > 0 &&
+      Preferences::instance()->isKeyframesFollowExposureEnabled()) {
+    TStageObject *obj = getStageObject(getColumnObjectId(col));
+    if (obj) {
+      TStageObject::KeyframeMap km;
+      obj->getKeyframes(km);
+      std::set<int> toShift;
+      for (auto &kv : km)
+        if (kv.first >= row) toShift.insert(kv.first);
+      if (!toShift.empty()) obj->moveKeyframes(toShift, rowCount);
+    }
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -496,6 +514,24 @@ void TXsheet::removeCells(int row, int col, int rowCount, bool keepCellMarks) {
 
   int oldColRowCount = xshCellColumn->getMaxFrame(true) + 1;
   xshCellColumn->removeCells(row, rowCount, keepCellMarks);
+
+  // "Keyframes follow exposure" (Preference): rimuovo i keyframe nello span
+  // cancellato e slitto in alto di rowCount quelli successivi.  Simmetrico con
+  // insertCells() → undo-safe.
+  if (rowCount > 0 &&
+      Preferences::instance()->isKeyframesFollowExposureEnabled()) {
+    TStageObject *obj = getStageObject(getColumnObjectId(col));
+    if (obj) {
+      for (int r = row; r < row + rowCount; r++)
+        if (obj->isKeyframe(r)) obj->removeKeyframeWithoutUndo(r);
+      TStageObject::KeyframeMap km;
+      obj->getKeyframes(km);
+      std::set<int> toShift;
+      for (auto &kv : km)
+        if (kv.first >= row + rowCount) toShift.insert(kv.first);
+      if (!toShift.empty()) obj->moveKeyframes(toShift, -rowCount);
+    }
+  }
 
   // aggiornamento framecount
   if (oldColRowCount == m_imp->m_frameCount) updateFrameCount();

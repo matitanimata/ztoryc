@@ -144,6 +144,11 @@ public:
                          ? m_modifier & Qt::ControlModifier
                          : m_modifier & Qt::AltModifier;
 
+    // "Keyframes Follow Exposure" (Preference): la selezione a rettangolo
+    // include SEMPRE i keyframe (→ TCellKeyframeSelection), senza Ctrl/Alt.
+    if (Preferences::instance()->isKeyframesFollowExposureEnabled())
+      m_keySelection = true;
+
     int r0, c0, r1, c1;
     bool shiftPressed = false;
     if ((m_modifier & Qt::ShiftModifier) &&

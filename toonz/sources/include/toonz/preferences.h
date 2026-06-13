@@ -326,6 +326,9 @@ public:
   double getDefLevelHeight() const { return getDoubleValue(DefLevelHeight); }
   double getDefLevelDpi() const { return getDoubleValue(DefLevelDpi); }
   bool isAutoCreateEnabled() const { return getBoolValue(EnableAutocreation); }
+  bool isKeyframesFollowExposureEnabled() const {
+    return getBoolValue(KeyframesFollowExposure);
+  }
   int getNumberingSystem() const { return getIntValue(NumberingSystem); }
   bool isAutoStretchEnabled() const { return getBoolValue(EnableAutoStretch); }
   bool isImplicitHoldEnabled() const {

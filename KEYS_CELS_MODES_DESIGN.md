@@ -3,6 +3,44 @@
 > Branch: `feature/keys-cels-modes`. NON mergiare su master finché non solido:
 > si tocca il routing di selezione/drag del pannello più usato dell'app.
 
+## STATO / DECISIONI FINALI (2026-06-14)
+
+Il design a **3 modalità** (Drawings/Keys/Both) è stato **abbandonato**: l'utente
+ha giudicato Keys-only e Drawings-only inutili/invasive.  Modello finale: **un
+solo toggle on/off** *"Keyframes Follow Exposure"* — i keyframe restano incollati
+alle loro celle.
+
+Implementato (Opzione B, hook centrale, undo-safe):
+- ✅ **Preference** `KeyframesFollowExposure` (default OFF) — `preferencesitemids.h`,
+  `preferences.h` (getter `isKeyframesFollowExposureEnabled()`), `preferences.cpp`.
+  Persistente e leggibile dal core `TXsheet` (toonzlib).
+- ✅ **Hook centrale** in `TXsheet::insertCells`/`removeCells` (txsheet.cpp): quando
+  ON, slitta i keyframe della colonna insieme alle celle (usa
+  `TStageObject::moveKeyframes`).  Undo-safe: le operazioni (Level Extender,
+  Insert…) rieseguono do/undo passando da queste primitive → shift simmetrico.
+  Verificato: niente doppio-shift perché il drag-move usa `CellsMover`, non
+  insertCells.
+- ✅ **Toggle** checkable `MI_ToggleKeyframesFollowExposure` (xsheetcmd.cpp +
+  mainwindow.cpp `createToggle`, categoria Misc).
+- ✅ **Selezione+drag**: gating in `xshcellviewer.cpp` (~4245) e
+  `xsheetdragtool.cpp` (XsheetSelectionDragTool::onClick) ora legge la Preference
+  → selezione a rettangolo include i keyframe, `CellKeyframeMoverTool` li muove.
+- ✅ Singleton `cellkeyframemode.h` **ritirato**.
+- 🧪 Testato OK dall'utente: selezione, drag in blocco, **frame-extend che slitta
+  i keyframe**, undo/redo.
+
+Da fare (prossimi incrementi):
+- Altri comandi che dovrebbero portare i keyframe: reverse, swing, step/each,
+  paste-insert, ecc. (molti già passano da insert/removeCells → potrebbero
+  funzionare gratis; da verificare uno a uno).
+- Eventuale checkbox nel dialog Preferences + voce di menu (menubar.xml) per
+  rendere visibile lo stato del toggle.
+- Verificare interazione con la riga "global keyframe" (camera/tutte le colonne).
+
+Il resto di questo documento è la ricognizione/design originale (storico).
+
+---
+
 ## Obiettivo
 
 Tre modalità globali che cambiano come selezione e spostamento si applicano a
