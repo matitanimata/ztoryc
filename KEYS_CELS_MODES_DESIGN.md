@@ -29,13 +29,40 @@ Implementato (Opzione B, hook centrale, undo-safe):
 - 🧪 Testato OK dall'utente: selezione, drag in blocco, **frame-extend che slitta
   i keyframe**, undo/redo.
 
-Da fare (prossimi incrementi):
-- Altri comandi che dovrebbero portare i keyframe: reverse, swing, step/each,
-  paste-insert, ecc. (molti già passano da insert/removeCells → potrebbero
-  funzionare gratis; da verificare uno a uno).
-- Eventuale checkbox nel dialog Preferences + voce di menu (menubar.xml) per
-  rendere visibile lo stato del toggle.
-- Verificare interazione con la riga "global keyframe" (camera/tutte le colonne).
+Repertorio comandi sulla selezione combinata (commit successivo):
+- ✅ `TCellKeyframeSelection::enableCommands` ora delega l'INTERO repertorio celle
+  a `m_cellSelection->enableCommands()` (prima era uno stub: solo copy/paste/cut/
+  delete → reverse/swing/step/insert/… restavano GRIGI con i keyframe selezionati).
+  I 4 comandi combinati (Copy/Paste/Cut/Clear) restano override.
+
+## ⚠️ BUG NOTO — undo della cancellazione keyframe (operazioni distruttive)
+
+Accorciare il timing di un blocco (rimuove frame → `TXsheet::removeCells`) **cancella**
+i keyframe nello span, e l'**undo NON li ripristina** (chiavi perse).
+
+Causa: lo SHIFT dei keyframe in insert/removeCells è undo-safe (simmetrico: l'undo
+dell'operazione rieseguendo la primitiva opposta ri-slitta). Ma la **cancellazione**
+delle chiavi nello span rimosso non lo è: l'undo chiama `insertCells` (ri-slitta giù)
+che **non può ricreare chiavi cancellate** — non sono salvate da nessuna parte. E non
+si può pushare un undo da dentro la primitiva (rieseguita durante il replay → corrompe
+lo stack, famiglia TUndoManager UAF).
+
+Asimmetria: EXTEND inserisce frame vuoti → la removeCells dell'undo cancella nello span
+inserito che è VUOTO di chiavi → undo ok. SHORTEN rimuove frame CON chiavi → perse.
+
+**Fix corretto (da fare a mente fresca):** rendere la cancellazione undoable a livello
+di COMANDO, non di primitiva — l'undo dell'operazione (es. `LevelExtenderUndo`, che già
+salva le celle in `m_cells`) deve salvare anche i keyframe dello span e ripristinarli.
+Lo shift centrale in insertCells può restare. È la parte distruttiva che serve gestire
+con un undo proprio (per-operazione, mirato alle operazioni che rimuovono frame).
+
+Contenimento: toggle OFF di default, branch isolato → nessun rischio su master.
+
+Altri da fare:
+- Operazioni di RIORDINO (reverse/swing/step/each): oggi riordinano solo le celle;
+  semantica keyframe da decidere (reverse → specchiare le chiavi nel range?).
+- Checkbox nel dialog Preferences + voce di menu (menubar.xml) per la visibilità.
+- Verificare la riga "global keyframe" (camera/tutte le colonne).
 
 Il resto di questo documento è la ricognizione/design originale (storico).
 

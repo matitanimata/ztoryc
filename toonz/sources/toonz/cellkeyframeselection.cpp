@@ -38,6 +38,21 @@ TCellKeyframeSelection::~TCellKeyframeSelection() {
 //-----------------------------------------------------------------------------
 
 void TCellKeyframeSelection::enableCommands() {
+  // Abilita l'INTERO repertorio dei comandi celle (reverse, swing, step/each,
+  // insert/remove/duplicate, reframe, time stretch, …) facendoli operare sulla
+  // cell-selection interna (che tiene il range corretto e usa il proprio
+  // m_range, non la current selection dell'app).  Prima questa selezione
+  // combinata era uno stub con solo copy/paste/cut/delete → tutti gli altri
+  // comandi restavano grigi quando i keyframe erano inclusi nella selezione.
+  //
+  // Nota: i comandi che spostano l'exposure passando da TXsheet::insert/
+  // removeCells portano già i keyframe con sé (Preference "Keyframes Follow
+  // Exposure", hook centrale).  I comandi di RIORDINO (reverse/swing/step…)
+  // riordinano solo le celle: l'allineamento dei keyframe a quei riordini è un
+  // incremento successivo.
+  m_cellSelection->enableCommands();
+
+  // Override dei 4 comandi che devono gestire ANCHE i keyframe selezionati.
   enableCommand(this, MI_Copy, &TCellKeyframeSelection::copyCellsKeyframes);
   enableCommand(this, MI_Paste, &TCellKeyframeSelection::pasteCellsKeyframes);
   enableCommand(this, MI_Cut, &TCellKeyframeSelection::cutCellsKeyframes);
