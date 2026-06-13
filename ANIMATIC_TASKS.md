@@ -745,21 +745,52 @@ nella sub-scene corretta.
     (ZtoryStartup).
 ✅ [GIÀ FATTO — rimosso 2026-06-10] Frame handle separato per l'animatic viewer —
     risolto di fatto col panel Monitor ancorato alla camera main.
-51. 🔴 NEW Brush feel — reattività e qualità del pennello (ALTA — priorità strategica)
-    Obiettivo: feel paragonabile a TVPaint. È la cosa che si giudica nei primi
-    30 secondi di prova ed è il motivo per cui studi boardano in TVPaint pur
-    senza modulo storyboard. Decisione: NON attingere codice da Krita (GPL-3
-    incompatibile con BSD + engine inestricabile) — le idee sì (stabilizer
-    pull-string, curve di pressione, preset UX). Tahoma2D ha già libmypaint
-    (ISC, sotto-sfruttato). Piano in 4 fasi, in ordine:
-    1. AUDIT LATENZA stroke (prossima sessione): strumentare la pipeline
-       tablet event → dab → schermo; cercare coalescing eventi Qt perso,
-       repaint completi invece che incrementali, lavoro estraneo durante il
-       drag (famiglia del fix task 49). I fix valgono come PR upstream.
-    2. STABILIZZATORE serio: peso regolabile stile Krita/CSP (riimplementato).
-    3. PRESET pennelli: salva/organizza/condividi (UX migliore di Tahoma2D).
-    4. MYPAINT: esporre curve di pressione per parametro, import .myb della
-       community. Deformatori e assistant tool: capitolo successivo.
+✅ [DECLASSATO 2026-06-13] 52. CRASH Shift+N da dentro uno shot — palette dangling
+    SIGSEGV in PaletteViewer::updateTabBar (crash log Crash-20260611-181136.log).
+    Catena: MI_ZtoryNewShotAfter da dentro una sub-scene → close + nuovo shot + open
+    → shotActivatedForViewing → ZtoryRightPanel::showShotMode → stack page SHOT
+    → PaletteViewer::showEvent → onPaletteSwitched → updateTabBar → deref di
+    TPaletteHandle::getPalette() NON nullo ma dangling.
+    ── Esito sessione lldb 2026-06-13: NON RIPRODUCIBILE. Due torture test:
+    (1) debug build ../debug-build + MallocScribble (UAF → crash deterministico):
+        path esercitato 70× in updateTabBar (shot vuoti, raster, smart raster,
+        global palette caricata, brush MyPaint) — MAI crashato; la handle del
+        level-palette viene SEMPRE azzerata correttamente (setPalette con 0x0)
+        nel percorso closeChild→newShot→openChild. L'address-match palette
+        letta↔distrutta era falso positivo (riuso heap dello stesso indirizzo).
+    (2) ESATTO binario release che crashò l'11 (toonz/Ztoryc.app, Jun 10 21:01,
+        TUndoManager hardening c0e7c92bf GIÀ incluso) girato sotto lldb senza
+        MallocScribble (timing/heap originali): nessun SIGSEGV in nessuna variante.
+    → Heisenbug state-dependent, stessa famiglia del crash StudioPalette
+    declassato 2026-06-11. NON patchato (regola: niente fix alla cieca; nel codice
+    attuale non c'è bug identificabile sulla handle da correggere). CrashHandler
+    resta a presidio: riaprire solo su recidiva con nuovo crash log.
+    File di riferimento: ztoryanimatic.cpp (showShotMode ~4290, deferral singleShot
+    già presente dal 31/05 commit 9c4b5ae02), paletteviewer.cpp:681, tpalettehandle.cpp.
+
+51. 🟢 [DECLASSATO 2026-06-13] Brush feel — da ALTA strategica a feature opzionale on-demand
+    La premessa "feel inferiore a TVPaint" era un'ASSUNZIONE di Fable 5, mai
+    misurata né lamentata da un utente reale (e non abbiamo TVPaint per il
+    confronto). L'utente percepisce il pennello "piuttosto reattivo".
+    ── FASE 1 AUDIT LATENZA: FATTA (2026-06-13). Aggiunto BrushProfiler
+    (`toonz/sources/include/brushprofiler.h`, header-only zero-cost; flag
+    `ZTORYC_BRUSH_PROFILE=1`; instrumenta leftButtonDrag, paintGL, evt→paint).
+    Misure su tavoletta reale (153 blocchi × 120 dab):
+      dab_compute (event→raster)   med 0.08 ms  (gratis)
+      paintGL (durata repaint)     med 0.27 ms  (gratis, incrementale+scissor OK)
+      evt→paint (end-to-end CPU)   med 2.18 ms  (SOTTO un frame @60Hz)
+    → La pipeline software NON è il collo di bottiglia. Repaint già incrementale
+    (invalidateRect→clipRect→glScissor), tablet events NON compressi
+    (AA_CompressTabletEvents off), nessun lavoro estraneo nel drag.
+    Eventuale latenza percepita residua = presentazione/vsync/compositor macOS
+    (livello Qt/OS, non nostra CPU) — NON inseguire senza una lamentela concreta.
+    Reperti minori non risolti (solo se emergerà un problema reale):
+      A) throttle 10ms MyPaint (toonzrasterbrushtool ~:2001): non è latenza,
+         scarta punti sui tratti VELOCI → fedeltà; quantificabile con drop counter.
+      B) stabilizzatore (m_smoothStroke): lag spaziale by-design quando Smooth>0.
+    ── FASI 2-4 (stabilizzatore pull-string, preset pennelli, curve MyPaint .myb):
+    restano valide SOLO come feature UX a sé, on-demand, NON come fix di latenza.
+    BrushProfiler resta in repo come strumento di diagnosi riutilizzabile.
 38. NEW Room TRADITIONAL (BASSA — "vedremo", declassata 2026-06-10)
 Kitsu. NEW Integrazione Kitsu (M5) — unica voce roadmap pubblica nel README
 41. NEW Cache RAM threshold configurabile (BASSA) — ora a 14.3% shipped in `tsystempd.cpp` (il tentativo di alzarlo al 25% è stato revertito perché l'eviction aggressiva crashava il Save All su scene pesanti, raster liberato durante `TRasterCodecLZO::compress`). Rifarlo in modo MIRATO: non toccare l'eviction globale durante i save; semmai rilevamento per classe di macchina (≤8GB→più aggressivo) + opzione utente. ⚠️ Collegato: cache-leak post-render (frame restano in cache, ~17GB su scena pesante; fix upstream `be20f9512` da portare).

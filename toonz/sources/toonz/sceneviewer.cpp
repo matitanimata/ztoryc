@@ -7,6 +7,7 @@
 #include "tapp.h"
 #include "viewerpane.h"
 #include "onionskinmaskgui.h"
+#include "brushprofiler.h"  // task 51 — strumentazione latenza (no-op senza flag)
 #include "viewerdraw.h"
 #include "menubarcommandids.h"
 #include "ruler.h"
@@ -2192,6 +2193,7 @@ static void drawFpsGraph(int t0, int t1) {
 // #define FPS_HISTOGRAM
 
 void SceneViewer::paintGL() {
+  BrushProfiler::PaintScope _profPaint;  // task 51 — durata paint + latenza evt→paint
 #ifdef _DEBUG
   if (!check_framebuffer_status()) {
     /* QGLWidget の widget 生成/削除のタイミングで(platform によって?)

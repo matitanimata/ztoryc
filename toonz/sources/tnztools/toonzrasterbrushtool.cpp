@@ -23,6 +23,7 @@
 #include "toonz/tstageobjectspline.h"
 #include "toonz/ttileset.h"
 #include "toonz/txshsimplelevel.h"
+#include "brushprofiler.h"  // task 51 — strumentazione latenza (no-op senza flag)
 #include "toonz/toonzimageutils.h"
 #include "toonz/palettecontroller.h"
 #include "toonz/stage2.h"
@@ -1711,6 +1712,8 @@ void ToonzRasterBrushTool::leftButtonDrag(const TPointD &pos,
     m_brushPos = getCenteredCursorPos(pos);
     return;
   }
+
+  BrushProfiler::ScopeTimer _profDab(BrushProfiler::dabStat());  // task 51
 
   TRectD invalidateRect;
   invalidateRect = TRectD(m_firstPoint, m_lastPoint).enlarge(2);

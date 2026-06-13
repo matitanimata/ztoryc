@@ -1,3 +1,42 @@
+## [2026-06-13] — task 52 declassato, autofill antialias indagato, brush-feel audit
+
+### Added
+- **BrushProfiler** (`toonz/sources/include/brushprofiler.h`) — strumentazione
+  latenza header-only, zero-cost senza flag, attivabile con
+  `ZTORYC_BRUSH_PROFILE=1`. Instrumenta `leftButtonDrag` (dab_compute),
+  `paintGL` e la latenza end-to-end evento→paint; stampa min/med/max/avg ogni
+  120 campioni su stderr. Punti in `sceneviewer.cpp`, `sceneviewerevents.cpp`,
+  `toonzrasterbrushtool.cpp`.
+
+### Investigated / Declassed
+- **Task 51 — Brush feel → DECLASSATO** (da ALTA strategica a feature opzionale).
+  La premessa "feel < TVPaint" era un'assunzione di Fable 5, mai misurata.
+  Audit fase 1 col BrushProfiler su tavoletta reale (153 blocchi × 120 dab):
+  dab_compute med **0.08 ms**, paintGL med **0.27 ms**, evt→paint med **2.18 ms**
+  (sotto un frame @60Hz). La pipeline software NON è il collo di bottiglia:
+  repaint già incrementale (invalidateRect→clipRect→glScissor), tablet events
+  non compressi, nessun lavoro estraneo nel drag. Fasi 2-4 (stabilizzatore,
+  preset, curve MyPaint) restano solo come feature UX on-demand.
+- **Task 52 — crash palette Shift+N → DECLASSATO**: non riproducibile né su
+  debug build + lldb + MallocScribble (path esercitato 70× senza crash, handle
+  sempre azzerata correttamente) né sull'ESATTO binario release che crashò l'11
+  (TUndoManager hardening già incluso). Heisenbug state-dependent, famiglia del
+  crash StudioPalette declassato l'11. CrashHandler a presidio.
+
+### Notes
+- **AutoFill bordino bianco antialiased (smart raster) — IRRISOLTO, baseline safe
+  ripristinata.** 5 approcci provati, tutti regrediti sui pennelli morbidi:
+  (1) dipingere pixel ink adiacenti → sborda; (2) + guardia no-esterno → sborda;
+  (3) delega al fill() nativo → leak totale (soft brush senza core tone=0);
+  (4) tone-march `<=` → ricopre tutto; (5) tone-march `<` → colora tratti aperti.
+  Causa radice: nessuna regola locale per-pixel distingue versante interno/esterno
+  della linea sui soft brush (gradiente di tone esteso). Strada giusta (da fare
+  OFFLINE, testata su raster sintetici): logica scanline-direzionale di
+  `calcFillRow` confinata alla regione BFS. Lezione salvata in memoria Claude.
+- Lezione trasversale: misurare/riprodurre prima di patchare ha evitato di
+  inseguire problemi inesistenti (52, 51); l'errore è stato spedire pezze autofill
+  in live invece di testarle offline.
+
 ## [2026-06-10b] — New Shot After Current, fix task 49/50, README, release v0.4.1
 
 ### Added

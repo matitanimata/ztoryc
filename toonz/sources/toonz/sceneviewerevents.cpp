@@ -2,6 +2,7 @@
 
 #include <QtGlobal>
 
+#include "brushprofiler.h"  // task 51 — strumentazione latenza (no-op senza flag)
 #include "sceneviewercontextmenu.h"
 
 // Tnz6 includes
@@ -424,6 +425,8 @@ void SceneViewer::tabletEvent(QTabletEvent *e) {
     // necessary interval for it. Deformation will be processed at interval of
     // 20msec. (See RasterSelectionTool::leftButtonDrag())
     if (curPos != m_lastMousePos) {
+      // task 51 — marca l'arrivo dell'evento tablet per la latenza evt→paint
+      if (BrushProfiler::enabled()) BrushProfiler::lastEventMs() = BrushProfiler::nowMs();
       TMouseEvent mouseEvent;
       initToonzEvent(mouseEvent, e, height(), m_pressure, m_tiltX, m_tiltY,
                      m_rotation, getDevPixRatio(),
