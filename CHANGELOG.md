@@ -1,3 +1,41 @@
+## [2026-06-14] — Keys Follow Exposure: operazioni Cels portano i keyframe + toggle visibile
+
+Branch `feature/keys-cels-modes` (NON ancora su master).
+
+### Fixed
+- **Undo della cancellazione keyframe nel Level Extender (shrink)** — accorciare il
+  timing di un blocco cancellava i keyframe nel tail rimosso e l'undo non li
+  ripristinava. Fix a livello di comando in `LevelExtenderUndo` (`xsheetdragtool.cpp`):
+  snapshot dei keyframe del blocco all'onClick (`m_savedKeys`, gated su `m_followExposure`)
+  + restore nel path undo (`insertCells()`) limitato al tail `[r0,r1]`. Testato OK.
+- **Popup Repeat… grigio con selezione combinata** — `DuplicatePopup` faceva
+  `dynamic_cast<TCellSelection>` che fallisce su `TCellKeyframeSelection` → campi/bottoni
+  disabilitati. Nuovo helper `getCurrentCellSelection()` estrae la cell-selection interna
+  (`duplicatepopup.cpp`). ⚠️ Stesso pattern da verificare su Time Stretch….
+
+### Added
+- **Keys-follow per le operazioni del menu Cels** (toggle "Keyframes Follow Exposure" ON) —
+  i keyframe seguono il rimappamento delle celle. Tutto in `txsheet.cpp`, gated sulla
+  preference, undo simmetrico via primitive. Testato OK:
+  - **Reverse** — mirror involutivo `r→r0+r1-r` (`ReverseUndo` undo==redo).
+  - **Roll Up/Down** — rotazione ciclica; chiave di bordo salvata e riposizionata
+    (prima cancellata da `removeCells`).
+  - **Swing** — duplica `[r0,r1-1]` specchiato nel tail (`s→2*r1-s`), pivot escluso.
+  - **Repeat** — duplica il chunk di keyframe su ogni copia.
+- **Toggle visibile in toolbar** — `MI_ToggleKeyframesFollowExposure` ora ha icona
+  `segment_linked` (`mainwindow.cpp`): aggiungibile alla Quick Toolbar dell'xsheet via
+  "Customize Quick Toolbar" → Misc, mostra stato premuto/rilasciato.
+
+### Notes
+- **Classificazione completa menu Cels** in `KEYS_CELS_MODES_DESIGN.md`: estendibili
+  (rimappano il tempo) vs no (cambiano contenuto/marker playback). Loop Frames resta
+  fuori (righe virtuali, no celle reali) → eventuale "loop transform" è feature a parte.
+- **Gruppo ritempi TODO** (per sessione fresca): Step/Each/Time Stretch richiedono
+  snapshot/restore keyframe *dentro le Undo class* (ripristinano celle wholesale, non via
+  primitiva inversa). Reframe: semantica keyframe da decidere. Mappature già definite nel
+  design.
+- Toggle di default nella Quick Toolbar per tutti: eventuale, via `buildDefaultToolbar`.
+
 ## [2026-06-13] — task 52 declassato, autofill antialias indagato, brush-feel audit
 
 ### Added
