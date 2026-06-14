@@ -144,6 +144,11 @@ public:
                          ? m_modifier & Qt::ControlModifier
                          : m_modifier & Qt::AltModifier;
 
+    // "Keyframes Follow Exposure" (Preference): la selezione a rettangolo
+    // include SEMPRE i keyframe (→ TCellKeyframeSelection), senza Ctrl/Alt.
+    if (Preferences::instance()->isKeyframesFollowExposureEnabled())
+      m_keySelection = true;
+
     int r0, c0, r1, c1;
     bool shiftPressed = false;
     if ((m_modifier & Qt::ShiftModifier) &&
@@ -769,6 +774,14 @@ class LevelExtenderUndo final : public TUndo {
 
   bool m_refreshSound;
 
+  // "Keyframes follow exposure": durante uno shrink, TXsheet::removeCells
+  // cancella i keyframe nel tail rimosso (operazione distruttiva).  L'undo passa
+  // da insertCells(), che ri-slitta giù le chiavi sotto il blocco ma NON può
+  // ricreare quelle dentro lo span.  Le salviamo qui all'onClick (per colonna:
+  // riga assoluta → Keyframe) e le ripristiniamo nell'undo.
+  bool m_followExposure;
+  std::vector<std::map<int, TStageObject::Keyframe>> m_savedKeys;
+
 public:
   LevelExtenderUndo(bool insert = true, bool invert = false,
                     bool refreshSound = false)
@@ -779,7 +792,8 @@ public:
       , m_deltaRow(0)
       , m_insert(insert)
       , m_invert(invert)
-      , m_refreshSound(refreshSound) {}
+      , m_refreshSound(refreshSound)
+      , m_followExposure(false) {}
 
   void setCells(TXsheet *xsh, int row, int col, int rowCount, int colCount) {
     assert(rowCount > 0 && colCount > 0);
@@ -808,6 +822,23 @@ public:
         if (!column) continue;
         TXshCellColumn *cellColumn = column->getCellColumn();
         if (cellColumn) m_cellMarks.insert(c, cellColumn->getCellMarks());
+      }
+    }
+    // setCells gets called 2x. Snapshot dei keyframe del blocco 1x: servono per
+    // ripristinare nell'undo le chiavi del tail che removeCells cancella quando
+    // "Keyframes follow exposure" è attivo.
+    if (m_savedKeys.empty()) {
+      m_followExposure =
+          Preferences::instance()->isKeyframesFollowExposureEnabled();
+      m_savedKeys.resize(colCount);
+      if (m_followExposure) {
+        for (int c = 0; c < colCount; c++) {
+          TStageObject *obj =
+              xsh->getStageObject(xsh->getColumnObjectId(col + c));
+          if (!obj) continue;
+          for (int r = row; r < row + rowCount; r++)
+            if (obj->isKeyframe(r)) m_savedKeys[c][r] = obj->getKeyframe(r);
+        }
       }
     }
   }
@@ -860,6 +891,18 @@ public:
           xsh->setCell(r, col, cell);
           prevCell = cell;
         }
+      }
+    }
+    // Ripristina i keyframe del tail rimosso: insertCells() ha già ri-slittato
+    // giù le chiavi sotto il blocco, ma quelle DENTRO lo span [r0,r1] erano state
+    // cancellate da removeCells — le riapplichiamo dallo snapshot onClick.
+    if (m_followExposure) {
+      for (int c = 0; c < m_colCount && c < (int)m_savedKeys.size(); c++) {
+        TStageObject *obj = xsh->getStageObject(xsh->getColumnObjectId(m_col + c));
+        if (!obj) continue;
+        for (auto &kv : m_savedKeys[c])
+          if (kv.first >= r0 && kv.first <= r1)
+            obj->setKeyframeWithoutUndo(kv.first, kv.second);
       }
     }
   }

@@ -2538,6 +2538,13 @@ void MainWindow::defineActions() {
   createMenuXsheetAction(MI_ZtoryNewShotAfter,
                          QT_TR_NOOP("New Shot After Current"), "Shift+N",
                          "sub_enter");
+  createToggle(MI_ToggleKeyframesFollowExposure,
+               QT_TR_NOOP("Keyframes Follow Exposure"), "",
+               Preferences::instance()->isKeyframesFollowExposureEnabled(),
+               MiscCommandType, "segment_linked",
+               tr("When on, keyframes stay pinned to their cells: selection and "
+                  "drag include them, and insert/remove/extend frame operations "
+                  "shift them together with the exposure."));
   createMenuXsheetAction(MI_CloseChild, QT_TR_NOOP("&Close Sub-Scene"), "",
                          "sub_leave");
   createMenuXsheetAction(MI_ExplodeChild, QT_TR_NOOP("Explode Sub-Scene"), "",
