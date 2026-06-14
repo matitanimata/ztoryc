@@ -5,8 +5,22 @@
 > regressione toggle-OFF pulito. Il lavoro residuo (gruppo ritempi, rifiniture undo
 > lato toggle-ON) prosegue direttamente su master in modo incrementale e gated.
 >
-> ⚠️ TODO undo (toggle ON) — DA DETTAGLIARE: l'utente ha segnalato "qualcosa da
-> sistemare sugli undo" al momento del merge. Riprodurre e annotare la sequenza esatta.
+> ⚠️ BUG NOTI (toggle ON) — segnalati 2026-06-14 dopo il merge:
+>
+> **BUG-1 — Drag-move su colonna attigua bloccato.** In keys+cels, selezionando un
+> blocco non lo si riesce a spostare sulla colonna adiacente (il drag non muove).
+> Ipotesi: i keyframe appartengono allo `TStageObject` della colonna; spostarli su
+> un'altra colonna = trasferirli a un altro stage object. `CellKeyframeMoverTool`
+> probabilmente rifiuta/ignora il move cross-colonna. Decidere la semantica:
+> (a) consentirlo trasferendo le chiavi al nuovo stage object, oppure (b) muovere le
+> celle e lasciare le chiavi (degradare), oppure (c) vincolarlo esplicitamente.
+>
+> **BUG-2 — Undo del cut non ripristina i keyframe.** Cut di un blocco (celle+chiavi),
+> paste altrove (celle+chiavi incollati correttamente), poi Ctrl+Z: le **celle**
+> ritornano alla posizione originale ma le **chiavi no** → chiavi perse. Stessa
+> famiglia del fix Level Extender: la rimozione delle chiavi nel cut non è undoable.
+> Guardare `TCellKeyframeSelection::cutCellsKeyframes`/`deleteCellsKeyframes` e il loro
+> undo: deve salvare i keyframe rimossi e ripristinarli. PRIORITÀ ALTA (perdita dati).
 
 ## STATO / DECISIONI FINALI (2026-06-14)
 
