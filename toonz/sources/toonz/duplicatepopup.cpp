@@ -5,6 +5,7 @@
 // Tnz6 includes
 #include "filmstripcommand.h"
 #include "cellselection.h"
+#include "cellkeyframeselection.h"
 #include "tapp.h"
 
 // TnzQt includes
@@ -28,6 +29,20 @@
 
 //-----------------------------------------------------------------------------
 namespace {
+//-----------------------------------------------------------------------------
+
+// La selezione corrente può essere una TCellSelection pura oppure la combinata
+// TCellKeyframeSelection (quando sono inclusi keyframe): in quest'ultimo caso la
+// cell-selection effettiva è quella interna.  Senza questo, il popup Repeat
+// restava grigio con i keyframe selezionati (dynamic_cast<TCellSelection> null).
+TCellSelection *getCurrentCellSelection() {
+  TSelection *sel = TApp::instance()->getCurrentSelection()->getSelection();
+  if (TCellSelection *cs = dynamic_cast<TCellSelection *>(sel)) return cs;
+  if (TCellKeyframeSelection *cks = dynamic_cast<TCellKeyframeSelection *>(sel))
+    return cks->getCellSelection();
+  return nullptr;
+}
+
 //-----------------------------------------------------------------------------
 
 class DuplicateUndo final : public TUndo {
@@ -187,8 +202,7 @@ DuplicatePopup::DuplicatePopup()
 //-------------------------------------------------------------------
 
 void DuplicatePopup::onApplyPressed() {
-  TCellSelection *selection = dynamic_cast<TCellSelection *>(
-      TApp::instance()->getCurrentSelection()->getSelection());
+  TCellSelection *selection = getCurrentCellSelection();
   if (!selection) return;
 
   int count = 0, upTo = 0;
@@ -245,8 +259,7 @@ void DuplicatePopup::updateValues() {
   int count, upTo;
   getValues(count, upTo);
   if (count == m_count && upTo == m_upTo) return;
-  TCellSelection *selection = dynamic_cast<TCellSelection *>(
-      TApp::instance()->getCurrentSelection()->getSelection());
+  TCellSelection *selection = getCurrentCellSelection();
 
   if (!selection) {
     m_countFld->setEnabled(false);

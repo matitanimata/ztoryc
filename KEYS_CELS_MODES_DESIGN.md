@@ -35,32 +35,80 @@ Repertorio comandi sulla selezione combinata (commit successivo):
   delete → reverse/swing/step/insert/… restavano GRIGI con i keyframe selezionati).
   I 4 comandi combinati (Copy/Paste/Cut/Clear) restano override.
 
-## ⚠️ BUG NOTO — undo della cancellazione keyframe (operazioni distruttive)
+## ✅ RISOLTO (2026-06-14) — undo della cancellazione keyframe (Level Extender shrink)
 
-Accorciare il timing di un blocco (rimuove frame → `TXsheet::removeCells`) **cancella**
-i keyframe nello span, e l'**undo NON li ripristina** (chiavi perse).
+Accorciare il timing di un blocco (rimuove frame → `TXsheet::removeCells`) **cancellava**
+i keyframe nello span e l'**undo NON li ripristinava** (chiavi perse).
 
-Causa: lo SHIFT dei keyframe in insert/removeCells è undo-safe (simmetrico: l'undo
-dell'operazione rieseguendo la primitiva opposta ri-slitta). Ma la **cancellazione**
-delle chiavi nello span rimosso non lo è: l'undo chiama `insertCells` (ri-slitta giù)
-che **non può ricreare chiavi cancellate** — non sono salvate da nessuna parte. E non
-si può pushare un undo da dentro la primitiva (rieseguita durante il replay → corrompe
-lo stack, famiglia TUndoManager UAF).
+Causa: lo SHIFT dei keyframe in insert/removeCells è undo-safe (simmetrico). Ma la
+**cancellazione** delle chiavi nello span rimosso non lo era: l'undo chiama `insertCells`
+(ri-slitta giù) che non può ricreare chiavi cancellate.
 
-Asimmetria: EXTEND inserisce frame vuoti → la removeCells dell'undo cancella nello span
-inserito che è VUOTO di chiavi → undo ok. SHORTEN rimuove frame CON chiavi → perse.
+**Fix implementato** (a livello di COMANDO, non di primitiva) in `LevelExtenderUndo`
+(`xsheetdragtool.cpp`):
+- ✅ **Snapshot all'onClick** — `setCells()` salva i keyframe dell'intero blocco originale
+  per colonna (`m_savedKeys`, mappa riga→`TStageObject::Keyframe`), una sola volta, gated
+  sul flag `m_followExposure` letto al momento dell'operazione.
+- ✅ **Restore nell'undo** — l'helper `insertCells()` (path undo dello shrink) riapplica via
+  `setKeyframeWithoutUndo` solo le chiavi nello span del tail `[r0,r1]` rimosso. Lo shift
+  centrale in `TXsheet::insertCells` resta (ri-slitta le chiavi sotto il blocco).
+- 🧪 Testato OK dall'utente: shrink oltre una chiave → undo la ripristina, redo la ri-rimuove.
 
-**Fix corretto (da fare a mente fresca):** rendere la cancellazione undoable a livello
-di COMANDO, non di primitiva — l'undo dell'operazione (es. `LevelExtenderUndo`, che già
-salva le celle in `m_cells`) deve salvare anche i keyframe dello span e ripristinarli.
-Lo shift centrale in insertCells può restare. È la parte distruttiva che serve gestire
-con un undo proprio (per-operazione, mirato alle operazioni che rimuovono frame).
+Contenimento verificato analiticamente: lossy solo il path `m_insert=true` non-invert
+(undo via `insertCells`); non-insert/invert usano `clearCells`/`setCells` (non cancellano
+chiavi); per l'extend il restore è no-op (chiavi salvate sopra il tail inserito).
 
-Contenimento: toggle OFF di default, branch isolato → nessun rischio su master.
+⚠️ **Da generalizzare**: lo stesso pattern distruttivo esiste in altri comandi che
+rimuovono frame con chiavi (es. Reframe, Step/Each reduce, time-stretch). Per ora coperto
+solo Level Extender (caso segnalato). Se emergono altri casi, estrarre un helper
+riusabile snapshot/restore keyframe-in-span e adottarlo nei rispettivi Undo.
+
+## Menu Cels → keys-follow: classificazione (decisa 2026-06-14)
+
+Principio unico: **la chiave segue la sua cella**.  Operazioni che rimappano il
+tempo (permuta/sposta/ritempo/duplica righe) → estendibili.  Operazioni che cambiano
+il *contenuto* (numero disegno) o mettono un *marker di playback* → no.
+NON opzionali per-comando: il toggle stesso è l'opt-in globale (OFF = niente tocca le chiavi).
+
+| Voce | Keys-follow | Stato |
+|------|-------------|-------|
+| Reverse | ✅ specchia `r→r0+r1-r` (involuzione) | ✅ FATTO 2026-06-14 |
+| Roll Up / Roll Down | ✅ rotazione ciclica, bordo incluso | ✅ FATTO 2026-06-14 |
+| Swing | ✅ duplica chiavi nel tail rovesciato (`s→2*r1-s`) | ✅ FATTO 2026-06-14 |
+| Repeat… | ✅ duplica pattern chiavi su ogni copia | ✅ FATTO 2026-06-14 |
+| Time Stretch | ✅ ritempo proporzionale | ☐ TODO (gruppo ritempi) |
+| Step (2/3/4) | ✅ chiave sul primo frame del run | ☐ TODO |
+| Each (2/3/4) | ⚠️ decima: snap al frame superstite | ☐ TODO |
+| Reframe (1/2/3/4) | ⚠️ espandi+decima | ☐ TODO (semantica da decidere) |
+| Random | ❌ cambia numeri disegno, non il tempo | — |
+| Autoexpose | ❌ contenuto | — |
+| Auto Input Cell Number | ❌ contenuto | — |
+| Loop Frames / Remove Loop | ❌ marker playback (righe virtuali) | feature a parte* |
+
+\* **Loop "key-aware" = feature separata**: Loop non duplica celle reali
+(`column->addLoop`, righe virtuali via `getLoopedFrame`).  Far seguire le chiavi
+significherebbe *ciclare la valutazione del transform* per-range — tocca lo
+`TStageObject` (esiste già `m_cycleEnabled` globale, non per-range), non il
+rimappamento di righe.  Non incastrarla in questo toggle.
+
+**Gruppo permutazioni + duplicazioni FATTO** (undo simmetrico gratis via primitive,
+zero perdita) — tutto in `txsheet.cpp`, gated sulla preference, testato OK dall'utente:
+- Reverse — `reverseCells`: mirror involutivo (`ReverseUndo` undo==redo).
+- Roll Up/Down — `rollupCells`/`rolldownCells`: la chiave di bordo veniva cancellata
+  da `removeCells`, ora salvata e riposizionata; undo via primitiva inversa.
+- Swing — `swingCells`: duplica `[r0,r1-1]` specchiato nel tail; undo = `removeCells`
+  del tail (cancella le chiavi duplicate, simmetrico).
+- Repeat — `duplicateCells`: duplica il chunk su ogni copia; undo idem.
+- Fix collaterale: `DuplicatePopup` (Repeat…) faceva `dynamic_cast<TCellSelection>`
+  → grigio con la selezione combinata.  Ora usa `getCurrentCellSelection()` che
+  estrae la cell-selection interna da `TCellKeyframeSelection`.  ⚠️ Stesso pattern
+  da verificare su altri popup del menu Cels (Time Stretch…).
+
+**Gruppo ritempi (TODO)**: Time Stretch/Step/Each/Reframe — richiedono snapshot/
+restore stile Level Extender per la decimazione (chiavi su celle scartate → snap
+al superstite, no perdita silenziosa).  Estrarre l'helper riusabile.
 
 Altri da fare:
-- Operazioni di RIORDINO (reverse/swing/step/each): oggi riordinano solo le celle;
-  semantica keyframe da decidere (reverse → specchiare le chiavi nel range?).
 - Checkbox nel dialog Preferences + voce di menu (menubar.xml) per la visibilità.
 - Verificare la riga "global keyframe" (camera/tutte le colonne).
 

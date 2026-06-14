@@ -2541,7 +2541,7 @@ void MainWindow::defineActions() {
   createToggle(MI_ToggleKeyframesFollowExposure,
                QT_TR_NOOP("Keyframes Follow Exposure"), "",
                Preferences::instance()->isKeyframesFollowExposureEnabled(),
-               MiscCommandType, "",
+               MiscCommandType, "segment_linked",
                tr("When on, keyframes stay pinned to their cells: selection and "
                   "drag include them, and insert/remove/extend frame operations "
                   "shift them together with the exposure."));

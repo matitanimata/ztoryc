@@ -41,6 +41,7 @@
 
 #include "toonz/txsheet.h"
 #include "toonz/preferences.h"
+#include "toonz/tstageobjectkeyframe.h"  // full def per getKeyframe() by-value
 
 // STD includes
 #include <set>
@@ -997,6 +998,25 @@ void TXsheet::reverseCells(int r0, int c0, int r1, int c1) {
       setCell(i2, j, app1);
     }
   }
+
+  // "Keyframes follow exposure": specchia anche i keyframe nel range (chiave a
+  // r → r0+r1-r).  setCell non tocca i keyframe, quindi lo facciamo qui.  È
+  // un'involuzione → ReverseUndo (undo==redo) resta valido senza codice extra.
+  if (Preferences::instance()->isKeyframesFollowExposureEnabled()) {
+    for (int j = c0; j <= c1; j++) {
+      TStageObject *obj = getStageObject(getColumnObjectId(j));
+      if (!obj) continue;
+      TStageObject::KeyframeMap km;
+      obj->getKeyframes(km);
+      std::vector<std::pair<int, TStageObject::Keyframe>> inRange;
+      for (auto &kv : km)
+        if (kv.first >= r0 && kv.first <= r1) inRange.push_back(kv);
+      if (inRange.empty()) continue;
+      for (auto &kv : inRange) obj->removeKeyframeWithoutUndo(kv.first);
+      for (auto &kv : inRange)
+        obj->setKeyframeWithoutUndo(r0 + r1 - kv.first, kv.second);
+    }
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -1010,10 +1030,28 @@ void TXsheet::swingCells(int r0, int c0, int r1, int c1) {
     shiftMarkers(r1, c, rowCount);
   }
 
+  // "Keyframes follow exposure": il tail è la copia rovesciata di [r0, r1-1]
+  // (il pivot r1 non si duplica).  Chiave a s → 2*r1 - s.  L'undo (SwingUndo)
+  // rimuove il tail con removeCells → simmetrico, undo gratis.
+  bool followExp = Preferences::instance()->isKeyframesFollowExposureEnabled();
+
   for (int j = c0; j <= c1; j++) {
+    std::map<int, TStageObject::Keyframe> srcKeys;
+    TStageObject *obj =
+        followExp ? getStageObject(getColumnObjectId(j)) : nullptr;
+    if (obj) {
+      TStageObject::KeyframeMap km;
+      obj->getKeyframes(km);
+      for (auto &kv : km)
+        if (kv.first >= r0 && kv.first <= r1 - 1) srcKeys[kv.first] = kv.second;
+    }
     for (int i1 = r0Mod, i2 = r1 - 1; i2 >= r0; i1++, i2--) {
       TXshCell cell = getCell(CellPosition(i2, j), false, false);
       setCell(i1, j, cell);
+      if (obj) {
+        auto it = srcKeys.find(i2);
+        if (it != srcKeys.end()) obj->setKeyframeWithoutUndo(i1, it->second);
+      }
     }
   }
 }
@@ -1101,7 +1139,22 @@ void TXsheet::duplicateCells(int r0, int c0, int r1, int c1, int upTo) {
   if (upTo < r1 + 1) return;
   int chunk = r1 - r0 + 1;
 
+  // "Keyframes follow exposure": duplico anche i keyframe del chunk sorgente
+  // su ogni copia.  L'undo (DuplicateUndo) rimuove il tail con removeCells →
+  // cancella i keyframe duplicati e ri-slitta → simmetrico, undo gratis.
+  bool followExp = Preferences::instance()->isKeyframesFollowExposureEnabled();
+
   for (int j = c0; j <= c1; j++) {
+    std::map<int, TStageObject::Keyframe> srcKeys;
+    TStageObject *obj =
+        followExp ? getStageObject(getColumnObjectId(j)) : nullptr;
+    if (obj) {
+      TStageObject::KeyframeMap km;
+      obj->getKeyframes(km);
+      for (auto &kv : km)
+        if (kv.first >= r0 && kv.first <= r1) srcKeys[kv.first] = kv.second;
+    }
+
     insertCells(r1 + 1, j, upTo - (r1 + 1) + 1);
     shiftLoopMarkers(r1, j, upTo - (r1 + 1) + 1);
     shiftCellMarks(r1 + 1, j, upTo - (r1 + 1) + 1);
@@ -1109,6 +1162,10 @@ void TXsheet::duplicateCells(int r0, int c0, int r1, int c1, int upTo) {
       int row = r0 + ((i - (r1 + 1)) % chunk);
       TXshCell cell = getCell(CellPosition(row, j), false, false);
       setCell(i, j, cell);
+      if (obj) {
+        auto it = srcKeys.find(row);
+        if (it != srcKeys.end()) obj->setKeyframeWithoutUndo(i, it->second);
+      }
     }
   }
 }
@@ -1431,11 +1488,33 @@ void TXsheet::rollupCells(int r0, int c0, int r1, int c1) {
   for (k          = c0; k <= c1; k++)
     cells[k - c0] = getCell(CellPosition(r0, k), false, false);
 
+  // "Keyframes follow exposure": la cella di bordo r0 ruota a r1, ma removeCells
+  // la cancellerebbe come keyframe.  La salvo e la riposiziono a r1 dopo; gli
+  // interni li slittano già insert/removeCells.  rolldownCells è l'inverso esatto
+  // → RollupUndo (undo=rolldown) resta valido senza codice extra.
+  bool followExp = Preferences::instance()->isKeyframesFollowExposureEnabled();
+  std::vector<std::pair<bool, TStageObject::Keyframe>> boundaryKeys(nc);
+  if (followExp) {
+    for (k = c0; k <= c1; k++) {
+      TStageObject *obj = getStageObject(getColumnObjectId(k));
+      if (obj && obj->isKeyframe(r0))
+        boundaryKeys[k - c0] = {true, obj->getKeyframe(r0)};
+    }
+  }
+
   for (k = c0; k <= c1; k++) removeCells(r0, k, 1, true);
 
   for (k = c0; k <= c1; k++) {
     insertCells(r1, k, 1);
     setCell(r1, k, cells[k - c0]);  // setto le celle
+  }
+
+  if (followExp) {
+    for (k = c0; k <= c1; k++)
+      if (boundaryKeys[k - c0].first) {
+        TStageObject *obj = getStageObject(getColumnObjectId(k));
+        if (obj) obj->setKeyframeWithoutUndo(r1, boundaryKeys[k - c0].second);
+      }
   }
 }
 
@@ -1455,11 +1534,31 @@ void TXsheet::rolldownCells(int r0, int c0, int r1, int c1) {
   for (k          = c0; k <= c1; k++)
     cells[k - c0] = getCell(CellPosition(r1, k), false, false);
 
+  // "Keyframes follow exposure": la cella di bordo r1 ruota a r0 — speculare a
+  // rollupCells (vedi nota lì).
+  bool followExp = Preferences::instance()->isKeyframesFollowExposureEnabled();
+  std::vector<std::pair<bool, TStageObject::Keyframe>> boundaryKeys(nc);
+  if (followExp) {
+    for (k = c0; k <= c1; k++) {
+      TStageObject *obj = getStageObject(getColumnObjectId(k));
+      if (obj && obj->isKeyframe(r1))
+        boundaryKeys[k - c0] = {true, obj->getKeyframe(r1)};
+    }
+  }
+
   for (k = c0; k <= c1; k++) removeCells(r1, k, 1, true);
 
   for (k = c0; k <= c1; k++) {
     insertCells(r0, k, 1);
     setCell(r0, k, cells[k - c0]);  // setto le celle
+  }
+
+  if (followExp) {
+    for (k = c0; k <= c1; k++)
+      if (boundaryKeys[k - c0].first) {
+        TStageObject *obj = getStageObject(getColumnObjectId(k));
+        if (obj) obj->setKeyframeWithoutUndo(r0, boundaryKeys[k - c0].second);
+      }
   }
 }
 
