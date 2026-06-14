@@ -1,7 +1,12 @@
 # Keys / Cels Modes — design (stile Toon Boom Harmony)
 
-> Branch: `feature/keys-cels-modes`. NON mergiare su master finché non solido:
-> si tocca il routing di selezione/drag del pannello più usato dell'app.
+> ✅ MERGIATO su master il 2026-06-14 (merge `ee838a7e3`). La feature è opt-in
+> (toggle default OFF → comportamento identico a upstream), verificato con giro di
+> regressione toggle-OFF pulito. Il lavoro residuo (gruppo ritempi, rifiniture undo
+> lato toggle-ON) prosegue direttamente su master in modo incrementale e gated.
+>
+> ⚠️ TODO undo (toggle ON) — DA DETTAGLIARE: l'utente ha segnalato "qualcosa da
+> sistemare sugli undo" al momento del merge. Riprodurre e annotare la sequenza esatta.
 
 ## STATO / DECISIONI FINALI (2026-06-14)
 
