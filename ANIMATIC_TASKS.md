@@ -697,7 +697,36 @@ nella sub-scene corretta.
 
 ## Priority Order
 
-✅ [FATTO 2026-05-31] BUG-CAMERA — monitor ancorato a camera main (commit 7d1746f3a)
+### 🆕 DA FARE (giugno 2026) — in cima per priorità
+
+**Feature keys-cels-modes (su master, branch mergiato il 2026-06-14).** Dettagli
+completi in `KEYS_CELS_MODES_DESIGN.md`. In ordine:
+1. **BUG-2 [perdita dati, ALTA]** — Cut→Paste cross-colonna in keys+cels: undo riporta
+   le celle sulla sorgente ma perde i keyframe. Repro: colonna con 2 chiavi → cut →
+   paste su altra colonna → Ctrl+Z → chiavi sparite. Da fare con **debug build + lldb**
+   (breakpoint su DeleteKeyframesUndo/PasteKeyframesUndo::undo).
+2. **BUG-1** — drag di un blocco con chiavi su colonna attigua bloccato in keys+cels.
+   Semantica: trasferire i keyframe al nuovo stage object (la preference esistente
+   "muovi celle+chiavi nel drag" conferma che dev'essere possibile).
+3. **Feature key-only ops** — abilitare Reverse/Swing/Repeat/Step/Each anche su
+   selezione di SOLE chiavi (TKeyframeSelection) → operazioni solo sui keyframe. Stesso
+   comando, routing per tipo di selezione. Completa la simmetria del modello.
+4. **Gruppo ritempi keys-follow** — Step/Each/Time Stretch/Reframe che portano i
+   keyframe (richiede snapshot/restore dentro le Undo class). Reverse/Roll/Swing/Repeat
+   già fatti.
+
+**Refactor — dedup comandi Board ↔ Timeline [igiene, MEDIA].** In Ztoryc gli stessi
+comandi shot (add/copy/cut/clone/paste…) sono duplicati tra `StoryboardPanel` e
+`ZtoryAnimaticPanel`/Track. Vincolo: ogni panel deve restare autosufficiente (l'utente
+può crearsi una room con solo Board o solo timeline) → NON togliere i comandi da un
+panel. Soluzione: estrarre la LOGICA condivisa in un punto unico (`ZtoryModel` o un
+`ZtoryShotCommands`), i panel restano thin e delegano. Beneficio chiave: le regole di
+sync Board↔Animatic (firewall resequence/modelReset, no doppio shotAdded) si manterrebbero
+una volta sola invece di due. Refactor → zero cambio comportamento, a piccoli passi con
+test del sync a ogni comando. Primo passo: audit grep dei comandi duplicati per quantificare.
+Priorità: DOPO BUG-1/BUG-2.
+
+
 ✅ [FATTO 2026-05-31] 39. MOD Feedback visivo — highlight shot attivo (commit 043b5020b)
 ✅ [FATTO 2026-05-31] Marker/navigation tag in timeline (commit 7182b5543)
 ✅ [FATTO 2026-05-31] Sync selezione Board↔Animatic (commit 7182b5543)
