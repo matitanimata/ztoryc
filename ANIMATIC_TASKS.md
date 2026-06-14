@@ -715,6 +715,18 @@ completi in `KEYS_CELS_MODES_DESIGN.md`. In ordine:
    keyframe (richiede snapshot/restore dentro le Undo class). Reverse/Roll/Swing/Repeat
    già fatti.
 
+**UI cleanup — header ridondanti nei panel compositi [estetica, MEDIA].** I panel
+duali di Ztoryc mostrano DUE righe di titolo ridondanti: (1) il window title del TPanel
+(`setWindowTitle("Ztoryc Script/Palette")` ecc. — `ztoryanimatic.cpp:7661/7673/7795`) e
+(2) un header custom "X | Y" + icona a catena che fa già da switcher. Riguarda
+`ZtoryRightPanel` (SCRIPT|PALETTE), `ZtoryLeftPanel` (BOARD|XSHEET), `ZtoryDrawLeftPanel`
+(BOARD/SHOT), Board/Navigator. Obiettivo: tenere SOLO lo switcher (row 2), eliminare la
+duplicazione del window title → fix una volta sul pattern condiviso, si propaga a tutti.
+Va capito come il TPanel renderizza il titolo per nasconderlo senza rompere dock/floating.
+Inoltre, quick win indipendente: rimuovere il **chip verde "BOARD"** decorativo in
+`storyboardpanel.cpp:976-993` (e cercare chip analoghi negli altri panel). Vincolo come
+sopra: i panel devono restare autosufficienti per le room custom. Priorità: DOPO i bug.
+
 **Refactor — dedup comandi Board ↔ Timeline [igiene, MEDIA].** In Ztoryc gli stessi
 comandi shot (add/copy/cut/clone/paste…) sono duplicati tra `StoryboardPanel` e
 `ZtoryAnimaticPanel`/Track. Vincolo: ogni panel deve restare autosufficiente (l'utente
