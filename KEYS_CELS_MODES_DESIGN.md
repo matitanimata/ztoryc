@@ -37,6 +37,26 @@
 > File: `keyframeselection.cpp` (DeleteKeyframesUndo/PasteKeyframesUndo),
 > `cellkeyframeselection.cpp` (cut/paste block), `cellselection.cpp::pasteCells`.
 
+## FEATURE PIANIFICATA — operazioni timing su selezione di sole chiavi
+
+Idea (2026-06-14): lo stesso comando (Reverse/Swing/Repeat/Step/Each) si adatta al
+tipo di selezione attiva, completando il modello in modo simmetrico:
+- **TCellSelection** (solo celle) → opera sulle celle (toggle decide keys-follow). ✅ fatto
+- **TCellKeyframeSelection** (combinata) → celle + chiavi. ✅ fatto
+- **TKeyframeSelection** (solo chiavi) → opera **solo sulle chiavi**. ☐ DA FARE
+
+Semantica sui keyframe puri: Reverse = mirror `r→r0+r1-r`; Swing = coda rovesciata;
+Repeat = ripeti pattern N volte; Step/Each = dilata/decima il timing.
+
+Vantaggi: stesso menu (routing per tipo di selezione, come gli override della
+combinata), **basso rischio** (non tocca l'hot-path celle, ma il path
+keyframe-selection meno battuto), e **riuso** della logica già scritta in `txsheet.cpp`
+(mirror, duplicazione) da fattorizzare in helper keyframe-only.
+
+Implementazione: estendere `TKeyframeSelection::enableCommands` (oggi solo
+copy/paste/delete/shift) con reverse/swing/repeat/step/each + relativi undo (i mover
+keyframe esistono già). Priorità: DOPO BUG-1/BUG-2 (perdita dati prima della ciliegina).
+
 ## STATO / DECISIONI FINALI (2026-06-14)
 
 Il design a **3 modalità** (Drawings/Keys/Both) è stato **abbandonato**: l'utente
