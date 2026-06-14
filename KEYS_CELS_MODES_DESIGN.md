@@ -15,12 +15,27 @@
 > (a) consentirlo trasferendo le chiavi al nuovo stage object, oppure (b) muovere le
 > celle e lasciare le chiavi (degradare), oppure (c) vincolarlo esplicitamente.
 >
-> **BUG-2 — Undo del cut non ripristina i keyframe.** Cut di un blocco (celle+chiavi),
-> paste altrove (celle+chiavi incollati correttamente), poi Ctrl+Z: le **celle**
-> ritornano alla posizione originale ma le **chiavi no** → chiavi perse. Stessa
-> famiglia del fix Level Extender: la rimozione delle chiavi nel cut non è undoable.
-> Guardare `TCellKeyframeSelection::cutCellsKeyframes`/`deleteCellsKeyframes` e il loro
-> undo: deve salvare i keyframe rimossi e ripristinarli. PRIORITÀ ALTA (perdita dati).
+> **BUG-2 — Cut→Paste cross-colonna: undo perde i keyframe.** PRIORITÀ ALTA (perdita dati).
+> Repro esatta: colonna A con celle + 2 chiavi → keys+cels ON → seleziona blocco →
+> Cut → Paste su colonna B (incolla bene celle+chiavi) → **un** Ctrl+Z: le celle
+> tornano su A (sorgente ripristinata) ma le **2 chiavi spariscono** (né A né B).
+>
+> Diagnosi (tracing statico 2026-06-14): la catena undo ESISTE e sul codice sembra
+> corretta — cut: `TCellKeyframeSelection::cutCellsKeyframes` → `cutCells` (undoable) +
+> `deleteKeyframesWithShift` → `DeleteKeyframesUndo` (il cui `undo()` ripristina via
+> `pasteKeyframesWithoutUndo`); paste: `pasteCells` gestisce `TCellKeyframeData` e
+> pusha `PasteCellsUndo` + `PasteKeyframesUndo` nello stesso blocco. Il sintomo (un
+> solo Ctrl+Z riporta le celle sulla SORGENTE A) suggerisce che l'undo del cut sta
+> scattando e `cutCells` ripristina, ma `DeleteKeyframesUndo::undo` NON ricrea le
+> chiavi — oppure i blocchi cut/paste si fondono/scavalcano (beginBlock/endBlock) e
+> uno shift sballa. NON evidente staticamente.
+>
+> Piano: riprodurre su **debug build + lldb** (../debug-build, workflow in memoria) →
+> breakpoint su `DeleteKeyframesUndo::undo`, `PasteKeyframesUndo::undo`,
+> `shiftKeyframesWithoutUndo` → verificare QUALE undo scatta col primo Ctrl+Z e lo
+> stato di `m_positions`/shift. Fix mirato dopo la repro, NON patch alla cieca (hot-path).
+> File: `keyframeselection.cpp` (DeleteKeyframesUndo/PasteKeyframesUndo),
+> `cellkeyframeselection.cpp` (cut/paste block), `cellselection.cpp::pasteCells`.
 
 ## STATO / DECISIONI FINALI (2026-06-14)
 
