@@ -701,10 +701,16 @@ nella sub-scene corretta.
 
 **Feature keys-cels-modes (su master, branch mergiato il 2026-06-14).** Dettagli
 completi in `KEYS_CELS_MODES_DESIGN.md`. In ordine:
-1. **BUG-2 [perdita dati, ALTA]** — Cut→Paste cross-colonna in keys+cels: undo riporta
-   le celle sulla sorgente ma perde i keyframe. Repro: colonna con 2 chiavi → cut →
-   paste su altra colonna → Ctrl+Z → chiavi sparite. Da fare con **debug build + lldb**
-   (breakpoint su DeleteKeyframesUndo/PasteKeyframesUndo::undo).
+1. ✅ **[FATTO 2026-06-15] BUG-2 [perdita dati, ALTA]** — Cut→Paste cross-colonna in
+   keys+cels: undo riportava le celle ma perdeva i keyframe. **Root cause (confermata
+   con debug build + lldb, snapshot probe):** in `cutCellsKeyframes()`, `cutCells()`
+   → `removeCells()` con keys-follow ON cancellava già i keyframe nello span; il
+   successivo `deleteKeyframesWithShift()` faceva lo snapshot a chiavi già sparite
+   (`data->m_keyData=0`) → `DeleteKeyframesUndo` senza dati da ripristinare. **Fix
+   (`cellkeyframeselection.cpp`):** cancellare i keyframe con `deleteKeyframes()`
+   (senza shift) PRIMA di `cutCells()` → snapshot cattura le chiavi (=2), e l'ordine
+   di undo si inverte (CutCellsUndo ripristina celle+shift, poi DeleteKeyframesUndo
+   ri-incolla le chiavi). Rimuove anche un latente doppio-shift. Verificato a video.
 2. **BUG-1** — drag di un blocco con chiavi su colonna attigua bloccato in keys+cels.
    Semantica: trasferire i keyframe al nuovo stage object (la preference esistente
    "muovi celle+chiavi nel drag" conferma che dev'essere possibile).

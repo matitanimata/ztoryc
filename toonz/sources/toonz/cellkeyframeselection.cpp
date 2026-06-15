@@ -116,10 +116,17 @@ void TCellKeyframeSelection::deleteCellsKeyframes() {
 void TCellKeyframeSelection::cutCellsKeyframes() {
   copyCellsKeyframes();
   TUndoManager::manager()->beginBlock();
-  int r0, r1, c0, c1;
-  m_cellSelection->getSelectedCells(r0, c0, r1, c1);
+  // I keyframe vanno cancellati PRIMA di cutCells().  Con "Keyframes Follow
+  // Exposure" ON, cutCells() -> removeCells() cancella già i keyframe nello
+  // span tagliato: se deleteKeyframes() girasse dopo, lo snapshot dell'undo
+  // sarebbe vuoto e l'undo non potrebbe ripristinare le chiavi (BUG-2, perdita
+  // dati).  Usiamo deleteKeyframes() (senza shift): lo shift delle chiavi
+  // superstiti è gestito una sola volta da removeCells() — e simmetricamente da
+  // insertCells() nell'undo del cut celle.  L'ordine di undo risultante è
+  // corretto: prima CutCellsUndo (ripristina celle + shift), poi
+  // DeleteKeyframesUndo (ri-incolla le chiavi sulle celle ormai ripristinate).
+  m_keyframeSelection->deleteKeyframes();
   m_cellSelection->cutCells(true);
-  m_keyframeSelection->deleteKeyframesWithShift(r0, r1, c0, c1);
   TUndoManager::manager()->endBlock();
 }
 

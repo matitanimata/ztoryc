@@ -15,6 +15,13 @@
 > (a) consentirlo trasferendo le chiavi al nuovo stage object, oppure (b) muovere le
 > celle e lasciare le chiavi (degradare), oppure (c) vincolarlo esplicitamente.
 >
+> **BUG-2 — ✅ RISOLTO 2026-06-15.** Root cause confermata con debug build + lldb
+> (probe sulla dimensione dello snapshot): `cutCells()`→`removeCells()` con keys-follow
+> ON cancellava i keyframe PRIMA che `deleteKeyframesWithShift()` ne facesse lo snapshot
+> (`data->m_keyData=0`) → undo senza dati. Fix in `cutCellsKeyframes()`: `deleteKeyframes()`
+> (no shift) PRIMA di `cutCells()`. Lo shift resta a carico del solo `removeCells`/
+> `insertCells`. Dettaglio in CHANGELOG e ANIMATIC_TASKS. Testo storico sotto per riferimento.
+>
 > **BUG-2 — Cut→Paste cross-colonna: undo perde i keyframe.** PRIORITÀ ALTA (perdita dati).
 > Repro esatta: colonna A con celle + 2 chiavi → keys+cels ON → seleziona blocco →
 > Cut → Paste su colonna B (incolla bene celle+chiavi) → **un** Ctrl+Z: le celle
