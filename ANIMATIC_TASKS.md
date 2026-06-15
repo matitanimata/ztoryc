@@ -711,15 +711,20 @@ completi in `KEYS_CELS_MODES_DESIGN.md`. In ordine:
    (senza shift) PRIMA di `cutCells()` → snapshot cattura le chiavi (=2), e l'ordine
    di undo si inverte (CutCellsUndo ripristina celle+shift, poi DeleteKeyframesUndo
    ri-incolla le chiavi). Rimuove anche un latente doppio-shift. Verificato a video.
-2. **BUG-1** — drag di un blocco con chiavi su colonna attigua bloccato in keys+cels.
-   Semantica: trasferire i keyframe al nuovo stage object (la preference esistente
-   "muovi celle+chiavi nel drag" conferma che dev'essere possibile).
-3. **Feature key-only ops** — abilitare Reverse/Swing/Repeat/Step/Each anche su
-   selezione di SOLE chiavi (TKeyframeSelection) → operazioni solo sui keyframe. Stesso
-   comando, routing per tipo di selezione. Completa la simmetria del modello.
-4. **Gruppo ritempi keys-follow** — Step/Each/Time Stretch/Reframe che portano i
-   keyframe (richiede snapshot/restore dentro le Undo class). Reverse/Roll/Swing/Repeat
-   già fatti.
+2. ✅ **[FATTO 2026-06-15b] BUG-1** — drag cross-colonna di un blocco con chiavi in
+   keys+cels ora trasferisce i keyframe al nuovo stage object. Approccio unificato
+   (chiavi trasferite al rilascio dove atterrano le celle, atomico; rimosso il
+   keyframe-mover live dal tool combinato che corrompeva la selezione). Collisione di
+   riga esatta → blocco totale. Commit di sessione.
+3. ✅ **[FATTO 2026-06-15b] Feature key-only ops** — su TKeyframeSelection:
+   Reverse/Swing/Roll Up-Down/Repeat (+ opzione Loop per cicli seamless)/Time Stretch
+   (proporzionale, caso walk cycle). Step/Each/Reframe ARCHIVIATI (nessuna semantica su
+   keyframe interpolati). Tutto in `keyframeselection.cpp` con undo dedicato.
+4. **Gruppo ritempi keys-follow COMBINATO (celle+chiavi)** — RIMANDATO a sessione con
+   build di debug + lldb. Time Stretch combinato: `xsh->timeStretch` con keys-follow ON
+   shifta le chiavi uniformemente (non proporzionale) → doppio-handling sul path
+   keys+undo (classe BUG-2). Serve undo-class dedicata (snapshot originale + stato
+   intermedio). Step/Each/Reframe combinati: bassa priorità.
 
 **UI cleanup — header ridondanti nei panel compositi [estetica, MEDIA].** I panel
 duali di Ztoryc mostrano DUE righe di titolo ridondanti: (1) il window title del TPanel

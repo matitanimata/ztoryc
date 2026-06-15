@@ -1,3 +1,43 @@
+## [2026-06-15b] — BUG-1 (drag cross-colonna keys+cels) + Gruppo A operazioni key-only
+
+### Fixed
+- **BUG-1 [keys+cels] — drag cross-colonna ora trasferisce i keyframe.** Trascinando
+  un sotto-blocco di celle con keyframe su un'altra colonna (modalità "Keyframes
+  Follow Exposure"), le chiavi seguono le celle al nuovo stage object. Implementazione
+  **unificata** in `CellKeyframeMoverTool` (`xsheetdragtool.cpp`): rimosso del tutto il
+  keyframe-mover *live* dal tool combinato — le celle si muovono live (LevelMover), le
+  chiavi vengono trasferite **al rilascio** dove le celle sono atterrate (posizione già
+  validata da `canMove`, quindi righe libere → atomico). Questo elimina la transizione
+  fragile `revertMove` che corrompeva la cell-selection (stessa classe di BUG-2,
+  diagnosticata con log su 3 giri). Collisione di riga esatta sulla destinazione →
+  blocco dell'intero drag (celle incluse); convivenza permessa se le righe target sono
+  libere. Nuova `CrossColumnKeyframeUndo` (snapshot via `TKeyframeData`). Il drag di
+  colonna intera → dest vuota (path clone "Cells and Column Data") resta invariato,
+  rilevato a runtime via `keysStillAtSource` per non fare doppio spostamento.
+
+### Added
+- **Gruppo A — operazioni timing su selezione di SOLE chiavi (`TKeyframeSelection`).**
+  Routing via `enableCommands`, tutte con undo dedicato, in `keyframeselection.cpp`:
+  - **Reverse** — specchia `r→r0+r1-r` (involuzione, undo==redo).
+  - **Swing** — appende la coda specchiata (ping-pong); undo ripristina la coda.
+  - **Roll Up / Roll Down** — rotazione ciclica entro `[r0,r1]`; undo = direzione opposta.
+  - **Repeat** — appende il pattern N volte (aggancio a `DuplicatePopup` per la selezione
+    chiavi). Nuova opzione **Loop** (visibile solo con chiavi selezionate): sovrappone la
+    chiave di giunzione (passo `r1-r0`) per cicli seamless senza doppia posa.
+  - **Time Stretch** — rimappamento **proporzionale** `r→r0+round((r-r0)·(N-1)/(old-1))`,
+    estremi ancorati (caso walk cycle 18→24). Aggancio a `TimeStretchPopup` + abilitazione
+    `MI_TimeStretch` in `enableCommands`. Undo con snapshot dell'intero span interessato.
+- Step/Each/Reframe **archiviati** per le sole chiavi: non hanno semantica sensata su
+  keyframe interpolati (decidono esposizione di disegni tenuti).
+
+### Notes / TODO
+- **Time Stretch su selezione combinata celle+chiavi RIMANDATO** a sessione dedicata con
+  build di debug + lldb: lo stretch celle (`xsh->timeStretch`) con keys-follow ON shifta
+  le chiavi in modo uniforme (non proporzionale) → doppio-handling sul path keys+undo
+  (classe BUG-2). Serve undo-class dedicata (snapshot originale + stato intermedio).
+- Reverse mantiene gli ease di ogni chiave (non flippa le tangenti in/out) — come il
+  Reverse celle. Eventuale rifinitura futura.
+
 ## [2026-06-15] — BUG-2 (perdita chiavi su undo) + drag celle: modificatori nativi
 
 ### Fixed
