@@ -4279,16 +4279,20 @@ void CellArea::mousePressEvent(QMouseEvent *event) {
         if (m_viewer->getDragTool()) m_viewer->dragToolRelease(event);
       }
 
-      // Cell swap / block swap: Alt+Drag on a non-empty cell.
-      // Intercepted before the level-range selection below would widen
-      // the selection. If the clicked cell is already inside a multi-cell
-      // selection, the whole block is swapped; otherwise single-cell swap.
+      // Drag celle (Ztoryc): segue la convenzione nativa di Tahoma gestita da
+      // LevelMoverTool — drag semplice = move, Shift+drag = insert (slitta giù),
+      // Alt+drag = overwrite (vedi LevelMoverTool::onClick in xshcellmover.cpp).
+      // Il Cell/Block Swap (prima su Alt+drag, in conflitto con overwrite) è
+      // stato spostato su Ctrl+Alt+drag (Cmd+Option su macOS): la coppia
+      // copy+overwrite non ha un uso pratico, quindi la intercettiamo qui per
+      // lo swap prima che LevelMover veda i qualifier.
       if (isInDragArea && !isCellEmpty &&
-          (event->modifiers() & Qt::AltModifier)) {
+          (event->modifiers() & Qt::AltModifier) &&
+          (event->modifiers() & Qt::ControlModifier)) {
         m_viewer->getKeyframeSelection()->selectNone();
         m_viewer->getCellSelection()->makeCurrent();
-        // Only override selection if the cell is NOT already selected —
-        // that way a pre-selected block is preserved for block swap.
+        // Override della selezione solo se la cella NON è già selezionata —
+        // così un blocco pre-selezionato resta integro per il block swap.
         if (!m_viewer->getCellSelection()->isCellSelected(row, col))
           m_viewer->getCellSelection()->selectCells(row, col, row, col);
         TApp::instance()->getCurrentSelection()->notifySelectionChanged();
@@ -4324,12 +4328,16 @@ void CellArea::mousePressEvent(QMouseEvent *event) {
           setDragTool(XsheetGUI::DragTool::makeLevelMoverTool(m_viewer));
       } else {
         m_viewer->getKeyframeSelection()->selectNone();
-        if (!isCellEmpty && (event->modifiers() & Qt::AltModifier)) {
-          // Rolling edit: Alt+click on cell content (drag bars on) — swap.
-          // isInDragArea was false because the user didn't click the drag bar
-          // strip; we still want to activate the swap tool.
+        if (!isCellEmpty && (event->modifiers() & Qt::AltModifier) &&
+            (event->modifiers() & Qt::ControlModifier)) {
+          // Cell/Block Swap senza drag bar: Ctrl+Alt+click sul contenuto
+          // (Cmd+Option su macOS). isInDragArea era false perché non si è
+          // cliccata la striscia della drag bar; attiviamo comunque lo swap.
           m_viewer->getCellSelection()->makeCurrent();
-          m_viewer->getCellSelection()->selectCells(row, col, row, col);
+          // Preserva un blocco già selezionato (block swap); seleziona la
+          // singola cella solo se non è già parte della selezione.
+          if (!m_viewer->getCellSelection()->isCellSelected(row, col))
+            m_viewer->getCellSelection()->selectCells(row, col, row, col);
           TApp::instance()->getCurrentSelection()->notifySelectionChanged();
           setDragTool(XsheetGUI::DragTool::makeCellSwapperTool(m_viewer));
         } else if (isSoundPreviewArea)
@@ -4536,9 +4544,19 @@ void CellArea::mouseMoveEvent(QMouseEvent *event) {
            Preferences::instance()->isShowDragBarsEnabled() &&
            o->rect(PredefinedRect::DRAG_AREA)
                .adjusted(0, 0, -frameAdj.x(), -frameAdj.y())
-               .contains(mouseInCell))
-    m_tooltip = tr("Click and drag to move the selection");
-  else if (isZeraryColumn)
+               .contains(mouseInCell)) {
+    // Hint sui modificatori del drag celle (vedi LevelMoverTool::onClick e il
+    // dispatch swap in questo file). Nomi tasti per piattaforma.
+#ifdef MACOSX
+    m_tooltip = tr(
+        "Drag: move  |  Shift: insert  |  Option: overwrite  |  "
+        "Cmd: copy  |  Cmd+Option: swap");
+#else
+    m_tooltip = tr(
+        "Drag: move  |  Shift: insert  |  Alt: overwrite  |  "
+        "Ctrl: copy  |  Ctrl+Alt: swap");
+#endif
+  } else if (isZeraryColumn)
     m_tooltip = QString::fromStdWString(column->getZeraryFxColumn()
                                             ->getZeraryColumnFx()
                                             ->getZeraryFx()
