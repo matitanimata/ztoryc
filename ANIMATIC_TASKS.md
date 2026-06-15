@@ -720,13 +720,26 @@ completi in `KEYS_CELS_MODES_DESIGN.md`. In ordine:
    Reverse/Swing/Roll Up-Down/Repeat (+ opzione Loop per cicli seamless)/Time Stretch
    (proporzionale, caso walk cycle). Step/Each/Reframe ARCHIVIATI (nessuna semantica su
    keyframe interpolati). Tutto in `keyframeselection.cpp` con undo dedicato.
-4. **Gruppo ritempi keys-follow COMBINATO (celle+chiavi)** — RIMANDATO a sessione con
-   build di debug + lldb. Time Stretch combinato: `xsh->timeStretch` con keys-follow ON
-   shifta le chiavi uniformemente (non proporzionale) → doppio-handling sul path
-   keys+undo (classe BUG-2). Serve undo-class dedicata (snapshot originale + stato
-   intermedio). Step/Each/Reframe combinati: bassa priorità.
+4. ✅ **[FATTO 2026-06-15c] Time Stretch COMBINATO (celle+chiavi)** — con keys-follow
+   ON ritempra celle + chiavi proporzionalmente. `CellAndKeyframeStretchUndo`
+   (`timestretchpopup.cpp`) compone `TimeStretchUndo` (celle) e sovrascrive
+   esplicitamente solo le chiavi del blocco `[r0,r1]` (il ripple della coda resta alle
+   primitive insert/removeCells). Fix collaterale: `TimeStretchPopup` non riconosceva
+   `TCellKeyframeSelection` (Old Range 0) → helper `asCellSelection()` per spacchettarla.
+   Step/Each/Reframe combinati: bassa priorità, archiviati.
 
-**UI cleanup — header ridondanti nei panel compositi [estetica, MEDIA].** I panel
+5. **Selezione combinata governata dal link "Keyframes Follow Exposure" [DESIGN, NUOVO].**
+   Richiesta utente: con pref ON, *qualsiasi* selezione (incluso il drag sui diamanti)
+   deve produrre una `TCellKeyframeSelection` (chiavi + celle sottostanti); con pref OFF
+   selezione indipendente. Oggi metà già funziona (selezione CELLE → combinata); manca
+   il verso selezione DIAMANTI → combinata quando pref ON. Cambio trasversale alla logica
+   di selezione dell'xsheet (xsheetviewer/cell viewer mouse handling), impatta TUTTI i
+   comandi combinati → da testare sull'intero repertorio. Priorità: valutare dopo dedup.
+
+**UI cleanup — header ridondanti nei panel compositi [estetica, MEDIA] — ✅ FATTO 2026-06-15c.**
+Azzerato il window title nei 3 panel con switcher (ZtoryRightPanel/ZtoryLeftPanel/
+ZtoryDrawLeftPanel, costruttore + factory) + rimosso il chip verde "BOARD". La barra
+del titolo resta come drag-handle (docking). Testo originale qui sotto per riferimento. I panel
 duali di Ztoryc mostrano DUE righe di titolo ridondanti: (1) il window title del TPanel
 (`setWindowTitle("Ztoryc Script/Palette")` ecc. — `ztoryanimatic.cpp:7661/7673/7795`) e
 (2) un header custom "X | Y" + icona a catena che fa già da switcher. Riguarda
@@ -738,7 +751,7 @@ Inoltre, quick win indipendente: rimuovere il **chip verde "BOARD"** decorativo 
 `storyboardpanel.cpp:976-993` (e cercare chip analoghi negli altri panel). Vincolo come
 sopra: i panel devono restare autosufficienti per le room custom. Priorità: DOPO i bug.
 
-**Refactor — dedup comandi Board ↔ Timeline [igiene, MEDIA].** In Ztoryc gli stessi
+**Refactor — dedup comandi Board ↔ Timeline [igiene, MEDIA] — SBLOCCATO (BUG-1/BUG-2 chiusi), PROSSIMO.** In Ztoryc gli stessi
 comandi shot (add/copy/cut/clone/paste…) sono duplicati tra `StoryboardPanel` e
 `ZtoryAnimaticPanel`/Track. Vincolo: ogni panel deve restare autosufficiente (l'utente
 può crearsi una room con solo Board o solo timeline) → NON togliere i comandi da un

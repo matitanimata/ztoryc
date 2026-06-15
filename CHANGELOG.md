@@ -1,3 +1,50 @@
+## [2026-06-15c] — Time Stretch combinato celle+chiavi + UI cleanup titoli panel
+
+### Added
+- **Time Stretch COMBINATO celle+chiavi (keys-follow ON)** — completa il gruppo
+  ritempi rimandato. Selezionando un blocco di celle con keyframe (modalità
+  "Keyframes Follow Exposure"), il Time Stretch ora ritempra **sia le celle sia le
+  chiavi** in modo proporzionale (caso walk cycle 18↔24). Nuova
+  `CellAndKeyframeStretchUndo` (`timestretchpopup.cpp`) che **compone**
+  `TimeStretchUndo` per le celle e gestisce le chiavi esplicitamente: si lascia che
+  `xsh->timeStretch` rippli tutto (corretto per le chiavi *sotto* il blocco), poi si
+  sovrascrivono **solo le chiavi del blocco** `[r0,r1]` con il rimappamento
+  proporzionale (estremi ancorati). Niente doppio-handling (classe BUG-2). Undo/redo
+  atomici celle+chiavi. Snapshot del blocco preso PRIMA dello stretch.
+
+### Fixed
+- **`Old Range 0` nel Time Stretch con celle+chiavi selezionate.** Quando si
+  selezionano celle che contengono keyframe la selezione corrente è una
+  `TCellKeyframeSelection` (wrapper nativo Tahoma con dentro una cell-selection +
+  una keyframe-selection), non una `TCellSelection`. Il `TimeStretchPopup` faceva un
+  `dynamic_cast<TCellSelection>` che falliva → range 0 e nessuno stretch.
+  **Fix**: helper `asCellSelection()` che spacchetta il wrapper alla cell-selection
+  interna, usato in `updateValues` (display) e nella free function `timeStretch`
+  (range + colonne + trigger del path combinato). Diagnosi con logging mirato su
+  stderr (typeid della selezione), poi rimosso.
+
+### Modified
+- **UI cleanup — titoli ridondanti nei panel compositi.** Rimosso il chip verde
+  decorativo "BOARD" (`storyboardpanel.cpp`) e azzerato il window title nei 3 panel
+  con switcher — `ZtoryRightPanel` (SCRIPT|PALETTE), `ZtoryLeftPanel` (BOARD|XSHEET),
+  `ZtoryDrawLeftPanel` (BOARD/SHOT) — sia nel costruttore che nelle factory
+  (`ztoryanimatic.cpp`). Lo switcher row già etichetta il panel; la barra del titolo
+  resta come drag-handle per il docking (vincolo autosufficienza room custom). I
+  panel a scopo singolo (Animatic/Viewer/StoryStrip/Navigator) non toccati.
+
+### Notes / TODO
+- **Selezione combinata governata dal link "Keyframes Follow Exposure" [DESIGN, da fare].**
+  Modello richiesto dall'utente: con pref ON, *qualsiasi* selezione (incluso il drag
+  sui diamanti) deve produrre una `TCellKeyframeSelection` (chiavi + celle
+  sottostanti); con pref OFF, selezione indipendente (chiavi isolabili). Oggi metà
+  funziona già (selezione celle → combinata); manca l'altro verso (selezione dai
+  diamanti → combinata quando pref ON). Cambio trasversale alla logica di selezione
+  dell'xsheet (xsheetviewer/cell viewer), impatta TUTTI i comandi combinati → da fare
+  e testare sull'intero repertorio.
+- **Dedup comandi Board↔Timeline [refactor] ora sbloccato** (BUG-1/BUG-2 chiusi):
+  estrarre la logica shot condivisa in un punto unico, panel thin che delegano.
+  Primo passo: audit grep dei comandi duplicati.
+
 ## [2026-06-15b] — BUG-1 (drag cross-colonna keys+cels) + Gruppo A operazioni key-only
 
 ### Fixed
