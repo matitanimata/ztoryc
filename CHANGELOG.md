@@ -1,3 +1,40 @@
+## [2026-06-16] — Dedup comandi shot Board↔Timeline (ZtoryShotOps) + cleanup UI
+
+### Added
+- **`ztoryshotops.{h,cpp}` — modulo condiviso `ZtoryShotOps`** con la logica xsheet
+  pura dei comandi shot: `syncChildCameraToMain`, `cloneChildToPosition`,
+  `pasteSharedClip`, `colDuration`. Prima erano duplicate come static file-local in
+  `storyboardpanel.cpp` e `ztoryanimatic.cpp` e si erano **disallineate** (il clone
+  del Board usava `storeObjects(ids)`+`setDagNodePos`, quello dell'Animatic
+  `storeColumns(indices)` senza dagNodePos). Canonico = versione Board (battle-tested).
+  Entrambi i panel ora delegano. Net Step 1: -314/+245.
+
+### Modified
+- **Board: clipboard shot ora SOLO `ZtoryModel::sharedClip()`** — rimosso il membro
+  locale `m_clipboard` + struct `ClipboardEntry` e il ramo "legacy" di `onPasteShot`
+  (127 righe). `onCopy/onCut/onCloneShot` scrivono solo lo shared clip; `onPasteShot`
+  delega a `ZtoryShotOps::pasteSharedClip` + resequence + refreshFromScene +
+  `UndoBoardState`, identico a `onPasteShots` dell'Animatic. Net Step 2: -230/+63.
+  **Cambio di consistenza voluto:** un secondo Paste di un Cut non duplica piu (Board
+  allineato all'Animatic).
+- **Rimosso il chip blu "ANIMATIC"** dalla toolbar della timeline (coerente con la
+  pulizia dei chip decorativi; toolbar ora parte da "Zoom:").
+
+### Verified (a video)
+- copy/cut/clone/paste same-panel (Board): Copy→Paste→Paste (copia persiste),
+  Cut→Paste→Paste (2o no-op); cross-panel Board→Animatic e Animatic→Board (Cmd+C/Cmd+V);
+  clone Animatic (chiavi camera + colonne preservate); undo; sync Board↔Animatic.
+
+### Notes / TODO
+- **Bug pre-esistente (NON il dedup):** un paste puo lasciare un pannello-fantasma da
+  1 frame su uno shot vicino (`refreshFromScene`/`resequence` fa crescere la colonna).
+  Verificato dal diff: non ho toccato quella logica e il paste normale gia passava da
+  `refreshFromScene` su master → si riproduce anche su master. Da fixare a parte.
+- **TODO UI:** togliere la toolbar finestra "nuovo livello/1's2's3's/repeat" in Animatic
+  e de-doppiarla in Shot editing (file `room*.ini` in bundle + ~/Library; le room nel
+  bundle hanno nomi default che non corrispondono a Ztoryc X/T → identificare i file
+  giusti prima).
+
 ## [2026-06-15c] — Time Stretch combinato celle+chiavi + UI cleanup titoli panel
 
 ### Added
