@@ -107,6 +107,7 @@ set(MOC_HEADERS
     tpanels.h
     storyboardpanel.h
     ztorymodel.h
+    ztoryshotops.h
     ztoryanimatic.h
     ztoryannotations.h
     ztorymonitorpanel.h
@@ -243,6 +244,7 @@ set(SOURCES
     tpanels.cpp
     storyboardpanel.cpp
     ztorymodel.cpp
+    ztoryshotops.cpp
     ztoryanimatic.cpp
     ztoryannotations.cpp
     ztorymonitorpanel.cpp
