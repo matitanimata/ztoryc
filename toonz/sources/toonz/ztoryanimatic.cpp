@@ -4,6 +4,7 @@
 #include "viewerpane.h"
 #include "comboviewerpane.h"
 #include "ztorymodel.h"
+#include "ztoryshotops.h"
 #include "toonz/tcolumnhandle.h"
 #include "subscenecommand.h"
 #include "toonzqt/menubarcommand.h"
@@ -5561,120 +5562,13 @@ void ZtoryAnimaticPanel::showAnimaticTimeline() {
 // Helper: returns shot index in ZtoryModel for a given xsheet column, or -1.
 
 
-// Force a freshly-created sub-scene's camera(s) to match the MAIN xsheet camera
-// (res + size). Prevents new shots from getting a non-standard camera that no
-// longer matches the main (root cause of BUG-CAMERA framing mismatch). Only for
-// brand-new empty sub-scenes — not for clones with camera animation.
-static void animSyncChildCameraToMain(TXsheet *parentXsh, TXshChildLevel *cl) {
-  if (!parentXsh || !cl) return;
-  TXsheet *childXsh = cl->getXsheet();
-  if (!childXsh) return;
-  TStageObjectTree *parentTree = parentXsh->getStageObjectTree();
-  TStageObjectTree *childTree  = childXsh->getStageObjectTree();
-  int tmpCamId = 0;
-  for (int cam = 0; cam < parentTree->getCameraCount();) {
-    TStageObject *parentCamera =
-        parentTree->getStageObject(TStageObjectId::CameraId(tmpCamId), false);
-    if (!parentCamera) { tmpCamId++; continue; }
-    if (parentCamera->getCamera()) {
-      TStageObject *childObj =
-          childTree->getStageObject(TStageObjectId::CameraId(tmpCamId));
-      TCamera *childCamera = childObj ? childObj->getCamera() : nullptr;
-      if (childCamera) {
-        childCamera->setRes(parentCamera->getCamera()->getRes());
-        childCamera->setSize(parentCamera->getCamera()->getSize());
-      }
-    }
-    tmpCamId++; cam++;
-  }
-  childTree->setCurrentCameraId(parentTree->getCurrentCameraId());
-}
 
-// ── Clone a sub-scene column into a new adjacent column ──────────────────────
-// Mirrors StoryboardPanel::cloneChildToPosition (static there; static here too).
-static void animCloneChildToPosition(int srcCol, int dstCol) {
-  TApp       *app   = TApp::instance();
-  ToonzScene *scene = app->getCurrentScene()->getScene();
-  TXsheet    *xsh   = app->getCurrentXsheet()->getXsheet();
-  TXshColumn *column = xsh->getColumn(srcCol);
-  if (!column) return;
-  TXshLevelColumn *lcolumn = column->getLevelColumn();
-  if (!lcolumn) return;
-  int r0 = 0, r1 = -1;
-  lcolumn->getRange(r0, r1);
-  if (r0 > r1) return;
-  TXshCell cell = lcolumn->getCell(r0);
-  if (cell.isEmpty()) return;
-  TXshChildLevel *childLevel = cell.m_level->getChildLevel();
-  if (!childLevel) return;
-  TXsheet *childXsh = childLevel->getXsheet();
-
-  xsh->insertColumn(dstCol);
-
-  ChildStack      *childStack   = scene->getChildStack();
-  TXshChildLevel  *newChildLevel = childStack->createChild(0, dstCol);
-  TXsheet         *newChildXsh  = newChildLevel->getXsheet();
-
-  std::set<int> indices;
-  for (int i = 0; i < childXsh->getColumnCount(); i++) indices.insert(i);
-  StageObjectsData *data = new StageObjectsData();
-  data->storeColumns(indices, childXsh, 0);
-  data->storeColumnFxs(indices, childXsh, 0);
-  std::list<int>                      restoredSplineIds;
-  QMap<TStageObjectId, TStageObjectId> idTable;
-  QMap<TFx *, TFx *>                  fxTable;
-  data->restoreObjects(indices, restoredSplineIds, newChildXsh,
-                       StageObjectsData::eDoClone, idTable, fxTable);
-  delete data;
-
-  // Stage objects non-colonna (camera, pegbar): storeColumns() li omette del
-  // tutto, quindi copiamo i params (keyframe/animazione) sull'oggetto con lo
-  // STESSO id già esistente nel clone.  Mirror della logica stock
-  // cloneXsheetTStageObjectTree() (in namespace anonimo, non richiamabile da
-  // qui).  Vedi StoryboardPanel::cloneChildToPosition per i dettagli sul perché
-  // NON si usa StageObjectsData per la camera (Camera fantasma).
-  {
-    TStageObjectTree *srcTree = childXsh->getStageObjectTree();
-    for (int i = 0; i < srcTree->getStageObjectCount(); i++) {
-      TStageObject *srcObj = srcTree->getStageObject(i);
-      TStageObjectId id    = srcObj->getId();
-      if (id.isColumn()) continue;  // colonne già gestite da restoreObjects
-      TStageObject *dstObj = newChildXsh->getStageObject(id);
-      if (!dstObj) continue;
-      if (id.isCamera()) *(dstObj->getCamera()) = *(srcObj->getCamera());
-      TStageObjectParams *p = srcObj->getParams();
-      dstObj->assignParams(p, /*doParametersClone=*/true);
-      delete p;
-      dstObj->setParent(childXsh->getStageObjectParent(id));
-    }
-  }
-
-  newChildXsh->updateFrameCount();
-
-  xsh->removeCells(0, dstCol);
-  for (int r = r0; r <= r1; r++) {
-    TXshCell c = lcolumn->getCell(r);
-    if (c.isEmpty()) continue;
-    c.m_level = newChildLevel;
-    xsh->setCell(r, dstCol, c);
-  }
-
-  xsh->updateFrameCount();
-  app->getCurrentScene()->setDirtyFlag(true);
-  app->getCurrentXsheet()->notifyXsheetChanged();
-}
 
 
 // ── Cmd+C/X/V slot implementations ───────────────────────────────────────────
 // All operations work directly on xsheet columns — no ZtoryModel::shot() lookup
 // needed, which avoids stale xsheetColumn values.
 
-static int colDuration(TXsheet *xsh, int col) {
-  TXshColumn *c = xsh ? xsh->getColumn(col) : nullptr;
-  if (!c) return 24;
-  int r0=0, r1=0; c->getRange(r0, r1);
-  return (r1 >= r0) ? r1 - r0 + 1 : 24;
-}
 
 void ZtoryAnimaticPanel::onCopyShots() {
   if (!ZtoryModel::assertMainXsheet(false)) return;
@@ -5687,7 +5581,7 @@ void ZtoryAnimaticPanel::onCopyShots() {
   std::vector<ZtoryClipEntry> clip;
   for (int col : sel) {
     ZtoryClipEntry ce;
-    ce.srcCol = col; ce.duration = colDuration(xsh, col);
+    ce.srcCol = col; ce.duration = ZtoryShotOps::colDuration(xsh, col);
     ce.isCut = false; ce.isClone = false;
     clip.push_back(ce);
   }
@@ -5720,7 +5614,7 @@ void ZtoryAnimaticPanel::onCutShots() {
   std::vector<ZtoryClipEntry> clip;
   for (int col : cols) {
     ZtoryClipEntry ce;
-    ce.srcCol = -1; ce.duration = colDuration(xsh, col);
+    ce.srcCol = -1; ce.duration = ZtoryShotOps::colDuration(xsh, col);
     ce.isCut = true; ce.isClone = false;
     TXshColumn      *xshCol = xsh->getColumn(col);
     TXshLevelColumn *lc     = xshCol ? xshCol->getLevelColumn() : nullptr;
@@ -5748,44 +5642,6 @@ void ZtoryAnimaticPanel::onCutShots() {
   }
 }
 
-// Helper used by both Animatic and Board paste (shared clipboard format).
-static void pasteFromClip(const std::vector<ZtoryClipEntry> &clip,
-                          int insertCol, TXsheet *xsh, ToonzScene *scene) {
-  for (int ci = 0; ci < (int)clip.size(); ci++) {
-    int pos = insertCol + ci;
-    const ZtoryClipEntry &ce = clip[ci];
-    if (ce.isCut) {
-      xsh->insertColumn(pos);
-      if (ce.cutLevel) {
-        for (int r = 0; r < ce.duration; r++)
-          xsh->setCell(r, pos, TXshCell(ce.cutLevel, TFrameId(r+1)));
-      } else if (scene) {
-        TXshLevel *xl = scene->createNewLevel(CHILD_XSHLEVEL);
-        if (xl && xl->getChildLevel()) {
-          animSyncChildCameraToMain(xsh, xl->getChildLevel());
-          for (int r = 0; r < ce.duration; r++)
-            xsh->setCell(r, pos, TXshCell(xl->getChildLevel(), TFrameId(r+1)));
-        }
-      }
-    } else if (ce.isClone) {
-      int srcCol = ce.srcCol;
-      for (int cj = 0; cj < ci; cj++) if (insertCol+cj <= srcCol) srcCol++;
-      animCloneChildToPosition(srcCol, pos);
-    } else {
-      int srcCol = ce.srcCol;
-      for (int cj = 0; cj < ci; cj++) if (insertCol+cj <= srcCol) srcCol++;
-      TXshColumn *srcColumn = xsh->getColumn(srcCol);
-      if (srcColumn) {
-        int r0=0, r1=0; srcColumn->getRange(r0, r1);
-        xsh->insertColumn(pos);
-        for (int r = r0; r <= r1; r++) {
-          TXshCell cell = xsh->getCell(r, srcCol >= pos ? srcCol+1 : srcCol);
-          if (!cell.isEmpty()) xsh->setCell(r, pos, cell);
-        }
-      }
-    }
-  }
-}
 
 void ZtoryAnimaticPanel::onPasteShots() {
   const auto &clip = ZtoryModel::instance()->sharedClip();
@@ -5803,7 +5659,7 @@ void ZtoryAnimaticPanel::onPasteShots() {
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
   const std::set<int> &sel = m_track->selectedCols();
   int insertCol = sel.empty() ? xsh->getColumnCount() : *sel.rbegin() + 1;
-  pasteFromClip(clip, insertCol, xsh, scene);
+  ZtoryShotOps::pasteSharedClip(clip, insertCol, xsh, scene);
   xsh->updateFrameCount();
   ZtoryModel::instance()->resequenceXsheet();
   refreshFromScene();
@@ -5864,7 +5720,7 @@ void ZtoryAnimaticPanel::onCloneShots() {
   std::vector<ZtoryClipEntry> clip;
   for (int col : sel) {
     ZtoryClipEntry ce;
-    ce.srcCol = col; ce.duration = colDuration(xsh, col);
+    ce.srcCol = col; ce.duration = ZtoryShotOps::colDuration(xsh, col);
     ce.isCut = false; ce.isClone = true;
     clip.push_back(ce);
   }
@@ -6492,7 +6348,7 @@ void ZtoryAnimaticPanel::onAddShot() {
   xsh->updateFrameCount();
 
   // Copy camera resolution/size from parent to sub-scene
-  animSyncChildCameraToMain(xsh, cl);
+  ZtoryShotOps::syncChildCameraToMain(xsh, cl);
 
   app->getCurrentXsheet()->notifyXsheetChanged();
   ZtoryModel::instance()->resequenceXsheet();
