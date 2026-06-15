@@ -68,6 +68,23 @@ public:
   void pasteKeyframes();
   void deleteKeyframes();
   void cutKeyframes();
+
+  // Key-only timing ops (Ztoryc): operate on the selected keyframes only,
+  // mirroring the homonymous Cels commands but on TStageObject keyframes.
+  void reverseKeyframes();
+  void swingKeyframes();
+  void rollupKeyframes();
+  void rolldownKeyframes();
+  // Repeat: append the pattern count times. With loop==true each copy overlaps
+  // the previous one by one row so a seamless cycle (last key == first key)
+  // continues without a duplicated pose at the seam.
+  void duplicateKeyframes(int count, bool loop = false);
+
+  // Time Stretch: proportionally rescale the selected keys so the block becomes
+  // newRange rows long (endpoints anchored). r -> r0 + round((r-r0)*(newRange-1)
+  // /(oldRange-1)).
+  void timeStretchKeyframes(int newRange);
+  void openTimeStretchPopup();  // enables MI_TimeStretch for key-only selection
   void shiftKeyframes(int direction);
   void shiftKeyframesDown() { shiftKeyframes(1); }
   void shiftKeyframesUp() { shiftKeyframes(-1); }

@@ -6,7 +6,10 @@
 #include "filmstripcommand.h"
 #include "cellselection.h"
 #include "cellkeyframeselection.h"
+#include "keyframeselection.h"
 #include "tapp.h"
+
+#include <climits>
 
 // TnzQt includes
 #include "toonzqt/tselectionhandle.h"
@@ -21,6 +24,7 @@
 // Qt includes
 #include <QPushButton>
 #include <QLabel>
+#include <QCheckBox>
 #include <QMainWindow>
 
 //=============================================================================
@@ -41,6 +45,35 @@ TCellSelection *getCurrentCellSelection() {
   if (TCellKeyframeSelection *cks = dynamic_cast<TCellKeyframeSelection *>(sel))
     return cks->getCellSelection();
   return nullptr;
+}
+
+// Repeat on a key-only selection (Ztoryc): when no cell selection is active but
+// a pure TKeyframeSelection is, Repeat duplicates the keyframe pattern instead.
+TKeyframeSelection *getCurrentKeyframeOnlySelection() {
+  if (getCurrentCellSelection()) return nullptr;  // cells take precedence
+  TSelection *sel = TApp::instance()->getCurrentSelection()->getSelection();
+  TKeyframeSelection *ks = dynamic_cast<TKeyframeSelection *>(sel);
+  return (ks && !ks->isEmpty()) ? ks : nullptr;
+}
+
+// Row/column bounds of whichever selection is active. Returns false if neither.
+bool getRepeatRange(int &r0, int &c0, int &r1, int &c1) {
+  if (TCellSelection *cs = getCurrentCellSelection()) {
+    cs->getSelectedCells(r0, c0, r1, c1);
+    return true;
+  }
+  if (TKeyframeSelection *ks = getCurrentKeyframeOnlySelection()) {
+    r0 = c0 = INT_MAX;
+    r1 = c1 = -1;
+    for (auto const &p : ks->getSelection()) {
+      r0 = std::min(r0, p.first);
+      r1 = std::max(r1, p.first);
+      c0 = std::min(c0, p.second);
+      c1 = std::max(c1, p.second);
+    }
+    return r1 >= r0;
+  }
+  return false;
 }
 
 //-----------------------------------------------------------------------------
@@ -165,6 +198,13 @@ DuplicatePopup::DuplicatePopup()
       upperLay->addSpacing(10);
       upperLay->addWidget(new QLabel(tr("Up to Frame:"), this), 0);
       upperLay->addWidget(m_upToFld, 1);
+      upperLay->addSpacing(10);
+      m_loopCB = new QCheckBox(tr("Loop"), this);
+      m_loopCB->setToolTip(
+          tr("Overlap the seam key so a cyclic animation (last key == first "
+             "key) repeats seamlessly."));
+      m_loopCB->setVisible(false);
+      upperLay->addWidget(m_loopCB, 0);
     }
     mainLayout->addLayout(upperLay, 0);
 
@@ -202,11 +242,19 @@ DuplicatePopup::DuplicatePopup()
 //-------------------------------------------------------------------
 
 void DuplicatePopup::onApplyPressed() {
-  TCellSelection *selection = getCurrentCellSelection();
-  if (!selection) return;
-
   int count = 0, upTo = 0;
   getValues(count, upTo);
+
+  // Key-only Repeat (Ztoryc): duplicate the keyframe pattern `count` times.
+  if (TKeyframeSelection *ks = getCurrentKeyframeOnlySelection()) {
+    if (count < 1) return;
+    ks->duplicateKeyframes(count, m_loopCB->isChecked());
+    TApp::instance()->getCurrentSelection()->notifySelectionChanged();
+    return;
+  }
+
+  TCellSelection *selection = getCurrentCellSelection();
+  if (!selection) return;
 
   try {
     int r0, r1, c0, c1;
@@ -256,12 +304,15 @@ void DuplicatePopup::showEvent(QShowEvent *) {
 //-------------------------------------------------------------------
 
 void DuplicatePopup::updateValues() {
+  // the Loop option only makes sense on a key-only Repeat (seamless cycle)
+  m_loopCB->setVisible(getCurrentKeyframeOnlySelection() != nullptr);
+
   int count, upTo;
   getValues(count, upTo);
   if (count == m_count && upTo == m_upTo) return;
-  TCellSelection *selection = getCurrentCellSelection();
 
-  if (!selection) {
+  int r0, r1, c0, c1;
+  if (!getRepeatRange(r0, c0, r1, c1)) {
     m_countFld->setEnabled(false);
     m_upToFld->setEnabled(false);
     m_okBtn->setEnabled(false);
@@ -274,8 +325,6 @@ void DuplicatePopup::updateValues() {
     m_applyBtn->setEnabled(true);
   }
 
-  int r0, r1, c0, c1;
-  selection->getSelectedCells(r0, c0, r1, c1);
   int chunkSize = r1 - r0 + 1;
 
   if (count != m_count) {

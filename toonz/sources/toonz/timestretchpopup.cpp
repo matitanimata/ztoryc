@@ -5,8 +5,11 @@
 // Tnz6 includes
 #include "filmstripcommand.h"
 #include "cellselection.h"
+#include "keyframeselection.h"
 #include "tapp.h"
 #include "menubarcommandids.h"
+
+#include <climits>
 
 // TnzQt includes
 #include "toonzqt/tselectionhandle.h"
@@ -35,6 +38,28 @@
 
 //-----------------------------------------------------------------------------
 namespace {
+//-----------------------------------------------------------------------------
+
+// Key-only Time Stretch (Ztoryc): when the current selection is a pure
+// TKeyframeSelection, Time Stretch rescales the keyframe block instead of cells.
+TKeyframeSelection *getCurrentKeyframeOnlySelection() {
+  TSelection *sel = TApp::instance()->getCurrentSelection()->getSelection();
+  if (dynamic_cast<TCellSelection *>(sel)) return nullptr;  // cells win
+  TKeyframeSelection *ks = dynamic_cast<TKeyframeSelection *>(sel);
+  return (ks && !ks->isEmpty()) ? ks : nullptr;
+}
+
+// row span of a keyframe selection; returns false if fewer than 2 rows
+bool keyframeSelectionRange(TKeyframeSelection *ks, int &r0, int &r1) {
+  r0 = INT_MAX;
+  r1 = -1;
+  for (auto const &p : ks->getSelection()) {
+    r0 = std::min(r0, p.first);
+    r1 = std::max(r1, p.first);
+  }
+  return r1 > r0;
+}
+
 //-----------------------------------------------------------------------------
 
 class TimeStretchUndo final : public TUndo {
@@ -174,6 +199,14 @@ public:
 //-----------------------------------------------------------------------------
 
 void timeStretch(int newRange, TimeStretchPopup::STRETCH_TYPE type) {
+  // Key-only Time Stretch: rescale the selected keyframes proportionally.
+  if (type != TimeStretchPopup::eWholeXsheet) {
+    if (TKeyframeSelection *ks = getCurrentKeyframeOnlySelection()) {
+      ks->timeStretchKeyframes(newRange);
+      return;
+    }
+  }
+
   TCellSelection::Range range;
   TCellSelection *selection = dynamic_cast<TCellSelection *>(
       TApp::instance()->getCurrentSelection()->getSelection());
@@ -321,6 +354,9 @@ void TimeStretchPopup::updateValues(TSelection *selection) {
       int c0, c1;
       cellCelection->getSelectedCells(from, c0, to, c1);
       newRange = to - from + 1;
+    } else if (TKeyframeSelection *ks = getCurrentKeyframeOnlySelection()) {
+      int r0, r1;
+      if (keyframeSelectionRange(ks, r0, r1)) newRange = r1 - r0 + 1;
     }
   }
 

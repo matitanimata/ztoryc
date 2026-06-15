@@ -10,6 +10,7 @@
 
 // forward declaration
 class QPushButton;
+class QCheckBox;
 
 //=============================================================================
 // DuplicatePopup
@@ -23,6 +24,7 @@ class DuplicatePopup final : public DVGui::Dialog {
   QPushButton *m_applyBtn;
 
   DVGui::IntLineEdit *m_countFld, *m_upToFld;
+  QCheckBox *m_loopCB;  // shown only for key-only Repeat (seamless cycle)
 
   int m_count, m_upTo;
 

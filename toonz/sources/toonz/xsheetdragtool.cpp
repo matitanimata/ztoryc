@@ -42,6 +42,7 @@
 #include "toonz/fxdag.h"
 #include "toonz/sceneproperties.h"
 #include "toonz/tstageobjecttree.h"
+#include "toonz/tstageobject.h"
 #include "toonz/tstageobjectkeyframe.h"
 #include "toonz/onionskinmask.h"
 #include "toonz/txshsoundcolumn.h"
@@ -1613,43 +1614,220 @@ XsheetGUI::DragTool *XsheetGUI::DragTool::makeKeyframeMoverTool(
 // Cell KeyFrame Mover DragTool
 //-----------------------------------------------------------------------------
 
-class CellKeyframeMoverTool final : public LevelMoverTool {
-  KeyframeMoverTool *m_keyframeMoverTool;
+//-----------------------------------------------------------------------------
+// CrossColumnKeyframeUndo (Ztoryc keys+cels)
+//
+// Self-contained undo for transferring a block of keyframes from a source
+// stage object to a different one (cross-column cell+keyframe drag). The keys
+// are snapshotted relative to the source top-left; redo deletes them from the
+// source and pastes them at the destination, undo does the reverse. The drop
+// is only allowed when the destination rows are free (see destKeyframesFree),
+// so undo never has to restore overwritten destination keys.
+//-----------------------------------------------------------------------------
 
-protected:
-  bool canMove(const TPoint &pos) override {
-    if (m_keyframeMoverTool->hasSelection() &&
-        !m_keyframeMoverTool->canMove(pos))
-      return false;
-    return LevelMoverTool::canMove(pos);
+namespace {
+
+class CrossColumnKeyframeUndo final : public TUndo {
+  std::set<TKeyframeSelection::Position> m_srcPositions, m_dstPositions;
+  TKeyframeData *m_data;  // snapshot, relative to the source top-left
+
+  static void removeKeysAt(
+      const std::set<TKeyframeSelection::Position> &positions) {
+    TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    TStageObjectId cameraId =
+        TStageObjectId::CameraId(xsh->getCameraColumnIndex());
+    for (auto const &p : positions) {
+      int r = p.first, c = p.second;
+      TStageObjectId id = c >= 0 ? xsh->getColumnObjectId(c) : cameraId;
+      TStageObject *obj = xsh->getStageObject(id);
+      if (obj && obj->isKeyframe(r)) obj->removeKeyframeWithoutUndo(r);
+    }
+  }
+
+  static void pasteKeysAt(
+      TKeyframeData *data,
+      const std::set<TKeyframeSelection::Position> &anchor) {
+    TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    // getKeyframes() pastes the snapshot using the min of the passed set as the
+    // top-left, then rewrites the set with the actual pasted positions.
+    std::set<TKeyframeSelection::Position> dest = anchor;
+    data->getKeyframes(dest, xsh);
   }
 
 public:
-  CellKeyframeMoverTool(XsheetViewer *viewer) : LevelMoverTool(viewer) {
-    m_keyframeMoverTool = new KeyframeMoverTool(viewer, true);
+  CrossColumnKeyframeUndo(
+      const std::set<TKeyframeSelection::Position> &src,
+      const std::set<TKeyframeSelection::Position> &dst, TKeyframeData *data)
+      : m_srcPositions(src), m_dstPositions(dst), m_data(data) {}
+
+  ~CrossColumnKeyframeUndo() { delete m_data; }
+
+  void undo() const override {
+    removeKeysAt(m_dstPositions);
+    pasteKeysAt(m_data, m_srcPositions);
+    TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
   }
+
+  void redo() const override {
+    removeKeysAt(m_srcPositions);
+    pasteKeysAt(m_data, m_dstPositions);
+    TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override {
+    return QObject::tr("Move Keyframe across columns");
+  }
+  int getHistoryType() override { return HistoryType::Xsheet; }
+};
+
+}  // namespace
+
+//-----------------------------------------------------------------------------
+
+// Combined cell + keyframe drag tool (Ztoryc "Keyframes Follow Exposure").
+//
+// Cells are moved live by LevelMoverTool; the keyframes are NOT moved live —
+// they are transferred on release to wherever the cells actually landed. This
+// keeps cells and keys perfectly in sync (the landing position has already been
+// validated by canMove, so the keyframe rows are guaranteed free) and avoids
+// the fragile live-keyframe-mover/revert transition that used to corrupt the
+// selection on a same-column→cross-column drag. Same-column keyframe moves are
+// handled by the very same on-release path (dCol == 0), so the behaviour is
+// uniform; the only visible difference from before is that the keyframe block
+// snaps on release instead of following the cursor live — exactly like a
+// whole-column drag already does.
+//-----------------------------------------------------------------------------
+
+class CellKeyframeMoverTool final : public LevelMoverTool {
+  std::set<TKeyframeSelection::Position> m_kfStart;  // keys at click time
+  int m_origCellR0, m_origCellC0;                    // cell-block top-left
+
+  // Would moving the selected keys by (dRow,dCol) land any of them on a foreign
+  // keyframe? A key that is itself being moved out of the target slot does not
+  // count (mirrors the stock same-column rule in KeyframeMover::moveKeyframes).
+  bool destKeyframesFree(int dRow, int dCol) {
+    TXsheet *xsh = getViewer()->getXsheet();
+    for (auto const &p : m_kfStart) {
+      int nr = p.first + dRow, nc = p.second + dCol;
+      if (nr < 0 || nc < 0) return false;
+      // a key vacating (nr,nc) is not a conflict
+      if (m_kfStart.count(TKeyframeSelection::Position(nr, nc))) continue;
+      if (nc >= xsh->getColumnCount()) continue;  // brand-new empty column
+      TXshColumn *col = xsh->getColumn(nc);
+      if (!col) continue;
+      if (col->getSoundColumn() || col->getFolderColumn()) return false;
+      TStageObject *obj = xsh->getStageObject(xsh->getColumnObjectId(nc));
+      if (obj && obj->isKeyframe(nr)) return false;
+    }
+    return true;
+  }
+
+  // Delete the keys from the source and re-create them shifted by (dRow,dCol)
+  // on the destination stage object(s), wrapped in a dedicated undo.
+  void transferKeyframes(int dRow, int dCol) {
+    if (m_kfStart.empty() || (dRow == 0 && dCol == 0)) return;
+    TXsheet *xsh = getViewer()->getXsheet();
+
+    TKeyframeData *data = new TKeyframeData();
+    data->setKeyframes(m_kfStart, xsh);
+
+    std::set<TKeyframeSelection::Position> dst;
+    for (auto const &p : m_kfStart)
+      dst.insert(
+          TKeyframeSelection::Position(p.first + dRow, p.second + dCol));
+
+    CrossColumnKeyframeUndo *undo =
+        new CrossColumnKeyframeUndo(m_kfStart, dst, data);
+    undo->redo();  // keys were left at the source during the drag: apply now
+    TUndoManager::manager()->add(undo);
+
+    TKeyframeSelection *ksel = getViewer()->getKeyframeSelection();
+    ksel->selectNone();
+    for (auto const &p : dst) ksel->select(p.first, p.second);
+    ksel->makeCurrent();
+  }
+
+  // On release, transfer the keys to follow the cells — unless the cell mover's
+  // column-clone (whole column → empty destination, "Cells and Column Data")
+  // already carried them: if the original keys vanished from the source, the
+  // clone handled everything and we must not double-move.
+  void finishKeyframes() {
+    if (m_kfStart.empty()) return;
+    TXsheet *xsh = getViewer()->getXsheet();
+    TStageObjectId cameraId =
+        TStageObjectId::CameraId(xsh->getCameraColumnIndex());
+    bool keysStillAtSource = false;
+    for (auto const &p : m_kfStart) {
+      int c             = p.second;
+      TStageObjectId id = c >= 0 ? xsh->getColumnObjectId(c) : cameraId;
+      TStageObject *obj = xsh->getStageObject(id);
+      if (obj && obj->isKeyframe(p.first)) {
+        keysStillAtSource = true;
+        break;
+      }
+    }
+    if (!keysStillAtSource) return;  // clone already moved the keys
+
+    TCellSelection *cs = getViewer()->getCellSelection();
+    if (cs->isEmpty()) return;
+    int fr0, fc0, fr1, fc1;
+    cs->getSelectedCells(fr0, fc0, fr1, fc1);
+    // keys follow the cells: same delta the cell block actually moved by
+    transferKeyframes(fr0 - m_origCellR0, fc0 - m_origCellC0);
+  }
+
+protected:
+  // Gate the whole drag (cells included) on keyframe validity: a position whose
+  // destination keyframe rows are occupied is invalid, so the cells cannot land
+  // there either — cells and keys stay together.
+  bool canMove(const TPoint &pos) override {
+    if (!LevelMoverTool::canMove(pos)) return false;
+    if (m_kfStart.empty()) return true;
+
+    const Orientation *o = getViewer()->orientation();
+    int dCol, dRow;
+    if (o->isVerticalTimeline()) {
+      dCol = pos.x - m_startPos.x;
+      dRow = pos.y - m_startPos.y;
+    } else {
+      dCol = pos.y - m_startPos.y;
+      dRow = pos.x - m_startPos.x;
+    }
+    return destKeyframesFree(dRow, dCol);
+  }
+
+public:
+  CellKeyframeMoverTool(XsheetViewer *viewer)
+      : LevelMoverTool(viewer), m_origCellR0(0), m_origCellC0(0) {}
 
   void onClick(const QMouseEvent *e) override {
+    // capture the cell-block top-left and the keyframe selection BEFORE moving
+    TCellSelection *cs = getViewer()->getCellSelection();
+    if (!cs->isEmpty()) {
+      int r0, c0, r1, c1;
+      cs->getSelectedCells(r0, c0, r1, c1);
+      m_origCellR0 = r0;
+      m_origCellC0 = c0;
+    } else {
+      m_origCellR0 = m_origCellC0 = 0;
+    }
     LevelMoverTool::onClick(e);
-    m_keyframeMoverTool->onClick(e);
+    m_kfStart = getViewer()->getKeyframeSelection()->getSelection();
   }
 
-  void onDrag(const QMouseEvent *e) override {
-    LevelMoverTool::onDrag(e);
-    if (m_validPos) m_keyframeMoverTool->onDrag(e);
-  }
+  // onDrag inherited: only the cells move live; keys are transferred on release.
+
   void onRelease(const CellPosition &pos) override {
-    int row = pos.frame(), col = pos.layer();
     TUndoManager::manager()->beginBlock();
     LevelMoverTool::onRelease(pos);
-    m_keyframeMoverTool->onRelease(pos);
+    finishKeyframes();
     TUndoManager::manager()->endBlock();
   }
 
-  void drawCellsArea(QPainter &p) override {
-    LevelMoverTool::drawCellsArea(p);
-    m_keyframeMoverTool->drawCellsArea(p);
-  }
+  // drawCellsArea inherited: the cell block (red/blue) is the drag feedback.
 };
 
 //=============================================================================
