@@ -4773,26 +4773,6 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   QHBoxLayout *tbLay = new QHBoxLayout(toolbar);
   tbLay->setContentsMargins(6, 2, 6, 2);
   tbLay->setSpacing(4);
-  // ── Context chip: "ANIMATIC" — visual orientation badge ──────────────────
-  {
-    QLabel *chip = new QLabel("ANIMATIC", toolbar);
-    chip->setStyleSheet(
-        "QLabel{"
-        "  background:#1a3a5c;"        // steel blue
-        "  color:#7ab8ef;"
-        "  font-size:9px;"
-        "  font-weight:bold;"
-        "  letter-spacing:1px;"
-        "  border-radius:3px;"
-        "  padding:1px 6px;"
-        "}");
-    chip->setFixedHeight(18);
-    chip->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    tbLay->addWidget(chip);
-    tbLay->addSpacing(8);
-  }
-  // ─────────────────────────────────────────────────────────────────────────
-
   QLabel *zoomLabel = new QLabel("Zoom:", toolbar);
   zoomLabel->setStyleSheet("color:#ccc; font-size:11px;");
   m_zoomSlider = new QSlider(Qt::Horizontal, toolbar);
