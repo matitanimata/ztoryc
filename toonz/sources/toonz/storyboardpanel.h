@@ -176,14 +176,8 @@ struct Shot {
   std::set<int>     m_selectedIndices;
 
   bool m_updating = false;   // re-entrancy guard for signal reactions
-  struct ClipboardEntry {
-    ShotData   data;
-    bool       isClone;
-    int        srcColumn;
-    bool       isCut = false;    // true = cut (delete original on paste)
-    TXshLevelP cutLevel;         // non-null for immediate cut: level kept alive here
-  };
-  std::vector<ClipboardEntry> m_clipboard;
+  // Shot clipboard lives in ZtoryModel::sharedClip() — single source of truth
+  // shared with the Animatic. The Board no longer keeps a local copy.
   int  m_fps;
   bool m_autoRenumber;
   // True while loadZtoryc() runs — suppresses the scriptFileChanged→saveZtoryc
