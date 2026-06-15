@@ -19,6 +19,11 @@
   allineato all'Animatic).
 - **Rimosso il chip blu "ANIMATIC"** dalla toolbar della timeline (coerente con la
   pulizia dei chip decorativi; toolbar ora parte da "Zoom:").
+- **Main Toolbar nascosta di default** (`ShowMainToolbarAction` 1->0) - la barra
+  window-top (new level / Reframe 1's-2's-3's / audio) duplicava la QuickToolbar
+  dell'xsheet e ingombrava le room storyboard. Resta riattivabile da
+  View > Show Main Toolbar. La QuickToolbar dell'xsheet/timeline e invariata.
+- **README**: rimosso "Brush feel" dalla Roadmap (declassato).
 
 ### Verified (a video)
 - copy/cut/clone/paste same-panel (Board): Copy→Paste→Paste (copia persiste),
