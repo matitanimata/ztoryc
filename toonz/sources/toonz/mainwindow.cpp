@@ -86,7 +86,10 @@ TEnv::IntVar BCheckToggleAction("BCheckToggleAction", 0);
 TEnv::IntVar GCheckToggleAction("GCheckToggleAction", 0);
 TEnv::IntVar ACheckToggleAction("ACheckToggleAction", 0);
 TEnv::IntVar LinkToggleAction("LinkToggleAction", 0);
-TEnv::IntVar ShowMainToolbarAction("ShowMainToolbarAction", 1);
+// Ztoryc: the Main Toolbar duplicates the xsheet QuickToolbar (new level /
+// reframe 1's-2's-3's / audio) and clutters the custom storyboard rooms, so it
+// ships hidden by default. Still toggleable via View > Show Main Toolbar.
+TEnv::IntVar ShowMainToolbarAction("ShowMainToolbarAction", 0);
 TEnv::IntVar ShowStatusBarAction("ShowStatusBarAction", 1);
 // TEnv::IntVar DockingCheckToggleAction("DockingCheckToggleAction", 1);
 TEnv::IntVar ShiftTraceToggleAction("ShiftTraceToggleAction", 0);
