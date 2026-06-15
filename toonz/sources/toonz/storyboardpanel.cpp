@@ -973,27 +973,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
 
   QHBoxLayout *tb = new QHBoxLayout();
 
-  // ── Context chip: "BOARD" — visual orientation badge ─────────────────────
-  {
-    QLabel *chip = new QLabel("BOARD", main);
-    chip->setStyleSheet(
-        "QLabel{"
-        "  background:#1e5c2e;"        // forest green
-        "  color:#7defa0;"
-        "  font-size:9px;"
-        "  font-weight:bold;"
-        "  letter-spacing:1px;"
-        "  border-radius:3px;"
-        "  padding:1px 6px;"
-        "}");
-    chip->setFixedHeight(18);
-    chip->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    tb->addWidget(chip);
-    tb->addSpacing(8);
-  }
-  // ─────────────────────────────────────────────────────────────────────────
-
-    m_addShotButton = new QToolButton();
+  m_addShotButton = new QToolButton();
   m_addShotButton->setIcon(createQIcon("ztoryc_add_shot"));
   m_addShotButton->setIconSize(QSize(20, 20));
   m_addShotButton->setFixedSize(28, 28);

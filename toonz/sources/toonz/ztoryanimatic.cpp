@@ -4190,7 +4190,10 @@ void ZtoryPanelNavigator::refreshActivePanelFromFrame() {
 
 ZtoryRightPanel::ZtoryRightPanel(QWidget *parent)
     : TPanel(parent) {
-  setWindowTitle(tr("Ztoryc Script/Palette"));
+  // No window title: the switcher row (SCRIPT | PALETTE) already labels this
+  // composite panel — a title bar caption would just duplicate it. The title
+  // bar strip itself is kept (drag handle for docking in custom rooms).
+  setWindowTitle("");
   setPanelType("ZtoryRightPanel");
 
   QWidget *container = new QWidget(this);
@@ -4332,7 +4335,9 @@ void ZtoryRightPanel::showShotMode(int /*col*/) {
 
 ZtoryLeftPanel::ZtoryLeftPanel(QWidget *parent)
     : TPanel(parent) {
-  setWindowTitle(tr("Ztory Left"));
+  // No window title: the switcher row (BOARD | XSHEET) already labels this
+  // composite panel — see ZtoryRightPanel for rationale.
+  setWindowTitle("");
   setPanelType("ZtoryLeftPanel");
 
   QWidget *container  = new QWidget(this);
@@ -7658,7 +7663,7 @@ public:
   TPanel *createPanel(QWidget *parent) override {
     TPanel *panel = new ZtoryRightPanel(parent);
     panel->setObjectName("ZtoryRightPanel");
-    panel->setWindowTitle("Ztoryc Script/Palette");
+    // Title intentionally left empty: switcher row labels the panel.
     return panel;
   }
   void initialize(TPanel *panel) override { assert(0); }
@@ -7670,7 +7675,7 @@ public:
   TPanel *createPanel(QWidget *parent) override {
     TPanel *panel = new ZtoryLeftPanel(parent);
     panel->setObjectName("ZtoryLeftPanel");
-    panel->setWindowTitle("Ztoryc Board/XSheet");
+    // Title intentionally left empty: switcher row labels the panel.
     return panel;
   }
   void initialize(TPanel *panel) override { assert(0); }
@@ -7681,7 +7686,9 @@ public:
 
 ZtoryDrawLeftPanel::ZtoryDrawLeftPanel(QWidget *parent)
     : TPanel(parent) {
-  setWindowTitle(tr("Ztoryc Draw Left"));
+  // No window title: the switcher row (BOARD / SHOT) already labels this
+  // composite panel — see ZtoryRightPanel for rationale.
+  setWindowTitle("");
   setPanelType("ZtoryDrawLeftPanel");
 
   QWidget *container = new QWidget(this);
@@ -7792,7 +7799,7 @@ public:
   TPanel *createPanel(QWidget *parent) override {
     TPanel *panel = new ZtoryDrawLeftPanel(parent);
     panel->setObjectName("ZtoryDrawLeftPanel");
-    panel->setWindowTitle("Ztoryc Board/Navigator");
+    // Title intentionally left empty: switcher row labels the panel.
     return panel;
   }
   void initialize(TPanel *panel) override { assert(0); }

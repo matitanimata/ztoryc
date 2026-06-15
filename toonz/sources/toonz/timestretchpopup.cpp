@@ -21,9 +21,16 @@
 #include "toonz/txsheethandle.h"
 #include "toonz/txshcell.h"
 #include "toonz/txshcolumn.h"
+#include "toonz/tstageobject.h"
+#include "toonz/preferences.h"
 
 // TnzCore includes
 #include "tundo.h"
+
+#include "cellkeyframeselection.h"
+
+#include <cmath>
+#include <map>
 
 // Qt includes
 #include <QPushButton>
@@ -45,8 +52,20 @@ namespace {
 TKeyframeSelection *getCurrentKeyframeOnlySelection() {
   TSelection *sel = TApp::instance()->getCurrentSelection()->getSelection();
   if (dynamic_cast<TCellSelection *>(sel)) return nullptr;  // cells win
+  if (dynamic_cast<TCellKeyframeSelection *>(sel))
+    return nullptr;  // combined: cells win (handled via asCellSelection)
   TKeyframeSelection *ks = dynamic_cast<TKeyframeSelection *>(sel);
   return (ks && !ks->isEmpty()) ? ks : nullptr;
+}
+
+// Unwrap to a cell selection. When cells are selected together with keyframes
+// the current selection is a TCellKeyframeSelection wrapper (not a plain
+// TCellSelection), so a bare dynamic_cast misses it and the popup read 0.
+TCellSelection *asCellSelection(TSelection *sel) {
+  if (TCellSelection *cs = dynamic_cast<TCellSelection *>(sel)) return cs;
+  if (TCellKeyframeSelection *ck = dynamic_cast<TCellKeyframeSelection *>(sel))
+    return ck->getCellSelection();
+  return nullptr;
 }
 
 // row span of a keyframe selection; returns false if fewer than 2 rows
@@ -197,6 +216,113 @@ public:
 };
 
 //-----------------------------------------------------------------------------
+// Combined cell + keyframe Time Stretch (Ztoryc), used when "Keyframes Follow
+// Exposure" is ON and the stretched cell block contains keyframes.
+//
+// TXsheet::timeStretch resamples the cells via insert/removeCells. With
+// keys-follow ON those primitives shift the keyframes UNIFORMLY (by the row
+// delta), which is correct for keys *below* the block (ripple) but wrong for
+// keys *inside* [r0,r1], which must be rescaled PROPORTIONALLY (e.g. a walk
+// cycle 18→24). So we let the cell stretch ripple everything, then explicitly
+// overwrite just the block keys with the proportionally-rescaled originals.
+// Doing the key fix as an explicit override (instead of relying on the cell
+// primitives) avoids the double-handling that bit BUG-2.
+//-----------------------------------------------------------------------------
+
+typedef std::map<int, std::map<int, TStageObject::Keyframe>> BlockKeyMap;
+
+// snapshot the keyframes inside the block [r0,r1] for every column in [c0,c1]
+BlockKeyMap snapshotBlockKeys(TXsheet *xsh, int c0, int c1, int r0, int r1) {
+  BlockKeyMap snap;
+  for (int c = c0; c <= c1; c++) {
+    TStageObject *obj = xsh->getStageObject(xsh->getColumnObjectId(c));
+    if (!obj) continue;
+    std::map<int, TStageObject::Keyframe> keys;
+    for (int r = r0; r <= r1; r++)
+      if (obj->isKeyframe(r)) keys[r] = obj->getKeyframe(r);
+    if (!keys.empty()) snap[c] = keys;
+  }
+  return snap;
+}
+
+bool blockHasKeys(TXsheet *xsh, int c0, int c1, int r0, int r1) {
+  for (int c = c0; c <= c1; c++) {
+    TStageObject *obj = xsh->getStageObject(xsh->getColumnObjectId(c));
+    if (!obj) continue;
+    for (int r = r0; r <= r1; r++)
+      if (obj->isKeyframe(r)) return true;
+  }
+  return false;
+}
+
+// clear the target block [r0, r0+dstRange-1] and re-place the snapshot keys
+// (originally spanning srcRange from r0) remapped proportionally onto dstRange,
+// endpoints anchored. src==dst gives an identity restore.
+void placeStretchedKeys(TXsheet *xsh, const BlockKeyMap &snap, int r0,
+                        int srcRange, int dstRange) {
+  double srcSpan = srcRange - 1, dstSpan = dstRange - 1;
+  for (auto const &cv : snap) {
+    int c             = cv.first;
+    TStageObject *obj = xsh->getStageObject(xsh->getColumnObjectId(c));
+    if (!obj) continue;
+    for (int r = r0; r <= r0 + dstRange - 1; r++)
+      if (obj->isKeyframe(r)) obj->removeKeyframeWithoutUndo(r);
+    for (auto const &kv : cv.second) {
+      int nr = (srcSpan > 0)
+                   ? r0 + (int)std::lround((kv.first - r0) * dstSpan / srcSpan)
+                   : r0;
+      obj->setKeyframeWithoutUndo(nr, kv.second);
+    }
+  }
+}
+
+class CellAndKeyframeStretchUndo final : public TUndo {
+  std::unique_ptr<TimeStretchUndo> m_cellUndo;  // cells: stretch + restore
+  int m_r0, m_c0, m_c1, m_oldRange, m_newRange;
+  BlockKeyMap m_blockKeys;  // original keys in [r0,r1], snapshot pre-stretch
+
+  static TXsheet *xsheet() {
+    return TApp::instance()->getCurrentXsheet()->getXsheet();
+  }
+
+public:
+  // cellUndo is adopted; ctor snapshots the block keys BEFORE the manual stretch
+  CellAndKeyframeStretchUndo(TimeStretchUndo *cellUndo, int r0, int c0, int r1,
+                             int c1, int newRange)
+      : m_cellUndo(cellUndo)
+      , m_r0(r0)
+      , m_c0(c0)
+      , m_c1(c1)
+      , m_oldRange(r1 - r0 + 1)
+      , m_newRange(newRange) {
+    m_blockKeys = snapshotBlockKeys(xsheet(), c0, c1, r0, r1);
+  }
+
+  // proportional block-key fix; call once after the manual xsh->timeStretch,
+  // and on every redo
+  void applyBlockKeyStretch() const {
+    placeStretchedKeys(xsheet(), m_blockKeys, m_r0, m_oldRange, m_newRange);
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+
+  void redo() const override {
+    m_cellUndo->redo();       // cells resampled + keys rippled by keys-follow
+    applyBlockKeyStretch();   // override block keys with proportional rescale
+  }
+
+  void undo() const override {
+    m_cellUndo->undo();  // cells restored + keys rippled back
+    // restore the original block keys (identity remap onto the old range)
+    placeStretchedKeys(xsheet(), m_blockKeys, m_r0, m_oldRange, m_oldRange);
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override { return QObject::tr("Time Stretch"); }
+  int getHistoryType() override { return HistoryType::Xsheet; }
+};
+
+//-----------------------------------------------------------------------------
 
 void timeStretch(int newRange, TimeStretchPopup::STRETCH_TYPE type) {
   // Key-only Time Stretch: rescale the selected keyframes proportionally.
@@ -208,8 +334,8 @@ void timeStretch(int newRange, TimeStretchPopup::STRETCH_TYPE type) {
   }
 
   TCellSelection::Range range;
-  TCellSelection *selection = dynamic_cast<TCellSelection *>(
-      TApp::instance()->getCurrentSelection()->getSelection());
+  TCellSelection *selection =
+      asCellSelection(TApp::instance()->getCurrentSelection()->getSelection());
   if (type != TimeStretchPopup::eWholeXsheet) {
     if (!selection) {
       DVGui::error(QObject::tr("The current selection is invalid."));
@@ -237,13 +363,29 @@ void timeStretch(int newRange, TimeStretchPopup::STRETCH_TYPE type) {
   assert(r1 >= r0 && c1 >= c0);
   if (r1 - r0 + 1 == newRange) return;
 
+  // Combined cells + keyframes: when "Keyframes Follow Exposure" is ON and the
+  // stretched block holds keyframes, rescale those keys proportionally (the
+  // bare cell stretch would only shift them uniformly). Whole-scene stretch
+  // keeps the legacy behavior.
+  bool combineKeys = type != TimeStretchPopup::eWholeXsheet &&
+                     Preferences::instance()->isKeyframesFollowExposureEnabled() &&
+                     blockHasKeys(xsheet, c0, c1, r0, r1);
+
   TimeStretchUndo *undo = new TimeStretchUndo(r0, c0, r1, c1, newRange, type);
-
-  xsheet->timeStretch(r0, c0, r1, c1, newRange);
-
   if (type == TimeStretchPopup::eFrameRange)
     undo->setOldColumnRange(range.m_c0, range.m_c1);
-  TUndoManager::manager()->add(undo);
+
+  if (combineKeys) {
+    // ctor snapshots the block keys BEFORE the stretch
+    CellAndKeyframeStretchUndo *combined =
+        new CellAndKeyframeStretchUndo(undo, r0, c0, r1, c1, newRange);
+    xsheet->timeStretch(r0, c0, r1, c1, newRange);  // cells + uniform key ripple
+    combined->applyBlockKeyStretch();               // proportional block fix
+    TUndoManager::manager()->add(combined);
+  } else {
+    xsheet->timeStretch(r0, c0, r1, c1, newRange);
+    TUndoManager::manager()->add(undo);
+  }
 
   // Modifico la selezione in base al tipo di comando effettuato
   if (type != TimeStretchPopup::eWholeXsheet) {
@@ -349,7 +491,7 @@ void TimeStretchPopup::updateValues(TSelection *selection) {
     TXsheet *xsheet = TApp::instance()->getCurrentXsheet()->getXsheet();
     newRange        = xsheet->getFrameCount();
   } else {
-    TCellSelection *cellCelection = dynamic_cast<TCellSelection *>(selection);
+    TCellSelection *cellCelection = asCellSelection(selection);
     if (cellCelection) {
       int c0, c1;
       cellCelection->getSelectedCells(from, c0, to, c1);
