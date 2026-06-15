@@ -1,3 +1,44 @@
+## [2026-06-15] — BUG-2 (perdita chiavi su undo) + drag celle: modificatori nativi
+
+### Fixed
+- **BUG-2 [perdita dati] — l'undo del cut perdeva i keyframe (modalità keys+cels).**
+  In `cutCellsKeyframes()`, con "Keyframes Follow Exposure" ON, `cutCells()` →
+  `removeCells()` cancellava già i keyframe nello span tagliato; il successivo
+  `deleteKeyframesWithShift()` faceva lo snapshot a chiavi già sparite
+  (`data->m_keyData=0`) → `DeleteKeyframesUndo` non aveva nulla da ripristinare.
+  **Fix** (`cellkeyframeselection.cpp`): cancellare i keyframe con
+  `deleteKeyframes()` (senza shift) PRIMA di `cutCells()`; lo snapshot cattura le
+  chiavi e l'ordine di undo si inverte correttamente (CutCellsUndo ripristina
+  celle+shift, poi DeleteKeyframesUndo ri-incolla le chiavi). Rimuove anche un
+  latente doppio-shift. Diagnosi con debug build + lldb (probe Python su
+  `TKeyframeData::m_keyData`). Commit `73f1a5d64`.
+
+### Changed / Added
+- **Drag celle: ripristinata la convenzione modificatori nativa di Tahoma.**
+  Rimossa l'intercettazione di Alt+drag che attivava il Cell/Block Swap: ora il
+  drag celle è gestito da `LevelMoverTool` — drag = move, Shift = insert,
+  Alt = overwrite, Ctrl = copy (comportamenti già presenti in upstream ma
+  "coperti" dallo swap Ztoryc).
+- **Cell/Block Swap spostato su Ctrl+Alt+drag** (Cmd+Option su macOS): non ruba
+  più il modificatore overwrite; nessun conflitto con il rolling cel (regioni
+  diverse — drag bar vs smart-tab extender). Il block swap ora funziona anche
+  afferrando il corpo della cella (prima il fallback forzava una cella sola).
+  Commit `c5095c6a7`.
+- **Tooltip hint** sui modificatori del drag celle, mostrato sulla drag bar
+  (nomi tasti per piattaforma: Cmd/Option su macOS, Ctrl/Alt altrove).
+
+### Notes
+- **BUG-1 rimandato** (drag cross-colonna in modalità combinata keys+cels →
+  trasferimento keyframe al nuovo stage object). È una feature sostanziosa sullo
+  stesso path delicato keys+undo di BUG-2: da fare a sessione fresca con verifica
+  lldb. Accertato che la preference "Cell-dragging Behaviour: Cells and Column
+  Data" già muove l'intero stage object (keyframe inclusi) per colonne intere su
+  destinazione vuota; manca il caso del **sotto-blocco** in modalità combinata,
+  bloccato da `KeyframeMoverTool::canMove` (col != startCol).
+- Dead-code del CellSwapper NON rimosso (swap tenuto, su Ctrl+Alt).
+- Pulizia repo: rimossi branch effimeri (`feature/keys-cels-modes` già mergiato,
+  e 2 worktree `claude/*` con relativi branch).
+
 ## [2026-06-14] — Keys Follow Exposure: operazioni Cels portano i keyframe + toggle visibile
 
 Branch `feature/keys-cels-modes` (NON ancora su master).
