@@ -699,6 +699,27 @@ nella sub-scene corretta.
 
 ### 🆕 DA FARE (giugno 2026) — in cima per priorità
 
+**🔺 PRIORITARIO — Finalizzazione UI dedup: toolbar Board↔Animatic [richiesto utente, giugno 2026].**
+Niente bottoni shot duplicati tra Board e Animatic nelle room Ztoryc. I comandi shot
+condivisi vanno sulla toolbar della **timeline Animatic, parte SINISTRA** (così cadono
+sotto il Board); i tool di editing a seguire a destra. Questo libera la toolbar del
+**Board** per: menu auto/keep/renumber, numbering options, light arrow (+opzioni),
+export PDF/scene/animatic (gli export forse anch'essi sull'Animatic). Motivo: il panel
+Board può essere ristretto → troppe icone danno problemi.
+- **Vincolo invariante:** ogni panel resta self-sufficient — una room custom col solo
+  Board deve riavere TUTTI i bottoni. Quindi NON spostare i bottoni: ogni panel tiene la
+  toolbar completa e nella room di default **nasconde i duplicati a runtime** se rileva il
+  panel "owner" vicino (owner = Animatic).
+- **Come:** enumerare i vicini con `currentRoom->findChildren<TPanel*>()` (room è un
+  `TMainWindow`; pattern già usato in `floatingpanelcommand.cpp`, `mainwindow.cpp:1584`);
+  su `showEvent`/cambio room il Board nasconde i bottoni condivisi se c'è un Animatic.
+- **Complementare:** overflow "»" sulla toolbar Board (QToolBar extension o menu More) così
+  da sola ristretta non perde mai bottoni.
+- **Da decidere a inizio task:** lista canonica dei bottoni condivisi (un posto solo) +
+  identificare i file room `.ini` di default (bundle + ~/Library). Logica shot già in
+  `ztoryshotops` (dedup di logica fatto); questo è SOLO la parte UI/toolbar.
+
+
 **Feature keys-cels-modes (su master, branch mergiato il 2026-06-14).** Dettagli
 completi in `KEYS_CELS_MODES_DESIGN.md`. In ordine:
 1. ✅ **[FATTO 2026-06-15] BUG-2 [perdita dati, ALTA]** — Cut→Paste cross-colonna in

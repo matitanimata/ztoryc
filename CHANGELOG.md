@@ -1,3 +1,48 @@
+## [2026-06-16b] — Increase/Decrease chiavi + refactor selezione combinata
+
+### Fixed
+- **Pannello-fantasma da 1 frame nel paste (e ricalcoli durata).** Lo Stop Frame Hold
+  che `resequenceXsheet()` mette in coda a ogni colonna shot è una cella non vuota
+  (`isEmpty()` controlla solo `m_level`) e veniva contato come frame: `refreshFromScene`,
+  `detectAndUpdatePanels` (entrambi i rami), `onXsheetChanged`, `onShotInserted`
+  gonfiavano la durata di +1 → il filtro di visibilità pannelli (`f < timelineDuration`)
+  lasciava passare un boundary → pannello-fantasma. Fix: escludere la SFH dal conteggio
+  (`getRange(..., ignoreLastStop=true)` / break sullo stop-frame), allineati a
+  `onModelResequenced`. File `storyboardpanel.cpp`.
+
+### Added
+- **Increase/Decrease spaziatura chiavi (key-only)** su `TKeyframeSelection`
+  (`keyframeselection.cpp`): aggiunge/toglie un frame per ogni intervallo tra chiavi
+  consecutive; prima chiave ancorata, chiavi successive che **slittano** (ripple via
+  `moveKeyframes`); Decrease no-op se un gap è già 1; blocco riselezionato dopo
+  l'operazione (ripetibile). Agganciato a MI_IncreaseStep/MI_DecreaseStep. Undo
+  `KeyframeSpaceUndo`.
+- **Increase/Decrease combinato celle+chiavi** (`cellkeyframeselection.cpp`): in
+  modalità combinata NON ripete i disegni — inserisce/rimuove un frame negli intervalli
+  tra le chiavi via `insertCells`/`removeCells` (celle+chiavi slittano insieme,
+  pref-independent). Single-point su una cella sola → un frame nel punto selezionato;
+  sul primo frame del disegno il disegno cresce in testa (no frame vuoto). Undo
+  `KeyframeGapResizeUndo` con snapshot completo per colonna.
+
+### Refactor
+- **`TCellKeyframeSelection` ora EREDITA `TCellSelection`** (tolto `final`). Con
+  keys-follow ON ogni selezione celle diventava la selezione combinata che NON era una
+  `TCellSelection` → gli ~82 `dynamic_cast<TCellSelection*>` fallivano e i comandi cella
+  (drawing substitution W/Q, filtri, reframe…) ricadevano sulla singola cella. Ora il
+  cast riesce → operano sull'intero blocco. La combinata È la cell selection (possiede il
+  range); ctor prende solo `TKeyframeSelection*`. Ogni override (copy/cut/clear/paste,
+  increase/decrease) ha fall-through al comportamento cella base quando non ci sono chiavi
+  (o keys-follow OFF) → modalità normale invariata. Aggiornati `xsheetviewer.cpp` e
+  `cellselectioncommand.cpp` (ctor).
+
+### Notes / TODO
+- Aggiunto **task PRIORITARIO** in ANIMATIC_TASKS.md: finalizzazione UI dedup toolbar
+  Board↔Animatic (bottoni condivisi su timeline Animatic sinistra, Board liberato per
+  auto/keep/renumber + numbering + light arrow + export; nascondere duplicati a runtime
+  via `findChildren<TPanel*>`, panel sempre self-sufficient).
+- Task 5 (drag sui diamanti → selezione combinata quando pref ON) ancora aperto; il
+  refactor di oggi è infrastruttura utile in quella direzione.
+
 ## [2026-06-16] — Dedup comandi shot Board↔Timeline (ZtoryShotOps) + cleanup UI
 
 ### Added
