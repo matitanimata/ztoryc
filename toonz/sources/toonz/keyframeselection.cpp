@@ -307,6 +307,8 @@ void TKeyframeSelection::enableCommands() {
   enableCommand(this, MI_Rollup, &TKeyframeSelection::rollupKeyframes);
   enableCommand(this, MI_Rolldown, &TKeyframeSelection::rolldownKeyframes);
   enableCommand(this, MI_TimeStretch, &TKeyframeSelection::openTimeStretchPopup);
+  enableCommand(this, MI_IncreaseStep, &TKeyframeSelection::increaseKeyframes);
+  enableCommand(this, MI_DecreaseStep, &TKeyframeSelection::decreaseKeyframes);
 }
 
 //-----------------------------------------------------------------------------
@@ -879,6 +881,207 @@ void TKeyframeSelection::openTimeStretchPopup() {
   popup->show();
   popup->raise();
   popup->activateWindow();
+}
+
+//-----------------------------------------------------------------------------
+// Increase / Decrease Keyframe Spacing (key-only) — widen (delta=+1) or tighten
+// (delta=-1) every gap between consecutive selected keys by one frame, per
+// object. The first selected key per object is anchored; the i-th key moves by
+// i*delta, so the whole block grows/shrinks uniformly while keeping the timing
+// proportions of unequal gaps. Decrease is rejected (whole op) if any object
+// has a gap of 1, because keys can't be pushed onto each other.
+//-----------------------------------------------------------------------------
+
+namespace {
+
+class KeyframeSpaceUndo final : public TUndo {
+  int m_r0, m_r1, m_delta;
+  std::set<int> m_cols;
+  // original block keys per column (only [r0,r1]); foreign keys below the block
+  // are handled by a uniform ripple (moveKeyframes), not snapshotted.
+  std::map<int, std::map<int, TStageObject::Keyframe>> m_blockKeys;
+
+  static TStageObject *stageObj(TXsheet *xsh, int c) {
+    TStageObjectId id =
+        c >= 0 ? xsh->getColumnObjectId(c)
+               : TStageObjectId::CameraId(xsh->getCameraColumnIndex());
+    return xsh->getStageObject(id);
+  }
+
+  // Rows below r1 ripple by this so they keep their distance from the block end:
+  // the block grows/shrinks by (keys-1)*delta.
+  int totalDelta(const std::map<int, TStageObject::Keyframe> &blk) const {
+    return ((int)blk.size() - 1) * m_delta;
+  }
+
+  // Shift every keyframe strictly below `threshold` row by `delta`.
+  static void rippleBelow(TStageObject *obj, int threshold, int delta) {
+    if (delta == 0) return;
+    TStageObject::KeyframeMap km;
+    obj->getKeyframes(km);
+    std::set<int> toShift;
+    for (auto const &kv : km)
+      if (kv.first > threshold) toShift.insert(kv.first);
+    if (!toShift.empty()) obj->moveKeyframes(toShift, delta);
+  }
+
+public:
+  KeyframeSpaceUndo(int r0, int r1, int delta, const std::set<int> &cols)
+      : m_r0(r0), m_r1(r1), m_delta(delta), m_cols(cols) {
+    TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    for (int c : cols) {
+      TStageObject *obj = stageObj(xsh, c);
+      if (!obj) continue;
+      std::map<int, TStageObject::Keyframe> blk;
+      for (int r = m_r0; r <= m_r1; r++)
+        if (obj->isKeyframe(r)) blk[r] = obj->getKeyframe(r);
+      m_blockKeys[c] = blk;
+    }
+  }
+
+  void redo() const override {
+    TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    for (int c : m_cols) {
+      TStageObject *obj = stageObj(xsh, c);
+      if (!obj) continue;
+      auto it = m_blockKeys.find(c);
+      if (it == m_blockKeys.end()) continue;
+      const auto &blk = it->second;
+      // 1) lift the block keys out so the ripple destination is clear
+      for (auto const &kv : blk)
+        if (obj->isKeyframe(kv.first)) obj->removeKeyframeWithoutUndo(kv.first);
+      // 2) ripple everything below the block to make room (or close the gap)
+      rippleBelow(obj, m_r1, totalDelta(blk));
+      // 3) re-place the block keys with one frame added/removed per gap
+      int i = 0;
+      for (auto const &kv : blk)
+        obj->setKeyframeWithoutUndo(kv.first + (i++) * m_delta, kv.second);
+    }
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+    TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  }
+
+  void undo() const override {
+    TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    for (int c : m_cols) {
+      TStageObject *obj = stageObj(xsh, c);
+      if (!obj) continue;
+      auto it = m_blockKeys.find(c);
+      if (it == m_blockKeys.end()) continue;
+      const auto &blk = it->second;
+      int td = totalDelta(blk);
+      // 1) remove the respaced block keys (current positions)
+      int i = 0;
+      for (auto const &kv : blk) {
+        int nr = kv.first + (i++) * m_delta;
+        if (obj->isKeyframe(nr)) obj->removeKeyframeWithoutUndo(nr);
+      }
+      // 2) ripple the foreign keys back (they now sit below the new block end)
+      rippleBelow(obj, m_r1 + td, -td);
+      // 3) restore the original block keys
+      for (auto const &kv : blk)
+        obj->setKeyframeWithoutUndo(kv.first, kv.second);
+    }
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+    TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  }
+
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override {
+    return m_delta > 0 ? QObject::tr("Increase Keyframe Spacing")
+                       : QObject::tr("Decrease Keyframe Spacing");
+  }
+  int getHistoryType() override { return HistoryType::Xsheet; }
+};
+
+// Reselect the respaced block so the command can be applied repeatedly without
+// having to drag-select the keys again. Computes the new key rows (orig+i*delta)
+// from the block captured BEFORE the op.
+void reselectRespacedBlock(TKeyframeSelection *sel,
+                           const std::map<int, std::vector<int>> &origBlock,
+                           int delta) {
+  sel->selectNone();
+  for (auto const &cv : origBlock)
+    for (int i = 0; i < (int)cv.second.size(); i++)
+      sel->select(cv.second[i] + i * delta, cv.first);
+}
+
+// Snapshot, per column, the rows that carry a keyframe in [r0,r1] (the block).
+std::map<int, std::vector<int>> captureBlockRows(const std::set<int> &cols,
+                                                 int r0, int r1) {
+  TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+  std::map<int, std::vector<int>> blk;
+  for (int c : cols) {
+    TStageObjectId id =
+        c >= 0 ? xsh->getColumnObjectId(c)
+               : TStageObjectId::CameraId(xsh->getCameraColumnIndex());
+    TStageObject *obj = xsh->getStageObject(id);
+    if (!obj) continue;
+    std::vector<int> rows;
+    for (int r = r0; r <= r1; r++)
+      if (obj->isKeyframe(r)) rows.push_back(r);
+    if (!rows.empty()) blk[c] = rows;
+  }
+  return blk;
+}
+
+}  // namespace
+
+void TKeyframeSelection::increaseKeyframes() {
+  unselectLockedColumn();
+  if (isEmpty()) return;
+
+  int r0 = INT_MAX, r1 = -1;
+  std::set<int> cols;
+  for (auto const &p : m_positions) {
+    r0 = std::min(r0, p.first);
+    r1 = std::max(r1, p.first);
+    cols.insert(p.second);
+  }
+  if (r1 <= r0) return;  // need at least two rows to have a gap
+
+  auto origBlock = captureBlockRows(cols, r0, r1);
+  TUndo *undo = new KeyframeSpaceUndo(r0, r1, +1, cols);
+  TUndoManager::manager()->add(undo);
+  undo->redo();
+  reselectRespacedBlock(this, origBlock, +1);
+}
+
+void TKeyframeSelection::decreaseKeyframes() {
+  unselectLockedColumn();
+  if (isEmpty()) return;
+
+  int r0 = INT_MAX, r1 = -1;
+  std::set<int> cols;
+  for (auto const &p : m_positions) {
+    r0 = std::min(r0, p.first);
+    r1 = std::max(r1, p.first);
+    cols.insert(p.second);
+  }
+  if (r1 <= r0) return;
+
+  // Reject if any object already has a 1-frame gap between consecutive selected
+  // keys — decreasing would collide two keys on the same row.
+  TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+  for (int c : cols) {
+    TStageObjectId id =
+        c >= 0 ? xsh->getColumnObjectId(c)
+               : TStageObjectId::CameraId(xsh->getCameraColumnIndex());
+    TStageObject *obj = xsh->getStageObject(id);
+    if (!obj) continue;
+    int prev = -1;
+    for (int r = r0; r <= r1; r++) {
+      if (!obj->isKeyframe(r)) continue;
+      if (prev >= 0 && r - prev < 2) return;  // gap already 1 → abort
+      prev = r;
+    }
+  }
+
+  auto origBlock = captureBlockRows(cols, r0, r1);
+  TUndo *undo = new KeyframeSpaceUndo(r0, r1, -1, cols);
+  TUndoManager::manager()->add(undo);
+  undo->redo();
+  reselectRespacedBlock(this, origBlock, -1);
 }
 
 //-----------------------------------------------------------------------------

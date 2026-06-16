@@ -2592,7 +2592,11 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
     TXshColumn *mc = mainXsh ? mainXsh->getColumn(mainCol) : nullptr;
     if (!mc) return;
     int r0 = 0, r1 = 0;
-    mc->getRange(r0, r1);
+    // ignoreLastStop=true: drop the trailing Stop Frame Hold so timelineDuration
+    // is the shot's true length. Without it the +1 widens the panel-visibility
+    // filter (f < timelineDuration) below and lets a boundary frame through as a
+    // phantom 1-frame panel.
+    mc->getRange(r0, r1, /*ignoreLastStop=*/true);
     timelineDuration = (r1 >= r0) ? r1 - r0 + 1 : 0;
     if (timelineDuration <= 0) return;
     xsh = nullptr;
@@ -2611,7 +2615,8 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
       TXshColumn *mc = anc->m_xsheet->getColumn(mainCol);
       if (mc) {
         int r0 = 0, r1 = 0;
-        mc->getRange(r0, r1);
+        // ignoreLastStop=true: same SFH-inflation guard as the main-xsheet branch.
+        mc->getRange(r0, r1, /*ignoreLastStop=*/true);
         if (r1 >= r0) timelineDuration = r1 - r0 + 1;
       }
     }
@@ -2990,7 +2995,9 @@ void StoryboardPanel::onShotInserted(int col) {
   TXshColumn *column = xsh->getColumn(col);
   if (column) {
     int r0 = 0, r1 = 0;
-    column->getRange(r0, r1);
+    // ignoreLastStop=true: exclude the resequence SFH so the new shot reads its
+    // true length, not length+1.
+    column->getRange(r0, r1, /*ignoreLastStop=*/true);
     PanelData pd;
     pd.duration = (r1 >= r0) ? (r1 - r0 + 1) : 24;
     shot.data.panels.push_back(pd);
@@ -3061,7 +3068,9 @@ void StoryboardPanel::onXsheetChanged() {
     TXshColumn *column = xsh->getColumn(col);
     if (!column) continue;
     int r0 = 0, r1 = 0;
-    column->getRange(r0, r1);
+    // ignoreLastStop=true: exclude the resequence SFH (matches onModelResequenced)
+    // so T:/D: show the shot's true length, not length+1.
+    column->getRange(r0, r1, /*ignoreLastStop=*/true);
     int duration = r1 - r0 + 1;
     // Always update T: display to reflect actual timeline duration
     for (PanelWidget *pw : m_shots[si].panels)
@@ -3152,6 +3161,15 @@ void StoryboardPanel::refreshFromScene() {
     int duration = 0;
     for (int r = 0; r < xsh->getFrameCount(); r++) {
       TXshCell cell = xsh->getCell(r, col);
+      // The trailing Stop Frame Hold placed by resequenceXsheet() is a non-empty
+      // child cell (isEmpty() only checks m_level), so it would inflate duration
+      // by +1 here. Treat it as the column terminator, not a counted frame —
+      // otherwise the shot reads 1 frame too long and the +1 leaks into the
+      // panel-visibility filter, producing a phantom 1-frame panel.
+      if (cell.getFrameId().isStopFrame()) {
+        if (duration > 0) break;
+        continue;
+      }
       if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
         if (!cl) cl = cell.m_level->getChildLevel();
         duration++;

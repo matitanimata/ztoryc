@@ -17,7 +17,7 @@ class TXshSimpleLevel;
 // TCellSelection
 //-----------------------------------------------------------------------------
 
-class TCellSelection final : public TSelection {
+class TCellSelection : public TSelection {
   TimeStretchPopup *m_timeStretchPopup;
   ReframePopup *m_reframePopup;
 

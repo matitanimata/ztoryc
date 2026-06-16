@@ -85,6 +85,13 @@ public:
   // /(oldRange-1)).
   void timeStretchKeyframes(int newRange);
   void openTimeStretchPopup();  // enables MI_TimeStretch for key-only selection
+
+  // Increase / Decrease spacing: add (increase) or remove (decrease) one frame
+  // between every pair of consecutive selected keys, per object. The first key
+  // is anchored; key i moves by i*delta. Decrease is a no-op if any gap is
+  // already 1 (keys can't merge). Mirrors MI_IncreaseStep / MI_DecreaseStep.
+  void increaseKeyframes();
+  void decreaseKeyframes();
   void shiftKeyframes(int direction);
   void shiftKeyframesDown() { shiftKeyframes(1); }
   void shiftKeyframesUp() { shiftKeyframes(-1); }

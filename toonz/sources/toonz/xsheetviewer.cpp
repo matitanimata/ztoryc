@@ -240,8 +240,8 @@ XsheetViewer::XsheetViewer(QWidget *parent, Qt::WindowFlags flags)
     , m_autoPanSpeed(0, 0)
     , m_dragTool(0)
     , m_columnSelection(new TColumnSelection())
-    , m_cellKeyframeSelection(new TCellKeyframeSelection(
-          new TCellSelection(), new TKeyframeSelection()))
+    , m_cellKeyframeSelection(
+          new TCellKeyframeSelection(new TKeyframeSelection()))
     , m_scrubCol(-1)
     , m_scrubRow0(-1)
     , m_scrubRow1(-1)

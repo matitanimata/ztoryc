@@ -15,18 +15,23 @@ class TXsheetHandle;
 // TCellKeyframeSelection
 //-----------------------------------------------------------------------------
 
-class TCellKeyframeSelection final : public TSelection {
-  TCellSelection *m_cellSelection;
+// Inherits TCellSelection so that dynamic_cast<TCellSelection*> on the current
+// selection succeeds while a combined cells+keyframes selection is active. This
+// keeps EVERY cell command (drawing substitution, filters, reframe, …) working
+// on the full range in keys-follow mode, instead of falling back to the single
+// current cell. The object IS the cell selection (it owns the range via the
+// base class) and additionally carries the selected keyframes.
+class TCellKeyframeSelection final : public TCellSelection {
   TKeyframeSelection *m_keyframeSelection;
 
   TXsheetHandle *m_xsheetHandle;
 
 public:
-  TCellKeyframeSelection(TCellSelection *cellSelection,
-                         TKeyframeSelection *keyframeSelection);
+  TCellKeyframeSelection(TKeyframeSelection *keyframeSelection);
   ~TCellKeyframeSelection();
 
-  TCellSelection *getCellSelection() { return m_cellSelection; }
+  // The wrapper itself is the cell selection now.
+  TCellSelection *getCellSelection() { return this; }
   TKeyframeSelection *getKeyframeSelection() { return m_keyframeSelection; }
 
   void setXsheetHandle(TXsheetHandle *xsheetHandle) {
@@ -41,6 +46,13 @@ public:
   void pasteCellsKeyframes();
   void deleteCellsKeyframes();
   void cutCellsKeyframes();
+
+  // Increase / Decrease spacing in combined mode (keys-follow ON): add (resp.
+  // remove) one frame in every gap between consecutive keys. Uses insert/
+  // removeCells so BOTH cells and keyframes ripple together. NOT a cell step
+  // repeat — the drawings are not duplicated, only the timing is stretched.
+  void increaseCellsKeyframes();
+  void decreaseCellsKeyframes();
 
   //! \note: puo' anche essere r0>r1 o c0>c1
   void selectCellsKeyframes(int r0, int c0, int r1, int c1);

@@ -2202,8 +2202,8 @@ void TCellSelection::shiftKeyframes(int direction) {
 
   TXsheetHandle *xsheet = TApp::instance()->getCurrentXsheet();
   TXsheet *xsh          = xsheet->getXsheet();
-  TCellKeyframeSelection *cellKeyframeSelection = new TCellKeyframeSelection(
-      new TCellSelection(), new TKeyframeSelection());
+  TCellKeyframeSelection *cellKeyframeSelection =
+      new TCellKeyframeSelection(new TKeyframeSelection());
 
   cellKeyframeSelection->setXsheetHandle(xsheet);
 
