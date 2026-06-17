@@ -3742,6 +3742,14 @@ void StoryboardPanel::onAddShot() {
       app->getCurrentXsheet()->notifyXsheetChanged();
     }
   }
+  // The inserted column shifts every existing shot at/after insertAt one column
+  // to the right in the xsheet. Keep their stored xsheetColumn in sync (mirror
+  // of onDeleteShot). Without this, onEditShot() opens the wrong sub-scene for
+  // every shot after an in-the-middle insertion (e.g. click last → enter
+  // penultimate).
+  for (Shot &s : m_shots)
+    if (s.data.xsheetColumn >= insertAt) s.data.xsheetColumn++;
+
   Shot shot;
   shot.data.xsheetColumn = insertAt;
   PanelData pd;
