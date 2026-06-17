@@ -2544,7 +2544,7 @@ void MainWindow::defineActions() {
   createToggle(MI_ToggleKeyframesFollowExposure,
                QT_TR_NOOP("Keyframes Follow Exposure"), "",
                Preferences::instance()->isKeyframesFollowExposureEnabled(),
-               MiscCommandType, "segment_linked",
+               MiscCommandType, "ztoryc_keys_follow",
                tr("When on, keyframes stay pinned to their cells: selection and "
                   "drag include them, and insert/remove/extend frame operations "
                   "shift them together with the exposure."));
@@ -2559,7 +2559,7 @@ void MainWindow::defineActions() {
                "sub_edit_in_place");
   createToggle(MI_ToggleMainAudio, QT_TR_NOOP("&Toggle Main Audio"), "",
                MainAudioToggleAction ? 1 : 0, MenuXsheetCommandType,
-               "sub_main_audio");
+               "ztoryc_listen_audio");
   createMenuXsheetAction(MI_SaveSubxsheetAs,
                          QT_TR_NOOP("&Save Sub-Scene As..."), "",
                          "sub_xsheet_saveas");

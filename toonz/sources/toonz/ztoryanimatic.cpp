@@ -3672,16 +3672,16 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
 
   // Visibility toggle — mirrors the Board's "L" button bidirectionally.
   m_lightShowBtn = new QToolButton(toggleRow);
-  m_lightShowBtn->setText("L");
+  m_lightShowBtn->setIcon(createQIcon("ztoryc_light_arrow"));
+  m_lightShowBtn->setIconSize(QSize(18, 18));
   m_lightShowBtn->setFixedSize(28, 28);
   m_lightShowBtn->setCheckable(true);
   m_lightShowBtn->setChecked(
       QSettings().value("Ztoryc/ShowLightDirection", true).toBool());
   m_lightShowBtn->setToolTip(tr("Show light-direction arrows"));
   m_lightShowBtn->setStyleSheet(
-      "QToolButton{background:transparent;color:#ccc;border:1px solid #555;border-radius:4px;font-size:12px;}"
-      "QToolButton:hover{background:#555;}"
-      "QToolButton:checked{background:#5c4a1e;color:#ffd27d;border-color:#5c4a1e;}");
+      "QToolButton{background:transparent;border:none;border-radius:4px;}"
+      "QToolButton:hover{background:#555;}");
   toggleLay->addWidget(m_lightShowBtn);
   connect(m_lightShowBtn, &QToolButton::toggled, this, [this](bool on) {
     QSettings().setValue("Ztoryc/ShowLightDirection", on);
@@ -4916,17 +4916,19 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   // Snap (magnet) toggle: snap dragged shot/audio edges to shot boundaries,
   // the playhead and other audio-segment edges.
   m_snapBtn = new QToolButton(toolbar);
-  m_snapBtn->setText("U");  // simple magnet glyph stand-in
+  // Icon swaps automatically: base = magnet-off (snap disabled), _on = magnet
+  // (snap enabled) — createQIcon picks the _on SVG for the checked state.
+  m_snapBtn->setIcon(createQIcon("ztoryc_snap"));
+  m_snapBtn->setIconSize(QSize(18, 18));
   m_snapBtn->setCheckable(true);
   m_snapBtn->setChecked(m_snapEnabled);
-  m_snapBtn->setFixedSize(26, 22);
+  m_snapBtn->setFixedSize(28, 28);
   m_snapBtn->setToolTip(tr("Snap (magnet) — snap dragged edges to shot "
                            "boundaries, the playhead and audio clip edges"));
   m_snapBtn->setStyleSheet(
-      "QToolButton{background:transparent;border:1px solid #555;border-radius:3px;"
-      "color:#aaa;font-size:11px;font-weight:bold;}"
+      "QToolButton{background:transparent;border:none;border-radius:4px;}"
       "QToolButton:hover{background:#555;}"
-      "QToolButton:checked{background:#3a6a9a;color:#fff;border-color:#5599cc;}");
+      "QToolButton:checked{background:#3a6a9a;}");
   connect(m_snapBtn, &QToolButton::toggled, this, [this](bool on) {
     m_snapEnabled = on;
     updateSnapFrames();

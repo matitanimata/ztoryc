@@ -1066,15 +1066,15 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_showCamMoveType =
       QSettings().value("Ztoryc/ShowCamMoveType", true).toBool();
   m_camLabelButton = new QToolButton();
-  m_camLabelButton->setText("Trk");
+  m_camLabelButton->setIcon(createQIcon("ztoryc_cam_moves"));
+  m_camLabelButton->setIconSize(QSize(18, 18));
   m_camLabelButton->setCheckable(true);
   m_camLabelButton->setChecked(m_showCamMoveType);
   m_camLabelButton->setFixedSize(28, 28);
   m_camLabelButton->setToolTip(tr("Show camera-move labels (Trk In, Pan…)"));
   m_camLabelButton->setStyleSheet(
-      "QToolButton{background:transparent;color:#ccc;border:none;border-radius:4px;font-size:11px;}"
-      "QToolButton:hover{background:#555;}"
-      "QToolButton:checked{background:#1e5c2e;color:#7defa0;}");
+      "QToolButton{background:transparent;border:none;border-radius:4px;}"
+      "QToolButton:hover{background:#555;}");
 
   // ── Light-direction gizmo controls (task 40 FASE 3) ──
   const QString lightBtnStyle =
@@ -1093,12 +1093,15 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
 
   m_showLights = QSettings().value("Ztoryc/ShowLightDirection", true).toBool();
   m_lightShowButton = new QToolButton();
-  m_lightShowButton->setText("L");
+  m_lightShowButton->setIcon(createQIcon("ztoryc_light_arrow"));
+  m_lightShowButton->setIconSize(QSize(18, 18));
   m_lightShowButton->setCheckable(true);
   m_lightShowButton->setChecked(m_showLights);
   m_lightShowButton->setFixedSize(28, 28);
   m_lightShowButton->setToolTip(tr("Show light-direction arrows (L)"));
-  m_lightShowButton->setStyleSheet(lightBtnStyle);
+  m_lightShowButton->setStyleSheet(
+      "QToolButton{background:transparent;border:none;border-radius:4px;}"
+      "QToolButton:hover{background:#555;}");
 
   QString lightColor =
       QSettings().value("Ztoryc/LightColor", "#FFC34D").toString();

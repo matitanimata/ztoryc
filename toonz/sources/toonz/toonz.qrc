@@ -803,15 +803,10 @@
 		<file>icons/dark/ztoryc/ztoryc_razor.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_select.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_trim.svg</file>
-		<file>icons/dark/ztoryc/ztoryc_slip.svg</file>
-		<file>icons/dark/ztoryc/ztoryc_onion.svg</file>
-		<file>icons/dark/ztoryc/ztoryc_onion_on.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_av_link.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_av_link_on.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_lock.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_lock_on.svg</file>
-		<file>icons/dark/ztoryc/ztoryc_shotedit.svg</file>
-		<file>icons/dark/ztoryc/ztoryc_shotedit_on.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_refresh_preview.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_copy.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_clone.svg</file>
@@ -821,6 +816,6 @@
 		<file>icons/dark/ztoryc/ztoryc_light_arrow.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_listen_audio.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_snap.svg</file>
-		<file>icons/dark/ztoryc/ztoryc_snap_off.svg</file>
+		<file>icons/dark/ztoryc/ztoryc_snap_on.svg</file>
 	</qresource>
 </RCC>
