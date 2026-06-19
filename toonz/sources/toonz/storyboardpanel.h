@@ -237,6 +237,20 @@ public:
   // enters the new shot directly so drawing can continue without leaving
   // the SHOTEDITOR room.
   void newShotAfterCurrent();
+  // Toolbar dedup (Board↔Animatic): hide the shared shot-op buttons
+  // (add/delete/merge/copy/clone/paste) when an Animatic panel — the owner of
+  // shot ops — lives in the same room. Pure setVisible, no layout rebuild; the
+  // Board keeps a complete toolbar in custom rooms that have no Animatic.
+  // Driven by MainWindow (room composition is authoritative there), never from
+  // showEvent (perturbs detectAndUpdatePanels timing).
+  void setShotButtonsHidden(bool hidden);
+  // Export entry points. Exports live on the Board; the Animatic toolbar hosts
+  // duplicate "Export Shots/Scene" and "Export Animatic" buttons (the Board has
+  // little room, the timeline has plenty) that delegate here on the sibling
+  // Board. Export logic reads only m_shots + the current scene, so calling it
+  // from the Animatic is safe (it never touches the Board↔Animatic sync path).
+  void exportShotsCmd() { onExportShots(); }
+  void exportAnimaticCmd() { onExportAnimatic(); }
 protected:
   void showEvent(QShowEvent *e) override;
   void resizeEvent(QResizeEvent *e) override;

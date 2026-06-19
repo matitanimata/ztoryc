@@ -19,6 +19,10 @@
 #include "aboutpopup.h"
 #include "filebrowserpopup.h"
 #include "ztorymodel.h"
+#include "storyboardpanel.h"
+#include "ztoryanimatic.h"
+
+#include <QTimer>
 
 // TnzTools includes
 #include "tools/toolcommandids.h"
@@ -631,6 +635,23 @@ centralWidget->setLayout(centralWidgetLayout);*/
   connect(TUndoManager::manager(), SIGNAL(historyChanged()), this,
           SLOT(onHistoryChanged()));
   onHistoryChanged();
+
+  // Deduplicate the Ztoryc shot-op toolbar once the initial room layout is
+  // assembled (deferred so docked panels already exist as children).
+  QTimer::singleShot(0, this, [this] { updateZtoryToolbarDedup(); });
+}
+
+//-----------------------------------------------------------------------------
+
+void MainWindow::updateZtoryToolbarDedup() {
+  Room *room = getCurrentRoom();
+  if (!room) return;
+  // Owner of shot ops = the Animatic panel. When it shares the room with the
+  // Board, the Board hides its duplicate shot buttons; in a Board-only custom
+  // room no Animatic is found, so the Board stays fully self-sufficient.
+  bool hasAnimatic = !room->findChildren<ZtoryAnimaticPanel *>().isEmpty();
+  for (StoryboardPanel *board : room->findChildren<StoryboardPanel *>())
+    board->setShotButtonsHidden(hasAnimatic);
 }
 
 //-----------------------------------------------------------------------------
@@ -718,6 +739,7 @@ void MainWindow::switchToRoom(const QString &name) {
       break;
     }
   }
+  QTimer::singleShot(0, this, [this] { updateZtoryToolbarDedup(); });
 }
 
 //-----------------------------------------------------------------------------
@@ -1607,6 +1629,10 @@ void MainWindow::onCurrentRoomChanged(int newRoomIndex) {
   }
   m_oldRoomIndex = newRoomIndex;
   TSelection::setCurrent(0);
+
+  // Re-evaluate Ztoryc toolbar dedup for the room we just entered (deferred so
+  // any panel re-parenting above has settled).
+  QTimer::singleShot(0, this, [this] { updateZtoryToolbarDedup(); });
 }
 
 //-----------------------------------------------------------------------------

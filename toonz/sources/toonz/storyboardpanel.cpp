@@ -31,6 +31,7 @@
 #include "toonz/tstageobject.h"
 #include "mainwindow.h"
 #include "toonzqt/gutil.h"
+#include "toonzqt/dvscrollwidget.h"
 
 #include <QVBoxLayout>
 #include <QKeyEvent>
@@ -1074,7 +1075,8 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_camLabelButton->setToolTip(tr("Show camera-move labels (Trk In, Pan…)"));
   m_camLabelButton->setStyleSheet(
       "QToolButton{background:transparent;border:none;border-radius:4px;}"
-      "QToolButton:hover{background:#555;}");
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#666;}");
 
   // ── Light-direction gizmo controls (task 40 FASE 3) ──
   const QString lightBtnStyle =
@@ -1101,7 +1103,8 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_lightShowButton->setToolTip(tr("Show light-direction arrows (L)"));
   m_lightShowButton->setStyleSheet(
       "QToolButton{background:transparent;border:none;border-radius:4px;}"
-      "QToolButton:hover{background:#555;}");
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#666;}");
 
   QString lightColor =
       QSettings().value("Ztoryc/LightColor", "#FFC34D").toString();
@@ -1128,7 +1131,10 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   tb->addSpacing(8);
   tb->addWidget(colLabel);
   tb->addWidget(m_columnsPerRowSpin);
-  tb->addStretch();
+  // No stretch here: the toolbar is wrapped in a DvScrollWidget below, so its
+  // natural content width must drive the overflow scroll arrows. A stretch
+  // would absorb all extra space and the bar would never report an overflow.
+  tb->addSpacing(12);
   tb->addWidget(m_lightEditButton);
   tb->addWidget(m_lightColorButton);
   tb->addWidget(m_lightShowButton);
@@ -1138,7 +1144,17 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   tb->addWidget(m_exportPdfButton);
   tb->addWidget(m_exportShotsButton);
   tb->addWidget(m_exportAnimaticButton);
-  mainLayout->addLayout(tb);
+
+  // Overflow: wrap the toolbar in Tahoma's DvScrollWidget so a narrow Board
+  // shows side scroll arrows instead of clipping / stacking icons — same UX as
+  // the native panels' toolbars. (Not a QToolBar: keeps our QHBoxLayout + the
+  // runtime setVisible dedup intact.)
+  tb->setContentsMargins(2, 0, 2, 0);
+  QWidget *tbWidget = new QWidget();
+  tbWidget->setLayout(tb);
+  DvScrollWidget *tbScroll = new DvScrollWidget();
+  tbScroll->setWidget(tbWidget);
+  mainLayout->addWidget(tbScroll);
 
   QFrame *sep = new QFrame();
   sep->setFrameShape(QFrame::HLine);
@@ -2859,6 +2875,16 @@ void StoryboardPanel::onModelResequenced() {
     qWarning("[ZTORY] onModelResequenced: xshShotCount=%d != shots=%d -> full rebuild",
              xshShotCount, (int)m_shots.size());
     refreshFromScene();
+    // refreshFromScene() rebuilds the grid with blank thumbnails (lazy by
+    // design, so scene LOAD never freezes). This branch only runs after an
+    // interactive shot op (add / paste / delete / cut / merge), where the user
+    // expects the visible thumbnails back immediately. singleShot(0) (NOT a
+    // synchronous call) defers just past this event loop so the QGridLayout has
+    // repositioned the rebuilt panels — otherwise updateVisiblePreviews() would
+    // viewport-test stale geometry and render the wrong panels. It renders only
+    // viewport panels and skips ones that already have a pixmap, so even if a
+    // burst of ops fires it several times the heavy render happens once.
+    QTimer::singleShot(0, this, &StoryboardPanel::onRefreshPreviews);
     return;
   }
   for (int si = 0; si < (int)m_shots.size(); si++) {
@@ -3086,6 +3112,19 @@ void StoryboardPanel::onXsheetChanged() {
     }
     // For multi-panel shots: D: stays as computed by detectAndUpdatePanels
   }
+}
+
+void StoryboardPanel::setShotButtonsHidden(bool hidden) {
+  // Only flip visibility — never touch the layout container or re-add widgets.
+  // When an Animatic shares the room it owns the shot ops AND the Shots/Animatic
+  // export buttons (moved to the timeline); the Board keeps PDF export and, in a
+  // Board-only room, the full set (nothing hidden).
+  QToolButton *shared[] = {m_addShotButton,     m_deleteButton,
+                           m_mergeButton,       m_copyButton,
+                           m_cloneButton,       m_pasteButton,
+                           m_exportShotsButton, m_exportAnimaticButton};
+  for (QToolButton *b : shared)
+    if (b) b->setVisible(!hidden);
 }
 
 void StoryboardPanel::showEvent(QShowEvent *e) {

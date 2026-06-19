@@ -112,6 +112,11 @@ public:
   Room *getCurrentRoom() const;
   void refreshWriteSettings();
 
+  // Ztoryc toolbar dedup: in rooms holding both a Storyboard (Board) and an
+  // Animatic panel, hide the Board's duplicate shot-op buttons (the Animatic
+  // owns shot ops). Idempotent; safe to call on every room change / startup.
+  void updateZtoryToolbarDedup();
+
   void onNewVectorLevelButtonPressed();
   void onNewToonzRasterLevelButtonPressed();
   void onNewRasterLevelButtonPressed();

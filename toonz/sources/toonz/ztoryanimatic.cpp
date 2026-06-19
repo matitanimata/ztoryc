@@ -1190,11 +1190,13 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
   static const int kBtnH  = 16;
   static const int kBtnW  = 22;
   static const int kBtnGap = 3;
-  struct BtnInfo { const char *txt; QColor offColor; QColor onColor; bool active; };
+  // Lock = padlock open/closed; Mute = native audio speaker (waves when
+  // audible, plain when muted); Solo stays a textual "S".
+  struct BtnInfo { const char *txt; const char *icon; QColor offColor; QColor onColor; bool active; };
   BtnInfo btns[3] = {
-    {"L", QColor(100, 65, 20), QColor(220, 140, 50), m_locked},
-    {"M", QColor(100, 30, 30), QColor(210, 64, 64),  m_muted},
-    {"S", QColor(20, 90, 95),  QColor(50, 190, 200), m_solo},
+    {"L", m_locked ? "ztoryc_lock_on" : "ztoryc_lock", QColor(100, 65, 20), QColor(220, 140, 50), m_locked},
+    {"M", m_muted  ? "sound"          : "sound_on",    QColor(100, 30, 30), QColor(210, 64, 64),  m_muted},
+    {"S", nullptr,                                     QColor(20, 90, 95),  QColor(50, 190, 200), m_solo},
   };
   p.setFont(QFont("Arial", 8, QFont::Bold));
   for (int i = 0; i < 3; i++) {
@@ -1202,7 +1204,12 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
     p.fillRect(r, btns[i].active ? btns[i].onColor : btns[i].offColor);
     p.setPen(btns[i].active ? QColor(255, 255, 255) : btns[i].onColor);
     p.drawRect(r.adjusted(0, 0, -1, -1));
-    p.drawText(r, Qt::AlignCenter, btns[i].txt);
+    if (btns[i].icon) {
+      QPixmap pm = createQIcon(btns[i].icon).pixmap(12, 12);
+      p.drawPixmap(r.x() + (r.width() - 12) / 2, r.y() + (r.height() - 12) / 2, pm);
+    } else {
+      p.drawText(r, Qt::AlignCenter, btns[i].txt);
+    }
   }
 
   // Volume slider — thin horizontal bar at the bottom of the label area.
@@ -2195,15 +2202,16 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
   p.drawText(4, 0, kLabelW - 30, height(),
              Qt::AlignVCenter | Qt::AlignLeft, sceneName);
 
-  // Painted lock button (right of label area)
+  // Painted lock button (right of label area) — padlock open/closed.
   {
     const int bw = 22, bh = 20;
     QRect r(kLabelW - bw - 4, (height() - bh) / 2, bw, bh);
     p.fillRect(r, m_locked ? QColor(220, 140, 50) : QColor(45, 45, 45));
     p.setPen(m_locked ? QColor(255, 255, 255) : QColor(220, 140, 50));
     p.drawRect(r.adjusted(0, 0, -1, -1));
-    p.setFont(QFont("Arial", 7, QFont::Bold));
-    p.drawText(r, Qt::AlignCenter, "L");
+    QPixmap pm =
+        createQIcon(m_locked ? "ztoryc_lock_on" : "ztoryc_lock").pixmap(14, 14);
+    p.drawPixmap(r.x() + (r.width() - 14) / 2, r.y() + (r.height() - 14) / 2, pm);
   }
 
   p.setPen(QColor(60, 60, 60));
@@ -3681,7 +3689,8 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
   m_lightShowBtn->setToolTip(tr("Show light-direction arrows"));
   m_lightShowBtn->setStyleSheet(
       "QToolButton{background:transparent;border:none;border-radius:4px;}"
-      "QToolButton:hover{background:#555;}");
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#666;}");
   toggleLay->addWidget(m_lightShowBtn);
   connect(m_lightShowBtn, &QToolButton::toggled, this, [this](bool on) {
     QSettings().setValue("Ztoryc/ShowLightDirection", on);
@@ -4773,27 +4782,30 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   QHBoxLayout *tbLay = new QHBoxLayout(toolbar);
   tbLay->setContentsMargins(6, 2, 6, 2);
   tbLay->setSpacing(4);
-  QLabel *zoomLabel = new QLabel("Zoom:", toolbar);
-  zoomLabel->setStyleSheet("color:#ccc; font-size:11px;");
+  QLabel *zoomLabel = new QLabel(toolbar);
+  zoomLabel->setPixmap(createQIcon("ztoryc_zoom").pixmap(16, 16));
+  zoomLabel->setToolTip(tr("Zoom (pixels per frame)"));
   m_zoomSlider = new QSlider(Qt::Horizontal, toolbar);
   m_zoomSlider->setRange(2, 20000);  // 0.02–200 ppf (×100 scale)
   m_zoomSlider->setValue((int)(m_ppf * 100));
   m_zoomSlider->setMaximumWidth(160);
   m_zoomSlider->setToolTip("Zoom (pixels per frame)");
-  tbLay->addWidget(zoomLabel);
-  tbLay->addWidget(m_zoomSlider);
 
-  // Fit All: zoom out to show the entire animatic in one view
+  // Fit All: zoom out to show the entire animatic in one view. Lives right
+  // next to the zoom slider (left), since it is a zoom control, not a shot op.
   m_fitAllBtn = new QToolButton(toolbar);
-  m_fitAllBtn->setText("[]");
-  m_fitAllBtn->setFixedSize(26, 22);
+  m_fitAllBtn->setIcon(createQIcon("ztoryc_fit_all"));
+  m_fitAllBtn->setIconSize(QSize(20, 20));
+  m_fitAllBtn->setFixedSize(28, 28);
   m_fitAllBtn->setToolTip(tr("Fit All — zoom to show the entire animatic (Ctrl+0)"));
   m_fitAllBtn->setStyleSheet(
-      "QToolButton{background:transparent;border:1px solid #555;border-radius:3px;"
-      "color:#ccc;font-size:10px;font-weight:bold;}"
+      "QToolButton{background:transparent;border:none;border-radius:4px;}"
       "QToolButton:hover{background:#555;}");
+
+  tbLay->addWidget(zoomLabel);
+  tbLay->addWidget(m_zoomSlider);
   tbLay->addWidget(m_fitAllBtn);
-  tbLay->addSpacing(12);
+  tbLay->addSpacing(16);
 
   QToolButton *selectBtn = new QToolButton(toolbar);
   selectBtn->setIcon(createQIcon("ztoryc_select"));
@@ -4846,15 +4858,8 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   addShotBtn->setToolTip(tr("Add Shot"));
   addShotBtn->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}QToolButton:hover{background:#555;}QToolButton:checked{background:#666;}");
 
-  tbLay->addWidget(selectBtn);
-  tbLay->addWidget(trimBtn);
-  tbLay->addWidget(razorBtn);
-  tbLay->addSpacing(8);
-  tbLay->addWidget(linkBtn);
-  tbLay->addSpacing(8);
   connect(addShotBtn, &QToolButton::clicked,
           this, &ZtoryAnimaticPanel::onAddShot);
-  tbLay->addWidget(addShotBtn);
 
   // ── Delete — right next to Add (+ -), matching Board toolbar layout ──────
   auto makeAnimaticBtn = [&](const char *icon, const QString &tip) {
@@ -4869,10 +4874,6 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   };
   QToolButton *deleteBtn = makeAnimaticBtn("ztoryc_delete_shot", tr("Delete selected shots  (Del)"));
   connect(deleteBtn, &QToolButton::clicked, this, &ZtoryAnimaticPanel::onDeleteShots);
-  tbLay->addWidget(deleteBtn);
-  tbLay->addSpacing(8);
-  tbLay->addWidget(mergeBtn);
-  tbLay->addSpacing(8);
 
   // ── Copy / Clone / Paste ─────────────────────────────────────────────────
   auto makeAnimaticBtn2 = [&](const char *icon, const QString &tip) {
@@ -4891,9 +4892,23 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   connect(copyBtn,  &QToolButton::clicked, this, &ZtoryAnimaticPanel::onCopyShots);
   connect(cloneBtn, &QToolButton::clicked, this, &ZtoryAnimaticPanel::onCloneShots);
   connect(pasteBtn, &QToolButton::clicked, this, &ZtoryAnimaticPanel::onPasteShots);
+
+  // ── Toolbar order: shared SHOT OPS on the LEFT (so they fall under the
+  // Board, which owns them in the default room), then EDITING / nav tools to
+  // the right. Board↔Animatic dedup hides the duplicate set on the Board. ──
+  tbLay->addWidget(addShotBtn);
+  tbLay->addWidget(deleteBtn);
+  tbLay->addWidget(mergeBtn);
+  tbLay->addSpacing(8);
   tbLay->addWidget(copyBtn);
   tbLay->addWidget(cloneBtn);
   tbLay->addWidget(pasteBtn);
+  tbLay->addSpacing(16);
+  tbLay->addWidget(selectBtn);
+  tbLay->addWidget(trimBtn);
+  tbLay->addWidget(razorBtn);
+  tbLay->addSpacing(8);
+  tbLay->addWidget(linkBtn);
   tbLay->addSpacing(8);
 
   // Frame / Timecode toggle
@@ -4956,6 +4971,36 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
           m_autoMatchBtn, &QToolButton::setChecked);
   tbLay->addSpacing(12);
   tbLay->addStretch(1);
+
+  // ── Export (far right): the Board toolbar is cramped while the timeline has
+  // free space, so "Export Shots/Scene" and "Export Animatic" live here and
+  // delegate to the sibling Board (PDF export stays on the Board). ──
+  auto makeExportBtn = [&](const char *icon, const QString &tip) {
+    QToolButton *b = new QToolButton(toolbar);
+    b->setIcon(createQIcon(icon));
+    b->setIconSize(QSize(20, 20));
+    b->setFixedSize(28, 28);
+    b->setToolTip(tip);
+    b->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}"
+                     "QToolButton:hover{background:#555;}");
+    return b;
+  };
+  QToolButton *exportShotsBtn =
+      makeExportBtn("ztoryc_export_shots", tr("Export Shots / Scene"));
+  QToolButton *exportAnimBtn =
+      makeExportBtn("ztoryc_export_animatic", tr("Export Animatic"));
+  connect(exportShotsBtn, &QToolButton::clicked, this, [this]() {
+    if (QWidget *top = window())
+      if (StoryboardPanel *b = top->findChild<StoryboardPanel *>())
+        b->exportShotsCmd();
+  });
+  connect(exportAnimBtn, &QToolButton::clicked, this, [this]() {
+    if (QWidget *top = window())
+      if (StoryboardPanel *b = top->findChild<StoryboardPanel *>())
+        b->exportAnimaticCmd();
+  });
+  tbLay->addWidget(exportShotsBtn);
+  tbLay->addWidget(exportAnimBtn);
 
   // Debounce timer: fires 300ms after the last xsheetChanged while inside
   // a sub-scene with auto-match ON.
