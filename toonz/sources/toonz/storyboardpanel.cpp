@@ -81,6 +81,9 @@
 #include <QLineEdit>
 #include <QGroupBox>
 #include <QButtonGroup>
+#include <QFormLayout>
+#include <QFileInfo>
+#include <QDir>
 #include "toutputproperties.h"
 #include "toonz/sceneproperties.h"
 #include "toonz/boardsettings.h"
@@ -1790,6 +1793,12 @@ void StoryboardPanel::updateVisiblePreviews() {
   // updatePreview() is called explicitly (e.g. from previewRerenderNeeded) when
   // a higher-resolution re-render is needed after a panel resize.
   if (!m_scrollArea) return;
+  // Force any pending grid relayout to be applied NOW. After an interactive shot
+  // op the panels are rebuilt and a LayoutRequest is posted; if this runs before
+  // that request is processed (e.g. the op originated from the Animatic, so the
+  // Board got no paint/layout cycle of its own) mapTo() would return stale
+  // positions and the viewport test would render the wrong panels — or none.
+  if (m_grid) m_grid->activate();
   QRect vpRect = m_scrollArea->viewport()->rect();
 
   for (int si = 0; si < (int)m_shots.size(); si++) {
@@ -2050,10 +2059,15 @@ void StoryboardPanel::saveZtoryc() {
   // Project metadata (production + title entered by user at scene creation).
   {
     ZtoryModel *model = ZtoryModel::instance();
-    if (!model->production().isEmpty() || !model->title().isEmpty()) {
+    if (!model->production().isEmpty() || !model->title().isEmpty() ||
+        !model->pdfLogoPath().isEmpty() || model->pdfNoLogo()) {
       xml.writeStartElement("project");
       xml.writeAttribute("production", model->production());
       xml.writeAttribute("title",      model->title());
+      if (!model->pdfLogoPath().isEmpty())
+        xml.writeAttribute("pdfLogo", model->pdfLogoPath());
+      if (model->pdfNoLogo())
+        xml.writeAttribute("pdfNoLogo", "1");
       xml.writeEndElement();
     }
   }
@@ -2162,6 +2176,8 @@ void StoryboardPanel::loadZtoryc() {
   // below if the file contains a <project> element.
   ZtoryModel::instance()->setProduction("");
   ZtoryModel::instance()->setTitle("");
+  ZtoryModel::instance()->setPdfLogoPath("");
+  ZtoryModel::instance()->setPdfNoLogo(false);
   // Start each scene's sequence list fresh so sequences never leak across
   // scenes. Old files (no <sequence>) leave it empty → renumberAll() recreates
   // a default sequence if needed.
@@ -2176,6 +2192,8 @@ void StoryboardPanel::loadZtoryc() {
         auto a = xml.attributes();
         ZtoryModel::instance()->setProduction(a.value("production").toString());
         ZtoryModel::instance()->setTitle(a.value("title").toString());
+        ZtoryModel::instance()->setPdfLogoPath(a.value("pdfLogo").toString());
+        ZtoryModel::instance()->setPdfNoLogo(a.value("pdfNoLogo").toInt() != 0);
       }
       else if (xml.name() == QLatin1String("scriptFile")) {
         scriptFromFile = xml.readElementText();
@@ -4751,15 +4769,116 @@ void StoryboardPanel::onExportAnimatic() {
   TApp::instance()->getCurrentScene()->notifySceneChanged();
 }
 
+// Resolve a (possibly scene-relative) PDF logo path to an absolute file path.
+// Empty input → empty output (caller uses the bundled default).
+static QString resolvePdfLogoFile(const QString &logoPath, ToonzScene *scene) {
+  if (logoPath.isEmpty()) return QString();
+  QFileInfo fi(logoPath);
+  if (fi.isRelative() && scene) {
+    QString dir = QString::fromStdWString(
+        scene->getScenePath().getParentDir().getWideString());
+    if (!dir.isEmpty()) return QDir(dir).filePath(logoPath);
+  }
+  return logoPath;
+}
+
 void StoryboardPanel::onExportPdf() {
   if (m_shots.empty()) {
     QMessageBox::information(this, tr("Export PDF"), tr("No shots to export."));
     return;
   }
 
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+
+  // ── Pre-export options: project metadata + header logo ─────────────────────
+  // Lets the user edit Production/Title (used in the page header) and choose a
+  // custom logo (PNG/SVG), keep the default Ztoryc logo, or export with none.
+  // Choices persist per-project in the .ztoryc.
+  {
+    ZtoryModel *model = ZtoryModel::instance();
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Export Storyboard PDF"));
+    QVBoxLayout *lay = new QVBoxLayout(&dlg);
+
+    QFormLayout *form    = new QFormLayout();
+    QLineEdit *prodEdit  = new QLineEdit(model->production(), &dlg);
+    QLineEdit *titleEdit = new QLineEdit(model->title(), &dlg);
+    form->addRow(tr("Production:"), prodEdit);
+    form->addRow(tr("Title:"),      titleEdit);
+    lay->addLayout(form);
+
+    QGroupBox *logoBox    = new QGroupBox(tr("Header logo"), &dlg);
+    QVBoxLayout *logoLay  = new QVBoxLayout(logoBox);
+    QHBoxLayout *pathRow  = new QHBoxLayout();
+    QLineEdit *logoEdit   = new QLineEdit(model->pdfLogoPath(), logoBox);
+    logoEdit->setPlaceholderText(tr("(default Ztoryc logo)"));
+    QPushButton *browseBtn = new QPushButton(tr("Browse…"), logoBox);
+    QPushButton *clearBtn  = new QPushButton(tr("Clear"),    logoBox);
+    pathRow->addWidget(logoEdit, 1);
+    pathRow->addWidget(browseBtn);
+    pathRow->addWidget(clearBtn);
+    logoLay->addLayout(pathRow);
+    QCheckBox *noLogoChk = new QCheckBox(tr("No logo (clean export)"), logoBox);
+    noLogoChk->setChecked(model->pdfNoLogo());
+    logoLay->addWidget(noLogoChk);
+    QLabel *preview = new QLabel(logoBox);
+    preview->setMinimumHeight(46);
+    preview->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    logoLay->addWidget(preview);
+    lay->addWidget(logoBox);
+
+    auto updatePreview = [&]() {
+      bool none = noLogoChk->isChecked();
+      logoEdit->setEnabled(!none);
+      browseBtn->setEnabled(!none);
+      clearBtn->setEnabled(!none);
+      if (none) { preview->setPixmap(QPixmap()); preview->setText(tr("(no logo)")); return; }
+      QString custom = logoEdit->text().trimmed();
+      if (custom.isEmpty()) {
+        preview->setPixmap(QPixmap(":Resources/ztoryc_about.png")
+                               .scaledToHeight(40, Qt::SmoothTransformation));
+        return;
+      }
+      QPixmap pm(resolvePdfLogoFile(custom, scene));
+      if (pm.isNull())
+        preview->setText(tr("⚠ image not found — default logo will be used"));
+      else
+        preview->setPixmap(pm.scaledToHeight(40, Qt::SmoothTransformation));
+    };
+    connect(browseBtn, &QPushButton::clicked, &dlg, [&]() {
+      QString start = logoEdit->text().trimmed();
+      if (start.isEmpty() && scene)
+        start = QString::fromStdWString(
+            scene->getScenePath().getParentDir().getWideString());
+      QString f = QFileDialog::getOpenFileName(
+          &dlg, tr("Choose Logo Image"), start,
+          tr("Images (*.png *.svg *.jpg *.jpeg *.bmp)"));
+      if (!f.isEmpty()) { logoEdit->setText(f); updatePreview(); }
+    });
+    connect(clearBtn, &QPushButton::clicked, &dlg, [&]() {
+      logoEdit->clear(); updatePreview();
+    });
+    connect(noLogoChk, &QCheckBox::toggled, &dlg, [&](bool){ updatePreview(); });
+    connect(logoEdit, &QLineEdit::textChanged, &dlg, [&](const QString&){ updatePreview(); });
+
+    QDialogButtonBox *bb = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(bb);
+
+    updatePreview();
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    model->setProduction(prodEdit->text());
+    model->setTitle(titleEdit->text());
+    model->setPdfNoLogo(noLogoChk->isChecked());
+    model->setPdfLogoPath(logoEdit->text().trimmed());
+    saveZtoryc();  // persist metadata + logo choice in the .ztoryc
+  }
+
   // Build a sensible default filename from the scene name.
   QString defaultPath;
-  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   if (scene) {
     TFilePath sp = scene->getScenePath();
     QString sceneName = QString::fromStdWString(sp.getWideName());
@@ -4835,9 +4954,23 @@ void StoryboardPanel::onExportPdf() {
   const int totalPanels = (int)allPanels.size();
   const int totalPages  = (totalPanels + perPage - 1) / perPage;
 
-  // Assets
-  QPixmap logoPixmap = QPixmap(":Resources/ztoryc_about.png")
-      .scaled(mm2px(10), mm2px(10), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+  // Assets — header/footer logo: custom (per-project), default Ztoryc, or none.
+  QPixmap logoSrc;
+  if (!ZtoryModel::instance()->pdfNoLogo()) {
+    QString custom = ZtoryModel::instance()->pdfLogoPath();
+    if (!custom.isEmpty()) {
+      QPixmap pm(resolvePdfLogoFile(custom, scene));
+      // Broken custom path → fall back to the bundled logo (never break export).
+      logoSrc = pm.isNull() ? QPixmap(":Resources/ztoryc_about.png") : pm;
+    } else {
+      logoSrc = QPixmap(":Resources/ztoryc_about.png");
+    }
+  }
+  QPixmap logoPixmap = logoSrc.isNull() ? QPixmap()
+      : logoSrc.scaled(mm2px(10), mm2px(10), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+  // Footer logo is ALWAYS the Ztoryc brand mark — independent of the header
+  // logo choice (custom/none) — so every export keeps the "Made with Ztoryc"
+  // attribution and repo link.
   QPixmap ftLogo = QPixmap(":Resources/ztoryc_about.png")
       .scaled(mm2px(3.5), mm2px(3.5), Qt::KeepAspectRatio, Qt::SmoothTransformation);
 
@@ -4914,16 +5047,27 @@ void StoryboardPanel::onExportPdf() {
     painter.setFont(QFont("Arial", 5));
     QFontMetrics fm(painter.font());
     QString ftText = tr("Made with Ztoryc");
-    int tW = fm.horizontalAdvance(ftText);
+    const QString repoText = "github.com/matitanimata/ztoryc";
+    int tW    = fm.horizontalAdvance(ftText);
+    int sepW  = fm.horizontalAdvance("  ·  ");
+    int repoW = fm.horizontalAdvance(repoText);
     int g2 = mm2px(1.5);
-    int totalW = (ftLogo.isNull() ? 0 : ftLogo.width() + g2) + tW;
+    int totalW = (ftLogo.isNull() ? 0 : ftLogo.width() + g2) + tW + sepW + repoW;
     int fx = (pageW - totalW) / 2;
     if (!ftLogo.isNull()) {
       painter.drawPixmap(fx, fy + (footerH - ftLogo.height())/2, ftLogo);
       fx += ftLogo.width() + g2;
     }
     painter.setPen(QColor(160,160,160));
-    painter.drawText(fx, fy, tW + mm2px(1), footerH, Qt::AlignVCenter | Qt::AlignLeft, ftText);
+    painter.drawText(fx, fy, tW, footerH, Qt::AlignVCenter | Qt::AlignLeft, ftText);
+    fx += tW;
+    painter.drawText(fx, fy, sepW, footerH, Qt::AlignVCenter | Qt::AlignHCenter, "  ·  ");
+    fx += sepW;
+    // Repo URL shown in link colour. QPdfWriter+QPainter has no simple API for
+    // clickable annotations, so this is readable text, not an active hyperlink.
+    painter.setPen(QColor(120,120,200));
+    QRect repoRect(fx, fy, repoW + mm2px(1), footerH);
+    painter.drawText(repoRect, Qt::AlignVCenter | Qt::AlignLeft, repoText);
   };
 
   // ── Pages ─────────────────────────────────────────────────────────────────

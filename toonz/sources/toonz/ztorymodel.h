@@ -160,6 +160,8 @@ class ZtoryModel : public QObject {
   QString                           m_scriptFile;
   QString                           m_production;  // user-defined production name
   QString                           m_title;       // user-defined project title
+  QString                           m_pdfLogoPath; // custom PDF header logo (abs or scene-relative); empty = default Ztoryc logo
+  bool                              m_pdfNoLogo = false;  // true = export PDF with no logo at all
   ZtoryWorkflow                     m_workflow = ZtoryWorkflow::Tradigital;
   std::vector<ZtoryClipEntry>       m_sharedClip;
   std::set<int>                     m_sharedSelection;
@@ -195,6 +197,11 @@ public:
   QString title()      const { return m_title; }
   void setProduction(const QString &s) { m_production = s; }
   void setTitle(const QString &s)      { m_title = s; }
+  // PDF export logo: empty path + !noLogo → default Ztoryc logo; path set → custom; noLogo → none.
+  QString pdfLogoPath() const { return m_pdfLogoPath; }
+  void    setPdfLogoPath(const QString &s) { m_pdfLogoPath = s; }
+  bool    pdfNoLogo() const { return m_pdfNoLogo; }
+  void    setPdfNoLogo(bool b) { m_pdfNoLogo = b; }
 
   // ── Sequences ─────────────────────────────────────────────────────────────
   const std::vector<SequenceData>& sequences() const { return m_sequences; }

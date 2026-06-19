@@ -5598,13 +5598,17 @@ void ZtoryAnimaticPanel::showAnimaticTimeline() {
 
 
 void ZtoryAnimaticPanel::onCopyShots() {
-  if (!ZtoryModel::assertMainXsheet(false)) return;
+  // Copy is non-destructive: read shot durations from the MAIN xsheet even when
+  // the artist is inside a sub-scene, without yanking them out of edit mode.
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return;
   const std::set<int> *selPtr = &m_track->selectedCols();
   const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
   if (selPtr->empty() && !shared.empty()) selPtr = &shared;
   const std::set<int> &sel = *selPtr;
   if (sel.empty()) return;
-  TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+  if (!xsh) return;
   std::vector<ZtoryClipEntry> clip;
   for (int col : sel) {
     ZtoryClipEntry ce;
@@ -5620,7 +5624,8 @@ void ZtoryAnimaticPanel::onCopyShots() {
 // Cut = immediate: shot disappears right away; TXshLevel kept alive in cutLevel
 // so paste can restore sub-scene content without loss.
 void ZtoryAnimaticPanel::onCutShots() {
-  if (!ZtoryModel::assertMainXsheet(false)) return;
+  // Structural op: works from inside a sub-scene by closing it first (below),
+  // then operating on the main xsheet — same flow as the Board's onCutShot.
   const std::set<int> *selPtr = &m_track->selectedCols();
   const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
   if (selPtr->empty() && !shared.empty()) selPtr = &shared;
@@ -5673,7 +5678,8 @@ void ZtoryAnimaticPanel::onCutShots() {
 void ZtoryAnimaticPanel::onPasteShots() {
   const auto &clip = ZtoryModel::instance()->sharedClip();
   if (clip.empty()) return;
-  if (!ZtoryModel::assertMainXsheet(false)) return;
+  // Structural op: closes any open sub-scene below, then pastes into the main
+  // xsheet — works from inside a sub-scene like the Board's onPasteShot.
 
   StoryboardPanel *board = findBoardPanel();
   std::vector<ZtoryShotSnap> before;
@@ -5710,12 +5716,17 @@ void ZtoryAnimaticPanel::onDeleteShots() {
   if (selPtr->empty() && !shared.empty()) selPtr = &shared;
   const std::set<int> &sel = *selPtr;
   if (sel.empty()) return;
-  if (!ZtoryModel::assertMainXsheet(false)) return;
 
   StoryboardPanel *board = findBoardPanel();
   std::vector<ZtoryShotSnap> before;
   if (board) before = board->captureSnapshot();
 
+  // Structural op: close any open sub-scene first so deleteColumns acts on the
+  // main xsheet — lets Delete Shot work from inside a sub-scene.
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (scene)
+    while (scene->getChildStack()->getAncestorCount() > 0)
+      CommandManager::instance()->execute("MI_CloseChild");
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
   std::vector<int> cols(sel.begin(), sel.end());
   std::sort(cols.rbegin(), cols.rend());
@@ -5737,13 +5748,16 @@ void ZtoryAnimaticPanel::onDeleteShots() {
 
 // Cmd+D: puts selected shots in clipboard as clones; Cmd+V inserts them.
 void ZtoryAnimaticPanel::onCloneShots() {
-  if (!ZtoryModel::assertMainXsheet(false)) return;
+  // Non-destructive: read from the MAIN xsheet (top) without leaving edit mode.
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return;
   const std::set<int> *selPtr = &m_track->selectedCols();
   const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
   if (selPtr->empty() && !shared.empty()) selPtr = &shared;
   const std::set<int> &sel = *selPtr;
   if (sel.empty()) return;
-  TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+  if (!xsh) return;
   std::vector<ZtoryClipEntry> clip;
   for (int col : sel) {
     ZtoryClipEntry ce;
@@ -6218,8 +6232,6 @@ void mergeChildXsheetContent(TXshChildLevel *dstCl,
 }
 
 void ZtoryAnimaticPanel::onMergeShots() {
-  if (!ZtoryModel::assertMainXsheet(/*showWarning=*/true)) return;
-
   StoryboardPanel *board = findBoardPanel();
   std::vector<ZtoryShotSnap> before;
   if (board) before = board->captureSnapshot();
@@ -6235,6 +6247,10 @@ void ZtoryAnimaticPanel::onMergeShots() {
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene) return;
+  // Structural op: close any open sub-scene so the merge operates cleanly on the
+  // main xsheet — lets Merge Shots work from inside a sub-scene.
+  while (scene->getChildStack()->getAncestorCount() > 0)
+    CommandManager::instance()->execute("MI_CloseChild");
   TXsheet *xsh = scene->getChildStack()->getTopXsheet();
   if (!xsh) return;
 
