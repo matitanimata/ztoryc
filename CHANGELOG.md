@@ -1,3 +1,38 @@
+## [2026-06-17] — Wiring icone toolbar + fix add-shot xsheetColumn
+
+### Added
+- **Wiring icone ai 5 toggle** (commit `ef833e133`): snap (`m_snapBtn`, magnet/magnet-off —
+  base = off, `_on` = on, `createQIcon` carica auto la variante `_on` per lo stato checked);
+  light_arrow (bottone "Show light arrows" "L", sia Board che Animatic); cam_moves (Board "Trk");
+  keys_follow (`MI_ToggleKeyframesFollowExposure`, era `segment_linked`); listen_audio
+  (`MI_ToggleMainAudio`, era `sub_main_audio`). Rimosso il fondo colorato `:checked` da cam_moves
+  e light_arrow.
+- Rimossi file morti icone (`slip`, `onion`/`_on`, `shotedit`/`_on`, `snap_off`) + righe qrc;
+  aggiunto `ztoryc_snap_on`.
+
+### Fixed
+- **`onAddShot` non aggiornava `xsheetColumn` degli shot successivi** (commit `ea1ab3490`).
+  Inserendo uno shot in mezzo, la colonna inserita spostava a destra gli shot seguenti
+  nell'xsheet ma `data.xsheetColumn` non veniva incrementato (a differenza di `onDeleteShot`
+  che lo tiene sempre allineato) → cliccando uno shot dopo l'inserimento si apriva la
+  sotto-scena sbagliata (es. ultimo → penultimo). **Da verificare:** l'utente conferma che la
+  **v0.5 NON ha il baco**, pur avendo `onAddShot` byte-identico al tag → il trigger reale
+  coinvolge un'interazione con una modifica post-v0.5 ancora **non tracciata**. Il fix è
+  comunque corretto (allinea `onAddShot` a `onDeleteShot`). ⚠️ Indagare l'origine prima di
+  considerarlo chiuso.
+
+### Reverted / Notes
+- **Dedup toolbar Board↔Animatic + delega add/delete dall'Animatic al Board: TENTATI e ANNULLATI**
+  (regressioni: numero panel sballato). Tutto revertito. Lezione: il dedup deve toccare SOLO
+  `setVisible` dei bottoni — mai convertire il container a `QToolBar`, mai agganciarsi a
+  `showEvent`/timer. Vedi memoria `project_toolbar_dedup_ui`.
+- **Trappola single-instance:** i sintomi "catastrofici" osservati durante le prove (disegni
+  spariti, scene nuove rotte, 030→020) erano il **binario vecchio bacato ancora in esecuzione**
+  (single-instance guard rifocalizza invece di riavviare); codice/binario erano già puliti
+  (verificato con `nm`). Regola: dopo ogni deploy **Cmd+Q + riapri**. Vedi memoria
+  `feedback_deploy_single_instance_restart`.
+- `onMergeShots`/`onMergeWithNext` Animatic: NON toccati (regola AGENTS "già corrette").
+
 ## [2026-06-16b] — Increase/Decrease chiavi + refactor selezione combinata
 
 ### Fixed

@@ -699,6 +699,47 @@ nella sub-scene corretta.
 
 ### 🆕 DA FARE (giugno 2026) — in cima per priorità
 
+**🎨 Icon Inventory & Tabler Migration [richiesto utente + Claudio Paddei, giugno 2026].**
+Sostituire le icone Ztoryc con Tabler Icons (MIT). Inventario fatto: `icon_inventory.tsv`
+in root — **612 icone, tutte SVG** (actions 509, tools 40, console 24, mimetypes 14,
+**ztoryc 25**), 0 PNG. Ztoryc: 23/25 mappate su Tabler, 2 custom (onion skin on/off).
+- **STEP 1 inventario — ✅ FATTO 2026-06-17.** `icon_inventory.tsv` (colonne: file_path,
+  icona_attuale, tipo, contesto, proposta_tabler, note). Colonna `proposta_tabler`
+  precompilata solo sulle 25 Ztoryc — da revisionare Franco.
+- **Correzioni al piano originale di Claudio:**
+  - **NO npm / node_modules** — sproporzionato per un progetto C++/Qt/CMake. Tabler è MIT:
+    `git clone` (o zip release) una volta, **vendorizzare solo gli SVG che servono** in
+    `toonz/sources/toonz/icons/dark/ztoryc/`. Nessuna dipendenza di build.
+  - **Scope:** NON migrare tutte le 612. Limitarsi a (a) 25 icone Ztoryc + (b) toolbar
+    shot/animatic in revisione. Il resto solo se ne vale la pena (rischio regressioni).
+  - **Tema:** Tabler stroke-based `currentColor` → si ricolora via il sistema temi
+    esistente (un solo tema `dark/` con ricolorazione runtime). Plus, non problema.
+  - **Edge case reale:** onion skin (on/off) → nessun equivalente Tabler, variante custom.
+- **STEP 2-3:** dopo review della colonna `proposta_tabler` da parte di Franco, copia batch
+  degli SVG vendorizzati e sostituzione. Aggiornare eventuali path nel QSS del tema.
+
+**🆕 Thumbnail room (sketch grid → export to board) [richiesto utente, giugno 2026] — MILESTONE.**
+Nuova room con una grande griglia vettoriale per fare thumbnail veloci: si schizzano i
+panel (con pan H e V multi-panel), si selezionano i panel di uno shot, si riordina se
+serve, poi **export to board** → il programma ritaglia i panel dalla griglia, crea gli shot
+reali e li mette in timeline + board.
+- **Stima:** è una milestone, non un task. Parente della M4 Reference room.
+- **Componenti:** canvas vettoriale (QGraphicsView o riuso flip canvas) + selezione
+  multi-panel con pan H/V + riordino + **slicer** che ritaglia i riquadri e li promuove a
+  shot reali (mapping riquadro → subxsheet). La parte non banale è l'auto-slicing
+  geometrico e il mapping verso `ZtoryModel`.
+
+**🆕 Export to worksheet (Excel production management) [richiesto utente, giugno 2026].**
+Finito lo storyboard, generare un file di production management con: produzione, episodio,
+titolo; poi per ogni scena: seq, shot, timing, + i task (layout, animazione, vfx,
+compositing, ...) con status (todo, ready, wip, wfa, retake, done). Versione "easy" in
+attesa dell'integrazione Kitsu (M5).
+- **Dati:** seq/shot/timing già in `ZtoryModel`; mancano i campi metadata (produzione/
+  episodio/titolo) e la matrice task×status (da aggiungere al modello o a un .ztoryc field).
+- **Tecnica:** C++/Qt non scrive `.xlsx` nativamente. Strategia: **prima CSV** (zero
+  dipendenze, valida lo schema dei campi con Franco), **poi QXlsx** (Qt-based, MIT) per
+  header colorati / dropdown status / formattazione "production".
+
 **🔺 PRIORITARIO — Finalizzazione UI dedup: toolbar Board↔Animatic [richiesto utente, giugno 2026].**
 Niente bottoni shot duplicati tra Board e Animatic nelle room Ztoryc. I comandi shot
 condivisi vanno sulla toolbar della **timeline Animatic, parte SINISTRA** (così cadono
@@ -929,6 +970,229 @@ Milestone:
 - M5: Kitsu Integration (kitsu.ztoryc.org su Mac mini M4)
 
 ---
+---
+
+### NEW — Shot ops in edit-shot mode (task 53)
+
+**Priorità: MEDIA-ALTA | Tipo: NEW | Stima: 1 sessione**
+
+Quando l'utente è dentro una sub-scena (edit-shot mode), i comandi shot
+dell'animatic (Copy Shot, Clone Shot, Cut Shot, Paste Shot, Delete Shot, ecc.)
+sono disabilitati perché il focus è sull'xsheet nativo della sub-scena.
+
+Obiettivo: estendere la disponibilità di questi comandi anche dall'interno
+della sub-scena, esattamente come già fatto per `MI_ZtoryNewShotAfter` (Add Shot).
+
+**Approccio:** nessun nuovo meccanismo — solo rimuovere il guard / condizione
+che disabilita i comandi shot quando `isInsideSubScene()` è true. Verificare
+che ogni comando operi correttamente sul main xsheet (non sulla sub corrente)
+e che il ritorno al main dopo l'operazione sia coerente (resequence + Board sync).
+
+**Comandi da abilitare:**
+- `MI_ZtoryCopyShot` / `MI_ZtoryCloneShot`
+- `MI_ZtoryCutShot` / `MI_ZtoryPasteShot`
+- `MI_ZtoryDeleteShot`
+- `MI_ZtoryMergeShots` (valutare se ha senso in edit-shot mode)
+
+**Test:** eseguire ogni operazione stando dentro uno shot, verificare che
+Board + timeline si aggiornino correttamente all'uscita.
+
+**File:** `ztoryanimatic.cpp` (enablement dei comandi), `ztoryshotops.cpp` (logica).
+
+---
+
+### NEW — Custom logo nel PDF storyboard (task 54)
+
+**Priorità: MEDIA | Tipo: NEW | Stima: 1 sessione**
+
+Il PDF di export dello storyboard mostra attualmente il logo Ztoryc nell'header
+di ogni pagina. L'utente deve poter sostituirlo con il logo del proprio studio/progetto.
+
+**Design:**
+- Preferenza per-progetto (salvata nel `.ztoryc`): path a un file immagine logo
+  (PNG/SVG, trasparenza supportata)
+- Campo nelle impostazioni export: "Logo personalizzato" con browse + preview
+- Se nessun logo è impostato, comportamento attuale (logo Ztoryc)
+- Dimensione logo: adattata all'area header esistente (max height ~40px nell'header)
+- Opzione "Nessun logo" per export completamente puliti
+
+**File:** `storyboardpanel.cpp` (dialog export + onExportPdf),
+`ztorymodel.h/.cpp` (campo preferenza logo path),
+eventualmente `ztoryexport.h/.cpp`.
+
+---
+
+### NEW — Altezza tracce video/audio regolabile (task 55)
+
+**Priorità: MEDIA | Tipo: NEW | Stima: 1 sessione**
+
+Le tracce video e audio nella timeline animatic hanno altezza fissa.
+L'utente deve poter ridimensionarle verticalmente per adattare la
+densità visiva al proprio workflow (più spazio per vedere le waveform,
+meno spazio per avere più tracce in vista).
+
+**Design:**
+- Handle di resize tra tracce (drag verticale sul bordo inferiore di ogni traccia)
+- Altezza minima: ~24px (solo label + mute/lock); altezza massima: ~120px
+- Altezza video track e audio track indipendenti
+- Persistenza per-progetto nel `.ztoryc` (o in preferenze globali — decidere)
+- Cursore `SizeVerCursor` sull'hover del bordo
+
+**Nota:** per le tracce audio, l'altezza influenza la visibilità della waveform
+(già renderizzata in `QImage` viewport-aware) — verificare che il repaint
+della waveform si adatti alla nuova altezza senza ricalcolo completo.
+
+**File:** `ztoryanimatic.h/.cpp` (ZtoryVideoTrack, ZtoryAudioTrack —
+mouse events + paintEvent), `ztorymodel.h/.cpp` (persistenza altezze).
+
+---
+
+### NEW — Thumbnail Room (task 56) ⭐ FEATURE MAGGIORE
+
+**Priorità: MEDIA | Tipo: NEW | Stima: 4-5 sessioni**
+
+Nuova room dedicata al rough sketching rapido di tutto lo storyboard
+su un unico canvas con griglia, prima di costruire la timeline reale.
+
+#### Concept
+
+L'utente disegna thumbnail grezzi su un canvas grande con griglia 3×N,
+seleziona le celle per formare gli shot (anche non-rettangoalri: L, Z, pan),
+riordina gli shot con drag&drop, poi esporta tutto in Board + timeline
+con un click.
+
+#### Canvas e griglia
+
+- Room `ZtoryThumbnailRoom` con `QScrollArea` 2D (pan H e V)
+- Griglia fissa **3 colonne × N righe** (N cresce automaticamente)
+- Overlay griglia disegnato in Qt (non vettoriale — solo guida visiva)
+- **Un unico livello PLI** (`Thumbnail.pli`) che si estende su tutto il canvas;
+  ogni cella corrisponde a una regione dello spazio PLI
+- Strumenti di disegno nativi Tahoma2D accessibili (vettoriale/raster)
+- La PLI è salvata nel `.ztoryc` come risorsa permanente
+
+#### Selezione e raggruppamento in shot
+
+- Click su cella → selezione singola
+- Shift+click / drag → selezione multipla (qualsiasi forma: L, T, Z, ecc.)
+- Comando "Assegna a nuovo shot" → raggruppa le celle selezionate in uno shot
+  con label editabile (SQ/SH assegnati automaticamente dal modello)
+- Celle non assegnate = grigie; celle assegnate = bordo colorato per shot
+  (colore distinto per shot, come nel Board)
+- Un click su un gruppo già assegnato → lo seleziona come shot corrente
+
+#### Riordino shot
+
+- Drag&drop dei gruppi-shot nella griglia per riordinare la sequenza
+  (stessa UX del Board)
+- Il riordino aggiorna l'ordine di export ma non sposta fisicamente i disegni
+  nel canvas (i disegni restano dove sono — l'ordine è logico)
+
+#### Export to Board
+
+Bottone "Export to Board" nella toolbar della room. Per ogni shot, in ordine:
+
+**Caso normale (1 cella o N celle non panoramiche):**
+- Ogni cella → 1 frame nel livello `Rough` della sub-scena
+- N frame in sequenza nell'xsheet della sub-scena (frame 1, 2, … N)
+
+**Caso panoramica (N celle adiacenti marcate esplicitamente come pan):**
+- L'utente seleziona le celle e usa "Unisci come panoramica" (comando esplicito)
+- Il sistema calcola il **bounding box** dell'unione delle celle
+- Renderizza la regione corrispondente dalla PLI come **1 unica immagine larga/alta**
+  (le celle vuote nel bounding box = area trasparente/bianca)
+- L'immagine viene importata come singolo frame nel livello `Rough` della sub-scena
+- Il frame viene esposto per la durata dello shot nell'xsheet (hold lungo)
+- La camera si muoverà sopra quell'immagine in produzione
+
+**Per tutti i casi:**
+- Crea la sub-scena dello shot (come `onAddShot`) se non esiste già
+- Importa i frame come livello `Rough` (TLV o PLI, da decidere — PLI mantiene
+  il vettoriale se il disegno è vettoriale)
+- Inserisce lo shot in ZtoryModel → Board + timeline aggiornati
+- Gli shot già esistenti con lo stesso SQ/SH vengono aggiornati, non duplicati
+
+#### Persistenza
+
+- Le celle assegnate, i raggruppamenti shot e l'ordine sono salvati nel `.ztoryc`
+- La PLI `Thumbnail.pli` è salvata come livello nella scena
+
+#### File
+
+```
+toonz/sources/toonz/ztorythumbnailroom.h/.cpp   (nuova room + canvas)
+toonz/sources/toonz/ztorythumbnailpanel.h/.cpp  (pannello con griglia + toolbar)
+toonz/sources/toonz/ztorymodel.h/.cpp           (persistenza raggruppamenti)
+toonz/sources/toonz/mainwindow.cpp              (registrazione room)
+```
+
+#### Fasi di sviluppo
+
+1. **FASE 1** — Room + canvas PLI + griglia overlay + pan H/V
+2. **FASE 2** — Selezione celle, assegnazione shot, colori bordo
+3. **FASE 3** — Drag&drop riordino shot
+4. **FASE 4** — Export to Board (caso normale)
+5. **FASE 5** — Export to Board (caso panoramica: bounding box + merge immagine)
+
+---
+
+### NEW — Export to Worksheet Excel (task 57)
+
+**Priorità: MEDIA | Tipo: NEW | Stima: 1-2 sessioni**
+
+Al termine dello storyboard, genera un file `.xlsx` di production management
+con i dati dello storyboard già compilati e colonne task pronte per il tracking.
+Versione "easy" in attesa dell'integrazione Kitsu (M5).
+
+#### Struttura del file generato
+
+**Header (prime righe):**
+| Campo | Valore |
+|---|---|
+| Produzione | (da ZtoryModel o input utente) |
+| Episodio | (da nome file `.ztoryc` o input) |
+| Titolo | (da metadati progetto) |
+| Data export | (automatica) |
+| Versione | (numero di versione storyboard) |
+
+**Tabella shot (una riga per shot):**
+
+| SQ | SH | Titolo | Timing (sec) | Frame | Note | Layout | Animazione | Sfondi | VFX | Compositing | Status |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 010 | 010 | … | 2.5 | 60 | … | TODO | TODO | TODO | - | TODO | TODO |
+
+**Colonne task:** pre-impostate con valori TODO; l'utente le modifica
+manualmente nel file Excel (dropdown con TODO/WIP/WFA/RETAKE/DONE).
+
+**Colonne task configurabili:** lista editabile nelle preferenze progetto
+(default: Layout, Animazione, Sfondi, VFX, Compositing). L'utente può
+aggiungere/rimuovere/rinominare colonne prima dell'export.
+
+**Formattazione:**
+- Header colorato (colore accent Ztoryc `#e8b84b`)
+- Celle status con colori distinti per valore (verde=DONE, giallo=WIP, ecc.)
+- Colonne SQ/SH frozen (sempre visibili scrollando a destra)
+- Row alternata per leggibilità
+
+#### Integrazione UI
+
+- Voce "Export → Production Worksheet…" nel menu File o nel dialog export animatic
+- Dialog pre-export: nome produzione, episodio, titolo, selezione colonne task
+- Output: file `.xlsx` nella directory del progetto (o path scelto dall'utente)
+
+#### Nota Kitsu
+
+Quando M5 (integrazione Kitsu) sarà implementata, il Worksheet potrà essere
+generato leggendo gli status reali da Kitsu invece di TODO fissi — o potrà
+essere il punto di import iniziale per popolare Kitsu da zero.
+
+**Dipendenza:** libreria `xlsxwriter` o `openpyxl` (già disponibile nell'ambiente
+o da aggiungere come dipendenza Python/bundled). Valutare se implementare in
+Python (script bundled) o in C++ con una libreria xlsx minimale.
+
+**File:** `storyboardpanel.cpp` (voce menu + dialog),
+`ztoryexport.h/.cpp` (logica generazione xlsx),
+`ztorymodel.h/.cpp` (lettura dati shot + preferenze colonne task).
 
 ## File Structure
 
