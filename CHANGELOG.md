@@ -1,3 +1,52 @@
+## [2026-06-19] — Toolbar dedup Board↔Animatic + overflow scroll + UI polish + ottimizzazione task list
+
+### Added
+- **Dedup toolbar Board↔Animatic a livello UI** (commit `d194149ad`, su master). Riuscito dove
+  il tentativo del 2026-06-17 era fallito, rispettando i vincoli della memoria: SOLO `setVisible`,
+  niente `QToolBar`, niente hook su `showEvent`, niente delega add/delete cross-panel.
+  - `MainWindow::updateZtoryToolbarDedup()` nasconde sul Board i 6 shot-ops
+    (add/delete/merge/copy/clone/paste) + i 2 export (Shots/Animatic) quando un `ZtoryAnimaticPanel`
+    è nella stessa room. Pilotato da `onCurrentRoomChanged`/`switchToRoom`/costruttore via
+    `QTimer::singleShot(0)`, MAI dal `showEvent` del Board. Room col solo Board → tutto visibile
+    (self-sufficient).
+  - Toolbar Animatic riordinata: shot-ops a SINISTRA (sotto il Board), tool editing
+    (fit/select/trim/razor/link) a destra.
+  - **Export spostati sulla timeline** (spazio libero): Export Shots/Scene + Export Animatic
+    sull'Animatic a destra, delegano al Board sibling; PDF resta sul Board.
+- **Overflow scroll sulla toolbar del Board** via `DvScrollWidget` nativo di Tahoma: frecce
+  laterali quando le icone non c'entrano, invece di tagliarle/ammucchiarle (stessa UX dei pannelli
+  nativi). Rimosso l'`addStretch()` interno che avrebbe assorbito lo spazio.
+- **Icone nuove**: `ztoryc_fit_all` (arrows-maximize) e `ztoryc_zoom` (lente). Fit All riportato
+  accanto allo zoom slider; etichetta "Zoom:" sostituita dalla lente.
+
+### Modified
+- **Tracce video/audio**: Lock con icona lucchetto aperto/chiuso (`ztoryc_lock`/`_on`); Mute con
+  icona speaker nativa di Tahoma (`sound_on`/`sound`); Solo resta "S" (paint dei track, non più
+  drawText "L"/"M").
+- **Show light direction + Show camera movement**: ora hanno lo stato `:checked` (background #666)
+  come razor/select, sia Board che Animatic.
+
+### Fixed
+- **Anteprime Board non rigenerate dopo add/copy/paste/delete/cut/merge** finché non si scrollava.
+  `refreshFromScene()` ricostruisce con thumbnail vuote (lazy by design per non freezare al load);
+  ora in `onModelResequenced` (ramo count-cambiato, solo path operazione) un `singleShot(0)` →
+  `updateVisiblePreviews()` rigenera SOLO i pannelli nel viewport (salta quelli già renderizzati),
+  istantaneo e senza appesantire. Il path di caricamento scena resta lazy.
+
+### Docs
+- **ANIMATIC_TASKS.md ottimizzato**: 1213 → 611 righe. Pregresso (614 righe, verbatim) spostato in
+  `ANIMATIC_TASKS_ARCHIVE_2026-05.md` (sezione giugno 2026): spec dei task DONE rimaste tra gli
+  "aperti" (39,40,42,43,45,48,49,50, mark-out, ffmpeg, pdf-thumb, audio/volume/transizioni/startup/
+  nav-tags), task 35/36/37 (assorbiti in 40), keys-cels 1-4, icon migration, blocco FATTO/DECLASSATO
+  (51,52,StudioPalette). Tabella DONE aggiornata con 11 voci giugno (incl. `ICON-MIGRATION`).
+  Regola adottata: completato → riga in tabella DONE + spec in archivio (basta voci `✅ FATTO`
+  accumulate nella sezione attiva).
+
+### Notes
+- Branch `feat/toolbar-dedup-board-animatic` mergiato in `master` (fast-forward) e pushato su origin.
+- **Prossimo**: task 53 (shot ops in edit-shot mode, MEDIA-ALTA) → 54 → 55, e valutare 57. Task 56
+  (Thumbnail Room) è lavoro a parte (milestone).
+
 ## [2026-06-17] — Wiring icone toolbar + fix add-shot xsheetColumn
 
 ### Added
