@@ -640,17 +640,45 @@ public:
 
 class DragDrawingNumberTool final : public DragChannelTool {
   bool m_firstMove;
+  double m_startValue;  // drawing number at gesture start (stable reference)
 
 public:
   DragDrawingNumberTool()
       : DragChannelTool(TStageObject::T_DrawingNumber, false)
-      , m_firstMove(true) {}
+      , m_firstMove(true)
+      , m_startValue(0.0) {}
 
   void leftButtonDown(const TPointD &pos, const TMouseEvent &) override {
     start();
     m_firstPos = pos;
+    // Reference = the currently exposed drawing number, read from the CELL.
+    // The T_DrawingNumber param value (getOldValue) is 0 when the channel has no
+    // keyframes, which would make the "did it change?" guard misfire and add a
+    // key on a plain click.
+    m_startValue         = getOldValue(0);
+    TApplication *app    = TTool::getApplication();
+    TXsheet *xsh         = app->getCurrentXsheet()->getXsheet();
+    int frame            = app->getCurrentFrame()->getFrameIndex();
+    TStageObjectId objId = app->getCurrentObject()->getObjectId();
+    if (objId.isColumn()) {
+      TXshCell cell = xsh->getCell(frame, objId.getIndex(), true, true);
+      if (!cell.isEmpty() && !cell.getFrameId().isStopFrame())
+        m_startValue = cell.getFrameId().getNumber();
+    }
   }
   void leftButtonDrag(const TPointD &pos, const TMouseEvent &e) override {
+    TPointD delta = pos - m_firstPos;
+    double factor = 1.0 / Stage::inch;
+    // Reference the gesture-start value (not getOldValue, which the first-move
+    // block below mutates) so the scrub stays stable.
+    double v0 = m_startValue + delta.x * factor;
+    if (v0 < 1.0) v0 = 1.0;  // drawing numbers are 1-based; 0 is an empty cell
+
+    // Drawing numbers are integers: do nothing until the drag actually lands on
+    // a different number, so a click (or sub-drawing jitter) neither re-exposes
+    // the cell nor adds a keyframe.
+    if (qRound(v0) == qRound(m_startValue)) return;
+
     if (m_firstMove) {
       m_firstMove = false;
 
@@ -676,17 +704,10 @@ public:
       }
     }
 
-    TPointD delta = pos - m_firstPos;
-
-    double factor = 1.0 / Stage::inch;
-
     // DragDrawingNumberTool registers a SINGLE channel (T_DrawingNumber), so it
     // must use the one-value API. The old setValues(v0, getOldValue(1)+...) read
     // and wrote m_channels[1], which doesn't exist -> out-of-bounds (assert in
-    // debug, heap corruption / malloc trap in release). Only horizontal drag
-    // changes the drawing number.
-    double v0 = getOldValue(0) + delta.x * factor;
-    if (v0 < 0.0) v0 = 0;
+    // debug, heap corruption / malloc trap in release).
     setValue(v0);
   }
 };
