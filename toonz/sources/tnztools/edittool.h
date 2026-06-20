@@ -5,6 +5,7 @@
 
 #include "tool.h"
 #include "tproperty.h"
+#include "tpixel.h"
 #include "edittoolgadgets.h"
 
 // For Qt translation support
@@ -92,6 +93,15 @@ class EditTool final : public QObject, public TTool {
 
   void drawMainHandle();
   void onLeftButtonPick(TPointD& pos, const TMouseEvent& e);
+
+  // Gizmo readability: draw the manipulator with a contrasting casing (a thick
+  // underlay pass) so it stays visible over any drawing color. The casing tone
+  // (dark or light) is chosen from the background luminance under the gizmo.
+  void drawGizmo();                          // actual gizmo rendering
+  void gizmoColor(const TPixel32& c);
+  TPixel32 sampleBgColor(const TPointD& worldCenter);  // avg bg under the gizmo
+  bool m_gizmoCasing = false;                // casing pass (currently disabled)
+  TPixel32 m_gizmoNormal, m_gizmoHi;         // adaptive gizmo colours
 
 public:
   EditTool();
