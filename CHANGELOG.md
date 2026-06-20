@@ -24,6 +24,7 @@
   quando il gizmo e' chiaro sia quando e' scuro.
 - Implementata prima come "casing" a doppio tratto (alone), poi sostituita dalla versione a colore
   adattivo su richiesta utente; l'infrastruttura casing resta nel codice ma disabilitata.
+- **REVERT (2026-06-21)**: `edittool.cpp/.h` ripristinati all'originale (gizmo fisso rosa/verde). La `glReadPixels` durante l'overlay corrompe il primitive-buffer immediate-mode su macOS (Metal-GL) -> crash non deterministico in `glEnd` (visto toccando il braccio Drawing Number, che disegna testo extra). Da rifare con sampling crash-safe (lettura dal raster dell'immagine, non dal framebuffer live, come fa lo style picker in un pass separato).
 
 ### Upstream candidates
 - **Gizmo Animate tool adattivo allo sfondo** (`tnztools/edittool.cpp`) — codice core Tahoma2D,
