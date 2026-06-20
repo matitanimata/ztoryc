@@ -1,3 +1,18 @@
+## [2026-06-21] — Fix crash maniglia "Drawing #" Animate tool (bug upstream)
+
+### Fixed
+- **CRASH trascinando la maniglia "Drawing #" dell'Animate tool** (`tnztools/edittool.cpp`,
+  `DragDrawingNumberTool::leftButtonDrag`). Root cause trovata con lldb sul debug build:
+  il tool registra UN solo canale (`DragChannelTool(T_DrawingNumber, false)` -> `m_channels.size()==1`)
+  ma il drag usava l'API a due canali `setValues(v0, getOldValue(1)+delta.y*factor)` (copiata dal tool
+  di posizione), accedendo a `m_channels[1]` inesistente. Debug: `assert` in
+  `TStageObjectValues::getValue` (stageobjectutil.cpp:147). Release: OOB read+write -> corruzione heap
+  -> trap `malloc` (i crash log erano mal-simbolicati in overlay GL/Qt, fuorvianti). Scattava al primo
+  micro-movimento del mouse sulla maniglia. Fix: usare l'API a canale singolo `setValue(v0)`
+  (solo il drag orizzontale cambia il drawing number).
+- **VERIFICATO su Tahoma2D stock** -> bug upstream (feature PR #2124, merge `67f0ef7f4`), NON regressione
+  Ztoryc. Candidato PR upstream ad alto impatto (vedi AGENTS.md).
+
 ## [2026-06-20c] — Tema chiaro "Abete" (WIP) + Animate tool: gizmo leggibile su ogni sfondo
 
 ### Added (WIP — tema Abete)

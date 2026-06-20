@@ -680,9 +680,14 @@ public:
 
     double factor = 1.0 / Stage::inch;
 
+    // DragDrawingNumberTool registers a SINGLE channel (T_DrawingNumber), so it
+    // must use the one-value API. The old setValues(v0, getOldValue(1)+...) read
+    // and wrote m_channels[1], which doesn't exist -> out-of-bounds (assert in
+    // debug, heap corruption / malloc trap in release). Only horizontal drag
+    // changes the drawing number.
     double v0 = getOldValue(0) + delta.x * factor;
     if (v0 < 0.0) v0 = 0;
-    setValues(v0, getOldValue(1) + delta.y * factor);
+    setValue(v0);
   }
 };
 
