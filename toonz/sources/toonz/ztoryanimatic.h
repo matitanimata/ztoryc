@@ -594,6 +594,10 @@ public:
 
 protected:
   void showEvent(QShowEvent *e) override;
+  // Swallows tool mouse/tablet input on the scene viewer while the Animate
+  // (Edit) tool is active: the animatic is a timing/preview view, transforming
+  // shot objects there makes no sense. Pan/zoom navigation still pass through.
+  bool eventFilter(QObject *obj, QEvent *e) override;
 
 private slots:
   // Sets FlipConsole frame range from the main xsheet (top-level), not from

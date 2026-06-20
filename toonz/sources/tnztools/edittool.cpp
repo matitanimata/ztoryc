@@ -1557,17 +1557,24 @@ void EditTool::drawMainHandle() {
   gizmoColor(normalColor);
   tglDrawSegment(p, center);
 
-  // draw drawing number handle
-  p = center + unit * TPointD(0, -delta);
-  gizmoColor(m_highlightedDevice == DrawingNumber ? highlightedColor
-                                                : normalColor);
-  glPushName(DrawingNumber);
-  drawText(p + TPointD(-unit * 18, 0), unit, "#");
-  glPopName();
-  if (m_highlightedDevice == DrawingNumber && !dragging)
-    drawText(p + TPointD(0, -unit * 10), unit, "Drawing Number");
-  gizmoColor(normalColor);
-  tglDrawSegment(p + TPointD(0, unit * 11), center);
+  // draw drawing number handle — gated by the "Drawing #" toggle (off by
+  // default). Gating both the draw AND the glPushName here also removes it from
+  // pick() (which re-runs this draw in pick mode), so the handle can't be hit
+  // when hidden. For storyboard/timing it is a footgun (it keyframes the
+  // animatable drawing-number channel); animators can re-enable it in the tool
+  // options.
+  if (m_showDrawingNumber.getValue()) {
+    p = center + unit * TPointD(0, -delta);
+    gizmoColor(m_highlightedDevice == DrawingNumber ? highlightedColor
+                                                    : normalColor);
+    glPushName(DrawingNumber);
+    drawText(p + TPointD(-unit * 18, 0), unit, "#");
+    glPopName();
+    if (m_highlightedDevice == DrawingNumber && !dragging)
+      drawText(p + TPointD(0, -unit * 10), unit, "Drawing Number");
+    gizmoColor(normalColor);
+    tglDrawSegment(p + TPointD(0, unit * 11), center);
+  }
 
   //
   if (objId.isCamera()) {

@@ -71,6 +71,7 @@ extern ToggleCommandHandler mainAudioToggle;
 #include "mainwindow.h"
 #include "storyboardpanel.h"
 #include "tools/tool.h"
+#include "tools/toolhandle.h"
 #include "tools/toolcommandids.h"
 #include "../tnztools/symmetrytool.h"
 #include "../tnztools/perspectivetool.h"
@@ -2981,6 +2982,8 @@ ZtoryAnimaticViewer::ZtoryAnimaticViewer(QWidget *parent)
     : BaseViewerPanel(parent) {
   m_sceneViewer->setAlwaysMainXsheet(true);
   m_sceneViewer->setReferenceMode(SceneViewer::CAMERA_REFERENCE);
+  // Block Animate-tool editing in the animatic preview (see eventFilter).
+  m_sceneViewer->installEventFilter(this);
 
   // --- Dedicated frame handle from the animatic controller ---
   auto *ctrl = ZtoryAnimaticController::instance();
@@ -3506,6 +3509,38 @@ void ZtoryAnimaticViewer::onAudioToggleChanged() {
   TXsheet *mainXsh = ctrl ? ctrl->mainXsheet() : nullptr;
   if (mainXsh) mainXsh->stopScrub();
   m_continuousPlay = false;
+}
+
+bool ZtoryAnimaticViewer::eventFilter(QObject *obj, QEvent *e) {
+  // The animatic viewer is a timing/preview surface: the Animate (Edit) tool
+  // must not transform shot objects here. Swallow its left-button and tablet
+  // actions; hover, pan (middle/space) and zoom (wheel) still pass through.
+  if (obj == m_sceneViewer) {
+    const QEvent::Type t = e->type();
+    bool isToolAction    = false;
+    if (t == QEvent::MouseButtonPress || t == QEvent::MouseButtonDblClick ||
+        t == QEvent::MouseButtonRelease)
+      isToolAction = (static_cast<QMouseEvent *>(e)->button() == Qt::LeftButton);
+    else if (t == QEvent::MouseMove)
+      isToolAction =
+          (static_cast<QMouseEvent *>(e)->buttons() & Qt::LeftButton) != 0;
+    else if (t == QEvent::TabletPress || t == QEvent::TabletMove ||
+             t == QEvent::TabletRelease)
+      isToolAction = true;
+
+    if (isToolAction) {
+      ToolHandle *th = TApp::instance()->getCurrentTool();
+      TTool *tool    = th ? th->getTool() : nullptr;
+      if (tool && tool->getName() == "T_Edit") {
+        if (t == QEvent::MouseButtonPress)
+          TApp::instance()->showZtoryHint(
+              tr("Animate tool disabled in the animatic — enter a shot to edit "
+                 "transforms."));
+        return true;  // swallow: no object editing in the animatic preview
+      }
+    }
+  }
+  return BaseViewerPanel::eventFilter(obj, e);
 }
 
 void ZtoryAnimaticViewer::showEvent(QShowEvent *e) {
