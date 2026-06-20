@@ -3,7 +3,7 @@
 # Bump only ZTORYC_VERSION_MAJOR / MINOR / PATCH here.
 # =============================================================================
 set(ZTORYC_VERSION_MAJOR 0)
-set(ZTORYC_VERSION_MINOR 5)
+set(ZTORYC_VERSION_MINOR 6)
 set(ZTORYC_VERSION_PATCH 0)
 set(ZTORYC_VERSION "${ZTORYC_VERSION_MAJOR}.${ZTORYC_VERSION_MINOR}.${ZTORYC_VERSION_PATCH}")
 

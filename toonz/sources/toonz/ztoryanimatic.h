@@ -225,6 +225,11 @@ private:
   int m_hoverTagFrame = -1;
 };
 
+// Shared limits for the user-resizable track height (bottom-edge grip).
+static constexpr int kZtoryMinTrackH  = 24;   // label + lock/mute only
+static constexpr int kZtoryMaxTrackH  = 120;  // generous waveform / thumbnail
+static constexpr int kZtoryResizeGrip = 5;    // bottom px reserved for the grip
+
 class ZtoryAnimaticTrack : public QWidget {
   Q_OBJECT
 public:
@@ -244,6 +249,9 @@ public:
   void setCurrentFrame(int f) { m_currentFrame = f; update(); }
   void setTool(Tool t) { m_tool = t; updateCursor(); }
   Tool tool() const { return m_tool; }
+  // Vertical track height — user-resizable via the grip on the bottom edge.
+  int trackHeight() const { return m_trackHeight; }
+  void setTrackHeight(int h);
   void refreshFromScene();
   // Invalidate cached thumbnails so they are re-rendered on next refresh.
   void clearThumbCache() { m_thumbCache.clear(); }
@@ -296,6 +304,8 @@ signals:
   void rollEdit(int colA, int newDurA, int colB, int newDurB);
   // Cross-dissolve transition: colA is the outgoing shot, colB is the incoming, frames = total overlap (0 = no transition)
   void transitionChanged(int colA, int colB, int frames);
+  // Emitted while/after the bottom resize grip is dragged (final height on release).
+  void trackHeightChanged(int h);
 
 private:
   double m_ppf = 8.0;
@@ -303,8 +313,9 @@ private:
   std::vector<ShotBlock> m_blocks;
 
   // ── Drag state ────────────────────────────────────────────────────────────
-  enum DragMode { NoDrag, RippleTrim, Roll, TransitionTrim };
+  enum DragMode { NoDrag, RippleTrim, Roll, TransitionTrim, Resize };
   DragMode m_dragMode     = NoDrag;
+  int m_trackHeight       = 80;  // current height (px), resizable via bottom grip
   int m_dragStartX        = 0;   // pixel X at drag start
   int m_dragColA          = -1;  // RippleTrim/Roll/TransitionTrim: primary col (left for Roll/Transition)
   int m_dragColB          = -1;  // Roll/TransitionTrim: right col
@@ -344,7 +355,11 @@ public:
   // Call before deleting the widget to prevent stale drag state from firing.
   void cancelDrag() { m_dragMode = NoDrag; m_draggingPreview = false; }
   int trackHeight() const { return m_trackHeight; }
-  void setTrackHeight(int h) { m_trackHeight = h; m_waveformDirty = true; setFixedHeight(h); update(); }
+  void setTrackHeight(int h) {
+    h = qBound(kZtoryMinTrackH, h, kZtoryMaxTrackH);
+    if (h == m_trackHeight) return;
+    m_trackHeight = h; m_waveformDirty = true; setFixedHeight(h); update();
+  }
   int columnIndex() const { return m_col; }
   void setColumnIndex(int col) { m_col = col; }  // update after column shift
   TXshSoundColumn *soundColumn() const { return m_soundCol; }
@@ -408,6 +423,8 @@ signals:
   void groupDragStarted();                // SegmentDrag begun on a selected seg
   void groupDragDelta(int deltaFrames);   // live delta during the drag
   void groupDragCommitted(int deltaFrames);// final delta on release
+  // Emitted while/after the bottom resize grip is dragged (final height on release).
+  void trackHeightChanged(int h);
 
 public slots:
   void clearSelection();    // clears m_selSeg and repaints
@@ -447,7 +464,7 @@ private:
   QVector<int> m_cutFrames;
   // Segment selection & drag
   Segment m_selSeg{-1, -1};
-  enum DragMode { NoDrag, SegmentDrag, TrimLeft, TrimRight };
+  enum DragMode { NoDrag, SegmentDrag, TrimLeft, TrimRight, Resize };
   DragMode m_dragMode     = NoDrag;
   int  m_dragStartFrame   = -1;
   int  m_dragOrigR0       = -1;

@@ -419,9 +419,15 @@ eventualmente `ztoryexport.h/.cpp`.
 
 ---
 
-### NEW — Altezza tracce video/audio regolabile (task 55)
+### ✅ FATTO (2026-06-20) — Altezza tracce video/audio regolabile (task 55)
 
-**Priorità: MEDIA | Tipo: NEW | Stima: 1 sessione**
+**Priorità: MEDIA | Tipo: NEW | Stima: 1 sessione | STATO: COMPLETATO**
+
+> Implementato: handle di resize sul bordo inferiore (grip 5px) per video e
+> audio track, cursore SizeVerCursor, min 24 / max 120px, persistenza QSettings
+> (Ztoryc/VideoTrackHeight, Ztoryc/AudioTrackHeight) con altezza audio condivisa.
+> Bonus: label audio progressiva (nome->volume->solo L/M/S), nome shot centrato
+> verticalmente, fix diradamento label timecode in zoom (QFontMetrics).
 
 Le tracce video e audio nella timeline animatic hanno altezza fissa.
 L'utente deve poter ridimensionarle verticalmente per adattare la

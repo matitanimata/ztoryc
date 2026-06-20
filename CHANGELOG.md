@@ -1,3 +1,43 @@
+## [2026-06-20b] — Task 55: altezza tracce video/audio regolabile
+
+### Added
+- **Import audio dall'interno di uno shot** (`ztoryanimatic.cpp`, menu contestuale
+  timeline). "Load Audio..." e "Add Audio Track" non chiedono piu' di tornare
+  all'Animatic: se sei dentro una sub-scena chiudono lo shot (`while ancestorCount>0
+  -> MI_CloseChild`) e operano sul main xsheet, coerente col pattern delle op
+  strutturali del Task 53. Rispetta la regola "audio solo nel main xsheet".
+- **Resize verticale delle tracce della timeline animatic** (`ztoryanimatic.h/.cpp`).
+  Handle sul bordo inferiore di ogni traccia (striscia di `kZtoryResizeGrip=5px`,
+  riservata), drag -> ridimensiona; cursore `SizeVerCursor` in hover. Limiti
+  condivisi `kZtoryMinTrackH=24` / `kZtoryMaxTrackH=120`. Grip visivo (separatore +
+  tratto centrato) disegnato in fondo a entrambe le tracce.
+  - **Video track** (`ZtoryAnimaticTrack`): nuovo `m_trackHeight` (default 80) +
+    `setTrackHeight()` con clamp; il `paintEvent` scalava gia' con `height()` ->
+    thumbnail si adattano da sole. `DragMode::Resize`.
+  - **Audio track** (`ZtoryAudioTrack`): `setTrackHeight()` ora fa clamp + no-op
+    guard; la waveform (`m_waveformDirty`) si rigenera alla nuova altezza senza
+    ricalcolo completo. `DragMode::Resize`.
+- **Persistenza globale** via `QSettings` (`Ztoryc/VideoTrackHeight`,
+  `Ztoryc/AudioTrackHeight`) - pattern coerente con `Ztoryc/LightColor`. Altezza
+  audio **condivisa**: resize di una traccia le ridimensiona tutte e persiste.
+- **Densita' label audio progressiva**: a scalare sparisce prima il nome file
+  (`<kAudioShowNameMinH=45`), poi anche la barra del volume (`<kAudioShowVolMinH=36`);
+  al minimo restano solo i bottoni L/M/S. Hit-test del volume disattivato quando la
+  barra e' nascosta (no drag fantasma).
+
+### Fixed
+- **Cursore resize sull'audio track non appariva in hover**: l'audio gestisce il
+  cursore via `QEvent::HoverMove` in `event()` (WA_Hover, piu' affidabile di
+  `setMouseTracking` dentro `QScrollArea` su macOS), non via `mouseMoveEvent`.
+  Aggiunto il check del grip li', con priorita' sul cursore di trim dei bordi.
+- **Nome shot nella traccia video** ora centrato verticalmente (`AlignVCenter`
+  invece di `AlignBottom`) -> resta leggibile a qualsiasi altezza traccia.
+- **Label timecode che si ammucchiavano in zoom**: `kMinLabelPx` era fisso a 40px
+  (ok per i numeri di frame, troppo stretto per `MM:SS:FF`/`H:MM:SS:FF`). Ora misurato
+  con `QFontMetrics` sulla label piu' larga visibile (frame piu' a destra) + 14px gap ->
+  l'intervallo tra label (serie 1/2/5/10/25/50...) si dirada da solo. Formatter `fmtFrame`
+  spostato prima del calcolo dello spacing.
+
 ## [2026-06-20] — Export to Spreadsheet (production tracking Kitsu-aligned, XLSX+CSV)
 
 ### Added

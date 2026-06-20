@@ -84,6 +84,10 @@ extern ToggleCommandHandler mainAudioToggle;
 // Shared label column width — must match ZtoryAudioTrack::labelW (80px).
 // Used by ZtoryAnimaticRuler and ZtoryAnimaticTrack to align with audio tracks.
 static constexpr int    kLabelW  = 80;
+// Audio label density thresholds: as the track shrinks the file name hides
+// first, then the volume bar — at minimum height only L/M/S buttons remain.
+static constexpr int    kAudioShowVolMinH  = 36;
+static constexpr int    kAudioShowNameMinH = 45;
 // Zoom limits (pixels per frame).
 // kMinPpf = 0.02 supports a 26-minute episode (37 440 frames) in a ~750 px
 // viewport without scrolling.  kMaxPpf = 200 gives single-frame editing.
@@ -644,21 +648,6 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
   //   zoom out → labels every 25/50/100/250/... frames (no crowding)
   // Series: 1 2 5 10 25 50 100 250 500 1000 ... (base-10/5, universally readable)
   p.setFont(QFont());  // use application default font (same as original)
-  static const int kNice[] = {
-      1, 2, 5, 10, 25, 50, 100, 250, 500,
-      1000, 2500, 5000, 10000, 25000, 50000
-  };
-  const int kMinLabelPx = 40;  // minimum pixels between two label centres
-  int labelEvery = kNice[0];
-  for (int iv : kNice) {
-    if ((int)(iv * m_ppf) >= kMinLabelPx) { labelEvery = iv; break; }
-  }
-  // Minor ticks: next finer level, at least 4 px apart (0 = no minor ticks)
-  int tickEvery = 0;
-  for (int iv : kNice) {
-    if (iv >= labelEvery) break;
-    if ((int)(iv * m_ppf) >= 4) tickEvery = iv;
-  }
 
   // Label formatter: frame number or timecode (HH:MM:SS:FF)
   auto fmtFrame = [&](int f) -> QString {
@@ -675,6 +664,30 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
     return QString("%1:%2:%3")
         .arg(mm,2,10,QChar('0')).arg(ss,2,10,QChar('0')).arg(fr,2,10,QChar('0'));
   };
+
+  static const int kNice[] = {
+      1, 2, 5, 10, 25, 50, 100, 250, 500,
+      1000, 2500, 5000, 10000, 25000, 50000
+  };
+  // Minimum px between label centres — must fit the actual label text plus a
+  // gap. Timecode strings are far wider than frame numbers, so measure the
+  // widest label that can appear on screen (the rightmost frame has the most
+  // digits / the largest hours field) and size the spacing to it. This is what
+  // thins the labels out progressively as we zoom in on timecode.
+  int lastVisibleFrame = (m_ppf > 0) ? (int)(w / m_ppf) : 0;
+  QFontMetrics fm(p.font());
+  int kMinLabelPx =
+      qMax(40, fm.horizontalAdvance(fmtFrame(lastVisibleFrame)) + 14);
+  int labelEvery = kNice[0];
+  for (int iv : kNice) {
+    if ((int)(iv * m_ppf) >= kMinLabelPx) { labelEvery = iv; break; }
+  }
+  // Minor ticks: next finer level, at least 4 px apart (0 = no minor ticks)
+  int tickEvery = 0;
+  for (int iv : kNice) {
+    if (iv >= labelEvery) break;
+    if ((int)(iv * m_ppf) >= 4) tickEvery = iv;
+  }
 
   for (int f = 0; (int)(f * m_ppf) < w; f++) {
     int x = kLabelW + (int)(f * m_ppf);
@@ -1212,34 +1225,43 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
     }
   }
 
+  // Progressive label density: the file name hides first as the track shrinks,
+  // then the volume bar — at minimum height only the L/M/S buttons remain.
+  const bool showVol  = (trackH >= kAudioShowVolMinH);
+  const bool showName = (trackH >= kAudioShowNameMinH);
+
   // Volume slider — thin horizontal bar at the bottom of the label area.
-  // Click sets volume to position; drag adjusts continuously.  Range [0,1].
   // Coordinates also used in mousePressEvent hit-test — keep in sync!
   static const int kVolBarH    = 6;
   static const int kVolBarBotMargin = 4;
-  const int volBarY  = trackH - kVolBarH - kVolBarBotMargin;
+  const int volBarY  = trackH - kVolBarH - kVolBarBotMargin - kZtoryResizeGrip;
   const int volBarX  = 4;
   const int volBarW  = labelW - 8;
-  QRect volBar(volBarX, volBarY, volBarW, kVolBarH);
-  // Background track
-  p.fillRect(volBar, QColor(28, 28, 28));
-  // Filled portion
-  int filledW = (int)(m_volume * (volBarW - 2));
-  p.fillRect(volBar.x() + 1, volBar.y() + 1, filledW, kVolBarH - 2,
-             m_muted || m_effectiveMuted ? QColor(70, 70, 70)
-                                         : QColor(80, 140, 200));
-  // Knob position marker
-  int knobX = volBar.x() + 1 + filledW;
-  p.setPen(QPen(QColor(220, 230, 245), 1));
-  p.drawLine(knobX, volBar.y() - 1, knobX, volBar.y() + kVolBarH);
+  if (showVol) {
+    QRect volBar(volBarX, volBarY, volBarW, kVolBarH);
+    // Background track
+    p.fillRect(volBar, QColor(28, 28, 28));
+    // Filled portion
+    int filledW = (int)(m_volume * (volBarW - 2));
+    p.fillRect(volBar.x() + 1, volBar.y() + 1, filledW, kVolBarH - 2,
+               m_muted || m_effectiveMuted ? QColor(70, 70, 70)
+                                           : QColor(80, 140, 200));
+    // Knob position marker
+    int knobX = volBar.x() + 1 + filledW;
+    p.setPen(QPen(QColor(220, 230, 245), 1));
+    p.drawLine(knobX, volBar.y() - 1, knobX, volBar.y() + kVolBarH);
+  }
 
-  // Track name — between the buttons (top) and the volume slider (bottom)
-  p.setPen(QColor(210, 210, 210));
-  p.setFont(QFont("Arial", 8));
-  int nameY = kBtnY + kBtnH + 2;
-  int nameH = volBarY - nameY - 2;
-  if (nameH > 0)
-    p.drawText(2, nameY, labelW - 4, nameH, Qt::AlignVCenter | Qt::AlignLeft, m_name);
+  // Track name — between the buttons (top) and the volume slider (bottom).
+  if (showName) {
+    p.setPen(QColor(210, 210, 210));
+    p.setFont(QFont("Arial", 8));
+    int nameY = kBtnY + kBtnH + 2;
+    int nameBottom = showVol ? (volBarY - 2) : (trackH - kZtoryResizeGrip - 2);
+    int nameH = nameBottom - nameY;
+    if (nameH > 0)
+      p.drawText(2, nameY, labelW - 4, nameH, Qt::AlignVCenter | Qt::AlignLeft, m_name);
+  }
 
   p.setPen(QColor(65, 65, 65));
   p.drawLine(labelW, 0, labelW, trackH);
@@ -1418,13 +1440,14 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
     p.drawRect(x0, 0, x1 - x0 - 1, trackH - 1);
   }
 
-  // Preview bar (12c) — thin strip at bottom, orange selection
+  // Preview bar (12c) — thin strip just above the reserved resize grip.
   static const int kScrubBarH = 6;
-  p.fillRect(labelW, trackH - kScrubBarH, trackW, kScrubBarH, QColor(55, 55, 55));
+  const int scrubY = trackH - kScrubBarH - kZtoryResizeGrip;
+  p.fillRect(labelW, scrubY, trackW, kScrubBarH, QColor(55, 55, 55));
   if (m_previewR0 >= 0 && m_previewR1 >= m_previewR0) {
     int x0 = labelW + (int)(m_previewR0 * m_ppf);
     int x1 = labelW + (int)((m_previewR1 + 1) * m_ppf);
-    p.fillRect(x0, trackH - kScrubBarH, x1 - x0, kScrubBarH, QColor(255, 165, 0));
+    p.fillRect(x0, scrubY, x1 - x0, kScrubBarH, QColor(255, 165, 0));
   }
 
   // NOTE: m_cutFrames (video shot boundaries) are intentionally NOT drawn here.
@@ -1449,6 +1472,12 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
     p.setPen(QPen(QColor(80, 160, 255), 2));
     p.drawRect(1, 1, width() - 2, trackH - 2);
   }
+
+  // Bottom-edge resize grip — thin separator + a short centered handle hint.
+  p.fillRect(0, trackH - kZtoryResizeGrip, width(), kZtoryResizeGrip,
+             QColor(20, 20, 20));
+  p.setPen(QColor(110, 110, 110));
+  p.drawLine(labelW / 2 - 12, trackH - 3, labelW / 2 + 12, trackH - 3);
 }
 
 void ZtoryAudioTrack::setRazorActive(bool on) {
@@ -1560,6 +1589,11 @@ bool ZtoryAudioTrack::event(QEvent *e) {
   // reliable than setMouseTracking inside QScrollArea on macOS.
   if (e->type() == QEvent::HoverMove && m_dragMode == NoDrag && !m_razorActive) {
     auto *he = static_cast<QHoverEvent *>(e);
+    // Bottom-edge resize grip takes priority over the segment-edge cursor.
+    if (he->pos().y() >= height() - kZtoryResizeGrip) {
+      setCursor(Qt::SizeVerCursor);
+      return true;
+    }
     int mx = he->pos().x();
     // Avoid identifier name 'near' — it's a macro in Windows windef.h.
     bool nearEdge = nearSegmentEdge(mx, m_ppf, findSegments(), width());
@@ -1586,6 +1620,12 @@ void ZtoryAudioTrack::wheelEvent(QWheelEvent *e) {
 }
 
 void ZtoryAudioTrack::mousePressEvent(QMouseEvent *e) {
+  // Bottom-edge resize grip — reserved strip, takes priority over everything.
+  if (e->button() == Qt::LeftButton && e->y() >= height() - kZtoryResizeGrip) {
+    m_dragMode = Resize;
+    setCursor(Qt::SizeVerCursor);
+    return;
+  }
   // L/M/S button hit-test — must match coordinates in paintEvent exactly
   // Buttons: horizontal row, each 22px wide, 3px gap, starting at x=2, y=2, h=16
   if (e->button() == Qt::LeftButton && e->y() >= 2 && e->y() < 18) {
@@ -1612,10 +1652,11 @@ void ZtoryAudioTrack::mousePressEvent(QMouseEvent *e) {
       }
     }
   }
-  // Volume slider hit-test — must match coordinates in paintEvent exactly
-  if (e->button() == Qt::LeftButton) {
+  // Volume slider hit-test — must match coordinates in paintEvent exactly.
+  // Skip when the bar is hidden at small track heights.
+  if (e->button() == Qt::LeftButton && m_trackHeight >= kAudioShowVolMinH) {
     static const int kVolBarH = 6, kVolBarBotMargin = 4;
-    const int volBarY = m_trackHeight - kVolBarH - kVolBarBotMargin;
+    const int volBarY = m_trackHeight - kVolBarH - kVolBarBotMargin - kZtoryResizeGrip;
     const int volBarX = 4;
     const int volBarW = kLabelW - 8;
     if (e->y() >= volBarY - 2 && e->y() <= volBarY + kVolBarH + 2 &&
@@ -1636,9 +1677,11 @@ void ZtoryAudioTrack::mousePressEvent(QMouseEvent *e) {
   // Ignore other label area clicks
   if (e->x() < kLabelW) return;
 
+  // Scrub bar sits just above the reserved resize grip.
   static const int kScrubBarH = 6;
+  const int scrubTop = height() - kScrubBarH - kZtoryResizeGrip;
   // Razor tool: click anywhere on the waveform area (not in the scrub bar)
-  if (m_razorActive && !m_locked && e->y() < height() - kScrubBarH) {
+  if (m_razorActive && !m_locked && e->y() < scrubTop) {
     int frame = frameAtX(e->x());
     // Clear selection so the highlight doesn't persist after the cut
     if (m_selSeg.r0 >= 0) { m_selSeg = {-1, -1}; update(); }
@@ -1646,7 +1689,7 @@ void ZtoryAudioTrack::mousePressEvent(QMouseEvent *e) {
     return;
   }
   // Scrub bar drag — allowed even when locked (read-only preview)
-  if (e->y() >= height() - kScrubBarH) {
+  if (e->y() >= scrubTop) {
     m_draggingPreview  = true;
     int frame = frameAtX(e->x());
     m_previewDragStart = frame;
@@ -1712,6 +1755,11 @@ void ZtoryAudioTrack::mousePressEvent(QMouseEvent *e) {
 }
 
 void ZtoryAudioTrack::mouseMoveEvent(QMouseEvent *e) {
+  // Active resize drag — track top is fixed, so local y == desired height.
+  if (m_dragMode == Resize) {
+    setTrackHeight(e->y());
+    return;
+  }
   // Volume slider drag — must precede other drag handlers.
   // sc->setVolume() updates the column's m_volume AND, if its m_player is
   // currently playing, calls m_player->setVolume() which is applied by
@@ -1874,6 +1922,11 @@ void ZtoryAudioTrack::mouseReleaseEvent(QMouseEvent *e) {
   DragMode finishedMode = m_dragMode;
   m_dragMode = NoDrag;
   setCursor(m_razorActive ? Qt::CrossCursor : Qt::ArrowCursor);
+
+  if (finishedMode == Resize) {
+    emit trackHeightChanged(m_trackHeight);  // panel applies to all + persists
+    return;
+  }
 
   // Finish segment drag — commit via shiftLevelInRange on the ColumnLevel
   if (finishedMode == SegmentDrag) {
@@ -2071,7 +2124,7 @@ void ZtoryAudioTrack::keyPressEvent(QKeyEvent *e) {
 // ---- ZtoryAnimaticTrack ----
 
 ZtoryAnimaticTrack::ZtoryAnimaticTrack(QWidget *parent) : QWidget(parent) {
-  setFixedHeight(80);
+  setFixedHeight(m_trackHeight);
   setMouseTracking(true);
   // ClickFocus: clicking a shot block focuses the track, so the eventFilter on
   // ZtoryAnimaticPanel can verify focus is inside its subtree and fire shortcuts.
@@ -2098,6 +2151,14 @@ void ZtoryAnimaticTrack::updateCursor() {
     setCursor(Qt::CrossCursor);
   else
     unsetCursor();
+}
+
+void ZtoryAnimaticTrack::setTrackHeight(int h) {
+  h = qBound(kZtoryMinTrackH, h, kZtoryMaxTrackH);
+  if (h == m_trackHeight) return;
+  m_trackHeight = h;
+  setFixedHeight(h);
+  update();
 }
 
 void ZtoryAnimaticTrack::setRazorHoverFrame(int frame) {
@@ -2273,9 +2334,9 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
     int textX = x + 4 + (thumbW > 0 ? thumbW + 2 : 0);
     int textW = w - 8 - (thumbW > 0 ? thumbW + 2 : 0);
     if (textW > 10)
-      p.drawText(textX, 2, textW, h, Qt::AlignBottom | Qt::AlignLeft, b.shotNumber);
+      p.drawText(textX, 2, textW, h, Qt::AlignVCenter | Qt::AlignLeft, b.shotNumber);
     else
-      p.drawText(x + 4, 2, w - 8, h, Qt::AlignBottom | Qt::AlignLeft, b.shotNumber);
+      p.drawText(x + 4, 2, w - 8, h, Qt::AlignVCenter | Qt::AlignLeft, b.shotNumber);
 
     // Cross-dissolve transition indicator: overlapping triangles on the right edge
     if (b.transitionFrames > 0) {
@@ -2341,10 +2402,22 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
     p.setPen(QPen(QColor(255, 255, 80, 200), 1, Qt::DashLine));
     p.drawLine(rx, 0, rx, height());
   }
+
+  // Bottom-edge resize grip — thin separator + a short centered handle hint.
+  p.fillRect(0, height() - kZtoryResizeGrip, width(), kZtoryResizeGrip,
+             QColor(20, 20, 20));
+  p.setPen(QColor(110, 110, 110));
+  p.drawLine(kLabelW / 2 - 12, height() - 3, kLabelW / 2 + 12, height() - 3);
 }
 
 void ZtoryAnimaticTrack::mousePressEvent(QMouseEvent *e) {
   setFocus(Qt::MouseFocusReason);  // guarantee focus for keyboard shortcuts
+  // Bottom-edge resize grip — takes priority over every other interaction.
+  if (e->button() == Qt::LeftButton && e->y() >= height() - kZtoryResizeGrip) {
+    m_dragMode = Resize;
+    setCursor(Qt::SizeVerCursor);
+    return;
+  }
   int mx = e->x() - kLabelW;
   // Lock button hit-test in label area
   if (mx < 0) {
@@ -2513,6 +2586,14 @@ void ZtoryAnimaticTrack::mousePressEvent(QMouseEvent *e) {
 void ZtoryAnimaticTrack::mouseMoveEvent(QMouseEvent *e) {
   int mx = e->x() - kLabelW;
 
+  // ── Active resize drag ─────────────────────────────────────────────────
+  // The track top stays put in the layout, so the cursor's local y maps
+  // directly to the desired height (clamped inside setTrackHeight).
+  if (m_dragMode == Resize) {
+    setTrackHeight(e->y());
+    return;
+  }
+
   // ── Active drag update ─────────────────────────────────────────────────
   if (m_dragMode == RippleTrim) {
     int dx = mx - m_dragStartX;
@@ -2590,6 +2671,13 @@ void ZtoryAnimaticTrack::mouseMoveEvent(QMouseEvent *e) {
   }
 
   // ── Hover cursor (no active drag) ─────────────────────────────────────
+  // Bottom-edge grip: show the vertical-resize cursor, override tool cursors.
+  if (e->y() >= height() - kZtoryResizeGrip) {
+    setCursor(Qt::SizeVerCursor);
+    TApp::instance()->showZtoryHint(
+        tr("Drag to resize the track height"));
+    return;
+  }
   if (m_tool == SelectTool) {
     bool nearSeam = false;
     if (e->modifiers() & Qt::AltModifier) {
@@ -2681,6 +2769,11 @@ void ZtoryAnimaticTrack::mouseReleaseEvent(QMouseEvent *) {
   DragMode finished = m_dragMode;
   m_dragMode = NoDrag;
   unsetCursor();
+
+  if (finished == Resize) {
+    emit trackHeightChanged(m_trackHeight);  // persist via the panel
+    return;
+  }
 
   if (finished == RippleTrim) {
     bool found = false;
@@ -5120,6 +5213,12 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
           this, &ZtoryAnimaticPanel::onShotMoved);
   connect(m_track, &ZtoryAnimaticTrack::transitionChanged,
           this, &ZtoryAnimaticPanel::onTransitionChanged);
+  // Track height — restore the persisted value and persist any user resize.
+  m_track->setTrackHeight(
+      QSettings().value("Ztoryc/VideoTrackHeight", 80).toInt());
+  connect(m_track, &ZtoryAnimaticTrack::trackHeightChanged, this, [](int h) {
+    QSettings().setValue("Ztoryc/VideoTrackHeight", h);
+  });
   // Video lock state — no persistence map needed (single track)
   // The lock state lives directly on m_track and survives refreshFromScene()
   // because m_track itself is not rebuilt (only its blocks are refreshed).
@@ -5443,6 +5542,13 @@ void ZtoryAnimaticPanel::refreshAudioTracks() {
 
     ZtoryAudioTrack *at = new ZtoryAudioTrack(col, name, m_scrollContent);
     at->setPixelsPerFrame(m_ppf);
+    // Restore the shared (per-app) audio track height.
+    at->setTrackHeight(QSettings().value("Ztoryc/AudioTrackHeight", 50).toInt());
+    // Resizing one audio track resizes them all (shared height) and persists it.
+    connect(at, &ZtoryAudioTrack::trackHeightChanged, this, [this](int h) {
+      QSettings().setValue("Ztoryc/AudioTrackHeight", h);
+      for (auto *other : m_audioTracks) other->setTrackHeight(h);
+    });
     at->setCurrentFrame(m_track->property("currentFrame").toInt());
     // Propagate current razor state to newly created audio track.
     // m_audioLinked only controls whether a video cut also cuts audio;
@@ -7458,6 +7564,10 @@ void ZtoryAnimaticPanel::contextMenuEvent(QContextMenuEvent *e) {
     TApp *app = TApp::instance();
     ToonzScene *scene = app->getCurrentScene()->getScene();
     if (!scene) return;
+    // Audio lives in the main xsheet only — if inside a shot, close the
+    // sub-scene(s) first so the new column lands on (and notifies) the main.
+    while (scene->getChildStack()->getAncestorCount() > 0)
+      CommandManager::instance()->execute("MI_CloseChild");
     TXsheet *xsh = scene->getChildStack()->getTopXsheet();
     if (!xsh) return;
     int insertCol = xsh->getColumnCount();
@@ -7470,17 +7580,16 @@ void ZtoryAnimaticPanel::contextMenuEvent(QContextMenuEvent *e) {
     return;
   }
   if (chosen == loadAudio) {
-    // In storyboard workflow, audio can only be loaded from the main xsheet.
-    // Show the warning before opening the file dialog so the user doesn't
-    // waste time selecting a file only to be rejected afterward.
-    if (ZtoryModel::instance()->isStoryboardWorkflow()) {
+    // Audio lives in the main xsheet only. If the user is inside a shot, close
+    // the sub-scene(s) first and load onto the main xsheet — same pattern as the
+    // structural shot ops (Task 53), so import no longer requires a manual
+    // "Back to Animatic". Done before the file dialog so loadResources targets
+    // the (now current) main xsheet.
+    {
       ToonzScene *checkScene = TApp::instance()->getCurrentScene()->getScene();
-      if (checkScene && checkScene->getChildStack()->getAncestorCount() > 0) {
-        DVGui::warning(tr(
-            "In storyboard workflow, audio can only be loaded from the main "
-            "xsheet.\nPlease close the current sub-scene first."));
-        return;
-      }
+      if (checkScene)
+        while (checkScene->getChildStack()->getAncestorCount() > 0)
+          CommandManager::instance()->execute("MI_CloseChild");
     }
     // Formati nativi: wav, aiff. mp3/ogg richiedono FFmpeg configurato.
     // NOTE: pass nullptr as parent (not 'this') — on macOS a docked panel widget
