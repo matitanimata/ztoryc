@@ -1,5 +1,6 @@
 
 #include "ztoryanimatic.h"
+#include "ztorytheme.h"
 #include "ztorylightgizmo.h"
 #include "viewerpane.h"
 #include "comboviewerpane.h"
@@ -612,9 +613,9 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
   const int rulerH = h;
 
   // Background
-  p.fillRect(rect(), QColor(40, 40, 40));
-  p.fillRect(0, 0, kLabelW, h, QColor(25, 25, 25));
-  p.setPen(QColor(60, 60, 60));
+  p.fillRect(rect(), ZtoryTheme::g(40));
+  p.fillRect(0, 0, kLabelW, h, ZtoryTheme::g(25));
+  p.setPen(ZtoryTheme::g(60));
   p.drawLine(kLabelW, 0, kLabelW, h);
 
   // ---- In/Out range highlight ----
@@ -641,7 +642,7 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
   // that adjacent labels are at least kMinLabelPx apart.
   // Intervals follow animation-friendly units: frames → seconds (×24) → minutes.
   p.setFont(QFont("", 8));
-  p.setPen(QColor(180, 180, 180));
+  p.setPen(ZtoryTheme::g(180));
   int w = width() - kLabelW;
   // Fully adaptive tick spacing — fps-agnostic, works in both directions:
   //   zoom in  → labels every 1/2/5/10 frames (frame-accurate at high zoom)
@@ -728,7 +729,7 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
         int tx = kLabelW + (int)(tag.m_frame * m_ppf) + (int)(m_ppf / 2);
         if (tx < kLabelW || (tx - kLabelW) > w) continue;
         QColor c = tag.m_color.isValid() ? tag.m_color
-                                         : QColor(0xE0, 0x24, 0x9B);
+                                         : ZtoryTheme::activeShot();
         // Faint guide line from the pin tip down to the bottom of the ruler.
         p.setPen(QPen(c, 1));
         p.drawLine(tx, rulerY + 13, tx, h);
@@ -748,7 +749,7 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
         if (!tag.m_label.isEmpty() && tag.m_frame == m_hoverTagFrame) {
           int tw = fm.horizontalAdvance(tag.m_label);
           QRect chip(tx + 6, rulerY, tw + 6, h);
-          p.setBrush(QColor(0, 0, 0, 180));
+          p.setBrush(QColor(0, 0, 0, 180));  // dark scrim in both themes
           p.setPen(Qt::NoPen);
           p.drawRoundedRect(chip, 2, 2);
           p.setPen(c.lighter(140));
@@ -1191,10 +1192,10 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
   const int center = trackH / 2;
 
   // Sfondo
-  p.fillRect(rect(), QColor(25, 25, 25));
+  p.fillRect(rect(), ZtoryTheme::g(25));
 
   // ---- Label area ----
-  p.fillRect(0, 0, labelW, trackH, QColor(35, 35, 35));
+  p.fillRect(0, 0, labelW, trackH, ZtoryTheme::g(35));
 
   // L/M/S buttons — horizontal row at top of label area
   // Layout: 3 buttons each 22px wide, 2px gap, starting at x=2, y=2
@@ -1215,7 +1216,7 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
   for (int i = 0; i < 3; i++) {
     QRect r(2 + i * (kBtnW + kBtnGap), kBtnY, kBtnW, kBtnH);
     p.fillRect(r, btns[i].active ? btns[i].onColor : btns[i].offColor);
-    p.setPen(btns[i].active ? QColor(255, 255, 255) : btns[i].onColor);
+    p.setPen(btns[i].active ? ZtoryTheme::g(255) : btns[i].onColor);
     p.drawRect(r.adjusted(0, 0, -1, -1));
     if (btns[i].icon) {
       QPixmap pm = createQIcon(btns[i].icon).pixmap(12, 12);
@@ -1240,11 +1241,11 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
   if (showVol) {
     QRect volBar(volBarX, volBarY, volBarW, kVolBarH);
     // Background track
-    p.fillRect(volBar, QColor(28, 28, 28));
+    p.fillRect(volBar, ZtoryTheme::g(28));
     // Filled portion
     int filledW = (int)(m_volume * (volBarW - 2));
     p.fillRect(volBar.x() + 1, volBar.y() + 1, filledW, kVolBarH - 2,
-               m_muted || m_effectiveMuted ? QColor(70, 70, 70)
+               m_muted || m_effectiveMuted ? ZtoryTheme::g(70)
                                            : QColor(80, 140, 200));
     // Knob position marker
     int knobX = volBar.x() + 1 + filledW;
@@ -1254,7 +1255,7 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
 
   // Track name — between the buttons (top) and the volume slider (bottom).
   if (showName) {
-    p.setPen(QColor(210, 210, 210));
+    p.setPen(ZtoryTheme::g(210));
     p.setFont(QFont("Arial", 8));
     int nameY = kBtnY + kBtnH + 2;
     int nameBottom = showVol ? (volBarY - 2) : (trackH - kZtoryResizeGrip - 2);
@@ -1263,7 +1264,7 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
       p.drawText(2, nameY, labelW - 4, nameH, Qt::AlignVCenter | Qt::AlignLeft, m_name);
   }
 
-  p.setPen(QColor(65, 65, 65));
+  p.setPen(ZtoryTheme::g(65));
   p.drawLine(labelW, 0, labelW, trackH);
 
   // Viewport-aware waveform cache.
@@ -1292,7 +1293,7 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
   if (needRebuild) {
     m_cacheOffsetX  = bandX0;
     m_waveformCache = QPixmap(bandW, trackH);
-    m_waveformCache.fill(QColor(25, 25, 25));
+    m_waveformCache.fill(ZtoryTheme::g(25));
     m_waveformDirty = false;
 
     TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
@@ -1304,7 +1305,7 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
     // Reading sample positions directly from each CL avoids any merging
     // artefacts that getOverallSoundTrack() could introduce.
     QPainter cp(&m_waveformCache);
-    cp.setPen(QColor(60, 60, 60));
+    cp.setPen(ZtoryTheme::g(60));
     cp.drawLine(0, center, bandW, center);
 
     if (sc && sc->getColumnLevelCount() > 0) {
@@ -1393,11 +1394,11 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
 
     if (segs.empty()) {
       // No segments at all — fill entire track area with gap color
-      p.fillRect(labelW, 0, trackW, trackH, QColor(42, 42, 42));
+      p.fillRect(labelW, 0, trackW, trackH, ZtoryTheme::g(42));
     } else {
       // 1. Fill entire area with gap color first (covers gaps before first
       //    segment, between segments, and after last segment)
-      p.fillRect(labelW, 0, trackW, trackH, QColor(42, 42, 42));
+      p.fillRect(labelW, 0, trackW, trackH, ZtoryTheme::g(42));
 
       // 2. For each segment, blit the corresponding slice from the waveform
       //    cache (cache covers [m_cacheOffsetX .. m_cacheOffsetX+cache.width()))
@@ -1416,7 +1417,7 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
       }
 
       // 3. Draw 1px borders at each segment edge
-      p.setPen(QColor(70, 70, 70));
+      p.setPen(ZtoryTheme::g(70));
       for (auto &s : segs) {
         int x0 = labelW + (int)(s.r0 * m_ppf);
         int x1 = labelW + (int)((s.r1 + 1) * m_ppf);
@@ -1429,7 +1430,7 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
   // Dim overlay whenever the track is silent: either user-muted (M) or
   // silenced by another track's solo (effectiveMuted).
   if (m_muted || m_effectiveMuted)
-    p.fillRect(labelW, 0, trackW, trackH, QColor(0, 0, 0, 130));
+    p.fillRect(labelW, 0, trackW, trackH, QColor(0, 0, 0, 130));  // dim veil, both themes
 
   // Highlight selected segment
   if (m_selSeg.r0 >= 0 && m_selSeg.r1 >= m_selSeg.r0) {
@@ -1443,7 +1444,7 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
   // Preview bar (12c) — thin strip just above the reserved resize grip.
   static const int kScrubBarH = 6;
   const int scrubY = trackH - kScrubBarH - kZtoryResizeGrip;
-  p.fillRect(labelW, scrubY, trackW, kScrubBarH, QColor(55, 55, 55));
+  p.fillRect(labelW, scrubY, trackW, kScrubBarH, ZtoryTheme::g(55));
   if (m_previewR0 >= 0 && m_previewR1 >= m_previewR0) {
     int x0 = labelW + (int)(m_previewR0 * m_ppf);
     int x1 = labelW + (int)((m_previewR1 + 1) * m_ppf);
@@ -1475,8 +1476,8 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
 
   // Bottom-edge resize grip — thin separator + a short centered handle hint.
   p.fillRect(0, trackH - kZtoryResizeGrip, width(), kZtoryResizeGrip,
-             QColor(20, 20, 20));
-  p.setPen(QColor(110, 110, 110));
+             ZtoryTheme::g(20));
+  p.setPen(ZtoryTheme::g(110));
   p.drawLine(labelW / 2 - 12, trackH - 3, labelW / 2 + 12, trackH - 3);
 }
 
@@ -2249,16 +2250,16 @@ void ZtoryAnimaticTrack::refreshFromScene() {
 void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
   QPainter p(this);
 
-  p.fillRect(rect(), QColor(30, 30, 30));
+  p.fillRect(rect(), ZtoryTheme::g(30));
 
   // Label column — aligned with audio track label and ruler
-  p.fillRect(0, 0, kLabelW, height(), QColor(40, 40, 40));
+  p.fillRect(0, 0, kLabelW, height(), ZtoryTheme::g(40));
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   QString sceneName = scene
       ? QString::fromStdWString(scene->getSceneName())
       : tr("Animatic");
   // Track name (left of lock button)
-  p.setPen(QColor(210, 210, 210));
+  p.setPen(ZtoryTheme::g(210));
   p.setFont(QFont("Arial", 9));
   p.drawText(4, 0, kLabelW - 30, height(),
              Qt::AlignVCenter | Qt::AlignLeft, sceneName);
@@ -2267,15 +2268,15 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
   {
     const int bw = 22, bh = 20;
     QRect r(kLabelW - bw - 4, (height() - bh) / 2, bw, bh);
-    p.fillRect(r, m_locked ? QColor(220, 140, 50) : QColor(45, 45, 45));
-    p.setPen(m_locked ? QColor(255, 255, 255) : QColor(220, 140, 50));
+    p.fillRect(r, m_locked ? QColor(220, 140, 50) : ZtoryTheme::g(45));
+    p.setPen(m_locked ? ZtoryTheme::g(255) : QColor(220, 140, 50));
     p.drawRect(r.adjusted(0, 0, -1, -1));
     QPixmap pm =
         createQIcon(m_locked ? "ztoryc_lock_on" : "ztoryc_lock").pixmap(14, 14);
     p.drawPixmap(r.x() + (r.width() - 14) / 2, r.y() + (r.height() - 14) / 2, pm);
   }
 
-  p.setPen(QColor(60, 60, 60));
+  p.setPen(ZtoryTheme::g(60));
   p.drawLine(kLabelW, 0, kLabelW, height());
 
   // Active shot column: when the user is editing a shot (sub-scene open), the
@@ -2311,9 +2312,9 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
     // knows which shot they are inside. Drawn on top of the selection border.
     if (active) {
       p.setOpacity(0.18);
-      p.fillRect(x + 1, 2, w - 2, h, QColor(0xE0, 0x24, 0x9B));
+      p.fillRect(x + 1, 2, w - 2, h, ZtoryTheme::activeShot());
       p.setOpacity(1.0);
-      p.setPen(QPen(QColor(0xE0, 0x24, 0x9B), 2));
+      p.setPen(QPen(ZtoryTheme::activeShot(), 2));
       p.drawRect(x + 2, 3, w - 4, h - 2);
     }
 
@@ -2330,7 +2331,7 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
     }
 
     // Numero shot — to the right of the thumbnail if present
-    p.setPen(Qt::white);
+    p.setPen(ZtoryTheme::g(255));
     int textX = x + 4 + (thumbW > 0 ? thumbW + 2 : 0);
     int textW = w - 8 - (thumbW > 0 ? thumbW + 2 : 0);
     if (textW > 10)
@@ -2405,8 +2406,8 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
 
   // Bottom-edge resize grip — thin separator + a short centered handle hint.
   p.fillRect(0, height() - kZtoryResizeGrip, width(), kZtoryResizeGrip,
-             QColor(20, 20, 20));
-  p.setPen(QColor(110, 110, 110));
+             ZtoryTheme::g(20));
+  p.setPen(ZtoryTheme::g(110));
   p.drawLine(kLabelW / 2 - 12, height() - 3, kLabelW / 2 + 12, height() - 3);
 }
 
@@ -2917,7 +2918,7 @@ void ZtoryStoryStrip::setCurrentCol(int col) {
 
 void ZtoryStoryStrip::paintEvent(QPaintEvent *) {
   QPainter p(this);
-  p.fillRect(rect(), QColor(25, 25, 25));
+  p.fillRect(rect(), ZtoryTheme::g(25));
 
   int x = 4 - m_scrollOffset;
   for (auto &e : m_entries) {
@@ -2925,18 +2926,18 @@ void ZtoryStoryStrip::paintEvent(QPaintEvent *) {
     QRect r(x, 4, kThumbW, kThumbH);
 
     // Background
-    p.fillRect(r, current ? QColor(70, 100, 150) : QColor(45, 45, 45));
+    p.fillRect(r, current ? QColor(70, 100, 150) : ZtoryTheme::g(45));
 
     // Thumbnail
     if (!e.thumb.isNull())
       p.drawPixmap(r, e.thumb.scaled(r.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
 
     // Border
-    p.setPen(current ? QColor(255, 160, 0) : QColor(80, 80, 80));
+    p.setPen(current ? QColor(255, 160, 0) : ZtoryTheme::g(80));
     p.drawRect(r);
 
     // Shot number overlay
-    p.setPen(Qt::white);
+    p.setPen(ZtoryTheme::g(255));
     p.setFont(QFont("Arial", 8, QFont::Bold));
     p.drawText(r.adjusted(2, 2, -2, -2), Qt::AlignBottom | Qt::AlignLeft, e.shotNumber);
 

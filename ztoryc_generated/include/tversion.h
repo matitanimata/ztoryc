@@ -20,7 +20,7 @@ public:
 
 private:
   const char *applicationName     = "Ztoryc";
-  const float applicationVersion  = 0.5f;
+  const float applicationVersion  = 0.6f;
   /* PATCH.0f — never use bare f (PATCH 0 becomes illegal token "0f"). */
   const float applicationRevision = 0.0f;
   const char *applicationNote     = "";

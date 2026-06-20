@@ -1,3 +1,34 @@
+## [2026-06-20c] — Tema chiaro "Abete" (WIP) + Animate tool: gizmo leggibile su ogni sfondo
+
+### Added (WIP — tema Abete)
+- **Tema chiaro "Abete" (legno caldo)** — `stuff/config/qss/Abete/Abete.qss`, generato da
+  Light.qss: neutri tintati su rampa legno per luminanza, selezione magenta -> ambra/oro,
+  semantici (rosso/arancio/blu/verde) invariati. Auto-scoperto (Preferences > Interface > Style).
+- **`ztorytheme.h`** — palette centralizzata header-only per i pannelli custom: `isLight()`
+  (legge il tema attivo), `wood(lum)` rampa abete, `g(v[,a])` grigio neutro che segue il tema
+  (dark: grigio originale; light: inversione di luminanza sul legno), `activeShot()`/`accent()`.
+- **Strato 2 (timeline animatic)** — `ztoryanimatic.cpp`: 32 grigi neutri ora via `ZtoryTheme::g()`,
+  testo bianco -> testo-tema; scrim "muted"/chip marker restano scuri in entrambi i temi.
+  Shot attivo: oro logo `#ECA61C` in Abete, **magenta `#E0249B` mantenuto nei temi scuri**.
+- STATO: **WIP**. L'oro su legno e la resa generale vanno ancora rifiniti; il Board (storyboardpanel,
+  stylesheet-based) non e' ancora tematizzato. Default invariato (Dark).
+
+### Added (Animate tool — leggibilita' gizmo)
+- **Colore gizmo adattivo allo sfondo** (`tnztools/edittool.cpp/.h`) — `sampleBgColor()` legge
+  via `glReadPixels` il colore medio sotto il centro del gizmo; `gizmoContrastColor()` colora il
+  manipolatore col **complementare a luminanza forzata** (fondo chiaro -> gizmo scuro e viceversa;
+  fondo neutro -> bianco/nero). Si aggiorna mentre si sposta il gizmo. Risolve il gizmo invisibile
+  su disegni di colore simile.
+- **Highlight device sempre distinguibile** — l'elemento in hover (centro/estremi bracci) usa un
+  colore **vivido a luminosita' media** con tinta nettamente diversa dal normale, leggibile sia
+  quando il gizmo e' chiaro sia quando e' scuro.
+- Implementata prima come "casing" a doppio tratto (alone), poi sostituita dalla versione a colore
+  adattivo su richiesta utente; l'infrastruttura casing resta nel codice ma disabilitata.
+
+### Upstream candidates
+- **Gizmo Animate tool adattivo allo sfondo** (`tnztools/edittool.cpp`) — codice core Tahoma2D,
+  il gizmo invisibile su sfondi di colore simile affligge tutti gli utenti. Candidato PR upstream.
+
 ## [2026-06-20b] — Task 55: altezza tracce video/audio regolabile
 
 ### Added

@@ -1293,9 +1293,111 @@ glColor3d(0,0,0);
 
 //-----------------------------------------------------------------------------
 
+void EditTool::gizmoColor(const TPixel32 &c) { tglColor(c); }
+
+// Average framebuffer colour under the gizmo centre, read before the gizmo is
+// drawn so it reflects the artwork behind it.
+TPixel32 EditTool::sampleBgColor(const TPointD &worldCenter) {
+  TPixel32 mid(128, 128, 128, 255);
+  if (!m_viewer) return mid;
+  TPointD pos = m_viewer->worldToPos(worldCenter);  // logical px, top-left origin
+  int dpr     = m_viewer->getDevPixRatio();
+  GLint vp[4] = {0, 0, 0, 0};
+  glGetIntegerv(GL_VIEWPORT, vp);
+  const int S = 7;
+  int x       = vp[0] + (int)(pos.x * dpr);
+  int y       = vp[1] + vp[3] - (int)(pos.y * dpr);  // flip to GL bottom-left
+  x           = std::max(vp[0], std::min(x, vp[0] + vp[2] - S));
+  y           = std::max(vp[1], std::min(y, vp[1] + vp[3] - S));
+  unsigned char buf[S * S * 4];
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadPixels(x, y, S, S, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+  long r = 0, g = 0, b = 0;
+  const int n = S * S;
+  for (int i = 0; i < n; i++) {
+    r += buf[i * 4];
+    g += buf[i * 4 + 1];
+    b += buf[i * 4 + 2];
+  }
+  return TPixel32(int(r / n), int(g / n), int(b / n), 255);
+}
+
+// Pick a gizmo colour that contrasts with the background: complementary hue with
+// luminance forced opposite to the background. Near-neutral backgrounds fall
+// back to black/white. `highlighted` nudges hue + lightness so the highlighted
+// device stays distinguishable from the normal one.
+static TPixel32 gizmoContrastColor(const TPixel32 &bg, bool highlighted) {
+  double r = bg.r / 255.0, g = bg.g / 255.0, b = bg.b / 255.0;
+  double mx = std::max({r, g, b}), mn = std::min({r, g, b}), d = mx - mn;
+  double h = 0.0, s = 0.0, l = (mx + mn) / 2.0;
+  if (d > 1e-6) {
+    s = (l > 0.5) ? d / (2.0 - mx - mn) : d / (mx + mn);
+    if (mx == r)
+      h = (g - b) / d + (g < b ? 6.0 : 0.0);
+    else if (mx == g)
+      h = (b - r) / d + 2.0;
+    else
+      h = (r - g) / d + 4.0;
+    h /= 6.0;
+  }
+  double L = 0.299 * r + 0.587 * g + 0.114 * b;  // perceptual luma
+  double nh, ns, nl;
+  if (highlighted) {
+    // Active device: always a vivid colour at mid lightness, so it stands out
+    // both from the background and from the (near-black / near-white) normal
+    // gizmo colour. Distinct hue from the normal one.
+    nh = h + 0.5 + 0.42;
+    ns = 0.95;
+    nl = (L > 0.5) ? 0.42 : 0.66;
+  } else {
+    // Normal: complementary hue, luminance forced opposite to the background;
+    // neutral (b/w) on near-grey backgrounds.
+    nh = h + 0.5;
+    ns = (s < 0.18) ? 0.0 : 0.85;
+    nl = (L > 0.5) ? 0.14 : 0.94;
+  }
+  nh -= std::floor(nh);
+  auto hue  = [](double p, double q, double t) {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6.0) return p + (q - p) * 6 * t;
+    if (t < 1 / 2.0) return q;
+    if (t < 2 / 3.0) return p + (q - p) * (2 / 3.0 - t) * 6;
+    return p;
+  };
+  double q  = nl < 0.5 ? nl * (1 + ns) : nl + ns - nl * ns;
+  double p  = 2 * nl - q;
+  double rr = hue(p, q, nh + 1 / 3.0), gg = hue(p, q, nh),
+         bb = hue(p, q, nh - 1 / 3.0);
+  return TPixel32(int(rr * 255), int(gg * 255), int(bb * 255), 255);
+}
+
+// Public entry: colour the gizmo to contrast with the background under it, then
+// draw it in a single pass (no casing).
+void EditTool::draw() {
+  if (isPicking() ||
+      TTool::getApplication()->getCurrentFrame()->isEditingLevel()) {
+    m_gizmoNormal = TPixel32(250, 127, 240);
+    m_gizmoHi     = TPixel32(150, 255, 140);
+    drawGizmo();
+    return;
+  }
+  TPixel32 bg(128, 128, 128, 255);
+  if (m_viewer && getXsheet()) {
+    TStageObjectId objId = getObjectId();
+    int frame            = getFrame();
+    TAffine aff          = getXsheet()->getPlacement(objId, frame);
+    TPointD c            = Stage::inch * getXsheet()->getCenter(objId, frame);
+    bg                   = sampleBgColor(aff * c);
+  }
+  m_gizmoNormal = gizmoContrastColor(bg, false);
+  m_gizmoHi     = gizmoContrastColor(bg, true);
+  drawGizmo();
+}
+
 void EditTool::drawMainHandle() {
-  const TPixel32 normalColor(250, 127, 240);
-  const TPixel32 highlightedColor(150, 255, 140);
+  const TPixel32 &normalColor      = m_gizmoNormal;
+  const TPixel32 &highlightedColor = m_gizmoHi;
 
   // collect information
   TXsheet *xsh         = getXsheet();
@@ -1319,7 +1421,7 @@ void EditTool::drawMainHandle() {
   bool dragging = m_dragTool != 0;
 
   // draw center
-  tglColor(m_highlightedDevice == Center ? highlightedColor : normalColor);
+  gizmoColor(m_highlightedDevice == Center ? highlightedColor : normalColor);
   glPushName(Center);
   if (isPicking())
     tglDrawDisk(center, unit * 12);
@@ -1332,7 +1434,7 @@ void EditTool::drawMainHandle() {
   glPopName();
 
   // draw label (column/pegbar name; possibly camera icon)
-  tglColor(normalColor);
+  gizmoColor(normalColor);
   glPushMatrix();
   glTranslated(center.x + unit * 10, center.y - unit * 20, 0);
 
@@ -1349,17 +1451,17 @@ void EditTool::drawMainHandle() {
 
   // draw rotation handle
   const double delta = 30;
-  tglColor(m_highlightedDevice == Rotation ? highlightedColor : normalColor);
+  gizmoColor(m_highlightedDevice == Rotation ? highlightedColor : normalColor);
   glPushName(Rotation);
   TPointD p = center + unit * TPointD(0, delta);
   if (isPicking())
     tglDrawDisk(p, unit * 10);
   else
-    tglDrawDisk(p, unit * 5);
+    tglDrawDisk(p, unit * (m_gizmoCasing ? 6 : 5));
   glPopName();
   if (m_highlightedDevice == Rotation && !dragging && !isPicking())
     drawText(p, unit, "Rotate");
-  tglColor(normalColor);
+  gizmoColor(normalColor);
   tglDrawSegment(p, center);
 
   // draw scale handle
@@ -1368,7 +1470,7 @@ void EditTool::drawMainHandle() {
   double f = 5;
   TRectD hitRect;
 
-  tglColor(m_highlightedDevice == Scale ? highlightedColor : normalColor);
+  gizmoColor(m_highlightedDevice == Scale ? highlightedColor : normalColor);
   glPushName(Scale);
   hitRect =
       TRectD(p.x - (f - 2) * r, p.y - (f - 2) * r, p.x + r * 2, p.y + r * 2);
@@ -1382,14 +1484,14 @@ void EditTool::drawMainHandle() {
   if (m_highlightedDevice == Scale && !dragging && !isPicking())
     drawText(scaleTooltipPos, unit, "Scale");
 
-  tglColor(normalColor);
+  gizmoColor(normalColor);
   tglDrawSegment(p, center);
 
   TPointD q;
   double dd = unit * 10;
 
   q = p + TPointD(dd, dd);
-  tglColor(m_highlightedDevice == ScaleXY ? highlightedColor : normalColor);
+  gizmoColor(m_highlightedDevice == ScaleXY ? highlightedColor : normalColor);
   glPushName(ScaleXY);
   hitRect =
       TRectD(q.x - 2 * r, q.y - 2 * r, q.x + r * (f - 2), q.y + r * (f - 2));
@@ -1404,7 +1506,7 @@ void EditTool::drawMainHandle() {
 
   // draw shear handle
   p = center + m_currentScaleFactor * unit * delta * TPointD(1, -1);
-  tglColor(m_highlightedDevice == Shear ? highlightedColor : normalColor);
+  gizmoColor(m_highlightedDevice == Shear ? highlightedColor : normalColor);
   glPushName(Shear);
   if (isPicking()) {
     glBegin(GL_POLYGON);
@@ -1426,24 +1528,24 @@ void EditTool::drawMainHandle() {
   glPopName();
   if (m_highlightedDevice == Shear && !dragging)
     drawText(p + TPointD(0, -unit * 10), unit, "Shear");
-  tglColor(normalColor);
+  gizmoColor(normalColor);
   tglDrawSegment(p, center);
 
   // draw drawing number handle
   p = center + unit * TPointD(0, -delta);
-  tglColor(m_highlightedDevice == DrawingNumber ? highlightedColor
+  gizmoColor(m_highlightedDevice == DrawingNumber ? highlightedColor
                                                 : normalColor);
   glPushName(DrawingNumber);
   drawText(p + TPointD(-unit * 18, 0), unit, "#");
   glPopName();
   if (m_highlightedDevice == DrawingNumber && !dragging)
     drawText(p + TPointD(0, -unit * 10), unit, "Drawing Number");
-  tglColor(normalColor);
+  gizmoColor(normalColor);
   tglDrawSegment(p + TPointD(0, unit * 11), center);
 
   //
   if (objId.isCamera()) {
-    if (xsh->getStageObjectTree()->getCurrentCameraId() != objId) {
+    if (xsh->getStageObjectTree()->getCurrentCameraId() != objId && !m_gizmoCasing) {
       glEnable(GL_LINE_STIPPLE);
       glColor3d(1.0, 0.0, 1.0);
       glLineStipple(1, 0x1111);
@@ -1465,7 +1567,7 @@ void EditTool::drawMainHandle() {
 }
 //-----------------------------------------------------------------------------
 
-void EditTool::draw() {
+void EditTool::drawGizmo() {
   // the tool is using the coordinate system of the parent object
   // glColor3d(1,0,1);
   // tglDrawCircle(crossHair,50);
@@ -1475,15 +1577,15 @@ void EditTool::draw() {
 
   int devPixRatio = m_viewer->getDevPixRatio();
 
-  glLineWidth(1.0 * devPixRatio);
+  glLineWidth((m_gizmoCasing ? 2.0 : 1.0) * devPixRatio);
 
   // if the column and its children are all hidden, only draw fx gadgets
   if (!transformEnabled()) {
-    m_fxGadgetController->draw(isPicking());
+    if (!m_gizmoCasing) m_fxGadgetController->draw(isPicking());
     return;
   }
-  const TPixel32 normalColor(250, 127, 240);
-  const TPixel32 highlightedColor(150, 255, 140);
+  const TPixel32 &normalColor      = m_gizmoNormal;
+  const TPixel32 &highlightedColor = m_gizmoHi;
 
   // collect information
   TXsheet *xsh = getXsheet();
@@ -1500,7 +1602,7 @@ void EditTool::draw() {
     glPushMatrix();
     glPushName(ZTranslation);
 
-    tglColor(m_highlightedDevice == ZTranslation ? highlightedColor
+    gizmoColor(m_highlightedDevice == ZTranslation ? highlightedColor
                                                  : normalColor);
 
     glPushMatrix();
@@ -1517,7 +1619,7 @@ void EditTool::draw() {
   // Edit-all
   if (m_activeAxis.getValue() == L"All") {
     if (!m_fxGadgetController->isEditingNonZeraryFx()) drawMainHandle();
-    m_fxGadgetController->draw(isPicking());
+    if (!m_gizmoCasing) m_fxGadgetController->draw(isPicking());
     return;
   }
 
@@ -1526,14 +1628,14 @@ void EditTool::draw() {
   /*-- Obtain object's center position --*/
   glPushMatrix();
   tglMultMatrix(parentAff.inv() * TTranslation(aff * TPointD(0.0, 0.0)));
-  tglColor(normalColor);
-  tglDrawDisk(TPointD(0.0, 0.0), unit * 4);
+  gizmoColor(normalColor);
+  tglDrawDisk(TPointD(0.0, 0.0), unit * (m_gizmoCasing ? 5 : 4));
   glPopMatrix();
 
   /*-- Z translation : Draw arrow mark (placed at the camera center) --*/
   if (m_activeAxis.getValue() == L"Position" &&
       m_highlightedDevice == ZTranslation) {
-    tglColor(normalColor);
+    gizmoColor(normalColor);
     glPushMatrix();
     TStageObjectId currentCamId =
         TStageObjectId::CameraId(xsh->getCameraColumnIndex());
@@ -1551,7 +1653,7 @@ void EditTool::draw() {
     glPushMatrix();
     tglMultMatrix(parentAff.inv() * aff * TTranslation(center));
     glScaled(unit, unit, 1);
-    tglColor(normalColor);
+    gizmoColor(normalColor);
     glBegin(GL_LINE_STRIP);
     glVertex2i(-800, 0);
     glVertex2i(800, 0);
@@ -1570,7 +1672,7 @@ void EditTool::draw() {
   bool dragging = m_dragTool != 0;
 
   // draw center
-  tglColor(normalColor);
+  gizmoColor(normalColor);
   glPushName(Center);
   {
     tglDrawCircle(center, unit * 10);
@@ -1590,7 +1692,7 @@ void EditTool::draw() {
   glPopName();
 
   // draw label (column/pegbar name; possibly camera icon)
-  tglColor(normalColor);
+  gizmoColor(normalColor);
   glPushMatrix();
   glTranslated(center.x + unit * 10, center.y - unit * 20, 0);
 
@@ -1612,7 +1714,7 @@ void EditTool::draw() {
 
   /*--- When editing non-active camera, draw its camera frame ---*/
   if (objId.isCamera()) {
-    if (xsh->getStageObjectTree()->getCurrentCameraId() != objId) {
+    if (xsh->getStageObjectTree()->getCurrentCameraId() != objId && !m_gizmoCasing) {
       // TODO : glLineStipple has been deprecated in the OpenGL APIs. Need to be
       // replaced. 2016/1/20 shun_iwasawa
       glEnable(GL_LINE_STIPPLE);
@@ -1633,7 +1735,7 @@ void EditTool::draw() {
 
   glPopMatrix();
 
-  m_fxGadgetController->draw(isPicking());
+  if (!m_gizmoCasing) m_fxGadgetController->draw(isPicking());
 }
 
 //=============================================================================
