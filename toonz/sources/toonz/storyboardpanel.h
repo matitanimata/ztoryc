@@ -246,6 +246,8 @@ public:
   void onExportSpreadsheetCsv();
   void onExportShots();
   void onExportAnimatic();
+  // Storyboard Settings dialog (production/episode/title/technique/numbering).
+  void onStoryboardSettings();
   // Toolbar dedup (Board↔Animatic): hide the shared shot-op buttons
   // (add/delete/merge/copy/clone/paste) when an Animatic panel — the owner of
   // shot ops — lives in the same room. Pure setVisible, no layout rebuild; the

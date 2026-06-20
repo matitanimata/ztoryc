@@ -428,6 +428,20 @@ StartupPopup::StartupPopup(Mode mode)
       m_episodeFld->setPlaceholderText(tr("e.g. EP01"));
       numLay->addWidget(m_episodeFld, 7, 1, 1, 5);
 
+      // Default production technique: new shots inherit it (so the spreadsheet
+      // export already shows the right tasks per shot).
+      numLay->addWidget(new QLabel(tr("Technique:")), 8, 0,
+                        Qt::AlignRight | Qt::AlignVCenter);
+      m_techniqueFld = new QComboBox(m_numberingBox);
+      for (const Technique &t : ZtoryModel::instance()->techniques())
+        m_techniqueFld->addItem(t.name);
+      {
+        int di = m_techniqueFld->findText(
+            ZtoryModel::instance()->defaultTechnique());
+        if (di >= 0) m_techniqueFld->setCurrentIndex(di);
+      }
+      numLay->addWidget(m_techniqueFld, 8, 1, 1, 5);
+
       newSceneLay->addWidget(m_numberingBox, 8, 0, 1, 6);
 
       // Row 9: elastic empty area — absorbs space when numbering box is hidden,
@@ -1095,6 +1109,8 @@ void StartupPopup::onCreateButton() {
     ZtoryModel::instance()->setProduction(m_productionFld->text().trimmed());
     ZtoryModel::instance()->setTitle(m_titleFld->text().trimmed());
     ZtoryModel::instance()->setEpisode(m_episodeFld->text().trimmed());
+    if (m_techniqueFld && !m_techniqueFld->currentText().isEmpty())
+      ZtoryModel::instance()->setDefaultTechnique(m_techniqueFld->currentText());
 
     // In Sequence mode, create a default "sq01" sequence and assign all
     // initial shots to it so they show the SQ field pre-populated.

@@ -2577,6 +2577,8 @@ void MainWindow::defineActions() {
                        QT_TR_NOOP("Shots / Scenes..."), "");
   createMenuFileAction(MI_ZtoryExportAnimatic,
                        QT_TR_NOOP("Animatic..."), "");
+  createMenuXsheetAction(MI_ZtoryStoryboardSettings,
+                         QT_TR_NOOP("Storyboard Settings..."), "", "");
   createToggle(MI_ToggleKeyframesFollowExposure,
                QT_TR_NOOP("Keyframes Follow Exposure"), "",
                Preferences::instance()->isKeyframesFollowExposureEnabled(),

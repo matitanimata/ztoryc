@@ -580,6 +580,7 @@
 #define MI_ZtoryExportSpreadsheetCsv "MI_ZtoryExportSpreadsheetCsv"
 #define MI_ZtoryExportShots "MI_ZtoryExportShots"
 #define MI_ZtoryExportAnimatic "MI_ZtoryExportAnimatic"
+#define MI_ZtoryStoryboardSettings "MI_ZtoryStoryboardSettings"
 
 // Toggle: i keyframe seguono le celle (insert/remove/extend + selezione/drag)
 #define MI_ToggleKeyframesFollowExposure "MI_ToggleKeyframesFollowExposure"

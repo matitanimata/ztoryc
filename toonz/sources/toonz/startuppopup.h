@@ -88,6 +88,7 @@ public:
   QLineEdit *m_productionFld;
   QLineEdit *m_titleFld;
   QLineEdit *m_episodeFld;
+  QComboBox *m_techniqueFld;
   // Numbering widgets to show/hide based on workflow
   QWidget *m_numberingBox;
   QString m_presetListFile;

@@ -5710,6 +5710,53 @@ void StoryboardPanel::onExportSpreadsheetCsv() {
 }
 
 //=============================================================================
+// Storyboard Settings — edit project metadata (production / episode / title),
+// the default production technique, and shot numbering after scene creation.
+//-----------------------------------------------------------------------------
+
+void StoryboardPanel::onStoryboardSettings() {
+  ZtoryModel *model = ZtoryModel::instance();
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Storyboard Settings"));
+  QVBoxLayout *lay = new QVBoxLayout(&dlg);
+
+  QFormLayout *form    = new QFormLayout();
+  QLineEdit *prodEdit  = new QLineEdit(model->production(), &dlg);
+  QLineEdit *titleEdit = new QLineEdit(model->title(), &dlg);
+  QLineEdit *epEdit    = new QLineEdit(model->episode(), &dlg);
+  QComboBox *techCombo = new QComboBox(&dlg);
+  for (const Technique &t : model->techniques()) techCombo->addItem(t.name);
+  {
+    int di = techCombo->findText(model->defaultTechnique());
+    if (di >= 0) techCombo->setCurrentIndex(di);
+  }
+  form->addRow(tr("Production:"),        prodEdit);
+  form->addRow(tr("Title:"),            titleEdit);
+  form->addRow(tr("Episode:"),          epEdit);
+  form->addRow(tr("Default technique:"), techCombo);
+  lay->addLayout(form);
+
+  QPushButton *numBtn = new QPushButton(tr("Shot Numbering…"), &dlg);
+  connect(numBtn, &QPushButton::clicked, this,
+          &StoryboardPanel::onNumberingConfig);
+  lay->addWidget(numBtn);
+
+  QDialogButtonBox *bb = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  lay->addWidget(bb);
+
+  if (dlg.exec() != QDialog::Accepted) return;
+  model->setProduction(prodEdit->text().trimmed());
+  model->setTitle(titleEdit->text().trimmed());
+  model->setEpisode(epEdit->text().trimmed());
+  if (!techCombo->currentText().isEmpty())
+    model->setDefaultTechnique(techCombo->currentText());
+  saveZtoryc();
+}
+
+//=============================================================================
 // Set the production technique of the selected shot(s).  The technique drives
 // which task columns apply in the spreadsheet (others become N/A).  An empty
 // technique means "use the project default".
@@ -5842,6 +5889,15 @@ public:
     if (auto *b = findZtoryBoard()) b->onExportAnimatic(); else warnNoBoard();
   }
 } ztoryExportAnimaticCommand;
+
+class ZtoryStoryboardSettingsCommand final : public MenuItemHandler {
+public:
+  ZtoryStoryboardSettingsCommand()
+      : MenuItemHandler(MI_ZtoryStoryboardSettings) {}
+  void execute() override {
+    if (auto *b = findZtoryBoard()) b->onStoryboardSettings(); else warnNoBoard();
+  }
+} ztoryStoryboardSettingsCommand;
  
  
  

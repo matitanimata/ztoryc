@@ -425,6 +425,7 @@ void TopBar::loadMenubar() {
 
   // Menu' Scene
   QMenu *sceneMenu = addMenu(ShortcutTree::tr("Scene"), m_menuBar);
+  addMenuItem(sceneMenu, MI_ZtoryStoryboardSettings);
   addMenuItem(sceneMenu, MI_SceneSettings);
   addMenuItem(sceneMenu, MI_CameraSettings);
   sceneMenu->addSeparator();
