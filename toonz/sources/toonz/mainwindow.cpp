@@ -2567,6 +2567,16 @@ void MainWindow::defineActions() {
   createMenuXsheetAction(MI_ZtoryNewShotAfter,
                          QT_TR_NOOP("New Shot After Current"), "Shift+N",
                          "sub_enter");
+  createMenuFileAction(MI_ZtoryExportPdf,
+                       QT_TR_NOOP("Storyboard PDF..."), "");
+  createMenuFileAction(MI_ZtoryExportSpreadsheetXlsx,
+                       QT_TR_NOOP("Production Spreadsheet (XLSX)..."), "");
+  createMenuFileAction(MI_ZtoryExportSpreadsheetCsv,
+                       QT_TR_NOOP("Production Spreadsheet (CSV)..."), "");
+  createMenuFileAction(MI_ZtoryExportShots,
+                       QT_TR_NOOP("Shots / Scenes..."), "");
+  createMenuFileAction(MI_ZtoryExportAnimatic,
+                       QT_TR_NOOP("Animatic..."), "");
   createToggle(MI_ToggleKeyframesFollowExposure,
                QT_TR_NOOP("Keyframes Follow Exposure"), "",
                Preferences::instance()->isKeyframesFollowExposureEnabled(),

@@ -317,7 +317,7 @@ attesa dell'integrazione Kitsu (M5).
   dipendenze, valida lo schema dei campi con Franco), **poi QXlsx** (Qt-based, MIT) per
   header colorati / dropdown status / formattazione "production".
 
-**🔺 PRIORITARIO — Finalizzazione UI dedup: toolbar Board↔Animatic [richiesto utente, giugno 2026].**
+**✅ FATTO (2026-06-19, commit `d194149ad`) — Finalizzazione UI dedup: toolbar Board↔Animatic.**
 Niente bottoni shot duplicati tra Board e Animatic nelle room Ztoryc. I comandi shot
 condivisi vanno sulla toolbar della **timeline Animatic, parte SINISTRA** (così cadono
 sotto il Board); i tool di editing a seguire a destra. Questo libera la toolbar del

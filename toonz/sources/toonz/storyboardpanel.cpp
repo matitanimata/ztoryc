@@ -2,6 +2,15 @@
 #include "ztoryshotops.h"
 #include "ztorylightgizmo.h"
 
+// QXlsx (vendored, MIT) — production spreadsheet export.
+#include "xlsxdocument.h"
+#include "xlsxformat.h"
+#include "xlsxdatavalidation.h"
+#include "xlsxconditionalformatting.h"
+#include "xlsxworksheet.h"
+#include "xlsxcellrange.h"
+#include "xlsxcellreference.h"
+
 #include "tundo.h"
 #include "tapp.h"
 #include "tenv.h"
@@ -63,6 +72,7 @@
 #include <QDrag>
 #include <QMimeData>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QFileDialog>
 #include <QPainter>
 #include <QPdfWriter>
@@ -71,6 +81,7 @@
 #include <QResizeEvent>
 #include <QWindow>
 #include <QFile>
+#include <QTextStream>
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
 #include <QRegularExpression>
@@ -1052,6 +1063,20 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_exportPdfButton->setToolTip(tr("Export PDF"));
   m_exportPdfButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
 
+    m_exportSpreadsheetButton = new QToolButton();
+  m_exportSpreadsheetButton->setIcon(createQIcon("ztoryc_export_spreadsheet"));
+  m_exportSpreadsheetButton->setIconSize(QSize(20, 20));
+  m_exportSpreadsheetButton->setFixedSize(28, 28);
+  m_exportSpreadsheetButton->setToolTip(tr("Export Spreadsheet (XLSX)"));
+  m_exportSpreadsheetButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
+
+    m_techniqueButton = new QToolButton();
+  m_techniqueButton->setIcon(createQIcon("ztoryc_technique"));
+  m_techniqueButton->setIconSize(QSize(20, 20));
+  m_techniqueButton->setFixedSize(28, 28);
+  m_techniqueButton->setToolTip(tr("Set Technique for selected shot(s)"));
+  m_techniqueButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
+
     m_exportShotsButton = new QToolButton();
   m_exportShotsButton->setIcon(createQIcon("ztoryc_export_shots"));
   m_exportShotsButton->setIconSize(QSize(20, 20));
@@ -1144,7 +1169,9 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   tb->addSpacing(8);
   tb->addWidget(m_camLabelButton);
   tb->addSpacing(8);
+  tb->addWidget(m_techniqueButton);
   tb->addWidget(m_exportPdfButton);
+  tb->addWidget(m_exportSpreadsheetButton);
   tb->addWidget(m_exportShotsButton);
   tb->addWidget(m_exportAnimaticButton);
 
@@ -1272,6 +1299,8 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   connect(m_cloneButton,  &QToolButton::clicked, this, &StoryboardPanel::onCloneShot);
   connect(m_pasteButton,  &QToolButton::clicked, this, &StoryboardPanel::onPasteShot);
   connect(m_exportPdfButton, &QToolButton::clicked, this, &StoryboardPanel::onExportPdf);
+  connect(m_exportSpreadsheetButton, &QToolButton::clicked, this, &StoryboardPanel::onExportSpreadsheet);
+  connect(m_techniqueButton, &QToolButton::clicked, this, &StoryboardPanel::onSetTechnique);
   connect(m_exportShotsButton, &QToolButton::clicked, this, &StoryboardPanel::onExportShots);
   connect(m_exportAnimaticButton, &QToolButton::clicked, this, &StoryboardPanel::onExportAnimatic);
   connect(m_camLabelButton, &QToolButton::toggled, this, [this](bool on) {
@@ -1488,6 +1517,8 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     {m_pasteButton,          "Paste the last copied shot after the current selection"},
     {m_mergeButton,          "Merge two adjacent shots into one (durations are summed)"},
     {m_exportPdfButton,      "Export the Board as PDF: thumbnails, dialog, and per-panel/shot durations"},
+    {m_exportSpreadsheetButton, "Export a production spreadsheet (.xlsx): one row per shot with thumbnail, timing, technique and per-task Kitsu status"},
+    {m_techniqueButton,      "Assign a production technique (Tradigital, Cut-out, 3D…) to the selected shot(s); it drives which tasks apply in the spreadsheet"},
     {m_exportShotsButton,    "Export each shot as a standalone scene"},
     {m_exportAnimaticButton, "Export the full animatic as a video with audio"},
     {m_lightEditButton,      "Light direction: drag to place the conic arrow (tail = source); wheel tilts it toward camera/background, Shift+wheel sets the beam spread (hard/soft light). Right-click removes it"},
@@ -2060,14 +2091,31 @@ void StoryboardPanel::saveZtoryc() {
   {
     ZtoryModel *model = ZtoryModel::instance();
     if (!model->production().isEmpty() || !model->title().isEmpty() ||
-        !model->pdfLogoPath().isEmpty() || model->pdfNoLogo()) {
+        !model->episode().isEmpty() ||
+        !model->pdfLogoPath().isEmpty() || model->pdfNoLogo() ||
+        !model->defaultTechnique().isEmpty()) {
       xml.writeStartElement("project");
       xml.writeAttribute("production", model->production());
       xml.writeAttribute("title",      model->title());
+      if (!model->episode().isEmpty())
+        xml.writeAttribute("episode", model->episode());
+      if (!model->defaultTechnique().isEmpty())
+        xml.writeAttribute("defaultTechnique", model->defaultTechnique());
       if (!model->pdfLogoPath().isEmpty())
         xml.writeAttribute("pdfLogo", model->pdfLogoPath());
       if (model->pdfNoLogo())
         xml.writeAttribute("pdfNoLogo", "1");
+      xml.writeEndElement();
+    }
+    // Technique presets (editable) — persisted so user edits survive reload.
+    if (!model->techniques().empty()) {
+      xml.writeStartElement("techniques");
+      for (const Technique &t : model->techniques()) {
+        xml.writeStartElement("technique");
+        xml.writeAttribute("name",  t.name);
+        xml.writeAttribute("tasks", t.taskTypes.join("|"));
+        xml.writeEndElement();
+      }
       xml.writeEndElement();
     }
   }
@@ -2111,6 +2159,21 @@ void StoryboardPanel::saveZtoryc() {
     xml.writeAttribute("sequenceId", shot.data.sequenceId);
     if (shot.data.transitionFrames > 0)
       xml.writeAttribute("transition", QString::number(shot.data.transitionFrames));
+    // Production tracking (spreadsheet / Kitsu).
+    if (!shot.data.technique.isEmpty())
+      xml.writeAttribute("technique", shot.data.technique);
+    if (!shot.data.notes.isEmpty())
+      xml.writeTextElement("shotNotes", shot.data.notes);
+    if (!shot.data.vfxNotes.isEmpty())
+      xml.writeTextElement("shotVfxNotes", shot.data.vfxNotes);
+    for (auto it = shot.data.tasks.constBegin(); it != shot.data.tasks.constEnd(); ++it) {
+      xml.writeStartElement("task");
+      xml.writeAttribute("type",   it.key());
+      xml.writeAttribute("status", ZtoryModel::taskStatusLabel(it.value().status));
+      if (!it.value().assignee.isEmpty())
+        xml.writeAttribute("assignee", it.value().assignee);
+      xml.writeEndElement();
+    }
     for (int pi = 0; pi < (int)shot.data.panels.size(); pi++) {
       const PanelData &pd = shot.data.panels[pi];
       xml.writeStartElement("panel");
@@ -2176,6 +2239,7 @@ void StoryboardPanel::loadZtoryc() {
   // below if the file contains a <project> element.
   ZtoryModel::instance()->setProduction("");
   ZtoryModel::instance()->setTitle("");
+  ZtoryModel::instance()->setEpisode("");
   ZtoryModel::instance()->setPdfLogoPath("");
   ZtoryModel::instance()->setPdfNoLogo(false);
   // Start each scene's sequence list fresh so sequences never leak across
@@ -2185,6 +2249,7 @@ void StoryboardPanel::loadZtoryc() {
 
   QXmlStreamReader xml(&file);
   int si = -1, pi = -1;
+  std::vector<Technique> loadedTechs;  // technique presets from file (if any)
   while (!xml.atEnd()) {
     xml.readNext();
     if (xml.isStartElement()) {
@@ -2192,8 +2257,19 @@ void StoryboardPanel::loadZtoryc() {
         auto a = xml.attributes();
         ZtoryModel::instance()->setProduction(a.value("production").toString());
         ZtoryModel::instance()->setTitle(a.value("title").toString());
+        ZtoryModel::instance()->setEpisode(a.value("episode").toString());
         ZtoryModel::instance()->setPdfLogoPath(a.value("pdfLogo").toString());
         ZtoryModel::instance()->setPdfNoLogo(a.value("pdfNoLogo").toInt() != 0);
+        if (a.hasAttribute("defaultTechnique"))
+          ZtoryModel::instance()->setDefaultTechnique(
+              a.value("defaultTechnique").toString());
+      }
+      else if (xml.name() == QLatin1String("technique")) {
+        Technique t;
+        t.name      = xml.attributes().value("name").toString();
+        t.taskTypes = xml.attributes().value("tasks").toString()
+                          .split('|', Qt::SkipEmptyParts);
+        if (!t.name.isEmpty()) loadedTechs.push_back(t);
       }
       else if (xml.name() == QLatin1String("scriptFile")) {
         scriptFromFile = xml.readElementText();
@@ -2231,6 +2307,8 @@ void StoryboardPanel::loadZtoryc() {
           m_shots[si].data.orderIndex       = xml.attributes().value("order").toInt();
           m_shots[si].data.sequenceId       = xml.attributes().value("sequenceId").toString();
           m_shots[si].data.transitionFrames = xml.attributes().value("transition").toInt();
+          m_shots[si].data.technique        = xml.attributes().value("technique").toString();
+          m_shots[si].data.tasks.clear();   // refilled by <task> children below
           // sequenceId is synced here (ZtoryModel may already have shots);
           // transitionFrames is synced later in refreshFromScene after syncShotPanels.
           if (si < ZtoryModel::instance()->shotCount())
@@ -2289,6 +2367,26 @@ void StoryboardPanel::loadZtoryc() {
           }
         }
       }
+      else if (xml.name() == QLatin1String("task")) {
+        if (si >= 0 && si < (int)m_shots.size()) {
+          auto a = xml.attributes();
+          QString type = a.value("type").toString();
+          if (!type.isEmpty()) {
+            TaskState ts;
+            ts.status   = ZtoryModel::taskStatusFromLabel(a.value("status").toString());
+            ts.assignee = a.value("assignee").toString();
+            m_shots[si].data.tasks.insert(type, ts);
+          }
+        }
+      }
+      else if (xml.name() == QLatin1String("shotNotes")) {
+        QString t = xml.readElementText();
+        if (si >= 0 && si < (int)m_shots.size()) m_shots[si].data.notes = t;
+      }
+      else if (xml.name() == QLatin1String("shotVfxNotes")) {
+        QString t = xml.readElementText();
+        if (si >= 0 && si < (int)m_shots.size()) m_shots[si].data.vfxNotes = t;
+      }
       else if (xml.name() == QLatin1String("dialog")) {
         QString t = xml.readElementText();
         if (si >= 0 && si < (int)m_shots.size() &&
@@ -2310,6 +2408,11 @@ void StoryboardPanel::loadZtoryc() {
     }
   }
   file.close();
+
+  // Replace the seeded technique presets with the ones saved in this scene
+  // (only when present, so old files keep the built-in defaults).
+  if (!loadedTechs.empty())
+    ZtoryModel::instance()->techniques() = loadedTechs;
 
   // ── SFH-explosion repair ─────────────────────────────────────────────────
   // The Stop-Frame-Hold bug (fixed in v0.2.x) wrote one PanelData entry per
@@ -4803,8 +4906,10 @@ void StoryboardPanel::onExportPdf() {
     QFormLayout *form    = new QFormLayout();
     QLineEdit *prodEdit  = new QLineEdit(model->production(), &dlg);
     QLineEdit *titleEdit = new QLineEdit(model->title(), &dlg);
+    QLineEdit *epEdit    = new QLineEdit(model->episode(), &dlg);
     form->addRow(tr("Production:"), prodEdit);
     form->addRow(tr("Title:"),      titleEdit);
+    form->addRow(tr("Episode:"),    epEdit);
     lay->addLayout(form);
 
     QGroupBox *logoBox    = new QGroupBox(tr("Header logo"), &dlg);
@@ -4872,6 +4977,7 @@ void StoryboardPanel::onExportPdf() {
 
     model->setProduction(prodEdit->text());
     model->setTitle(titleEdit->text());
+    model->setEpisode(epEdit->text());
     model->setPdfNoLogo(noLogoChk->isChecked());
     model->setPdfLogoPath(logoEdit->text().trimmed());
     saveZtoryc();  // persist metadata + logo choice in the .ztoryc
@@ -5004,9 +5110,11 @@ void StoryboardPanel::onExportPdf() {
     painter.setPen(QPen(QColor(180,180,180), mm2px(0.2)));
     painter.drawLine(cx - mm2px(1.5), mm2px(2), cx - mm2px(1.5), headerH - mm2px(2));
 
-    // Production + Title fields (each takes ~1/3 of remaining width)
+    // Production + Title (+ Episode when set) fields, splitting remaining width.
+    QString epName = ZtoryModel::instance()->episode();
+    int numSecs    = epName.isEmpty() ? 2 : 3;
     int fieldAreaW = pageW - cx - mm2px(38);
-    int secW = fieldAreaW / 2;
+    int secW = fieldAreaW / numSecs;
 
     auto drawHdrField = [&](int x, int w, const QString &label, const QString &value) {
       painter.setFont(QFont("Arial", 5.5));
@@ -5021,8 +5129,10 @@ void StoryboardPanel::onExportPdf() {
       painter.setPen(QPen(QColor(180,180,180), mm2px(0.2)));
       painter.drawLine(x, lineY, x + w - mm2px(3), lineY);
     };
-    drawHdrField(cx,        secW, tr("Production:"), prodName);
-    drawHdrField(cx + secW, secW, tr("Title:"),      titleName);
+    drawHdrField(cx,            secW, tr("Production:"), prodName);
+    drawHdrField(cx + secW,     secW, tr("Title:"),      titleName);
+    if (!epName.isEmpty())
+      drawHdrField(cx + 2*secW, secW, tr("Episode:"),    epName);
 
     // Page box (right)
     int pbX = pageW - mm2px(36);
@@ -5219,6 +5329,423 @@ void StoryboardPanel::onExportPdf() {
       tr("Exported to:\n%1").arg(path));
 }
 
+//=============================================================================
+// Export Production Spreadsheet (.xlsx) — Kitsu-aligned shot tracking.
+// One row per shot (thumbnail of the first panel, sequence, shot, timing,
+// workflow, notes) plus a status+assignee pair per task type.  Task columns
+// are the union of the task sets of every technique used; tasks that don't
+// apply to a shot's technique render as a greyed N/A cell.  Status cells get a
+// coloured fill and a TODO/READY/WIP/WFA/RETAKE/DONE dropdown.
+//-----------------------------------------------------------------------------
+
+void StoryboardPanel::onExportSpreadsheet() {
+  if (m_shots.empty()) {
+    QMessageBox::information(this, tr("Export Spreadsheet"),
+                            tr("No shots to export."));
+    return;
+  }
+  ZtoryModel *model = ZtoryModel::instance();
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  TXsheet *mainXsh  = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
+
+  // Suggested filename: production[_episode]_spreadsheet.xlsx
+  QString base = model->production().trimmed();
+  QString ep   = model->episode().trimmed();
+  if (!ep.isEmpty()) base = (base.isEmpty() ? ep : base + "_" + ep);
+  if (base.isEmpty()) base = "spreadsheet"; else base += "_spreadsheet";
+  base.replace(' ', '_').replace('/', '_');
+  QString startDir = scene ? QString::fromStdWString(
+      scene->getScenePath().getParentDir().getWideString()) : QString();
+  QString suggested = startDir.isEmpty() ? base + ".xlsx"
+                                         : startDir + "/" + base + ".xlsx";
+  QString path = QFileDialog::getSaveFileName(
+      this, tr("Export Production Spreadsheet"), suggested,
+      tr("Excel Spreadsheet (*.xlsx)"));
+  if (path.isEmpty()) return;
+  if (!path.endsWith(".xlsx", Qt::CaseInsensitive)) path += ".xlsx";
+
+  using namespace QXlsx;
+
+  // ── Resolve per-shot technique + task columns (task data lives in the Board
+  //    copy m_shots[].data, so resolve locally rather than via ZtoryModel). ───
+  auto techOf = [&](int si) -> QString {
+    const QString &t = m_shots[si].data.technique;
+    return t.isEmpty() ? model->defaultTechnique() : t;
+  };
+  auto taskTypesOf = [&](int si) -> QStringList {
+    const Technique *t = model->findTechnique(techOf(si));
+    return t ? t->taskTypes : QStringList();
+  };
+  std::set<QString> usedSet;
+  for (int si = 0; si < (int)m_shots.size(); si++)
+    for (const QString &tt : taskTypesOf(si)) usedSet.insert(tt);
+  QStringList taskCols;
+  for (const QString &tt : ZtoryModel::canonicalTaskOrder())
+    if (usedSet.count(tt)) { taskCols << tt; usedSet.erase(tt); }
+  for (const QString &tt : usedSet) taskCols << tt;  // custom types last
+
+  auto statusColor = [](TaskStatus s) -> QColor {
+    switch (s) {
+    case TaskStatus::Ready:  return QColor("#F2C744");  // yellow
+    case TaskStatus::Wip:    return QColor("#8E44AD");  // purple
+    case TaskStatus::Wfa:    return QColor("#2E86DE");  // blue
+    case TaskStatus::Retake: return QColor("#E67E22");  // orange
+    case TaskStatus::Done:   return QColor("#27AE60");  // green
+    case TaskStatus::Todo:
+    default:                 return QColor("#9E9E9E");  // grey
+    }
+  };
+
+  Document xlsx;
+
+  const QStringList fixedCols = {
+      tr("Thumbnail"), tr("Sequence"), tr("Shot"),  tr("Frames"),
+      tr("Sec/Fr"),    tr("Workflow"), tr("Notes"), tr("VFX Notes")};
+  const int firstTaskCol = fixedCols.size() + 1;  // 1-based
+  const int headerRow    = 4;
+  const int firstDataRow = 5;
+  const int fps          = model->fps() > 0 ? model->fps() : 24;
+
+  Format titleFmt; titleFmt.setFontBold(true); titleFmt.setFontSize(14);
+  Format subFmt;   subFmt.setFontBold(true);
+  Format hdrFmt;
+  hdrFmt.setFontBold(true);
+  hdrFmt.setFontColor(Qt::white);
+  hdrFmt.setPatternBackgroundColor(QColor("#2C3E50"));
+  hdrFmt.setHorizontalAlignment(Format::AlignHCenter);
+  hdrFmt.setVerticalAlignment(Format::AlignVCenter);
+  hdrFmt.setTextWrap(true);
+  Format cellFmt; cellFmt.setVerticalAlignment(Format::AlignVCenter);
+  cellFmt.setTextWrap(true);
+  Format centerFmt;
+  centerFmt.setHorizontalAlignment(Format::AlignHCenter);
+  centerFmt.setVerticalAlignment(Format::AlignVCenter);
+  Format naFmt;
+  naFmt.setHorizontalAlignment(Format::AlignHCenter);
+  naFmt.setVerticalAlignment(Format::AlignVCenter);
+  naFmt.setFontColor(QColor("#BBBBBB"));
+  naFmt.setPatternBackgroundColor(QColor("#F0F0F0"));
+
+  const QString statusList = "\"TODO,READY,WIP,WFA,RETAKE,DONE\"";
+  const TaskStatus allStatuses[] = {TaskStatus::Todo,   TaskStatus::Ready,
+                                    TaskStatus::Wip,    TaskStatus::Wfa,
+                                    TaskStatus::Retake, TaskStatus::Done};
+
+  // Writes one (already-current) sheet: title, header, one row per shot in
+  // shotIdxs, then status dropdowns + colour-by-value CF + auto-filter.
+  auto writeSheet = [&](const QString &sheetName, const QString &subtitle,
+                        const std::vector<int> &shotIdxs, const QStringList &cols) {
+    xlsx.write(1, 1, model->production().isEmpty() ? tr("Production Spreadsheet")
+                                                   : model->production(), titleFmt);
+    if (!subtitle.isEmpty()) xlsx.write(2, 1, subtitle, subFmt);
+
+    for (int c = 0; c < fixedCols.size(); c++)
+      xlsx.write(headerRow, c + 1, fixedCols[c], hdrFmt);
+    for (int t = 0; t < cols.size(); t++) {
+      int sc = firstTaskCol + t * 2;
+      xlsx.write(headerRow, sc,     cols[t],                hdrFmt);
+      xlsx.write(headerRow, sc + 1, cols[t] + tr(" — Who"), hdrFmt);
+    }
+    xlsx.setRowHeight(headerRow, 28);
+    xlsx.setColumnWidth(1, 23); xlsx.setColumnWidth(2, 12);
+    xlsx.setColumnWidth(3, 10); xlsx.setColumnWidth(4, 8);
+    xlsx.setColumnWidth(5, 11); xlsx.setColumnWidth(6, 15);
+    xlsx.setColumnWidth(7, 26); xlsx.setColumnWidth(8, 26);
+    for (int t = 0; t < cols.size(); t++) {
+      xlsx.setColumnWidth(firstTaskCol + t * 2,     11);
+      xlsx.setColumnWidth(firstTaskCol + t * 2 + 1, 12);
+    }
+
+    int row = firstDataRow;
+    for (int si : shotIdxs) {
+      const ShotData &sd = m_shots[si].data;
+
+      // Thumbnail of the first panel.
+      QImage thumb;
+      if (mainXsh && !sd.panels.empty()) {
+        TXsheet *subXsh = nullptr;
+        for (int r = 0; r <= mainXsh->getFrameCount(); r++) {
+          TXshCell cell = mainXsh->getCell(r, sd.xsheetColumn);
+          if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+            subXsh = cell.m_level->getChildLevel()->getXsheet();
+            break;
+          }
+        }
+        if (subXsh) {
+          QPixmap px = IconGenerator::renderXsheetFrame(
+              subXsh, sd.panels[0].startFrame, TDimension(140, 79));
+          if (!px.isNull()) {
+            // Exact pixel size + pinned DPI so QXlsx computes a predictable EMU
+            // size (renderXsheetFrame may return a retina/2× image).
+            thumb = px.toImage().scaled(128, 72, Qt::KeepAspectRatio,
+                                        Qt::SmoothTransformation);
+            thumb.setDotsPerMeterX(3780);  // 96 dpi
+            thumb.setDotsPerMeterY(3780);
+          }
+        }
+      }
+      // insertImage uses a 0-based cell anchor (write() is 1-based).
+      if (!thumb.isNull()) xlsx.insertImage(row - 1, 0, thumb);
+      xlsx.setRowHeight(row, 60);
+
+      QString seqLabel;
+      if (!sd.sequenceId.isEmpty())
+        if (SequenceData *seq = model->findSequence(sd.sequenceId))
+          seqLabel = seq->label;
+      xlsx.write(row, 2, seqLabel,   centerFmt);
+      xlsx.write(row, 3, sd.label(), centerFmt);
+
+      int frames = sd.totalDuration();
+      xlsx.write(row, 4, frames, centerFmt);
+      // Sec/Fr = shot DURATION as seconds:frames (not a film position).
+      xlsx.write(row, 5, QString("%1:%2").arg(frames / fps)
+                             .arg(frames % fps, 2, 10, QChar('0')), centerFmt);
+
+      // Notes: shot-level note if set, else the first panel's note.
+      QString notesVal = sd.notes;
+      if (notesVal.isEmpty() && !sd.panels.empty()) notesVal = sd.panels[0].notes;
+      xlsx.write(row, 6, techOf(si),  centerFmt);   // Workflow (read-only)
+      xlsx.write(row, 7, notesVal,    cellFmt);
+      xlsx.write(row, 8, sd.vfxNotes, cellFmt);
+
+      QStringList applicable = taskTypesOf(si);
+      for (int t = 0; t < cols.size(); t++) {
+        int sc = firstTaskCol + t * 2;
+        const QString &tt = cols[t];
+        if (!applicable.contains(tt)) {
+          xlsx.write(row, sc,     QString("N/A"), naFmt);
+          xlsx.write(row, sc + 1, QString(),      naFmt);
+          continue;
+        }
+        TaskState ts = sd.tasks.value(tt);  // missing → default Todo
+        Format sf;
+        sf.setHorizontalAlignment(Format::AlignHCenter);
+        sf.setVerticalAlignment(Format::AlignVCenter);
+        sf.setFontBold(true);
+        xlsx.write(row, sc,     ZtoryModel::taskStatusLabel(ts.status), sf);
+        xlsx.write(row, sc + 1, ts.assignee, centerFmt);
+      }
+      row++;
+    }
+
+    const int lastRow = row - 1;
+    if (lastRow < firstDataRow) return;
+
+    // Status dropdown (TODO/…/DONE) on every status column.
+    for (int t = 0; t < cols.size(); t++) {
+      int sc = firstTaskCol + t * 2;
+      DataValidation dv(DataValidation::List);
+      dv.setFormula1(statusList);
+      dv.addRange(firstDataRow, sc, lastRow, sc);
+      dv.setAllowBlank(true);
+      xlsx.addDataValidation(dv);
+    }
+
+    // One CF block over all status columns: the fill colour follows the value.
+    if (!cols.isEmpty()) {
+      ConditionalFormatting cf;
+      for (TaskStatus s : allStatuses) {
+        Format f;
+        f.setPatternBackgroundColor(statusColor(s));
+        f.setFontColor(s == TaskStatus::Ready ? QColor(Qt::black)
+                                              : QColor(Qt::white));
+        f.setFontBold(true);
+        cf.addHighlightCellsRule(ConditionalFormatting::Highlight_ContainsText,
+                                 ZtoryModel::taskStatusLabel(s), f);
+      }
+      for (int t = 0; t < cols.size(); t++)
+        cf.addRange(firstDataRow, firstTaskCol + t * 2,
+                    lastRow, firstTaskCol + t * 2);
+      xlsx.addConditionalFormatting(cf);
+    }
+
+    // Auto-filter on the header row + matching _FilterDatabase defined name
+    // (LibreOffice needs the name to actually show the filter dropdowns).
+    int lastCol = cols.isEmpty() ? fixedCols.size()
+                                 : firstTaskCol + cols.size() * 2 - 1;
+    if (QXlsx::Worksheet *ws = xlsx.currentWorksheet())
+      ws->setAutoFilter(QXlsx::CellRange(headerRow, 1, lastRow, lastCol));
+    QString fdb = QString("='%1'!%2:%3").arg(sheetName)
+        .arg(QXlsx::CellReference(headerRow, 1).toString(true, true))
+        .arg(QXlsx::CellReference(lastRow, lastCol).toString(true, true));
+    xlsx.defineName("_xlnm._FilterDatabase", fdb, QString(), sheetName);
+  };  // writeSheet
+
+  auto sanitizeSheet = [](QString n) -> QString {
+    for (QChar c : QString("\\/?*:[]")) n.replace(c, ' ');
+    return n.simplified().left(31);
+  };
+
+  // Overview sheet: every shot, union of all used task columns.
+  const QString overviewName = tr("All Shots");
+  xlsx.renameSheet(xlsx.sheetNames().first(), overviewName);
+  std::vector<int> allShots;
+  for (int si = 0; si < (int)m_shots.size(); si++) allShots.push_back(si);
+  QString subtitle;
+  if (!model->title().isEmpty())   subtitle  = model->title();
+  if (!model->episode().isEmpty()) subtitle += (subtitle.isEmpty() ? QString()
+                                     : QString("  ·  ")) + tr("Episode ") + model->episode();
+  writeSheet(overviewName, subtitle, allShots, taskCols);
+
+  // One sheet per technique actually used, with only that technique's tasks.
+  QStringList usedTechs;
+  for (int si = 0; si < (int)m_shots.size(); si++) {
+    QString tn = techOf(si);
+    if (!usedTechs.contains(tn)) usedTechs << tn;
+  }
+  for (const QString &tn : usedTechs) {
+    const Technique *t = model->findTechnique(tn);
+    if (!t) continue;
+    std::vector<int> shotIdxs;
+    for (int si = 0; si < (int)m_shots.size(); si++)
+      if (techOf(si) == tn) shotIdxs.push_back(si);
+    QString sname = sanitizeSheet(tn);
+    if (sname.compare(overviewName, Qt::CaseInsensitive) == 0) sname += " (wf)";
+    if (!xlsx.addSheet(sname)) continue;
+    writeSheet(sname, tn, shotIdxs, t->taskTypes);
+  }
+
+  if (xlsx.saveAs(path))
+    QMessageBox::information(this, tr("Export Spreadsheet"),
+                            tr("Exported to:\n%1").arg(path));
+  else
+    QMessageBox::warning(this, tr("Export Spreadsheet"),
+                         tr("Failed to write:\n%1").arg(path));
+}
+
+//=============================================================================
+// Export the same production data as a plain CSV (no thumbnails / colours) so
+// productions can import it into their own templates or tracking systems.
+//-----------------------------------------------------------------------------
+
+void StoryboardPanel::onExportSpreadsheetCsv() {
+  if (m_shots.empty()) {
+    QMessageBox::information(this, tr("Export Spreadsheet CSV"),
+                            tr("No shots to export."));
+    return;
+  }
+  ZtoryModel *model = ZtoryModel::instance();
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+
+  QString base = model->production().trimmed();
+  QString ep   = model->episode().trimmed();
+  if (!ep.isEmpty()) base = (base.isEmpty() ? ep : base + "_" + ep);
+  if (base.isEmpty()) base = "spreadsheet"; else base += "_spreadsheet";
+  base.replace(' ', '_').replace('/', '_');
+  QString startDir = scene ? QString::fromStdWString(
+      scene->getScenePath().getParentDir().getWideString()) : QString();
+  QString suggested = startDir.isEmpty() ? base + ".csv"
+                                         : startDir + "/" + base + ".csv";
+  QString path = QFileDialog::getSaveFileName(
+      this, tr("Export Production Spreadsheet (CSV)"), suggested,
+      tr("CSV (*.csv)"));
+  if (path.isEmpty()) return;
+  if (!path.endsWith(".csv", Qt::CaseInsensitive)) path += ".csv";
+
+  auto techOf = [&](int si) -> QString {
+    const QString &t = m_shots[si].data.technique;
+    return t.isEmpty() ? model->defaultTechnique() : t;
+  };
+  auto taskTypesOf = [&](int si) -> QStringList {
+    const Technique *t = model->findTechnique(techOf(si));
+    return t ? t->taskTypes : QStringList();
+  };
+  std::set<QString> usedSet;
+  for (int si = 0; si < (int)m_shots.size(); si++)
+    for (const QString &tt : taskTypesOf(si)) usedSet.insert(tt);
+  QStringList taskCols;
+  for (const QString &tt : ZtoryModel::canonicalTaskOrder())
+    if (usedSet.count(tt)) { taskCols << tt; usedSet.erase(tt); }
+  for (const QString &tt : usedSet) taskCols << tt;
+
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    QMessageBox::warning(this, tr("Export Spreadsheet CSV"),
+                         tr("Failed to write:\n%1").arg(path));
+    return;
+  }
+  QTextStream out(&file);
+  auto csv = [](QString s) -> QString {
+    if (s.contains(',') || s.contains('"') || s.contains('\n')) {
+      s.replace('"', "\"\"");
+      return "\"" + s + "\"";
+    }
+    return s;
+  };
+
+  // Header.
+  QStringList header = {tr("Sequence"), tr("Shot"), tr("Frames"), tr("Sec/Fr"),
+                        tr("Workflow"), tr("Notes"), tr("VFX Notes")};
+  for (const QString &tt : taskCols) { header << tt << (tt + tr(" Who")); }
+  QStringList headerOut;
+  for (const QString &h : header) headerOut << csv(h);
+  out << headerOut.join(',') << '\n';
+
+  int fps = model->fps() > 0 ? model->fps() : 24;
+  for (int si = 0; si < (int)m_shots.size(); si++) {
+    const ShotData &sd = m_shots[si].data;
+    QString seqLabel;
+    if (!sd.sequenceId.isEmpty())
+      if (SequenceData *seq = model->findSequence(sd.sequenceId))
+        seqLabel = seq->label;
+    int frames = sd.totalDuration();
+    QString notesVal = sd.notes;
+    if (notesVal.isEmpty() && !sd.panels.empty()) notesVal = sd.panels[0].notes;
+    QStringList rowOut;
+    rowOut << csv(seqLabel) << csv(sd.label()) << QString::number(frames)
+           << csv(QString("%1:%2").arg(frames / fps)
+                      .arg(frames % fps, 2, 10, QChar('0')))
+           << csv(techOf(si)) << csv(notesVal) << csv(sd.vfxNotes);
+    QStringList applicable = taskTypesOf(si);
+    for (const QString &tt : taskCols) {
+      if (!applicable.contains(tt)) { rowOut << "N/A" << QString(); continue; }
+      TaskState ts = sd.tasks.value(tt);
+      rowOut << ZtoryModel::taskStatusLabel(ts.status) << csv(ts.assignee);
+    }
+    out << rowOut.join(',') << '\n';
+  }
+  file.close();
+  QMessageBox::information(this, tr("Export Spreadsheet CSV"),
+                          tr("Exported to:\n%1").arg(path));
+}
+
+//=============================================================================
+// Set the production technique of the selected shot(s).  The technique drives
+// which task columns apply in the spreadsheet (others become N/A).  An empty
+// technique means "use the project default".
+//-----------------------------------------------------------------------------
+
+void StoryboardPanel::onSetTechnique() {
+  std::vector<int> sel(m_selectedIndices.begin(), m_selectedIndices.end());
+  if (sel.empty() && m_selectedShotIndex >= 0) sel.push_back(m_selectedShotIndex);
+  if (sel.empty()) {
+    QMessageBox::information(this, tr("Set Technique"),
+                            tr("Select one or more shots first."));
+    return;
+  }
+  ZtoryModel *model = ZtoryModel::instance();
+  QStringList items;
+  items << tr("(project default: %1)").arg(model->defaultTechnique());
+  for (const Technique &t : model->techniques()) items << t.name;
+
+  int cur = 0;
+  const QString &curTech = m_shots[sel.front()].data.technique;
+  if (!curTech.isEmpty()) {
+    int idx = items.indexOf(curTech);
+    if (idx > 0) cur = idx;
+  }
+  bool ok = false;
+  QString choice = QInputDialog::getItem(
+      this, tr("Set Technique"),
+      tr("Production technique for the selected shot(s):"), items, cur, false, &ok);
+  if (!ok) return;
+  QString tech = (choice == items.front()) ? QString() : choice;
+  for (int si : sel)
+    if (si >= 0 && si < (int)m_shots.size())
+      m_shots[si].data.technique = tech;
+  saveZtoryc();
+}
+
 class StoryboardPanelFactory final : public TPanelFactory {
 public:
   StoryboardPanelFactory() : TPanelFactory("Storyboard") {}
@@ -5260,6 +5787,61 @@ public:
     }
   }
 } ztoryNewShotAfterCommand;
+
+// Export commands (File ▸ Export ▸ Ztoryc) — route to the live Board panel.
+namespace {
+StoryboardPanel *findZtoryBoard() {
+  for (QWidget *w : QApplication::allWidgets())
+    if (auto *board = qobject_cast<StoryboardPanel *>(w)) return board;
+  return nullptr;
+}
+void warnNoBoard() {
+  QMessageBox::warning(nullptr, QObject::tr("Ztoryc Export"),
+      QObject::tr("Open the Ztoryc Board at least once before exporting."));
+}
+}  // namespace
+
+class ZtoryExportPdfCommand final : public MenuItemHandler {
+public:
+  ZtoryExportPdfCommand() : MenuItemHandler(MI_ZtoryExportPdf) {}
+  void execute() override {
+    if (auto *b = findZtoryBoard()) b->onExportPdf(); else warnNoBoard();
+  }
+} ztoryExportPdfCommand;
+
+class ZtoryExportSpreadsheetXlsxCommand final : public MenuItemHandler {
+public:
+  ZtoryExportSpreadsheetXlsxCommand()
+      : MenuItemHandler(MI_ZtoryExportSpreadsheetXlsx) {}
+  void execute() override {
+    if (auto *b = findZtoryBoard()) b->onExportSpreadsheet(); else warnNoBoard();
+  }
+} ztoryExportSpreadsheetXlsxCommand;
+
+class ZtoryExportSpreadsheetCsvCommand final : public MenuItemHandler {
+public:
+  ZtoryExportSpreadsheetCsvCommand()
+      : MenuItemHandler(MI_ZtoryExportSpreadsheetCsv) {}
+  void execute() override {
+    if (auto *b = findZtoryBoard()) b->onExportSpreadsheetCsv(); else warnNoBoard();
+  }
+} ztoryExportSpreadsheetCsvCommand;
+
+class ZtoryExportShotsCommand final : public MenuItemHandler {
+public:
+  ZtoryExportShotsCommand() : MenuItemHandler(MI_ZtoryExportShots) {}
+  void execute() override {
+    if (auto *b = findZtoryBoard()) b->onExportShots(); else warnNoBoard();
+  }
+} ztoryExportShotsCommand;
+
+class ZtoryExportAnimaticCommand final : public MenuItemHandler {
+public:
+  ZtoryExportAnimaticCommand() : MenuItemHandler(MI_ZtoryExportAnimatic) {}
+  void execute() override {
+    if (auto *b = findZtoryBoard()) b->onExportAnimatic(); else warnNoBoard();
+  }
+} ztoryExportAnimaticCommand;
  
  
  

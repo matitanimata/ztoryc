@@ -87,6 +87,7 @@ public:
   QLabel *m_seqPrefixLabel;
   QLineEdit *m_productionFld;
   QLineEdit *m_titleFld;
+  QLineEdit *m_episodeFld;
   // Numbering widgets to show/hide based on workflow
   QWidget *m_numberingBox;
   QString m_presetListFile;

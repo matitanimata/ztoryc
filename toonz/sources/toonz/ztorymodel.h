@@ -3,6 +3,7 @@
 #include <QPixmap>
 #include <QString>
 #include <QStringList>
+#include <QMap>
 #include <vector>
 #include <set>
 #include "toonz/txshchildlevel.h"  // for TXshLevelP
@@ -94,6 +95,27 @@ struct PanelData {
   PanelData() : startFrame(0), duration(24) {}
 };
 
+// ─── Production tasks (Kitsu-aligned) ─────────────────────────────────────────
+// A shot's task list depends on its production technique (Tradigital, Cut-out,
+// …).  Each technique defines an ordered set of task types; each shot picks a
+// technique and gets that set.  Statuses mirror Kitsu's pipeline so the data
+// maps cleanly onto a future Kitsu sync (M5).
+
+enum class TaskStatus { Todo, Ready, Wip, Wfa, Retake, Done };
+
+// One task type's state inside a shot.
+struct TaskState {
+  TaskStatus status = TaskStatus::Todo;
+  QString    assignee;   // person assigned (free text / Kitsu user name)
+};
+
+// A named production technique = ordered list of task-type names.
+// Presets are editable and persisted in the .ztoryc.
+struct Technique {
+  QString     name;        // "Tradigital", "Cut-out", …
+  QStringList taskTypes;   // ordered task-type names for this technique
+};
+
 struct ShotData {
   int                    xsheetColumn;
   QString                shotNumber;    // legacy field — kept for XML backward compat
@@ -103,6 +125,12 @@ struct ShotData {
   std::vector<PanelData> panels;
 
   int transitionFrames = 0; // total overlap frames for cross-dissolve (T/2 tail in A, T/2 head in B)
+
+  // ── Production tracking (spreadsheet / Kitsu) ──
+  QString                  technique;  // Technique::name; empty = project default
+  QMap<QString, TaskState> tasks;      // keyed by task-type name (only its technique's types)
+  QString                  notes;      // spreadsheet "Notes" (general)
+  QString                  vfxNotes;   // spreadsheet "VFX Notes"
 
   ShotData() : xsheetColumn(0) {}
 
@@ -160,6 +188,9 @@ class ZtoryModel : public QObject {
   QString                           m_scriptFile;
   QString                           m_production;  // user-defined production name
   QString                           m_title;       // user-defined project title
+  QString                           m_episode;     // user-defined episode
+  std::vector<Technique>            m_techniques;       // editable presets (seeded with defaults)
+  QString                           m_defaultTechnique; // project default technique name
   QString                           m_pdfLogoPath; // custom PDF header logo (abs or scene-relative); empty = default Ztoryc logo
   bool                              m_pdfNoLogo = false;  // true = export PDF with no logo at all
   ZtoryWorkflow                     m_workflow = ZtoryWorkflow::Tradigital;
@@ -195,8 +226,30 @@ public:
   void setFps(int fps) { if (fps > 0) m_fps = fps; }
   QString production() const { return m_production; }
   QString title()      const { return m_title; }
+  QString episode()    const { return m_episode; }
   void setProduction(const QString &s) { m_production = s; }
   void setTitle(const QString &s)      { m_title = s; }
+  void setEpisode(const QString &s)    { m_episode = s; }
+
+  // ── Production techniques / tasks (Kitsu-aligned) ──────────────────────────
+  const std::vector<Technique> &techniques() const { return m_techniques; }
+  std::vector<Technique>       &techniques()       { return m_techniques; }
+  void seedDefaultTechniques();                       // populate presets if empty
+  const Technique *findTechnique(const QString &name) const;
+  QString defaultTechnique() const { return m_defaultTechnique; }
+  void    setDefaultTechnique(const QString &s) { m_defaultTechnique = s; }
+  // Effective technique name for a shot (its own, else project default).
+  QString techniqueForShot(int shotIdx) const;
+  // Ordered task-type names that apply to a shot (from its technique).
+  QStringList taskTypesForShot(int shotIdx) const;
+  // Union of task-type names across all techniques actually used by the shots,
+  // in canonical column order — the spreadsheet's task columns.
+  QStringList spreadsheetTaskColumns() const;
+  // Canonical ordering of all known task types (drives spreadsheet column order).
+  static const QStringList &canonicalTaskOrder();
+  // Status <-> label (TODO/READY/WIP/WFA/RETAKE/DONE) for persistence + export.
+  static QString    taskStatusLabel(TaskStatus s);
+  static TaskStatus taskStatusFromLabel(const QString &s);
   // PDF export logo: empty path + !noLogo → default Ztoryc logo; path set → custom; noLogo → none.
   QString pdfLogoPath() const { return m_pdfLogoPath; }
   void    setPdfLogoPath(const QString &s) { m_pdfLogoPath = s; }

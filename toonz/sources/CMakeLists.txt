@@ -763,6 +763,9 @@ add_subdirectory(tnztools)
 
 add_subdirectory(${SDKROOT}/lzo/driver lzodriver)
 
+# QXlsx (MIT) — vendored for the Ztoryc production worksheet export (.xlsx).
+add_subdirectory(${SDKROOT}/QXlsx qxlsx)
+
 add_subdirectory(toonz)
 add_subdirectory(tcleanupper)
 add_subdirectory(tcomposer)

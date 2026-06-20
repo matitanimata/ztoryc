@@ -357,6 +357,14 @@ void TopBar::loadMenubar() {
     addMenuItem(exportMenu, MI_StopMotionExportImageSequence);
     addMenuItem(exportMenu, MI_ExportTvpJson);
     addMenuItem(exportMenu, MI_ExportCameraTrack);
+    QMenu *ztoryExportMenu = exportMenu->addMenu(tr("Ztoryc"));
+    {
+      addMenuItem(ztoryExportMenu, MI_ZtoryExportPdf);
+      addMenuItem(ztoryExportMenu, MI_ZtoryExportSpreadsheetXlsx);
+      addMenuItem(ztoryExportMenu, MI_ZtoryExportSpreadsheetCsv);
+      addMenuItem(ztoryExportMenu, MI_ZtoryExportShots);
+      addMenuItem(ztoryExportMenu, MI_ZtoryExportAnimatic);
+    }
   }
   fileMenu->addSeparator();
   addMenuItem(fileMenu, MI_PrintXsheet);

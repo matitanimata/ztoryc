@@ -99,6 +99,92 @@ ZtoryModel::ZtoryModel() : m_fps(24) {
   // Xsheet + Script show in shot mode.
   m_animaticSidePanels = QStringList{ "Storyboard" };
   m_shotSidePanels     = QStringList{ "Xsheet", "ZtoryScriptPanel" };
+  seedDefaultTechniques();
+}
+
+// ─── Production techniques / tasks ──────────────────────────────────────────
+
+void ZtoryModel::seedDefaultTechniques() {
+  if (!m_techniques.empty()) return;
+  // Editable presets — tasks per technique.  Stop-motion / Traditional / Live
+  // are reasonable starting points to be refined later.
+  m_techniques = {
+    {"Tradigital",  {"Layout", "Key Animation", "Inbetweening", "Clean up",
+                     "Ink & Paint", "VFX", "Render", "Compositing"}},
+    {"Traditional", {"Layout", "Key Animation", "Inbetweening", "Clean up",
+                     "Scan & Clean", "Ink & Paint", "X-Sheet", "VFX",
+                     "Render", "Compositing"}},
+    {"Cut-out",     {"Layout", "Animation", "VFX", "Render", "Compositing"}},
+    {"3D / CGI",    {"Layout", "Animation", "Lighting", "Render", "Compositing"}},
+    {"Stop-motion", {"Set-up", "Layout", "Animation", "Rig Removal",
+                     "Compositing"}},
+    // Generic keeps every task active; Live is a trimmed live-action set.
+    {"Generic", canonicalTaskOrder()},
+    {"Live",    {"Layout", "Shooting", "Editing", "VFX", "Compositing"}},
+  };
+  if (m_defaultTechnique.isEmpty()) m_defaultTechnique = "Tradigital";
+}
+
+const Technique *ZtoryModel::findTechnique(const QString &name) const {
+  for (const auto &t : m_techniques)
+    if (t.name.compare(name, Qt::CaseInsensitive) == 0) return &t;
+  return nullptr;
+}
+
+QString ZtoryModel::techniqueForShot(int shotIdx) const {
+  if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return m_defaultTechnique;
+  const QString &t = m_shots[shotIdx].technique;
+  return t.isEmpty() ? m_defaultTechnique : t;
+}
+
+QStringList ZtoryModel::taskTypesForShot(int shotIdx) const {
+  const Technique *t = findTechnique(techniqueForShot(shotIdx));
+  return t ? t->taskTypes : QStringList();
+}
+
+const QStringList &ZtoryModel::canonicalTaskOrder() {
+  // Master column order: union of all known task types, stable across exports.
+  static const QStringList order = {
+    "Set-up", "Layout", "Key Animation", "Animation", "Inbetweening",
+    "Clean up", "Scan & Clean", "Ink & Paint", "X-Sheet", "Lighting",
+    "Rig Removal", "Shooting", "Editing", "VFX", "Render", "Compositing",
+  };
+  return order;
+}
+
+QStringList ZtoryModel::spreadsheetTaskColumns() const {
+  // Collect every task type used by any shot's technique, then order them by
+  // the canonical sequence (unknown/custom types appended at the end).
+  std::set<QString> used;
+  for (int si = 0; si < (int)m_shots.size(); si++)
+    for (const QString &tt : taskTypesForShot(si)) used.insert(tt);
+  QStringList cols;
+  for (const QString &tt : canonicalTaskOrder())
+    if (used.count(tt)) { cols << tt; used.erase(tt); }
+  for (const QString &tt : used) cols << tt;  // any custom types not in canon
+  return cols;
+}
+
+QString ZtoryModel::taskStatusLabel(TaskStatus s) {
+  switch (s) {
+  case TaskStatus::Ready:  return "READY";
+  case TaskStatus::Wip:    return "WIP";
+  case TaskStatus::Wfa:    return "WFA";
+  case TaskStatus::Retake: return "RETAKE";
+  case TaskStatus::Done:   return "DONE";
+  case TaskStatus::Todo:
+  default:                 return "TODO";
+  }
+}
+
+TaskStatus ZtoryModel::taskStatusFromLabel(const QString &s) {
+  const QString u = s.trimmed().toUpper();
+  if (u == "READY")  return TaskStatus::Ready;
+  if (u == "WIP")    return TaskStatus::Wip;
+  if (u == "WFA")    return TaskStatus::Wfa;
+  if (u == "RETAKE") return TaskStatus::Retake;
+  if (u == "DONE")   return TaskStatus::Done;
+  return TaskStatus::Todo;
 }
 
 // ─── Sequences ────────────────────────────────────────────────────────────────

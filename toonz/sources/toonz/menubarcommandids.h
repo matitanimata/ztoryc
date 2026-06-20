@@ -575,6 +575,11 @@
 #define MI_OpenCrashReportFolder "MI_OpenCrashReportFolder"
 
 #define MI_ZtoryNewShotAfter "MI_ZtoryNewShotAfter"
+#define MI_ZtoryExportPdf "MI_ZtoryExportPdf"
+#define MI_ZtoryExportSpreadsheetXlsx "MI_ZtoryExportSpreadsheetXlsx"
+#define MI_ZtoryExportSpreadsheetCsv "MI_ZtoryExportSpreadsheetCsv"
+#define MI_ZtoryExportShots "MI_ZtoryExportShots"
+#define MI_ZtoryExportAnimatic "MI_ZtoryExportAnimatic"
 
 // Toggle: i keyframe seguono le celle (insert/remove/extend + selezione/drag)
 #define MI_ToggleKeyframesFollowExposure "MI_ToggleKeyframesFollowExposure"

@@ -1,3 +1,82 @@
+## [2026-06-20] — Export to Spreadsheet (production tracking Kitsu-aligned, XLSX+CSV)
+
+### Added
+- **Matrice tecnica→task nel modello** (`ztorymodel.h/.cpp`): `TaskStatus` (TODO/READY/WIP/WFA/
+  RETAKE/DONE), `TaskState{status,assignee}`, `Technique{name,taskTypes}`. `ShotData` +=
+  `technique`, `QMap<QString,TaskState> tasks`, `notes`, `vfxNotes`. ZtoryModel += `m_episode`,
+  preset tecniche editabili + helper. Persistito nel `.ztoryc` (path attivo
+  `StoryboardPanel::saveZtoryc/loadZtoryc`): `<project>` episode/defaultTechnique, blocco
+  `<techniques>`, per-shot `technique` + `<task>` + `<shotNotes>`/`<shotVfxNotes>`.
+- **Tecniche preset** (Kitsu-aligned, per-shot, editabili): Tradigital, Traditional (scan&clean/
+  ink&paint/x-sheet), Cut-out, 3D/CGI, Stop-motion (Set-up→…→Rig Removal), Generic (tutti i task),
+  Live (ridotto). Bottone toolbar Board **Set Technique** (multi-selezione) + colonna Workflow.
+- **Export Spreadsheet XLSX** (`onExportSpreadsheet`) via **QXlsx 1.5.1 vendorato** (MIT,
+  `thirdparty/QXlsx`, CMakeLists minimale Qt5): foglio **All Shots** (tutti gli shot, unione task,
+  N/A grigio dove non pertinente) + **uno sheet per tecnica usata** (solo i suoi task). Per riga:
+  thumbnail primo panel, seq, shot, frames, Sec/Fr (durata), Workflow, Notes (dal primo panel),
+  VFX Notes; per ogni task colonna status (colore Kitsu via **conditional formatting** che segue
+  il valore) + assegnatario. Dropdown status + **autofilter** (header).
+- **Export Spreadsheet CSV** (`onExportSpreadsheetCsv`) per import in sistemi di production mgmt.
+- **Menu File ▸ Export ▸ Ztoryc**: Storyboard PDF, Spreadsheet XLSX, Spreadsheet CSV, Shots/Scenes,
+  Animatic (comandi globali che instradano al Board).
+- **Campo Episode** in creazione scena (`startuppopup`) + dialog/testata PDF.
+
+### Fixed (patch su QXlsx vendorato — cercare "Ztoryc:" nei commenti)
+- Conditional formatting: le regole via API non avevano `priority` (tutte 0 → Excel/LibreOffice
+  ne tenevano una sola). Ora `priority=i+1` nel saveToXml.
+- Aggiunto `Worksheet::setAutoFilter()` (QXlsx non aveva autofilter) + emit `<autoFilter>` nell'ordine
+  schema corretto, + defined-name `_xlnm._FilterDatabase` per LibreOffice.
+- Thumbnail: `insertImage` è 0-based (vs `write()` 1-based) → immagini shiftate; fix `insertImage(row-1,0)`
+  + DPI 96 pinnata (renderXsheetFrame può tornare immagine retina 2×).
+
+### Notes
+- Terminologia: rinominato "worksheet"→"spreadsheet" in tutto il codice Ztoryc (non nei token QXlsx).
+- Limite: cambiare Workflow nel foglio non aggiorna gli N/A (export statico) → Workflow reso read-only;
+  la tecnica si setta in-app. I colori status invece sono dinamici (CF).
+- **DA FARE prossima sessione** (richiesto a fine 2026-06-20): (1) tecnica di default nelle opzioni
+  di creazione scena; (2) voce "Storyboard Settings" nel menu per editare produzione/episodio/titolo/
+  tecnica/numbering dopo la creazione. Dettagli in memory `project_worksheet_export`.
+- Tecniche riviste = solo su scene NUOVE (le scene esistenti hanno i preset salvati nel .ztoryc).
+
+## [2026-06-19b] — Task 53 shot ops in edit-shot mode + Task 54 logo custom PDF + footer branding
+
+### Added
+- **Task 53 — Shot ops dall'interno di una sub-scena (edit-shot mode)** (`ztoryanimatic.cpp`).
+  Le 6 shot ops dell'Animatic (Copy/Clone/Cut/Paste/Delete/Merge) erano bloccate silenziosamente
+  da `if (!ZtoryModel::assertMainXsheet(false)) return;` quando si era dentro uno shot. Rimosso il
+  guard e garantito che ogni op operi sul main xsheet:
+  - **Copy/Clone** (non distruttivi): leggono da `scene->getChildStack()->getTopXsheet()` senza
+    chiudere la sub-scena → l'utente resta in edit-mode.
+  - **Cut/Paste/Delete/Merge** (strutturali): chiudono la sub-scena (`while ancestorCount>0 →
+    MI_CloseChild`) poi operano sul main, esattamente come fanno già le op del Board. Cut/Paste
+    avevano già il loop di chiusura (era solo dopo l'assert, irraggiungibile); a Delete aggiunto
+    il loop; Merge usava già `getTopXsheet()`, aggiunto il close-children + rimosso l'assert.
+- **Task 54 — Logo custom + metadata nell'export PDF** (`storyboardpanel.cpp`, `ztorymodel.h`).
+  Premendo Export PDF appare un dialog "Export Storyboard PDF" con:
+  - **Production** e **Title** editabili (prima nel modello ma senza UI) → finiscono nell'header.
+  - **Header logo**: campo path + Browse (PNG/SVG/JPG/BMP) + Clear, checkbox "No logo (clean
+    export)", **preview live** con warning ⚠ se il file non esiste.
+  - Scelte persistite per-progetto nel `.ztoryc` (`<project>` attr `pdfLogo`/`pdfNoLogo`),
+    ricaricate alla riapertura scena. Nuovi campi modello `m_pdfLogoPath`/`m_pdfNoLogo` +
+    accessor; helper `resolvePdfLogoFile()` (assoluto o relativo alla cartella scena).
+  - Logo header: custom valido → custom; rotto → fallback al logo Ztoryc (export non si rompe mai);
+    "No logo" → header pulito.
+- **Footer PDF branding sempre presente** (richiesta utente): il footer "Made with Ztoryc" + logo
+  Ztoryc resta **indipendente** dalla scelta header (logo footer hardcoded su `ztoryc_about.png`).
+  Aggiunto link al repo: `Made with Ztoryc  ·  github.com/matitanimata/ztoryc` (URL in colore link;
+  risulta cliccabile nei viewer PDF testati dall'utente).
+
+### Fixed
+- **Anteprime Board non rigenerate dopo shot ops dall'Animatic** finché non si scrollava (il fix
+  del 2026-06-19 copriva solo le op nate dal Board). Causa: quando l'op nasce dall'Animatic il
+  Board non riceve un ciclo di paint/layout, quindi al `singleShot(0)` il `QGridLayout` non era
+  ancora ricalcolato → `mapTo()` su geometrie stale → test viewport-intersect fallisce → niente
+  render. Fix in `updateVisiblePreviews()`: `m_grid->activate()` forza il flush del layout
+  pendente prima del test geometrico. Punto unico, copre tutti i chiamanti.
+
+### Notes
+- **Prossimo**: task 55 (altezza tracce video/audio regolabile) → 56 (Thumbnail Room, milestone).
+
 ## [2026-06-19] — Toolbar dedup Board↔Animatic + overflow scroll + UI polish + ottimizzazione task list
 
 ### Added

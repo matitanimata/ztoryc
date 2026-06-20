@@ -419,8 +419,14 @@ StartupPopup::StartupPopup(Mode mode)
       numLay->addWidget(new QLabel(tr("Title:")), 6, 0,
                         Qt::AlignRight | Qt::AlignVCenter);
       m_titleFld = new QLineEdit(m_numberingBox);
-      m_titleFld->setPlaceholderText(tr("e.g. Episode or Sequence Title"));
+      m_titleFld->setPlaceholderText(tr("e.g. Sequence or Project Title"));
       numLay->addWidget(m_titleFld, 6, 1, 1, 5);
+
+      numLay->addWidget(new QLabel(tr("Episode:")), 7, 0,
+                        Qt::AlignRight | Qt::AlignVCenter);
+      m_episodeFld = new QLineEdit(m_numberingBox);
+      m_episodeFld->setPlaceholderText(tr("e.g. EP01"));
+      numLay->addWidget(m_episodeFld, 7, 1, 1, 5);
 
       newSceneLay->addWidget(m_numberingBox, 8, 0, 1, 6);
 
@@ -1088,6 +1094,7 @@ void StartupPopup::onCreateButton() {
     ZtoryModel::instance()->setNumberingConfig(numCfg);
     ZtoryModel::instance()->setProduction(m_productionFld->text().trimmed());
     ZtoryModel::instance()->setTitle(m_titleFld->text().trimmed());
+    ZtoryModel::instance()->setEpisode(m_episodeFld->text().trimmed());
 
     // In Sequence mode, create a default "sq01" sequence and assign all
     // initial shots to it so they show the SQ field pre-populated.

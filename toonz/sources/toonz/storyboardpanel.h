@@ -152,6 +152,8 @@ class StoryboardPanel final : public TPanel {
 QToolButton *m_numberingBtn;   // ⚙ Numbering config button
   QTimer      *m_panelDetectTimer;
   QToolButton *m_exportPdfButton;
+  QToolButton *m_exportSpreadsheetButton;
+  QToolButton *m_techniqueButton;
   QToolButton *m_exportShotsButton;
   QToolButton *m_exportAnimaticButton;
   QToolButton *m_camLabelButton;   // toggle camera-move type labels on thumbnails
@@ -237,6 +239,13 @@ public:
   // enters the new shot directly so drawing can continue without leaving
   // the SHOTEDITOR room.
   void newShotAfterCurrent();
+  // Export entry points — also invoked from the File ▸ Export ▸ Ztoryc menu
+  // commands, so they must be public.
+  void onExportPdf();
+  void onExportSpreadsheet();
+  void onExportSpreadsheetCsv();
+  void onExportShots();
+  void onExportAnimatic();
   // Toolbar dedup (Board↔Animatic): hide the shared shot-op buttons
   // (add/delete/merge/copy/clone/paste) when an Animatic panel — the owner of
   // shot ops — lives in the same room. Pure setVisible, no layout rebuild; the
@@ -273,9 +282,7 @@ protected:
   void onNumberingChanged(int comboIndex);
   void onNumberingConfig();   // opens the numbering settings dialog
   void onRefreshPreviews();
-  void onExportPdf();
-  void onExportShots();
-  void onExportAnimatic();
+  void onSetTechnique();
   void onXsheetChanged();
   void onModelResequenced(); // called when ZtoryModel::resequenceXsheet runs
   void onMergeShots();            // merge selected shots (Board → xsheet + sub-scene merge)
