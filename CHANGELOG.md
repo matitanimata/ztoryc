@@ -13,6 +13,22 @@
 - **VERIFICATO su Tahoma2D stock** -> bug upstream (feature PR #2124, merge `67f0ef7f4`), NON regressione
   Ztoryc. Candidato PR upstream ad alto impatto (vedi AGENTS.md).
 
+### Added / Changed (Animate tool, stessa sessione)
+- **Drawing # — comportamento corretto**: il riferimento del numero di disegno viene letto dalla
+  CELLA (non dal param `T_DrawingNumber`, che e' 0 senza keyframe). Un click secco o un micro-drag
+  non cambia nulla e non aggiunge keyframe; la chiave nasce solo quando il drag passa davvero a un
+  altro disegno. Clamp minimo a **1** (0 = cella vuota). Allineato al campo Drawing# di tool options.
+- **Maniglia "Drawing #" nascosta di default** (`m_showDrawingNumber`, env `EditToolShowDrawingNumber=0`):
+  gate su disegno **+** `glPushName` -> sparisce anche dal pick (non cliccabile per sbaglio).
+  Riattivabile dalle opzioni tool. Nota: upstream non collegava affatto la flag al disegno.
+- **Gizmo Animate adattivo allo sfondo (ripristinato)**: `sampleBgColor` (glReadPixels al centro) +
+  `gizmoContrastColor` (complementare a luminanza forzata; b/n su sfondi neutri); highlight del device
+  in hover sempre vivido a luminosita' media, leggibile sia su gizmo chiaro che scuro. Era stato tolto
+  per errore col revert anti-crash; il crash era il Drawing#, non questo.
+- **Animate tool disabilitato nel viewer animatic** (`ZtoryAnimaticViewer::eventFilter` sul SceneViewer):
+  ingoia click/drag sinistro e tablet quando il tool attivo e' `T_Edit` -> niente trasformazioni nella
+  vista timing/preview; pan, zoom e hover restano attivi. Hint al primo click.
+
 ## [2026-06-20c] — Tema chiaro "Abete" (WIP) + Animate tool: gizmo leggibile su ogni sfondo
 
 ### Added (WIP — tema Abete)
