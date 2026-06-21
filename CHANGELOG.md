@@ -22,6 +22,16 @@
 - **Play si fermava alla fine della 1ª traccia audio** con due tracce di lunghezza diversa
   (`getMasterAudioUsecs`): leggeva il `processedUsecs` della PRIMA colonna, che si congela quando
   quella traccia finisce. Fix: usare il **massimo** tra tutte le colonne (il player ancora attivo).
+- **Play si fermava a fine audio se il video è più lungo** (`onDrawFrame`): il playback è
+  audio-clocked, quindi col video oltre l'audio il playhead si bloccava a fine audio invece di
+  arrivare al mark-out. Fix: quando il clock audio è congelato (audio finito) ma il mark-out è
+  ancora avanti, avanza sul **wall-clock della FlipConsole** (`m_lastMasterAudioUsecs` rileva se
+  l'audio avanza ancora).
+- **Export/render marcava la scena come modificata** (`onExportAnimatic`): il ripristino delle
+  output properties post-render chiamava `notifySceneChanged()` (default `setDirty=true`) → asterisco
+  spurio dopo ogni export. Fix: `notifySceneChanged(false)` (ripristino net-zero, niente dirty).
+  NOTA: resta aperto un bug intermittente non riprodotto — asterisco che non si pulisce sul MAIN
+  mentre si lavora sull'animatic (in sotto-scena ok). Da indagare con repro o log su setDirtyFlag.
 
 ### Changed
 - **Export Animatic ↔ Render Settings: sync bidirezionale live** (`onExportAnimatic`).
