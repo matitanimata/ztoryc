@@ -5089,10 +5089,14 @@ void StoryboardPanel::onExportAnimatic() {
   // copied it into the MovieRenderer at setup time.
   ZtoryModel::instance()->burnIn() = ZtoryBurnInConfig();
 
-  // Restore original output properties
+  // Restore original output properties.  Use notifySceneChanged(false): a render
+  // (and restoring prop to its pre-export value) must NOT mark the scene dirty —
+  // otherwise the unsaved "*" reappears after every export and a following Save
+  // can't clear it.  We still emit sceneChanged() to refresh the open Render
+  // Settings popup.
   prop->setPath(origPath);
   prop->setRange(origR0, origR1, origStep);
-  TApp::instance()->getCurrentScene()->notifySceneChanged();
+  TApp::instance()->getCurrentScene()->notifySceneChanged(false);
 }
 
 // Resolve a (possibly scene-relative) PDF logo path to an absolute file path.

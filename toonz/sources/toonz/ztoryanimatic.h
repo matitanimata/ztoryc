@@ -632,6 +632,10 @@ private:
   // 0-based animatic frame at which the current play session started.
   // Used by onDrawFrame to compute the audio-master target frame.
   int m_playStartFrame = 0;
+  // Last master-audio processedUsecs seen by onDrawFrame.  When it stops
+  // advancing the audio has finished: if the mark-out is still ahead (video
+  // longer than audio) we keep advancing on the FlipConsole wall-clock.
+  qint64 m_lastMasterAudioUsecs = 0;
 
   // Previous FlipConsole frame (1-based) seen by onDrawFrame.
   // Used to detect loop-back (frame drops below previous value).

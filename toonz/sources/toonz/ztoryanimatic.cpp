@@ -3191,6 +3191,7 @@ void ZtoryAnimaticViewer::onDrawFrame(
         // Restart audio from FlipConsole's new start frame (0-based).
         int newStart = frame - 1;
         m_playStartFrame = newStart;
+        m_lastMasterAudioUsecs = 0;  // fresh audio-clock for the new segment
         if (m_sound && m_hasSoundtrack && mainXsh2) {
           ToonzScene *sc3 = TApp::instance()->getCurrentScene()->getScene();
           double fps3 = sc3
@@ -3225,26 +3226,26 @@ void ZtoryAnimaticViewer::onDrawFrame(
         // since they all start at the same time.
         TXsheet *mainXsh = ctrl->mainXsheet();
         qint64 audioUsecs = ctrl->getMasterAudioUsecs();
-        if (audioUsecs > 0) {
+        // Mark-out: use the animatic's own play range (NOT XsheetGUI::getPlayRange
+        // which can be stale from a sub-scene/previous session), falling back to
+        // the animatic length.  Markers are cleared inside a sub-scene.
+        int markOut = animaticFrameCount(mainXsh) - 1;
+        {
+          int ar0, ar1;
+          ctrl->getAnimaticPlayRange(ar0, ar1);
+          if (ar1 >= 0) markOut = ar1;
+        }
+        if (audioUsecs > 0 && audioUsecs != m_lastMasterAudioUsecs) {
+          // Audio is still advancing → it is the authoritative A/V clock.
           targetFrame = m_playStartFrame + (int)(audioUsecs * m_fps / 1000000.0);
-          int totalFrames = animaticFrameCount(mainXsh);
-          // Also clamp to mark-out so that loop respects it.
-          // Only apply the mark-out when at the top (main xsheet) level;
-          // inside a sub-scene, updateAnimaticFrameMarkers() cleared markers.
-          int markOut = totalFrames - 1;
-          // Use animatic's own play range for the video mark-out clamp —
-          // NOT XsheetGUI::getPlayRange which can be stale (e.g. set while
-          // inside a sub-scene or from a previous session) and stop playback
-          // prematurely even after resequenceXsheet() updated the duration.
-          {
-            int ar0, ar1;
-            ctrl->getAnimaticPlayRange(ar0, ar1);
-            if (ar1 >= 0) markOut = ar1;
-          }
           targetFrame = std::max(0, std::min(targetFrame, markOut));
+          m_lastMasterAudioUsecs = audioUsecs;
         } else {
-          // DAC not yet started — use FlipConsole frame as fallback.
-          targetFrame = frame - 1;
+          // The DAC has not started yet (usecs == 0) OR the audio has finished
+          // (usecs frozen).  Drive the playhead from the FlipConsole wall-clock
+          // so a video that is LONGER than the audio keeps playing to the
+          // mark-out instead of freezing at the end of the audio.
+          targetFrame = std::max(0, std::min(frame - 1, markOut));
         }
       }
     } else {
@@ -3458,6 +3459,7 @@ void ZtoryAnimaticViewer::onAnimaticPlayingStatusChanged(bool playing) {
   // (int)(audioUsecs * fps / 1e6).  Captured BEFORE play() so that
   // processedUsecs() = 0 at the moment the first onDrawFrame fires.
   m_playStartFrame = startFrame;
+  m_lastMasterAudioUsecs = 0;  // reset audio-clock tracker for the new play
 
   // Start streaming audio from current frame to animatic end in one shot.
   // TSoundOutputDeviceImp uses QAudioOutput with a 100 ms hardware buffer,
@@ -3523,6 +3525,7 @@ void ZtoryAnimaticViewer::restartAudioIfPlaying() {
   m_samplesPerFrame = spf;
   m_first           = false;
   m_playStartFrame  = startFrame;
+  m_lastMasterAudioUsecs = 0;  // reset audio-clock tracker for the new play
 
   if (!TXsheet::isMainAudioEnabled()) return;
   // Per-column audio playback only.  Each column's player carries audible
