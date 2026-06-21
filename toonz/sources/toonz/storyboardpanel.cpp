@@ -4748,6 +4748,16 @@ void StoryboardPanel::onExportAnimatic() {
   };
   refreshFormatNote();
   fmtNote->setStyleSheet("color:#ddd; font-size:11px;");
+  // The native Output Settings popup (opened by "Render Settings…") is
+  // non-modal: the user can change format/fps/resolution while this dialog is
+  // open. There is no per-property changed signal to connect to, so poll the
+  // live TOutputProperties and keep the summary in sync in real time.
+  {
+    auto *fmtTimer = new QTimer(&dlg);
+    QObject::connect(fmtTimer, &QTimer::timeout, &dlg,
+                     [refreshFormatNote]() { refreshFormatNote(); });
+    fmtTimer->start(400);
+  }
   {
     auto *fmtRow = new QHBoxLayout;
     fmtRow->addWidget(fmtNote, 1);
@@ -4784,6 +4794,55 @@ void StoryboardPanel::onExportAnimatic() {
   nameRow->addWidget(nameEdit, 1);
   nameRow->addWidget(nameNote);
   mainLay->addLayout(nameRow);
+
+  // ── Bidirectional sync of the export destination with Render Settings ──────
+  // Output folder / Filename mirror the native Output Settings "Save in" /
+  // "Name" (the non-modal popup can change them live), and edits here write
+  // back into the scene's TOutputProperties.  The "+outputs"-style aliases are
+  // resolved to/from absolute paths via scene->decode/codeFilePath.
+  auto folderFromProp = [scene, prop]() {
+    return QString::fromStdWString(
+        scene->decodeFilePath(prop->getPath().getParentDir()).getWideString());
+  };
+  auto nameFromProp = [prop]() {
+    return QString::fromStdString(prop->getPath().getName());
+  };
+  // Align on open (overrides the scene-derived defaults set above).
+  { QString f = folderFromProp(); if (!f.isEmpty()) folderEdit->setText(f); }
+  { QString n = nameFromProp();   if (!n.isEmpty()) nameEdit->setText(n); }
+  // Render Settings -> Export (poll; never overwrite a field being edited).
+  {
+    auto *destTimer = new QTimer(&dlg);
+    QObject::connect(destTimer, &QTimer::timeout, &dlg,
+                     [folderEdit, nameEdit, folderFromProp, nameFromProp]() {
+                       if (!folderEdit->hasFocus()) {
+                         QString f = folderFromProp();
+                         if (!f.isEmpty() && f != folderEdit->text())
+                           folderEdit->setText(f);
+                       }
+                       if (!nameEdit->hasFocus()) {
+                         QString n = nameFromProp();
+                         if (!n.isEmpty() && n != nameEdit->text())
+                           nameEdit->setText(n);
+                       }
+                     });
+    destTimer->start(400);
+  }
+  // Export -> Render Settings (write back on edit, preserving the format ext).
+  auto writeBackDest = [scene, prop, folderEdit, nameEdit]() {
+    QString nm = nameEdit->text().trimmed();
+    if (nm.isEmpty()) return;
+    std::string e = prop->getPath().getType();
+    if (e.empty()) e = "mp4";
+    TFilePath coded = scene->codeFilePath(
+        TFilePath(folderEdit->text().toStdWString()));
+    TFilePath p = (coded + TFilePath(nm.toStdWString())).withType(e);
+    if (p == prop->getPath()) return;
+    prop->setPath(p);
+    TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  };
+  QObject::connect(folderEdit, &QLineEdit::editingFinished, &dlg, writeBackDest);
+  QObject::connect(nameEdit, &QLineEdit::editingFinished, &dlg, writeBackDest);
 
   // Inform user: per-shot uses shot number as filename
   auto *perShotNote = new QLabel(

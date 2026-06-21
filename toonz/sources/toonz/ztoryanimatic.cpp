@@ -2277,11 +2277,15 @@ void ZtoryAnimaticTrack::refreshFromScene() {
       return a.startFrameInMain < b.startFrameInMain;
     });
 
-  // Calcola larghezza totale — copre anche l'audio piazzato oltre l'ultimo
-  // shot (montaggio audio-led), così playhead e righello raggiungono la coda.
-  int totalFrames = animaticFrameCount(mainXsh);
+  // Calcola larghezza totale dai SOLI blocchi video (come ZtoryAnimaticPanel::
+  // updateTrackWidths): NON usare l'estensione audio qui. Dopo un razor un
+  // ColumnLevel audio con endOffset=0 fa restituire a getVisibleEndFrame la
+  // durata del FILE raw (anche minuti/ore) -> minWidth abnorme -> la track
+  // glitcha/sparisce per un refresh, poi updateTrackWidths la rimette a posto.
+  int totalFrames = 0;
   for (auto &b : m_blocks)
     totalFrames = qMax(totalFrames, b.startFrameInMain + (b.f1 - b.f0 + 1));
+  if (totalFrames <= 0) totalFrames = 1;
   setMinimumWidth(kLabelW + (int)(totalFrames * m_ppf) + 100);
   update();
 }
