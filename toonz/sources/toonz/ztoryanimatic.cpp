@@ -6719,6 +6719,32 @@ void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
     }
   }
 
+  // ── Step 0: pristine backup of the original sub-scene for a lossless undo ──
+  // The split mutates origCL IN PLACE (trimChildXsheetTo below removes the tail
+  // drawings).  UndoBoardState's snapshot only stores a POINTER to the level, so
+  // undo would re-expose the already-trimmed origCL and the second half would be
+  // gone.  Clone origCL into a standalone level NOW (cloneChild deep-copies the
+  // whole sub-scene), orphan its column, and repoint the `before` snapshot at the
+  // clone — so undo restores every original drawing.
+  if (origCL) {
+    ColumnCmd::cloneChild(col);
+    TUndoManager::manager()->popUndo(1);  // covered by our UndoBoardState
+    int backupCol = col + 1;
+    TXshLevelP backupLevel;
+    for (int r = r0; r <= r1; r++) {
+      TXshCell cell = mainXsh->getCell(r, backupCol);
+      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+        backupLevel = cell.m_level;
+        break;
+      }
+    }
+    mainXsh->removeColumn(backupCol);  // orphan it; the TXshLevelP keeps it alive
+    mainXsh->updateFrameCount();
+    if (backupLevel)
+      for (auto &s : before)
+        if (s.data.xsheetColumn == col) { s.level = backupLevel; break; }
+  }
+
   // ── Step 1: materialize held cells for the full shot duration ──────────────
   // Tahoma2D stores drawing cells only at transition points; intermediate
   // frames are empty in storage ("held"). We must make them explicit so that

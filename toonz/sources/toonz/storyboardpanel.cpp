@@ -3887,6 +3887,13 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
   renumberAll();
   resequenceXsheet();
   rebuildGrid();
+  // After undo/redo the grid is rebuilt with blank thumbnails. Defer the preview
+  // render past this event loop so the QGridLayout has repositioned (and, in
+  // Compact view, actually shown) the cards — otherwise the viewport/visibility
+  // test runs on not-yet-laid-out widgets and skips them (Compact view showed
+  // stale/blank cards after undo). onRefreshPreviews renders only visible panels
+  // lacking a pixmap, so it is cheap and idempotent.
+  QTimer::singleShot(0, this, &StoryboardPanel::onRefreshPreviews);
   // Re-anchor the path after clearShots() cleared it.
   m_currentZtoryPath = ztoryPath();
   saveZtoryc();
