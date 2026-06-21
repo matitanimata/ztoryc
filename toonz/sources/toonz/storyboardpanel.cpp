@@ -4776,10 +4776,9 @@ void StoryboardPanel::onExportAnimatic() {
   auto *folderEdit = new QLineEdit(defaultDir, &dlg);
   auto *folderBtn  = new QToolButton(&dlg);
   folderBtn->setText("…");
-  connect(folderBtn, &QToolButton::clicked, [&]() {
-    QString d = QFileDialog::getExistingDirectory(&dlg, tr("Output folder"), folderEdit->text());
-    if (!d.isEmpty()) folderEdit->setText(d);
-  });
+  // Connected further down, after writeBackDest is defined: picking a folder
+  // must also write it into the Render Settings, otherwise the sync poll below
+  // reverts it back to the (unchanged) TOutputProperties value.
   folderRow->addWidget(new QLabel(tr("Output folder:"), &dlg));
   folderRow->addWidget(folderEdit, 1);
   folderRow->addWidget(folderBtn);
@@ -4813,19 +4812,23 @@ void StoryboardPanel::onExportAnimatic() {
   // Render Settings -> Export (poll; never overwrite a field being edited).
   {
     auto *destTimer = new QTimer(&dlg);
-    QObject::connect(destTimer, &QTimer::timeout, &dlg,
-                     [folderEdit, nameEdit, folderFromProp, nameFromProp]() {
-                       if (!folderEdit->hasFocus()) {
-                         QString f = folderFromProp();
-                         if (!f.isEmpty() && f != folderEdit->text())
-                           folderEdit->setText(f);
-                       }
-                       if (!nameEdit->hasFocus()) {
-                         QString n = nameFromProp();
-                         if (!n.isEmpty() && n != nameEdit->text())
-                           nameEdit->setText(n);
-                       }
-                     });
+    QObject::connect(
+        destTimer, &QTimer::timeout, &dlg,
+        [folderEdit, nameEdit, nameNote, prop, folderFromProp, nameFromProp]() {
+          if (!folderEdit->hasFocus()) {
+            QString f = folderFromProp();
+            if (!f.isEmpty() && f != folderEdit->text()) folderEdit->setText(f);
+          }
+          if (!nameEdit->hasFocus()) {
+            QString n = nameFromProp();
+            if (!n.isEmpty() && n != nameEdit->text()) nameEdit->setText(n);
+          }
+          // Keep the extension hint in sync with the current output format.
+          std::string e = prop->getPath().getType();
+          if (e.empty()) e = "mp4";
+          QString extNote = QString("(.%1)").arg(QString::fromStdString(e));
+          if (nameNote->text() != extNote) nameNote->setText(extNote);
+        });
     destTimer->start(400);
   }
   // Export -> Render Settings (write back on edit, preserving the format ext).
@@ -4840,9 +4843,32 @@ void StoryboardPanel::onExportAnimatic() {
     if (p == prop->getPath()) return;
     prop->setPath(p);
     TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+    // Refresh the open native Render Settings popup, which rebuilds its fields
+    // from TOutputProperties on sceneChanged() (OutputSettingsPopup::updateField).
+    TApp::instance()->getCurrentScene()->notifySceneChanged();
   };
   QObject::connect(folderEdit, &QLineEdit::editingFinished, &dlg, writeBackDest);
   QObject::connect(nameEdit, &QLineEdit::editingFinished, &dlg, writeBackDest);
+  // Folder picker: write the chosen folder through to the Render Settings (so
+  // the sync poll keeps it) and re-raise this dialog — on macOS the native file
+  // dialog can leave the export dialog behind the main window on close.
+  QObject::connect(folderBtn, &QToolButton::clicked, &dlg,
+                   [&dlg, folderEdit, writeBackDest]() {
+                     QFileDialog fd(&dlg, tr("Output folder"), folderEdit->text());
+                     fd.setFileMode(QFileDialog::Directory);
+                     fd.setOption(QFileDialog::ShowDirsOnly, true);
+                     // Match the Render Settings folder picker label ("Choose").
+                     fd.setLabelText(QFileDialog::Accept, tr("Choose"));
+                     QString d;
+                     if (fd.exec() == QDialog::Accepted &&
+                         !fd.selectedFiles().isEmpty())
+                       d = fd.selectedFiles().first();
+                     dlg.raise();
+                     dlg.activateWindow();
+                     if (d.isEmpty()) return;
+                     folderEdit->setText(d);
+                     writeBackDest();
+                   });
 
   // Inform user: per-shot uses shot number as filename
   auto *perShotNote = new QLabel(
