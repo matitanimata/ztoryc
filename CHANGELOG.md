@@ -1,3 +1,48 @@
+## [2026-06-21] — Sequenze trattino, animatic audio-led, Board Compact view, razor audio, fix crash export
+
+### Added
+- **Riconoscimento sequenze con trattino** (`frame-0006.jpeg`). Aggiunto `-` come separatore
+  frame alla pari di `.`/`_` nel parser core (`tfilepath.cpp`): helper `rfindFrameSep()` usato
+  in read (getDots/getSepChar/getFrame/getWideName/getLevelNameW) e write (withName/withFrame,
+  che preserva il `-` nel round-trip) + regex `analyzePath`. La guardia "solo cifre tra
+  separatore ed estensione" rende sicuro `my-file.jpg` (resta singolo). **Candidato PR upstream.**
+- **Modalità rilevamento sequenze (Automatic / Sequence / Individual frames)** stile DaVinci.
+  Preferenza globale `numberedFilesImportMode` (tab Loading) + override per-caricamento nei popup
+  **Load Level** e **Import Assets** (helper riusabile `FileBrowserPopup::createNumberedFilesModeCombo`).
+  `FileBrowser::SequenceMode` pilota il grouping in `refreshCurrentFolderItems` (Automatic =
+  raggruppa ma demota i singleton a still; Individual = ogni file separato).
+- **Board "Compact view"** (toggle in toolbar, icona `ztoryc_compact_view` stacked-cards): una card
+  per shot (mostra il panel corrente) con frecce ◀ ▶ per navigare i panel in place. Allevia il Board
+  con scene animate (un panel per keyframe). `rebuildGrid` collassato + swap della singola cella su
+  nav (no rebuild completo); `updateVisiblePreviews` salta i panel nascosti. Stato persistito
+  (`TEnv ZtoryBoardCollapsePanels`).
+
+### Fixed
+- **Animatic: il play si fermava prima della fine / audio muto su shot vuoti** (`ztoryanimatic.cpp`).
+  Due cause: (1) il playback è audio-clocked e la cache audio per-colonna è tagliata a
+  `videoFrameCount`, ma `soundColumnsFingerprint` guardava solo i sound column → allungando il video
+  (Load nelle sub-scene) la cache restava stale (play fermo a 828). Fix: includere la lunghezza nel
+  fingerprint. (2) timeline = solo video → audio oltre l'ultimo shot non suonava. Fix: nuovo
+  `animaticFrameCount = max(videoFrameCount, audioPlacedFrameCount)` (placement via `getRange` sui
+  sound column, non il file raw) usato per cap audio, play range, FlipConsole range, stop/markOut,
+  larghezza track. Montaggio audio-led ora riproduce tutto l'audio.
+- **CRASH su Windows esportando lo Spreadsheet** (`storyboardpanel.cpp` `onExportSpreadsheet`).
+  `xlsx.sheetNames().first()` su `QXlsx::Document` appena costruito: nessun foglio finché non si
+  scrive → QList vuota → `.first()` UB → `EXCEPTION_ACCESS_VIOLATION` in `renameSheet`/`operator==`
+  (innocuo su macOS per la QString nulla condivisa). Fix: guardia — rename del foglio default se
+  presente, altrimenti `addSheet(overviewName)`.
+
+### Changed
+- **Razor audio dentro lo shot**: `onAudioRazorRequested` ora funziona anche con una sub-scena aperta
+  (opera sempre su `mainXsheet()`; dentro una sub-scena usa `notifyCastChange` invece di
+  `notifyXsheetChanged` per non innescare cascate dal contesto sbagliato). Comodo per gli spostamenti
+  della guida audio senza uscire dallo shot. Il drag dei segmenti audio già funzionava. Razor degli
+  shot (video) lasciato gated.
+
+### Notes
+- Build dir Ninja = ROOT del workspace (non `toonz/build`, che non esiste più e fa fallire ninja in
+  silenzio). Per i check rapidi: `ninja -C /Volumes/ZioSam/tahoma2d-workspace/tahoma2d`.
+
 ## [2026-06-21] — Fix crash maniglia "Drawing #" Animate tool (bug upstream)
 
 ### Fixed
