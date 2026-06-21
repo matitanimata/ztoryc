@@ -31,6 +31,14 @@
   scrive → QList vuota → `.first()` UB → `EXCEPTION_ACCESS_VIOLATION` in `renameSheet`/`operator==`
   (innocuo su macOS per la QString nulla condivisa). Fix: guardia — rename del foglio default se
   presente, altrimenti `addSheet(overviewName)`.
+- **Undo dello split shot perdeva i disegni della seconda metà** (`ztoryanimatic.cpp`
+  `onRazorRequested`). Lo split muta `origCL` in place (`trimChildXsheetTo`), ma lo snapshot
+  `UndoBoardState` tiene solo un PUNTATORE al child level → l'undo riesponeva `origCL` già trimmato.
+  Fix: clonare `origCL` in un livello backup pristine PRIMA del trim (via `cloneChild`), orfanare la
+  colonna (il `TXshLevelP` lo tiene vivo) e ripuntare lo snapshot `before` sul backup → undo lossless.
+- **Compact view: anteprime non aggiornate dopo undo/redo** (`storyboardpanel.cpp`
+  `restoreFromSnapshot`). Mancava il refresh deferito post-rebuild. Fix: `onRefreshPreviews` via
+  `singleShot(0)` dopo `rebuildGrid()` (vale per qualunque undo: reorder/split/delete…).
 
 ### Changed
 - **Razor audio dentro lo shot**: `onAudioRazorRequested` ora funziona anche con una sub-scena aperta
