@@ -333,15 +333,20 @@ void ZtoryAnimaticController::stopPerColumnAudio() {
 qint64 ZtoryAnimaticController::getMasterAudioUsecs() const {
   TXsheet *xsh = mainXsheet();
   if (!xsh) return 0;
-  // First non-empty audio column with an active player.
+  // Use the MAX processedUsecs across all audio columns, not the first one.
+  // All per-column players start together, so the furthest-along player tracks
+  // the real elapsed time.  Taking the first column would freeze the playhead
+  // at the end of the SHORTEST/first track (its clock stops advancing) even
+  // though longer tracks — and the video — still have content to play.
+  qint64 maxUs = 0;
   for (int c = 0; c < xsh->getColumnCount(); c++) {
     TXshColumn *column = xsh->getColumn(c);
     TXshSoundColumn *sc = column ? column->getSoundColumn() : nullptr;
     if (!sc || sc->isEmpty()) continue;
     qint64 us = sc->getProcessedUsecs();
-    if (us > 0) return us;
+    if (us > maxUs) maxUs = us;
   }
-  return 0;
+  return maxUs;
 }
 
 TSoundTrackP ZtoryAnimaticController::requireColumnSoundTrack(int col) {

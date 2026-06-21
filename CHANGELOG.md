@@ -19,6 +19,9 @@
   abnorme → glitch/gap. Fix: larghezza dai **soli blocchi video** (come `updateTrackWidths`).
 - **Rebrand popup render** (`dvdialog.cpp`): `ProgressDialog`/`RadioButtonDialog` usavano
   `tr("Tahoma2D")` come titolo → ora `getAppName()` ("Ztoryc"). Risolve il popup "Finalizing render".
+- **Play si fermava alla fine della 1ª traccia audio** con due tracce di lunghezza diversa
+  (`getMasterAudioUsecs`): leggeva il `processedUsecs` della PRIMA colonna, che si congela quando
+  quella traccia finisce. Fix: usare il **massimo** tra tutte le colonne (il player ancora attivo).
 
 ### Changed
 - **Export Animatic ↔ Render Settings: sync bidirezionale live** (`onExportAnimatic`).
