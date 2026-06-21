@@ -1,4 +1,33 @@
-## [2026-06-21] — Sequenze trattino, animatic audio-led, Board Compact view, razor audio, fix crash export
+## [2026-06-21b] — Release 0.6.1 (macOS+Windows), fix CI ccache, fix post-release
+
+### Release
+- **Pubblicata v0.6.1** (macOS Intel+Silicon DMG + Windows installer/portable), note bilingui IT/EN.
+- Bump `ZtorycVersion.cmake` 0.6.0 → 0.6.1. Trattino aggiunto ai **PR candidates** upstream (AGENTS.md).
+
+### CI
+- **macOS+Linux: `CC="ccache <compiler>"` rompeva Qt AutoMoc** (`moc_predefs.h`): la ccache
+  aggiornata sui runner rifiuta `ccache -std=… clang++` (`invalid option -- t`). Fix: CC/CXX nudi +
+  shim ccache nel PATH (macOS `brew --prefix ccache`/libexec; Linux `/usr/lib/ccache`). macOS OK.
+  Linux: ccache risolto, resta QXlsx che richiede header privato Qt (`qzipreader_p.h` →
+  `qtbase5-private-dev` + tweak CMake) — task a sé.
+- Push dei file `.github/workflows/*` richiede scope `workflow` sul token (push manuale utente).
+
+### Fixed
+- **Monitor animatic: tracce che glitchavano/sparivano + gap verticale**. `refreshFromScene` usava
+  `animaticFrameCount` (include l'audio piazzato) per la larghezza; dopo un razor un ColumnLevel
+  audio con endOffset=0 fa restituire a `getVisibleEndFrame` la durata del file raw → minWidth
+  abnorme → glitch/gap. Fix: larghezza dai **soli blocchi video** (come `updateTrackWidths`).
+- **Rebrand popup render** (`dvdialog.cpp`): `ProgressDialog`/`RadioButtonDialog` usavano
+  `tr("Tahoma2D")` come titolo → ora `getAppName()` ("Ztoryc"). Risolve il popup "Finalizing render".
+
+### Changed
+- **Export Animatic ↔ Render Settings: sync bidirezionale live** (`onExportAnimatic`).
+  Output folder/Filename ↔ Save in/Name (poll non-distruttivo + write-back con `code/decodeFilePath`
+  per l'alias `+outputs`); nota Format ed estensione filename aggiornate live; il "…" scrive in
+  `prop` (il poll non riverte) + rialza il dialog (z-order macOS) e usa la label **"Choose"**;
+  `notifySceneChanged()` rinfresca il popup nativo in tempo reale (Export→Render).
+
+
 
 ### Added
 - **Riconoscimento sequenze con trattino** (`frame-0006.jpeg`). Aggiunto `-` come separatore
