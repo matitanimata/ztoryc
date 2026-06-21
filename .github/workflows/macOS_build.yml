@@ -216,16 +216,16 @@ jobs:
       - name: Build ffmpeg (skipped when ffmpeg cache hit)
         if: ${{ steps.restore-ffmpeg-cache.outputs.cache-hit != 'true' }}
         env:
-          CC: ccache clang
-          CXX: ccache clang++
+          CC: clang
+          CXX: clang++
         run: ci-scripts/osx/tahoma-buildffmpeg.sh
       - name: Bundle third-party apps (FFmpeg from brew + Rhubarb)
         run: ci-scripts/osx/tahoma-bundle-apps.sh
       - name: Build OpenCV (skipped when OpenCV cache hit)
         if: ${{ steps.restore-opencv-cache.outputs.cache-hit != 'true' }}
         env:
-          CC: ccache clang
-          CXX: ccache clang++
+          CC: clang
+          CXX: clang++
         run: ci-scripts/osx/tahoma-buildopencv.sh
       - name: Ensure OpenCV CMake config exists
         run: |
@@ -234,23 +234,23 @@ jobs:
             echo "OpenCV config found: $OPENCV_CFG"
           else
             echo "OpenCV config missing at $OPENCV_CFG — rebuilding OpenCV now"
-            export CC="ccache clang"
-            export CXX="ccache clang++"
+            export CC="clang"
+            export CXX="clang++"
             ci-scripts/osx/tahoma-buildopencv.sh
             test -f "$OPENCV_CFG"
           fi
       - name: Build libgphoto2 (skipped when libgphoto2 cache hit)
         if: ${{ steps.restore-gphoto-cache.outputs.cache-hit != 'true' }}
         env:
-          CC: ccache clang
-          CXX: ccache clang++
+          CC: clang
+          CXX: clang++
         run: ci-scripts/osx/tahoma-buildlibgphoto2.sh
       - name: ccache stats (before Ztoryc)
         run: ccache -sv || true
       - name: Build Ztoryc
         env:
-          CC: ccache clang
-          CXX: ccache clang++
+          CC: clang
+          CXX: clang++
         run: ci-scripts/osx/tahoma-build.sh
       - name: ccache stats (after Ztoryc)
         if: success() || failure()
