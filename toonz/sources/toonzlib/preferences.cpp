@@ -546,6 +546,9 @@ void Preferences::definePreferenceItems() {
 
   // Loading
   define(importPolicy, "importPolicy", QMetaType::Int, 0);  // Always ask
+  // Numbered-file sequence detection: 0 Automatic, 1 Always sequence,
+  // 2 Always individual frames
+  define(numberedFilesImportMode, "numberedFilesImportMode", QMetaType::Int, 0);
   define(autoExposeEnabled, "autoExposeEnabled", QMetaType::Bool, true);
   define(subsceneFolderEnabled, "subsceneFolderEnabled", QMetaType::Bool, true);
   define(removeSceneNumberFromLoadedLevelName,

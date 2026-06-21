@@ -62,6 +62,7 @@ enum PreferencesItemId {
   //----------
   // Loading
   importPolicy,
+  numberedFilesImportMode,
   autoExposeEnabled,
   subsceneFolderEnabled,
   removeSceneNumberFromLoadedLevelName,

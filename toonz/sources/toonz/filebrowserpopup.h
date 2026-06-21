@@ -133,6 +133,12 @@ protected:
     return m_currentFIdsSet;
   }
 
+  // Builds a "Numbered Files" combo (Automatic / Sequence / Individual frames)
+  // already wired to m_browser and defaulted to the global preference. Reused
+  // by the load popups (Load Level, Import Assets) to override sequence
+  // detection for that browser only.
+  QComboBox *createNumberedFilesModeCombo(QWidget *parent);
+
 protected:
   /*!
 Performs some action on m_paths and returns whether the action was
@@ -286,6 +292,7 @@ class LoadLevelPopup final : public FileBrowserPopup {
 
   QLabel *m_notExistLabel;
   QComboBox *m_rasterCacheBehaviorComboBox;
+  QComboBox *m_numberedFilesModeCombo;
 
 public:
   LoadLevelPopup();
@@ -316,6 +323,9 @@ protected slots:
   void onSelectionChanged(TSelection *selection);
 
   void onFilePathDoubleClicked(const TFilePath &path) override;
+
+  // change how numbered files are listed (sequence / individual) for this load
+  void onNumberedFilesModeChanged(int index);
 
   void onPreferenceChanged(const QString &);
 

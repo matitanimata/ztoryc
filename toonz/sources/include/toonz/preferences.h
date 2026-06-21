@@ -267,6 +267,10 @@ public:
 
   // Loading  tab
   int getDefaultImportPolicy() { return getIntValue(importPolicy); }
+  // 0 Automatic, 1 Always sequence, 2 Always individual frames
+  int getNumberedFilesImportMode() {
+    return getIntValue(numberedFilesImportMode);
+  }
   bool isAutoExposeEnabled() const { return getBoolValue(autoExposeEnabled); }
   bool isSubsceneFolderEnabled() const {
     return getBoolValue(subsceneFolderEnabled);

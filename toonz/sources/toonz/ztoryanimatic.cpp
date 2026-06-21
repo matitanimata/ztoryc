@@ -258,6 +258,32 @@ static int videoFrameCount(TXsheet *xsh) {
   return maxFrame > 0 ? maxFrame : 1;
 }
 
+// Last frame occupied by any sound column's PLACED audio (its ColumnLevel
+// visibleEndFrame in the main xsheet) — the user's edit, not the raw file
+// beyond it.  Used to let an audio-led montage (audio extends past the last
+// shot) play to the end of the audio instead of stopping at the last video
+// frame.  NOTE: a very long *untrimmed* guide clip makes the timeline (and the
+// audio allocated for it) correspondingly long — trim the clip to bound it.
+static int audioPlacedFrameCount(TXsheet *xsh) {
+  if (!xsh) return 0;
+  int maxFrame = 0;
+  for (int c = 0; c < xsh->getColumnCount(); c++) {
+    TXshColumn *col     = xsh->getColumn(c);
+    TXshSoundColumn *sc = col ? col->getSoundColumn() : nullptr;
+    if (!sc || sc->isEmpty()) continue;
+    int r0, r1;
+    if (col->getRange(r0, r1)) maxFrame = std::max(maxFrame, r1 + 1);
+  }
+  return maxFrame;
+}
+
+// Effective animatic timeline length: the longer of the video timeline and the
+// placed audio.  Drives playback length, audio-build caps, the FlipConsole
+// range and the default play range so audio-led montages play fully.
+static int animaticFrameCount(TXsheet *xsh) {
+  return std::max(videoFrameCount(xsh), audioPlacedFrameCount(xsh));
+}
+
 void ZtoryAnimaticController::setCurrentFrame(int frame) {
   if (frame < 0) frame = 0;
   m_frameHandle->setFrame(frame);
@@ -346,7 +372,7 @@ TSoundTrackP ZtoryAnimaticController::requireColumnSoundTrack(int col) {
     // getOverallSoundTrack(0, 172800) allocates ~1.27 GB per track.
     // 18 such tracks = 23 GB.  We only need audio up to the last video frame.
     int audioEnd = std::max(sc->getMaxFrame(), 0);
-    int vidEnd   = videoFrameCount(xsh) - 1;
+    int vidEnd   = animaticFrameCount(xsh) - 1;
     int toFrame  = std::min(audioEnd, vidEnd);
     if (toFrame < 0) toFrame = 0;
     track = sc->getOverallSoundTrack(0, toFrame);
@@ -369,9 +395,20 @@ static void collectSoundColumns(TXsheet *xsh,
 
 // Cheap fingerprint of the sound columns: order + pointer + length.  Changes
 // whenever a track is added, removed, reordered or edited.
+//
+// CRITICAL: the cached audio tracks are clipped to videoFrameCount() (see
+// requireColumnSoundTrack / requireSoundTrack).  When the VIDEO timeline grows
+// — e.g. the user loads more frames into a shot's sub-scene from the
+// SHOTEDITOR room — the sound columns themselves do not change, so without
+// folding the video length into the fingerprint the cache stays clipped to the
+// OLD (shorter) length.  Because playback is audio-clocked, the playhead would
+// then freeze at that stale end (observed: stops far before the real content).
+// Mixing videoFrameCount() in makes any video-length change invalidate the
+// audio caches on the next play/scrub.
 static size_t soundColumnsFingerprint(TXsheet *xsh) {
   size_t h = 1469598103934665603ULL;  // FNV-ish seed
   if (!xsh) return h;
+  h = (h ^ (size_t)animaticFrameCount(xsh)) * 1099511628211ULL;
   for (int col = 0; col < xsh->getColumnCount(); col++) {
     TXshColumn *c = xsh->getColumn(col);
     TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
@@ -413,7 +450,7 @@ TSoundTrackP ZtoryAnimaticController::requireSoundTrack() {
     double fps = scene
         ? scene->getProperties()->getOutputProperties()->getFrameRate()
         : 24.0;
-    int toFrame = videoFrameCount(xsh) - 1;
+    int toFrame = animaticFrameCount(xsh) - 1;
     if (toFrame < 0) return TSoundTrackP();
     m_soundTrack = sounds[0]->mixingTogether(sounds, 0, toFrame, fps);
   } catch (...) {
@@ -434,7 +471,7 @@ void ZtoryAnimaticController::preBuildSoundTrackAsync() {
   if (m_soundTrack || m_soundBuildPending) return;
   TXsheet *xsh = mainXsheet();
   if (!xsh) return;
-  int toFrame = videoFrameCount(xsh) - 1;
+  int toFrame = animaticFrameCount(xsh) - 1;
   if (toFrame < 0) return;
 
   // Collect sound columns on the main thread before spawning (safe, xsh stable).
@@ -629,7 +666,7 @@ void ZtoryAnimaticRuler::paintEvent(QPaintEvent *) {
   if (!rangeEnabled) {
     TXsheet *mainXsh = ctrl->mainXsheet();
     r0 = 0;
-    r1 = mainXsh ? std::max(0, videoFrameCount(mainXsh) - 1) : 0;
+    r1 = mainXsh ? std::max(0, animaticFrameCount(mainXsh) - 1) : 0;
   }
   if (r1 >= r0) {
     int x0 = kLabelW + (int)(r0 * m_ppf);
@@ -912,7 +949,7 @@ void ZtoryAnimaticRuler::resetPlayRangeToFull() {
   auto *ctrl = ZtoryAnimaticController::instance();
   TXsheet *xsh = ctrl->mainXsheet();
   if (!xsh) return;
-  int lastFrame = std::max(0, videoFrameCount(xsh) - 1);
+  int lastFrame = std::max(0, animaticFrameCount(xsh) - 1);
   ctrl->setAnimaticPlayRange(0, lastFrame);
   ctrl->notifyPlayRangeChanged();
   update();
@@ -924,7 +961,7 @@ void ZtoryAnimaticRuler::clampPlayRangeToTimeline() {
   auto *ctrl = ZtoryAnimaticController::instance();
   TXsheet *xsh = ctrl->mainXsheet();
   if (!xsh) return;
-  int lastFrame = std::max(0, videoFrameCount(xsh) - 1);
+  int lastFrame = std::max(0, animaticFrameCount(xsh) - 1);
   int r0, r1;
   ctrl->getAnimaticPlayRange(r0, r1);
   if (r1 > lastFrame) {
@@ -942,7 +979,7 @@ void ZtoryAnimaticRuler::initPlayRangeIfNeeded() {
   if (r0 <= r1) return;  // already set
   TXsheet *xsh = ctrl->mainXsheet();
   if (!xsh) return;
-  int lastFrame = std::max(0, videoFrameCount(xsh) - 1);
+  int lastFrame = std::max(0, animaticFrameCount(xsh) - 1);
   ctrl->setAnimaticPlayRange(0, lastFrame);
   ctrl->notifyPlayRangeChanged();
   update();
@@ -1031,14 +1068,14 @@ void ZtoryAnimaticRuler::contextMenuEvent(QContextMenuEvent *e) {
     ctrlM->setAnimaticPlayRange(std::min(r0, frame), frame);
   } else if (chosen == autoAct) {
     TXsheet *xsh = ctrlM->mainXsheet();
-    int last = std::max(0, videoFrameCount(xsh) - 1);
+    int last = std::max(0, animaticFrameCount(xsh) - 1);
     int r0, r1;
     ctrlM->getAnimaticPlayRange(r0, r1);
     if (r0 > r1) r0 = 0;
     ctrlM->setAnimaticPlayRange(r0, last);
   } else if (chosen == resetAct) {
     TXsheet *xsh = ctrlM->mainXsheet();
-    int last = std::max(0, videoFrameCount(xsh) - 1);
+    int last = std::max(0, animaticFrameCount(xsh) - 1);
     ctrlM->setAnimaticPlayRange(0, last);
   } else {
     return;
@@ -2240,8 +2277,9 @@ void ZtoryAnimaticTrack::refreshFromScene() {
       return a.startFrameInMain < b.startFrameInMain;
     });
 
-  // Calcola larghezza totale
-  int totalFrames = 0;
+  // Calcola larghezza totale — copre anche l'audio piazzato oltre l'ultimo
+  // shot (montaggio audio-led), così playhead e righello raggiungono la coda.
+  int totalFrames = animaticFrameCount(mainXsh);
   for (auto &b : m_blocks)
     totalFrames = qMax(totalFrames, b.startFrameInMain + (b.f1 - b.f0 + 1));
   setMinimumWidth(kLabelW + (int)(totalFrames * m_ppf) + 100);
@@ -3152,7 +3190,7 @@ void ZtoryAnimaticViewer::onDrawFrame(
           double spf3 = m_sound->getSampleRate() / fps3;
           TINT32 startSmp = (TINT32)(newStart * spf3);
           TINT32 totalSmp = (TINT32)m_sound->getSampleCount();
-          int stopFr = videoFrameCount(mainXsh2);
+          int stopFr = animaticFrameCount(mainXsh2);
           // Use animatic's own play range — NOT XsheetGUI::getPlayRange which
           // can hold a stale mark-out from a previous native-xsheet session and
           // would cut audio short even after resequenceXsheet() updated the
@@ -3180,7 +3218,7 @@ void ZtoryAnimaticViewer::onDrawFrame(
         qint64 audioUsecs = ctrl->getMasterAudioUsecs();
         if (audioUsecs > 0) {
           targetFrame = m_playStartFrame + (int)(audioUsecs * m_fps / 1000000.0);
-          int totalFrames = videoFrameCount(mainXsh);
+          int totalFrames = animaticFrameCount(mainXsh);
           // Also clamp to mark-out so that loop respects it.
           // Only apply the mark-out when at the top (main xsheet) level;
           // inside a sub-scene, updateAnimaticFrameMarkers() cleared markers.
@@ -3235,22 +3273,12 @@ void ZtoryAnimaticViewer::updateAnimaticFrameRange() {
   TXsheet *mainXsh = ctrl->mainXsheet();
   if (!mainXsh) return;
 
-  // Compute frame count from VIDEO columns only — skip sound columns.
-  // mainXsh->getFrameCount() includes audio columns; after a razor cut the
-  // trailing ColumnLevel keeps endOffset=0 (= full raw file length, potentially
-  // hours), inflating the count and making the ruler/cursor jump to the right.
-  int totalFrames = 0;
-  for (int c = 0; c < mainXsh->getColumnCount(); c++) {
-    TXshColumn *col = mainXsh->getColumn(c);
-    if (!col || col->getSoundColumn()) continue; // skip audio
-    int r0, r1;
-    // ignoreLastStop=true: keep total length aligned with videoFrameCount()
-    // (which also skips the trailing SFH).  Mismatched counts would let the
-    // playhead overshoot mark-out by 1 frame per shot.
-    if (col->getRange(r0, r1, /*ignoreLastStop=*/true))
-      totalFrames = std::max(totalFrames, r1 + 1);
-  }
-  if (totalFrames <= 0) totalFrames = mainXsh->getFrameCount();
+  // Effective animatic length = max(video timeline, placed audio).  Using the
+  // audio extent too lets an audio-led montage play past the last video frame
+  // (animaticFrameCount also skips the trailing SFH on video columns and never
+  // uses mainXsh->getFrameCount(), which a razor cut can inflate to the raw
+  // audio file length).
+  int totalFrames = animaticFrameCount(mainXsh);
   if (totalFrames <= 0) totalFrames = 1;
 
   int currentFrame = ctrl->currentFrame();  // 0-based
@@ -3397,7 +3425,7 @@ void ZtoryAnimaticViewer::onAnimaticPlayingStatusChanged(bool playing) {
   // play(st, s0, rawEnd) calls m_buffer.resize(rawBytes) + memcpy which can
   // allocate/copy hundreds of MB — causing 1-3 s startup delay while the
   // PlaybackExecutor has already advanced video frames, causing A/V desync.
-  int    animFrames      = videoFrameCount(mainXsh);
+  int    animFrames      = animaticFrameCount(mainXsh);
   // Cap audio at the animatic's own mark-out (NOT XsheetGUI::getPlayRange
   // which can be stale and cut audio at the wrong frame).
   int stopFrame = animFrames;
@@ -3471,7 +3499,7 @@ void ZtoryAnimaticViewer::restartAudioIfPlaying() {
   TINT32 totalSamples = (TINT32)m_sound->getSampleCount();
   if (startSample >= totalSamples) return;
 
-  int stopFrame = videoFrameCount(mainXsh);
+  int stopFrame = animaticFrameCount(mainXsh);
   // Use animatic play range, not XsheetGUI mark-out (same reasoning as
   // refreshAnimaticSound — avoids stale mark-out cutting audio short).
   {
@@ -6823,8 +6851,12 @@ void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
 }
 
 void ZtoryAnimaticPanel::onAudioRazorRequested(int col, int frame) {
-  if (!ZtoryModel::assertMainXsheet(/*showWarning=*/false)) return;
-  TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
+  // Audio lives in the MAIN xsheet only and this handler operates on it
+  // explicitly (controller->mainXsheet()), so the razor is allowed even while
+  // a shot's sub-scene is open — handy for trimming/moving the guide audio
+  // without leaving the shot.
+  bool insideSub = !ZtoryModel::assertMainXsheet(/*showWarning=*/false);
+  TXsheet *xsh   = ZtoryAnimaticController::instance()->mainXsheet();
   if (!xsh) return;
   TXshColumn *c = xsh->getColumn(col);
   TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
@@ -6837,7 +6869,14 @@ void ZtoryAnimaticPanel::onAudioRazorRequested(int col, int frame) {
   TXshSoundColumn *after = dynamic_cast<TXshSoundColumn *>(sc->clone());
   TUndoManager::manager()->add(
       new UndoAudioEdit(col, before, after, tr("Razor Audio")));
-  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  if (insideSub)
+    // Inside a sub-scene getCurrentXsheet() is the sub-scene: notifying it would
+    // fire a main-level refresh cascade from the wrong context.  A cast-change
+    // notification + the direct audio refresh below is enough (mirrors the
+    // audio segmentMoved path).
+    TApp::instance()->getCurrentScene()->notifyCastChange();
+  else
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
   refreshAudioTracks();
   updateTrackWidths();
   if (m_restoreScrollX >= 0 && m_scroll)

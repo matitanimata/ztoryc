@@ -151,6 +151,7 @@ QMutex levelFileMutex;
 FileBrowser::FileBrowser(QWidget *parent, Qt::WindowFlags flags,
                          bool noContextMenu, bool multiSelectionEnabled)
     : QFrame(parent), m_folderName(0), m_itemViewer(0) {
+  m_sequenceMode = Preferences::instance()->getNumberedFilesImportMode();
   // style sheet
   setObjectName("FileBrowser");
   setFrameStyle(QFrame::StyledPanel);
@@ -511,6 +512,15 @@ void FileBrowser::removeFilterType(const QString &type) {
 
 //-----------------------------------------------------------------------------
 
+void FileBrowser::setSequenceMode(int mode) {
+  if (m_sequenceMode == mode) return;
+  m_sequenceMode = mode;
+  refreshCurrentFolderItems();
+  refreshData();
+}
+
+//-----------------------------------------------------------------------------
+
 void FileBrowser::refreshCurrentFolderItems() {
   m_items.clear();
 
@@ -572,35 +582,64 @@ void FileBrowser::refreshCurrentFolderItems() {
       } catch (...) {
       }
     }
+    // Choose how numbered files are presented (Automatic / Always sequence /
+    // Always individual frames). In "Individual" mode every physical file is
+    // shown; otherwise numbered files are collapsed into a single sequence.
+    TFilePathSet &listSet =
+        (m_sequenceMode == IndividualFrames) ? all_files : files;
+
+    // "Automatic" keeps a lone numbered file (e.g. a single "frame-0006.jpg"
+    // with no siblings) as a plain still instead of a 1-frame sequence: count
+    // the physical files behind each level name so such groups can be demoted.
+    std::map<std::string, int> levelFileCount;
+    std::map<std::string, TFilePath> singleFileForLevel;
+    if (m_sequenceMode == Automatic) {
+      for (const TFilePath &fp : all_files) {
+        std::string ln = fp.getLevelName();
+        levelFileCount[ln]++;
+        singleFileForLevel[ln] = fp;
+      }
+    }
+
     TFilePathSet::iterator it;
-    for (it = files.begin(); it != files.end(); ++it) {
+    for (it = listSet.begin(); it != listSet.end(); ++it) {
+      TFilePath path = *it;
+
+      // demote single-frame sequences to the underlying still (Automatic only)
+      if (m_sequenceMode == Automatic && path.isLevelName()) {
+        std::string ln = path.getLevelName();
+        auto cit       = levelFileCount.find(ln);
+        if (cit != levelFileCount.end() && cit->second == 1)
+          path = singleFileForLevel[ln];
+      }
+
 #ifdef _WIN32
       // include folder shortcut items
-      if (it->getType() == "lnk") {
-        TFileStatus info(*it);
+      if (path.getType() == "lnk") {
+        TFileStatus info(path);
         if (info.isLink() && info.isDirectory()) {
           m_items.push_back(
-              Item(*it, true, true, QString::fromStdString((*it).getName())));
+              Item(path, true, true, QString::fromStdString(path.getName())));
         }
         continue;
       }
 #endif
       // skip the plt file (Palette file for TOONZ 4.6 and earlier)
-      if (it->getType() == "plt") continue;
+      if (path.getType() == "plt") continue;
 
       // filter the file
       else if (m_filter.isEmpty()) {
-        if (it->getType() != "tnz" && it->getType() != "scr" &&
-            it->getType() != "tnzbat" && it->getType() != "mpath" &&
-            it->getType() != "curve" && it->getType() != "tpl" &&
-            it->getType() != "macrofx" && it->getType() != "plugin" &&
-            it->getType() != "grid" && it->getType() != "tnzbrd" &&
-            TFileType::getInfo(*it) == TFileType::UNKNOW_FILE)
+        if (path.getType() != "tnz" && path.getType() != "scr" &&
+            path.getType() != "tnzbat" && path.getType() != "mpath" &&
+            path.getType() != "curve" && path.getType() != "tpl" &&
+            path.getType() != "macrofx" && path.getType() != "plugin" &&
+            path.getType() != "grid" && path.getType() != "tnzbrd" &&
+            TFileType::getInfo(path) == TFileType::UNKNOW_FILE)
           continue;
-      } else if (!m_filter.contains(QString::fromStdString(it->getType())))
+      } else if (!m_filter.contains(QString::fromStdString(path.getType())))
         continue;
       // store the filtered file paths
-      m_items.push_back(Item(*it));
+      m_items.push_back(Item(path));
     }
 
     // update the m_multiFileItemMap

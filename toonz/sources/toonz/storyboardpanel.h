@@ -46,6 +46,8 @@ class PanelWidget final : public QFrame {
   QString      m_storedShotPrefix;  // e.g. "SH" — restored when shotNumber() is read
   QString      m_storedSeqPrefix;   // e.g. "SQ" — restored on seqLabelEdited
   QLabel      *m_panelLabel;
+  QPushButton *m_prevPanelBtn = nullptr;  // ◀ navigate panels in collapsed view
+  QPushButton *m_nextPanelBtn = nullptr;  // ▶
   QLabel      *m_durationLabel;
   QLabel      *m_totalLabel;
   QSpinBox    *m_totalSpin;
@@ -89,6 +91,9 @@ public:
   void setShotNumber(const QString &n);
   void setSeqLabel(const QString &seq);
   void setSeqVisible(bool visible);
+  // Collapsed Board view ("one card per shot"): show ◀ ▶ to flip through the
+  // shot's panels in place.  total<=1 hides the arrows.
+  void setPanelNavigator(bool enabled, int total);
   void rescalePreview();
   int     shotIndex()  const { return m_shotIndex; }
   int     panelIndex() const { return m_panelIndex; }
@@ -112,6 +117,9 @@ signals:
   // sequence label including prefix, e.g. "SQ020".
   void seqLabelEdited(int shotIndex, QString fullLabel);
   void clicked(int shotIndex, int panelIndex, Qt::KeyboardModifiers modifiers);
+  // Collapsed view: user clicked ◀ (delta=-1) or ▶ (delta=+1) to change which
+  // panel of this shot is shown.
+  void panelNavRequested(int shotIndex, int delta);
   void dropReceived(int fromShot, int toShot);
   // Emitted from resizeEvent when the stored pixmap is too small to fill the
   // panel at native (HiDPI) resolution — StoryboardPanel re-renders on receipt.
@@ -164,6 +172,11 @@ QToolButton *m_numberingBtn;   // ⚙ Numbering config button
   QToolButton *m_lightColorButton = nullptr; // colour swatch → QColorDialog
   bool         m_showLights = true; // persisted in QSettings
   QSpinBox    *m_columnsPerRowSpin;
+  // "Compact view": one card per shot (show only the current panel), with
+  // ◀ ▶ to navigate panels in place.  Useful for animated scenes that generate
+  // one panel per keyframe/frame.  Persisted in QSettings.
+  QToolButton *m_collapsePanelsButton = nullptr;
+  bool         m_collapsePanels = false;
   QComboBox   *m_numberingCombo;
   QStackedWidget   *m_stack;
   SceneViewerPanel *m_comboViewer;
@@ -171,6 +184,7 @@ struct Shot {
     ShotData               data;
     std::vector<PanelWidget*> panels;
     bool selected = false;
+    int  viewPanel = 0;  // panel shown in collapsed "Compact view" view
   };
   std::vector<Shot> m_shots;
   int  m_columnsPerRow;
@@ -281,6 +295,8 @@ protected:
   void onDurationChanged(int shotIdx, int panelIdx, int frames);
   void onMoveShot(int fromShot, int toShot);
   void onColumnsChanged(int value);
+  void onToggleCollapsePanels(bool on);          // "Compact view" view toggle
+  void onPanelNavRequested(int shotIdx, int delta); // ◀ ▶ in collapsed view
   void onNumberingChanged(int comboIndex);
   void onNumberingConfig();   // opens the numbering settings dialog
   void onRefreshPreviews();

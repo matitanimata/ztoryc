@@ -86,6 +86,23 @@ bool checkForSeqNum(QString type) {
   else
     return false;
 }
+
+// Returns the index, inside str[0..i), of the separator character that may
+// precede a frame number. Legacy priority is preserved: a '.' anywhere in the
+// head wins (as the historical code did with rfind('.')). Otherwise the
+// rightmost of the "underscore-style" separators is used: '-' (hyphen) is
+// always considered, while '_' is considered only when the underscore format
+// is allowed for the current project. Returns npos (-1 as int) when none.
+int rfindFrameSep(const std::wstring &str, int i, bool underscoreAllowed) {
+  std::wstring head = str.substr(0, i);
+  int j             = (int)head.rfind(L'.');
+  if (j != (int)std::wstring::npos) return j;
+  int jh = (int)head.rfind(L'-');  // hyphen: always a valid separator
+  int ju = underscoreAllowed ? (int)head.rfind(L'_') : (int)std::wstring::npos;
+  // both npos cast to -1, so std::max yields npos when neither is present;
+  // otherwise the rightmost separator (closest to the frame number) wins.
+  return std::max(ju, jh);
+}
 };  // namespace
 
 // TFrameId::operator string() const
@@ -558,9 +575,7 @@ std::string TFilePath::getDots() const {
   i = str.rfind(L".");
   if (i == (int)std::wstring::npos || str == L"..") return "";
 
-  int j = str.substr(0, i).rfind(L".");
-  if (j == (int)std::wstring::npos && m_underscoreFormatAllowed)
-    j = str.substr(0, i).rfind(L"_");
+  int j = rfindFrameSep(str, i, m_underscoreFormatAllowed);
 
   if (j != (int)std::wstring::npos)
     return (j == i - 1 || (checkForSeqNum(type) && isNumbers(str, j, i))) ? ".."
@@ -582,19 +597,11 @@ QChar TFilePath::getSepChar() const {
   i = str.rfind(L".");
   if (i == (int)std::wstring::npos || str == L"..") return QChar();
 
-  int j = str.substr(0, i).rfind(L".");
+  int j = rfindFrameSep(str, i, m_underscoreFormatAllowed);
+  if (j == (int)std::wstring::npos) return QChar();
 
-  if (j != (int)std::wstring::npos)
-    return (j == i - 1 || (checkForSeqNum(type) && isNumbers(str, j, i)))
-               ? QChar('.')
-               : QChar();
-  if (!m_underscoreFormatAllowed) return QChar();
-
-  j = str.substr(0, i).rfind(L"_");
-  if (j != (int)std::wstring::npos)
-    return (j == i - 1 || (checkForSeqNum(type) && isNumbers(str, j, i)))
-               ? QChar('_')
-               : QChar();
+  if (j == i - 1 || (checkForSeqNum(type) && isNumbers(str, j, i)))
+    return QChar(str[j]);  // '.', '_' or '-'
   else
     return QChar();
 }
@@ -653,15 +660,10 @@ std::wstring TFilePath::getWideName() const  // noDot! noSlash!
   std::wstring str = m_path.substr(i + 1);
   i                = str.rfind(L".");
   if (i == (int)std::wstring::npos) return str;
-  int j = str.substr(0, i).rfind(L".");
-  if (j != (int)std::wstring::npos) {
-    if (checkForSeqNum(type) && isNumbers(str, j, i)) i = j;
-  } else if (m_underscoreFormatAllowed) {
-    j = str.substr(0, i).rfind(L"_");
-    if (j != (int)std::wstring::npos && checkForSeqNum(type) &&
-        isNumbers(str, j, i))
-      i = j;
-  }
+  int j = rfindFrameSep(str, i, m_underscoreFormatAllowed);
+  if (j != (int)std::wstring::npos && checkForSeqNum(type) &&
+      isNumbers(str, j, i))
+    i = j;
   return str.substr(0, i);
 }
 
@@ -698,9 +700,7 @@ std::wstring TFilePath::getLevelNameW() const {
   if (isFfmpegType()) return str;
   int j = str.rfind(L".");                       // str[j..] = ".type"
   if (j == (int)std::wstring::npos) return str;  // no frame; no type
-  i = str.substr(0, j).rfind(L'.');
-  if (i == (int)std::wstring::npos && m_underscoreFormatAllowed)
-    i = str.substr(0, j).rfind(L'_');
+  i = rfindFrameSep(str, j, m_underscoreFormatAllowed);
 
   if (j == i || j - i == 1)  // prova.tif o prova..tif
     return str;
@@ -762,11 +762,7 @@ TFrameId TFilePath::getFrame() const {
   i                = str.rfind(L'.');
   if (i == (int)std::wstring::npos || str == L"." || str == L"..")
     return TFrameId(TFrameId::NO_FRAME);
-  int j;
-
-  j = str.substr(0, i).rfind(L'.');
-  if (j == (int)std::wstring::npos && m_underscoreFormatAllowed)
-    j = str.substr(0, i).rfind(L'_');
+  int j = rfindFrameSep(str, i, m_underscoreFormatAllowed);
 
   if (j == (int)std::wstring::npos) return TFrameId(TFrameId::NO_FRAME);
   if (i == j + 1) return TFrameId(TFrameId::EMPTY_FRAME);
@@ -876,9 +872,7 @@ TFilePath TFilePath::withName(const std::wstring &name) const {
   }
   int k;
 
-  k = str.substr(0, j).rfind(L".");
-  if (k == (int)std::wstring::npos && m_underscoreFormatAllowed)
-    k = str.substr(0, j).rfind(L"_");
+  k = rfindFrameSep(str, j, m_underscoreFormatAllowed);
 
   if (k == (int)(std::wstring::npos))
     k = j;
@@ -939,6 +933,15 @@ TFilePath TFilePath::withFrame(const TFrameId &frame,
                                     format == TFrameId::UNDERSCORE_NO_PAD ||
                                     format == TFrameId::UNDERSCORE_CUSTOM_PAD))
     ch = "_";
+  // Preserve a hyphen separator already present in the source path
+  // (e.g. "frame-0006.jpg"), so addressing sibling frames keeps the same name.
+  if (j != (int)std::wstring::npos) {
+    int srcSep = rfindFrameSep(str, j, m_underscoreFormatAllowed);
+    if (srcSep != (int)std::wstring::npos && str[srcSep] == L'-' &&
+        (srcSep == j - 1 ||
+         (checkForSeqNum(type) && isNumbers(str, srcSep, j))))
+      ch = "-";
+  }
 
   // no extension case
   if (j == (int)std::wstring::npos) {
@@ -948,7 +951,7 @@ TFilePath TFilePath::withFrame(const TFrameId &frame,
       return TFilePath(m_path + ::to_wstring(ch + frame.expand(format)));
   }
 
-  int k = str.substr(0, j).rfind(L'.');
+  int k = rfindFrameSep(str, j, m_underscoreFormatAllowed);
 
   bool hasValidFrameNum = false;
   if (!isFfmpegType() && checkForSeqNum(type)) {
@@ -1093,8 +1096,8 @@ TFilePath::TFilePathInfo TFilePath::analyzePath() const {
 
   // Level Name : letters other than  \/:,;*?"<>|
   const QString levelNameRegExp("([^\\\\/:,;*?\"<>|]+)");
-  // Sep Char : period or underscore
-  const QString sepCharRegExp("([\\._])");
+  // Sep Char : period, underscore or hyphen
+  const QString sepCharRegExp("([\\._-])");
   // Frame Number and Suffix
   QString fIdRegExp = TFilePath::fidRegExpStr();
 

@@ -106,6 +106,8 @@
 // Persisted number of columns in the Board grid (the spin in the toolbar).
 // Stored in user env so the layout is remembered across sessions.
 TEnv::IntVar ZtoryBoardColumns("ZtoryBoardColumns", 3);
+// "Compact view": one card per shot (collapse panels). Persisted.
+TEnv::IntVar ZtoryBoardCollapsePanels("ZtoryBoardCollapsePanels", 0);
 
 // Strip leading alphabetic characters from a label; optionally capture the prefix.
 // E.g. "SH010" → "010" (prefix="SH"),  "010" → "010" (prefix=""),  "SQ001" → "001"
@@ -485,6 +487,25 @@ PanelWidget::PanelWidget(QWidget *parent)
     "QLineEdit:focus{background:#555;border:1px solid #888;}");
   m_panelLabel = val("1/1");
 
+  // ◀ ▶ panel navigator — only shown in the collapsed "Compact view" Board view.
+  auto makeNavBtn = [this](const QString &glyph) {
+    QPushButton *b = new QPushButton(glyph, this);
+    b->setFixedSize(16, 16);
+    b->setFocusPolicy(Qt::NoFocus);
+    b->setStyleSheet(
+        "QPushButton{background:#444;color:#ddd;border-radius:2px;font-size:10px;"
+        "padding:0;}QPushButton:hover{background:#666;}"
+        "QPushButton:disabled{color:#666;}");
+    b->hide();
+    return b;
+  };
+  m_prevPanelBtn = makeNavBtn(QString::fromUtf8("◀"));  // ◀
+  m_nextPanelBtn = makeNavBtn(QString::fromUtf8("▶"));  // ▶
+  connect(m_prevPanelBtn, &QPushButton::clicked, this,
+          [this]() { emit panelNavRequested(m_shotIndex, -1); });
+  connect(m_nextPanelBtn, &QPushButton::clicked, this,
+          [this]() { emit panelNavRequested(m_shotIndex, +1); });
+
   // D: durata parziale panel — read-only, derivata dalla subscene
   m_durationSpin = new QSpinBox();
   m_durationSpin->setRange(1, 99999);
@@ -522,7 +543,9 @@ PanelWidget::PanelWidget(QWidget *parent)
   hl->addWidget(lbl("SH:"));
   hl->addWidget(m_shotLabel);
   hl->addWidget(lbl("P:"));
+  hl->addWidget(m_prevPanelBtn);
   hl->addWidget(m_panelLabel);
+  hl->addWidget(m_nextPanelBtn);
   hl->addWidget(lbl("D:"));
   hl->addWidget(m_durationSpin);
   hl->addWidget(lbl("T:"));
@@ -697,6 +720,18 @@ void PanelWidget::setPanelIndex(int pi, int total) {
   m_totalSpin->setStyleSheet(pi == 0
     ? "QSpinBox{background:#222;color:#aaffaa;border:1px solid #555;font-size:10px;padding:1px;}"
     : "QSpinBox{background:#333;color:#666;border:1px solid #444;font-size:10px;padding:1px;}");
+}
+
+void PanelWidget::setPanelNavigator(bool enabled, int total) {
+  // Show the arrows only in collapsed view when the shot has more than one
+  // panel; disable each arrow at the ends.
+  bool show = enabled && total > 1;
+  m_prevPanelBtn->setVisible(show);
+  m_nextPanelBtn->setVisible(show);
+  if (show) {
+    m_prevPanelBtn->setEnabled(m_panelIndex > 0);
+    m_nextPanelBtn->setEnabled(m_panelIndex < total - 1);
+  }
 }
 
 void PanelWidget::setShotNumber(const QString &label) {
@@ -973,6 +1008,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
 {
   setObjectName("StoryboardPanel");
   setFocusPolicy(Qt::StrongFocus);
+  m_collapsePanels = ((int)ZtoryBoardCollapsePanels != 0);  // restore "Compact view"
 
   // Keyboard shortcuts: intercept via qApp event filter so they fire regardless
   // of which child widget (card, text field, button) currently holds keyboard focus.
@@ -1003,6 +1039,24 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_columnsPerRowSpin->setValue(m_columnsPerRow);
   m_columnsPerRowSpin->setFixedWidth(45);
   m_columnsPerRowSpin->setStyleSheet("background:#333;color:#ddd;border:1px solid #555;");
+
+  // "Compact view" toggle: one card per shot (collapse panels), with ◀ ▶ on the
+  // card to flip panels in place — keeps the Board light on animated scenes.
+  m_collapsePanelsButton = new QToolButton();
+  m_collapsePanelsButton->setIcon(createQIcon("ztoryc_compact_view"));
+  m_collapsePanelsButton->setIconSize(QSize(18, 18));
+  m_collapsePanelsButton->setCheckable(true);
+  m_collapsePanelsButton->setChecked(m_collapsePanels);
+  m_collapsePanelsButton->setFixedSize(28, 28);
+  m_collapsePanelsButton->setToolTip(
+      tr("Compact view: show one card per shot (the current panel); use the "
+         "◀ ▶ arrows on the card to flip through the shot's panels"));
+  m_collapsePanelsButton->setStyleSheet(
+      "QToolButton{background:transparent;border:none;border-radius:4px;}"
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#3a6ea5;}");
+  connect(m_collapsePanelsButton, &QToolButton::toggled, this,
+          &StoryboardPanel::onToggleCollapsePanels);
 
   m_numberingCombo = new QComboBox();
   m_numberingCombo->addItem("Auto #");
@@ -1159,6 +1213,8 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   tb->addSpacing(8);
   tb->addWidget(colLabel);
   tb->addWidget(m_columnsPerRowSpin);
+  tb->addSpacing(8);
+  tb->addWidget(m_collapsePanelsButton);
   // No stretch here: the toolbar is wrapped in a DvScrollWidget below, so its
   // natural content width must drive the overflow scroll arrows. A stretch
   // would absorb all extra space and the bar would never report an overflow.
@@ -1573,6 +1629,8 @@ void StoryboardPanel::connectPanelWidget(PanelWidget *pw) {
     }
   });
   connect(pw, &PanelWidget::clicked, this, &StoryboardPanel::onPanelClicked);
+  connect(pw, &PanelWidget::panelNavRequested, this,
+          &StoryboardPanel::onPanelNavRequested);
   connect(pw, &PanelWidget::dropReceived, this, &StoryboardPanel::onMoveShot);
   connect(pw, &PanelWidget::lightPlaced, this, &StoryboardPanel::onLightPlaced);
   connect(pw, &PanelWidget::lightRemoveRequested, this,
@@ -1756,12 +1814,34 @@ void StoryboardPanel::rebuildGrid() {
       m_grid->removeWidget(pw);
   int col = 0, row = 0;
   for (Shot &shot : m_shots) {
-    for (PanelWidget *pw : shot.panels) {
-      m_grid->addWidget(pw, row, col);
-      pw->show();
-      pw->updateGeometry();
+    if (m_collapsePanels) {
+      // "Compact view" view: a single card per shot showing the current panel.
+      if (shot.panels.empty()) continue;
+      int total = (int)shot.panels.size();
+      shot.viewPanel = qBound(0, shot.viewPanel, total - 1);
+      for (int pi = 0; pi < total; pi++) {
+        PanelWidget *pw = shot.panels[pi];
+        if (pi == shot.viewPanel) {
+          m_grid->addWidget(pw, row, col);
+          pw->setPanelNavigator(true, total);
+          pw->show();
+          pw->updateGeometry();
+        } else {
+          pw->setPanelNavigator(false, total);
+          pw->hide();
+        }
+      }
       col++;
       if (col >= m_columnsPerRow) { col = 0; row++; }
+    } else {
+      for (PanelWidget *pw : shot.panels) {
+        pw->setPanelNavigator(false, (int)shot.panels.size());
+        m_grid->addWidget(pw, row, col);
+        pw->show();
+        pw->updateGeometry();
+        col++;
+        if (col >= m_columnsPerRow) { col = 0; row++; }
+      }
     }
   }
   m_container->adjustSize();
@@ -1770,6 +1850,7 @@ void StoryboardPanel::rebuildGrid() {
     int colW = qMax(150, available / m_columnsPerRow);
     for (Shot &shot : m_shots)
       for (PanelWidget *pw : shot.panels) {
+        if (!pw->isVisible()) continue;  // skip collapsed-away panels
         pw->setFixedWidth(colW);
         pw->rescalePreview();
       }
@@ -1836,6 +1917,9 @@ void StoryboardPanel::updateVisiblePreviews() {
     for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++) {
       PanelWidget *pw = m_shots[si].panels[pi];
       if (!pw) continue;
+      // In "Compact view" view the non-current panels are hidden — never render
+      // them (and their geometry would be stale anyway).
+      if (!pw->isVisible()) continue;
       // Skip if already has a thumbnail — re-render only on explicit request
       // (window resize → previewRerenderNeeded) or manual refresh.
       if (!pw->previewPixmap().isNull()) continue;
@@ -4214,6 +4298,53 @@ void StoryboardPanel::onColumnsChanged(int value) {
   rebuildGrid();
 }
 
+void StoryboardPanel::onToggleCollapsePanels(bool on) {
+  m_collapsePanels        = on;
+  ZtoryBoardCollapsePanels = on ? 1 : 0;  // persist across sessions
+  rebuildGrid();
+  // Render the previews that just became visible (collapsed cards or, when
+  // turning the mode off, the panels that were hidden).
+  updateVisiblePreviews();
+}
+
+void StoryboardPanel::onPanelNavRequested(int shotIdx, int delta) {
+  if (!m_collapsePanels) return;
+  if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
+  Shot &shot = m_shots[shotIdx];
+  int total  = (int)shot.panels.size();
+  if (total <= 1) return;
+  int next = qBound(0, shot.viewPanel + delta, total - 1);
+  if (next == shot.viewPanel) return;
+
+  PanelWidget *oldPw = shot.panels[shot.viewPanel];
+  PanelWidget *newPw = shot.panels[next];
+
+  // Swap only this one cell instead of rebuilding the whole grid: find the
+  // cell occupied by the current card and drop the next one in its place.
+  int idx = m_grid->indexOf(oldPw);
+  int row = 0, col = 0, rspan = 1, cspan = 1;
+  if (idx >= 0) m_grid->getItemPosition(idx, &row, &col, &rspan, &cspan);
+
+  int colW = qMax(150, oldPw->width());  // reuse the laid-out card width
+
+  m_grid->removeWidget(oldPw);
+  oldPw->setPanelNavigator(false, total);
+  oldPw->hide();
+
+  shot.viewPanel = next;
+
+  if (idx >= 0) m_grid->addWidget(newPw, row, col);
+  newPw->setFixedWidth(colW);
+  newPw->setPanelNavigator(true, total);
+  newPw->show();
+  newPw->updateGeometry();
+  // Lazily render the thumbnail the first time this panel is shown.
+  if (newPw->previewPixmap().isNull())
+    updatePreview(shotIdx, next);
+  else
+    newPw->rescalePreview();
+}
+
 void StoryboardPanel::onNumberingChanged(int comboIndex) {
   if (comboIndex == 0) {
     m_autoRenumber = true;
@@ -5578,7 +5709,17 @@ void StoryboardPanel::onExportSpreadsheet() {
 
   // Overview sheet: every shot, union of all used task columns.
   const QString overviewName = tr("All Shots");
-  xlsx.renameSheet(xlsx.sheetNames().first(), overviewName);
+  // A freshly-constructed QXlsx::Document has NO worksheet until the first
+  // write/activeSheet() call, so sheetNames() can be empty here.  Calling
+  // .first() on an empty QList is undefined behaviour — harmless on macOS
+  // (shared-null QString) but an EXCEPTION_ACCESS_VIOLATION on Windows release
+  // inside renameSheet's QString comparison.  Guard it: rename the default
+  // sheet if present, otherwise create the named one (addSheet selects it).
+  QStringList existingSheets = xlsx.sheetNames();
+  if (existingSheets.isEmpty())
+    xlsx.addSheet(overviewName);
+  else
+    xlsx.renameSheet(existingSheets.first(), overviewName);
   std::vector<int> allShots;
   for (int si = 0; si < (int)m_shots.size(); si++) allShots.push_back(si);
   QString subtitle;

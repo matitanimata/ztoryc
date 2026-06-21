@@ -1365,6 +1365,7 @@ QString PreferencesPopup::getUIString(PreferencesItemId id) {
 
       // Loading
       {importPolicy, tr("Default File Import Behavior:")},
+      {numberedFilesImportMode, tr("Numbered Files:")},
       {autoExposeEnabled, tr("Expose Loaded Levels in the Scene")},
       {autoRemoveUnusedLevels,
        tr("Automatically Remove Unused Levels From Scene Cast")},
@@ -1578,6 +1579,10 @@ QList<ComboBoxItem> PreferencesPopup::getComboItemList(
        {{tr("Always ask before loading or importing"), 0},
         {tr("Always import the file to the current project"), 1},
         {tr("Always load the file from the current location"), 2}}},
+      {numberedFilesImportMode,
+       {{tr("Automatic (detect sequences)"), 0},
+        {tr("Always as a sequence"), 1},
+        {tr("Always as individual frames"), 2}}},
       {rasterLevelCachingBehavior,
        {{tr("On Demand"), 0},
         {tr("All Icons"), 1},
@@ -2059,6 +2064,8 @@ QGridLayout* PreferencesPopup::createLoadingLayout() {
   setupLayout(lay);
 
   insertUI(importPolicy, lay, getComboItemList(importPolicy));
+  insertUI(numberedFilesImportMode, lay,
+           getComboItemList(numberedFilesImportMode));
   QGridLayout* autoExposeLay = insertGroupBoxUI(autoExposeEnabled, lay);
   { insertUI(autoRemoveUnusedLevels, autoExposeLay); }
   insertUI(subsceneFolderEnabled, lay);

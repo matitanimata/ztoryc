@@ -177,6 +177,22 @@ FileBrowserPopup::FileBrowserPopup(const QString &title, Options options,
 
 //-----------------------------------------------------------------------------
 
+QComboBox *FileBrowserPopup::createNumberedFilesModeCombo(QWidget *parent) {
+  QComboBox *combo = new QComboBox(parent);
+  combo->addItem(tr("Automatic"), FileBrowser::Automatic);
+  combo->addItem(tr("Sequence"), FileBrowser::ForceSequence);
+  combo->addItem(tr("Individual frames"), FileBrowser::IndividualFrames);
+  combo->setCurrentIndex(combo->findData(
+      Preferences::instance()->getNumberedFilesImportMode()));
+  connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this, combo](int index) {
+            if (m_browser) m_browser->setSequenceMode(combo->itemData(index).toInt());
+          });
+  return combo;
+}
+
+//-----------------------------------------------------------------------------
+
 void FileBrowserPopup::setFilterTypes(const QStringList &typesList) {
   m_browser->setFilterTypes(typesList);
 }
@@ -712,6 +728,10 @@ LoadLevelPopup::LoadLevelPopup()
       new QLabel(tr("Raster Level Caching Behavior"), this);
   m_rasterCacheBehaviorComboBox = new QComboBox(this);
 
+  // how numbered files (e.g. "frame-0006.jpg") are listed for this load
+  QLabel *numberedFilesLabel = new QLabel(tr("Numbered Files"), this);
+  m_numberedFilesModeCombo   = new QComboBox(this);
+
   //----Load Subsequence Level
   QPushButton *showSubsequenceButton = createShowButton(this);
   QLabel *subsequenceLabel = new QLabel(tr("Load Subsequence Level"), this);
@@ -758,6 +778,15 @@ LoadLevelPopup::LoadLevelPopup()
       m_rasterCacheBehaviorComboBox->findData(
           Preferences::instance()->getRasterLevelCachingBehavior()));
   cacheBehaviorLabel->setObjectName("TitleTxtLabel");
+
+  //----Numbered files mode (defaults to the global preference)
+  m_numberedFilesModeCombo->addItem(tr("Automatic"), FileBrowser::Automatic);
+  m_numberedFilesModeCombo->addItem(tr("Sequence"), FileBrowser::ForceSequence);
+  m_numberedFilesModeCombo->addItem(tr("Individual frames"),
+                                    FileBrowser::IndividualFrames);
+  m_numberedFilesModeCombo->setCurrentIndex(m_numberedFilesModeCombo->findData(
+      Preferences::instance()->getNumberedFilesImportMode()));
+  numberedFilesLabel->setObjectName("TitleTxtLabel");
 
   //----Load Subsequence Level
   m_subsequenceFrame->setObjectName("LoadLevelFrame");
@@ -812,6 +841,9 @@ LoadLevelPopup::LoadLevelPopup()
     QHBoxLayout *cacheLay = createHBoxLayout(0, 5);
     {
       cacheLay->addStretch(1);
+      cacheLay->addWidget(numberedFilesLabel, 0);
+      cacheLay->addWidget(m_numberedFilesModeCombo, 0);
+      cacheLay->addSpacing(15);
       cacheLay->addWidget(cacheBehaviorLabel, 0);
       cacheLay->addWidget(m_rasterCacheBehaviorComboBox, 0);
     }
@@ -946,6 +978,8 @@ LoadLevelPopup::LoadLevelPopup()
           SLOT(onNameSetEditted()));
   connect(m_browser, SIGNAL(filePathDoubleClicked(const TFilePath &)), this,
           SLOT(onFilePathDoubleClicked(const TFilePath &)));
+  connect(m_numberedFilesModeCombo, SIGNAL(currentIndexChanged(int)), this,
+          SLOT(onNumberedFilesModeChanged(int)));
   //----Level Properties
   connect(m_dpiPolicy, SIGNAL(activated(int)), this,
           SLOT(onDpiPolicyActivated()));
@@ -1331,6 +1365,13 @@ void LoadLevelPopup::initFolder() {
 void LoadLevelPopup::onFilePathDoubleClicked(const TFilePath &path) {
   Q_UNUSED(path);
   onOkPressed();
+}
+
+//----------------------------------------------------------------------------
+
+void LoadLevelPopup::onNumberedFilesModeChanged(int index) {
+  if (!m_browser) return;
+  m_browser->setSequenceMode(m_numberedFilesModeCombo->itemData(index).toInt());
 }
 
 //----------------------------------------------------------------------------
@@ -2272,9 +2313,21 @@ void BrowserPopup::initFolder(TFilePath path) {
 // ImportAssetsPopup
 
 ImportAssetsPopup::ImportAssetsPopup()
-    : FileBrowserPopup(tr("Import Assets"), Options(MULTISELECTION)) {
+    : FileBrowserPopup(tr("Import Assets"), Options(MULTISELECTION), "",
+                       new QWidget(0)) {
   setOkText(tr("Import"));
   // No filter types: shows all non-tnz assets by default (images, tlv, pli, audio…)
+
+  // "Numbered Files" sequence-detection override for this import session
+  QWidget *optionWidget    = (QWidget *)m_customWidget;
+  QLabel *numberedFilesLbl = new QLabel(tr("Numbered Files"), optionWidget);
+  QComboBox *modeCombo     = createNumberedFilesModeCombo(optionWidget);
+  QHBoxLayout *optionLay   = new QHBoxLayout(optionWidget);
+  optionLay->setContentsMargins(5, 0, 5, 0);
+  optionLay->setSpacing(5);
+  optionLay->addStretch(1);
+  optionLay->addWidget(numberedFilesLbl, 0);
+  optionLay->addWidget(modeCombo, 0);
 }
 
 bool ImportAssetsPopup::execute() {

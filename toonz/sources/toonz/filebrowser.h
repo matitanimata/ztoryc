@@ -125,6 +125,17 @@ types to be displayed in the file browser.
   // So it is disabled by default.
   void enableDoubleClickToOpenScenes();
 
+  // How numbered files (e.g. "frame-0006.jpg") are listed. Mirrors the global
+  // Preferences default; the Load Level popup can override it per browser.
+  enum SequenceMode {
+    Automatic        = 0,  //!< group numbered files, but show a lone numbered
+                           //!< file as a single still
+    ForceSequence    = 1,  //!< always group numbered files into a sequence
+    IndividualFrames = 2   //!< list every physical file separately
+  };
+  void setSequenceMode(int mode);
+  int getSequenceMode() const { return m_sequenceMode; }
+
 protected:
   int findIndexWithPath(TFilePath path);
   void getExpandedFolders(DvDirModelNode *node,
@@ -258,6 +269,7 @@ private:
   std::string m_dayDateString;
   QStringList m_filter;
   std::map<TFilePath, Item> m_multiFileItemMap;
+  int m_sequenceMode;  // see SequenceMode; initialized from Preferences
 
 private:
   void readFrameCount(Item &item);
