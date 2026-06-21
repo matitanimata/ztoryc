@@ -60,6 +60,11 @@ jobs:
           ci-scripts/linux/tahoma-install.sh
           sudo apt-get install ccache
           mkdir -p /home/runner/.ccache
+          # Use ccache via its compiler shims (prepended to PATH) instead of the
+          # "ccache <compiler>" prefix below: the updated ccache rejects flags
+          # passed to it directly (e.g. Qt AutoMoc runs `ccache -std=... g++ -dM
+          # -E` -> `ccache: invalid option -- t` -> moc_predefs.h fails).
+          echo "/usr/lib/ccache" >> "$GITHUB_PATH"
       - name: Get CanonSDK
         if: ${{ (github.repository_owner == 'tahoma2d' || github.repository_owner == 'manongjohn') && github.event_name == 'push' }}
         run: |
@@ -70,33 +75,33 @@ jobs:
       - name: Build ffmpeg
         if: ${{ steps.restore-deps-cache.outputs.cache-hit != 'true' }}
         run: |
-          export CC="ccache ${{ matrix.cc }}"
-          export CXX="ccache ${{ matrix.cxx }}"
+          export CC="${{ matrix.cc }}"
+          export CXX="${{ matrix.cxx }}"
           ci-scripts/linux/tahoma-buildffmpeg.sh
       - name: Build OpenCV
         if: ${{ steps.restore-deps-cache.outputs.cache-hit != 'true' }}
         run: |
-          export CC="ccache ${{ matrix.cc }}"
-          export CXX="ccache ${{ matrix.cxx }}"
+          export CC="${{ matrix.cc }}"
+          export CXX="${{ matrix.cxx }}"
           ci-scripts/linux/tahoma-buildopencv.sh
       - name: Build libmypaint
         if: ${{ steps.restore-deps-cache.outputs.cache-hit != 'true' }}
         run: |
-          export CC="ccache ${{ matrix.cc }}"
-          export CXX="ccache ${{ matrix.cxx }}"
+          export CC="${{ matrix.cc }}"
+          export CXX="${{ matrix.cxx }}"
           ci-scripts/linux/tahoma-buildlibmypaint.sh
       - name: Build libgphoto2
         if: ${{ steps.restore-deps-cache.outputs.cache-hit != 'true' }}
         run: |
-          export CC="ccache ${{ matrix.cc }}"
-          export CXX="ccache ${{ matrix.cxx }}"
+          export CC="${{ matrix.cc }}"
+          export CXX="${{ matrix.cxx }}"
           ci-scripts/linux/tahoma-buildlibgphoto2.sh
       - name: Bundle third-party apps (FFmpeg from /usr/local + Rhubarb)
         run: ci-scripts/linux/tahoma-bundle-apps.sh
       - name: Build Ztoryc
         run: |
-          export CC="ccache ${{ matrix.cc }}"
-          export CXX="ccache ${{ matrix.cxx }}"
+          export CC="${{ matrix.cc }}"
+          export CXX="${{ matrix.cxx }}"
           ci-scripts/linux/tahoma-build.sh
       - name: Create Package
         run: |
