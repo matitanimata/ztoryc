@@ -3830,21 +3830,31 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
 
   clearShots();
 
-  // Remove all current shot columns (child-level columns at indices 0..N-1).
-  // Non-shot columns (audio etc.) live at higher indices and shift accordingly.
+  // Remove all current shot columns. Shot columns are always first; audio (and
+  // any other real, non-sub-scene level) columns follow.
+  //
+  // BUG FIX (undo of Delete Shot duplicated every shot): the old detection
+  // classified a column as a shot only if it held a child-level cell, and broke
+  // at the first column that didn't. But an *empty* shot — a shot made only of
+  // empty/red cells, a valid Ztoryc state (duration counts empty cells) — has no
+  // child-level cell, so the loop stopped early and removed too few columns. The
+  // snapshot re-insert below then added the full set on top of the survivors,
+  // duplicating every shot past the empty one (data corruption: cloned
+  // sub-scenes). Instead, treat every leading column as a removable shot until
+  // the first audio column or the first column carrying a non-sub-scene level.
   int currentShotCols = 0;
   for (int c = 0; c < xsh->getColumnCount(); c++) {
-    bool isShot = false;
-    int fc = xsh->getFrameCount();
+    TXshColumn *column = xsh->getColumn(c);
+    if (column && column->getSoundColumn()) break;  // audio ends the shot region
+    bool hasRealLevel = false;  // a non-sub-scene level → not a shot column
+    int fc            = xsh->getFrameCount();
     for (int r = 0; r <= fc; r++) {
       TXshCell cell = xsh->getCell(r, c);
-      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
-        isShot = true;
-        break;
-      }
+      if (cell.isEmpty() || !cell.m_level) continue;
+      if (!cell.m_level->getChildLevel()) { hasRealLevel = true; break; }
     }
-    if (isShot) currentShotCols++;
-    else break; // shot columns are always first; stop at first non-shot
+    if (hasRealLevel) break;
+    currentShotCols++;  // child-level shot OR empty/red-cell placeholder shot
   }
   // Remove from left repeatedly (indices shift left each time).
   for (int i = 0; i < currentShotCols; i++)
