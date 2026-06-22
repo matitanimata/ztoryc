@@ -111,6 +111,8 @@ set(MOC_HEADERS
     ztoryanimatic.h
     ztoryannotations.h
     ztorymonitorpanel.h
+    ztorythumbnailpanel.h
+    ztorythumbnailcanvas.h
     ztoryscriptpanel.h
     ztorystartup.h
     trackerpopup.h
@@ -248,6 +250,8 @@ set(SOURCES
     ztoryanimatic.cpp
     ztoryannotations.cpp
     ztorymonitorpanel.cpp
+    ztorythumbnailpanel.cpp
+    ztorythumbnailcanvas.cpp
     ztoryscriptpanel.cpp
     ztorystartup.cpp
     xshcellmover.cpp
@@ -475,6 +479,7 @@ include_directories(
     ../../sources/toonzfarm/include
     ../../sources/toonzqt
     ../../sources/stopmotion
+    ../../sources/tnztools
 )
 
 if (WITH_CANON)
@@ -627,6 +632,11 @@ target_link_libraries(Ztoryc ZLIB::ZLIB)
 
 # QXlsx (vendored, MIT) — production worksheet export (.xlsx with thumbnails).
 target_link_libraries(Ztoryc QXlsx::QXlsx)
+
+# libmypaint — the Thumbnail room canvas (ztorythumbnailcanvas.cpp) instantiates
+# mypaint::Brush, whose inline methods call libmypaint C functions directly. The
+# app must link libmypaint itself (it is otherwise pulled in only by tnztools).
+target_link_libraries(Ztoryc ${MYPAINT_LIB_LDFLAGS})
 
 if(BUILD_ENV_APPLE)
     # CMAKE_RUNTIME_OUTPUT_DIRECTORY should be equivalent to usage on windows despite empty

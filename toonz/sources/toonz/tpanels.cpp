@@ -414,6 +414,8 @@ OpenFloatingPanel openZtoryAnimaticViewerCommand(MI_OpenZtoryAnimaticViewer, "Zt
 
 OpenFloatingPanel openZtoryMonitorCommand(MI_OpenZtoryMonitor, "ZtoryMonitorPanel",
                                               QObject::tr("Ztoryc Monitor"));
+OpenFloatingPanel openZtoryThumbnailCommand(MI_OpenZtoryThumbnail, "ZtoryThumbnailPanel",
+                                              QObject::tr("Ztoryc Thumbnails"));
 OpenFloatingPanel openZtoryScriptCommand("MI_OpenZtoryScript", "ZtoryScriptPanel",
                                               QObject::tr("Ztoryc Script"));
 OpenFloatingPanel openZtoryLeftPanelCommand("MI_OpenZtoryLeftPanel", "ZtoryLeftPanel",

@@ -1,3 +1,42 @@
+## [2026-06-22] — Thumbnail room (Fasi 1-2): canvas MyPaint + griglia continua + palette  [branch `feature/thumbnail-room`]
+
+> Lavoro su branch dedicato `feature/thumbnail-room` (NON master). Milestone "Thumbnail room":
+> griglia per schizzare panel veloci, poi export-to-board (Fase 3 da fare).
+
+### Added — Thumbnail room (nuova room/panel)
+- **Panel `ZtoryThumbnailPanel`** registrato in `Windows ▸ Ztoryc ▸ Ztoryc Thumbnails`
+  (factory + `OpenFloatingPanel` in `tpanels.cpp` + `MI_OpenZtoryThumbnail` + menubar + CMake).
+- **Canvas di disegno custom `ZtoryThumbnailCanvas`** che pilota il **motore brush MyPaint
+  vero di Tahoma** (`MyPaintToonzBrush` su `TRaster32P`), del tutto **disaccoppiato da
+  SceneViewer/TTool**. Brush `.myb` reali caricati via `TMyPaintBrushStyle`; colore→HSV come
+  il fullcolor tool; `dtime` reale per le dinamiche. Scelta architetturale chiave: NON
+  embeddare un `ComboViewerPanel` (TPanel annidato in TPanel rompe il routing del viewer
+  attivo → non si disegna). Decoupling raster = export futuro banale (ritaglio, no slicing).
+- **Superficie continua** (un unico raster contiguo per tutta la griglia): gli stroke
+  attraversano i confini dei pannelli → **panoramiche orizzontali/verticali** come canvas
+  ad hoc. I bordi pannello sono solo overlay (linee sottili).
+- **Pan** (tasto centrale / rotella, Shift = orizzontale) e **zoom** (Ctrl+rotella, centrato
+  sul cursore). **`+ Row`** ingrandisce la griglia (raster ricopiato preservando il disegno).
+- **Palette toolbar**: strumenti con **icone = preview MyPaint del brush** (`_prev.png`):
+  Pencil/Brush/Airbrush/Kneaded/Eraser + **`+`** per aggiungere un brush dalla libreria.
+  **Colore separato dal brush**: chip blu `#1D5C83`/nero/rosso + **swatch attivo** (più grande,
+  bordo marcato, ▾) che apre il color picker. Le gomme dipingono **bianco** sulla carta opaca
+  (normale = pieno, gomma pane = bianco a opacità 30% → schiarisce). Slider **Size**.
+
+### Fixed (in-feature)
+- `TPanel` è un `TDockWidget`: contenuto installato via `setWidget()` (col layout diretto il
+  canvas restava invisibile).
+- Link: l'app non linkava `libmypaint` (lo tirava solo `tnztools`) → aggiunto `${MYPAINT_LIB_LDFLAGS}`
+  in `toonz/CMakeLists.txt`; aggiunto `tnztools` agli include dir dell'app.
+- Brush aggiunto col **+** (path assoluto dal file dialog): `resolveBrushFile` ora passa i path
+  assoluti → l'icona `_prev.png` si carica e il brush disegna col proprio stile.
+
+### TODO (prossime sessioni)
+- Fase 2 resto: selezione multi-pannello + riordino + aggiungi/rimuovi pannelli.
+- Fase 3: **export to board** (riquadri/panoramiche → shot reali in `ZtoryModel` + timeline/board).
+- Salvare la palette come **global/studio palette** Tahoma, default anche in modalità normale.
+- Possibili "pagine" oltre alle righe per gestire decine di pannelli.
+
 ## [2026-06-21b] — Release 0.6.1 (macOS+Windows), fix CI ccache, fix post-release
 
 ### Release

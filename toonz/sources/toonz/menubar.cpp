@@ -705,6 +705,7 @@ void TopBar::loadMenubar() {
     addMenuItem(ztoryMenu, MI_OpenZtoryAnimatic);
     addMenuItem(ztoryMenu, MI_OpenZtoryAnimaticViewer);
     addMenuItem(ztoryMenu, MI_OpenZtoryMonitor);
+    addMenuItem(ztoryMenu, MI_OpenZtoryThumbnail);
     ztoryMenu->addSeparator();
     addMenuItem(ztoryMenu, "MI_OpenZtoryLeftPanel");
     addMenuItem(ztoryMenu, "MI_OpenZtoryRightPanel");
