@@ -26,6 +26,7 @@
 #include <QElapsedTimer>
 #include <QPoint>
 #include <QString>
+#include <QVector>
 
 #include "mypainttoonzbrush.h"  // RasterController, MyPaintToonzBrush
 
@@ -51,6 +52,23 @@ public:
   void setColor(const TPixel32 &color);     // ink colour (ignored by erasers)
   void setSizeModifier(double logMod);      // brush size (log2 units)
   void addRow();                            // grow the grid by one row
+
+  // --- Panel selection (for export-to-board) -------------------------------
+  // In Select mode a left click toggles a panel's membership in the ordered
+  // selection (click order == export order); drawing is suspended.
+  void setSelectMode(bool on);
+  bool isSelectMode() const { return m_selectMode; }
+  void clearSelection();
+  // Linear panel indices (row * cols + col) in selection order.
+  QVector<int> selection() const { return m_selection; }
+  int gridCols() const { return m_cols; }
+  int gridRows() const { return m_rows; }
+
+signals:
+  // Emitted whenever the ordered selection changes (count = panels selected).
+  void selectionChanged(int count);
+
+public:
 
   // Resolve a library-relative brush path ("classic/pencil.myb") to an absolute
   // path; "" if not found. Used by the palette to locate brush preview icons.
@@ -79,6 +97,11 @@ private:
   TPointD widgetToRaster(const QPointF &widgetPos) const;
   void zoomAt(const QPointF &widgetAnchor, double factor);
 
+  // Linear panel index (row*cols+col) at a world point, or -1 if outside grid.
+  int panelAtWorld(const QPointF &world) const;
+  // World-space rectangle (top-left origin, y down) of a linear panel index.
+  QRectF panelWorldRect(int index) const;
+
   // Grid (one contiguous raster; boxes are logical rectangles)
   TRaster32P m_ras;
   int m_cols    = 4;
@@ -105,4 +128,8 @@ private:
   MyPaintToonzBrush *m_brush = nullptr;
   bool m_stroking            = false;
   QElapsedTimer m_timer;
+
+  // Selection state
+  bool m_selectMode = false;
+  QVector<int> m_selection;  // linear panel indices, in click (export) order
 };

@@ -168,6 +168,36 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   m_brushBarLay->addWidget(size);
 
   m_brushBarLay->addStretch(1);
+
+  // --- Selection (for export-to-board) ---------------------------------------
+  auto *selSep = new QFrame(bar);
+  selSep->setFrameShape(QFrame::VLine);
+  selSep->setFrameShadow(QFrame::Sunken);
+  m_brushBarLay->addWidget(selSep);
+
+  auto *selectBtn = new QToolButton(bar);
+  selectBtn->setText(tr("Select"));
+  selectBtn->setCheckable(true);
+  selectBtn->setToolTip(
+      tr("Select panels (click in order) to export them as one shot"));
+  connect(selectBtn, &QToolButton::toggled, this,
+          [this](bool on) { m_canvas->setSelectMode(on); });
+  m_brushBarLay->addWidget(selectBtn);
+
+  auto *selCount = new QLabel(tr("0 sel"), bar);
+  selCount->setStyleSheet("color:#e05a00;");
+  m_brushBarLay->addWidget(selCount);
+
+  auto *clearSel = new QToolButton(bar);
+  clearSel->setText(tr("Clear"));
+  clearSel->setToolTip(tr("Clear the panel selection"));
+  connect(clearSel, &QToolButton::clicked, this,
+          [this] { m_canvas->clearSelection(); });
+  m_brushBarLay->addWidget(clearSel);
+
+  connect(m_canvas, &ZtoryThumbnailCanvas::selectionChanged, this,
+          [selCount](int n) { selCount->setText(tr("%1 sel").arg(n)); });
+
   auto *addRow = new QToolButton(bar);
   addRow->setText(tr("+ Row"));
   addRow->setToolTip(tr("Add a row of panels to the grid"));

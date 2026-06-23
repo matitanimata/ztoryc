@@ -12,6 +12,7 @@
 #include "toonzqt/gutil.h"  // rasterToQImage
 
 #include <QPainter>
+#include <QFont>
 #include <QMouseEvent>
 #include <QTabletEvent>
 #include <QWheelEvent>
@@ -93,6 +94,41 @@ void ZtoryThumbnailCanvas::addRow() {
 }
 
 //=============================================================================
+// Selection
+//=============================================================================
+
+void ZtoryThumbnailCanvas::setSelectMode(bool on) {
+  if (m_selectMode == on) return;
+  m_selectMode = on;
+  setCursor(on ? Qt::PointingHandCursor : Qt::ArrowCursor);
+  update();
+}
+
+void ZtoryThumbnailCanvas::clearSelection() {
+  if (m_selection.isEmpty()) return;
+  m_selection.clear();
+  emit selectionChanged(0);
+  update();
+}
+
+int ZtoryThumbnailCanvas::panelAtWorld(const QPointF &world) const {
+  if (world.x() < 0 || world.y() < 0 || world.x() >= gridW() ||
+      world.y() >= gridH())
+    return -1;
+  int col = (int)(world.x() / m_boxW);
+  int row = (int)(world.y() / m_boxH);
+  if (col < 0 || col >= m_cols || row < 0 || row >= m_rows) return -1;
+  return row * m_cols + col;
+}
+
+QRectF ZtoryThumbnailCanvas::panelWorldRect(int index) const {
+  if (index < 0 || index >= m_cols * m_rows) return QRectF();
+  int col = index % m_cols;
+  int row = index / m_cols;
+  return QRectF(col * m_boxW, row * m_boxH, m_boxW, m_boxH);
+}
+
+//=============================================================================
 // View transform
 //=============================================================================
 
@@ -121,6 +157,7 @@ void ZtoryThumbnailCanvas::zoomAt(const QPointF &widgetAnchor, double factor) {
 //=============================================================================
 
 void ZtoryThumbnailCanvas::beginStroke(const QPointF &widgetPos, double pressure) {
+  if (m_selectMode) return;  // selection mode suspends drawing (incl. tablet)
   ensureStyle();
   if (!m_style || !m_ras) return;
   const QPointF w = widgetToWorld(widgetPos);
@@ -200,7 +237,22 @@ void ZtoryThumbnailCanvas::mousePressEvent(QMouseEvent *e) {
     setCursor(Qt::ClosedHandCursor);
     return;
   }
-  if (e->button() == Qt::LeftButton) beginStroke(e->localPos(), 0.5);
+  if (e->button() == Qt::LeftButton) {
+    if (m_selectMode) {
+      int idx = panelAtWorld(widgetToWorld(e->localPos()));
+      if (idx >= 0) {
+        int pos = m_selection.indexOf(idx);
+        if (pos >= 0)
+          m_selection.remove(pos);   // toggle off → following panels renumber
+        else
+          m_selection.append(idx);   // toggle on  → appended at end of order
+        emit selectionChanged(m_selection.size());
+        update();
+      }
+      return;
+    }
+    beginStroke(e->localPos(), 0.5);
+  }
 }
 
 void ZtoryThumbnailCanvas::mouseMoveEvent(QMouseEvent *e) {
@@ -272,4 +324,34 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   border.setCosmetic(true);
   p.setPen(border);
   p.drawRect(target);
+
+  // Selection overlay: tint selected panels + a numbered badge showing the
+  // export order. Always drawn (so the user keeps the order visible after
+  // switching back to a brush), but only editable in Select mode.
+  for (int i = 0; i < m_selection.size(); ++i) {
+    const QRectF wr = panelWorldRect(m_selection[i]);
+    if (wr.isNull()) continue;
+    const QRectF sr(worldToWidget(wr.topLeft()),
+                    QSizeF(wr.width() * m_zoom, wr.height() * m_zoom));
+    p.fillRect(sr, QColor(224, 90, 0, 60));
+    QPen selPen(QColor(224, 90, 0));
+    selPen.setCosmetic(true);
+    selPen.setWidth(2);
+    p.setPen(selPen);
+    p.drawRect(sr);
+
+    // Order badge (1-based) in the top-left corner of the panel.
+    const double bs = 20.0;
+    QRectF badge(sr.left() + 3, sr.top() + 3, bs, bs);
+    p.setBrush(QColor(224, 90, 0));
+    p.setPen(Qt::NoPen);
+    p.drawEllipse(badge);
+    p.setPen(Qt::white);
+    QFont f = p.font();
+    f.setBold(true);
+    f.setPointSizeF(10.0);
+    p.setFont(f);
+    p.drawText(badge, Qt::AlignCenter, QString::number(i + 1));
+    p.setBrush(Qt::NoBrush);
+  }
 }
