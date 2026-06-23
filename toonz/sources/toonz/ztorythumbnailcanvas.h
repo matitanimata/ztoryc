@@ -24,10 +24,13 @@
 
 #include <QWidget>
 #include <QElapsedTimer>
+#include <QImage>
 #include <QPoint>
+#include <QPointF>
 #include <QRect>
 #include <QSize>
 #include <QString>
+#include <QTransform>
 #include <QVector>
 
 class QTimer;
@@ -64,6 +67,20 @@ public:
   void setSelectMode(bool on);
   bool isSelectMode() const { return m_selectMode; }
   void clearSelection();
+
+  // --- Transform tool (raster selection: move / copy / scale / rotate) ------
+  // A marquee lifts a rectangular region into a floating buffer that can be
+  // dragged, scaled (corner handles) and rotated (top handle), then committed
+  // back into the canvas. Free across the whole contiguous surface.
+  void setTransformMode(bool on);
+  bool isTransformMode() const { return m_xformMode; }
+  void setLassoMode(bool on) { m_lassoMode = on; }  // freehand vs rectangular
+  void commitFloat();   // bake the floating selection into the canvas
+  void cancelFloat();   // drop it (restoring the lifted pixels if it was a move)
+  void deleteFloat();   // drop it and leave the source cleared
+  void copyFloat();     // current selection → internal clipboard
+  void pasteFloat();    // clipboard → a new floating selection
+  bool hasFloat() const { return !m_floatImg.isNull(); }
   // Region top-left linear indices (row * cols + col) in selection order. A
   // region is a rectangular block of boxes merged into one logical panel (or a
   // single box if unmerged); see m_merges.
@@ -111,6 +128,10 @@ protected:
   void mouseMoveEvent(QMouseEvent *) override;
   void mouseReleaseEvent(QMouseEvent *) override;
   void wheelEvent(QWheelEvent *) override;
+  void keyPressEvent(QKeyEvent *) override;
+  // App-wide filter: the transform shortcuts (Del/Esc/Enter/Cmd-C/V) must work
+  // even when keyboard focus sits on a toolbar button, not the canvas.
+  bool eventFilter(QObject *obj, QEvent *ev) override;
 
 private:
   // Brush
@@ -144,6 +165,15 @@ private:
   int regionIndexOf(int boxIndex) const;        // → region's top-left index
   QRect regionBoxRect(int topLeftIndex) const;  // region rect in box coords
 
+  // --- Transform tool internals --------------------------------------------
+  void liftFloat(const QRectF &worldRect, bool copy);  // marquee → floating buf
+  void liftFloatLasso(const QVector<QPointF> &worldPath, bool copy);
+  bool handleTransformKey(QKeyEvent *e);  // → true if the key was consumed
+  QTransform floatLocalToWorld() const;   // base-image px → world coords
+  QPointF floatHandleWorld(int h) const;  // h: 0..3 corners, 4 = rotate handle
+  int floatHandleAt(const QPointF &widgetPos) const;  // hit-test → handle, or -1
+  void paintFloat(QPainter &p);
+
   // Grid (one contiguous raster; boxes are logical rectangles)
   TRaster32P m_ras;
   int m_cols    = 4;
@@ -176,6 +206,24 @@ private:
   bool m_selectMode = false;
   QVector<int> m_selection;  // region top-left indices, in click (export) order
   QVector<QRect> m_merges;   // merged regions in box coords (col,row,wspan,hspan)
+
+  // Transform tool state
+  bool m_xformMode = false;
+  bool m_lassoMode = false;             // freehand selection instead of a rect
+  bool m_marqueeing = false;            // dragging the rubber-band rectangle
+  QPointF m_marqueeStart, m_marqueeCur; // world coords during the marquee
+  QVector<QPointF> m_lassoPath;         // world points of the freehand path
+  QImage m_clip;                        // internal copy/paste buffer
+  QImage m_floatImg;                    // lifted pixels (world orientation)
+  QPointF m_floatCenter;                // world center of the floating buffer
+  double m_floatScale = 1.0;            // uniform scale about the center
+  double m_floatAngle = 0.0;            // rotation (radians) about the center
+  QRect m_floatSrcRect;                 // original lifted world rect (for cancel)
+  bool m_floatWasMove = false;          // source was cleared (vs. copy)
+  int m_floatDrag = -1;                 // active handle: -1 none, 0..3 scale, 4 rot, 5 move
+  QPointF m_dragStartWorld;             // mouse-down world pos
+  double m_dragStartScale = 1.0, m_dragStartAngle = 0.0;
+  QPointF m_dragStartCenter;
 
   // Persistence
   QTimer *m_saveTimer = nullptr;  // debounced autosave after edits

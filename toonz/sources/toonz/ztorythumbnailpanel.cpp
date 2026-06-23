@@ -1,6 +1,7 @@
 #include "ztorythumbnailpanel.h"
 
 #include "toonzqt/menubarcommand.h"
+#include "toonzqt/gutil.h"  // createQIcon (native toolbar icons)
 #include "menubarcommandids.h"
 #include "toonz/mypaintbrushstyle.h"  // getBrushesDirs()
 
@@ -19,12 +20,14 @@
 #include <QButtonGroup>
 #include <QSlider>
 #include <QSpinBox>
+#include <QSignalBlocker>
 #include <QSize>
 #include <QLabel>
 #include <QFrame>
 #include <QIcon>
 #include <QPixmap>
 #include <QPainter>
+#include <QPainterPath>
 #include <QColor>
 #include <QColorDialog>
 #include <QFileDialog>
@@ -41,6 +44,51 @@ QIcon brushIcon(const QString &relPath) {
   QString prev = abs;
   prev.replace(QRegExp("\\.myb$"), "_prev.png");
   return QFileInfo::exists(prev) ? QIcon(prev) : QIcon();
+}
+
+// Hand-drawn tool icons (so they render regardless of the icon theme and match
+// exactly what each tool does). Light grey to read on the dark toolbar.
+QIcon arrowIcon() {  // selection-tool pointer (panel select)
+  QPixmap pm(20, 20);
+  pm.fill(Qt::transparent);
+  QPainter p(&pm);
+  p.setRenderHint(QPainter::Antialiasing, true);
+  QPolygonF a({QPointF(4, 3), QPointF(4, 16), QPointF(8, 12), QPointF(11, 18),
+               QPointF(13, 17), QPointF(10, 11), QPointF(15, 11)});
+  p.setBrush(QColor(220, 220, 220));
+  p.setPen(QPen(QColor(40, 40, 40), 1));
+  p.drawPolygon(a);
+  return QIcon(pm);
+}
+
+QIcon dashedRectIcon() {  // rectangular marquee
+  QPixmap pm(20, 20);
+  pm.fill(Qt::transparent);
+  QPainter p(&pm);
+  QPen pen(QColor(225, 225, 225), 1.6);
+  pen.setStyle(Qt::DashLine);
+  p.setPen(pen);
+  p.setBrush(Qt::NoBrush);
+  p.drawRect(3, 4, 14, 12);
+  return QIcon(pm);
+}
+
+QIcon lassoIcon() {  // classic dashed lasso loop
+  QPixmap pm(20, 20);
+  pm.fill(Qt::transparent);
+  QPainter p(&pm);
+  p.setRenderHint(QPainter::Antialiasing, true);
+  QPen pen(QColor(225, 225, 225), 1.6);
+  pen.setStyle(Qt::DashLine);
+  p.setPen(pen);
+  p.setBrush(Qt::NoBrush);
+  QPainterPath path;
+  path.moveTo(6, 4);
+  path.cubicTo(16, 2, 19, 11, 12, 13);
+  path.cubicTo(5, 15, 3, 8, 9, 7);
+  p.drawPath(path);
+  p.drawLine(QPointF(9, 13), QPointF(7, 18));  // the lasso tail
+  return QIcon(pm);
 }
 
 // A flat swatch icon filled with a solid colour (for the preset colour chips).
@@ -186,31 +234,69 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   selSep->setFrameShadow(QFrame::Sunken);
   m_brushBarLay->addWidget(selSep);
 
+  // Three mutually-exclusive tool toggles (plus "none" = drawing):
+  //   Select    — pick panels for export
+  //   Transform — rectangular region: move / copy / scale / rotate
+  //   Lasso     — same transform tool, but a freehand selection
   auto *selectBtn = new QToolButton(bar);
-  selectBtn->setText(tr("Select"));
+  selectBtn->setIcon(arrowIcon());
   selectBtn->setCheckable(true);
   selectBtn->setToolTip(
-      tr("Select panels (click in order) to export them as one shot"));
-  connect(selectBtn, &QToolButton::toggled, this,
-          [this](bool on) { m_canvas->setSelectMode(on); });
+      tr("Select panels (click in order) to export them as one shot.\n"
+         "Click a panel again to deselect it; turn this off to deselect all."));
   m_brushBarLay->addWidget(selectBtn);
+
+  auto *xformBtn = new QToolButton(bar);
+  xformBtn->setIcon(dashedRectIcon());
+  xformBtn->setCheckable(true);
+  xformBtn->setToolTip(
+      tr("Rectangular selection: move it, copy (Cmd/Ctrl+C, V), scale "
+         "(corners)\nor rotate (top handle). Enter applies, Esc cancels, "
+         "Del/Backspace erases."));
+  m_brushBarLay->addWidget(xformBtn);
+
+  auto *lassoBtn = new QToolButton(bar);
+  lassoBtn->setIcon(lassoIcon());
+  lassoBtn->setCheckable(true);
+  lassoBtn->setToolTip(
+      tr("Freehand selection, then the same move / copy / scale / rotate"));
+  m_brushBarLay->addWidget(lassoBtn);
+
+  // One shared handler keeps the three toggles exclusive and drives the canvas
+  // modes from their combined state (signals blocked to avoid re-entrancy).
+  auto applyTools = [this, selectBtn, xformBtn, lassoBtn](QToolButton *on) {
+    QSignalBlocker b1(selectBtn), b2(xformBtn), b3(lassoBtn);
+    if (on != selectBtn) selectBtn->setChecked(false);
+    if (on != xformBtn) xformBtn->setChecked(false);
+    if (on != lassoBtn) lassoBtn->setChecked(false);
+    m_canvas->setSelectMode(selectBtn->isChecked());
+    m_canvas->setTransformMode(xformBtn->isChecked() || lassoBtn->isChecked());
+    m_canvas->setLassoMode(lassoBtn->isChecked());
+  };
+  connect(selectBtn, &QToolButton::toggled, this,
+          [applyTools, selectBtn](bool on) { applyTools(on ? selectBtn : nullptr); });
+  connect(xformBtn, &QToolButton::toggled, this,
+          [applyTools, xformBtn](bool on) { applyTools(on ? xformBtn : nullptr); });
+  connect(lassoBtn, &QToolButton::toggled, this,
+          [applyTools, lassoBtn](bool on) { applyTools(on ? lassoBtn : nullptr); });
 
   auto *selCount = new QLabel(tr("0 sel"), bar);
   selCount->setStyleSheet("color:#e05a00;");
   m_brushBarLay->addWidget(selCount);
-
-  auto *clearSel = new QToolButton(bar);
-  clearSel->setText(tr("Deselect"));
-  clearSel->setToolTip(tr("Deselect all panels (does not erase any drawing)"));
-  connect(clearSel, &QToolButton::clicked, this,
-          [this] { m_canvas->clearSelection(); });
-  m_brushBarLay->addWidget(clearSel);
-
   connect(m_canvas, &ZtoryThumbnailCanvas::selectionChanged, this,
           [selCount](int n) { selCount->setText(tr("%1 sel").arg(n)); });
 
+  // Delete the floating Transform selection (same as Del/Backspace, but always
+  // reachable regardless of keyboard focus).
+  auto *delBtn = new QToolButton(bar);
+  delBtn->setIcon(createQIcon("delete"));
+  delBtn->setToolTip(tr("Delete the current Transform selection"));
+  connect(delBtn, &QToolButton::clicked, this,
+          [this] { m_canvas->deleteFloat(); });
+  m_brushBarLay->addWidget(delBtn);
+
   auto *mergeBtn = new QToolButton(bar);
-  mergeBtn->setText(tr("Merge"));
+  mergeBtn->setIcon(createQIcon("group"));
   mergeBtn->setToolTip(
       tr("Merge the selected rectangular block of panels into one panorama\n"
          "panel (or split the selected merge back into panels)"));
@@ -231,8 +317,7 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   m_brushBarLay->addWidget(m_shrinkSpin);
 
   auto *exportBtn = new QToolButton(bar);
-  exportBtn->setText(tr("Export to Board"));
-  exportBtn->setStyleSheet("font-weight:bold;");
+  exportBtn->setIcon(createQIcon("clapboard"));
   exportBtn->setToolTip(
       tr("Create a shot in the Board from the selected panels (in order)"));
   connect(exportBtn, &QToolButton::clicked, this,
@@ -240,7 +325,7 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   m_brushBarLay->addWidget(exportBtn);
 
   auto *addRow = new QToolButton(bar);
-  addRow->setText(tr("+ Row"));
+  addRow->setIcon(createQIcon("add_cells"));
   addRow->setToolTip(tr("Add a row of panels to the grid"));
   connect(addRow, &QToolButton::clicked, this, [this] { m_canvas->addRow(); });
   m_brushBarLay->addWidget(addRow);

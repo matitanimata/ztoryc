@@ -19,6 +19,7 @@
 #include <QMouseEvent>
 #include <QTabletEvent>
 #include <QWheelEvent>
+#include <QKeyEvent>
 #include <QDir>
 #include <QFileInfo>
 #include <QTimer>
@@ -26,6 +27,11 @@
 #include <QRegExp>
 #include <QFile>
 #include <QTextStream>
+#include <QPolygonF>
+#include <QLineF>
+#include <QApplication>
+
+#include <cmath>
 
 //=============================================================================
 
@@ -61,6 +67,8 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
           &ZtoryThumbnailCanvas::persistSave);
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
           this, &ZtoryThumbnailCanvas::persistLoad);
+  // Transform-tool shortcuts must work even when a toolbar button holds focus.
+  qApp->installEventFilter(this);
   // Load the scene that is already open when the panel is created.
   persistLoad();
 }
@@ -199,6 +207,7 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
 void ZtoryThumbnailCanvas::setSelectMode(bool on) {
   if (m_selectMode == on) return;
   m_selectMode = on;
+  if (!on) clearSelection();  // leaving Select mode deselects all panels
   setCursor(on ? Qt::PointingHandCursor : Qt::ArrowCursor);
   update();
 }
@@ -553,6 +562,12 @@ void ZtoryThumbnailCanvas::endStroke() {
 //=============================================================================
 
 void ZtoryThumbnailCanvas::tabletEvent(QTabletEvent *e) {
+  // In Select / Transform modes let Qt synthesize mouse events (those handlers
+  // own the interaction); the tablet only drives the brush.
+  if (m_selectMode || m_xformMode) {
+    e->ignore();
+    return;
+  }
   switch (e->type()) {
   case QEvent::TabletPress:
     beginStroke(e->posF(), e->pressure());
@@ -577,6 +592,27 @@ void ZtoryThumbnailCanvas::mousePressEvent(QMouseEvent *e) {
     return;
   }
   if (e->button() == Qt::LeftButton) {
+    if (m_xformMode) {
+      setFocus();  // ensure Esc / Enter / Del / Cmd-C/V reach keyPressEvent
+      if (hasFloat()) {
+        int h = floatHandleAt(e->localPos());
+        if (h >= 0) {  // grab a handle (0..3 scale, 4 rotate, 5 move)
+          m_floatDrag       = h;
+          m_dragStartWorld  = widgetToWorld(e->localPos());
+          m_dragStartScale  = m_floatScale;
+          m_dragStartAngle  = m_floatAngle;
+          m_dragStartCenter = m_floatCenter;
+          return;
+        }
+        commitFloat();  // click outside the float bakes it, then a new marquee
+      }
+      m_marqueeing   = true;
+      m_marqueeStart = m_marqueeCur = widgetToWorld(e->localPos());
+      m_lassoPath.clear();
+      if (m_lassoMode) m_lassoPath.push_back(m_marqueeStart);
+      update();
+      return;
+    }
     if (m_selectMode) {
       int box = panelAtWorld(widgetToWorld(e->localPos()));
       // Clicking any box of a merged region selects the whole region.
@@ -606,6 +642,35 @@ void ZtoryThumbnailCanvas::mouseMoveEvent(QMouseEvent *e) {
     update();
     return;
   }
+  if (m_xformMode) {
+    if (m_marqueeing) {
+      m_marqueeCur = widgetToWorld(e->localPos());
+      if (m_lassoMode) m_lassoPath.push_back(m_marqueeCur);
+      update();
+      return;
+    }
+    if (m_floatDrag >= 0) {
+      const QPointF w = widgetToWorld(e->localPos());
+      if (m_floatDrag == 5) {  // move
+        m_floatCenter = m_dragStartCenter + (w - m_dragStartWorld);
+      } else if (m_floatDrag == 4) {  // rotate about center
+        const double a0 = std::atan2(m_dragStartWorld.y() - m_dragStartCenter.y(),
+                                     m_dragStartWorld.x() - m_dragStartCenter.x());
+        const double a1 = std::atan2(w.y() - m_dragStartCenter.y(),
+                                     w.x() - m_dragStartCenter.x());
+        m_floatAngle = m_dragStartAngle + (a1 - a0);
+      } else {  // 0..3 corner → uniform scale about center
+        const double d0 = std::hypot(m_dragStartWorld.x() - m_dragStartCenter.x(),
+                                     m_dragStartWorld.y() - m_dragStartCenter.y());
+        const double d1 = std::hypot(w.x() - m_dragStartCenter.x(),
+                                     w.y() - m_dragStartCenter.y());
+        if (d0 > 1.0)
+          m_floatScale = qBound(0.05, m_dragStartScale * (d1 / d0), 20.0);
+      }
+      update();
+      return;
+    }
+  }
   if (m_stroking) strokeTo(e->localPos(), 0.5);
 }
 
@@ -615,7 +680,65 @@ void ZtoryThumbnailCanvas::mouseReleaseEvent(QMouseEvent *e) {
     unsetCursor();
     return;
   }
-  if (e->button() == Qt::LeftButton) endStroke();
+  if (e->button() == Qt::LeftButton) {
+    if (m_xformMode) {
+      if (m_marqueeing) {
+        m_marqueeing      = false;
+        const bool copy   = e->modifiers() & Qt::AltModifier;
+        if (m_lassoMode) {
+          if (m_lassoPath.size() >= 3) liftFloatLasso(m_lassoPath, copy);
+          m_lassoPath.clear();
+        } else {
+          const QRectF r = QRectF(m_marqueeStart, m_marqueeCur).normalized();
+          if (r.width() >= 3 && r.height() >= 3) liftFloat(r, copy);
+        }
+      }
+      m_floatDrag = -1;
+      return;
+    }
+    endStroke();
+  }
+}
+
+bool ZtoryThumbnailCanvas::handleTransformKey(QKeyEvent *e) {
+  if (!m_xformMode) return false;
+  // On macOS Qt maps Cmd → ControlModifier (Cmd-C/V here, Ctrl-C/V elsewhere).
+  const bool cmd = e->modifiers() & Qt::ControlModifier;
+  if (cmd && e->key() == Qt::Key_C) {
+    if (!hasFloat()) return false;
+    copyFloat();
+    return true;
+  }
+  if (cmd && e->key() == Qt::Key_V) {
+    if (m_clip.isNull()) return false;
+    pasteFloat();
+    return true;
+  }
+  if (!hasFloat()) return false;
+  switch (e->key()) {
+  case Qt::Key_Escape: cancelFloat(); return true;
+  case Qt::Key_Return:
+  case Qt::Key_Enter: commitFloat(); return true;
+  case Qt::Key_Delete:
+  case Qt::Key_Backspace: deleteFloat(); return true;
+  }
+  return false;
+}
+
+void ZtoryThumbnailCanvas::keyPressEvent(QKeyEvent *e) {
+  if (handleTransformKey(e)) return;
+  QWidget::keyPressEvent(e);
+}
+
+bool ZtoryThumbnailCanvas::eventFilter(QObject *obj, QEvent *ev) {
+  // Catch the transform shortcuts regardless of which widget in our window has
+  // focus (a toolbar button often steals it). Guarded to our active window and
+  // to keys we actually consume, so normal typing elsewhere is untouched.
+  if (ev->type() == QEvent::KeyPress && m_xformMode && isVisible() && window() &&
+      window()->isActiveWindow()) {
+    if (handleTransformKey(static_cast<QKeyEvent *>(ev))) return true;
+  }
+  return QWidget::eventFilter(obj, ev);
 }
 
 void ZtoryThumbnailCanvas::wheelEvent(QWheelEvent *e) {
@@ -632,6 +755,235 @@ void ZtoryThumbnailCanvas::wheelEvent(QWheelEvent *e) {
     update();
   }
   e->accept();
+}
+
+//=============================================================================
+// Transform tool (raster selection: move / copy / scale / rotate)
+//=============================================================================
+
+void ZtoryThumbnailCanvas::setTransformMode(bool on) {
+  if (m_xformMode == on) return;
+  if (!on) commitFloat();          // leaving the tool bakes any floating piece
+  m_xformMode  = on;
+  m_marqueeing = false;
+  m_floatDrag  = -1;
+  if (on) {                        // Select and Transform are mutually exclusive
+    m_selectMode = false;
+    if (!m_selection.isEmpty()) clearSelection();
+  }
+  setCursor(on ? Qt::CrossCursor : Qt::ArrowCursor);
+  if (on) setFocus();              // so Esc / Enter / Del reach keyPressEvent
+  update();
+}
+
+void ZtoryThumbnailCanvas::liftFloat(const QRectF &worldRect, bool copy) {
+  if (!m_ras) return;
+  const int lx = m_ras->getLx(), ly = m_ras->getLy();
+  const int x0 = qBound(0, (int)std::floor(worldRect.left()), lx);
+  const int x1 = qBound(0, (int)std::ceil(worldRect.right()), lx);
+  const int wy0 = qBound(0, (int)std::floor(worldRect.top()), ly);   // world y
+  const int wy1 = qBound(0, (int)std::ceil(worldRect.bottom()), ly);
+  if (x1 - x0 < 2 || wy1 - wy0 < 2) return;
+  // World y is top-down; the raster is bottom-up, so flip to raster rows.
+  const int ry0 = qBound(0, ly - wy1, ly);
+  const int ry1 = qBound(0, ly - wy0, ly);
+
+  TRaster32P sub = m_ras->extract(x0, ry0, x1 - 1, ry1 - 1);  // shares m_ras mem
+  // clone() gives a CONTIGUOUS copy (wrap == lx); rasterToQImage assumes that,
+  // whereas the extracted sub keeps the parent's wrap → "dusty" stride garbage.
+  // .copy() detaches from the clone's buffer (freed at scope exit).
+  m_floatImg = rasterToQImage(sub->clone(), /*premul=*/true, /*mirror=*/true).copy();
+  if (!copy) {  // move → clear the source region to white
+    sub->lock();
+    for (int y = 0; y < sub->getLy(); ++y) {
+      TPixel32 *p = sub->pixels(y);
+      for (int x = 0; x < sub->getLx(); ++x) p[x] = TPixel32::White;
+    }
+    sub->unlock();
+  }
+  m_floatSrcRect = QRect(x0, wy0, x1 - x0, wy1 - wy0);
+  m_floatCenter  = QPointF(x0 + (x1 - x0) / 2.0, wy0 + (wy1 - wy0) / 2.0);
+  m_floatScale   = 1.0;
+  m_floatAngle   = 0.0;
+  m_floatWasMove = !copy;
+  if (!copy) schedulePersistSave();  // the source was modified
+  update();
+}
+
+void ZtoryThumbnailCanvas::liftFloatLasso(const QVector<QPointF> &worldPath,
+                                          bool copy) {
+  if (!m_ras || worldPath.size() < 3) return;
+  QPolygonF poly(worldPath.toList().toVector());
+  const QRectF bb = poly.boundingRect();
+  // Reuse the rectangular lift for the bounding box, then mask to the polygon.
+  liftFloat(bb, /*copy=*/true);  // never let the rect lift clear the source
+  if (!hasFloat()) return;
+
+  // Mask: keep only the pixels inside the freehand polygon (polygon → image
+  // local coords are world − bbox top-left).
+  QImage mask(m_floatImg.size(), QImage::Format_ARGB32_Premultiplied);
+  mask.fill(Qt::transparent);
+  {
+    QPainter mp(&mask);
+    mp.setRenderHint(QPainter::Antialiasing, true);
+    mp.setPen(Qt::NoPen);
+    mp.setBrush(Qt::white);
+    mp.drawPolygon(poly.translated(-bb.topLeft()));
+  }
+  {
+    QPainter fp(&m_floatImg);
+    fp.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+    fp.drawImage(0, 0, mask);
+  }
+
+  if (!copy && m_ras) {  // erase only the lassoed shape from the canvas
+    QImage canvasImg = rasterToQImage(m_ras, true, true);  // world orientation
+    {
+      QPainter cp(&canvasImg);
+      cp.setRenderHint(QPainter::Antialiasing, true);
+      cp.setPen(Qt::NoPen);
+      cp.setBrush(Qt::white);
+      cp.drawPolygon(poly);  // world coords == canvasImg px
+    }
+    m_ras = rasterFromQImage(canvasImg, true, true);
+    m_floatWasMove = true;
+    schedulePersistSave();
+  }
+  update();
+}
+
+void ZtoryThumbnailCanvas::copyFloat() {
+  if (hasFloat()) m_clip = m_floatImg;
+}
+
+void ZtoryThumbnailCanvas::pasteFloat() {
+  if (m_clip.isNull()) return;
+  commitFloat();  // bake any current float first
+  m_floatImg     = m_clip;
+  m_floatCenter  = widgetToWorld(QPointF(width() / 2.0, height() / 2.0));
+  m_floatScale   = 1.0;
+  m_floatAngle   = 0.0;
+  m_floatWasMove = false;  // a paste has no source to restore
+  m_floatDrag    = -1;
+  setFocus();
+  update();
+}
+
+QTransform ZtoryThumbnailCanvas::floatLocalToWorld() const {
+  const double w = m_floatImg.width(), h = m_floatImg.height();
+  QTransform t;
+  t.translate(m_floatCenter.x(), m_floatCenter.y());
+  t.rotateRadians(m_floatAngle);
+  t.scale(m_floatScale, m_floatScale);
+  t.translate(-w / 2.0, -h / 2.0);
+  return t;
+}
+
+QPointF ZtoryThumbnailCanvas::floatHandleWorld(int h) const {
+  const double w = m_floatImg.width(), hh = m_floatImg.height();
+  const QTransform t = floatLocalToWorld();
+  switch (h) {
+  case 0: return t.map(QPointF(0, 0));      // top-left
+  case 1: return t.map(QPointF(w, 0));      // top-right
+  case 2: return t.map(QPointF(w, hh));     // bottom-right
+  case 3: return t.map(QPointF(0, hh));     // bottom-left
+  case 4: {                                 // rotate: above the top edge
+    const QPointF topMid = t.map(QPointF(w / 2.0, 0));
+    QPointF up           = topMid - t.map(QPointF(w / 2.0, 1));
+    const double n       = std::hypot(up.x(), up.y());
+    if (n > 1e-6) up /= n;
+    return topMid + up * 30.0;              // ~30 world px gap
+  }
+  }
+  return QPointF();
+}
+
+int ZtoryThumbnailCanvas::floatHandleAt(const QPointF &widgetPos) const {
+  if (!hasFloat()) return -1;
+  for (int h = 4; h >= 0; --h) {  // prefer rotate/corner handles over the body
+    const QPointF wp = worldToWidget(floatHandleWorld(h));
+    if (QLineF(wp, widgetPos).length() <= 9.0) return h;
+  }
+  // Inside the (possibly rotated) body → move.
+  QPolygonF poly;
+  for (int c = 0; c < 4; ++c) poly << worldToWidget(floatHandleWorld(c));
+  return poly.containsPoint(widgetPos, Qt::OddEvenFill) ? 5 : -1;
+}
+
+void ZtoryThumbnailCanvas::paintFloat(QPainter &p) {
+  if (!hasFloat()) return;
+  p.save();
+  const QPointF o = worldToWidget(QPointF(0, 0));
+  QTransform world2widget;
+  world2widget.translate(o.x(), o.y());
+  world2widget.scale(m_zoom, m_zoom);
+  p.setTransform(floatLocalToWorld() * world2widget);
+  p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+  p.drawImage(0, 0, m_floatImg);
+  p.restore();
+
+  // Outline + handles (drawn in widget space).
+  QPolygonF poly;
+  for (int c = 0; c < 4; ++c) poly << worldToWidget(floatHandleWorld(c));
+  QPen pen(QColor(0, 170, 255));
+  pen.setCosmetic(true);
+  pen.setWidth(2);
+  p.setPen(pen);
+  p.setBrush(Qt::NoBrush);
+  p.drawPolygon(poly);
+
+  // Rotation handle: a stalk + circle.
+  const QPointF topMid = (poly[0] + poly[1]) / 2.0;
+  const QPointF rot    = worldToWidget(floatHandleWorld(4));
+  p.drawLine(topMid, rot);
+  p.setBrush(QColor(0, 170, 255));
+  p.drawEllipse(rot, 5, 5);
+
+  // Corner (scale) handles.
+  for (int c = 0; c < 4; ++c) {
+    const QPointF wp = poly[c];
+    p.drawRect(QRectF(wp.x() - 4, wp.y() - 4, 8, 8));
+  }
+  p.setBrush(Qt::NoBrush);
+}
+
+void ZtoryThumbnailCanvas::commitFloat() {
+  if (!hasFloat() || !m_ras) return;
+  QImage canvasImg = rasterToQImage(m_ras, /*premul=*/true, /*mirror=*/true);
+  {
+    QPainter p(&canvasImg);  // canvasImg px == world coords (top-down)
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    p.setTransform(floatLocalToWorld());
+    p.drawImage(0, 0, m_floatImg);
+  }
+  m_ras      = rasterFromQImage(canvasImg, /*premul=*/true, /*mirror=*/true);
+  m_floatImg = QImage();
+  m_floatDrag = -1;
+  schedulePersistSave();
+  update();
+}
+
+void ZtoryThumbnailCanvas::cancelFloat() {
+  if (!hasFloat()) return;
+  if (m_floatWasMove && m_ras) {  // put the lifted pixels back where they were
+    QImage canvasImg = rasterToQImage(m_ras, true, true);
+    {
+      QPainter p(&canvasImg);
+      p.drawImage(m_floatSrcRect.topLeft(), m_floatImg);
+    }
+    m_ras = rasterFromQImage(canvasImg, true, true);
+    schedulePersistSave();
+  }
+  m_floatImg  = QImage();
+  m_floatDrag = -1;
+  update();
+}
+
+void ZtoryThumbnailCanvas::deleteFloat() {
+  if (!hasFloat()) return;
+  m_floatImg  = QImage();  // source already cleared on lift (for a move)
+  m_floatDrag = -1;
+  update();
 }
 
 //=============================================================================
@@ -725,5 +1077,29 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
     p.setFont(f);
     p.drawText(badge, Qt::AlignCenter, QString::number(i + 1));
     p.setBrush(Qt::NoBrush);
+  }
+
+  // Transform tool: rubber-band marquee + the floating selection with handles.
+  if (m_xformMode) {
+    if (m_marqueeing) {
+      QPen mp(QColor(0, 170, 255));
+      mp.setCosmetic(true);
+      mp.setStyle(Qt::DashLine);
+      p.setPen(mp);
+      if (m_lassoMode) {
+        QPolygonF wpoly;
+        for (const QPointF &wp : m_lassoPath) wpoly << worldToWidget(wp);
+        p.setBrush(QColor(0, 170, 255, 30));
+        p.drawPolygon(wpoly);
+      } else {
+        const QRectF wr = QRectF(m_marqueeStart, m_marqueeCur).normalized();
+        const QRectF sr(worldToWidget(wr.topLeft()),
+                        QSizeF(wr.width() * m_zoom, wr.height() * m_zoom));
+        p.setBrush(QColor(0, 170, 255, 30));
+        p.drawRect(sr);
+      }
+      p.setBrush(Qt::NoBrush);
+    }
+    paintFloat(p);
   }
 }
