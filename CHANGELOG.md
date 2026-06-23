@@ -1,3 +1,48 @@
+## [2026-06-23b] — Camera unica di scena + anteprime camera-aware; Thumbnail room Fase 3 (step 1-2)
+
+### Fixed / Added (master, commit `dbf0f5cc7`)
+- **Camera unica di scena** (regressione vs Tahoma). La camera (res+size) ora e' un
+  parametro unico per main + tutte le sotto-scene, come in Tahoma nativo.
+  - Nuovo `ZtoryShotOps::syncAllCamerasFrom(scene, srcXsh)`: propaga res+size della
+    camera appena modificata a TUTTI gli altri xsheet (main + sotto-scene), in
+    entrambi i versi. Hook in `CameraSettingsPopup::onChanged` (edit dal main O da
+    dentro uno shot). Solo res+size: i keyframe di camera-move restano intatti.
+  - `addShotNamed` (startup dialog) ora chiama `syncChildCameraToMain`: gli shot
+    creati all'avvio non ereditano piu' una camera di default != camera Preferenze.
+- **Anteprime camera-aware** (Board, PDF, track Animatic, story strip). Nuovo helper
+  `ZtoryShotOps::cameraAspect(scene)` (= res.lx/res.ly, fallback 16:9) sostituisce
+  tutti gli hardcode 16:9. Una camera quadrata mostra inquadrature quadrate ovunque.
+  Board re-renderizza le anteprime al cambio di aspect (`onXsheetChanged` +
+  `m_lastCameraAspect`); cache thumbnail animatic invalidata su cambio forma.
+- **GUI Show/Hide nel viewer ANIMATIC main**: `ZtoryAnimaticViewer` sovrascriveva
+  `addShowHideContextMenu`/`updateShowHide` con corpi VUOTI dal primo commit (non era
+  `bvp` null come ipotizzato): ora deleghano alla base, il submenu compare. Rimosso
+  il log diagnostico temporaneo da `onContextMenu`.
+
+### Added — Thumbnail room, Fase 3 step 1-2 (branch `feature/thumbnail-room`)
+- Merge di master nel branch (`5458b8f1e`): l'helper `cameraAspect` disponibile qui.
+- **Griglia con aspect camera** (`e063dc724`): le box derivano l'altezza da
+  `cameraAspect()` invece del 16:9 fisso (480x270). NB: letto alla creazione del
+  canvas, non live (follow-up flaggato come task in background).
+- **Step 1 — selezione pannelli** (`29452d1de`): modalita' Select in toolbar, click
+  in ordine (= ordine export), overlay arancio + badge numerato, contatore + Clear.
+- **Step 2 — rilevamento vuoti** (`70d865ab1`): `isPanelEmpty()` (raster non-bianco,
+  soglia 250); i pannelli vuoti non sono selezionabili.
+
+### TODO prossima sessione
+- **Thumbnail room Fase 3 step 3 — export-to-board** (il grosso): ritaglio regione
+  raster per pannello selezionato → child level (sotto-scena) con livello raster a N
+  frame (1 per pannello, ordine di selezione) salvato in `drawings/` → shot reale in
+  main xsheet + board + timeline (wiring tipo `addShotNamed`). Decisioni gia' prese:
+  selezione → 1 shot multi-panel, pannelli come sequenza di frame, salta i vuoti.
+- (opz.) refresh live della griglia thumbnail al cambio camera.
+
+### Decisioni / scelte tecniche
+- Cameras sono per-xsheet in Tahoma (`getCurrentCamera()` = camera dell'xsheet
+  corrente); `TSceneProperties::m_cameras` e' solo un mirror del main per la
+  serializzazione. La coerenza "camera unica" si ottiene sincronizzando gli stage
+  object camera, non centralizzando il dato.
+
 ## [2026-06-23] — Batch fix segnalazioni utente (undo Delete Shot, persistenza GUI viewer)
 
 ### Fixed (su master, pushato)
