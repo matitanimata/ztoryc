@@ -6,12 +6,13 @@
 #include "toonz/tscenehandle.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/toonzscene.h"
+#include "toonz/txshleveltypes.h"  // OVL_XSHLEVEL (persist folder resolution)
 #include "toonz/mypaintbrushstyle.h"
 #include "toonz/mypaint.h"
 
 #include "tpixelutils.h"   // RGB2HSV, PixelConverter
 
-#include "toonzqt/gutil.h"  // rasterToQImage
+#include "toonzqt/gutil.h"  // rasterToQImage / rasterFromQImage
 
 #include <QPainter>
 #include <QFont>
@@ -20,6 +21,9 @@
 #include <QWheelEvent>
 #include <QDir>
 #include <QFileInfo>
+#include <QTimer>
+#include <QImage>
+#include <QRegExp>
 
 //=============================================================================
 
@@ -46,9 +50,22 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
           this, &ZtoryThumbnailCanvas::onSceneChanged);
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneChanged, this,
           &ZtoryThumbnailCanvas::onSceneChanged);
+
+  // Persistence: debounced autosave after edits, reload on scene switch.
+  m_saveTimer = new QTimer(this);
+  m_saveTimer->setSingleShot(true);
+  m_saveTimer->setInterval(700);
+  connect(m_saveTimer, &QTimer::timeout, this,
+          &ZtoryThumbnailCanvas::persistSave);
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
+          this, &ZtoryThumbnailCanvas::persistLoad);
+  // Load the scene that is already open when the panel is created.
+  persistLoad();
 }
 
 ZtoryThumbnailCanvas::~ZtoryThumbnailCanvas() {
+  // Flush any pending edit so closing the app never loses the canvas.
+  if (m_saveTimer && m_saveTimer->isActive()) persistSave();
   delete m_brush;
   delete m_style;
 }
@@ -104,6 +121,7 @@ void ZtoryThumbnailCanvas::addRow() {
   nr->copy(m_ras, TPoint(0, addedH));  // keep existing content at the same world Y
   m_ras = nr;
   update();
+  schedulePersistSave();
 }
 
 void ZtoryThumbnailCanvas::onSceneChanged() {
@@ -255,6 +273,103 @@ TRaster32P ZtoryThumbnailCanvas::panelRaster(int index,
 }
 
 //=============================================================================
+// Persistence — the whole contiguous canvas is stored as a single PNG in the
+// scene's extras/<scene>/ folder (same family the export-to-board uses), named
+// with its grid dimensions so they round-trip.  Saved debounced after edits and
+// flushed on close; loaded when the scene is opened/switched.
+//=============================================================================
+
+QString ZtoryThumbnailCanvas::sceneKey() const {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return QString();
+  return QString::fromStdWString(scene->getScenePath().getWideString());
+}
+
+TFilePath ZtoryThumbnailCanvas::persistDir() const {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return TFilePath();
+  // Reuse the export-to-board folder resolution so canvas + exported shots live
+  // together: decode a dummy OVL level path and take its parent directory.
+  return scene
+      ->decodeFilePath(scene->getDefaultLevelPath(OVL_XSHLEVEL, L"_ztorythumbs"))
+      .getParentDir();
+}
+
+void ZtoryThumbnailCanvas::schedulePersistSave() {
+  if (m_saveTimer) m_saveTimer->start();  // (re)arm the debounce
+}
+
+void ZtoryThumbnailCanvas::persistSave() {
+  if (!m_ras) return;
+  TFilePath dir = persistDir();
+  if (dir.isEmpty()) return;
+  QString dirStr = QString::fromStdWString(dir.getWideString());
+  QDir qd(dirStr);
+  if (!qd.exists()) qd.mkpath(".");
+
+  // One canvas per scene: drop any previous size-tagged PNG before writing.
+  for (const QString &old :
+       qd.entryList(QStringList() << "_ztorythumbs_*.png", QDir::Files))
+    qd.remove(old);
+
+  QImage img = rasterToQImage(m_ras, /*premultiplied=*/false);
+  QString file =
+      dirStr + QString("/_ztorythumbs_%1x%2.png").arg(m_cols).arg(m_rows);
+  img.save(file, "PNG");
+  m_persistKey = sceneKey();  // we now hold this scene's canvas on disk
+}
+
+void ZtoryThumbnailCanvas::persistLoad() {
+  const QString key = sceneKey();
+  // sceneSwitched also fires for re-selecting the same scene; only reload when
+  // the scene identity actually changed, so in-RAM edits are never clobbered.
+  if (key == m_persistKey) return;
+  m_persistKey = key;
+
+  TFilePath dir = persistDir();
+  QStringList matches;
+  if (!dir.isEmpty()) {
+    QDir qd(QString::fromStdWString(dir.getWideString()));
+    matches = qd.entryList(QStringList() << "_ztorythumbs_*x*.png", QDir::Files,
+                           QDir::Time);
+  }
+
+  if (matches.isEmpty()) {
+    // New scene with no saved canvas: start blank at the current grid size.
+    m_ras = TRaster32P((int)gridW(), (int)gridH());
+    m_ras->fill(TPixel32::White);
+    clearSelection();
+    update();
+    return;
+  }
+
+  const QString fn = matches.first();  // most-recently modified
+  QRegExp re("_ztorythumbs_(\\d+)x(\\d+)\\.png");
+  if (re.indexIn(fn) >= 0) {
+    m_cols = qMax(1, re.cap(1).toInt());
+    m_rows = qMax(1, re.cap(2).toInt());
+  }
+  QImage img(QString::fromStdWString(dir.getWideString()) + "/" + fn);
+  if (img.isNull()) return;
+  TRaster32P r = rasterFromQImage(img, /*premultiply=*/false);
+
+  // The saved canvas may have been drawn at a different camera aspect; fit it to
+  // the current box height so panels still line up (width is fixed by m_boxW).
+  const int wantW = (int)gridW(), wantH = (int)gridH();
+  if (r->getLx() != wantW || r->getLy() != wantH) {
+    TRaster32P fit(wantW, wantH);
+    fit->fill(TPixel32::White);
+    TRop::resample(fit, r,
+                   TScale((double)wantW / r->getLx(),
+                          (double)wantH / r->getLy()));
+    r = fit;
+  }
+  m_ras = r;
+  clearSelection();
+  update();
+}
+
+//=============================================================================
 // View transform
 //=============================================================================
 
@@ -333,6 +448,7 @@ void ZtoryThumbnailCanvas::endStroke() {
   m_brush    = nullptr;
   m_stroking = false;
   update();
+  schedulePersistSave();
 }
 
 //=============================================================================

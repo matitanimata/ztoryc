@@ -28,6 +28,9 @@
 #include <QString>
 #include <QVector>
 
+class QTimer;
+class TFilePath;
+
 #include "mypainttoonzbrush.h"  // RasterController, MyPaintToonzBrush
 
 class TMyPaintBrushStyle;
@@ -81,6 +84,10 @@ private slots:
   // height and rescale the contiguous raster so existing drawings stay aligned
   // with their panels.
   void onSceneChanged();
+  // Load this scene's saved canvas from disk (on scene switch / panel open);
+  // clears the canvas if the scene has none.  Save is debounced after edits.
+  void persistLoad();
+  void persistSave();
 
 public:
 
@@ -110,6 +117,11 @@ private:
   double gridH() const { return m_rows * m_boxH; }
   TPointD widgetToRaster(const QPointF &widgetPos) const;
   void zoomAt(const QPointF &widgetAnchor, double factor);
+
+  // Persistence: per-scene folder + the contiguous-raster PNG inside it.
+  TFilePath persistDir() const;
+  QString sceneKey() const;       // identity of the currently loaded scene
+  void schedulePersistSave();     // (re)arm the debounced autosave
 
   // Linear panel index (row*cols+col) at a world point, or -1 if outside grid.
   int panelAtWorld(const QPointF &world) const;
@@ -147,4 +159,8 @@ private:
   // Selection state
   bool m_selectMode = false;
   QVector<int> m_selection;  // linear panel indices, in click (export) order
+
+  // Persistence
+  QTimer *m_saveTimer = nullptr;  // debounced autosave after edits
+  QString m_persistKey;           // scene identity currently loaded from disk
 };
