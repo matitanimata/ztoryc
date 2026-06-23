@@ -19,6 +19,7 @@
 #include <QButtonGroup>
 #include <QSlider>
 #include <QSpinBox>
+#include <QSize>
 #include <QLabel>
 #include <QFrame>
 #include <QIcon>
@@ -28,6 +29,8 @@
 #include <QColorDialog>
 #include <QFileDialog>
 #include <QFileInfo>
+
+#include <algorithm>
 
 namespace {
 
@@ -197,14 +200,23 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   m_brushBarLay->addWidget(selCount);
 
   auto *clearSel = new QToolButton(bar);
-  clearSel->setText(tr("Clear"));
-  clearSel->setToolTip(tr("Clear the panel selection"));
+  clearSel->setText(tr("Deselect"));
+  clearSel->setToolTip(tr("Deselect all panels (does not erase any drawing)"));
   connect(clearSel, &QToolButton::clicked, this,
           [this] { m_canvas->clearSelection(); });
   m_brushBarLay->addWidget(clearSel);
 
   connect(m_canvas, &ZtoryThumbnailCanvas::selectionChanged, this,
           [selCount](int n) { selCount->setText(tr("%1 sel").arg(n)); });
+
+  auto *mergeBtn = new QToolButton(bar);
+  mergeBtn->setText(tr("Merge"));
+  mergeBtn->setToolTip(
+      tr("Merge the selected rectangular block of panels into one panorama\n"
+         "panel (or split the selected merge back into panels)"));
+  connect(mergeBtn, &QToolButton::clicked, this,
+          [this] { m_canvas->toggleMergeSelection(); });
+  m_brushBarLay->addWidget(mergeBtn);
 
   // Shrink: export the shot's drawings at 1/shrink of the camera resolution per
   // side (1 = full, 2 = half each side → ¼ of the pixels, …). Lighter levels.
@@ -286,21 +298,47 @@ void ZtoryThumbnailPanel::exportSelectionToBoard() {
   // shrunk by an integer factor per side (1 = full) to keep the levels light.
   const int shrink     = m_shrinkSpin ? m_shrinkSpin->value() : 1;
   const TDimension cam = ZtoryShotOps::cameraRes(scene);
-  const TDimension res(qMax(1, cam.lx / shrink), qMax(1, cam.ly / shrink));
 
-  std::vector<TRaster32P> panels;
-  panels.reserve(sel.size());
+  // All selected panels become ONE shot on ONE level.  A level has a single
+  // resolution, so we size it to the LARGEST selected panel (a merged panorama
+  // spans N×M boxes → N·camW × M·camH) and composite every panel, centred, onto
+  // a white frame of that size.  Single panels thus sit centred in the larger
+  // canvas; the panorama fills it.
+  struct Item {
+    TRaster32P ras;
+    TDimension nat;
+  };
+  std::vector<Item> items;
+  int maxW = 1, maxH = 1;
   for (int idx : sel) {
-    TRaster32P r = m_canvas->panelRaster(idx, res);
-    if (r) panels.push_back(r);
+    const QSize span = m_canvas->panelSpan(idx);
+    const TDimension nat(qMax(1, span.width() * cam.lx / shrink),
+                         qMax(1, span.height() * cam.ly / shrink));
+    TRaster32P r = m_canvas->panelRaster(idx, nat);
+    if (!r) continue;
+    items.push_back({r, nat});
+    maxW = std::max(maxW, nat.lx);
+    maxH = std::max(maxH, nat.ly);
   }
-  if (panels.empty()) return;
+  if (items.empty()) return;
 
-  // Name is left empty: ZtoryModel assigns the proper SH label on resequence.
-  ZtoryModel::instance()->addShotFromRasters(QString(), panels);
+  std::vector<TRaster32P> frames;
+  frames.reserve(items.size());
+  for (const Item &it : items) {
+    if (it.nat.lx == maxW && it.nat.ly == maxH) {
+      frames.push_back(it.ras);  // already the full canvas
+      continue;
+    }
+    TRaster32P frame(maxW, maxH);
+    frame->fill(TPixel32::White);
+    frame->copy(it.ras, TPoint((maxW - it.nat.lx) / 2, (maxH - it.nat.ly) / 2));
+    frames.push_back(frame);
+  }
+
+  ZtoryModel::instance()->addShotFromRasters(QString(), frames);
   m_canvas->clearSelection();
   DVGui::info(tr("Exported %1 panel(s) to the Board as one shot.")
-                  .arg((int)panels.size()));
+                  .arg((int)frames.size()));
 }
 
 //=============================================================================

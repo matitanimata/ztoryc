@@ -24,6 +24,8 @@
 #include <QTimer>
 #include <QImage>
 #include <QRegExp>
+#include <QFile>
+#include <QTextStream>
 
 //=============================================================================
 
@@ -208,6 +210,50 @@ void ZtoryThumbnailCanvas::clearSelection() {
   update();
 }
 
+void ZtoryThumbnailCanvas::toggleMergeSelection() {
+  if (m_selection.isEmpty()) return;
+
+  // If the selection contains any merged region, split those back into boxes.
+  bool anyMerge = false;
+  for (int idx : m_selection) {
+    const int col = idx % m_cols, row = idx / m_cols;
+    if (mergeIndexAt(col, row) >= 0) anyMerge = true;
+  }
+  if (anyMerge) {
+    QVector<QRect> kept;
+    for (const QRect &m : m_merges) {
+      const int tl = m.y() * m_cols + m.x();
+      if (m_selection.indexOf(tl) < 0) kept.push_back(m);
+    }
+    m_merges = kept;
+    clearSelection();
+    schedulePersistSave();
+    update();
+    return;
+  }
+
+  // Otherwise merge the bounding rectangle of the selection.  We auto-fill the
+  // boxes the user didn't click (e.g. a diagonal pick) so the result is always a
+  // valid rectangular panorama — no need to select every box by hand.
+  int c0 = m_cols, r0 = m_rows, c1 = -1, r1 = -1;
+  for (int idx : m_selection) {
+    const int col = idx % m_cols, row = idx / m_cols;
+    c0 = qMin(c0, col); r0 = qMin(r0, row);
+    c1 = qMax(c1, col); r1 = qMax(r1, row);
+  }
+  const int w = c1 - c0 + 1, h = r1 - r0 + 1;
+  if (w * h < 2) return;  // need at least two boxes to form a panorama
+  // None of the covered boxes may already belong to a merge.
+  for (int rr = r0; rr <= r1; ++rr)
+    for (int cc = c0; cc <= c1; ++cc)
+      if (mergeIndexAt(cc, rr) >= 0) return;
+
+  m_merges.push_back(QRect(c0, r0, w, h));
+  clearSelection();
+  schedulePersistSave();
+  update();
+}
+
 int ZtoryThumbnailCanvas::panelAtWorld(const QPointF &world) const {
   if (world.x() < 0 || world.y() < 0 || world.x() >= gridW() ||
       world.y() >= gridH())
@@ -218,22 +264,46 @@ int ZtoryThumbnailCanvas::panelAtWorld(const QPointF &world) const {
   return row * m_cols + col;
 }
 
+int ZtoryThumbnailCanvas::mergeIndexAt(int col, int row) const {
+  for (int i = 0; i < m_merges.size(); ++i)
+    if (m_merges[i].contains(col, row)) return i;
+  return -1;
+}
+
+QRect ZtoryThumbnailCanvas::regionBoxRect(int topLeftIndex) const {
+  if (topLeftIndex < 0 || topLeftIndex >= m_cols * m_rows)
+    return QRect(0, 0, 1, 1);
+  const int col = topLeftIndex % m_cols, row = topLeftIndex / m_cols;
+  const int mi = mergeIndexAt(col, row);
+  return mi >= 0 ? m_merges[mi] : QRect(col, row, 1, 1);
+}
+
+int ZtoryThumbnailCanvas::regionIndexOf(int boxIndex) const {
+  const QRect r = regionBoxRect(boxIndex);  // resolves merge → its rect
+  return r.y() * m_cols + r.x();            // top-left box's linear index
+}
+
+QSize ZtoryThumbnailCanvas::panelSpan(int index) const {
+  const QRect r = regionBoxRect(index);
+  return QSize(r.width(), r.height());
+}
+
 QRectF ZtoryThumbnailCanvas::panelWorldRect(int index) const {
   if (index < 0 || index >= m_cols * m_rows) return QRectF();
-  int col = index % m_cols;
-  int row = index / m_cols;
-  return QRectF(col * m_boxW, row * m_boxH, m_boxW, m_boxH);
+  const QRect r = regionBoxRect(index);
+  return QRectF(r.x() * m_boxW, r.y() * m_boxH, r.width() * m_boxW,
+                r.height() * m_boxH);
 }
 
 bool ZtoryThumbnailCanvas::isPanelEmpty(int index) const {
   if (!m_ras || index < 0 || index >= m_cols * m_rows) return true;
-  const int col = index % m_cols, row = index / m_cols;
+  const QRect br = regionBoxRect(index);
   const int lx = m_ras->getLx(), ly = m_ras->getLy();
-  const int x0 = qBound(0, (int)(col * m_boxW), lx);
-  const int x1 = qBound(0, (int)((col + 1) * m_boxW), lx);
+  const int x0 = qBound(0, (int)(br.x() * m_boxW), lx);
+  const int x1 = qBound(0, (int)((br.x() + br.width()) * m_boxW), lx);
   // World y is top-down; the raster is bottom-up, so flip when computing rows.
-  const int ry0 = qBound(0, (int)(ly - (row + 1) * m_boxH), ly);
-  const int ry1 = qBound(0, (int)(ly - row * m_boxH), ly);
+  const int ry0 = qBound(0, (int)(ly - (br.y() + br.height()) * m_boxH), ly);
+  const int ry1 = qBound(0, (int)(ly - br.y() * m_boxH), ly);
 
   m_ras->lock();
   bool empty = true;
@@ -251,13 +321,13 @@ bool ZtoryThumbnailCanvas::isPanelEmpty(int index) const {
 TRaster32P ZtoryThumbnailCanvas::panelRaster(int index,
                                              const TDimension &outRes) const {
   if (!m_ras || index < 0 || index >= m_cols * m_rows) return TRaster32P();
-  const int col = index % m_cols, row = index / m_cols;
+  const QRect br = regionBoxRect(index);  // whole region (merged or single box)
   const int lx = m_ras->getLx(), ly = m_ras->getLy();
-  const int x0 = qBound(0, (int)(col * m_boxW), lx);
-  const int x1 = qBound(0, (int)((col + 1) * m_boxW), lx);
+  const int x0 = qBound(0, (int)(br.x() * m_boxW), lx);
+  const int x1 = qBound(0, (int)((br.x() + br.width()) * m_boxW), lx);
   // World y is top-down; the raster is bottom-up, so flip when computing rows.
-  const int ry0 = qBound(0, (int)(ly - (row + 1) * m_boxH), ly);
-  const int ry1 = qBound(0, (int)(ly - row * m_boxH), ly);
+  const int ry0 = qBound(0, (int)(ly - (br.y() + br.height()) * m_boxH), ly);
+  const int ry1 = qBound(0, (int)(ly - br.y() * m_boxH), ly);
   if (x1 <= x0 || ry1 <= ry0 || outRes.lx <= 0 || outRes.ly <= 0)
     return TRaster32P();
 
@@ -316,6 +386,20 @@ void ZtoryThumbnailCanvas::persistSave() {
   QString file =
       dirStr + QString("/_ztorythumbs_%1x%2.png").arg(m_cols).arg(m_rows);
   img.save(file, "PNG");
+
+  // Merged regions in a tiny sidecar ("col row w h" per line).
+  const QString mergesFile = dirStr + "/_ztorythumbs_merges.txt";
+  if (m_merges.isEmpty()) {
+    QFile::remove(mergesFile);
+  } else {
+    QFile mf(mergesFile);
+    if (mf.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      QTextStream ts(&mf);
+      for (const QRect &m : m_merges)
+        ts << m.x() << ' ' << m.y() << ' ' << m.width() << ' ' << m.height()
+           << '\n';
+    }
+  }
   m_persistKey = sceneKey();  // we now hold this scene's canvas on disk
 }
 
@@ -334,6 +418,7 @@ void ZtoryThumbnailCanvas::persistLoad() {
                            QDir::Time);
   }
 
+  m_merges.clear();
   if (matches.isEmpty()) {
     // New scene with no saved canvas: start blank at the current grid size.
     m_ras = TRaster32P((int)gridW(), (int)gridH());
@@ -341,6 +426,18 @@ void ZtoryThumbnailCanvas::persistLoad() {
     clearSelection();
     update();
     return;
+  }
+
+  // Merged regions, if any (saved alongside the PNG).
+  QFile mf(QString::fromStdWString(dir.getWideString()) +
+           "/_ztorythumbs_merges.txt");
+  if (mf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    QTextStream ts(&mf);
+    while (!ts.atEnd()) {
+      int c, r, w, h;
+      ts >> c >> r >> w >> h;
+      if (w > 0 && h > 0) m_merges.push_back(QRect(c, r, w, h));
+    }
   }
 
   const QString fn = matches.first();  // most-recently modified
@@ -481,7 +578,9 @@ void ZtoryThumbnailCanvas::mousePressEvent(QMouseEvent *e) {
   }
   if (e->button() == Qt::LeftButton) {
     if (m_selectMode) {
-      int idx = panelAtWorld(widgetToWorld(e->localPos()));
+      int box = panelAtWorld(widgetToWorld(e->localPos()));
+      // Clicking any box of a merged region selects the whole region.
+      int idx = box >= 0 ? regionIndexOf(box) : -1;
       // Empty panels carry no drawing → not selectable (export skips them too).
       if (idx >= 0 && m_selection.indexOf(idx) < 0 && isPanelEmpty(idx))
         return;
@@ -553,22 +652,50 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   p.drawImage(target, img);
 
   // Thin panel separators (overlay only — the surface itself is contiguous).
+  // Drawn per box-edge so the borders INTERNAL to a merged region are skipped,
+  // making the merge read as one panorama panel.
   QPen sep(QColor(170, 170, 170));
   sep.setCosmetic(true);
   p.setPen(sep);
-  for (int c = 1; c < m_cols; ++c) {
-    const double x = worldToWidget(QPointF(c * m_boxW, 0)).x();
-    p.drawLine(QPointF(x, target.top()), QPointF(x, target.bottom()));
-  }
-  for (int r = 1; r < m_rows; ++r) {
-    const double y = worldToWidget(QPointF(0, r * m_boxH)).y();
-    p.drawLine(QPointF(target.left(), y), QPointF(target.right(), y));
-  }
+  for (int c = 1; c < m_cols; ++c)
+    for (int r = 0; r < m_rows; ++r) {
+      if (mergeIndexAt(c - 1, r) >= 0 &&
+          mergeIndexAt(c - 1, r) == mergeIndexAt(c, r))
+        continue;  // interior vertical edge of a merge
+      const double x  = worldToWidget(QPointF(c * m_boxW, 0)).x();
+      const double y0 = worldToWidget(QPointF(0, r * m_boxH)).y();
+      const double y1 = worldToWidget(QPointF(0, (r + 1) * m_boxH)).y();
+      p.drawLine(QPointF(x, y0), QPointF(x, y1));
+    }
+  for (int r = 1; r < m_rows; ++r)
+    for (int c = 0; c < m_cols; ++c) {
+      if (mergeIndexAt(c, r - 1) >= 0 &&
+          mergeIndexAt(c, r - 1) == mergeIndexAt(c, r))
+        continue;  // interior horizontal edge of a merge
+      const double y  = worldToWidget(QPointF(0, r * m_boxH)).y();
+      const double x0 = worldToWidget(QPointF(c * m_boxW, 0)).x();
+      const double x1 = worldToWidget(QPointF((c + 1) * m_boxW, 0)).x();
+      p.drawLine(QPointF(x0, y), QPointF(x1, y));
+    }
 
   QPen border(QColor(110, 110, 110));
   border.setCosmetic(true);
   p.setPen(border);
   p.drawRect(target);
+
+  // Outline each merged (panorama) region a little brighter.
+  QPen mergePen(QColor(90, 150, 220));
+  mergePen.setCosmetic(true);
+  mergePen.setWidth(2);
+  p.setPen(mergePen);
+  p.setBrush(Qt::NoBrush);
+  for (const QRect &m : m_merges) {
+    const QRectF wr(m.x() * m_boxW, m.y() * m_boxH, m.width() * m_boxW,
+                    m.height() * m_boxH);
+    const QRectF sr(worldToWidget(wr.topLeft()),
+                    QSizeF(wr.width() * m_zoom, wr.height() * m_zoom));
+    p.drawRect(sr);
+  }
 
   // Selection overlay: tint selected panels + a numbered badge showing the
   // export order. Always drawn (so the user keeps the order visible after

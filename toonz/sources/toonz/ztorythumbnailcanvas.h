@@ -25,6 +25,8 @@
 #include <QWidget>
 #include <QElapsedTimer>
 #include <QPoint>
+#include <QRect>
+#include <QSize>
 #include <QString>
 #include <QVector>
 
@@ -62,10 +64,17 @@ public:
   void setSelectMode(bool on);
   bool isSelectMode() const { return m_selectMode; }
   void clearSelection();
-  // Linear panel indices (row * cols + col) in selection order.
+  // Region top-left linear indices (row * cols + col) in selection order. A
+  // region is a rectangular block of boxes merged into one logical panel (or a
+  // single box if unmerged); see m_merges.
   QVector<int> selection() const { return m_selection; }
   int gridCols() const { return m_cols; }
   int gridRows() const { return m_rows; }
+  // Span (in boxes, w×h) of the region whose top-left box is `index`.
+  QSize panelSpan(int index) const;
+  // Merge the current rectangular selection into one panorama panel, or split
+  // the selected merge(s) back into boxes. No-op if the selection is neither.
+  void toggleMergeSelection();
   // True if the panel's raster region has no ink (all white) — empty panels are
   // not selectable and are skipped by export-to-board.
   bool isPanelEmpty(int index) const;
@@ -125,8 +134,15 @@ private:
 
   // Linear panel index (row*cols+col) at a world point, or -1 if outside grid.
   int panelAtWorld(const QPointF &world) const;
-  // World-space rectangle (top-left origin, y down) of a linear panel index.
+  // World-space rectangle (top-left origin, y down) of a region (top-left index).
   QRectF panelWorldRect(int index) const;
+
+  // Merge support. A region is a w×h block of boxes; m_merges holds the >1-box
+  // ones, in BOX coords QRect(col, row, wspan, hspan). Boxes never overlap two
+  // merges. A region is named by its top-left box's linear index.
+  int mergeIndexAt(int col, int row) const;     // merge covering box, or -1
+  int regionIndexOf(int boxIndex) const;        // → region's top-left index
+  QRect regionBoxRect(int topLeftIndex) const;  // region rect in box coords
 
   // Grid (one contiguous raster; boxes are logical rectangles)
   TRaster32P m_ras;
@@ -158,7 +174,8 @@ private:
 
   // Selection state
   bool m_selectMode = false;
-  QVector<int> m_selection;  // linear panel indices, in click (export) order
+  QVector<int> m_selection;  // region top-left indices, in click (export) order
+  QVector<QRect> m_merges;   // merged regions in box coords (col,row,wspan,hspan)
 
   // Persistence
   QTimer *m_saveTimer = nullptr;  // debounced autosave after edits
