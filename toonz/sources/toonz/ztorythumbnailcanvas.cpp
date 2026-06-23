@@ -128,6 +128,29 @@ QRectF ZtoryThumbnailCanvas::panelWorldRect(int index) const {
   return QRectF(col * m_boxW, row * m_boxH, m_boxW, m_boxH);
 }
 
+bool ZtoryThumbnailCanvas::isPanelEmpty(int index) const {
+  if (!m_ras || index < 0 || index >= m_cols * m_rows) return true;
+  const int col = index % m_cols, row = index / m_cols;
+  const int lx = m_ras->getLx(), ly = m_ras->getLy();
+  const int x0 = qBound(0, (int)(col * m_boxW), lx);
+  const int x1 = qBound(0, (int)((col + 1) * m_boxW), lx);
+  // World y is top-down; the raster is bottom-up, so flip when computing rows.
+  const int ry0 = qBound(0, (int)(ly - (row + 1) * m_boxH), ly);
+  const int ry1 = qBound(0, (int)(ly - row * m_boxH), ly);
+
+  m_ras->lock();
+  bool empty = true;
+  for (int y = ry0; y < ry1 && empty; ++y) {
+    const TPixel32 *pix = m_ras->pixels(y);
+    for (int x = x0; x < x1; ++x) {
+      const TPixel32 &p = pix[x];
+      if (p.r < 250 || p.g < 250 || p.b < 250) { empty = false; break; }
+    }
+  }
+  m_ras->unlock();
+  return empty;
+}
+
 //=============================================================================
 // View transform
 //=============================================================================
@@ -240,6 +263,9 @@ void ZtoryThumbnailCanvas::mousePressEvent(QMouseEvent *e) {
   if (e->button() == Qt::LeftButton) {
     if (m_selectMode) {
       int idx = panelAtWorld(widgetToWorld(e->localPos()));
+      // Empty panels carry no drawing → not selectable (export skips them too).
+      if (idx >= 0 && m_selection.indexOf(idx) < 0 && isPanelEmpty(idx))
+        return;
       if (idx >= 0) {
         int pos = m_selection.indexOf(idx);
         if (pos >= 0)

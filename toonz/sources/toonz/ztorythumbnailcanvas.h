@@ -63,6 +63,9 @@ public:
   QVector<int> selection() const { return m_selection; }
   int gridCols() const { return m_cols; }
   int gridRows() const { return m_rows; }
+  // True if the panel's raster region has no ink (all white) — empty panels are
+  // not selectable and are skipped by export-to-board.
+  bool isPanelEmpty(int index) const;
 
 signals:
   // Emitted whenever the ordered selection changes (count = panels selected).
