@@ -4626,6 +4626,11 @@ void ZtoryLeftPanel::showShotMode(int /*col*/) {
 
 // ---- ZtoryAnimaticViewerPanel ----
 
+// Persist visible-parts (toolbars) of the embedded viewers — see definitions
+// below. Forward-declared so the constructor can restore them.
+static void ztoryLoadViewerParts(BaseViewerPanel *v, const char *group);
+static void ztorySaveViewerParts(BaseViewerPanel *v, const char *group);
+
 ZtoryAnimaticViewerPanel::ZtoryAnimaticViewerPanel(QWidget *parent)
     : TPanel(parent) {
   setWindowTitle("Ztory Viewer");
@@ -4671,6 +4676,8 @@ ZtoryAnimaticViewerPanel::ZtoryAnimaticViewerPanel(QWidget *parent)
   m_viewer = new ZtoryAnimaticViewer(m_stack);
   m_viewer->setMinimumHeight(120);
   m_stack->addWidget(m_viewer);  // index 0
+  // Embedded viewer: the room can't serialise its parts → restore them here.
+  ztoryLoadViewerParts(m_viewer, "ZtoryAnimaticViewerParts");
 
   lay->addWidget(m_stack, 1);
   setWidget(container);
@@ -4802,25 +4809,26 @@ void ZtoryAnimaticViewerPanel::updateTitle() {
 // choice to hide those toolbars in Ztoryc's drawing area was lost on every
 // restart, unlike stock Tahoma where viewer panels persist these flags. Persist
 // them ourselves in the app QSettings, mirroring BaseViewerPanel::save/load.
-static void ztoryLoadShotViewerParts(ComboViewerPanel *v) {
+static void ztoryLoadViewerParts(BaseViewerPanel *v, const char *group) {
   if (!v) return;
   QSettings settings;
-  settings.beginGroup("ZtoryShotViewerParts");
+  settings.beginGroup(group);
   v->load(settings);  // no-op when nothing was saved yet (keeps defaults)
   settings.endGroup();
 }
 
-static void ztorySaveShotViewerParts(ComboViewerPanel *v) {
+static void ztorySaveViewerParts(BaseViewerPanel *v, const char *group) {
   if (!v) return;
   QSettings settings;
-  settings.beginGroup("ZtoryShotViewerParts");
+  settings.beginGroup(group);
   v->save(settings);
   settings.endGroup();
 }
 
 ZtoryAnimaticViewerPanel::~ZtoryAnimaticViewerPanel() {
-  // Persist the drawing-area toolbar visibility on app close.
-  ztorySaveShotViewerParts(m_shotViewer);
+  // Persist toolbar/parts visibility of both embedded viewers on app close.
+  ztorySaveViewerParts(m_shotViewer, "ZtoryShotViewerParts");
+  ztorySaveViewerParts(m_viewer, "ZtoryAnimaticViewerParts");
 }
 
 void ZtoryAnimaticViewerPanel::enterShotMode(int /*col*/) {
@@ -4835,7 +4843,7 @@ void ZtoryAnimaticViewerPanel::enterShotMode(int /*col*/) {
     // mirroring the double-click-to-enter gesture.
     m_shotViewer->installEventFilter(this);
     // Restore the persisted toolbar visibility for the embedded drawing viewer.
-    ztoryLoadShotViewerParts(m_shotViewer);
+    ztoryLoadViewerParts(m_shotViewer, "ZtoryShotViewerParts");
   }
 
   // Redirect title bar buttons (view mode + preview) from the animatic viewer
@@ -4895,7 +4903,7 @@ void ZtoryAnimaticViewerPanel::returnToAnimaticMode() {
 
   // Persist the drawing-area toolbar visibility when leaving shot mode, so a
   // change made this session survives even without an app restart.
-  ztorySaveShotViewerParts(m_shotViewer);
+  ztorySaveViewerParts(m_shotViewer, "ZtoryShotViewerParts");
 
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   if (scene) {
