@@ -667,7 +667,9 @@ void PanelWidget::updateBorderStyle() {
 void PanelWidget::rescalePreview() {
   int w = width() - 8;
   if (w <= 0) w = 150;
-  int h = w * 9 / 16;
+  double aspect =
+      ZtoryShotOps::cameraAspect(TApp::instance()->getCurrentScene()->getScene());
+  int h = qMax(1, qRound(w / aspect));
   m_previewLabel->setFixedHeight(h);
   if (!m_previewPixmap.isNull()) {
     // HiDPI-aware display: render at physical pixel size so Retina screens are
@@ -894,8 +896,12 @@ void PanelWidget::mousePressEvent(QMouseEvent *e) {
       QPixmap pm(size());
       pm.fill(Qt::transparent);
       render(&pm);
-      drag->setPixmap(pm.scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-      drag->setHotSpot(QPoint(80, 45));
+      double dAspect =
+          ZtoryShotOps::cameraAspect(TApp::instance()->getCurrentScene()->getScene());
+      int dragW = 160, dragH = qMax(1, qRound(dragW / dAspect));
+      drag->setPixmap(pm.scaled(dragW, dragH, Qt::KeepAspectRatio,
+                                Qt::SmoothTransformation));
+      drag->setHotSpot(QPoint(dragW / 2, dragH / 2));
       drag->exec(Qt::MoveAction);
     }
   }
@@ -2065,7 +2071,7 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   int physW = int((pw->width() - 8) * dpr);
   if (physW < 64) physW = 320;   // widget not yet laid out — use safe default
   physW = qMin(physW, 1280);
-  int physH = physW * 9 / 16;
+  int physH = qMax(1, qRound(physW / ZtoryShotOps::cameraAspect(scene)));
 
   // Letter index = how many camera-move panels precede this one in the shot,
   // so the first MOVE is A→B (panels without a move don't consume letters).
@@ -3297,6 +3303,21 @@ void StoryboardPanel::onXsheetChanged() {
   if (!scene || scene->getChildStack()->getAncestorCount() != 0) return;
   TXsheet *xsh = scene->getChildStack()->getTopXsheet();
   if (!xsh) return;
+
+  // Camera shape changed (e.g. Camera Settings → square): relayout + re-render
+  // all previews at the new aspect.  Cheap aspect check avoids doing this on the
+  // many xsheet changes that don't touch the camera.
+  double aspect = ZtoryShotOps::cameraAspect(scene);
+  if (qAbs(aspect - m_lastCameraAspect) > 1e-4) {
+    m_lastCameraAspect = aspect;
+    for (Shot &shot : m_shots)
+      for (PanelWidget *pw : shot.panels) {
+        pw->setPreviewPixmap(QPixmap());  // invalidate → forces re-render
+        pw->rescalePreview();             // updates label height to new aspect
+      }
+    updateVisiblePreviews();
+  }
+
   for (int si = 0; si < (int)m_shots.size(); si++) {
     int col = m_shots[si].data.xsheetColumn;
     TXshColumn *column = xsh->getColumn(col);
@@ -5280,7 +5301,7 @@ void StoryboardPanel::onExportPdf() {
   const int perPage     = cols * rowsPerPage;
   const int cellH    = gridH;  // each cell spans the full grid height
   const int subHdrH  = mm2px(6.5);
-  const int imgH     = cellW * 9 / 16;
+  const int imgH     = qMax(1, (int)qRound(cellW / ZtoryShotOps::cameraAspect(scene)));
   // Remaining height after sub-header and thumbnail is shared among 3 fields.
   const int fieldsH  = cellH - subHdrH - imgH;
   const int fieldH   = fieldsH / 3;

@@ -4,6 +4,7 @@
 #include "menubarcommandids.h"
 #include "tapp.h"
 #include "camerasettingspopup.h"
+#include "ztoryshotops.h"  // Ztoryc: keep sub-scene cameras in sync with main
 #include "reslist.h"
 #include "castselection.h"
 
@@ -227,6 +228,14 @@ void CameraSettingsPopup::onChanged() {
   TCamera *camera = getCamera();
   if (!camera) return;
   if (m_cameraSettingsWidget->getFields(camera)) {
+    // Ztoryc: Tahoma2D treats camera framing as a single scene-wide setting.
+    // Propagate the just-edited camera's res+size to every other xsheet (main
+    // and all sub-scenes), no matter whether the edit was made from the main
+    // xsheet or from inside a shot.  Keeps the native single-camera invariant.
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    TXsheet *curXsh   = TApp::instance()->getCurrentXsheet()->getXsheet();
+    if (scene && curXsh) ZtoryShotOps::syncAllCamerasFrom(scene, curXsh);
+
     TApp::instance()->getCurrentScene()->notifySceneChanged();
     TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
 

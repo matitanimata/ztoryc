@@ -2219,6 +2219,14 @@ void ZtoryAnimaticTrack::refreshFromScene() {
   TXsheet *mainXsh = scene->getChildStack()->getTopXsheet();
   if (!mainXsh) return;
 
+  // Invalidate cached thumbnails if the scene camera changed shape (e.g. → square)
+  // so they re-render at the new aspect instead of staying letterboxed/squished.
+  double curAspect = ZtoryShotOps::cameraAspect(scene);
+  if (qAbs(curAspect - m_thumbCacheAspect) > 1e-4) {
+    m_thumbCache.clear();
+    m_thumbCacheAspect = curAspect;
+  }
+
   int numCols = mainXsh->getColumnCount();
   for (int col = 0; col < numCols; col++) {
     // Usa getMinFrame/getMaxFrame per avere durata reale incluse celle vuote
@@ -2266,8 +2274,14 @@ void ZtoryAnimaticTrack::refreshFromScene() {
     } else if (cl) {
       TXsheet *subXsh = cl->getXsheet();
       if (subXsh) {
+        // Render at the scene camera aspect (height fixed at 90) so a non-16:9
+        // camera (e.g. square) isn't squished — the draw code derives thumbW
+        // from the pixmap's own aspect.
+        double camAsp = ZtoryShotOps::cameraAspect(
+            TApp::instance()->getCurrentScene()->getScene());
+        int thH = 90, thW = qMax(1, qRound(thH * camAsp));
         QPixmap px = IconGenerator::renderXsheetFrame(
-            subXsh, 0, TDimension(160, 90));
+            subXsh, 0, TDimension(thW, thH));
         if (!px.isNull()) {
           m_thumbCache.insert(col, px);
           b.thumbnail = px;
@@ -2910,6 +2924,13 @@ void ZtoryStoryStrip::refreshFromScene() {
   TXsheet *xsh = scene->getChildStack()->getTopXsheet();
   if (!xsh) { update(); return; }
 
+  // Invalidate cached thumbnails if the scene camera changed shape.
+  double curAspect = ZtoryShotOps::cameraAspect(scene);
+  if (qAbs(curAspect - m_thumbCacheAspect) > 1e-4) {
+    m_thumbCache.clear();
+    m_thumbCacheAspect = curAspect;
+  }
+
   int numCols = xsh->getColumnCount();
   for (int col = 0; col < numCols; col++) {
     TXshColumn *column = xsh->getColumn(col);
@@ -2937,8 +2958,13 @@ void ZtoryStoryStrip::refreshFromScene() {
     if (m_thumbCache.contains(col)) {
       e.thumb = m_thumbCache.value(col);
     } else {
+      // Render at the scene camera aspect (height fixed at 90) so a non-16:9
+      // camera isn't squished.
+      double camAsp = ZtoryShotOps::cameraAspect(
+          TApp::instance()->getCurrentScene()->getScene());
+      int thH = 90, thW = qMax(1, qRound(thH * camAsp));
       QPixmap px = IconGenerator::renderXsheetFrame(
-          cl->getXsheet(), 0, TDimension(160, 90));
+          cl->getXsheet(), 0, TDimension(thW, thH));
       if (!px.isNull()) {
         m_thumbCache.insert(col, px);
         e.thumb = px;

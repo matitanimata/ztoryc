@@ -1,4 +1,5 @@
 #include "ztorymodel.h"
+#include "ztoryshotops.h"     // syncChildCameraToMain
 #include "xsheetdragtool.h"   // XsheetGUI::setPlayRange
 #include "tapp.h"
 #include "toonz/toonzscene.h"
@@ -492,6 +493,12 @@ void ZtoryModel::addShotNamed(const QString &name) {
   TXshLevel *xl = scene->createNewLevel(CHILD_XSHLEVEL);
   if (!xl || !xl->getChildLevel()) return;
   TXshChildLevel *cl = xl->getChildLevel();
+
+  // Native invariant: every sub-scene shares the main xsheet's camera framing
+  // (res + size).  Startup-created shots went through createNewLevel() without
+  // this sync, so they could inherit a default camera ≠ the scene camera set
+  // in Preferences. (Other creation paths already sync — see onAddShot.)
+  ZtoryShotOps::syncChildCameraToMain(xsh, cl);
 
   xsh->insertColumn(col);
   for (int r = 0; r < kDefaultDuration; r++)

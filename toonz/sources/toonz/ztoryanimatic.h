@@ -329,6 +329,7 @@ private:
   std::set<int> m_selectedCols;
   int m_lastClickedCol = -1; // for Shift+click range selection
   QHash<int, QPixmap> m_thumbCache; // col → rendered composite thumbnail
+  double m_thumbCacheAspect = -1.0; // camera aspect the cache was rendered at
   Tool m_tool = SelectTool;
   int m_razorHoverFrame = -1;
   // Lock button painted in paintEvent, toggled via mousePressEvent hit-test
@@ -524,6 +525,7 @@ private:
   int m_currentCol = -1;
   int m_scrollOffset = 0; // horizontal pixel offset
   QHash<int, QPixmap> m_thumbCache; // col → rendered composite thumbnail
+  double m_thumbCacheAspect = -1.0; // camera aspect the cache was rendered at
   static constexpr int kThumbH = 54;
   static constexpr int kThumbW = 80;
   static constexpr int kSpacing = 4;
@@ -556,8 +558,15 @@ public:
   ZtoryAnimaticViewer(QWidget *parent = nullptr);
   ~ZtoryAnimaticViewer() override;
   void stopAudio();
-  void updateShowHide() override {}
-  void addShowHideContextMenu(QMenu *) override {}
+  // Use the base implementation so the animatic viewer also gets the
+  // "GUI Show / Hide" context-menu submenu (playbar/frame slider toggles,
+  // camera/table/safe-area/ruler).  These were empty no-ops since the first
+  // commit, which is why the submenu never appeared on the animatic main
+  // viewer even though onContextMenu's pointer-match finds this panel.
+  void updateShowHide() override { BaseViewerPanel::updateShowHide(); }
+  void addShowHideContextMenu(QMenu *menu) override {
+    BaseViewerPanel::addShowHideContextMenu(menu);
+  }
   void checkOldVersionVisblePartsFlags(QSettings &) override {}
 
   // Set up minimal title-bar buttons for the animatic viewer:
