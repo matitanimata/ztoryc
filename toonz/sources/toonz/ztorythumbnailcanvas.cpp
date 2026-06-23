@@ -2,7 +2,9 @@
 
 #include "ztoryshotops.h"   // cameraAspect
 #include "tapp.h"
+#include "trop.h"           // resample (raster rescale on camera-aspect change)
 #include "toonz/tscenehandle.h"
+#include "toonz/txsheethandle.h"
 #include "toonz/toonzscene.h"
 #include "toonz/mypaintbrushstyle.h"
 #include "toonz/mypaint.h"
@@ -29,10 +31,21 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   // Width is kept fixed; height is derived from the camera aspect.
   double aspect =
       ZtoryShotOps::cameraAspect(TApp::instance()->getCurrentScene()->getScene());
-  if (aspect > 0.0) m_boxH = m_boxW / aspect;
+  if (aspect > 0.0) {
+    m_boxH      = m_boxW / aspect;
+    m_boxAspect = aspect;
+  }
 
   m_ras = TRaster32P((int)gridW(), (int)gridH());
   m_ras->fill(TPixel32::White);
+
+  // React live to camera changes made from Camera Settings while this room is
+  // open. xsheetChanged covers most camera edits; sceneChanged covers a scene
+  // load/switch with a different camera.
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+          this, &ZtoryThumbnailCanvas::onSceneChanged);
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneChanged, this,
+          &ZtoryThumbnailCanvas::onSceneChanged);
 }
 
 ZtoryThumbnailCanvas::~ZtoryThumbnailCanvas() {
@@ -89,6 +102,33 @@ void ZtoryThumbnailCanvas::addRow() {
   TRaster32P nr((int)gridW(), newH);
   nr->fill(TPixel32::White);
   nr->copy(m_ras, TPoint(0, addedH));  // keep existing content at the same world Y
+  m_ras = nr;
+  update();
+}
+
+void ZtoryThumbnailCanvas::onSceneChanged() {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return;
+  const double aspect = ZtoryShotOps::cameraAspect(scene);
+  if (aspect <= 0.0) return;
+  // Cheap guard: skip the (most common) changes that don't touch the camera.
+  if (qAbs(aspect - m_boxAspect) < 1e-4) return;
+  // Don't relayout mid-stroke; the next change will catch up once it ends.
+  if (m_stroking) return;
+
+  const int oldH = m_ras ? m_ras->getLy() : 0;
+  m_boxAspect    = aspect;
+  m_boxH         = m_boxW / aspect;
+  const int newH = (int)gridH();
+  if (newH <= 0 || oldH <= 0) return;
+
+  // Rescale the contiguous raster vertically so each panel's drawing follows its
+  // box height. Box width (and therefore grid width) is unchanged, so this is a
+  // pure Y scale by newH/oldH; in the bottom-up raster the world-space relayout
+  // about the top edge reduces to the same uniform scale about the raster origin.
+  TRaster32P nr((int)gridW(), newH);
+  nr->fill(TPixel32::White);
+  if (m_ras) TRop::resample(nr, m_ras, TScale(1.0, (double)newH / oldH));
   m_ras = nr;
   update();
 }

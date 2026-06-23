@@ -71,6 +71,13 @@ signals:
   // Emitted whenever the ordered selection changes (count = panels selected).
   void selectionChanged(int count);
 
+private slots:
+  // Live reaction to a scene/camera change: if the camera aspect changed (e.g.
+  // edited in Camera Settings while this room is open) re-derive the panel box
+  // height and rescale the contiguous raster so existing drawings stay aligned
+  // with their panels.
+  void onSceneChanged();
+
 public:
 
   // Resolve a library-relative brush path ("classic/pencil.myb") to an absolute
@@ -109,8 +116,9 @@ private:
   TRaster32P m_ras;
   int m_cols    = 4;
   int m_rows    = 3;
-  double m_boxW = 480.0;  // world units == raster px (16:9 panel)
-  double m_boxH = 270.0;
+  double m_boxW        = 480.0;  // world units == raster px (16:9 panel)
+  double m_boxH        = 270.0;
+  double m_boxAspect   = 16.0 / 9.0;  // last applied camera aspect (boxW/boxH)
 
   // View
   double m_zoom  = 1.0;
