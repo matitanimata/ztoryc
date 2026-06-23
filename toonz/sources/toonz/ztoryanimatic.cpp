@@ -4796,6 +4796,33 @@ void ZtoryAnimaticViewerPanel::updateTitle() {
   if (getTitleBar()) getTitleBar()->update();
 }
 
+// The shot-drawing viewer is a ComboViewerPanel embedded in m_stack, NOT a
+// top-level room panel, so the room layout never serialises its visible-parts
+// flags (toolbar / tool options / playbar / frame slider). Result: the user's
+// choice to hide those toolbars in Ztoryc's drawing area was lost on every
+// restart, unlike stock Tahoma where viewer panels persist these flags. Persist
+// them ourselves in the app QSettings, mirroring BaseViewerPanel::save/load.
+static void ztoryLoadShotViewerParts(ComboViewerPanel *v) {
+  if (!v) return;
+  QSettings settings;
+  settings.beginGroup("ZtoryShotViewerParts");
+  v->load(settings);  // no-op when nothing was saved yet (keeps defaults)
+  settings.endGroup();
+}
+
+static void ztorySaveShotViewerParts(ComboViewerPanel *v) {
+  if (!v) return;
+  QSettings settings;
+  settings.beginGroup("ZtoryShotViewerParts");
+  v->save(settings);
+  settings.endGroup();
+}
+
+ZtoryAnimaticViewerPanel::~ZtoryAnimaticViewerPanel() {
+  // Persist the drawing-area toolbar visibility on app close.
+  ztorySaveShotViewerParts(m_shotViewer);
+}
+
 void ZtoryAnimaticViewerPanel::enterShotMode(int /*col*/) {
   // Caller (onShotDoubleClicked / onEditShot) has already opened the sub-scene.
   // Here we only switch the viewer page, show the top bar, and (if linked)
@@ -4807,6 +4834,8 @@ void ZtoryAnimaticViewerPanel::enterShotMode(int /*col*/) {
     // Double-click on the shot viewer returns to animatic mode,
     // mirroring the double-click-to-enter gesture.
     m_shotViewer->installEventFilter(this);
+    // Restore the persisted toolbar visibility for the embedded drawing viewer.
+    ztoryLoadShotViewerParts(m_shotViewer);
   }
 
   // Redirect title bar buttons (view mode + preview) from the animatic viewer
@@ -4863,6 +4892,10 @@ void ZtoryAnimaticViewerPanel::restoreAnimaticButtons() {
 
 void ZtoryAnimaticViewerPanel::returnToAnimaticMode() {
   restoreAnimaticButtons();
+
+  // Persist the drawing-area toolbar visibility when leaving shot mode, so a
+  // change made this session survives even without an app restart.
+  ztorySaveShotViewerParts(m_shotViewer);
 
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   if (scene) {

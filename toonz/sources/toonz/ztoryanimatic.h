@@ -810,6 +810,7 @@ class ZtoryAnimaticViewerPanel : public TPanel {  // forward-decl already above
   Q_OBJECT
 public:
   ZtoryAnimaticViewerPanel(QWidget *parent = nullptr);
+  ~ZtoryAnimaticViewerPanel() override;
 
 public slots:
   // Triggered by ZtoryModel::shotActivatedForViewing — switch to shot view page.
