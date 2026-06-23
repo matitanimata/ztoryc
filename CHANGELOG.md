@@ -1,3 +1,44 @@
+## [2026-06-23c] — Release 0.6.2: Thumbnail room completa (export, persistenza, panoramiche, transform, undo)
+
+Rilascio **v0.6.2** (Win + macOS). Completata la Thumbnail room (Fase 3) e fix vari.
+
+### Added — Thumbnail room (branch `feature/thumbnail-room`, in master via FF)
+- **Export-to-board + Shrink** (`2f3267add`): i pannelli selezionati diventano uno
+  shot reale nel Board (livello OVL multi-frame in `extras/<scena>/`, sotto-scena,
+  colonna main, resequence). Spinbox **Shrink** 1-8 (risoluzione disegni = cameraRes/shrink).
+  - **Fix hang**: `createNewLevel` andava in loop infinito quando esistevano gia' i PNG
+    di export precedenti. `NameModifier` disambigua con `_N`, ma Tahoma legge `_<cifre>`
+    come separatore di frame → `thumb_1` collassa su livello `thumb` → collisione eterna.
+    Ora il livello e' nominato col label dello shot (`SH0xx`) e la disambiguazione su
+    disco usa un suffisso LETTERA (`SH040B`). **Bug core Tahoma → candidato PR upstream.**
+- **Persistenza del canvas per scena** (`b93899885`): il raster contiguo viene salvato
+  come PNG in `extras/<scena>/_ztorythumbs_<cols>x<rows>.png` (autosave debounced +
+  flush a chiusura), ricaricato al cambio scena. Prima i disegni si perdevano a chiusura.
+- **Panoramiche via merge** (`c94c775a6`): merge di un blocco rettangolare di pannelli
+  in un unico panel-panorama (selezione diagonale auto-completa il rettangolo). In export
+  tutti i selezionati = UN solo shot su UN livello dimensionato sul pannello piu' grande.
+- **Transform tool** (`bb2cb24fc`): selezione raster (rettangolare o **lazo**) → sposta,
+  copia/incolla (Cmd+C/V), scala (angoli), ruota (maniglia). Icone tool + cestino.
+- **Undo/redo** (`5d3a9018f`): Cmd+Z / Cmd+Shift+Z (snapshot full-canvas, 16 step) su
+  tratti, +Row, merge/split e operazioni Transform (uno step per operazione).
+
+### Fixed (inclusi nella release, gia' su master/branch dalle sessioni precedenti)
+- Camera unica di scena + anteprime camera-aware (`dbf0f5cc7`).
+- Animatic: play prosegue se il video e' piu' lungo dell'audio; play non si ferma sulla
+  1a traccia con piu' tracce audio; export non sporca la scena (`7bbadf0fe`, `f28b8f565`).
+- Sync Export Animatic ↔ Render Settings (`24d91e076`, `ff456130d`).
+- Board: undo del Delete Shot non duplica piu' gli shot vuoti (`aa3b16dea`).
+- Persistenza toolbar dei viewer animatic/shot (`ebcf790d5`, `ed25d5df4`).
+
+### Upstream candidates (PR Tahoma)
+- **NameModifier vs separatore frame `_N`** in `createNewLevel`: loop infinito quando un
+  livello con quel nome esiste gia' su disco (sequenza). Hardening: disambiguare con
+  suffisso non-collassabile. Riproducibile su stock creando livelli con nome collidente.
+
+### TODO prossima sessione
+- Icone tool: sostituire le disegnate a mano con Lucide/Phosphor (path da fornire).
+- Tasto Canc nudo non sempre cattura (focus): per ora cestino + Cmd+Backspace.
+
 ## [2026-06-23b] — Camera unica di scena + anteprime camera-aware; Thumbnail room Fase 3 (step 1-2)
 
 ### Fixed / Added (master, commit `dbf0f5cc7`)
