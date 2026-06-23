@@ -2219,6 +2219,14 @@ void ZtoryAnimaticTrack::refreshFromScene() {
   TXsheet *mainXsh = scene->getChildStack()->getTopXsheet();
   if (!mainXsh) return;
 
+  // Invalidate cached thumbnails if the scene camera changed shape (e.g. → square)
+  // so they re-render at the new aspect instead of staying letterboxed/squished.
+  double curAspect = ZtoryShotOps::cameraAspect(scene);
+  if (qAbs(curAspect - m_thumbCacheAspect) > 1e-4) {
+    m_thumbCache.clear();
+    m_thumbCacheAspect = curAspect;
+  }
+
   int numCols = mainXsh->getColumnCount();
   for (int col = 0; col < numCols; col++) {
     // Usa getMinFrame/getMaxFrame per avere durata reale incluse celle vuote
@@ -2266,8 +2274,14 @@ void ZtoryAnimaticTrack::refreshFromScene() {
     } else if (cl) {
       TXsheet *subXsh = cl->getXsheet();
       if (subXsh) {
+        // Render at the scene camera aspect (height fixed at 90) so a non-16:9
+        // camera (e.g. square) isn't squished — the draw code derives thumbW
+        // from the pixmap's own aspect.
+        double camAsp = ZtoryShotOps::cameraAspect(
+            TApp::instance()->getCurrentScene()->getScene());
+        int thH = 90, thW = qMax(1, qRound(thH * camAsp));
         QPixmap px = IconGenerator::renderXsheetFrame(
-            subXsh, 0, TDimension(160, 90));
+            subXsh, 0, TDimension(thW, thH));
         if (!px.isNull()) {
           m_thumbCache.insert(col, px);
           b.thumbnail = px;
@@ -2910,6 +2924,13 @@ void ZtoryStoryStrip::refreshFromScene() {
   TXsheet *xsh = scene->getChildStack()->getTopXsheet();
   if (!xsh) { update(); return; }
 
+  // Invalidate cached thumbnails if the scene camera changed shape.
+  double curAspect = ZtoryShotOps::cameraAspect(scene);
+  if (qAbs(curAspect - m_thumbCacheAspect) > 1e-4) {
+    m_thumbCache.clear();
+    m_thumbCacheAspect = curAspect;
+  }
+
   int numCols = xsh->getColumnCount();
   for (int col = 0; col < numCols; col++) {
     TXshColumn *column = xsh->getColumn(col);
@@ -2937,8 +2958,13 @@ void ZtoryStoryStrip::refreshFromScene() {
     if (m_thumbCache.contains(col)) {
       e.thumb = m_thumbCache.value(col);
     } else {
+      // Render at the scene camera aspect (height fixed at 90) so a non-16:9
+      // camera isn't squished.
+      double camAsp = ZtoryShotOps::cameraAspect(
+          TApp::instance()->getCurrentScene()->getScene());
+      int thH = 90, thW = qMax(1, qRound(thH * camAsp));
       QPixmap px = IconGenerator::renderXsheetFrame(
-          cl->getXsheet(), 0, TDimension(160, 90));
+          cl->getXsheet(), 0, TDimension(thW, thH));
       if (!px.isNull()) {
         m_thumbCache.insert(col, px);
         e.thumb = px;
@@ -4626,6 +4652,11 @@ void ZtoryLeftPanel::showShotMode(int /*col*/) {
 
 // ---- ZtoryAnimaticViewerPanel ----
 
+// Persist visible-parts (toolbars) of the embedded viewers — see definitions
+// below. Forward-declared so the constructor can restore them.
+static void ztoryLoadViewerParts(BaseViewerPanel *v, const char *group);
+static void ztorySaveViewerParts(BaseViewerPanel *v, const char *group);
+
 ZtoryAnimaticViewerPanel::ZtoryAnimaticViewerPanel(QWidget *parent)
     : TPanel(parent) {
   setWindowTitle("Ztory Viewer");
@@ -4671,6 +4702,8 @@ ZtoryAnimaticViewerPanel::ZtoryAnimaticViewerPanel(QWidget *parent)
   m_viewer = new ZtoryAnimaticViewer(m_stack);
   m_viewer->setMinimumHeight(120);
   m_stack->addWidget(m_viewer);  // index 0
+  // Embedded viewer: the room can't serialise its parts → restore them here.
+  ztoryLoadViewerParts(m_viewer, "ZtoryAnimaticViewerParts");
 
   lay->addWidget(m_stack, 1);
   setWidget(container);
@@ -4796,6 +4829,34 @@ void ZtoryAnimaticViewerPanel::updateTitle() {
   if (getTitleBar()) getTitleBar()->update();
 }
 
+// The shot-drawing viewer is a ComboViewerPanel embedded in m_stack, NOT a
+// top-level room panel, so the room layout never serialises its visible-parts
+// flags (toolbar / tool options / playbar / frame slider). Result: the user's
+// choice to hide those toolbars in Ztoryc's drawing area was lost on every
+// restart, unlike stock Tahoma where viewer panels persist these flags. Persist
+// them ourselves in the app QSettings, mirroring BaseViewerPanel::save/load.
+static void ztoryLoadViewerParts(BaseViewerPanel *v, const char *group) {
+  if (!v) return;
+  QSettings settings;
+  settings.beginGroup(group);
+  v->load(settings);  // no-op when nothing was saved yet (keeps defaults)
+  settings.endGroup();
+}
+
+static void ztorySaveViewerParts(BaseViewerPanel *v, const char *group) {
+  if (!v) return;
+  QSettings settings;
+  settings.beginGroup(group);
+  v->save(settings);
+  settings.endGroup();
+}
+
+ZtoryAnimaticViewerPanel::~ZtoryAnimaticViewerPanel() {
+  // Persist toolbar/parts visibility of both embedded viewers on app close.
+  ztorySaveViewerParts(m_shotViewer, "ZtoryShotViewerParts");
+  ztorySaveViewerParts(m_viewer, "ZtoryAnimaticViewerParts");
+}
+
 void ZtoryAnimaticViewerPanel::enterShotMode(int /*col*/) {
   // Caller (onShotDoubleClicked / onEditShot) has already opened the sub-scene.
   // Here we only switch the viewer page, show the top bar, and (if linked)
@@ -4807,6 +4868,8 @@ void ZtoryAnimaticViewerPanel::enterShotMode(int /*col*/) {
     // Double-click on the shot viewer returns to animatic mode,
     // mirroring the double-click-to-enter gesture.
     m_shotViewer->installEventFilter(this);
+    // Restore the persisted toolbar visibility for the embedded drawing viewer.
+    ztoryLoadViewerParts(m_shotViewer, "ZtoryShotViewerParts");
   }
 
   // Redirect title bar buttons (view mode + preview) from the animatic viewer
@@ -4863,6 +4926,10 @@ void ZtoryAnimaticViewerPanel::restoreAnimaticButtons() {
 
 void ZtoryAnimaticViewerPanel::returnToAnimaticMode() {
   restoreAnimaticButtons();
+
+  // Persist the drawing-area toolbar visibility when leaving shot mode, so a
+  // change made this session survives even without an app restart.
+  ztorySaveViewerParts(m_shotViewer, "ZtoryShotViewerParts");
 
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   if (scene) {

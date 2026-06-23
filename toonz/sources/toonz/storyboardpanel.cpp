@@ -667,7 +667,9 @@ void PanelWidget::updateBorderStyle() {
 void PanelWidget::rescalePreview() {
   int w = width() - 8;
   if (w <= 0) w = 150;
-  int h = w * 9 / 16;
+  double aspect =
+      ZtoryShotOps::cameraAspect(TApp::instance()->getCurrentScene()->getScene());
+  int h = qMax(1, qRound(w / aspect));
   m_previewLabel->setFixedHeight(h);
   if (!m_previewPixmap.isNull()) {
     // HiDPI-aware display: render at physical pixel size so Retina screens are
@@ -894,8 +896,12 @@ void PanelWidget::mousePressEvent(QMouseEvent *e) {
       QPixmap pm(size());
       pm.fill(Qt::transparent);
       render(&pm);
-      drag->setPixmap(pm.scaled(160, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-      drag->setHotSpot(QPoint(80, 45));
+      double dAspect =
+          ZtoryShotOps::cameraAspect(TApp::instance()->getCurrentScene()->getScene());
+      int dragW = 160, dragH = qMax(1, qRound(dragW / dAspect));
+      drag->setPixmap(pm.scaled(dragW, dragH, Qt::KeepAspectRatio,
+                                Qt::SmoothTransformation));
+      drag->setHotSpot(QPoint(dragW / 2, dragH / 2));
       drag->exec(Qt::MoveAction);
     }
   }
@@ -2065,7 +2071,7 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   int physW = int((pw->width() - 8) * dpr);
   if (physW < 64) physW = 320;   // widget not yet laid out — use safe default
   physW = qMin(physW, 1280);
-  int physH = physW * 9 / 16;
+  int physH = qMax(1, qRound(physW / ZtoryShotOps::cameraAspect(scene)));
 
   // Letter index = how many camera-move panels precede this one in the shot,
   // so the first MOVE is A→B (panels without a move don't consume letters).
@@ -3297,6 +3303,21 @@ void StoryboardPanel::onXsheetChanged() {
   if (!scene || scene->getChildStack()->getAncestorCount() != 0) return;
   TXsheet *xsh = scene->getChildStack()->getTopXsheet();
   if (!xsh) return;
+
+  // Camera shape changed (e.g. Camera Settings → square): relayout + re-render
+  // all previews at the new aspect.  Cheap aspect check avoids doing this on the
+  // many xsheet changes that don't touch the camera.
+  double aspect = ZtoryShotOps::cameraAspect(scene);
+  if (qAbs(aspect - m_lastCameraAspect) > 1e-4) {
+    m_lastCameraAspect = aspect;
+    for (Shot &shot : m_shots)
+      for (PanelWidget *pw : shot.panels) {
+        pw->setPreviewPixmap(QPixmap());  // invalidate → forces re-render
+        pw->rescalePreview();             // updates label height to new aspect
+      }
+    updateVisiblePreviews();
+  }
+
   for (int si = 0; si < (int)m_shots.size(); si++) {
     int col = m_shots[si].data.xsheetColumn;
     TXshColumn *column = xsh->getColumn(col);
@@ -3830,21 +3851,31 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
 
   clearShots();
 
-  // Remove all current shot columns (child-level columns at indices 0..N-1).
-  // Non-shot columns (audio etc.) live at higher indices and shift accordingly.
+  // Remove all current shot columns. Shot columns are always first; audio (and
+  // any other real, non-sub-scene level) columns follow.
+  //
+  // BUG FIX (undo of Delete Shot duplicated every shot): the old detection
+  // classified a column as a shot only if it held a child-level cell, and broke
+  // at the first column that didn't. But an *empty* shot — a shot made only of
+  // empty/red cells, a valid Ztoryc state (duration counts empty cells) — has no
+  // child-level cell, so the loop stopped early and removed too few columns. The
+  // snapshot re-insert below then added the full set on top of the survivors,
+  // duplicating every shot past the empty one (data corruption: cloned
+  // sub-scenes). Instead, treat every leading column as a removable shot until
+  // the first audio column or the first column carrying a non-sub-scene level.
   int currentShotCols = 0;
   for (int c = 0; c < xsh->getColumnCount(); c++) {
-    bool isShot = false;
-    int fc = xsh->getFrameCount();
+    TXshColumn *column = xsh->getColumn(c);
+    if (column && column->getSoundColumn()) break;  // audio ends the shot region
+    bool hasRealLevel = false;  // a non-sub-scene level → not a shot column
+    int fc            = xsh->getFrameCount();
     for (int r = 0; r <= fc; r++) {
       TXshCell cell = xsh->getCell(r, c);
-      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
-        isShot = true;
-        break;
-      }
+      if (cell.isEmpty() || !cell.m_level) continue;
+      if (!cell.m_level->getChildLevel()) { hasRealLevel = true; break; }
     }
-    if (isShot) currentShotCols++;
-    else break; // shot columns are always first; stop at first non-shot
+    if (hasRealLevel) break;
+    currentShotCols++;  // child-level shot OR empty/red-cell placeholder shot
   }
   // Remove from left repeatedly (indices shift left each time).
   for (int i = 0; i < currentShotCols; i++)
@@ -5270,7 +5301,7 @@ void StoryboardPanel::onExportPdf() {
   const int perPage     = cols * rowsPerPage;
   const int cellH    = gridH;  // each cell spans the full grid height
   const int subHdrH  = mm2px(6.5);
-  const int imgH     = cellW * 9 / 16;
+  const int imgH     = qMax(1, (int)qRound(cellW / ZtoryShotOps::cameraAspect(scene)));
   // Remaining height after sub-header and thumbnail is shared among 3 fields.
   const int fieldsH  = cellH - subHdrH - imgH;
   const int fieldH   = fieldsH / 3;

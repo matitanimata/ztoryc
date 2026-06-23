@@ -1,3 +1,31 @@
+## [2026-06-23] — Batch fix segnalazioni utente (undo Delete Shot, persistenza GUI viewer)
+
+### Fixed (su master, pushato)
+- **Undo del Delete Shot duplicava tutti gli shot/sotto-scene** (`storyboardpanel.cpp`
+  `restoreFromSnapshot`). Il conteggio delle colonne-shot da rimuovere le identificava
+  come "colonna con una cella child-level" e si fermava alla prima senza: uno **shot vuoto**
+  (solo celle vuote/rosse — stato valido) non ha celle child-level → stop anticipato →
+  rimosse troppo poche colonne → il re-insert dello snapshot duplicava tutto dopo lo shot
+  vuoto. Ora rimuove tutte le colonne iniziali fino alla prima traccia audio o al primo
+  livello reale (non sub-scene). Regression-safe. Commit `aa3b16dea` (+ merge `f542b0830`).
+  NB: bug Windows-only nei test utente ma codice identico cross-OS → era data-dependent.
+- **Toolbar del viewer di disegno (shot) non persistevano** tra riavvii (a differenza di
+  Tahoma). Il viewer è un `ComboViewerPanel` *embedded* (non pannello top-level della room)
+  → la room non ne serializza i visible-parts. Ora salvati/ripristinati in QSettings
+  (load alla creazione, save su uscita shot-mode + distruttore). **Confermato funzionante.**
+  Commit `ed25d5df4`. Stessa persistenza aggiunta al viewer animatic (`ebcf790d5`).
+- **`SceneViewer::onContextMenu`**: il pannello viewer ora si trova via match
+  `p->sceneViewer()==this` su `QApplication::allWidgets` invece dell'annidatura fissa
+  `parentWidget()->parentWidget()` → robusto ai viewer embedded. Candidato upstream. `ebcf790d5`.
+
+### Aperti (prossima sessione — vedi ANIMATIC_TASKS #5/#6/#7)
+- **"GUI Show / Hide" non compare nel viewer ANIMATIC main**: `bvp` resta null a runtime
+  nonostante il match (binario verificato aggiornato). Serve log diagnostico in `onContextMenu`.
+- **#2 Camera unica di scena** (regressione vs Tahoma): la camera deve essere un parametro
+  unico per tutta la scena (main + tutte le sub-scene). Modello: `TSceneProperties::m_cameras`
+  scena + camere per-sub-xsheet da allineare. Piano in task #6 (sync + hook cambio camera).
+- **#1 CRASH new project → selezione cartella (Windows only, no crash log)**: serve stack trace.
+
 ## [2026-06-22] — Thumbnail room (Fasi 1-2): canvas MyPaint + griglia continua + palette  [branch `feature/thumbnail-room`]
 
 > Lavoro su branch dedicato `feature/thumbnail-room` (NON master). Milestone "Thumbnail room":

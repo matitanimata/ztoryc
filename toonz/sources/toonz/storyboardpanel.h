@@ -192,6 +192,10 @@ struct Shot {
   std::set<int>     m_selectedIndices;
 
   bool m_updating = false;   // re-entrancy guard for signal reactions
+  // Last camera aspect (w/h) seen by onXsheetChanged.  When the scene camera
+  // changes shape (e.g. → square) the previews must be relaid-out and re-rendered
+  // at the new aspect; -1 forces a refresh on first run.
+  double m_lastCameraAspect = -1.0;
   // Shot clipboard lives in ZtoryModel::sharedClip() — single source of truth
   // shared with the Animatic. The Board no longer keeps a local copy.
   int  m_fps;

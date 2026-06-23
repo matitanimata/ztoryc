@@ -29,6 +29,15 @@ namespace ZtoryShotOps {
 // call on a clone with camera animation (changing size reframes keyframes).
 void syncChildCameraToMain(TXsheet *parentXsh, TXshChildLevel *cl);
 
+// Propagate the camera resolution + size of srcXsh to EVERY other xsheet in the
+// scene (the main xsheet and all sub-scenes), matching cameras by id.  Tahoma2D
+// treats the camera framing as a single scene-wide setting that applies to the
+// main xsheet and all sub-scenes, so a Camera Settings change made from any
+// xsheet (main OR inside a shot) must reach all the others.  Only res+size are
+// copied — per-shot camera-move keyframes (transform) are left untouched.
+// Returns true if any camera was actually modified.
+bool syncAllCamerasFrom(ToonzScene *scene, TXsheet *srcXsh);
+
 // Clone the sub-scene in column srcCol into a new (independent) sub-scene at
 // dstCol.  Inserts a column at dstCol, deep-clones the child xsheet (columns,
 // fx, camera, pegbars — preserving camera keyframes) and re-exposes the cells.
@@ -43,5 +52,11 @@ void pasteSharedClip(const std::vector<ZtoryClipEntry> &clip, int insertCol,
 
 // Cell count of a column (r1 - r0 + 1), or 24 if empty/invalid.
 int colDuration(TXsheet *xsh, int col);
+
+// Aspect ratio (width/height) of the scene camera, read from the MAIN xsheet
+// camera resolution.  Board previews, the PDF export and the Thumbnail room
+// grid use this so a non-16:9 camera (e.g. square) is framed correctly instead
+// of being letterboxed inside a fixed 16:9 box.  Falls back to 16:9.
+double cameraAspect(ToonzScene *scene);
 
 }  // namespace ZtoryShotOps

@@ -2085,8 +2085,17 @@ void SceneViewer::onContextMenu(const QPoint &pos, const QPoint &globalPos) {
 
   menu->addLevelCommands(columnIndices);
 
-  BaseViewerPanel *bvp =
-      qobject_cast<BaseViewerPanel *>(parentWidget()->parentWidget());
+  // Find the owning BaseViewerPanel by matching its SceneViewer to this one,
+  // rather than assuming a fixed parentWidget()->parentWidget() nesting. Viewers
+  // embedded in custom containers (e.g. Ztoryc's animatic viewer inside a
+  // stacked widget) are nested differently, so the positional lookup returned
+  // null there and the "GUI Show / Hide" submenu never appeared. The pointer
+  // match is robust to any widget hierarchy.
+  BaseViewerPanel *bvp = nullptr;
+  for (QWidget *w : QApplication::allWidgets()) {
+    BaseViewerPanel *p = qobject_cast<BaseViewerPanel *>(w);
+    if (p && p->sceneViewer() == this) { bvp = p; break; }
+  }
   if (bvp) {
     menu->addSeparator();
     bvp->addShowHideContextMenu(menu);

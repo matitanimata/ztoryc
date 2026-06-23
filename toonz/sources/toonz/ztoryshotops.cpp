@@ -8,6 +8,9 @@
 #include "toonz/tscenehandle.h"
 #include "toonz/txshlevelcolumn.h"
 #include "toonz/txshleveltypes.h"
+#include "toonz/txshchildlevel.h"
+#include "toonz/levelset.h"
+#include "toonz/sceneproperties.h"
 #include "toonz/tstageobject.h"
 #include "toonz/tstageobjecttree.h"
 #include "toonz/tstageobjectid.h"
@@ -43,6 +46,72 @@ void syncChildCameraToMain(TXsheet *parentXsh, TXshChildLevel *cl) {
     tmpCamId++; cam++;
   }
   childTree->setCurrentCameraId(parentTree->getCurrentCameraId());
+}
+
+// Copy res+size of every camera from srcTree to dstTree (matched by camera id).
+static bool copyCameraResSize(TStageObjectTree *srcTree,
+                              TStageObjectTree *dstTree) {
+  bool changed = false;
+  int tmpCamId = 0;
+  for (int cam = 0; cam < srcTree->getCameraCount();) {
+    TStageObject *srcCamObj =
+        srcTree->getStageObject(TStageObjectId::CameraId(tmpCamId), false);
+    if (!srcCamObj) { tmpCamId++; continue; }
+    TCamera *srcCam = srcCamObj->getCamera();
+    if (srcCam) {
+      TStageObject *dstObj =
+          dstTree->getStageObject(TStageObjectId::CameraId(tmpCamId));
+      TCamera *dstCam = dstObj ? dstObj->getCamera() : nullptr;
+      if (dstCam && (dstCam->getRes() != srcCam->getRes() ||
+                     dstCam->getSize() != srcCam->getSize())) {
+        dstCam->setRes(srcCam->getRes());
+        dstCam->setSize(srcCam->getSize());
+        changed = true;
+      }
+    }
+    tmpCamId++; cam++;
+  }
+  return changed;
+}
+
+bool syncAllCamerasFrom(ToonzScene *scene, TXsheet *srcXsh) {
+  if (!scene || !srcXsh) return false;
+  TStageObjectTree *srcTree = srcXsh->getStageObjectTree();
+  TXsheet *mainXsh          = scene->getTopXsheet();
+
+  bool changed = false;
+
+  // 1) Propagate to the main xsheet (unless the edit happened there).
+  if (mainXsh && mainXsh != srcXsh)
+    changed |= copyCameraResSize(srcTree, mainXsh->getStageObjectTree());
+
+  // 2) Propagate to every sub-scene (skip the source xsheet itself).
+  std::vector<TXshLevel *> levels;
+  scene->getLevelSet()->listLevels(levels);
+  for (TXshLevel *lvl : levels) {
+    if (!lvl) continue;
+    TXshChildLevel *cl = lvl->getChildLevel();
+    if (!cl) continue;
+    TXsheet *childXsh = cl->getXsheet();
+    if (!childXsh || childXsh == srcXsh) continue;
+    changed |= copyCameraResSize(srcTree, childXsh->getStageObjectTree());
+  }
+  return changed;
+}
+
+double cameraAspect(ToonzScene *scene) {
+  const double kDefault = 16.0 / 9.0;
+  if (!scene) return kDefault;
+  TXsheet *xsh = scene->getTopXsheet();
+  if (!xsh) return kDefault;
+  TStageObjectTree *tree = xsh->getStageObjectTree();
+  TStageObject *camObj =
+      tree->getStageObject(tree->getCurrentCameraId(), false);
+  TCamera *cam = camObj ? camObj->getCamera() : nullptr;
+  if (!cam) return kDefault;
+  TDimension res = cam->getRes();
+  if (res.lx <= 0 || res.ly <= 0) return kDefault;
+  return (double)res.lx / (double)res.ly;
 }
 
 void cloneChildToPosition(int srcCol, int dstCol) {
