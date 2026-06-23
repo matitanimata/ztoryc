@@ -1,5 +1,9 @@
 #include "ztorythumbnailcanvas.h"
 
+#include "ztoryshotops.h"   // cameraAspect
+#include "tapp.h"
+#include "toonz/tscenehandle.h"
+#include "toonz/toonzscene.h"
 #include "toonz/mypaintbrushstyle.h"
 #include "toonz/mypaint.h"
 
@@ -18,6 +22,13 @@
 
 ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   setFocusPolicy(Qt::StrongFocus);
+
+  // Panel boxes follow the scene camera aspect so the thumbnail grid matches the
+  // framing used by the Board/animatic (e.g. a square camera → square panels).
+  // Width is kept fixed; height is derived from the camera aspect.
+  double aspect =
+      ZtoryShotOps::cameraAspect(TApp::instance()->getCurrentScene()->getScene());
+  if (aspect > 0.0) m_boxH = m_boxW / aspect;
 
   m_ras = TRaster32P((int)gridW(), (int)gridH());
   m_ras->fill(TPixel32::White);
