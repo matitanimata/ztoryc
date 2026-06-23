@@ -33,6 +33,8 @@
 #include <QTransform>
 #include <QVector>
 
+#include <vector>
+
 class QTimer;
 class TFilePath;
 
@@ -169,6 +171,18 @@ private:
   void liftFloat(const QRectF &worldRect, bool copy);  // marquee → floating buf
   void liftFloatLasso(const QVector<QPointF> &worldPath, bool copy);
   bool handleTransformKey(QKeyEvent *e);  // → true if the key was consumed
+
+  // --- Undo / redo (full-canvas snapshots) ---------------------------------
+  struct Snapshot {
+    TRaster32P ras;
+    int cols, rows;
+    QVector<QRect> merges;
+  };
+  void pushUndo();   // snapshot current state before a mutating edit
+  void undo();
+  void redo();
+  void restoreSnapshot(const Snapshot &s);
+  bool handleUndoKey(QKeyEvent *e);  // Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z
   QTransform floatLocalToWorld() const;   // base-image px → world coords
   QPointF floatHandleWorld(int h) const;  // h: 0..3 corners, 4 = rotate handle
   int floatHandleAt(const QPointF &widgetPos) const;  // hit-test → handle, or -1
@@ -228,4 +242,7 @@ private:
   // Persistence
   QTimer *m_saveTimer = nullptr;  // debounced autosave after edits
   QString m_persistKey;           // scene identity currently loaded from disk
+
+  // Undo / redo
+  std::vector<Snapshot> m_undo, m_redo;
 };

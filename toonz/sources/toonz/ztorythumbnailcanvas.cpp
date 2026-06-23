@@ -122,6 +122,7 @@ void ZtoryThumbnailCanvas::ensureStyle() {
 //=============================================================================
 
 void ZtoryThumbnailCanvas::addRow() {
+  pushUndo();
   const int oldH  = m_ras->getLy();
   m_rows += 1;
   const int newH   = (int)gridH();
@@ -229,6 +230,7 @@ void ZtoryThumbnailCanvas::toggleMergeSelection() {
     if (mergeIndexAt(col, row) >= 0) anyMerge = true;
   }
   if (anyMerge) {
+    pushUndo();
     QVector<QRect> kept;
     for (const QRect &m : m_merges) {
       const int tl = m.y() * m_cols + m.x();
@@ -257,6 +259,7 @@ void ZtoryThumbnailCanvas::toggleMergeSelection() {
     for (int cc = c0; cc <= c1; ++cc)
       if (mergeIndexAt(cc, rr) >= 0) return;
 
+  pushUndo();
   m_merges.push_back(QRect(c0, r0, w, h));
   clearSelection();
   schedulePersistSave();
@@ -504,11 +507,14 @@ void ZtoryThumbnailCanvas::zoomAt(const QPointF &widgetAnchor, double factor) {
 //=============================================================================
 
 void ZtoryThumbnailCanvas::beginStroke(const QPointF &widgetPos, double pressure) {
-  if (m_selectMode) return;  // selection mode suspends drawing (incl. tablet)
+  if (m_selectMode || m_xformMode) return;  // these modes suspend drawing
   ensureStyle();
   if (!m_style || !m_ras) return;
   const QPointF w = widgetToWorld(widgetPos);
   if (w.x() < 0 || w.y() < 0 || w.x() > gridW() || w.y() > gridH()) return;
+
+  pushUndo();   // snapshot before the stroke modifies the canvas
+  setFocus();   // so Cmd-Z reaches us right after drawing
 
   // Erasers paint white onto the opaque page; brushes use the chosen ink.
   const TPixel32 ink = m_eraser ? TPixel32(255, 255, 255, 255) : m_color;
@@ -726,17 +732,24 @@ bool ZtoryThumbnailCanvas::handleTransformKey(QKeyEvent *e) {
 }
 
 void ZtoryThumbnailCanvas::keyPressEvent(QKeyEvent *e) {
+  if (handleUndoKey(e)) return;
   if (handleTransformKey(e)) return;
   QWidget::keyPressEvent(e);
 }
 
 bool ZtoryThumbnailCanvas::eventFilter(QObject *obj, QEvent *ev) {
-  // Catch the transform shortcuts regardless of which widget in our window has
-  // focus (a toolbar button often steals it). Guarded to our active window and
-  // to keys we actually consume, so normal typing elsewhere is untouched.
-  if (ev->type() == QEvent::KeyPress && m_xformMode && isVisible() && window() &&
+  // Catch our shortcuts regardless of which widget in our window has focus (a
+  // toolbar button often steals it). Guarded to our active window and to keys we
+  // actually consume, so normal typing / the app's own undo elsewhere is safe.
+  if (ev->type() == QEvent::KeyPress && isVisible() && window() &&
       window()->isActiveWindow()) {
-    if (handleTransformKey(static_cast<QKeyEvent *>(ev))) return true;
+    auto *ke = static_cast<QKeyEvent *>(ev);
+    // Undo only when this canvas is the focus of attention (focused, hovered or
+    // in a selection tool) AND we have history — else let the app handle Cmd-Z.
+    if ((hasFocus() || underMouse() || m_xformMode || m_selectMode) &&
+        handleUndoKey(ke))
+      return true;
+    if (m_xformMode && handleTransformKey(ke)) return true;
   }
   return QWidget::eventFilter(obj, ev);
 }
@@ -784,6 +797,9 @@ void ZtoryThumbnailCanvas::liftFloat(const QRectF &worldRect, bool copy) {
   const int wy0 = qBound(0, (int)std::floor(worldRect.top()), ly);   // world y
   const int wy1 = qBound(0, (int)std::ceil(worldRect.bottom()), ly);
   if (x1 - x0 < 2 || wy1 - wy0 < 2) return;
+  // Snapshot the pre-edit canvas now (start of a transform session); commit
+  // adds no further snapshot, so one undo reverts the whole move/scale/rotate.
+  pushUndo();
   // World y is top-down; the raster is bottom-up, so flip to raster rows.
   const int ry0 = qBound(0, ly - wy1, ly);
   const int ry1 = qBound(0, ly - wy0, ly);
@@ -859,6 +875,7 @@ void ZtoryThumbnailCanvas::copyFloat() {
 void ZtoryThumbnailCanvas::pasteFloat() {
   if (m_clip.isNull()) return;
   commitFloat();  // bake any current float first
+  pushUndo();     // start of the paste session (canvas = after that bake)
   m_floatImg     = m_clip;
   m_floatCenter  = widgetToWorld(QPointF(width() / 2.0, height() / 2.0));
   m_floatScale   = 1.0;
@@ -984,6 +1001,63 @@ void ZtoryThumbnailCanvas::deleteFloat() {
   m_floatImg  = QImage();  // source already cleared on lift (for a move)
   m_floatDrag = -1;
   update();
+}
+
+//=============================================================================
+// Undo / redo — full-canvas snapshots (raster + grid + merges)
+//=============================================================================
+
+void ZtoryThumbnailCanvas::pushUndo() {
+  if (!m_ras) return;
+  static const size_t kMaxUndo = 16;
+  m_undo.push_back({m_ras->clone(), m_cols, m_rows, m_merges});
+  if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
+  m_redo.clear();  // a fresh edit invalidates the redo branch
+}
+
+void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
+  m_ras    = s.ras->clone();  // clone so the stored snapshot stays immutable
+  m_cols   = s.cols;
+  m_rows   = s.rows;
+  m_merges = s.merges;
+  m_floatImg = QImage();  // any floating selection is dropped on undo/redo
+  m_floatDrag = -1;
+  clearSelection();
+  schedulePersistSave();
+  update();
+}
+
+void ZtoryThumbnailCanvas::undo() {
+  if (m_undo.empty()) return;
+  if (!m_ras) return;
+  m_redo.push_back({m_ras->clone(), m_cols, m_rows, m_merges});
+  Snapshot s = m_undo.back();
+  m_undo.pop_back();
+  restoreSnapshot(s);
+}
+
+void ZtoryThumbnailCanvas::redo() {
+  if (m_redo.empty()) return;
+  if (!m_ras) return;
+  m_undo.push_back({m_ras->clone(), m_cols, m_rows, m_merges});
+  Snapshot s = m_redo.back();
+  m_redo.pop_back();
+  restoreSnapshot(s);
+}
+
+bool ZtoryThumbnailCanvas::handleUndoKey(QKeyEvent *e) {
+  // Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z = redo. Only consume when we actually
+  // have history, so the app's own undo still works when ours is empty.
+  if (!(e->modifiers() & Qt::ControlModifier) || e->key() != Qt::Key_Z)
+    return false;
+  if (e->modifiers() & Qt::ShiftModifier) {
+    if (m_redo.empty()) return false;
+    redo();
+  } else {
+    if (m_undo.empty()) return false;
+    undo();
+  }
+  return true;
 }
 
 //=============================================================================
