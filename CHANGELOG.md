@@ -16,8 +16,11 @@
   zoom) con mirino; system cursor blank in draw mode.
 
 ### Note
-- Candidato PR upstream ancora aperto: loop infinito in `createNewLevel` con nome livello
-  collidente (NameModifier vs separatore frame `_N`).
+- Loop in `createNewLevel` con nome livello collidente (NameModifier `_N` letto come
+  separatore frame): **NON confermato come bug upstream**. La helper `rfindFrameSep`
+  (`common/tsystem/tfilepath.cpp`) che decide i separatori e' **codice nostro** (PR trattino,
+  commit `d1f4e21ef`), quindi il comportamento puo' differire da Tahoma stock. Da verificare
+  su stock prima di considerare qualsiasi PR — probabilmente NON e' un problema upstream.
 
 ## [2026-06-23c] — Release 0.6.2: Thumbnail room completa (export, persistenza, panoramiche, transform, undo)
 
