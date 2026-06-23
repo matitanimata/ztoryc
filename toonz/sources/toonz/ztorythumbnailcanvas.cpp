@@ -116,19 +116,58 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
   // Don't relayout mid-stroke; the next change will catch up once it ends.
   if (m_stroking) return;
 
-  const int oldH = m_ras ? m_ras->getLy() : 0;
-  m_boxAspect    = aspect;
-  m_boxH         = m_boxW / aspect;
-  const int newH = (int)gridH();
-  if (newH <= 0 || oldH <= 0) return;
+  const double oldBoxH = m_boxH;
+  const int oldH       = m_ras ? m_ras->getLy() : 0;
+  m_boxAspect          = aspect;
+  m_boxH               = m_boxW / aspect;
+  const double newBoxH = m_boxH;
+  const int newH       = (int)gridH();
+  const int gw         = (int)gridW();
+  const int bw         = (int)m_boxW;
+  if (newH <= 0 || oldH <= 0 || oldBoxH <= 0.0 || !m_ras) return;
 
-  // Rescale the contiguous raster vertically so each panel's drawing follows its
-  // box height. Box width (and therefore grid width) is unchanged, so this is a
-  // pure Y scale by newH/oldH; in the bottom-up raster the world-space relayout
-  // about the top edge reduces to the same uniform scale about the raster origin.
-  TRaster32P nr((int)gridW(), newH);
+  // Re-anchor every panel's drawing to the CENTRE of its (taller or shorter) new
+  // box.  Default is a pure translation that follows the box centre, so a drawing
+  // keeps its size and stays inside its panel; it is only scaled DOWN —
+  // proportionally (uniform X==Y) so it is never deformed — when it no longer
+  // fits.  Each panel is handled independently: a cross-panel panorama is thus
+  // re-anchored per panel, an accepted trade-off of the fixed-width grid (keeping
+  // each drawing inside its own panel takes priority).  We clone each panel's old
+  // content and place it with copy() (resample only into a dedicated buffer), so
+  // the filter never samples across a box edge — that left faint grid seams.
+  TRaster32P nr(gw, newH);
   nr->fill(TPixel32::White);
-  if (m_ras) TRop::resample(nr, m_ras, TScale(1.0, (double)newH / oldH));
+  // Width is unchanged, so only a shorter box forces a (proportional) scale-down.
+  const double s = qMin(1.0, newBoxH / oldBoxH);
+  for (int r = 0; r < m_rows; r++) {
+    const int sy0  = qBound(0, (int)(oldH - (r + 1) * oldBoxH), oldH);
+    const int sy1  = qBound(0, (int)(oldH - r * oldBoxH), oldH);
+    if (sy1 - sy0 < 1) continue;
+    const int nby0 = qBound(0, (int)(newH - (r + 1) * newBoxH), newH);  // new box bottom
+    for (int c = 0; c < m_cols; c++) {
+      const int sx0 = qBound(0, c * bw, gw);
+      const int sx1 = qBound(0, (c + 1) * bw, gw);
+      if (sx1 - sx0 < 1) continue;
+      // Independent (contiguous) copy of the panel's old content.
+      TRaster32P src = m_ras->extract(sx0, sy0, sx1 - 1, sy1 - 1)->clone();
+
+      TRaster32P content;
+      if (s >= 0.999) {
+        content = src;  // fits as-is → translate only, no resample, no seams
+      } else {
+        const int dw = qMax(1, (int)(src->getLx() * s));
+        const int dh = qMax(1, (int)(src->getLy() * s));
+        content      = TRaster32P(dw, dh);
+        content->fill(TPixel32::White);
+        TRop::resample(content, src, TScale(s, s));
+      }
+      // Centre the content in this panel's new box.
+      const int offX = sx0 + ((sx1 - sx0) - content->getLx()) / 2;
+      const int offY = qBound(0, nby0 + ((int)newBoxH - content->getLy()) / 2,
+                              newH - content->getLy());
+      nr->copy(content, TPoint(offX, offY));
+    }
+  }
   m_ras = nr;
   update();
 }
@@ -189,6 +228,30 @@ bool ZtoryThumbnailCanvas::isPanelEmpty(int index) const {
   }
   m_ras->unlock();
   return empty;
+}
+
+TRaster32P ZtoryThumbnailCanvas::panelRaster(int index,
+                                             const TDimension &outRes) const {
+  if (!m_ras || index < 0 || index >= m_cols * m_rows) return TRaster32P();
+  const int col = index % m_cols, row = index / m_cols;
+  const int lx = m_ras->getLx(), ly = m_ras->getLy();
+  const int x0 = qBound(0, (int)(col * m_boxW), lx);
+  const int x1 = qBound(0, (int)((col + 1) * m_boxW), lx);
+  // World y is top-down; the raster is bottom-up, so flip when computing rows.
+  const int ry0 = qBound(0, (int)(ly - (row + 1) * m_boxH), ly);
+  const int ry1 = qBound(0, (int)(ly - row * m_boxH), ly);
+  if (x1 <= x0 || ry1 <= ry0 || outRes.lx <= 0 || outRes.ly <= 0)
+    return TRaster32P();
+
+  // extract() shares memory with m_ras (inclusive coords) — fine as a read-only
+  // source for resample, which writes into the independent output raster.
+  TRaster32P sub = m_ras->extract(x0, ry0, x1 - 1, ry1 - 1);
+  TRaster32P out(outRes.lx, outRes.ly);
+  out->fill(TPixel32::White);
+  TRop::resample(out, sub,
+                 TScale((double)outRes.lx / sub->getLx(),
+                        (double)outRes.ly / sub->getLy()));
+  return out;
 }
 
 //=============================================================================

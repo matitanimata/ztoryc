@@ -7,6 +7,7 @@
 #include <vector>
 #include <set>
 #include "toonz/txshchildlevel.h"  // for TXshLevelP
+#include "traster.h"               // TRaster32P (export-to-board panels)
 
 // ─── NumberingConfig ─────────────────────────────────────────────────────────
 // Persistent numbering scheme used both at startup and during Board editing.
@@ -274,6 +275,13 @@ public:
   // Creates a fully-wired shot (xsheet column + sub-scene) with a given name.
   // Used by ZtoryStartupDialog to pre-populate a new project.
   void addShotNamed(const QString &name);
+  // Creates a fully-wired multi-panel shot from a list of panel rasters (one
+  // drawing per panel).  Builds an OVL raster level (saved under drawings/), a
+  // sub-scene exposing those drawings as a sequence — each held kPanelHoldFrames
+  // frames — then a column in the main xsheet.  Used by the Thumbnail room
+  // export-to-board.  Board picks the shot up via modelReset()/onModelResequenced.
+  void addShotFromRasters(const QString &name,
+                          const std::vector<TRaster32P> &panels);
   // Clears model data only (no xsheet changes). Call before re-populating.
   void clearShots() { m_shots.clear(); m_previews.clear(); }
   void removeShot(int shotIdx);

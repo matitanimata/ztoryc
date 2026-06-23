@@ -18,6 +18,7 @@
 class QToolButton;
 class QButtonGroup;
 class QHBoxLayout;
+class QSpinBox;
 
 class ZtoryThumbnailPanel final : public TPanel {
   Q_OBJECT
@@ -30,10 +31,14 @@ private:
   QToolButton *addBrushButton(const QString &relPath, double opacity,
                               bool eraser, const QString &tip);
   void selectColor(const QColor &c);  // set canvas ink + update swatch
+  // Build one raster per selected panel (at scene camera res) and hand them to
+  // ZtoryModel as a new multi-panel shot, then clear the selection.
+  void exportSelectionToBoard();
 
   ZtoryThumbnailCanvas *m_canvas = nullptr;
   QButtonGroup *m_brushGroup     = nullptr;
   QHBoxLayout *m_brushBarLay     = nullptr;
   QToolButton *m_swatch          = nullptr;  // shows / picks current colour
+  QSpinBox *m_shrinkSpin         = nullptr;  // export resolution divisor (1 = full)
   QList<ZtoryThumbnailCanvas::Preset> m_presets;  // indexed by brush button id
 };

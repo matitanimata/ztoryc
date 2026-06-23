@@ -15,6 +15,7 @@
 //=============================================================================
 
 #include "ztorymodel.h"  // ZtoryClipEntry
+#include "tgeometry.h"   // TDimension
 
 #include <vector>
 
@@ -58,5 +59,10 @@ int colDuration(TXsheet *xsh, int col);
 // grid use this so a non-16:9 camera (e.g. square) is framed correctly instead
 // of being letterboxed inside a fixed 16:9 box.  Falls back to 16:9.
 double cameraAspect(ToonzScene *scene);
+
+// Pixel resolution of the scene camera, read from the MAIN xsheet camera.
+// Used by the Thumbnail room export to rasterize panels at the real shot
+// framing.  Falls back to 1920x1080.
+TDimension cameraRes(ToonzScene *scene);
 
 }  // namespace ZtoryShotOps

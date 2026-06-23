@@ -6,6 +6,11 @@
 #include "toonz/txsheet.h"
 #include "toonz/txshcell.h"
 #include "toonz/txshsimplelevel.h"
+#include "toonz/levelproperties.h"   // LevelProperties (export-to-board level)
+#include "toonz/stage.h"             // Stage::standardDpi
+#include "toonz/tcamera.h"           // TCamera dpi for export-to-board
+#include "trasterimage.h"            // TRasterImageP (export-to-board frames)
+#include "tsystem.h"                 // doesExistFileOrLevel (unique level name)
 #include "tparamcontainer.h"
 #include "toonz/txshchildlevel.h"
 #include "toonz/txshleveltypes.h"
@@ -515,6 +520,127 @@ void ZtoryModel::addShotNamed(const QString &name) {
   s.panels.push_back(pd);
   m_shots.push_back(s);
   m_previews.push_back({QPixmap()});
+
+  app->getCurrentXsheet()->notifyXsheetChanged();
+  resequenceXsheet();
+  emit modelReset();
+}
+
+void ZtoryModel::addShotFromRasters(const QString &name,
+                                    const std::vector<TRaster32P> &panels) {
+  if (panels.empty()) return;
+  if (!assertMainXsheet(false)) return;
+  TApp *app         = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  TXsheet *xsh      = app->getCurrentXsheet()->getXsheet();
+  if (!scene || !xsh) return;
+
+  // Each panel becomes one drawing held for this many frames in the sub-scene,
+  // so the shot has a usable length in the animatic (re-timable afterwards).
+  // Matches the single-panel default used by addShotNamed.
+  static const int kPanelHoldFrames = 24;
+  const int n                       = (int)panels.size();
+  // Level resolution = the incoming panel rasters (already framed + shrunk by
+  // the caller); all panels share the same size.  Fall back to the camera res.
+  const TDimension res =
+      panels[0] ? panels[0]->getSize() : ZtoryShotOps::cameraRes(scene);
+
+  // Camera dpi: making the level dpi match the camera makes the res-sized image
+  // fill the frame exactly (image inches == camera size inches).
+  double dpi = Stage::standardDpi;
+  {
+    TStageObjectTree *tree = xsh->getStageObjectTree();
+    TStageObject *camObj =
+        tree->getStageObject(tree->getCurrentCameraId(), false);
+    TCamera *cam = camObj ? camObj->getCamera() : nullptr;
+    if (cam && cam->getDpi().x > 0) dpi = cam->getDpi().x;
+  }
+
+  // 0) Model entry first (panels metadata only) so we can derive the shot label
+  //    now and name the OVL level after it (e.g. "SH040").
+  ShotData s;
+  for (int i = 0; i < n; i++) {
+    PanelData pd;
+    pd.startFrame = i * kPanelHoldFrames;
+    pd.duration   = kPanelHoldFrames;
+    s.panels.push_back(pd);
+  }
+  m_shots.push_back(s);
+  m_previews.push_back(std::vector<QPixmap>(n));
+  const int si = (int)m_shots.size() - 1;
+  if (name.isEmpty())
+    generateShotLabel(si);  // appended at end → next number (SH010, SH020, …)
+  else
+    m_shots[si].shotLabel = m_shots[si].shotNumber = name;
+  auto rollback = [&]() { m_shots.pop_back(); m_previews.pop_back(); };
+
+  // 1) OVL raster level, one frame per panel, named after the shot it becomes,
+  //    so its drawings land in extras/<scene>/SH040.000N.png.  The name must NOT
+  //    already exist on disk: createNewLevel's own disambiguation appends
+  //    "_1", "_2"… but Tahoma reads "_<digits>" as a frame separator, so
+  //    "SH040_1" collapses back to level "SH040"; if "SH040" drawings already
+  //    exist (e.g. a previous export) that check never finds a free name and
+  //    loops forever — the export hang.  We disambiguate ourselves with a
+  //    trailing LETTER (never a frame separator) and hand createNewLevel a
+  //    guaranteed-free name, so its loop exits on the first try.
+  QString baseLabel = m_shots[si].shotLabel;
+  if (baseLabel.isEmpty()) baseLabel = "thumb";
+  std::wstring levelName = baseLabel.toStdWString();
+  {
+    auto existsOnDisk = [&](const std::wstring &nm) {
+      return TSystem::doesExistFileOrLevel(
+          scene->decodeFilePath(scene->getDefaultLevelPath(OVL_XSHLEVEL, nm)));
+    };
+    int guard = 0;
+    while (existsOnDisk(levelName) && guard < 25)
+      levelName =
+          baseLabel.toStdWString() + std::wstring(1, (wchar_t)(L'B' + guard++));
+  }
+
+  TXshLevel *rl =
+      scene->createNewLevel(OVL_XSHLEVEL, levelName, res, dpi, TFilePath());
+  if (!rl) return rollback();
+  TXshSimpleLevel *sl = rl->getSimpleLevel();
+  if (!sl) return rollback();
+  sl->setPath(scene->getDefaultLevelPath(OVL_XSHLEVEL, sl->getName()), true);
+  sl->getProperties()->setDpiPolicy(LevelProperties::DP_CustomDpi);
+  sl->getProperties()->setDpi(dpi);
+  sl->getProperties()->setImageDpi(TPointD(dpi, dpi));
+  sl->getProperties()->setImageRes(res);
+  for (int i = 0; i < n; i++) {
+    if (!panels[i]) continue;
+    TRasterImageP ri(panels[i]);
+    ri->setDpi(dpi, dpi);
+    sl->setFrame(TFrameId(i + 1), ri);
+  }
+  // No inline sl->save(): the frames live in RAM and are persisted with the
+  // scene at the next save, like any freshly painted level (addShotNamed never
+  // saves its sub-scene either).  Blocking disk I/O here was an earlier hang.
+
+  // 2) Sub-scene exposing the drawings as a held sequence (panel i → its hold of
+  //    rows), so the Board's detectAndUpdatePanels sees N evenly-sized panels.
+  TXshLevel *xl = scene->createNewLevel(CHILD_XSHLEVEL);
+  if (!xl || !xl->getChildLevel()) return rollback();
+  TXshChildLevel *cl = xl->getChildLevel();
+  ZtoryShotOps::syncChildCameraToMain(xsh, cl);
+  TXsheet *childXsh = cl->getXsheet();
+  for (int i = 0; i < n; i++)
+    for (int h = 0; h < kPanelHoldFrames; h++)
+      childXsh->setCell(i * kPanelHoldFrames + h, 0,
+                        TXshCell(sl, TFrameId(i + 1)));
+  childXsh->updateFrameCount();
+
+  // 3) Main-xsheet column exposing the sub-scene 1:1 (row r → sub frame r+1).
+  const int duration = n * kPanelHoldFrames;
+  const int col      = xsh->getColumnCount();  // append at end
+  xsh->insertColumn(col);
+  for (int r = 0; r < duration; r++)
+    xsh->setCell(r, col, TXshCell(cl, TFrameId(r + 1)));
+  xsh->updateFrameCount();
+
+  // 4) Finalise the model entry now that the column exists.  xsheetColumn is
+  //    critical: refreshPreview() uses it to render the sub-scene thumbnail.
+  m_shots[si].xsheetColumn = col;
 
   app->getCurrentXsheet()->notifyXsheetChanged();
   resequenceXsheet();

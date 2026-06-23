@@ -4,6 +4,13 @@
 #include "menubarcommandids.h"
 #include "toonz/mypaintbrushstyle.h"  // getBrushesDirs()
 
+#include "ztorymodel.h"    // addShotFromRasters
+#include "ztoryshotops.h"  // cameraRes
+#include "tapp.h"
+#include "toonz/tscenehandle.h"
+#include "toonz/toonzscene.h"
+#include "tmsgcore.h"  // DVGui::info / warning
+
 #include <QWidget>
 #include <QRegExp>
 #include <QVBoxLayout>
@@ -11,6 +18,7 @@
 #include <QToolButton>
 #include <QButtonGroup>
 #include <QSlider>
+#include <QSpinBox>
 #include <QLabel>
 #include <QFrame>
 #include <QIcon>
@@ -198,6 +206,27 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   connect(m_canvas, &ZtoryThumbnailCanvas::selectionChanged, this,
           [selCount](int n) { selCount->setText(tr("%1 sel").arg(n)); });
 
+  // Shrink: export the shot's drawings at 1/shrink of the camera resolution per
+  // side (1 = full, 2 = half each side → ¼ of the pixels, …). Lighter levels.
+  auto *shrinkLabel = new QLabel(tr("Shrink"), bar);
+  m_brushBarLay->addWidget(shrinkLabel);
+  m_shrinkSpin = new QSpinBox(bar);
+  m_shrinkSpin->setRange(1, 8);
+  m_shrinkSpin->setValue(1);
+  m_shrinkSpin->setToolTip(
+      tr("Divide the exported drawing resolution by this factor per side\n"
+         "(1 = full camera resolution, 2 = half, …)"));
+  m_brushBarLay->addWidget(m_shrinkSpin);
+
+  auto *exportBtn = new QToolButton(bar);
+  exportBtn->setText(tr("Export to Board"));
+  exportBtn->setStyleSheet("font-weight:bold;");
+  exportBtn->setToolTip(
+      tr("Create a shot in the Board from the selected panels (in order)"));
+  connect(exportBtn, &QToolButton::clicked, this,
+          [this] { exportSelectionToBoard(); });
+  m_brushBarLay->addWidget(exportBtn);
+
   auto *addRow = new QToolButton(bar);
   addRow->setText(tr("+ Row"));
   addRow->setToolTip(tr("Add a row of panels to the grid"));
@@ -243,6 +272,35 @@ QToolButton *ZtoryThumbnailPanel::addBrushButton(const QString &relPath,
 void ZtoryThumbnailPanel::selectColor(const QColor &c) {
   m_canvas->setColor(TPixel32(c.red(), c.green(), c.blue(), 255));
   if (m_swatch) m_swatch->setIcon(activeSwatchIcon(c));
+}
+
+void ZtoryThumbnailPanel::exportSelectionToBoard() {
+  const QVector<int> sel = m_canvas->selection();
+  if (sel.isEmpty()) {
+    DVGui::warning(tr("Select one or more panels first (use Select mode)."));
+    return;
+  }
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return;
+  // The shot's drawings are framed at the scene camera resolution, optionally
+  // shrunk by an integer factor per side (1 = full) to keep the levels light.
+  const int shrink     = m_shrinkSpin ? m_shrinkSpin->value() : 1;
+  const TDimension cam = ZtoryShotOps::cameraRes(scene);
+  const TDimension res(qMax(1, cam.lx / shrink), qMax(1, cam.ly / shrink));
+
+  std::vector<TRaster32P> panels;
+  panels.reserve(sel.size());
+  for (int idx : sel) {
+    TRaster32P r = m_canvas->panelRaster(idx, res);
+    if (r) panels.push_back(r);
+  }
+  if (panels.empty()) return;
+
+  // Name is left empty: ZtoryModel assigns the proper SH label on resequence.
+  ZtoryModel::instance()->addShotFromRasters(QString(), panels);
+  m_canvas->clearSelection();
+  DVGui::info(tr("Exported %1 panel(s) to the Board as one shot.")
+                  .arg((int)panels.size()));
 }
 
 //=============================================================================

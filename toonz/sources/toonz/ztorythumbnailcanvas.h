@@ -66,6 +66,10 @@ public:
   // True if the panel's raster region has no ink (all white) — empty panels are
   // not selectable and are skipped by export-to-board.
   bool isPanelEmpty(int index) const;
+  // Crop a panel's region out of the contiguous surface and resample it to
+  // outRes (the scene camera resolution). Returned raster is independent of
+  // m_ras. Null if the index is out of range.
+  TRaster32P panelRaster(int index, const TDimension &outRes) const;
 
 signals:
   // Emitted whenever the ordered selection changes (count = panels selected).
