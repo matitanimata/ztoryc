@@ -30,6 +30,8 @@
 #include <QPolygonF>
 #include <QLineF>
 #include <QApplication>
+#include <QScrollBar>
+#include <QResizeEvent>
 
 #include <cmath>
 
@@ -37,6 +39,24 @@
 
 ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   setFocusPolicy(Qt::StrongFocus);
+  setMouseTracking(true);  // brush cursor follows the mouse without a button
+
+  // Side scrollbars, shown only when the content overflows the viewport. They
+  // drive m_pan; middle-drag pan keeps them in sync via updateScrollBars().
+  m_hbar = new QScrollBar(Qt::Horizontal, this);
+  m_vbar = new QScrollBar(Qt::Vertical, this);
+  m_hbar->hide();
+  m_vbar->hide();
+  connect(m_hbar, &QScrollBar::valueChanged, this, [this](int v) {
+    if (m_syncingBars) return;
+    m_pan.setX(-v);
+    update();
+  });
+  connect(m_vbar, &QScrollBar::valueChanged, this, [this](int v) {
+    if (m_syncingBars) return;
+    m_pan.setY(-v);
+    update();
+  });
 
   // Panel boxes follow the scene camera aspect so the thumbnail grid matches the
   // framing used by the Board/animatic (e.g. a square camera → square panels).
@@ -71,6 +91,7 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   qApp->installEventFilter(this);
   // Load the scene that is already open when the panel is created.
   persistLoad();
+  updateToolCursor();  // start in drawing mode → brush-circle cursor
 }
 
 ZtoryThumbnailCanvas::~ZtoryThumbnailCanvas() {
@@ -115,6 +136,12 @@ void ZtoryThumbnailCanvas::ensureStyle() {
   delete m_style;
   m_style     = new TMyPaintBrushStyle(TFilePath(full.toStdWString()));
   m_styleFile = m_brushFile;
+  // Cache the brush's base radius (log px) so the cursor circle can show its
+  // real size without starting a stroke.
+  mypaint::Brush b;
+  b.fromBrush(m_style->getBrush());
+  m_brushBaseRadiusLog =
+      b.getBaseValue(MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC);
 }
 
 //=============================================================================
@@ -131,6 +158,7 @@ void ZtoryThumbnailCanvas::addRow() {
   nr->fill(TPixel32::White);
   nr->copy(m_ras, TPoint(0, addedH));  // keep existing content at the same world Y
   m_ras = nr;
+  updateScrollBars();
   update();
   schedulePersistSave();
 }
@@ -205,11 +233,20 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
 // Selection
 //=============================================================================
 
+void ZtoryThumbnailCanvas::updateToolCursor() {
+  if (m_xformMode)
+    setCursor(Qt::CrossCursor);
+  else if (m_selectMode)
+    setCursor(Qt::PointingHandCursor);
+  else
+    setCursor(Qt::BlankCursor);  // drawing: the brush circle is the cursor
+}
+
 void ZtoryThumbnailCanvas::setSelectMode(bool on) {
   if (m_selectMode == on) return;
   m_selectMode = on;
   if (!on) clearSelection();  // leaving Select mode deselects all panels
-  setCursor(on ? Qt::PointingHandCursor : Qt::ArrowCursor);
+  updateToolCursor();
   update();
 }
 
@@ -432,10 +469,14 @@ void ZtoryThumbnailCanvas::persistLoad() {
 
   m_merges.clear();
   if (matches.isEmpty()) {
-    // New scene with no saved canvas: start blank at the current grid size.
-    m_ras = TRaster32P((int)gridW(), (int)gridH());
+    // New scene with no saved canvas: start blank at the DEFAULT grid size (do
+    // not inherit rows added with +Row in the previous scene).
+    m_cols = kDefaultCols;
+    m_rows = kDefaultRows;
+    m_ras  = TRaster32P((int)gridW(), (int)gridH());
     m_ras->fill(TPixel32::White);
     clearSelection();
+    updateScrollBars();
     update();
     return;
   }
@@ -475,6 +516,7 @@ void ZtoryThumbnailCanvas::persistLoad() {
   }
   m_ras = r;
   clearSelection();
+  updateScrollBars();
   update();
 }
 
@@ -500,6 +542,53 @@ void ZtoryThumbnailCanvas::zoomAt(const QPointF &widgetAnchor, double factor) {
   m_zoom = qBound(0.1, m_zoom * factor, 8.0);
   m_pan = widgetAnchor - QPointF(worldAnchor.x() * m_zoom, worldAnchor.y() * m_zoom);
   update();
+}
+
+void ZtoryThumbnailCanvas::updateScrollBars() {
+  if (!m_hbar || !m_vbar) return;
+  const double contentW = gridW() * m_zoom, contentH = gridH() * m_zoom;
+  const int thick = 16;  // match the app's native scrollbar width
+  const bool needH  = contentW > width() + 0.5;
+  const bool needV  = contentH > height() + 0.5;
+  const int viewW   = width() - (needV ? thick : 0);
+  const int viewH   = height() - (needH ? thick : 0);
+
+  m_syncingBars = true;
+  m_hbar->setVisible(needH);
+  m_vbar->setVisible(needV);
+  if (needH) {
+    m_hbar->setGeometry(0, height() - thick, viewW, thick);
+    m_hbar->setRange(0, (int)std::ceil(contentW - viewW));
+    m_hbar->setPageStep(viewW);
+    m_hbar->setValue(qBound(0, (int)(-m_pan.x() + 0.5), m_hbar->maximum()));
+  }
+  if (needV) {
+    m_vbar->setGeometry(width() - thick, 0, thick, viewH);
+    m_vbar->setRange(0, (int)std::ceil(contentH - viewH));
+    m_vbar->setPageStep(viewH);
+    m_vbar->setValue(qBound(0, (int)(-m_pan.y() + 0.5), m_vbar->maximum()));
+  }
+  m_syncingBars = false;
+}
+
+void ZtoryThumbnailCanvas::resizeEvent(QResizeEvent *e) {
+  QWidget::resizeEvent(e);
+  updateScrollBars();
+}
+
+void ZtoryThumbnailCanvas::enterEvent(QEvent *) {
+  m_cursorOnCanvas = true;
+  update();
+}
+
+void ZtoryThumbnailCanvas::leaveEvent(QEvent *) {
+  m_cursorOnCanvas = false;
+  update();
+}
+
+double ZtoryThumbnailCanvas::brushRadiusWorld() const {
+  // MyPaint radius is logarithmic (natural log of px); add the size modifier.
+  return std::exp(m_brushBaseRadiusLog + m_sizeMod);
 }
 
 //=============================================================================
@@ -642,12 +731,16 @@ void ZtoryThumbnailCanvas::mousePressEvent(QMouseEvent *e) {
 }
 
 void ZtoryThumbnailCanvas::mouseMoveEvent(QMouseEvent *e) {
+  m_cursorWidget   = e->localPos();
+  m_cursorOnCanvas = true;
   if (m_panning) {
     m_pan += e->pos() - m_lastPanPos;
     m_lastPanPos = e->pos();
+    updateScrollBars();
     update();
     return;
   }
+  const bool drawMode = !m_selectMode && !m_xformMode;
   if (m_xformMode) {
     if (m_marqueeing) {
       m_marqueeCur = widgetToWorld(e->localPos());
@@ -677,13 +770,16 @@ void ZtoryThumbnailCanvas::mouseMoveEvent(QMouseEvent *e) {
       return;
     }
   }
-  if (m_stroking) strokeTo(e->localPos(), 0.5);
+  if (m_stroking)
+    strokeTo(e->localPos(), 0.5);
+  else if (drawMode)
+    update();  // repaint so the brush-circle cursor follows the mouse
 }
 
 void ZtoryThumbnailCanvas::mouseReleaseEvent(QMouseEvent *e) {
   if (e->button() == Qt::MiddleButton) {
     m_panning = false;
-    unsetCursor();
+    updateToolCursor();
     return;
   }
   if (e->button() == Qt::LeftButton) {
@@ -755,17 +851,11 @@ bool ZtoryThumbnailCanvas::eventFilter(QObject *obj, QEvent *ev) {
 }
 
 void ZtoryThumbnailCanvas::wheelEvent(QWheelEvent *e) {
-  const QPointF pos = e->position();
-  if (e->modifiers() & Qt::ControlModifier) {
-    const double factor = e->angleDelta().y() > 0 ? 1.15 : 1.0 / 1.15;
-    zoomAt(pos, factor);
-  } else {
-    const QPoint d = e->angleDelta();
-    if (e->modifiers() & Qt::ShiftModifier)
-      m_pan += QPointF(d.y(), 0);
-    else
-      m_pan += QPointF(d.x(), d.y());
-    update();
+  // Wheel = zoom at the cursor (scroll is via the side bars / middle-drag pan).
+  const int dy = e->angleDelta().y();
+  if (dy != 0) {
+    zoomAt(e->position(), dy > 0 ? 1.15 : 1.0 / 1.15);
+    updateScrollBars();
   }
   e->accept();
 }
@@ -784,7 +874,7 @@ void ZtoryThumbnailCanvas::setTransformMode(bool on) {
     m_selectMode = false;
     if (!m_selection.isEmpty()) clearSelection();
   }
-  setCursor(on ? Qt::CrossCursor : Qt::ArrowCursor);
+  updateToolCursor();
   if (on) setFocus();              // so Esc / Enter / Del reach keyPressEvent
   update();
 }
@@ -1024,6 +1114,7 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
   m_floatDrag = -1;
   clearSelection();
   schedulePersistSave();
+  updateScrollBars();
   update();
 }
 
@@ -1175,5 +1266,26 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
       p.setBrush(Qt::NoBrush);
     }
     paintFloat(p);
+  }
+
+  // Brush cursor: a circle of the real brush size (the system cursor is blank in
+  // drawing mode). Drawn last so it sits on top of everything.
+  if (!m_selectMode && !m_xformMode && m_cursorOnCanvas && !m_panning) {
+    const double r = qBound(1.5, brushRadiusWorld() * m_zoom, 2000.0);
+    p.setBrush(Qt::NoBrush);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    // White halo + dark ring so it reads on any background.
+    QPen halo(QColor(255, 255, 255, 200));
+    halo.setCosmetic(true);
+    halo.setWidthF(2.4);
+    p.setPen(halo);
+    p.drawEllipse(m_cursorWidget, r, r);
+    QPen ring(QColor(30, 30, 30, 220));
+    ring.setCosmetic(true);
+    ring.setWidthF(1.0);
+    p.setPen(ring);
+    p.drawEllipse(m_cursorWidget, r, r);
+    p.drawLine(m_cursorWidget + QPointF(-3, 0), m_cursorWidget + QPointF(3, 0));
+    p.drawLine(m_cursorWidget + QPointF(0, -3), m_cursorWidget + QPointF(0, 3));
   }
 }

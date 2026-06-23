@@ -36,6 +36,7 @@
 #include <vector>
 
 class QTimer;
+class QScrollBar;
 class TFilePath;
 
 #include "mypainttoonzbrush.h"  // RasterController, MyPaintToonzBrush
@@ -130,6 +131,9 @@ protected:
   void mouseMoveEvent(QMouseEvent *) override;
   void mouseReleaseEvent(QMouseEvent *) override;
   void wheelEvent(QWheelEvent *) override;
+  void resizeEvent(QResizeEvent *) override;
+  void enterEvent(QEvent *) override;
+  void leaveEvent(QEvent *) override;
   void keyPressEvent(QKeyEvent *) override;
   // App-wide filter: the transform shortcuts (Del/Esc/Enter/Cmd-C/V) must work
   // even when keyboard focus sits on a toolbar button, not the canvas.
@@ -149,6 +153,9 @@ private:
   double gridH() const { return m_rows * m_boxH; }
   TPointD widgetToRaster(const QPointF &widgetPos) const;
   void zoomAt(const QPointF &widgetAnchor, double factor);
+  void updateScrollBars();          // sync the side bars to pan/zoom/grid
+  double brushRadiusWorld() const;  // current brush radius in world px (cursor)
+  void updateToolCursor();          // brush(blank)/select/transform per mode
 
   // Persistence: per-scene folder + the contiguous-raster PNG inside it.
   TFilePath persistDir() const;
@@ -189,9 +196,12 @@ private:
   void paintFloat(QPainter &p);
 
   // Grid (one contiguous raster; boxes are logical rectangles)
+  static constexpr int kDefaultCols = 4;  // a fresh canvas starts 4×4 so the
+  static constexpr int kDefaultRows = 4;  // grid is square-ish vs the camera box
+
   TRaster32P m_ras;
-  int m_cols    = 4;
-  int m_rows    = 3;
+  int m_cols    = kDefaultCols;
+  int m_rows    = kDefaultRows;
   double m_boxW        = 480.0;  // world units == raster px (16:9 panel)
   double m_boxH        = 270.0;
   double m_boxAspect   = 16.0 / 9.0;  // last applied camera aspect (boxW/boxH)
@@ -201,6 +211,12 @@ private:
   QPointF m_pan  = QPointF(28.0, 28.0);
   bool m_panning = false;
   QPoint m_lastPanPos;
+  QScrollBar *m_hbar = nullptr;     // side scrollbars (shown only when needed)
+  QScrollBar *m_vbar = nullptr;
+  bool m_syncingBars = false;       // guard against scrollbar↔pan feedback
+  QPointF m_cursorWidget;           // last mouse pos (brush cursor)
+  bool m_cursorOnCanvas = false;
+  double m_brushBaseRadiusLog = 2.0;  // cached RADIUS_LOGARITHMIC of the brush
 
   // Active tool
   TMyPaintBrushStyle *m_style = nullptr;
