@@ -4,12 +4,25 @@
 #define MYPAINTTOONZBRUSH_H
 
 #include <toonz/mypaint.h>
+#include "tcommon.h"
 #include "traster.h"
 #include "trastercm.h"
 #include "tcurves.h"
 #include "symmetrytool.h"
 #include <QPainter>
 #include <QImage>
+
+// Export from the tnztools DLL: these classes are also used outside tnztools
+// (the Thumbnail panel canvas), so on Windows they must be in the export table.
+#undef DVAPI
+#undef DVVAR
+#ifdef TNZTOOLS_EXPORTS
+#define DVAPI DV_EXPORT_API
+#define DVVAR DV_EXPORT_VAR
+#else
+#define DVAPI DV_IMPORT_API
+#define DVVAR DV_IMPORT_VAR
+#endif
 
 class RasterController {
 public:
@@ -24,7 +37,7 @@ public:
 //
 //=======================================================
 
-class Raster32PMyPaintSurface : public mypaint::Surface {
+class DVAPI Raster32PMyPaintSurface : public mypaint::Surface {
 private:
   class Internal;
 
@@ -89,7 +102,7 @@ public:
 //
 //=======================================================
 
-class MyPaintToonzBrush {
+class DVAPI MyPaintToonzBrush {
 private:
   struct Params {
     union {
