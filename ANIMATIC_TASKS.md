@@ -295,16 +295,14 @@ nella sub-scene corretta.
 
 ### 🆕 DA FARE (giugno 2026) — in cima per priorità
 
-**🆕 Thumbnail room (sketch grid → export to board) [richiesto utente, giugno 2026] — MILESTONE.**
-Nuova room con una grande griglia vettoriale per fare thumbnail veloci: si schizzano i
-panel (con pan H e V multi-panel), si selezionano i panel di uno shot, si riordina se
-serve, poi **export to board** → il programma ritaglia i panel dalla griglia, crea gli shot
-reali e li mette in timeline + board.
-- **Stima:** è una milestone, non un task. Parente della M4 Reference room.
-- **Componenti:** canvas vettoriale (QGraphicsView o riuso flip canvas) + selezione
-  multi-panel con pan H/V + riordino + **slicer** che ritaglia i riquadri e li promuove a
-  shot reali (mapping riquadro → subxsheet). La parte non banale è l'auto-slicing
-  geometrico e il mapping verso `ZtoryModel`.
+**✅ FATTO — RILASCIATO in 0.6.2 (2026-06-23) — Thumbnail panel (sketch grid → export to board).**
+Pannello (non ancora una "room") con griglia di panel su un raster contiguo MyPaint:
+export-to-board (ritaglio panel → livello OVL multi-frame + sotto-scena + shot reale) +
+shrink; persistenza per scena; **merge panoramiche** (merge esplicito di panel adiacenti, no
+slicer geometrico); **transform tool** (move/copy/scale/rotate + lazo); **undo/redo**;
+zoom-rotella + scrollbar + cursore pennello; griglia 4x4 default.
+Aperti (prossime release): tasto Canc nudo (focus), icone Lucide/Phosphor — vedi
+[[project_thumbnail_room_fase3]].
 
 **🆕 Export to worksheet (Excel production management) [richiesto utente, giugno 2026].**
 Finito lo storyboard, generare un file di production management con: produzione, episodio,

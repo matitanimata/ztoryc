@@ -1,3 +1,24 @@
+## [2026-06-23d] — Post-0.6.2: polish Thumbnail panel + fix build Windows
+
+### Fixed (Windows release)
+- **Build Windows 0.6.2 fallita in link** (LNK2001): il canvas usa `MyPaintToonzBrush`/
+  `Raster32PMyPaintSurface` di tnztools dall'eseguibile, ma erano senza `DVAPI` (non
+  esportate dalla DLL). Aggiunto export. Commit `401828950`. La 0.6.2 Windows e' poi uscita.
+  → Gotcha: classi di lib usate dall'exe vanno marcate `DVAPI` o falliscono SOLO su Windows.
+
+### Added — Thumbnail panel polish (commit `adaf8e2e0`)
+- Griglia di default **4x4** (era 4x3) + reset alla default aprendo una scena senza canvas
+  salvato (bug: prima ereditava le righe aggiunte con +Row).
+- **Zoom con la rotella** (centrato sul cursore), niente piu' Ctrl.
+- **Scrollbar laterali** (16px) che compaiono solo quando il contenuto sborda; sync col pan
+  da tasto centrale.
+- **Cursore pennello**: cerchio della dimensione reale (exp(RADIUS_LOGARITHMIC + sizeMod) *
+  zoom) con mirino; system cursor blank in draw mode.
+
+### Note
+- Candidato PR upstream ancora aperto: loop infinito in `createNewLevel` con nome livello
+  collidente (NameModifier vs separatore frame `_N`).
+
 ## [2026-06-23c] — Release 0.6.2: Thumbnail room completa (export, persistenza, panoramiche, transform, undo)
 
 Rilascio **v0.6.2** (Win + macOS). Completata la Thumbnail room (Fase 3) e fix vari.
