@@ -232,6 +232,16 @@ public:
   void setTitle(const QString &s)      { m_title = s; }
   void setEpisode(const QString &s)    { m_episode = s; }
 
+  // Set a shot's per-task status (in-app source of truth for production
+  // tracking). Emits taskStatusChanged() so the Production Tracker refreshes;
+  // deliberately does NOT emit shotDataChanged (which triggers Board/Animatic
+  // thumbnail re-bakes — unwanted for a pure status edit).
+  void setShotTaskStatus(int shotIdx, const QString &taskType, TaskStatus status);
+  // Same, keyed by stable shotLabel (used by undo, which may run after the
+  // shot order changed). No-op if the label is not found.
+  void setShotTaskStatusByLabel(const QString &shotLabel, const QString &taskType,
+                                TaskStatus status);
+
   // ── Production techniques / tasks (Kitsu-aligned) ──────────────────────────
   const std::vector<Technique> &techniques() const { return m_techniques; }
   std::vector<Technique>       &techniques()       { return m_techniques; }
@@ -413,6 +423,7 @@ signals:
   void shotRemoved(int shotIdx);
   void shotMoved(int fromIdx, int toIdx);
   void shotDataChanged(int shotIdx);
+  void taskStatusChanged();  // a per-task status was edited (Production Tracker)
   void previewUpdated(int shotIdx, int panelIdx);
   void scriptFileChanged();  // imported screenplay changed (or cleared)
   void autoMatchChanged(bool on);  // auto-match toggle flipped

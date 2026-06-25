@@ -127,6 +127,7 @@
 #define MI_OpenZtoryAnimaticViewer "MI_OpenZtoryAnimaticViewer"
 #define MI_OpenZtoryMonitor "MI_OpenZtoryMonitor"
 #define MI_OpenZtoryThumbnail "MI_OpenZtoryThumbnail"
+#define MI_OpenZtoryProduction "MI_OpenZtoryProduction"
 #define MI_OpenZtoryStoryStrip "MI_OpenZtoryStoryStrip"
 #define MI_WorkflowStoryboard "MI_WorkflowStoryboard"
 #define MI_Workflow2D "MI_Workflow2D"

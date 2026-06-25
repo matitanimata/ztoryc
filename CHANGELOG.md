@@ -1,3 +1,42 @@
+## [2026-06-25] — Production Tracker panel (status in-app) + palette Kitsu allineata
+
+Nuova direzione export production: **status masterizzati in-app**, foglio = proiezione
+(niente Google API; integrazione Kitsu rimandata a M5). Decisioni prese studiando la
+Kitsu reale locale di Franco (docker, localhost:8012): task type/status e colori veri.
+
+### Added — Production Tracker panel (`ztoryproductionpanel.h/.cpp`, nuovo)
+- Pannello dockable **matrice Kitsu-style**: righe = shot, colonne = task-type della
+  tecnica (Layout, Key Animation, Inbetweening, …). Celle status colorate; **N/A** grigio
+  dove il task non si applica alla tecnica dello shot. Voce **Windows ▸ Ztoryc ▸ Production
+  Tracker** (registrato come gli altri pannelli: factory + commandid + tpanels + mainwindow
+  + menubar.cpp + le 2 menubar.xml).
+- **Editing in-app**: click su una cella → menu con i 6 stati (pallino colorato) → scrive nel
+  modello, salva il `.ztoryc` via `StoryboardPanel::saveZtoryc()`, **undo** (`StatusEditUndo`,
+  keyed su `shotLabel` → sopravvive al riordino degli shot).
+- Refresh via nuovo segnale leggero `ZtoryModel::taskStatusChanged` (NON `shotDataChanged`,
+  così niente re-bake thumbnail nel Board/Animatic). Nuovo setter `setShotTaskStatus` /
+  `setShotTaskStatusByLabel` nel modello.
+- **Re-export non distruttivo "gratis"**: con gli status nel modello/`.ztoryc`, ri-esportare
+  dopo aver aggiunto shot non azzera nulla.
+
+### Modified — palette status allineata a Kitsu
+- `statusColor` del pannello E dell'export xlsx (`storyboardpanel.cpp`) ora usano i colori
+  **ufficiali Kitsu**: Todo grigio · Ready ambra `#FBC02D` · WIP blu `#3273DC` · WFA viola
+  `#AB26FF` · Retake rosso `#FF3860` · Done verde `#22D160`. Prima WIP/WFA erano invertiti
+  (viola/blu) rispetto a Kitsu. La formattazione condizionale dell'xlsx usa la stessa lambda
+  → allineata automaticamente.
+
+### Added (fuori repo) — template spreadsheet standalone
+- `~/Desktop/Production_Tracker_Kitsu_Template.xlsx`: template riutilizzabile Google-Sheets-ready
+  (Project Info / Shots / Assets / Todo / Dashboard) ispirato al modello Kitsu, con dropdown
+  status + colori condizionali + frozen panes + legenda. Costruito con la skill xlsx.
+
+### Notes / prossimi passi
+- **Fase 3** (da fare): auto WIP→WFA al render (`RenderCommand::onRenderCompleted`, già
+  individuato → stesso path `setShotTaskStatus`).
+- Guida naming-convention della produzione (pattern in `.ztoryc` + lint) — idea separata, da fare.
+- Integrazione Kitsu vera = M5 (via API, non file).
+
 ## [2026-06-23d] — Post-0.6.2: polish Thumbnail panel + fix build Windows
 
 ### Fixed (Windows release)

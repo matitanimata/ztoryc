@@ -5644,11 +5644,11 @@ void StoryboardPanel::onExportSpreadsheet() {
 
   auto statusColor = [](TaskStatus s) -> QColor {
     switch (s) {
-    case TaskStatus::Ready:  return QColor("#F2C744");  // yellow
-    case TaskStatus::Wip:    return QColor("#8E44AD");  // purple
-    case TaskStatus::Wfa:    return QColor("#2E86DE");  // blue
-    case TaskStatus::Retake: return QColor("#E67E22");  // orange
-    case TaskStatus::Done:   return QColor("#27AE60");  // green
+    case TaskStatus::Ready:  return QColor("#FBC02D");  // amber  (Kitsu)
+    case TaskStatus::Wip:    return QColor("#3273DC");  // blue   (Kitsu)
+    case TaskStatus::Wfa:    return QColor("#AB26FF");  // purple (Kitsu)
+    case TaskStatus::Retake: return QColor("#FF3860");  // red    (Kitsu)
+    case TaskStatus::Done:   return QColor("#22D160");  // green  (Kitsu)
     case TaskStatus::Todo:
     default:                 return QColor("#9E9E9E");  // grey
     }

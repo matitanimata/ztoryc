@@ -148,6 +148,23 @@ QStringList ZtoryModel::taskTypesForShot(int shotIdx) const {
   return t ? t->taskTypes : QStringList();
 }
 
+void ZtoryModel::setShotTaskStatus(int shotIdx, const QString &taskType,
+                                   TaskStatus status) {
+  if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
+  m_shots[shotIdx].tasks[taskType].status = status;
+  emit taskStatusChanged();
+}
+
+void ZtoryModel::setShotTaskStatusByLabel(const QString &shotLabel,
+                                          const QString &taskType,
+                                          TaskStatus status) {
+  for (int i = 0; i < (int)m_shots.size(); i++)
+    if (m_shots[i].label() == shotLabel) {
+      setShotTaskStatus(i, taskType, status);
+      return;
+    }
+}
+
 const QStringList &ZtoryModel::canonicalTaskOrder() {
   // Master column order: union of all known task types, stable across exports.
   static const QStringList order = {
