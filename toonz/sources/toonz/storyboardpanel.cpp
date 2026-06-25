@@ -6091,12 +6091,6 @@ void StoryboardPanel::onStoryboardSettings() {
   form->addRow(tr("Default technique:"), techCombo);
   lay->addLayout(form);
 
-  lay->addWidget(new QLabel(tr("Team (one name per line):"), &dlg));
-  QPlainTextEdit *teamEdit = new QPlainTextEdit(model->team().join("\n"), &dlg);
-  teamEdit->setMaximumHeight(110);
-  teamEdit->setPlaceholderText(tr("Anna Rossi\nBruno Verdi"));
-  lay->addWidget(teamEdit);
-
   QPushButton *numBtn = new QPushButton(tr("Shot Numbering…"), &dlg);
   connect(numBtn, &QPushButton::clicked, this,
           &StoryboardPanel::onNumberingConfig);
@@ -6114,13 +6108,6 @@ void StoryboardPanel::onStoryboardSettings() {
   model->setEpisode(epEdit->text().trimmed());
   if (!techCombo->currentText().isEmpty())
     model->setDefaultTechnique(techCombo->currentText());
-  QStringList team;
-  for (const QString &ln :
-       teamEdit->toPlainText().split('\n', Qt::SkipEmptyParts)) {
-    QString t = ln.trimmed();
-    if (!t.isEmpty()) team << t;
-  }
-  model->setTeam(team);
   saveZtoryc();
 }
 

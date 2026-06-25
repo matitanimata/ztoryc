@@ -17,21 +17,44 @@
 #include "pane.h"
 
 #include <QTableWidget>
+#include <QStringList>
+
+class QTabWidget;
+class QListWidget;
+class QLineEdit;
+class QComboBox;
 
 class ZtoryProductionPanel final : public TPanel {
   Q_OBJECT
 
+  QTabWidget   *m_tabs  = nullptr;
+  // Shots tab
   QTableWidget *m_table = nullptr;
   QStringList   m_taskCols;   // task-type per column (index 0 == table column 1)
+  // Team tab
+  QListWidget  *m_teamList = nullptr;
+  bool          m_teamLoading = false;  // guard against apply during reload
+  // Project tab
+  QLineEdit    *m_prodEdit = nullptr, *m_titleEdit = nullptr, *m_epEdit = nullptr;
+  QComboBox    *m_techCombo = nullptr;
+  bool          m_projLoading = false;
 
 public:
   ZtoryProductionPanel(QWidget *parent = nullptr);
 
 private:
-  // Rebuild the whole matrix from ZtoryModel (cheap: small productions).
-  void rebuild();
-  // Pop up the status picker for a clicked cell and apply + persist + undo.
-  void editCell(int row, int col);
+  // Shots tab
+  QWidget *buildShotsTab();
+  void rebuild();                  // rebuild the shot × task matrix from ZtoryModel
+  void editCell(int row, int col); // status/assignee picker for a clicked cell
+  // Team tab
+  QWidget *buildTeamTab();
+  void reloadTeamTab();            // model → list
+  void applyTeamFromList();        // list → model + persist
+  // Project tab
+  QWidget *buildProjectTab();
+  void reloadProjectTab();         // model → fields
+  void applyProjectFromFields();   // fields → model + persist
 
 private slots:
   void onModelChanged();

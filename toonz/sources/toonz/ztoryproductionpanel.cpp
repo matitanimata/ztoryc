@@ -20,6 +20,11 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QDialogButtonBox>
+#include <QTabWidget>
+#include <QComboBox>
+#include <QPushButton>
+#include <QHBoxLayout>
+#include <QFormLayout>
 
 #include <cassert>
 
@@ -123,39 +128,168 @@ QStringList parseAssignees(const QString &text) {
 //-----------------------------------------------------------------------------
 
 ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
-  QWidget *container = new QWidget(this);
-  m_table            = new QTableWidget(container);
+  m_tabs = new QTabWidget(this);
+  m_tabs->setDocumentMode(true);
+  m_tabs->addTab(buildShotsTab(),   QObject::tr("Shots"));
+  m_tabs->addTab(buildTeamTab(),    QObject::tr("Team"));
+  m_tabs->addTab(buildProjectTab(), QObject::tr("Project"));
+  // Placeholders for the next increments (kept visible so the structure reads).
+  auto stub = [this](const QString &t) {
+    QLabel *l = new QLabel(t, this);
+    l->setAlignment(Qt::AlignCenter);
+    l->setEnabled(false);
+    return l;
+  };
+  m_tabs->addTab(stub(QObject::tr("Assets — coming soon")),    QObject::tr("Assets"));
+  m_tabs->addTab(stub(QObject::tr("Workflows — coming soon")), QObject::tr("Workflows"));
+
+  // TPanel (a TDockWidget) mounts its content via setWidget, not setLayout.
+  setWidget(m_tabs);
+
+  ZtoryModel *m = ZtoryModel::instance();
+  connect(m, &ZtoryModel::modelReset,        this, &ZtoryProductionPanel::onModelChanged);
+  connect(m, &ZtoryModel::shotAdded,         this, [this](int) { rebuild(); });
+  connect(m, &ZtoryModel::shotRemoved,       this, [this](int) { rebuild(); });
+  connect(m, &ZtoryModel::shotRemovedAt,     this, [this](int) { rebuild(); });
+  connect(m, &ZtoryModel::shotMoved,         this, [this](int, int) { rebuild(); });
+  connect(m, &ZtoryModel::shotDataChanged,   this, [this](int) { rebuild(); });
+  connect(m, &ZtoryModel::taskStatusChanged, this, [this] { rebuild(); reloadProjectTab(); });
+
+  rebuild();
+  reloadTeamTab();
+  reloadProjectTab();
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoryProductionPanel::onModelChanged() {
+  rebuild();
+  reloadTeamTab();
+  reloadProjectTab();
+}
+
+//-----------------------------------------------------------------------------
+
+QWidget *ZtoryProductionPanel::buildShotsTab() {
+  QWidget *w = new QWidget(this);
+  m_table    = new QTableWidget(w);
   m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
   m_table->setSelectionMode(QAbstractItemView::NoSelection);
   m_table->verticalHeader()->setVisible(false);
   m_table->setShowGrid(true);
   m_table->setAlternatingRowColors(false);
-
-  auto *lay = new QVBoxLayout(container);
-  lay->setContentsMargins(0, 0, 0, 0);
-  lay->addWidget(m_table);
-
-  // TPanel (a TDockWidget) mounts its content via setWidget, not setLayout.
-  setWidget(container);
-
   connect(m_table, &QTableWidget::cellClicked, this,
           &ZtoryProductionPanel::onCellClicked);
-
-  ZtoryModel *m = ZtoryModel::instance();
-  connect(m, &ZtoryModel::modelReset,      this, &ZtoryProductionPanel::onModelChanged);
-  connect(m, &ZtoryModel::shotAdded,       this, [this](int) { rebuild(); });
-  connect(m, &ZtoryModel::shotRemoved,     this, [this](int) { rebuild(); });
-  connect(m, &ZtoryModel::shotRemovedAt,   this, [this](int) { rebuild(); });
-  connect(m, &ZtoryModel::shotMoved,       this, [this](int, int) { rebuild(); });
-  connect(m, &ZtoryModel::shotDataChanged, this, [this](int) { rebuild(); });
-  connect(m, &ZtoryModel::taskStatusChanged, this, [this] { rebuild(); });
-
-  rebuild();
+  auto *lay = new QVBoxLayout(w);
+  lay->setContentsMargins(0, 0, 0, 0);
+  lay->addWidget(m_table);
+  return w;
 }
 
 //-----------------------------------------------------------------------------
+// Team tab — editable roster (project-level), the single home for the team
+// (moved out of Storyboard Settings: the tracker governs the whole pipeline).
 
-void ZtoryProductionPanel::onModelChanged() { rebuild(); }
+QWidget *ZtoryProductionPanel::buildTeamTab() {
+  QWidget *w = new QWidget(this);
+  auto *lay  = new QVBoxLayout(w);
+  lay->addWidget(new QLabel(QObject::tr("Project team (double-click to rename):"), w));
+  m_teamList = new QListWidget(w);
+  lay->addWidget(m_teamList);
+  auto *btns   = new QHBoxLayout();
+  auto *addBtn = new QPushButton(QObject::tr("+ Add"), w);
+  auto *remBtn = new QPushButton(QObject::tr("− Remove"), w);
+  btns->addWidget(addBtn);
+  btns->addWidget(remBtn);
+  btns->addStretch();
+  lay->addLayout(btns);
+
+  connect(addBtn, &QPushButton::clicked, this, [this] {
+    auto *it = new QListWidgetItem(QObject::tr("New person"), m_teamList);
+    it->setFlags(it->flags() | Qt::ItemIsEditable);
+    m_teamList->setCurrentItem(it);
+    m_teamList->editItem(it);
+  });
+  connect(remBtn, &QPushButton::clicked, this, [this] {
+    delete m_teamList->currentItem();
+    applyTeamFromList();
+  });
+  connect(m_teamList, &QListWidget::itemChanged, this,
+          [this](QListWidgetItem *) { applyTeamFromList(); });
+  return w;
+}
+
+void ZtoryProductionPanel::reloadTeamTab() {
+  if (!m_teamList) return;
+  m_teamLoading = true;
+  m_teamList->clear();
+  for (const QString &p : ZtoryModel::instance()->team()) {
+    auto *it = new QListWidgetItem(p, m_teamList);
+    it->setFlags(it->flags() | Qt::ItemIsEditable);
+  }
+  m_teamLoading = false;
+}
+
+void ZtoryProductionPanel::applyTeamFromList() {
+  if (m_teamLoading || !m_teamList) return;
+  QStringList team;
+  for (int i = 0; i < m_teamList->count(); i++) {
+    QString t = m_teamList->item(i)->text().trimmed();
+    if (!t.isEmpty()) team << t;
+  }
+  ZtoryModel::instance()->setTeam(team);
+  persistViaBoard();
+}
+
+//-----------------------------------------------------------------------------
+// Project tab — production metadata + default technique (pipeline-level, lives
+// here rather than in Storyboard Settings).
+
+QWidget *ZtoryProductionPanel::buildProjectTab() {
+  QWidget *w  = new QWidget(this);
+  auto *form  = new QFormLayout(w);
+  m_prodEdit  = new QLineEdit(w);
+  m_titleEdit = new QLineEdit(w);
+  m_epEdit    = new QLineEdit(w);
+  m_techCombo = new QComboBox(w);
+  form->addRow(QObject::tr("Production:"),        m_prodEdit);
+  form->addRow(QObject::tr("Title:"),             m_titleEdit);
+  form->addRow(QObject::tr("Episode:"),           m_epEdit);
+  form->addRow(QObject::tr("Default technique:"), m_techCombo);
+
+  for (QLineEdit *e : {m_prodEdit, m_titleEdit, m_epEdit})
+    connect(e, &QLineEdit::editingFinished, this,
+            [this] { applyProjectFromFields(); });
+  connect(m_techCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
+          [this](int) { applyProjectFromFields(); });
+  return w;
+}
+
+void ZtoryProductionPanel::reloadProjectTab() {
+  if (!m_prodEdit) return;
+  m_projLoading = true;
+  ZtoryModel *m = ZtoryModel::instance();
+  m_prodEdit->setText(m->production());
+  m_titleEdit->setText(m->title());
+  m_epEdit->setText(m->episode());
+  m_techCombo->clear();
+  for (const Technique &t : m->techniques()) m_techCombo->addItem(t.name);
+  int di = m_techCombo->findText(m->defaultTechnique());
+  if (di >= 0) m_techCombo->setCurrentIndex(di);
+  m_projLoading = false;
+}
+
+void ZtoryProductionPanel::applyProjectFromFields() {
+  if (m_projLoading || !m_prodEdit) return;
+  ZtoryModel *m = ZtoryModel::instance();
+  m->setProduction(m_prodEdit->text().trimmed());
+  m->setTitle(m_titleEdit->text().trimmed());
+  m->setEpisode(m_epEdit->text().trimmed());
+  if (!m_techCombo->currentText().isEmpty())
+    m->setDefaultTechnique(m_techCombo->currentText());
+  persistViaBoard();
+  rebuild();  // default-technique change may alter which task columns apply
+}
 
 //-----------------------------------------------------------------------------
 
