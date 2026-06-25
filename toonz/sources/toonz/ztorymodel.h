@@ -119,6 +119,7 @@ struct Technique {
 
 struct ShotData {
   int                    xsheetColumn;
+  QString                uuid;          // immutable project-unique key (assigned once); back-link to project tracker
   QString                shotNumber;    // legacy field — kept for XML backward compat
   QString                shotLabel;     // "SH020" — stable identifier (primary, v4+)
   int                    orderIndex = 0;  // sort key (100 × label number for step-10)

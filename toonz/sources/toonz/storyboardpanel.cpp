@@ -12,6 +12,8 @@
 #include "xlsxcellreference.h"
 
 #include "tundo.h"
+
+#include <QUuid>
 #include "tapp.h"
 #include "tenv.h"
 #include "toonz/toonzscene.h"
@@ -2130,6 +2132,52 @@ void StoryboardPanel::syncWidgetsToData() {
   }
 }
 
+// ── Production-tracking bridge ──────────────────────────────────────────────
+// ZtoryModel is the authoritative store for the fields the Production Tracker
+// edits (uuid, technique, tasks). The Board's m_shots copy is only the .ztoryc
+// serialization buffer; we sync model⇄Board at the load/save/export boundaries
+// so panel edits round-trip (otherwise the tracker writes the model while
+// save/export read the Board copy → edits silently lost).
+
+void StoryboardPanel::ensureShotUuids() {
+  ZtoryModel *m = ZtoryModel::instance();
+  int n = qMin((int)m_shots.size(), m->shotCount());
+  for (int i = 0; i < n; i++) {
+    QString &bu = m_shots[i].data.uuid;
+    QString &mu = m->shot(i).uuid;
+    QString id  = !bu.isEmpty() ? bu : mu;
+    if (id.isEmpty()) id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    bu = mu = id;  // keep both copies consistent
+  }
+  for (int i = n; i < (int)m_shots.size(); i++)
+    if (m_shots[i].data.uuid.isEmpty())
+      m_shots[i].data.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
+void StoryboardPanel::pushTrackingToBoard() {
+  ZtoryModel *m = ZtoryModel::instance();
+  int n = qMin((int)m_shots.size(), m->shotCount());
+  for (int i = 0; i < n; i++) {
+    const ShotData &md = m->shot(i);
+    ShotData &bd       = m_shots[i].data;
+    if (!md.uuid.isEmpty()) bd.uuid = md.uuid;
+    bd.technique = md.technique;
+    bd.tasks     = md.tasks;
+  }
+}
+
+void StoryboardPanel::pullTrackingFromBoard() {
+  ZtoryModel *m = ZtoryModel::instance();
+  int n = qMin((int)m_shots.size(), m->shotCount());
+  for (int i = 0; i < n; i++) {
+    const ShotData &bd = m_shots[i].data;
+    ShotData &md       = m->shot(i);
+    md.uuid      = bd.uuid;
+    md.technique = bd.technique;
+    md.tasks     = bd.tasks;
+  }
+}
+
 void StoryboardPanel::saveZtoryc() {
   // Use m_currentZtoryPath (set at end of refreshFromScene) instead of
   // ztoryPath() so we never write m_shots data to a different scene's file.
@@ -2239,10 +2287,16 @@ void StoryboardPanel::saveZtoryc() {
       xml.writeEndElement();
     }
   }
+  // Make the Board copy reflect the model (tracker edits) before serializing,
+  // and guarantee every shot has a stable uuid.
+  ensureShotUuids();
+  pushTrackingToBoard();
   for (int si = 0; si < (int)m_shots.size(); si++) {
     const Shot &shot = m_shots[si];
     xml.writeStartElement("shot");
     xml.writeAttribute("index",      QString::number(si));
+    if (!shot.data.uuid.isEmpty())
+      xml.writeAttribute("uuid",     shot.data.uuid);
     xml.writeAttribute("number",     shot.data.shotNumber);
     xml.writeAttribute("label",      shot.data.shotLabel);
     xml.writeAttribute("order",      QString::number(shot.data.orderIndex));
@@ -2392,6 +2446,7 @@ void StoryboardPanel::loadZtoryc() {
       else if (xml.name() == QLatin1String("shot")) {
         si = xml.attributes().value("index").toInt();
         if (si < (int)m_shots.size()) {
+          m_shots[si].data.uuid             = xml.attributes().value("uuid").toString();
           m_shots[si].data.shotNumber       = xml.attributes().value("number").toString();
           m_shots[si].data.shotLabel        = xml.attributes().value("label").toString();
           m_shots[si].data.orderIndex       = xml.attributes().value("order").toInt();
@@ -2576,6 +2631,11 @@ void StoryboardPanel::loadZtoryc() {
                                            m_shots[i].data.shotLabel,
                                            m_shots[i].data.xsheetColumn);
   m_loadingZtoryc = false;
+  // Bridge: model becomes the live store for tracking fields BEFORE any
+  // saveZtoryc below (so a re-save can't push stale/empty model data over the
+  // freshly-loaded Board copy). Backfill uuids for pre-uuid (legacy) scenes.
+  pullTrackingFromBoard();
+  ensureShotUuids();
   // Persist the SFH-explosion repair so the scene loads cleanly next time.
   // m_currentZtoryPath is still empty here (set by refreshFromScene after we
   // return), so temporarily anchor it so saveZtoryc() can write.
@@ -5603,6 +5663,7 @@ void StoryboardPanel::onExportSpreadsheet() {
     return;
   }
   ZtoryModel *model = ZtoryModel::instance();
+  pushTrackingToBoard();  // reflect tracker edits (model) into the exported copy
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   TXsheet *mainXsh  = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
 
@@ -5893,6 +5954,7 @@ void StoryboardPanel::onExportSpreadsheetCsv() {
     return;
   }
   ZtoryModel *model = ZtoryModel::instance();
+  pushTrackingToBoard();  // reflect tracker edits (model) into the exported copy
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
 
   QString base = model->production().trimmed();
@@ -6044,7 +6106,9 @@ void StoryboardPanel::onSetTechnique() {
   for (const Technique &t : model->techniques()) items << t.name;
 
   int cur = 0;
-  const QString &curTech = m_shots[sel.front()].data.technique;
+  QString curTech = (sel.front() < model->shotCount())
+                        ? model->shot(sel.front()).technique
+                        : QString();
   if (!curTech.isEmpty()) {
     int idx = items.indexOf(curTech);
     if (idx > 0) cur = idx;
@@ -6056,9 +6120,10 @@ void StoryboardPanel::onSetTechnique() {
   if (!ok) return;
   QString tech = (choice == items.front()) ? QString() : choice;
   for (int si : sel)
-    if (si >= 0 && si < (int)m_shots.size())
-      m_shots[si].data.technique = tech;
+    if (si >= 0 && si < model->shotCount())
+      model->shot(si).technique = tech;  // model is authoritative; save pushes to Board
   saveZtoryc();
+  emit model->taskStatusChanged();  // refresh the Production Tracker columns
 }
 
 class StoryboardPanelFactory final : public TPanelFactory {

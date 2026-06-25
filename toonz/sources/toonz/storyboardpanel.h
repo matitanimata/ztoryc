@@ -246,6 +246,13 @@ struct Shot {
   void    syncWidgetsToData();
   void    updateColumnName(int si);
   void    loadZtoryc();
+  // Production-tracking bridge: ZtoryModel is the authoritative store for the
+  // tracking fields (uuid, technique, tasks) edited by the Production Tracker.
+  // The Board's m_shots copy is just the .ztoryc serialization buffer, synced
+  // model⇄Board at the load/save/export boundaries so panel edits round-trip.
+  void    pushTrackingToBoard();    // model → Board (before save / export)
+  void    pullTrackingFromBoard();  // Board → model (after load)
+  void    ensureShotUuids();        // assign a stable uuid to any shot missing one
 public:
   explicit StoryboardPanel(QWidget *parent = nullptr);
   void    saveZtoryc();
