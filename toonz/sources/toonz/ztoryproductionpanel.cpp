@@ -16,6 +16,10 @@
 #include <QCursor>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QDialog>
+#include <QLabel>
+#include <QListWidget>
+#include <QDialogButtonBox>
 
 #include <cassert>
 
@@ -255,13 +259,50 @@ void ZtoryProductionPanel::editCell(int row, int col) {
   if (!chosen) return;
 
   if (chosen == assignAct) {
-    bool ok = false;
-    QString text = QInputDialog::getText(
-        this, QObject::tr("Assignees"),
-        QObject::tr("People assigned to %1 (comma-separated):").arg(taskType),
-        QLineEdit::Normal, oldAssign.join(", "), &ok);
-    if (!ok) return;
-    const QStringList newAssign = parseAssignees(text);
+    const QStringList team = m->team();
+    QStringList newAssign;
+
+    if (team.isEmpty()) {
+      // No project team defined yet → free-text fallback (define a Team in
+      // Storyboard Settings to get a pick list).
+      bool ok = false;
+      QString text = QInputDialog::getText(
+          this, QObject::tr("Assignees"),
+          QObject::tr("People assigned to %1 (comma-separated):").arg(taskType),
+          QLineEdit::Normal, oldAssign.join(", "), &ok);
+      if (!ok) return;
+      newAssign = parseAssignees(text);
+    } else {
+      // Pick from the project team (checkable) + free text for anyone else.
+      QDialog dlg(this);
+      dlg.setWindowTitle(QObject::tr("Assignees — %1").arg(taskType));
+      QVBoxLayout *lay = new QVBoxLayout(&dlg);
+      lay->addWidget(new QLabel(QObject::tr("Assign to:"), &dlg));
+      QListWidget *list = new QListWidget(&dlg);
+      for (const QString &p : team) {
+        auto *it = new QListWidgetItem(p, list);
+        it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+        it->setCheckState(oldAssign.contains(p) ? Qt::Checked : Qt::Unchecked);
+      }
+      lay->addWidget(list);
+      QStringList extras;
+      for (const QString &a : oldAssign)
+        if (!team.contains(a)) extras << a;
+      lay->addWidget(new QLabel(QObject::tr("Others (comma-separated):"), &dlg));
+      QLineEdit *extraEdit = new QLineEdit(extras.join(", "), &dlg);
+      lay->addWidget(extraEdit);
+      auto *bb = new QDialogButtonBox(
+          QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+      QObject::connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+      QObject::connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+      lay->addWidget(bb);
+      if (dlg.exec() != QDialog::Accepted) return;
+      for (int r = 0; r < list->count(); r++)
+        if (list->item(r)->checkState() == Qt::Checked)
+          newAssign << list->item(r)->text();
+      newAssign += parseAssignees(extraEdit->text());
+    }
+
     if (newAssign == oldAssign) return;
     m->setShotTaskAssignees(row, taskType, newAssign);
     persistViaBoard();

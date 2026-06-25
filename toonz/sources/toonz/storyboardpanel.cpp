@@ -2256,6 +2256,16 @@ void StoryboardPanel::saveZtoryc() {
       }
       xml.writeEndElement();
     }
+    // Team roster (people) — project-level; drives the assignee picker.
+    if (!model->team().isEmpty()) {
+      xml.writeStartElement("team");
+      for (const QString &person : model->team()) {
+        xml.writeStartElement("person");
+        xml.writeAttribute("name", person);
+        xml.writeEndElement();
+      }
+      xml.writeEndElement();
+    }
   }
   // Imported screenplay (Script panel) — project-relative path.
   {
@@ -2394,6 +2404,8 @@ void StoryboardPanel::loadZtoryc() {
   QXmlStreamReader xml(&file);
   int si = -1, pi = -1;
   std::vector<Technique> loadedTechs;  // technique presets from file (if any)
+  QStringList loadedTeam;              // team roster from file (replaces model's)
+  bool        hasTeamBlock = false;    // true once a <team> element is seen
   while (!xml.atEnd()) {
     xml.readNext();
     if (xml.isStartElement()) {
@@ -2414,6 +2426,13 @@ void StoryboardPanel::loadZtoryc() {
         t.taskTypes = xml.attributes().value("tasks").toString()
                           .split('|', Qt::SkipEmptyParts);
         if (!t.name.isEmpty()) loadedTechs.push_back(t);
+      }
+      else if (xml.name() == QLatin1String("team")) {
+        hasTeamBlock = true;  // a <team> exists → replace model roster (even if empty)
+      }
+      else if (xml.name() == QLatin1String("person")) {
+        QString nm = xml.attributes().value("name").toString().trimmed();
+        if (!nm.isEmpty()) loadedTeam << nm;
       }
       else if (xml.name() == QLatin1String("scriptFile")) {
         scriptFromFile = xml.readElementText();
@@ -2563,6 +2582,7 @@ void StoryboardPanel::loadZtoryc() {
   // (only when present, so old files keep the built-in defaults).
   if (!loadedTechs.empty())
     ZtoryModel::instance()->techniques() = loadedTechs;
+  if (hasTeamBlock) ZtoryModel::instance()->setTeam(loadedTeam);
 
   // ── SFH-explosion repair ─────────────────────────────────────────────────
   // The Stop-Frame-Hold bug (fixed in v0.2.x) wrote one PanelData entry per
@@ -6071,6 +6091,12 @@ void StoryboardPanel::onStoryboardSettings() {
   form->addRow(tr("Default technique:"), techCombo);
   lay->addLayout(form);
 
+  lay->addWidget(new QLabel(tr("Team (one name per line):"), &dlg));
+  QPlainTextEdit *teamEdit = new QPlainTextEdit(model->team().join("\n"), &dlg);
+  teamEdit->setMaximumHeight(110);
+  teamEdit->setPlaceholderText(tr("Anna Rossi\nBruno Verdi"));
+  lay->addWidget(teamEdit);
+
   QPushButton *numBtn = new QPushButton(tr("Shot Numbering…"), &dlg);
   connect(numBtn, &QPushButton::clicked, this,
           &StoryboardPanel::onNumberingConfig);
@@ -6088,6 +6114,13 @@ void StoryboardPanel::onStoryboardSettings() {
   model->setEpisode(epEdit->text().trimmed());
   if (!techCombo->currentText().isEmpty())
     model->setDefaultTechnique(techCombo->currentText());
+  QStringList team;
+  for (const QString &ln :
+       teamEdit->toPlainText().split('\n', Qt::SkipEmptyParts)) {
+    QString t = ln.trimmed();
+    if (!t.isEmpty()) team << t;
+  }
+  model->setTeam(team);
   saveZtoryc();
 }
 

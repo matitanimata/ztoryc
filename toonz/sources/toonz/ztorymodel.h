@@ -193,6 +193,7 @@ class ZtoryModel : public QObject {
   QString                           m_episode;     // user-defined episode
   std::vector<Technique>            m_techniques;       // editable presets (seeded with defaults)
   QString                           m_defaultTechnique; // project default technique name
+  QStringList                       m_team;             // project roster (names) for the assignee picker
   QString                           m_pdfLogoPath; // custom PDF header logo (abs or scene-relative); empty = default Ztoryc logo
   bool                              m_pdfNoLogo = false;  // true = export PDF with no logo at all
   ZtoryWorkflow                     m_workflow = ZtoryWorkflow::Tradigital;
@@ -232,6 +233,10 @@ public:
   void setProduction(const QString &s) { m_production = s; }
   void setTitle(const QString &s)      { m_title = s; }
   void setEpisode(const QString &s)    { m_episode = s; }
+  // Project team roster (people names) used by the Production Tracker's
+  // assignee picker. Project-level metadata (persisted in the .ztoryc for now).
+  const QStringList &team() const { return m_team; }
+  void setTeam(const QStringList &t) { m_team = t; }
 
   // Set a shot's per-task status (in-app source of truth for production
   // tracking). Emits taskStatusChanged() so the Production Tracker refreshes;
