@@ -165,6 +165,23 @@ void ZtoryModel::setShotTaskStatusByLabel(const QString &shotLabel,
     }
 }
 
+void ZtoryModel::setShotTaskAssignees(int shotIdx, const QString &taskType,
+                                      const QStringList &assignees) {
+  if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
+  m_shots[shotIdx].tasks[taskType].assignees = assignees;
+  emit taskStatusChanged();
+}
+
+void ZtoryModel::setShotTaskAssigneesByLabel(const QString &shotLabel,
+                                             const QString &taskType,
+                                             const QStringList &assignees) {
+  for (int i = 0; i < (int)m_shots.size(); i++)
+    if (m_shots[i].label() == shotLabel) {
+      setShotTaskAssignees(i, taskType, assignees);
+      return;
+    }
+}
+
 const QStringList &ZtoryModel::canonicalTaskOrder() {
   // Master column order: union of all known task types, stable across exports.
   static const QStringList order = {

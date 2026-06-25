@@ -106,8 +106,8 @@ enum class TaskStatus { Todo, Ready, Wip, Wfa, Retake, Done };
 
 // One task type's state inside a shot.
 struct TaskState {
-  TaskStatus status = TaskStatus::Todo;
-  QString    assignee;   // person assigned (free text / Kitsu user name)
+  TaskStatus  status = TaskStatus::Todo;
+  QStringList assignees;  // people assigned (free text / Kitsu user names) — multiple
 };
 
 // A named production technique = ordered list of task-type names.
@@ -242,6 +242,11 @@ public:
   // shot order changed). No-op if the label is not found.
   void setShotTaskStatusByLabel(const QString &shotLabel, const QString &taskType,
                                 TaskStatus status);
+  // Per-task assignees (multiple). Same dual API as the status setters.
+  void setShotTaskAssignees(int shotIdx, const QString &taskType,
+                            const QStringList &assignees);
+  void setShotTaskAssigneesByLabel(const QString &shotLabel, const QString &taskType,
+                                   const QStringList &assignees);
 
   // ── Production techniques / tasks (Kitsu-aligned) ──────────────────────────
   const std::vector<Technique> &techniques() const { return m_techniques; }

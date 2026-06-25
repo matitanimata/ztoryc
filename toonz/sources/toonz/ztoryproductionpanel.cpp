@@ -14,6 +14,8 @@
 #include <QPixmap>
 #include <QApplication>
 #include <QCursor>
+#include <QInputDialog>
+#include <QLineEdit>
 
 #include <cassert>
 
@@ -77,6 +79,40 @@ public:
     return QObject::tr("Set %1 status").arg(m_taskType);
   }
 };
+
+// Undo for a per-task assignees edit. Same keying as StatusEditUndo.
+class AssigneeEditUndo final : public TUndo {
+  QString     m_shotLabel, m_taskType;
+  QStringList m_old, m_new;
+
+public:
+  AssigneeEditUndo(const QString &shotLabel, const QString &taskType,
+                   const QStringList &oldA, const QStringList &newA)
+      : m_shotLabel(shotLabel), m_taskType(taskType), m_old(oldA), m_new(newA) {}
+
+  void undo() const override {
+    ZtoryModel::instance()->setShotTaskAssigneesByLabel(m_shotLabel, m_taskType, m_old);
+    persistViaBoard();
+  }
+  void redo() const override {
+    ZtoryModel::instance()->setShotTaskAssigneesByLabel(m_shotLabel, m_taskType, m_new);
+    persistViaBoard();
+  }
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override {
+    return QObject::tr("Set %1 assignees").arg(m_taskType);
+  }
+};
+
+// Parse a comma-separated assignee string into a trimmed, non-empty list.
+QStringList parseAssignees(const QString &text) {
+  QStringList out;
+  for (const QString &p : text.split(',', Qt::SkipEmptyParts)) {
+    QString t = p.trimmed();
+    if (!t.isEmpty()) out << t;
+  }
+  return out;
+}
 
 }  // namespace
 
@@ -159,7 +195,11 @@ void ZtoryProductionPanel::rebuild() {
         it->setBackground(QColor("#3a3a3a"));
       } else {
         const TaskState ts = sd.tasks.value(tt);
-        it->setText(ZtoryModel::taskStatusLabel(ts.status));
+        QString text = ZtoryModel::taskStatusLabel(ts.status);
+        if (!ts.assignees.isEmpty()) text += "\n" + ts.assignees.join(", ");
+        it->setText(text);
+        if (!ts.assignees.isEmpty())
+          it->setToolTip(QObject::tr("Assignees: %1").arg(ts.assignees.join(", ")));
         it->setBackground(statusColor(ts.status));
         it->setForeground(isLightStatus(ts.status) ? QColor(Qt::black)
                                                     : QColor(Qt::white));
@@ -169,6 +209,7 @@ void ZtoryProductionPanel::rebuild() {
   }
 
   m_table->resizeColumnsToContents();
+  m_table->resizeRowsToContents();
 }
 
 //-----------------------------------------------------------------------------
@@ -192,12 +233,13 @@ void ZtoryProductionPanel::editCell(int row, int col) {
   // Only applicable tasks (part of the shot's technique) are editable.
   if (!m->taskTypesForShot(row).contains(taskType)) return;
 
-  const TaskStatus oldStatus = m->shot(row).tasks.value(taskType).status;
+  const TaskState   cur        = m->shot(row).tasks.value(taskType);
+  const TaskStatus  oldStatus  = cur.status;
+  const QStringList oldAssign  = cur.assignees;
+  const QString     shotLabel  = m->shot(row).label();
 
-  // Status picker: a small menu with a colour swatch per status.
+  // Status picker: a swatch per status, plus an "Assignees…" entry.
   QMenu menu(this);
-  QAction *chosen = nullptr;
-  TaskStatus chosenStatus = oldStatus;
   for (TaskStatus s : kAllStatuses) {
     QPixmap pm(14, 14);
     pm.fill(statusColor(s));
@@ -206,12 +248,30 @@ void ZtoryProductionPanel::editCell(int row, int col) {
     a->setChecked(s == oldStatus);
     a->setData(static_cast<int>(s));
   }
-  chosen = menu.exec(QCursor::pos());
-  if (!chosen) return;
-  chosenStatus = static_cast<TaskStatus>(chosen->data().toInt());
-  if (chosenStatus == oldStatus) return;
+  menu.addSeparator();
+  QAction *assignAct = menu.addAction(QObject::tr("Set assignees…"));
 
-  const QString shotLabel = m->shot(row).label();
+  QAction *chosen = menu.exec(QCursor::pos());
+  if (!chosen) return;
+
+  if (chosen == assignAct) {
+    bool ok = false;
+    QString text = QInputDialog::getText(
+        this, QObject::tr("Assignees"),
+        QObject::tr("People assigned to %1 (comma-separated):").arg(taskType),
+        QLineEdit::Normal, oldAssign.join(", "), &ok);
+    if (!ok) return;
+    const QStringList newAssign = parseAssignees(text);
+    if (newAssign == oldAssign) return;
+    m->setShotTaskAssignees(row, taskType, newAssign);
+    persistViaBoard();
+    TUndoManager::manager()->add(
+        new AssigneeEditUndo(shotLabel, taskType, oldAssign, newAssign));
+    return;
+  }
+
+  const TaskStatus chosenStatus = static_cast<TaskStatus>(chosen->data().toInt());
+  if (chosenStatus == oldStatus) return;
   m->setShotTaskStatus(row, taskType, chosenStatus);  // emits taskStatusChanged → rebuild
   persistViaBoard();
   TUndoManager::manager()->add(

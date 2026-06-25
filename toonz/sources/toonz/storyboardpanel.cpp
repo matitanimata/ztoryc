@@ -2314,8 +2314,8 @@ void StoryboardPanel::saveZtoryc() {
       xml.writeStartElement("task");
       xml.writeAttribute("type",   it.key());
       xml.writeAttribute("status", ZtoryModel::taskStatusLabel(it.value().status));
-      if (!it.value().assignee.isEmpty())
-        xml.writeAttribute("assignee", it.value().assignee);
+      if (!it.value().assignees.isEmpty())
+        xml.writeAttribute("assignee", it.value().assignees.join(", "));
       xml.writeEndElement();
     }
     for (int pi = 0; pi < (int)shot.data.panels.size(); pi++) {
@@ -2519,7 +2519,12 @@ void StoryboardPanel::loadZtoryc() {
           if (!type.isEmpty()) {
             TaskState ts;
             ts.status   = ZtoryModel::taskStatusFromLabel(a.value("status").toString());
-            ts.assignee = a.value("assignee").toString();
+            const QStringList parts =
+                a.value("assignee").toString().split(',', Qt::SkipEmptyParts);
+            for (const QString &p : parts) {
+              QString t = p.trimmed();
+              if (!t.isEmpty()) ts.assignees << t;
+            }
             m_shots[si].data.tasks.insert(type, ts);
           }
         }
@@ -5842,7 +5847,7 @@ void StoryboardPanel::onExportSpreadsheet() {
         sf.setVerticalAlignment(Format::AlignVCenter);
         sf.setFontBold(true);
         xlsx.write(row, sc,     ZtoryModel::taskStatusLabel(ts.status), sf);
-        xlsx.write(row, sc + 1, ts.assignee, centerFmt);
+        xlsx.write(row, sc + 1, ts.assignees.join(", "), centerFmt);
       }
       row++;
     }
@@ -6030,7 +6035,7 @@ void StoryboardPanel::onExportSpreadsheetCsv() {
     for (const QString &tt : taskCols) {
       if (!applicable.contains(tt)) { rowOut << "N/A" << QString(); continue; }
       TaskState ts = sd.tasks.value(tt);
-      rowOut << ZtoryModel::taskStatusLabel(ts.status) << csv(ts.assignee);
+      rowOut << ZtoryModel::taskStatusLabel(ts.status) << csv(ts.assignees.join(", "));
     }
     out << rowOut.join(',') << '\n';
   }
