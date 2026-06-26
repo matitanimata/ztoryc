@@ -1,3 +1,38 @@
+## [2026-06-26b] — Thumbnail persistenti multi-storyboard + fix popup startup/progetti (B3b)
+
+Sessione di hardening multi-scena del Production Tracker e fix UX della startup page.
+
+### Fixed — Thumbnail Production Tracker (multi-storyboard)
+- **Cache thumbnail su disco** (`<project>/thumbs/<uuid>.png`): caricata interamente
+  all'avvio del Production Tracker, così le anteprime di TUTTI gli storyboard sono
+  sempre visibili qualsiasi scena sia aperta (prima si vedevano solo quelle della
+  scena corrente, e il pannello a tutta room non le caricava).
+- **UUID v5 namespaced per file storyboard** (`makeSourcedUuid`): elimina le collisioni
+  di uuid tra `.ztoryc` diversi (es. anteprima di "bugs" che appariva su "camera").
+  `ensureShotUuids()` rileva e rigenera gli uuid in conflitto cross-storyboard.
+- **Attribuzione per `source`** in `publishShotsToProjectDb`: upsert aggiorna solo gli
+  shot di proprietà del file corrente, niente più ri-attribuzione errata.
+- Refresh thumbnail **event-driven** via segnale `previewUpdated` (debounce 400ms),
+  al posto dei timer di retry.
+- Badge **"SB"** sulle scene storyboard nella schermata di avvio.
+
+### Fixed — Startup page / cambio progetto (doppio popup)
+- **Root cause**: selezionare un progetto nell'albero del browser chiama
+  `DvDirModelNode::makeCurrent()` che creava SEMPRE una seconda `StartupPopup` →
+  due finestre, una non si chiudeva al caricamento scena.
+- Ora `makeCurrent()` riusa la popup di startup già visibile: chiude il browser
+  (come "Choose") via `BrowserPopupController::closePopup()` (reject) e aggiorna la
+  stessa finestra con `StartupPopup::refreshAfterProjectChange()`. Nessun duplicato.
+- Tracking di tutte le istanze (`s_instances` + `visibleDefaultInstance()`), valido
+  per **Open Project**, **Load Scene** e **New Scene** (tab corretto per modo).
+
+### Upstream candidates (file core condivisi)
+- `filefield.h` (+`closePopup()` su `BrowserPopupController`), `filebrowserpopup.cpp/.h`,
+  `filebrowsermodel.cpp` — il doppio-popup al cambio progetto da browser è bug stock
+  Tahoma2D potenziale (verificare su stock prima di proporre PR).
+
+---
+
 ## [2026-06-26] — Production Tracker: room a tab, multiselezione, e file di progetto (B3a)
 
 Grande arco sul Production Tracker. Studiata la Kitsu reale locale; il tracker e'
