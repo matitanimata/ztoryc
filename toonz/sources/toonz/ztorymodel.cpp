@@ -26,6 +26,8 @@
 #include <QFile>
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
+
+#include "toonz/tproject.h"
 #include <QDir>
 #include <QMessageBox>
 #include <QRegularExpression>
@@ -230,6 +232,59 @@ void ZtoryModel::setAssetTaskAssigneesByUuid(const QString &uuid,
                                              const QStringList &assignees) {
   for (int i = 0; i < (int)m_assets.size(); i++)
     if (m_assets[i].uuid == uuid) { setAssetTaskAssignees(i, taskType, assignees); return; }
+}
+
+// ─── Project DB (production.ztrack) — B3 pilot: team roster ───────────────────
+
+namespace {
+TFilePath projectDbFilePath() {
+  auto proj = TProjectManager::instance()->getCurrentProject();
+  if (!proj) return TFilePath();
+  return proj->getProjectFolder() + TFilePath("production.ztrack");
+}
+}  // namespace
+
+void ZtoryModel::saveProjectDb() {
+  TFilePath fp = projectDbFilePath();
+  if (fp == TFilePath()) return;
+  QFile file(QString::fromStdWString(fp.getWideString()));
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+  QXmlStreamWriter xml(&file);
+  xml.setAutoFormatting(true);
+  xml.writeStartDocument();
+  xml.writeStartElement("ztrack");
+  xml.writeAttribute("version", "1");
+  xml.writeStartElement("team");
+  for (const QString &p : m_team) {
+    xml.writeStartElement("person");
+    xml.writeAttribute("name", p);
+    xml.writeEndElement();
+  }
+  xml.writeEndElement();  // team
+  xml.writeEndElement();  // ztrack
+  xml.writeEndDocument();
+}
+
+void ZtoryModel::loadProjectDb() {
+  TFilePath fp = projectDbFilePath();
+  if (fp == TFilePath()) return;
+  QFile file(QString::fromStdWString(fp.getWideString()));
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    // No project DB yet: migrate the current team (loaded from the .ztoryc) by
+    // creating the file, so it becomes the project-wide source from now on.
+    if (!m_team.isEmpty()) saveProjectDb();
+    return;
+  }
+  QStringList team;
+  QXmlStreamReader xml(&file);
+  while (!xml.atEnd()) {
+    xml.readNext();
+    if (xml.isStartElement() && xml.name() == QLatin1String("person")) {
+      QString nm = xml.attributes().value("name").toString().trimmed();
+      if (!nm.isEmpty()) team << nm;
+    }
+  }
+  m_team = team;  // project file is authoritative for the team
 }
 
 const QStringList &ZtoryModel::canonicalTaskOrder() {

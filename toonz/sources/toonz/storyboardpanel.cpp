@@ -2266,16 +2266,9 @@ void StoryboardPanel::saveZtoryc() {
       }
       xml.writeEndElement();
     }
-    // Team roster (people) — project-level; drives the assignee picker.
-    if (!model->team().isEmpty()) {
-      xml.writeStartElement("team");
-      for (const QString &person : model->team()) {
-        xml.writeStartElement("person");
-        xml.writeAttribute("name", person);
-        xml.writeEndElement();
-      }
-      xml.writeEndElement();
-    }
+    // NOTE: the team roster now lives in the project-level DB
+    // (production.ztrack), not in the per-scene .ztoryc. The <team> block is
+    // still READ on load (loadZtoryc) for one-time migration of legacy scenes.
     // Assets (project-level) with their own task pipeline.
     if (!model->assets().empty()) {
       xml.writeStartElement("assets");
@@ -2745,6 +2738,10 @@ void StoryboardPanel::loadZtoryc() {
     saveZtoryc();
     m_currentZtoryPath.clear();  // refreshFromScene will set it authoritatively
   }
+  // Team now lives in the project-level DB (production.ztrack), shared across
+  // the project's scenes. Load it after the .ztoryc (project file wins; if it
+  // doesn't exist yet, the .ztoryc team migrates into it).
+  ZtoryModel::instance()->loadProjectDb();
   // Project/team/assets are now populated in the model. refreshFromScene does
   // NOT emit modelReset, so the Production Tracker's non-shot tabs (Team /
   // Project / Assets) would otherwise stay stale after a scene reopen.

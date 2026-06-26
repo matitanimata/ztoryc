@@ -372,7 +372,7 @@ void ZtoryProductionPanel::applyTeamFromList() {
     if (!t.isEmpty()) team << t;
   }
   ZtoryModel::instance()->setTeam(team);
-  persistViaBoard();
+  ZtoryModel::instance()->saveProjectDb();  // team lives in the project DB
 }
 
 //-----------------------------------------------------------------------------

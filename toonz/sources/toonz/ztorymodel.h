@@ -249,6 +249,11 @@ public:
   // assignee picker. Project-level metadata (persisted in the .ztoryc for now).
   const QStringList &team() const { return m_team; }
   void setTeam(const QStringList &t) { m_team = t; }
+  // Project-level DB file (production.ztrack at the project root). B3 pilot:
+  // for now it owns the team roster (truly project-wide, shared across the
+  // project's scenes). Assets/techniques/shots will migrate here next.
+  void loadProjectDb();  // project file → model (authoritative); migrates if absent
+  void saveProjectDb();  // model → project file
 
   // Set a shot's per-task status (in-app source of truth for production
   // tracking). Emits taskStatusChanged() so the Production Tracker refreshes;
