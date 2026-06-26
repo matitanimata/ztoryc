@@ -244,6 +244,8 @@ void ZtoryModel::resetProjectLevelDefaults() {
   m_team.clear();
   m_assets.clear();
   m_techniques.clear();
+  m_projectShots.clear();
+  m_storyboardFiles.clear();
   seedDefaultTechniques();  // re-seed presets + defaultTechnique = "Tradigital"
 }
 
@@ -314,6 +316,36 @@ void ZtoryModel::saveProjectDb() {
   }
   xml.writeEndElement();  // assets
 
+  xml.writeStartElement("storyboards");
+  for (const QString &f : m_storyboardFiles) {
+    xml.writeStartElement("storyboard");
+    xml.writeAttribute("file", f);
+    xml.writeEndElement();
+  }
+  xml.writeEndElement();  // storyboards
+
+  xml.writeStartElement("shots");
+  for (const ProjectShot &ps : m_projectShots) {
+    xml.writeStartElement("shot");
+    xml.writeAttribute("uuid",      ps.uuid);
+    xml.writeAttribute("source",    ps.source);
+    xml.writeAttribute("seq",       ps.seq);
+    xml.writeAttribute("label",     ps.label);
+    xml.writeAttribute("frames",    QString::number(ps.frames));
+    if (!ps.technique.isEmpty())
+      xml.writeAttribute("technique", ps.technique);
+    for (auto it = ps.tasks.constBegin(); it != ps.tasks.constEnd(); ++it) {
+      xml.writeStartElement("task");
+      xml.writeAttribute("type",   it.key());
+      xml.writeAttribute("status", taskStatusLabel(it.value().status));
+      if (!it.value().assignees.isEmpty())
+        xml.writeAttribute("assignee", it.value().assignees.join(", "));
+      xml.writeEndElement();
+    }
+    xml.writeEndElement();  // shot
+  }
+  xml.writeEndElement();  // shots
+
   xml.writeEndElement();  // ztrack
   xml.writeEndDocument();
 }
@@ -331,7 +363,9 @@ void ZtoryModel::loadProjectDb() {
   QStringList team;
   std::vector<Technique> techs;
   std::vector<Asset> assets;
-  int ai = -1;
+  std::vector<ProjectShot> pshots;
+  QVector<QString> sboards;
+  int ai = -1, psi = -1;
   QXmlStreamReader xml(&file);
   while (!xml.atEnd()) {
     xml.readNext();
@@ -364,6 +398,7 @@ void ZtoryModel::loadProjectDb() {
       if (!tg.isEmpty()) as.tags = tg.split('|', Qt::SkipEmptyParts);
       assets.push_back(as);
       ai = (int)assets.size() - 1;
+      psi = -1;
     } else if (xml.name() == QLatin1String("atask")) {
       if (ai >= 0 && ai < (int)assets.size()) {
         auto a       = xml.attributes();
@@ -378,11 +413,181 @@ void ZtoryModel::loadProjectDb() {
           assets[ai].tasks.insert(type, ts);
         }
       }
+    } else if (xml.name() == QLatin1String("storyboard")) {
+      QString f = xml.attributes().value("file").toString();
+      if (!f.isEmpty() && !sboards.contains(f)) sboards << f;
+    } else if (xml.name() == QLatin1String("shot")) {
+      auto a = xml.attributes();
+      ProjectShot ps;
+      ps.uuid      = a.value("uuid").toString();
+      ps.source    = a.value("source").toString();
+      ps.seq       = a.value("seq").toString();
+      ps.label     = a.value("label").toString();
+      ps.frames    = a.value("frames").toInt();
+      ps.technique = a.value("technique").toString();
+      if (!ps.uuid.isEmpty()) {
+        pshots.push_back(ps);
+        psi = (int)pshots.size() - 1;
+        ai  = -1;
+      }
+    } else if (xml.name() == QLatin1String("task")) {
+      // task child of a <shot> element (project shots)
+      if (psi >= 0 && psi < (int)pshots.size()) {
+        auto a       = xml.attributes();
+        QString type = a.value("type").toString();
+        if (!type.isEmpty()) {
+          TaskState ts;
+          ts.status = taskStatusFromLabel(a.value("status").toString());
+          for (const QString &p : a.value("assignee").toString().split(',', Qt::SkipEmptyParts)) {
+            QString t = p.trimmed();
+            if (!t.isEmpty()) ts.assignees << t;
+          }
+          pshots[psi].tasks.insert(type, ts);
+        }
+      }
     }
   }
   m_team = team;  // project file is authoritative
   if (!techs.empty()) m_techniques = techs;
-  m_assets = assets;
+  m_assets    = assets;
+  m_projectShots   = pshots;
+  m_storyboardFiles = sboards;
+}
+
+// ─── B3b — Project shots ──────────────────────────────────────────────────────
+
+QString ZtoryModel::techniqueForProjectShot(const ProjectShot &ps) const {
+  return ps.technique.isEmpty() ? m_defaultTechnique : ps.technique;
+}
+
+QStringList ZtoryModel::taskTypesForProjectShot(const ProjectShot &ps) const {
+  const Technique *t = findTechnique(techniqueForProjectShot(ps));
+  return t ? t->taskTypes : QStringList();
+}
+
+void ZtoryModel::publishShotsToProjectDb(const QString &sourceFile) {
+  if (sourceFile.isEmpty()) return;
+  // Register the storyboard file.
+  if (!m_storyboardFiles.contains(sourceFile))
+    m_storyboardFiles << sourceFile;
+
+  // Build uuid set of current scene shots.
+  QSet<QString> sceneUuids;
+  for (const ShotData &sd : m_shots)
+    if (!sd.uuid.isEmpty()) sceneUuids.insert(sd.uuid);
+
+  // Remove shots that belonged to this source but are no longer in the scene.
+  m_projectShots.erase(
+      std::remove_if(m_projectShots.begin(), m_projectShots.end(),
+                     [&](const ProjectShot &ps) {
+                       return ps.source == sourceFile &&
+                              !sceneUuids.contains(ps.uuid);
+                     }),
+      m_projectShots.end());
+
+  // Build quick-lookup map: uuid → index in m_projectShots.
+  QHash<QString, int> byUuid;
+  for (int i = 0; i < (int)m_projectShots.size(); i++)
+    byUuid[m_projectShots[i].uuid] = i;
+
+  // Find the sequence label for a shot (for the "seq" field).
+  auto seqLabel = [this](const ShotData &sd) -> QString {
+    for (const SequenceData &seq : m_sequences)
+      if (seq.uuid == sd.sequenceId) return seq.label;
+    return QString();
+  };
+
+  for (const ShotData &sd : m_shots) {
+    if (sd.uuid.isEmpty()) continue;
+    auto it = byUuid.find(sd.uuid);
+    if (it != byUuid.end()) {
+      // Existing project shot: update structural metadata only.
+      ProjectShot &ps = m_projectShots[it.value()];
+      ps.source = sourceFile;
+      ps.seq    = seqLabel(sd);
+      ps.label  = sd.label();
+      ps.frames = sd.totalDuration();
+      // technique: only update if the scene has a value (project may have an override)
+      if (!sd.technique.isEmpty()) ps.technique = sd.technique;
+    } else {
+      // New shot: create with structure + copy initial task state from scene.
+      ProjectShot ps;
+      ps.uuid      = sd.uuid;
+      ps.source    = sourceFile;
+      ps.seq       = seqLabel(sd);
+      ps.label     = sd.label();
+      ps.frames    = sd.totalDuration();
+      ps.technique = sd.technique;
+      ps.tasks     = sd.tasks;
+      m_projectShots.push_back(ps);
+    }
+  }
+
+  // Re-sort project shots: by source file order in m_storyboardFiles, then by
+  // their position in the current scene (order index) for the active storyboard.
+  QHash<QString, int> sourceOrder;
+  for (int i = 0; i < m_storyboardFiles.size(); i++)
+    sourceOrder[m_storyboardFiles[i]] = i;
+  QHash<QString, int> sceneOrder;
+  for (int i = 0; i < (int)m_shots.size(); i++)
+    if (!m_shots[i].uuid.isEmpty()) sceneOrder[m_shots[i].uuid] = i;
+
+  std::stable_sort(m_projectShots.begin(), m_projectShots.end(),
+                   [&](const ProjectShot &a, const ProjectShot &b) {
+                     int sa = sourceOrder.value(a.source, 999);
+                     int sb = sourceOrder.value(b.source, 999);
+                     if (sa != sb) return sa < sb;
+                     // Within the same source: use scene order for active storyboard,
+                     // otherwise preserve existing order (orderIndex from label).
+                     int oa = sceneOrder.value(a.uuid, 0);
+                     int ob = sceneOrder.value(b.uuid, 0);
+                     return oa < ob;
+                   });
+
+  saveProjectDb();
+  emit taskStatusChanged();
+}
+
+void ZtoryModel::setProjectShotTaskStatusByUuid(const QString &uuid,
+                                                const QString &taskType,
+                                                TaskStatus status) {
+  for (ProjectShot &ps : m_projectShots) {
+    if (ps.uuid == uuid) {
+      ps.tasks[taskType].status = status;
+      // Mirror into the open scene's shot for .ztoryc consistency.
+      for (ShotData &sd : m_shots)
+        if (sd.uuid == uuid) { sd.tasks[taskType].status = status; break; }
+      emit taskStatusChanged();
+      return;
+    }
+  }
+}
+
+void ZtoryModel::setProjectShotAssigneesByUuid(const QString &uuid,
+                                               const QString &taskType,
+                                               const QStringList &assignees) {
+  for (ProjectShot &ps : m_projectShots) {
+    if (ps.uuid == uuid) {
+      ps.tasks[taskType].assignees = assignees;
+      for (ShotData &sd : m_shots)
+        if (sd.uuid == uuid) { sd.tasks[taskType].assignees = assignees; break; }
+      emit taskStatusChanged();
+      return;
+    }
+  }
+}
+
+void ZtoryModel::setProjectShotTechnique(const QString &uuid,
+                                         const QString &technique) {
+  for (ProjectShot &ps : m_projectShots) {
+    if (ps.uuid == uuid) {
+      ps.technique = technique;
+      for (ShotData &sd : m_shots)
+        if (sd.uuid == uuid) { sd.technique = technique; break; }
+      emit taskStatusChanged();
+      return;
+    }
+  }
 }
 
 const QStringList &ZtoryModel::canonicalTaskOrder() {

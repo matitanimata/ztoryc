@@ -213,6 +213,50 @@ TaskEditResult pickTaskEdit(QWidget *parent, const QString &taskType,
   return res;
 }
 
+// Undo for project-shot task edits — keyed by stable shot uuid (survives
+// reordering and cross-storyboard aggregation). Persists to project DB.
+class ProjectShotStatusUndo final : public TUndo {
+  QString    m_uuid, m_taskType;
+  TaskStatus m_old, m_new;
+public:
+  ProjectShotStatusUndo(const QString &uuid, const QString &taskType,
+                        TaskStatus o, TaskStatus n)
+      : m_uuid(uuid), m_taskType(taskType), m_old(o), m_new(n) {}
+  void undo() const override {
+    ZtoryModel::instance()->setProjectShotTaskStatusByUuid(m_uuid, m_taskType, m_old);
+    ZtoryModel::instance()->saveProjectDb();
+  }
+  void redo() const override {
+    ZtoryModel::instance()->setProjectShotTaskStatusByUuid(m_uuid, m_taskType, m_new);
+    ZtoryModel::instance()->saveProjectDb();
+  }
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override {
+    return QObject::tr("Set %1 status").arg(m_taskType);
+  }
+};
+
+class ProjectShotAssigneeUndo final : public TUndo {
+  QString     m_uuid, m_taskType;
+  QStringList m_old, m_new;
+public:
+  ProjectShotAssigneeUndo(const QString &uuid, const QString &taskType,
+                          const QStringList &o, const QStringList &n)
+      : m_uuid(uuid), m_taskType(taskType), m_old(o), m_new(n) {}
+  void undo() const override {
+    ZtoryModel::instance()->setProjectShotAssigneesByUuid(m_uuid, m_taskType, m_old);
+    ZtoryModel::instance()->saveProjectDb();
+  }
+  void redo() const override {
+    ZtoryModel::instance()->setProjectShotAssigneesByUuid(m_uuid, m_taskType, m_new);
+    ZtoryModel::instance()->saveProjectDb();
+  }
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override {
+    return QObject::tr("Set %1 assignees").arg(m_taskType);
+  }
+};
+
 // Undo for asset task edits — keyed by the asset's stable uuid.
 class AssetStatusUndo final : public TUndo {
   QString m_uuid, m_taskType;
@@ -768,81 +812,197 @@ void ZtoryProductionPanel::rebuild() {
 
   m_taskCols = m->spreadsheetTaskColumns();
   const QStringList &taskCols = m_taskCols;
-  const int kFixed = 6;  // Shot, Thumb, Frames, Sec/Fr, Workflow, Done
-  const int fps    = m->fps() > 0 ? m->fps() : 25;
+  const int fps = m->fps() > 0 ? m->fps() : 25;
 
-  // Remove progress-bar cell widgets from the previous build (clear() doesn't).
-  for (int r = 0; r < m_table->rowCount(); r++) m_table->removeCellWidget(r, 5);
+  // Prefer the project-level shots (multi-storyboard); fall back to scene shots.
+  const bool useProjectShots = !m->projectShots().empty();
+  // kFixed: Source column only in project mode (col 0 = Source).
+  // Project mode: Source | Shot | Thumb | Frames | Sec/Fr | Workflow | Done | tasks...
+  // Legacy mode:          Shot | Thumb | Frames | Sec/Fr | Workflow | Done | tasks...
+  const int kFixed = useProjectShots ? 7 : 6;
+  const int kSrcCol = useProjectShots ? 0 : -1;  // Source column index (or -1)
+
+  StoryboardPanel *board = findBoard();
+  const int rowCount = useProjectShots ? (int)m->projectShots().size() : m->shotCount();
+
+  // Remove progress-bar widgets from previous build (clear() doesn't).
+  const int doneCol = useProjectShots ? 6 : 5;
+  for (int r = 0; r < m_table->rowCount(); r++) m_table->removeCellWidget(r, doneCol);
   m_table->clear();
   m_table->setColumnCount(kFixed + taskCols.size());
-  m_table->setRowCount(m->shotCount());
+  m_table->setRowCount(rowCount);
   m_table->setIconSize(QSize(72, 40));
-  StoryboardPanel *board = findBoard();
 
   QStringList headers;
+  if (useProjectShots)
+    headers << QObject::tr("Storyboard");
   headers << QObject::tr("Shot") << QString() << QObject::tr("Frames")
           << QObject::tr("Sec/Fr") << QObject::tr("Workflow") << QObject::tr("Done");
   headers += taskCols;
   m_table->setHorizontalHeaderLabels(headers);
 
-  for (int i = 0; i < m->shotCount(); i++) {
-    const ShotData &sd = m->shot(i);
+  if (useProjectShots) {
+    // ── Project-shots mode: read from m_projectShots ────────────────────────
+    const auto &pshots = m->projectShots();
+    // Build uuid→scene-index map for thumbnails of the open storyboard.
+    QHash<QString, int> uuidToSceneIdx;
+    for (int i = 0; i < m->shotCount(); i++)
+      if (!m->shot(i).uuid.isEmpty()) uuidToSceneIdx[m->shot(i).uuid] = i;
 
-    auto *shotItem = new QTableWidgetItem(m->fullLabel(i));
-    shotItem->setFlags(Qt::ItemIsEnabled);
-    QFont f = shotItem->font();
-    f.setBold(true);
-    shotItem->setFont(f);
-    m_table->setItem(i, 0, shotItem);
+    for (int i = 0; i < (int)pshots.size(); i++) {
+      const ProjectShot &ps = pshots[i];
 
-    // Thumbnail of the first panel (blank until the Board has rendered it).
-    auto *thumb = new QTableWidgetItem();
-    thumb->setFlags(Qt::ItemIsEnabled);
-    QPixmap pm = board ? board->firstPanelThumbnail(i) : QPixmap();
-    if (!pm.isNull())
-      thumb->setData(Qt::DecorationRole,
-                     pm.scaled(72, 40, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    m_table->setItem(i, 1, thumb);
+      // Source (storyboard file).
+      auto *srcItem = new QTableWidgetItem(ps.source);
+      srcItem->setFlags(Qt::ItemIsEnabled);
+      srcItem->setForeground(QColor("#aaaaaa"));
+      m_table->setItem(i, 0, srcItem);
 
-    const int frames = sd.totalDuration();
-    auto *frItem = new QTableWidgetItem(QString::number(frames));
-    frItem->setFlags(Qt::ItemIsEnabled);
-    frItem->setTextAlignment(Qt::AlignCenter);
-    m_table->setItem(i, 2, frItem);
-    auto *tcItem = new QTableWidgetItem(
-        QString("%1:%2").arg(frames / fps).arg(frames % fps, 2, 10, QChar('0')));
-    tcItem->setFlags(Qt::ItemIsEnabled);
-    tcItem->setTextAlignment(Qt::AlignCenter);
-    m_table->setItem(i, 3, tcItem);
+      // Shot label.
+      QString fullLabel = ps.seq.isEmpty() ? ps.label
+                                           : ps.seq + "_" + ps.label;
+      auto *shotItem = new QTableWidgetItem(fullLabel);
+      shotItem->setFlags(Qt::ItemIsEnabled);
+      // Store uuid in UserRole for editing/undo.
+      shotItem->setData(Qt::UserRole, ps.uuid);
+      QFont f = shotItem->font();
+      f.setBold(true);
+      shotItem->setFont(f);
+      m_table->setItem(i, 1, shotItem);
 
-    // Workflow (effective technique) — click to change (col 4).
-    auto *wfItem = new QTableWidgetItem(m->techniqueForShot(i));
-    wfItem->setFlags(Qt::ItemIsEnabled);
-    wfItem->setTextAlignment(Qt::AlignCenter);
-    wfItem->setToolTip(QObject::tr("Click to set this shot's workflow"));
-    m_table->setItem(i, 4, wfItem);
+      // Thumbnail — available only if this shot belongs to the open storyboard.
+      auto *thumb = new QTableWidgetItem();
+      thumb->setFlags(Qt::ItemIsEnabled);
+      auto sceneIt = uuidToSceneIdx.find(ps.uuid);
+      if (board && sceneIt != uuidToSceneIdx.end()) {
+        QPixmap pm = board->firstPanelThumbnail(sceneIt.value());
+        if (!pm.isNull())
+          thumb->setData(Qt::DecorationRole,
+                         pm.scaled(72, 40, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+      }
+      m_table->setItem(i, 2, thumb);
 
-    const QStringList shotTasks = m->taskTypesForShot(i);
-    int done = 0;
-    for (const QString &tt : shotTasks)
-      if (sd.tasks.value(tt).status == TaskStatus::Done) done++;
-    if (!shotTasks.isEmpty()) {
-      auto *bar = new QProgressBar();
-      bar->setRange(0, shotTasks.size());
-      bar->setValue(done);
-      bar->setFormat(QString("%1/%2").arg(done).arg(shotTasks.size()));
-      bar->setAlignment(Qt::AlignCenter);
-      bar->setMaximumHeight(18);
-      bar->setStyleSheet(
-          "QProgressBar{border:1px solid #555;border-radius:3px;background:#333;"
-          "color:#fff;font-size:10px;}"
-          "QProgressBar::chunk{background:#22D160;border-radius:2px;}");
-      m_table->setCellWidget(i, 5, bar);
-    } else {
-      auto *empty = new QTableWidgetItem();
-      empty->setFlags(Qt::ItemIsEnabled);
-      m_table->setItem(i, 5, empty);
+      const int frames = ps.frames;
+      auto *frItem = new QTableWidgetItem(QString::number(frames));
+      frItem->setFlags(Qt::ItemIsEnabled);
+      frItem->setTextAlignment(Qt::AlignCenter);
+      m_table->setItem(i, 3, frItem);
+      auto *tcItem = new QTableWidgetItem(
+          QString("%1:%2").arg(frames / fps).arg(frames % fps, 2, 10, QChar('0')));
+      tcItem->setFlags(Qt::ItemIsEnabled);
+      tcItem->setTextAlignment(Qt::AlignCenter);
+      m_table->setItem(i, 4, tcItem);
+
+      auto *wfItem = new QTableWidgetItem(m->techniqueForProjectShot(ps));
+      wfItem->setFlags(Qt::ItemIsEnabled);
+      wfItem->setTextAlignment(Qt::AlignCenter);
+      wfItem->setToolTip(QObject::tr("Click to set this shot's workflow"));
+      m_table->setItem(i, 5, wfItem);
+
+      const QStringList shotTasks = m->taskTypesForProjectShot(ps);
+      int done = 0;
+      for (const QString &tt : shotTasks)
+        if (ps.tasks.value(tt).status == TaskStatus::Done) done++;
+      if (!shotTasks.isEmpty()) {
+        auto *bar = new QProgressBar();
+        bar->setRange(0, shotTasks.size());
+        bar->setValue(done);
+        bar->setFormat(QString("%1/%2").arg(done).arg(shotTasks.size()));
+        bar->setAlignment(Qt::AlignCenter);
+        bar->setMaximumHeight(18);
+        bar->setStyleSheet(
+            "QProgressBar{border:1px solid #555;border-radius:3px;background:#333;"
+            "color:#fff;font-size:10px;}"
+            "QProgressBar::chunk{background:#22D160;border-radius:2px;}");
+        m_table->setCellWidget(i, 6, bar);
+      } else {
+        auto *empty = new QTableWidgetItem();
+        empty->setFlags(Qt::ItemIsEnabled);
+        m_table->setItem(i, 6, empty);
+      }
+
+      for (int c = 0; c < taskCols.size(); c++) {
+        const QString &tt = taskCols[c];
+        auto *it = new QTableWidgetItem();
+        it->setTextAlignment(Qt::AlignCenter);
+        it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        if (!shotTasks.contains(tt)) {
+          it->setText(QObject::tr("N/A"));
+          it->setForeground(QColor("#777777"));
+          it->setBackground(QColor("#3a3a3a"));
+        } else {
+          const TaskState ts = ps.tasks.value(tt);
+          QString text = ZtoryModel::taskStatusLabel(ts.status);
+          if (!ts.assignees.isEmpty()) text += "\n" + ts.assignees.join(", ");
+          it->setText(text);
+          if (!ts.assignees.isEmpty())
+            it->setToolTip(QObject::tr("Assignees: %1").arg(ts.assignees.join(", ")));
+          it->setBackground(statusColor(ts.status));
+          it->setForeground(isLightStatus(ts.status) ? QColor(Qt::black)
+                                                      : QColor(Qt::white));
+        }
+        m_table->setItem(i, kFixed + c, it);
+      }
     }
+  } else {
+    // ── Legacy mode: read from scene shots (m_shots) ────────────────────────
+    for (int i = 0; i < m->shotCount(); i++) {
+      const ShotData &sd = m->shot(i);
+
+      auto *shotItem = new QTableWidgetItem(m->fullLabel(i));
+      shotItem->setFlags(Qt::ItemIsEnabled);
+      shotItem->setData(Qt::UserRole, sd.uuid);
+      QFont f = shotItem->font();
+      f.setBold(true);
+      shotItem->setFont(f);
+      m_table->setItem(i, 0, shotItem);
+
+      auto *thumb = new QTableWidgetItem();
+      thumb->setFlags(Qt::ItemIsEnabled);
+      QPixmap pm = board ? board->firstPanelThumbnail(i) : QPixmap();
+      if (!pm.isNull())
+        thumb->setData(Qt::DecorationRole,
+                       pm.scaled(72, 40, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+      m_table->setItem(i, 1, thumb);
+
+      const int frames = sd.totalDuration();
+      auto *frItem = new QTableWidgetItem(QString::number(frames));
+      frItem->setFlags(Qt::ItemIsEnabled);
+      frItem->setTextAlignment(Qt::AlignCenter);
+      m_table->setItem(i, 2, frItem);
+      auto *tcItem = new QTableWidgetItem(
+          QString("%1:%2").arg(frames / fps).arg(frames % fps, 2, 10, QChar('0')));
+      tcItem->setFlags(Qt::ItemIsEnabled);
+      tcItem->setTextAlignment(Qt::AlignCenter);
+      m_table->setItem(i, 3, tcItem);
+
+      auto *wfItem = new QTableWidgetItem(m->techniqueForShot(i));
+      wfItem->setFlags(Qt::ItemIsEnabled);
+      wfItem->setTextAlignment(Qt::AlignCenter);
+      wfItem->setToolTip(QObject::tr("Click to set this shot's workflow"));
+      m_table->setItem(i, 4, wfItem);
+
+      const QStringList shotTasks = m->taskTypesForShot(i);
+      int done = 0;
+      for (const QString &tt : shotTasks)
+        if (sd.tasks.value(tt).status == TaskStatus::Done) done++;
+      if (!shotTasks.isEmpty()) {
+        auto *bar = new QProgressBar();
+        bar->setRange(0, shotTasks.size());
+        bar->setValue(done);
+        bar->setFormat(QString("%1/%2").arg(done).arg(shotTasks.size()));
+        bar->setAlignment(Qt::AlignCenter);
+        bar->setMaximumHeight(18);
+        bar->setStyleSheet(
+            "QProgressBar{border:1px solid #555;border-radius:3px;background:#333;"
+            "color:#fff;font-size:10px;}"
+            "QProgressBar::chunk{background:#22D160;border-radius:2px;}");
+        m_table->setCellWidget(i, 5, bar);
+      } else {
+        auto *empty = new QTableWidgetItem();
+        empty->setFlags(Qt::ItemIsEnabled);
+        m_table->setItem(i, 5, empty);
+      }
 
     for (int c = 0; c < taskCols.size(); c++) {
       const QString &tt = taskCols[c];
@@ -868,7 +1028,8 @@ void ZtoryProductionPanel::rebuild() {
       }
       m_table->setItem(i, kFixed + c, it);
     }
-  }
+    }  // end outer shots for loop (legacy)
+  }  // end else (legacy mode)
 
   m_table->resizeColumnsToContents();
   m_table->resizeRowsToContents();
@@ -878,20 +1039,30 @@ void ZtoryProductionPanel::rebuild() {
 
 void ZtoryProductionPanel::onCellClicked(int row, int col) {
   ZtoryModel *m = ZtoryModel::instance();
-  if (row < 0 || row >= m->shotCount()) return;
-  if (col == 4) {  // Workflow picker
+  const bool useProjectShots = !m->projectShots().empty();
+  const int wfCol = useProjectShots ? 5 : 4;  // Workflow column index
+
+  if (col == wfCol) {  // Workflow picker
     QMenu menu(this);
     QAction *defA = menu.addAction(
         QObject::tr("(project default: %1)").arg(m->defaultTechnique()));
-    defA->setData(QString());  // empty technique = use project default
+    defA->setData(QString());
     menu.addSeparator();
     for (const Technique &t : m->techniques())
       menu.addAction(t.name)->setData(t.name);
     QAction *ch = menu.exec(QCursor::pos());
     if (!ch) return;
-    m->shot(row).technique = ch->data().toString();
-    persistViaBoard();
-    emit m->taskStatusChanged();  // columns + progress refresh
+    if (useProjectShots) {
+      if (row < 0 || row >= (int)m->projectShots().size()) return;
+      const QString uuid = m->projectShots()[row].uuid;
+      m->setProjectShotTechnique(uuid, ch->data().toString());
+      m->saveProjectDb();
+    } else {
+      if (row < 0 || row >= m->shotCount()) return;
+      m->shot(row).technique = ch->data().toString();
+      persistViaBoard();
+      emit m->taskStatusChanged();
+    }
     return;
   }
   // Task cells: a single left-click only selects (so shift/⌘ multi-select works
@@ -904,25 +1075,38 @@ void ZtoryProductionPanel::onCellClicked(int row, int col) {
 
 void ZtoryProductionPanel::onShotContextMenu(const QPoint &pos) {
   ZtoryModel *m    = ZtoryModel::instance();
-  const int kFixed = 6;
-  struct Target { int shot; QString task; };
+  const bool usePS = !m->projectShots().empty();
+  const int kFixed = usePS ? 7 : 6;
+  struct Target { int row; QString task; QString uuid; };
   QList<Target> targets;
+
+  auto rowValid = [&](int row) {
+    return usePS ? (row >= 0 && row < (int)m->projectShots().size())
+                 : (row >= 0 && row < m->shotCount());
+  };
+  auto taskTypes = [&](int row) -> QStringList {
+    return usePS ? m->taskTypesForProjectShot(m->projectShots()[row])
+                 : m->taskTypesForShot(row);
+  };
+  auto shotUuid = [&](int row) -> QString {
+    return usePS ? m->projectShots()[row].uuid : m->shot(row).uuid;
+  };
+
   for (QTableWidgetItem *it : m_table->selectedItems()) {
     int row = it->row(), col = it->column();
     int ti  = col - kFixed;
     if (ti < 0 || ti >= m_taskCols.size()) continue;
-    if (row < 0 || row >= m->shotCount()) continue;
+    if (!rowValid(row)) continue;
     const QString &tt = m_taskCols[ti];
-    if (!m->taskTypesForShot(row).contains(tt)) continue;  // skip N/A
-    targets.append({row, tt});
+    if (!taskTypes(row).contains(tt)) continue;
+    targets.append({row, tt, shotUuid(row)});
   }
-  // Nothing selected → act on the right-clicked cell.
   if (targets.isEmpty()) {
     if (QTableWidgetItem *it = m_table->itemAt(pos)) {
       int row = it->row(), ti = it->column() - kFixed;
-      if (ti >= 0 && ti < m_taskCols.size() && row >= 0 && row < m->shotCount() &&
-          m->taskTypesForShot(row).contains(m_taskCols[ti]))
-        targets.append({row, m_taskCols[ti]});
+      if (ti >= 0 && ti < m_taskCols.size() && rowValid(row) &&
+          taskTypes(row).contains(m_taskCols[ti]))
+        targets.append({row, m_taskCols[ti], shotUuid(row)});
     }
   }
   if (targets.isEmpty()) return;
@@ -941,68 +1125,118 @@ void ZtoryProductionPanel::onShotContextMenu(const QPoint &pos) {
 
   TUndoManager::manager()->beginBlock();
   {
-    QSignalBlocker block(m);  // one rebuild after the batch, not N
+    QSignalBlocker block(m);
     if (chosen == assignAct) {
       QStringList newAssign;
-      const QStringList cur =
-          m->shot(targets.first().shot).tasks.value(targets.first().task).assignees;
-      if (pickAssignees(this, QObject::tr("selected tasks"), cur, newAssign))
+      const QString &firstUuid = targets.first().uuid;
+      QStringList cur;
+      if (usePS) {
+        for (const ProjectShot &ps : m->projectShots())
+          if (ps.uuid == firstUuid) {
+            cur = ps.tasks.value(targets.first().task).assignees; break;
+          }
+      } else {
+        cur = m->shot(targets.first().row).tasks.value(targets.first().task).assignees;
+      }
+      if (pickAssignees(this, QObject::tr("selected tasks"), cur, newAssign)) {
         for (const Target &t : targets) {
-          QStringList old = m->shot(t.shot).tasks.value(t.task).assignees;
-          if (old == newAssign) continue;
-          m->setShotTaskAssignees(t.shot, t.task, newAssign);
-          TUndoManager::manager()->add(
-              new AssigneeEditUndo(m->shot(t.shot).label(), t.task, old, newAssign));
+          QStringList old;
+          if (usePS) {
+            for (const ProjectShot &ps : m->projectShots())
+              if (ps.uuid == t.uuid) { old = ps.tasks.value(t.task).assignees; break; }
+            if (old == newAssign) continue;
+            m->setProjectShotAssigneesByUuid(t.uuid, t.task, newAssign);
+            TUndoManager::manager()->add(
+                new ProjectShotAssigneeUndo(t.uuid, t.task, old, newAssign));
+          } else {
+            old = m->shot(t.row).tasks.value(t.task).assignees;
+            if (old == newAssign) continue;
+            m->setShotTaskAssignees(t.row, t.task, newAssign);
+            TUndoManager::manager()->add(
+                new AssigneeEditUndo(m->shot(t.row).label(), t.task, old, newAssign));
+          }
         }
+      }
     } else {
       TaskStatus s = static_cast<TaskStatus>(chosen->data().toInt());
       for (const Target &t : targets) {
-        TaskStatus old = m->shot(t.shot).tasks.value(t.task).status;
-        if (old == s) continue;
-        m->setShotTaskStatus(t.shot, t.task, s);
-        TUndoManager::manager()->add(
-            new StatusEditUndo(m->shot(t.shot).label(), t.task, old, s));
+        if (usePS) {
+          TaskStatus old = TaskStatus::Todo;
+          for (const ProjectShot &ps : m->projectShots())
+            if (ps.uuid == t.uuid) { old = ps.tasks.value(t.task).status; break; }
+          if (old == s) continue;
+          m->setProjectShotTaskStatusByUuid(t.uuid, t.task, s);
+          TUndoManager::manager()->add(
+              new ProjectShotStatusUndo(t.uuid, t.task, old, s));
+        } else {
+          TaskStatus old = m->shot(t.row).tasks.value(t.task).status;
+          if (old == s) continue;
+          m->setShotTaskStatus(t.row, t.task, s);
+          TUndoManager::manager()->add(
+              new StatusEditUndo(m->shot(t.row).label(), t.task, old, s));
+        }
       }
     }
   }
   TUndoManager::manager()->endBlock();
-  persistViaBoard();
+  if (usePS) m->saveProjectDb(); else persistViaBoard();
   rebuild();
 }
 
 //-----------------------------------------------------------------------------
 
 void ZtoryProductionPanel::editCell(int row, int col) {
-  const int kFixed = 6;
-  if (col < kFixed) return;  // fixed columns (Shot/Thumb/Frames/Sec-Fr/Workflow/Done)
+  ZtoryModel *m = ZtoryModel::instance();
+  const bool usePS = !m->projectShots().empty();
+  const int kFixed = usePS ? 7 : 6;
+  if (col < kFixed) return;
   const int taskIdx = col - kFixed;
   if (taskIdx < 0 || taskIdx >= m_taskCols.size()) return;
-
-  ZtoryModel *m = ZtoryModel::instance();
-  if (row < 0 || row >= m->shotCount()) return;
   const QString taskType = m_taskCols[taskIdx];
 
-  // Only applicable tasks (part of the shot's technique) are editable.
-  if (!m->taskTypesForShot(row).contains(taskType)) return;
-
-  const TaskState   cur        = m->shot(row).tasks.value(taskType);
-  const TaskStatus  oldStatus  = cur.status;
-  const QStringList oldAssign  = cur.assignees;
-  const QString     shotLabel  = m->shot(row).label();
-
-  TaskEditResult r = pickTaskEdit(this, taskType, oldStatus, oldAssign);
-  if (r.kind == TaskEditResult::Status) {
-    if (r.status == oldStatus) return;
-    m->setShotTaskStatus(row, taskType, r.status);  // emits taskStatusChanged → rebuild
-    persistViaBoard();
-    TUndoManager::manager()->add(
-        new StatusEditUndo(shotLabel, taskType, oldStatus, r.status));
-  } else if (r.kind == TaskEditResult::Assignees) {
-    if (r.assignees == oldAssign) return;
-    m->setShotTaskAssignees(row, taskType, r.assignees);
-    persistViaBoard();
-    TUndoManager::manager()->add(
-        new AssigneeEditUndo(shotLabel, taskType, oldAssign, r.assignees));
+  if (usePS) {
+    if (row < 0 || row >= (int)m->projectShots().size()) return;
+    const ProjectShot &ps = m->projectShots()[row];
+    if (!m->taskTypesForProjectShot(ps).contains(taskType)) return;
+    const TaskState   cur       = ps.tasks.value(taskType);
+    const TaskStatus  oldStatus = cur.status;
+    const QStringList oldAssign = cur.assignees;
+    const QString     uuid      = ps.uuid;
+    TaskEditResult r = pickTaskEdit(this, taskType, oldStatus, oldAssign);
+    if (r.kind == TaskEditResult::Status) {
+      if (r.status == oldStatus) return;
+      m->setProjectShotTaskStatusByUuid(uuid, taskType, r.status);
+      m->saveProjectDb();
+      TUndoManager::manager()->add(
+          new ProjectShotStatusUndo(uuid, taskType, oldStatus, r.status));
+    } else if (r.kind == TaskEditResult::Assignees) {
+      if (r.assignees == oldAssign) return;
+      m->setProjectShotAssigneesByUuid(uuid, taskType, r.assignees);
+      m->saveProjectDb();
+      TUndoManager::manager()->add(
+          new ProjectShotAssigneeUndo(uuid, taskType, oldAssign, r.assignees));
+    }
+  } else {
+    if (row < 0 || row >= m->shotCount()) return;
+    if (!m->taskTypesForShot(row).contains(taskType)) return;
+    const TaskState   cur       = m->shot(row).tasks.value(taskType);
+    const TaskStatus  oldStatus = cur.status;
+    const QStringList oldAssign = cur.assignees;
+    const QString     shotLabel = m->shot(row).label();
+    TaskEditResult r = pickTaskEdit(this, taskType, oldStatus, oldAssign);
+    if (r.kind == TaskEditResult::Status) {
+      if (r.status == oldStatus) return;
+      m->setShotTaskStatus(row, taskType, r.status);
+      persistViaBoard();
+      TUndoManager::manager()->add(
+          new StatusEditUndo(shotLabel, taskType, oldStatus, r.status));
+    } else if (r.kind == TaskEditResult::Assignees) {
+      if (r.assignees == oldAssign) return;
+      m->setShotTaskAssignees(row, taskType, r.assignees);
+      persistViaBoard();
+      TUndoManager::manager()->add(
+          new AssigneeEditUndo(shotLabel, taskType, oldAssign, r.assignees));
+    }
   }
 }
 

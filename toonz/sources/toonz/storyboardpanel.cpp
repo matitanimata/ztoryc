@@ -2235,6 +2235,7 @@ void StoryboardPanel::saveZtoryc() {
   xml.writeStartDocument();
   xml.writeStartElement("ztoryc");
   xml.writeAttribute("version", "2");
+  xml.writeAttribute("role", "storyboard");
   // Project metadata (production + title entered by user at scene creation).
   {
     ZtoryModel *model = ZtoryModel::instance();
@@ -2356,6 +2357,10 @@ void StoryboardPanel::saveZtoryc() {
   xml.writeEndElement();
   xml.writeEndDocument();
   file.close();
+  // Publish structural metadata to the project DB so the Production Tracker can
+  // aggregate shots from all storyboards without each one being open.
+  QString sourceFile = QFileInfo(path).fileName();
+  ZtoryModel::instance()->publishShotsToProjectDb(sourceFile);
 }
 
 void StoryboardPanel::loadZtoryc() {
@@ -2703,6 +2708,13 @@ void StoryboardPanel::loadZtoryc() {
   // the project's scenes. Load it after the .ztoryc (project file wins; if it
   // doesn't exist yet, the .ztoryc team migrates into it).
   ZtoryModel::instance()->loadProjectDb();
+  // Publish this storyboard's shots into the project DB so the Production
+  // Tracker can aggregate across multiple storyboards.
+  {
+    QString src = QFileInfo(path).fileName();
+    if (!src.isEmpty())
+      ZtoryModel::instance()->publishShotsToProjectDb(src);
+  }
   // Project/team/assets are now populated in the model. refreshFromScene does
   // NOT emit modelReset, so the Production Tracker's non-shot tabs (Team /
   // Project / Assets) would otherwise stay stale after a scene reopen.

@@ -157,6 +157,19 @@ struct Asset {
   QStringList              tags;   // free categorisation (future: breakdown / AI)
 };
 
+// A project-level shot record. Owns the production progress (task status/
+// assignee). The structural metadata (seq/label/frames/technique) is authored
+// by the storyboard .tnz and published here via publishShotsToProjectDb().
+struct ProjectShot {
+  QString uuid;
+  QString source;    // basename of the originating .tnz storyboard (e.g. "reel1.tnz")
+  QString seq;       // e.g. "SQ010"
+  QString label;     // e.g. "SH010"
+  int     frames = 0;
+  QString technique;
+  QMap<QString, TaskState> tasks;  // progress — authoritative for the project DB
+};
+
 // ─── Animatic export burn-in ──────────────────────────────────────────────────
 // Set by the export-animatic dialog right before MI_Render and cleared after.
 // rendercommand.cpp reads it at render SETUP time and pins it into the
@@ -192,6 +205,8 @@ class ZtoryModel : public QObject {
 
   std::vector<ShotData>             m_shots;
   std::vector<Asset>                m_assets;       // project-level asset list
+  std::vector<ProjectShot>          m_projectShots; // all project shots (from production.ztrack)
+  QVector<QString>                  m_storyboardFiles; // registered storyboard basenames
   std::vector<SequenceData>         m_sequences;
   std::vector<std::vector<QPixmap>> m_previews; // [shotIdx][panelIdx]
   int                               m_fps;
@@ -261,9 +276,28 @@ public:
   void loadProjectDb();  // project file → model (authoritative); migrates if absent
   void saveProjectDb();  // model → project file
   // Clear/re-seed all project-level fields (production/season/title/episode/team/
-  // assets/techniques) so data never leaks across scenes/projects. Called on
-  // scene switch BEFORE the .ztoryc migration read and loadProjectDb().
+  // assets/techniques/projectShots) so data never leaks across scenes/projects.
+  // Called on scene switch BEFORE the .ztoryc migration read and loadProjectDb().
   void resetProjectLevelDefaults();
+
+  // B3b — Project shots (multi-storyboard)
+  const std::vector<ProjectShot> &projectShots() const { return m_projectShots; }
+  const QVector<QString> &storyboardFiles() const { return m_storyboardFiles; }
+  // Upsert scene shots (m_shots) into m_projectShots keyed by uuid; sourceFile
+  // is the .tnz basename.  Preserves existing task progress; initialises tasks
+  // for new shots from the scene's current task state. Removes shots whose
+  // source==sourceFile but whose uuid is no longer in the scene.
+  void publishShotsToProjectDb(const QString &sourceFile);
+  // Task editing on project shots — authoritative, persist with saveProjectDb().
+  void setProjectShotTaskStatusByUuid(const QString &uuid,
+                                      const QString &taskType, TaskStatus status);
+  void setProjectShotAssigneesByUuid(const QString &uuid,
+                                     const QString &taskType,
+                                     const QStringList &assignees);
+  void setProjectShotTechnique(const QString &uuid, const QString &technique);
+  // Helper: effective technique for a ProjectShot (falls back to project default).
+  QString techniqueForProjectShot(const ProjectShot &ps) const;
+  QStringList taskTypesForProjectShot(const ProjectShot &ps) const;
 
   // Set a shot's per-task status (in-app source of truth for production
   // tracking). Emits taskStatusChanged() so the Production Tracker refreshes;
