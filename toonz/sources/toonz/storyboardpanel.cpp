@@ -2357,10 +2357,12 @@ void StoryboardPanel::saveZtoryc() {
   xml.writeEndElement();
   xml.writeEndDocument();
   file.close();
-  // Publish structural metadata to the project DB so the Production Tracker can
-  // aggregate shots from all storyboards without each one being open.
+  // Publish structural metadata to the project DB. saveZtoryc() always writes
+  // role="storyboard", so this is always safe here. The guard mirrors loadZtoryc
+  // for the future case where saveZtoryc might be called on a role="shot" scene.
   QString sourceFile = QFileInfo(path).fileName();
-  ZtoryModel::instance()->publishShotsToProjectDb(sourceFile);
+  if (!sourceFile.isEmpty())
+    ZtoryModel::instance()->publishShotsToProjectDb(sourceFile);
 }
 
 void StoryboardPanel::loadZtoryc() {
@@ -2404,6 +2406,9 @@ void StoryboardPanel::loadZtoryc() {
 
   QXmlStreamReader xml(&file);
   int si = -1, pi = -1, ai = -1;
+  // role: "storyboard" (default/legacy) → publishShotsToProjectDb;
+  //       "shot" (B3c exported scene) → do NOT publish (not a shot list source).
+  QString sceneRole = "storyboard";
   std::vector<Technique> loadedTechs;  // technique presets from file (if any)
   QStringList loadedTeam;              // team roster from file (replaces model's)
   bool        hasTeamBlock = false;    // true once a <team> element is seen
@@ -2412,7 +2417,11 @@ void StoryboardPanel::loadZtoryc() {
   while (!xml.atEnd()) {
     xml.readNext();
     if (xml.isStartElement()) {
-      if (xml.name() == QLatin1String("project")) {
+      if (xml.name() == QLatin1String("ztoryc")) {
+        // Root element: read role attribute (absent in legacy files = storyboard).
+        QString r = xml.attributes().value("role").toString();
+        if (!r.isEmpty()) sceneRole = r;
+      } else if (xml.name() == QLatin1String("project")) {
         auto a = xml.attributes();
         ZtoryModel::instance()->setProduction(a.value("production").toString());
         ZtoryModel::instance()->setTitle(a.value("title").toString());
@@ -2709,8 +2718,10 @@ void StoryboardPanel::loadZtoryc() {
   // doesn't exist yet, the .ztoryc team migrates into it).
   ZtoryModel::instance()->loadProjectDb();
   // Publish this storyboard's shots into the project DB so the Production
-  // Tracker can aggregate across multiple storyboards.
-  {
+  // Tracker can aggregate across multiple storyboards. Skip role="shot" scenes
+  // (exported shot .tnz from B3c): they are consumers of the project DB, not
+  // sources of the shot list.
+  if (sceneRole == "storyboard") {
     QString src = QFileInfo(path).fileName();
     if (!src.isEmpty())
       ZtoryModel::instance()->publishShotsToProjectDb(src);
