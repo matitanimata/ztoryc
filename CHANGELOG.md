@@ -1,3 +1,54 @@
+## [2026-06-26] — Production Tracker: room a tab, multiselezione, e file di progetto (B3a)
+
+Grande arco sul Production Tracker. Studiata la Kitsu reale locale; il tracker e'
+diventato un mini-Kitsu in-app (pannello a tab) e ora ha un **file di progetto**
+(`production.ztrack`) per i dati project-level. Design B3 completo in
+`DESIGN_production_tracker.md` (Modello B). Tutto su master.
+
+### Added — Production Tracker a tab (pannello `ztoryproductionpanel`)
+- **Tab Shots**: matrice shot x task con status+assignee; arricchita con Thumbnail
+  (riuso anteprime del Board via `firstPanelThumbnail`), Frames, Sec/Fr, **Workflow
+  editabile** (click sulla cella), **Done** (progress bar). Set Technique del Board
+  disabilitato (icona tenuta per futuro breakdown tagging).
+- **Tab Team**: roster di progetto (add/remove/rename) — spostato fuori da Storyboard
+  Settings.
+- **Tab Project**: production/season(nuovo)/episode/title/default technique inline.
+- **Tab Assets**: entita' Asset (type/name/tasks/tags) con add/remove + matrice task.
+- **Tab Workflows**: editor task-type custom alla Kitsu (workflow + lista task editabili).
+- **Assignee multipli** per task; picker dal Team (checkbox) con fallback testo libero.
+- **Multiselezione** celle task (shift=intervallo, Cmd=salti, drag) -> tasto destro =
+  batch set status/assignee (un solo undo); doppio-click = edit singolo.
+
+### Added — B3a: file di progetto `production.ztrack`
+- Modello B (deciso): `production.ztrack` alla radice progetto e' la **fonte di verita'
+  project-level**. Possiede meta (production/season/episode/title/defaultTechnique/
+  namingPattern) + team + techniques + assets, **condivisi tra le scene del progetto**.
+- `ZtoryModel::loadProjectDb/saveProjectDb/resetProjectLevelDefaults`; migrazione
+  automatica dai `.ztoryc` vecchi; il `.ztoryc` resta scene-level (shot/sequenze/
+  numbering/panel/pdfLogo).
+
+### Fixed
+- Bug latente: i task stavano in 2 copie non sincronizzate (StoryboardPanel vs
+  ZtoryModel) -> editing tracker non persisteva/esportava. Ora ZtoryModel e' la fonte
+  unica (bridge pull/push a load/save/export). Aggiunto `ShotData::uuid` stabile (Fase A).
+- Refresh tab non-shot al riapri scena (`productionReloaded`).
+- **Leak project-level tra scene/progetti**: azzeramento completo dei campi a ogni load
+  scena (incl. techniques->reseed) su tutti i path, prima della migrazione. Ripuliti i
+  file gia' contaminati (`2303v15.ztoryc`).
+- Palette status allineata ai colori Kitsu reali (WIP blu / WFA viola) nel pannello e
+  nell'export xlsx.
+
+### Added (fuori repo)
+- `~/Desktop/Production_Tracker_Kitsu_Template.xlsx`: template standalone Google-Sheets-ready
+  ispirato a Kitsu (Shots/Assets/Team/Dashboard), costruito con la skill xlsx.
+
+### Notes / prossimi passi
+- **B3b** (prossima sessione): shot nel project file + pubblicazione multi-storyboard
+  (per uuid+source), tab Shots raggruppata per file; nodo thumbnail per storyboard non
+  aperti. Poi B3c (export-tnz + naming convention `AVIS_CS26_EP03_AMC_V01`) / B3d.
+- Room dedicata "Production" + eventuale colonna "Due" opzionale = separati.
+- Deciso vs Kitsu: qui status/assignee/workflow/progress/thumbnail; deadline+scheduling -> Kitsu (M5).
+
 ## [2026-06-25] — Production Tracker panel (status in-app) + palette Kitsu allineata
 
 Nuova direzione export production: **status masterizzati in-app**, foglio = proiezione

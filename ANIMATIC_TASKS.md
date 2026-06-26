@@ -304,6 +304,15 @@ zoom-rotella + scrollbar + cursore pennello; griglia 4x4 default.
 Aperti (prossime release): tasto Canc nudo (focus), icone Lucide/Phosphor — vedi
 [[project_thumbnail_room_fase3]].
 
+**🆕 Production Tracker DI PROGETTO — DESIGN COMPLETO in `DESIGN_production_tracker.md`
+[brainstorming 2026-06-25].** Promozione del tracker da per-scena a sottosistema di
+progetto: un DB di produzione (Shot + Asset + task + casting/breakdown + Team) con 4
+proiezioni (pannello in-app, spreadsheet, Kitsu, **export-to-AI** per animatix). Roadmap
+A-E. **Fase 0 fatta** (pannello per-scena + editing status, commit `282af0c64`). Prossimo:
+Fase A (UUID stabili shot+asset + back-link nei .tnz esportati). MVP anticipabile = export
+AI-campione di una scena reale da mandare ad animatix. **Leggere il design doc prima di
+implementare qualsiasi fase.**
+
 **🆕 Export to worksheet (Excel production management) [richiesto utente, giugno 2026].**
 Finito lo storyboard, generare un file di production management con: produzione, episodio,
 titolo; poi per ogni scena: seq, shot, timing, + i task (layout, animazione, vfx,
