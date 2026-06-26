@@ -248,18 +248,11 @@ public:
 ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   m_tabs = new QTabWidget(this);
   m_tabs->setDocumentMode(true);
-  m_tabs->addTab(buildShotsTab(),   QObject::tr("Shots"));
-  m_tabs->addTab(buildTeamTab(),    QObject::tr("Team"));
-  m_tabs->addTab(buildProjectTab(), QObject::tr("Project"));
-  // Placeholders for the next increments (kept visible so the structure reads).
-  auto stub = [this](const QString &t) {
-    QLabel *l = new QLabel(t, this);
-    l->setAlignment(Qt::AlignCenter);
-    l->setEnabled(false);
-    return l;
-  };
-  m_tabs->addTab(buildAssetsTab(), QObject::tr("Assets"));
-  m_tabs->addTab(stub(QObject::tr("Workflows — coming soon")), QObject::tr("Workflows"));
+  m_tabs->addTab(buildShotsTab(),     QObject::tr("Shots"));
+  m_tabs->addTab(buildTeamTab(),      QObject::tr("Team"));
+  m_tabs->addTab(buildProjectTab(),   QObject::tr("Project"));
+  m_tabs->addTab(buildAssetsTab(),    QObject::tr("Assets"));
+  m_tabs->addTab(buildWorkflowsTab(), QObject::tr("Workflows"));
 
   // TPanel (a TDockWidget) mounts its content via setWidget, not setLayout.
   setWidget(m_tabs);
@@ -279,6 +272,7 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   reloadTeamTab();
   reloadProjectTab();
   rebuildAssets();
+  reloadWorkflowsTab();
 }
 
 //-----------------------------------------------------------------------------
@@ -288,6 +282,7 @@ void ZtoryProductionPanel::onModelChanged() {
   reloadTeamTab();
   reloadProjectTab();
   rebuildAssets();
+  reloadWorkflowsTab();
 }
 
 //-----------------------------------------------------------------------------
@@ -547,6 +542,131 @@ void ZtoryProductionPanel::editAssetCell(int row, int col) {
     TUndoManager::manager()->add(
         new AssetAssigneeUndo(uuid, taskType, oldAssign, r.assignees));
   }
+}
+
+//-----------------------------------------------------------------------------
+// Workflows tab — Kitsu-style: define workflows (techniques) and their custom,
+// ordered task types. Drives which task columns apply to each shot.
+
+QWidget *ZtoryProductionPanel::buildWorkflowsTab() {
+  QWidget *w = new QWidget(this);
+  auto *root = new QHBoxLayout(w);
+
+  // Left: workflows (techniques).
+  auto *leftCol = new QVBoxLayout();
+  leftCol->addWidget(new QLabel(QObject::tr("Workflows (double-click to rename):"), w));
+  m_techList = new QListWidget(w);
+  leftCol->addWidget(m_techList);
+  auto *lb   = new QHBoxLayout();
+  auto *addT = new QPushButton(QObject::tr("+ Workflow"), w);
+  auto *remT = new QPushButton(QObject::tr("− Workflow"), w);
+  lb->addWidget(addT);
+  lb->addWidget(remT);
+  lb->addStretch();
+  leftCol->addLayout(lb);
+  root->addLayout(leftCol, 1);
+
+  // Right: task types of the selected workflow.
+  auto *rightCol = new QVBoxLayout();
+  rightCol->addWidget(
+      new QLabel(QObject::tr("Task types (double-click to rename):"), w));
+  m_taskTypeList = new QListWidget(w);
+  rightCol->addWidget(m_taskTypeList);
+  auto *rb    = new QHBoxLayout();
+  auto *addTT = new QPushButton(QObject::tr("+ Task"), w);
+  auto *remTT = new QPushButton(QObject::tr("− Task"), w);
+  rb->addWidget(addTT);
+  rb->addWidget(remTT);
+  rb->addStretch();
+  rightCol->addLayout(rb);
+  root->addLayout(rightCol, 2);
+
+  connect(m_techList, &QListWidget::currentRowChanged, this,
+          [this](int) { reloadTaskTypeList(); });
+  connect(m_techList, &QListWidget::itemChanged, this, [this](QListWidgetItem *it) {
+    if (m_wfLoading) return;
+    int row     = m_techList->row(it);
+    auto &techs = ZtoryModel::instance()->techniques();
+    if (row >= 0 && row < (int)techs.size()) {
+      techs[row].name = it->text().trimmed();
+      persistViaBoard();
+      reloadProjectTab();  // default-technique combo reflects the new name
+    }
+  });
+  connect(addT, &QPushButton::clicked, this, [this] {
+    ZtoryModel::instance()->techniques().push_back(
+        Technique{QObject::tr("New workflow"), {}});
+    persistViaBoard();
+    reloadWorkflowsTab();
+    m_techList->setCurrentRow(m_techList->count() - 1);
+  });
+  connect(remT, &QPushButton::clicked, this, [this] {
+    int row     = m_techList->currentRow();
+    auto &techs = ZtoryModel::instance()->techniques();
+    if (row < 0 || row >= (int)techs.size()) return;
+    techs.erase(techs.begin() + row);
+    persistViaBoard();
+    reloadWorkflowsTab();
+    emit ZtoryModel::instance()->taskStatusChanged();  // shot columns may change
+  });
+  connect(addTT, &QPushButton::clicked, this, [this] {
+    if (m_techList->currentRow() < 0) return;
+    auto *it = new QListWidgetItem(QObject::tr("newtask"), m_taskTypeList);
+    it->setFlags(it->flags() | Qt::ItemIsEditable);
+    m_taskTypeList->setCurrentItem(it);
+    m_taskTypeList->editItem(it);
+  });
+  connect(remTT, &QPushButton::clicked, this, [this] {
+    delete m_taskTypeList->currentItem();
+    applyTaskTypesToTechnique();
+  });
+  connect(m_taskTypeList, &QListWidget::itemChanged, this,
+          [this](QListWidgetItem *) { applyTaskTypesToTechnique(); });
+  return w;
+}
+
+void ZtoryProductionPanel::reloadWorkflowsTab() {
+  if (!m_techList) return;
+  m_wfLoading = true;
+  m_techList->clear();
+  for (const Technique &t : ZtoryModel::instance()->techniques()) {
+    auto *it = new QListWidgetItem(t.name, m_techList);
+    it->setFlags(it->flags() | Qt::ItemIsEditable);
+  }
+  m_wfLoading = false;
+  if (m_techList->count() > 0)
+    m_techList->setCurrentRow(0);
+  else
+    reloadTaskTypeList();
+}
+
+void ZtoryProductionPanel::reloadTaskTypeList() {
+  if (!m_taskTypeList) return;
+  m_wfLoading = true;
+  m_taskTypeList->clear();
+  int row            = m_techList ? m_techList->currentRow() : -1;
+  const auto &techs  = ZtoryModel::instance()->techniques();
+  if (row >= 0 && row < (int)techs.size())
+    for (const QString &tt : techs[row].taskTypes) {
+      auto *it = new QListWidgetItem(tt, m_taskTypeList);
+      it->setFlags(it->flags() | Qt::ItemIsEditable);
+    }
+  m_wfLoading = false;
+}
+
+void ZtoryProductionPanel::applyTaskTypesToTechnique() {
+  if (m_wfLoading || !m_taskTypeList || !m_techList) return;
+  int row     = m_techList->currentRow();
+  auto &techs = ZtoryModel::instance()->techniques();
+  if (row < 0 || row >= (int)techs.size()) return;
+  QStringList tt;
+  for (int i = 0; i < m_taskTypeList->count(); i++) {
+    QString s = m_taskTypeList->item(i)->text().trimmed();
+    if (!s.isEmpty()) tt << s;
+  }
+  techs[row].taskTypes = tt;
+  persistViaBoard();
+  emit ZtoryModel::instance()->taskStatusChanged();  // shot matrix columns refresh
 }
 
 //-----------------------------------------------------------------------------

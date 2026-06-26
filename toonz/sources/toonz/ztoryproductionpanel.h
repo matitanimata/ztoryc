@@ -42,6 +42,10 @@ class ZtoryProductionPanel final : public TPanel {
   QTableWidget *m_assetTable = nullptr;
   QStringList   m_assetTaskCols;
   bool          m_assetLoading = false;
+  // Workflows tab
+  QListWidget  *m_techList     = nullptr;
+  QListWidget  *m_taskTypeList = nullptr;
+  bool          m_wfLoading    = false;
 
 public:
   ZtoryProductionPanel(QWidget *parent = nullptr);
@@ -63,6 +67,11 @@ private:
   QWidget *buildAssetsTab();
   void rebuildAssets();            // rebuild the asset × task matrix from ZtoryModel
   void editAssetCell(int row, int col);
+  // Workflows tab
+  QWidget *buildWorkflowsTab();
+  void reloadWorkflowsTab();        // model → workflow (technique) list
+  void reloadTaskTypeList();        // selected workflow → its task-type list
+  void applyTaskTypesToTechnique(); // task-type list → selected workflow + persist
 
 private slots:
   void onModelChanged();
