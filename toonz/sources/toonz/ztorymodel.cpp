@@ -295,6 +295,25 @@ void ZtoryModel::saveProjectDb() {
   }
   xml.writeEndElement();  // techniques
 
+  xml.writeStartElement("assets");
+  for (const Asset &as : m_assets) {
+    xml.writeStartElement("asset");
+    xml.writeAttribute("uuid", as.uuid);
+    xml.writeAttribute("type", as.type);
+    xml.writeAttribute("name", as.name);
+    if (!as.tags.isEmpty()) xml.writeAttribute("tags", as.tags.join("|"));
+    for (auto it = as.tasks.constBegin(); it != as.tasks.constEnd(); ++it) {
+      xml.writeStartElement("atask");
+      xml.writeAttribute("type",   it.key());
+      xml.writeAttribute("status", taskStatusLabel(it.value().status));
+      if (!it.value().assignees.isEmpty())
+        xml.writeAttribute("assignee", it.value().assignees.join(", "));
+      xml.writeEndElement();
+    }
+    xml.writeEndElement();
+  }
+  xml.writeEndElement();  // assets
+
   xml.writeEndElement();  // ztrack
   xml.writeEndDocument();
 }
@@ -311,6 +330,8 @@ void ZtoryModel::loadProjectDb() {
   }
   QStringList team;
   std::vector<Technique> techs;
+  std::vector<Asset> assets;
+  int ai = -1;
   QXmlStreamReader xml(&file);
   while (!xml.atEnd()) {
     xml.readNext();
@@ -333,10 +354,35 @@ void ZtoryModel::loadProjectDb() {
       t.name      = xml.attributes().value("name").toString();
       t.taskTypes = xml.attributes().value("tasks").toString().split('|', Qt::SkipEmptyParts);
       if (!t.name.isEmpty()) techs.push_back(t);
+    } else if (xml.name() == QLatin1String("asset")) {
+      Asset as;
+      auto a   = xml.attributes();
+      as.uuid  = a.value("uuid").toString();
+      as.type  = a.value("type").toString();
+      as.name  = a.value("name").toString();
+      QString tg = a.value("tags").toString();
+      if (!tg.isEmpty()) as.tags = tg.split('|', Qt::SkipEmptyParts);
+      assets.push_back(as);
+      ai = (int)assets.size() - 1;
+    } else if (xml.name() == QLatin1String("atask")) {
+      if (ai >= 0 && ai < (int)assets.size()) {
+        auto a       = xml.attributes();
+        QString type = a.value("type").toString();
+        if (!type.isEmpty()) {
+          TaskState ts;
+          ts.status = taskStatusFromLabel(a.value("status").toString());
+          for (const QString &p : a.value("assignee").toString().split(',', Qt::SkipEmptyParts)) {
+            QString t = p.trimmed();
+            if (!t.isEmpty()) ts.assignees << t;
+          }
+          assets[ai].tasks.insert(type, ts);
+        }
+      }
     }
   }
   m_team = team;  // project file is authoritative
   if (!techs.empty()) m_techniques = techs;
+  m_assets = assets;
 }
 
 const QStringList &ZtoryModel::canonicalTaskOrder() {

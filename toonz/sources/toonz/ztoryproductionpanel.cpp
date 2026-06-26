@@ -68,6 +68,9 @@ void persistViaBoard() {
   if (auto *b = findBoard()) b->saveZtoryc();
 }
 
+// Assets are project-level: they live in production.ztrack, not the .ztoryc.
+void persistAssets() { ZtoryModel::instance()->saveProjectDb(); }
+
 // Undo for a single per-task status edit. Keyed by stable shotLabel so it
 // survives shot reordering between the edit and its undo.
 class StatusEditUndo final : public TUndo {
@@ -219,11 +222,11 @@ public:
       : m_uuid(uuid), m_taskType(type), m_old(o), m_new(n) {}
   void undo() const override {
     ZtoryModel::instance()->setAssetTaskStatusByUuid(m_uuid, m_taskType, m_old);
-    persistViaBoard();
+    persistAssets();
   }
   void redo() const override {
     ZtoryModel::instance()->setAssetTaskStatusByUuid(m_uuid, m_taskType, m_new);
-    persistViaBoard();
+    persistAssets();
   }
   int getSize() const override { return sizeof(*this); }
   QString getHistoryString() override {
@@ -240,11 +243,11 @@ public:
       : m_uuid(uuid), m_taskType(type), m_old(o), m_new(n) {}
   void undo() const override {
     ZtoryModel::instance()->setAssetTaskAssigneesByUuid(m_uuid, m_taskType, m_old);
-    persistViaBoard();
+    persistAssets();
   }
   void redo() const override {
     ZtoryModel::instance()->setAssetTaskAssigneesByUuid(m_uuid, m_taskType, m_new);
-    persistViaBoard();
+    persistAssets();
   }
   int getSize() const override { return sizeof(*this); }
   QString getHistoryString() override {
@@ -454,13 +457,13 @@ QWidget *ZtoryProductionPanel::buildAssetsTab() {
 
   connect(addBtn, &QPushButton::clicked, this, [this] {
     ZtoryModel::instance()->addAsset("Character", QObject::tr("New asset"));
-    persistViaBoard();
+    persistAssets();
   });
   connect(remBtn, &QPushButton::clicked, this, [this] {
     int row = m_assetTable->currentRow();
     if (row < 0) return;
     ZtoryModel::instance()->removeAssetAt(row);
-    persistViaBoard();
+    persistAssets();
   });
   connect(m_assetTable, &QTableWidget::cellClicked, this,
           &ZtoryProductionPanel::onAssetCellClicked);
@@ -520,7 +523,7 @@ void ZtoryProductionPanel::onAssetItemChanged(QTableWidgetItem *it) {
   if (row < 0 || row >= m->assetCount()) return;
   if (it->column() == 1) {  // Name
     m->assets()[row].name = it->text().trimmed();
-    persistViaBoard();
+    persistAssets();
   }
 }
 
@@ -534,7 +537,7 @@ void ZtoryProductionPanel::onAssetCellClicked(int row, int col) {
     QAction *ch = menu.exec(QCursor::pos());
     if (!ch) return;
     m->assets()[row].type = ch->text();
-    persistViaBoard();
+    persistAssets();
     rebuildAssets();
     return;
   }
@@ -600,7 +603,7 @@ void ZtoryProductionPanel::onAssetContextMenu(const QPoint &pos) {
     }
   }
   TUndoManager::manager()->endBlock();
-  persistViaBoard();
+  persistAssets();
   rebuildAssets();
 }
 
@@ -621,13 +624,13 @@ void ZtoryProductionPanel::editAssetCell(int row, int col) {
   if (r.kind == TaskEditResult::Status) {
     if (r.status == oldStatus) return;
     m->setAssetTaskStatus(row, taskType, r.status);
-    persistViaBoard();
+    persistAssets();
     TUndoManager::manager()->add(
         new AssetStatusUndo(uuid, taskType, oldStatus, r.status));
   } else if (r.kind == TaskEditResult::Assignees) {
     if (r.assignees == oldAssign) return;
     m->setAssetTaskAssignees(row, taskType, r.assignees);
-    persistViaBoard();
+    persistAssets();
     TUndoManager::manager()->add(
         new AssetAssigneeUndo(uuid, taskType, oldAssign, r.assignees));
   }

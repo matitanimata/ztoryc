@@ -2252,27 +2252,8 @@ void StoryboardPanel::saveZtoryc() {
     // NOTE: the team roster now lives in the project-level DB
     // (production.ztrack), not in the per-scene .ztoryc. The <team> block is
     // still READ on load (loadZtoryc) for one-time migration of legacy scenes.
-    // Assets (project-level) with their own task pipeline.
-    if (!model->assets().empty()) {
-      xml.writeStartElement("assets");
-      for (const Asset &as : model->assets()) {
-        xml.writeStartElement("asset");
-        xml.writeAttribute("uuid", as.uuid);
-        xml.writeAttribute("type", as.type);
-        xml.writeAttribute("name", as.name);
-        if (!as.tags.isEmpty()) xml.writeAttribute("tags", as.tags.join("|"));
-        for (auto it = as.tasks.constBegin(); it != as.tasks.constEnd(); ++it) {
-          xml.writeStartElement("atask");
-          xml.writeAttribute("type",   it.key());
-          xml.writeAttribute("status", ZtoryModel::taskStatusLabel(it.value().status));
-          if (!it.value().assignees.isEmpty())
-            xml.writeAttribute("assignee", it.value().assignees.join(", "));
-          xml.writeEndElement();
-        }
-        xml.writeEndElement();
-      }
-      xml.writeEndElement();
-    }
+    // Assets now live in the project DB (production.ztrack), not the .ztoryc.
+    // The <assets> block is still READ on load for one-time migration.
   }
   // Imported screenplay (Script panel) — project-relative path.
   {
