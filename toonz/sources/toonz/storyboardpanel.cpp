@@ -1136,7 +1136,10 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_techniqueButton->setIcon(createQIcon("ztoryc_technique"));
   m_techniqueButton->setIconSize(QSize(20, 20));
   m_techniqueButton->setFixedSize(28, 28);
-  m_techniqueButton->setToolTip(tr("Set Technique for selected shot(s)"));
+  m_techniqueButton->setToolTip(tr("Asset breakdown tagging (coming soon)"));
+  // Workflow is now set per-shot in the Production Tracker (Shots tab). The
+  // button is kept (disabled) as the future home for asset breakdown tagging.
+  m_techniqueButton->setEnabled(false);
   m_techniqueButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
 
     m_exportShotsButton = new QToolButton();
@@ -2176,6 +2179,13 @@ void StoryboardPanel::pullTrackingFromBoard() {
     md.technique = bd.technique;
     md.tasks     = bd.tasks;
   }
+}
+
+QPixmap StoryboardPanel::firstPanelThumbnail(int shotIdx) const {
+  if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return QPixmap();
+  const Shot &shot = m_shots[shotIdx];
+  if (shot.panels.empty() || !shot.panels[0]) return QPixmap();
+  return shot.panels[0]->previewPixmap();
 }
 
 void StoryboardPanel::saveZtoryc() {

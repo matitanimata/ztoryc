@@ -25,6 +25,7 @@
 #include <QPushButton>
 #include <QHBoxLayout>
 #include <QFormLayout>
+#include <QProgressBar>
 
 #include <cassert>
 
@@ -56,12 +57,14 @@ const TaskStatus kAllStatuses[] = {TaskStatus::Todo,  TaskStatus::Ready,
 // Persist the .ztoryc through the Board (the in-app source of truth lives in
 // the model; the Board owns the save path). No-op if the Board is closed —
 // the model still holds the change, it just isn't written until next save.
-void persistViaBoard() {
+StoryboardPanel *findBoard() {
   for (QWidget *w : QApplication::allWidgets())
-    if (auto *board = qobject_cast<StoryboardPanel *>(w)) {
-      board->saveZtoryc();
-      return;
-    }
+    if (auto *b = qobject_cast<StoryboardPanel *>(w)) return b;
+  return nullptr;
+}
+
+void persistViaBoard() {
+  if (auto *b = findBoard()) b->saveZtoryc();
 }
 
 // Undo for a single per-task status edit. Keyed by stable shotLabel so it
@@ -676,14 +679,20 @@ void ZtoryProductionPanel::rebuild() {
 
   m_taskCols = m->spreadsheetTaskColumns();
   const QStringList &taskCols = m_taskCols;
-  const int kFixed = 1;  // "Shot" column
+  const int kFixed = 6;  // Shot, Thumb, Frames, Sec/Fr, Workflow, Done
+  const int fps    = m->fps() > 0 ? m->fps() : 25;
 
+  // Remove progress-bar cell widgets from the previous build (clear() doesn't).
+  for (int r = 0; r < m_table->rowCount(); r++) m_table->removeCellWidget(r, 5);
   m_table->clear();
   m_table->setColumnCount(kFixed + taskCols.size());
   m_table->setRowCount(m->shotCount());
+  m_table->setIconSize(QSize(72, 40));
+  StoryboardPanel *board = findBoard();
 
   QStringList headers;
-  headers << QObject::tr("Shot");
+  headers << QObject::tr("Shot") << QString() << QObject::tr("Frames")
+          << QObject::tr("Sec/Fr") << QObject::tr("Workflow") << QObject::tr("Done");
   headers += taskCols;
   m_table->setHorizontalHeaderLabels(headers);
 
@@ -697,7 +706,55 @@ void ZtoryProductionPanel::rebuild() {
     shotItem->setFont(f);
     m_table->setItem(i, 0, shotItem);
 
+    // Thumbnail of the first panel (blank until the Board has rendered it).
+    auto *thumb = new QTableWidgetItem();
+    thumb->setFlags(Qt::ItemIsEnabled);
+    QPixmap pm = board ? board->firstPanelThumbnail(i) : QPixmap();
+    if (!pm.isNull())
+      thumb->setData(Qt::DecorationRole,
+                     pm.scaled(72, 40, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    m_table->setItem(i, 1, thumb);
+
+    const int frames = sd.totalDuration();
+    auto *frItem = new QTableWidgetItem(QString::number(frames));
+    frItem->setFlags(Qt::ItemIsEnabled);
+    frItem->setTextAlignment(Qt::AlignCenter);
+    m_table->setItem(i, 2, frItem);
+    auto *tcItem = new QTableWidgetItem(
+        QString("%1:%2").arg(frames / fps).arg(frames % fps, 2, 10, QChar('0')));
+    tcItem->setFlags(Qt::ItemIsEnabled);
+    tcItem->setTextAlignment(Qt::AlignCenter);
+    m_table->setItem(i, 3, tcItem);
+
+    // Workflow (effective technique) — click to change (col 4).
+    auto *wfItem = new QTableWidgetItem(m->techniqueForShot(i));
+    wfItem->setFlags(Qt::ItemIsEnabled);
+    wfItem->setTextAlignment(Qt::AlignCenter);
+    wfItem->setToolTip(QObject::tr("Click to set this shot's workflow"));
+    m_table->setItem(i, 4, wfItem);
+
     const QStringList shotTasks = m->taskTypesForShot(i);
+    int done = 0;
+    for (const QString &tt : shotTasks)
+      if (sd.tasks.value(tt).status == TaskStatus::Done) done++;
+    if (!shotTasks.isEmpty()) {
+      auto *bar = new QProgressBar();
+      bar->setRange(0, shotTasks.size());
+      bar->setValue(done);
+      bar->setFormat(QString("%1/%2").arg(done).arg(shotTasks.size()));
+      bar->setAlignment(Qt::AlignCenter);
+      bar->setMaximumHeight(18);
+      bar->setStyleSheet(
+          "QProgressBar{border:1px solid #555;border-radius:3px;background:#333;"
+          "color:#fff;font-size:10px;}"
+          "QProgressBar::chunk{background:#22D160;border-radius:2px;}");
+      m_table->setCellWidget(i, 5, bar);
+    } else {
+      auto *empty = new QTableWidgetItem();
+      empty->setFlags(Qt::ItemIsEnabled);
+      m_table->setItem(i, 5, empty);
+    }
+
     for (int c = 0; c < taskCols.size(); c++) {
       const QString &tt = taskCols[c];
       auto *it = new QTableWidgetItem();
@@ -731,14 +788,31 @@ void ZtoryProductionPanel::rebuild() {
 //-----------------------------------------------------------------------------
 
 void ZtoryProductionPanel::onCellClicked(int row, int col) {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (row < 0 || row >= m->shotCount()) return;
+  if (col == 4) {  // Workflow picker
+    QMenu menu(this);
+    QAction *defA = menu.addAction(
+        QObject::tr("(project default: %1)").arg(m->defaultTechnique()));
+    defA->setData(QString());  // empty technique = use project default
+    menu.addSeparator();
+    for (const Technique &t : m->techniques())
+      menu.addAction(t.name)->setData(t.name);
+    QAction *ch = menu.exec(QCursor::pos());
+    if (!ch) return;
+    m->shot(row).technique = ch->data().toString();
+    persistViaBoard();
+    emit m->taskStatusChanged();  // columns + progress refresh
+    return;
+  }
   editCell(row, col);
 }
 
 //-----------------------------------------------------------------------------
 
 void ZtoryProductionPanel::editCell(int row, int col) {
-  const int kFixed = 1;
-  if (col < kFixed) return;  // "Shot" label column, not editable
+  const int kFixed = 6;
+  if (col < kFixed) return;  // fixed columns (Shot/Thumb/Frames/Sec-Fr/Workflow/Done)
   const int taskIdx = col - kFixed;
   if (taskIdx < 0 || taskIdx >= m_taskCols.size()) return;
 
