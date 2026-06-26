@@ -2238,32 +2238,15 @@ void StoryboardPanel::saveZtoryc() {
   // Project metadata (production + title entered by user at scene creation).
   {
     ZtoryModel *model = ZtoryModel::instance();
-    if (!model->production().isEmpty() || !model->title().isEmpty() ||
-        !model->episode().isEmpty() ||
-        !model->pdfLogoPath().isEmpty() || model->pdfNoLogo() ||
-        !model->defaultTechnique().isEmpty()) {
+    // production/title/episode/season/defaultTechnique/techniques now live in
+    // the project DB (production.ztrack). The .ztoryc keeps only the per-scene
+    // PDF logo settings here, and still READS the old attrs for migration.
+    if (!model->pdfLogoPath().isEmpty() || model->pdfNoLogo()) {
       xml.writeStartElement("project");
-      xml.writeAttribute("production", model->production());
-      xml.writeAttribute("title",      model->title());
-      if (!model->episode().isEmpty())
-        xml.writeAttribute("episode", model->episode());
-      if (!model->defaultTechnique().isEmpty())
-        xml.writeAttribute("defaultTechnique", model->defaultTechnique());
       if (!model->pdfLogoPath().isEmpty())
         xml.writeAttribute("pdfLogo", model->pdfLogoPath());
       if (model->pdfNoLogo())
         xml.writeAttribute("pdfNoLogo", "1");
-      xml.writeEndElement();
-    }
-    // Technique presets (editable) — persisted so user edits survive reload.
-    if (!model->techniques().empty()) {
-      xml.writeStartElement("techniques");
-      for (const Technique &t : model->techniques()) {
-        xml.writeStartElement("technique");
-        xml.writeAttribute("name",  t.name);
-        xml.writeAttribute("tasks", t.taskTypes.join("|"));
-        xml.writeEndElement();
-      }
       xml.writeEndElement();
     }
     // NOTE: the team roster now lives in the project-level DB
@@ -2403,8 +2386,8 @@ void StoryboardPanel::loadZtoryc() {
   QString path = ztoryPath();
   if (path.isEmpty()) {
     ZtoryModel::instance()->setScriptFile(scriptFromFile);
-    ZtoryModel::instance()->setTeam(QStringList());
-    ZtoryModel::instance()->assets().clear();
+    ZtoryModel::instance()->resetProjectLevelDefaults();
+    ZtoryModel::instance()->loadProjectDb();  // load this project's DB (or migrate defaults)
     m_loadingZtoryc = false;
     emit ZtoryModel::instance()->productionReloaded();
     return;
@@ -2412,8 +2395,8 @@ void StoryboardPanel::loadZtoryc() {
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
     ZtoryModel::instance()->setScriptFile(scriptFromFile);
-    ZtoryModel::instance()->setTeam(QStringList());
-    ZtoryModel::instance()->assets().clear();
+    ZtoryModel::instance()->resetProjectLevelDefaults();
+    ZtoryModel::instance()->loadProjectDb();  // load this project's DB (or migrate defaults)
     m_loadingZtoryc = false;
     emit ZtoryModel::instance()->productionReloaded();
     return;
@@ -2421,20 +2404,17 @@ void StoryboardPanel::loadZtoryc() {
   // File exists: reset project metadata so stale values from a previous scene
   // or creation flow don't bleed into this reload. They will be repopulated
   // below if the file contains a <project> element.
-  ZtoryModel::instance()->setProduction("");
-  ZtoryModel::instance()->setTitle("");
-  ZtoryModel::instance()->setEpisode("");
   ZtoryModel::instance()->setPdfLogoPath("");
   ZtoryModel::instance()->setPdfNoLogo(false);
   // Start each scene's sequence list fresh so sequences never leak across
   // scenes. Old files (no <sequence>) leave it empty → renumberAll() recreates
   // a default sequence if needed.
   ZtoryModel::instance()->sequences().clear();
-  // Same for the production roster + assets: a scene (or another project's
-  // scene) without a <team>/<assets> block must NOT inherit the previous
-  // scene's data. They are repopulated below if the file contains them.
-  ZtoryModel::instance()->setTeam(QStringList());
-  ZtoryModel::instance()->assets().clear();
+  // Reset ALL project-level data (production/season/title/episode/team/assets/
+  // techniques) so nothing leaks from the previous scene/project. The .ztoryc
+  // below repopulates it for migration; loadProjectDb() then overrides from the
+  // project DB (or migrates these defaults if no DB exists yet).
+  ZtoryModel::instance()->resetProjectLevelDefaults();
 
   QXmlStreamReader xml(&file);
   int si = -1, pi = -1, ai = -1;
@@ -6185,7 +6165,8 @@ void StoryboardPanel::onStoryboardSettings() {
   model->setEpisode(epEdit->text().trimmed());
   if (!techCombo->currentText().isEmpty())
     model->setDefaultTechnique(techCombo->currentText());
-  saveZtoryc();
+  saveZtoryc();                 // numbering / scene-level
+  model->saveProjectDb();       // production/title/episode/defaultTechnique are project-level
   emit model->productionReloaded();  // refresh the Production Tracker's Project tab
 }
 

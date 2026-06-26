@@ -382,16 +382,18 @@ void ZtoryProductionPanel::applyTeamFromList() {
 QWidget *ZtoryProductionPanel::buildProjectTab() {
   QWidget *w  = new QWidget(this);
   auto *form  = new QFormLayout(w);
-  m_prodEdit  = new QLineEdit(w);
-  m_titleEdit = new QLineEdit(w);
-  m_epEdit    = new QLineEdit(w);
-  m_techCombo = new QComboBox(w);
+  m_prodEdit   = new QLineEdit(w);
+  m_seasonEdit = new QLineEdit(w);
+  m_titleEdit  = new QLineEdit(w);
+  m_epEdit     = new QLineEdit(w);
+  m_techCombo  = new QComboBox(w);
   form->addRow(QObject::tr("Production:"),        m_prodEdit);
-  form->addRow(QObject::tr("Title:"),             m_titleEdit);
+  form->addRow(QObject::tr("Season:"),            m_seasonEdit);
   form->addRow(QObject::tr("Episode:"),           m_epEdit);
+  form->addRow(QObject::tr("Title:"),             m_titleEdit);
   form->addRow(QObject::tr("Default technique:"), m_techCombo);
 
-  for (QLineEdit *e : {m_prodEdit, m_titleEdit, m_epEdit})
+  for (QLineEdit *e : {m_prodEdit, m_seasonEdit, m_titleEdit, m_epEdit})
     connect(e, &QLineEdit::editingFinished, this,
             [this] { applyProjectFromFields(); });
   connect(m_techCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -404,6 +406,7 @@ void ZtoryProductionPanel::reloadProjectTab() {
   m_projLoading = true;
   ZtoryModel *m = ZtoryModel::instance();
   m_prodEdit->setText(m->production());
+  m_seasonEdit->setText(m->season());
   m_titleEdit->setText(m->title());
   m_epEdit->setText(m->episode());
   m_techCombo->clear();
@@ -417,11 +420,12 @@ void ZtoryProductionPanel::applyProjectFromFields() {
   if (m_projLoading || !m_prodEdit) return;
   ZtoryModel *m = ZtoryModel::instance();
   m->setProduction(m_prodEdit->text().trimmed());
+  m->setSeason(m_seasonEdit->text().trimmed());
   m->setTitle(m_titleEdit->text().trimmed());
   m->setEpisode(m_epEdit->text().trimmed());
   if (!m_techCombo->currentText().isEmpty())
     m->setDefaultTechnique(m_techCombo->currentText());
-  persistViaBoard();
+  m->saveProjectDb();  // project-meta lives in the project DB
   rebuild();  // default-technique change may alter which task columns apply
 }
 
@@ -674,14 +678,14 @@ QWidget *ZtoryProductionPanel::buildWorkflowsTab() {
     auto &techs = ZtoryModel::instance()->techniques();
     if (row >= 0 && row < (int)techs.size()) {
       techs[row].name = it->text().trimmed();
-      persistViaBoard();
+      ZtoryModel::instance()->saveProjectDb();
       reloadProjectTab();  // default-technique combo reflects the new name
     }
   });
   connect(addT, &QPushButton::clicked, this, [this] {
     ZtoryModel::instance()->techniques().push_back(
         Technique{QObject::tr("New workflow"), {}});
-    persistViaBoard();
+    ZtoryModel::instance()->saveProjectDb();
     reloadWorkflowsTab();
     m_techList->setCurrentRow(m_techList->count() - 1);
   });
@@ -690,7 +694,7 @@ QWidget *ZtoryProductionPanel::buildWorkflowsTab() {
     auto &techs = ZtoryModel::instance()->techniques();
     if (row < 0 || row >= (int)techs.size()) return;
     techs.erase(techs.begin() + row);
-    persistViaBoard();
+    ZtoryModel::instance()->saveProjectDb();
     reloadWorkflowsTab();
     emit ZtoryModel::instance()->taskStatusChanged();  // shot columns may change
   });
@@ -750,7 +754,7 @@ void ZtoryProductionPanel::applyTaskTypesToTechnique() {
     if (!s.isEmpty()) tt << s;
   }
   techs[row].taskTypes = tt;
-  persistViaBoard();
+  ZtoryModel::instance()->saveProjectDb();
   emit ZtoryModel::instance()->taskStatusChanged();  // shot matrix columns refresh
 }
 

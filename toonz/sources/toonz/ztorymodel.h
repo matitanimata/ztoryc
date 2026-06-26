@@ -203,6 +203,8 @@ class ZtoryModel : public QObject {
   QString                           m_production;  // user-defined production name
   QString                           m_title;       // user-defined project title
   QString                           m_episode;     // user-defined episode
+  QString                           m_season;      // user-defined season (e.g. CS26)
+  QString                           m_namingPattern; // export naming convention (B3d)
   std::vector<Technique>            m_techniques;       // editable presets (seeded with defaults)
   QString                           m_defaultTechnique; // project default technique name
   QStringList                       m_team;             // project roster (names) for the assignee picker
@@ -245,6 +247,10 @@ public:
   void setProduction(const QString &s) { m_production = s; }
   void setTitle(const QString &s)      { m_title = s; }
   void setEpisode(const QString &s)    { m_episode = s; }
+  QString season() const { return m_season; }
+  void    setSeason(const QString &s) { m_season = s; }
+  QString namingPattern() const { return m_namingPattern; }
+  void    setNamingPattern(const QString &s) { m_namingPattern = s; }
   // Project team roster (people names) used by the Production Tracker's
   // assignee picker. Project-level metadata (persisted in the .ztoryc for now).
   const QStringList &team() const { return m_team; }
@@ -254,6 +260,10 @@ public:
   // project's scenes). Assets/techniques/shots will migrate here next.
   void loadProjectDb();  // project file → model (authoritative); migrates if absent
   void saveProjectDb();  // model → project file
+  // Clear/re-seed all project-level fields (production/season/title/episode/team/
+  // assets/techniques) so data never leaks across scenes/projects. Called on
+  // scene switch BEFORE the .ztoryc migration read and loadProjectDb().
+  void resetProjectLevelDefaults();
 
   // Set a shot's per-task status (in-app source of truth for production
   // tracking). Emits taskStatusChanged() so the Production Tracker refreshes;

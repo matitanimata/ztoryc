@@ -36,6 +36,7 @@ class ZtoryProductionPanel final : public TPanel {
   bool          m_teamLoading = false;  // guard against apply during reload
   // Project tab
   QLineEdit    *m_prodEdit = nullptr, *m_titleEdit = nullptr, *m_epEdit = nullptr;
+  QLineEdit    *m_seasonEdit = nullptr;
   QComboBox    *m_techCombo = nullptr;
   bool          m_projLoading = false;
   // Assets tab

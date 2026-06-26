@@ -234,6 +234,19 @@ void ZtoryModel::setAssetTaskAssigneesByUuid(const QString &uuid,
     if (m_assets[i].uuid == uuid) { setAssetTaskAssignees(i, taskType, assignees); return; }
 }
 
+void ZtoryModel::resetProjectLevelDefaults() {
+  m_production.clear();
+  m_season.clear();
+  m_title.clear();
+  m_episode.clear();
+  m_namingPattern.clear();
+  m_defaultTechnique.clear();
+  m_team.clear();
+  m_assets.clear();
+  m_techniques.clear();
+  seedDefaultTechniques();  // re-seed presets + defaultTechnique = "Tradigital"
+}
+
 // ─── Project DB (production.ztrack) — B3 pilot: team roster ───────────────────
 
 namespace {
@@ -254,6 +267,17 @@ void ZtoryModel::saveProjectDb() {
   xml.writeStartDocument();
   xml.writeStartElement("ztrack");
   xml.writeAttribute("version", "1");
+
+  xml.writeStartElement("project");
+  xml.writeAttribute("production", m_production);
+  xml.writeAttribute("season",     m_season);
+  xml.writeAttribute("episode",    m_episode);
+  xml.writeAttribute("title",      m_title);
+  xml.writeAttribute("defaultTechnique", m_defaultTechnique);
+  if (!m_namingPattern.isEmpty())
+    xml.writeAttribute("namingPattern", m_namingPattern);
+  xml.writeEndElement();
+
   xml.writeStartElement("team");
   for (const QString &p : m_team) {
     xml.writeStartElement("person");
@@ -261,6 +285,16 @@ void ZtoryModel::saveProjectDb() {
     xml.writeEndElement();
   }
   xml.writeEndElement();  // team
+
+  xml.writeStartElement("techniques");
+  for (const Technique &t : m_techniques) {
+    xml.writeStartElement("technique");
+    xml.writeAttribute("name",  t.name);
+    xml.writeAttribute("tasks", t.taskTypes.join("|"));
+    xml.writeEndElement();
+  }
+  xml.writeEndElement();  // techniques
+
   xml.writeEndElement();  // ztrack
   xml.writeEndDocument();
 }
@@ -270,21 +304,39 @@ void ZtoryModel::loadProjectDb() {
   if (fp == TFilePath()) return;
   QFile file(QString::fromStdWString(fp.getWideString()));
   if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-    // No project DB yet: migrate the current team (loaded from the .ztoryc) by
-    // creating the file, so it becomes the project-wide source from now on.
-    if (!m_team.isEmpty()) saveProjectDb();
+    // No project DB yet: migrate the current project-level data (loaded from the
+    // .ztoryc) by creating the file, so it becomes the project-wide source.
+    saveProjectDb();
     return;
   }
   QStringList team;
+  std::vector<Technique> techs;
   QXmlStreamReader xml(&file);
   while (!xml.atEnd()) {
     xml.readNext();
-    if (xml.isStartElement() && xml.name() == QLatin1String("person")) {
+    if (!xml.isStartElement()) continue;
+    if (xml.name() == QLatin1String("project")) {
+      auto a = xml.attributes();
+      m_production = a.value("production").toString();
+      m_season     = a.value("season").toString();
+      m_episode    = a.value("episode").toString();
+      m_title      = a.value("title").toString();
+      if (a.hasAttribute("defaultTechnique"))
+        m_defaultTechnique = a.value("defaultTechnique").toString();
+      if (a.hasAttribute("namingPattern"))
+        m_namingPattern = a.value("namingPattern").toString();
+    } else if (xml.name() == QLatin1String("person")) {
       QString nm = xml.attributes().value("name").toString().trimmed();
       if (!nm.isEmpty()) team << nm;
+    } else if (xml.name() == QLatin1String("technique")) {
+      Technique t;
+      t.name      = xml.attributes().value("name").toString();
+      t.taskTypes = xml.attributes().value("tasks").toString().split('|', Qt::SkipEmptyParts);
+      if (!t.name.isEmpty()) techs.push_back(t);
     }
   }
-  m_team = team;  // project file is authoritative for the team
+  m_team = team;  // project file is authoritative
+  if (!techs.empty()) m_techniques = techs;
 }
 
 const QStringList &ZtoryModel::canonicalTaskOrder() {
