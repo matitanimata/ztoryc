@@ -50,11 +50,14 @@
 #include <QFrame>
 #include <QGroupBox>
 #include <QPainter>
+#include <QRegularExpression>
+#include <QFile>
 #include <QScrollBar>
 #include <QMouseEvent>
 #include <QDesktopServices>
 #include <QCloseEvent>
 #include <QCheckBox>
+#include <QFileDialog>
 
 using namespace std;
 using namespace DVGui;
@@ -103,10 +106,23 @@ QString removeZeros(QString srcStr) {
 */
 //-----------------------------------------------------------------------------
 
+// Live instances (any mode), used to avoid spawning duplicate popups when the
+// project is changed from the file browser tree (makeCurrent()).
+static QList<StartupPopup *> s_instances;
+
+StartupPopup *StartupPopup::visibleDefaultInstance() {
+  for (StartupPopup *p : s_instances)
+    if (p && p->isVisible()) return p;
+  return nullptr;
+}
+
+StartupPopup::~StartupPopup() { s_instances.removeAll(this); }
+
 StartupPopup::StartupPopup(Mode mode)
     : Dialog(TApp::instance()->getMainWindow(), true, true, "StartupPopup")
     , m_mode(mode) {
   setObjectName("StartupPopup");
+  s_instances.append(this);
   switch (mode) {
     case CreateMode:      setWindowTitle(tr("Create New Scene"));        break;
     case LoadMode:        setWindowTitle(tr("Load Scene"));              break;
@@ -1441,6 +1457,9 @@ void StartupPopup::onOpenProjectButtonPressed() {
   TFilePath cfp = pm->getCurrentProject()->getProjectFolder();
   bpc->openPopup(QStringList(), true, cfp.getQString(), this);
   if (bpc->isExecute()) directory = bpc->getPath(false);
+  // Note: if the user picked a project by clicking its red dot, makeCurrent()
+  // already changed the project and refreshed this popup, then rejected the
+  // browser — so isExecute() is false and the block below is skipped.
 
   if (!directory.isEmpty()) {
     TFilePath fp(directory);
@@ -1454,7 +1473,28 @@ void StartupPopup::onOpenProjectButtonPressed() {
     setupProjectChange();
     updateProjectCB();
     refreshExistingScenes();
+    // Switch to "Open Existing Scene" tab so the user can pick a scene.
+    m_scenesTab->setCurrentIndex(0);
+    // Re-show the popup only if we ended up on an untitled scene (the normal
+    // case after a project switch). If a scene was already loaded and onSceneChanged
+    // already hid the popup, don't re-open it.
+    if (TApp::instance()->getCurrentScene()->getScene()->isUntitled())
+      show();
   }
+}
+
+//-----------------------------------------------------------------------------
+
+void StartupPopup::refreshAfterProjectChange() {
+  // The current project was already switched (and a new scene created) by the
+  // caller; just resync the UI and keep this popup as the single visible window.
+  updateProjectCB();
+  refreshExistingScenes();
+  // Land on the tab that matches this popup's mode (Create uses tab 1).
+  m_scenesTab->setCurrentIndex(m_mode == CreateMode ? 1 : 0);
+  show();
+  raise();
+  activateWindow();
 }
 
 //-----------------------------------------------------------------------------
@@ -1741,12 +1781,32 @@ void StartupScenesList::addScene(const QString &name, const QString &path) {
         generateIconPixmap("new_scene", 1.0, m_iconSize, Qt::KeepAspectRatio);
   else
     pixmap = createScenePreview(name, TFilePath(path));
-  QIcon icon(pixmap);
 
+  // Storyboard badge: if a .ztoryc sidecar exists, paint an "SB" pill over the
+  // thumbnail so the user can tell storyboard scenes from regular ones.
+  if (path != ":") {
+    QString ztoryPath = path;
+    ztoryPath.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
+    if (QFile::exists(ztoryPath) && !pixmap.isNull()) {
+      QPainter p(&pixmap);
+      p.setRenderHint(QPainter::Antialiasing);
+      const int pad = 3, h = 14, r = 4;
+      QString label("SB");
+      QFont f = p.font(); f.setBold(true); f.setPixelSize(9); p.setFont(f);
+      int w = p.fontMetrics().horizontalAdvance(label) + pad * 2 + 2;
+      QRect badge(pad, pixmap.height() - h - pad, w, h);
+      p.setPen(Qt::NoPen);
+      p.setBrush(QColor(255, 160, 0, 220));
+      p.drawRoundedRect(badge, r, r);
+      p.setPen(Qt::white);
+      p.drawText(badge, Qt::AlignCenter, label);
+    }
+  }
+
+  QIcon icon(pixmap);
   QListWidgetItem *lw = new QListWidgetItem(name);
   lw->setData(Qt::UserRole, path);
   lw->setToolTip(name);
-
   lw->setIcon(icon);
   addItem(lw);
 }

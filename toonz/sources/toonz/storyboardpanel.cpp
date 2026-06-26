@@ -2088,6 +2088,9 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   if (!px.isNull()) {
     if (m_showLights) ztoryApplyLightOverlay(px, pd);
     shot.panels[panelIdx]->setPreviewPixmap(px);
+    // Keep Production Tracker thumbnail cache warm: panel 0 is the shot thumbnail.
+    if (panelIdx == 0 && !shot.data.uuid.isEmpty())
+      ZtoryModel::instance()->updateThumbCache(shot.data.uuid, px);
   }
 }
 
@@ -2142,19 +2145,56 @@ void StoryboardPanel::syncWidgetsToData() {
 // so panel edits round-trip (otherwise the tracker writes the model while
 // save/export read the Board copy → edits silently lost).
 
+// Generate a UUID namespaced to the storyboard source file.
+// UUID v5 (SHA1-based): deterministic from (namespace, seed) pair.
+// Namespace = v5(root, sourceFilename) — unique per storyboard file.
+// Seed      = a fresh random UUID — unique per shot within that file.
+// Result    = UUID that is unique globally AND tied to its storyboard.
+// Even if two storyboards share the same random seed (due to file copy),
+// different namespaces yield different final UUIDs.
+static QString makeSourcedUuid(const QString &sourceFile) {
+  static const QUuid kRoot("6a1c7e2f-3b4d-5e6f-7a8b-9c0d1e2f3a4b");
+  QUuid ns      = QUuid::createUuidV5(kRoot, sourceFile);
+  QUuid shotSeed = QUuid::createUuid();  // random, unique per shot
+  return QUuid::createUuidV5(ns, shotSeed.toString()).toString(QUuid::WithoutBraces);
+}
+
 void StoryboardPanel::ensureShotUuids() {
   ZtoryModel *m = ZtoryModel::instance();
+
+  // Build a (uuid → source) map from the project DB to detect cross-storyboard
+  // uuid collisions (happens when a .ztoryc is file-copied to a new storyboard).
+  QString mySource = QFileInfo(ztoryPath()).fileName();
+  QHash<QString, QString> dbUuidSource;
+  for (const ProjectShot &ps : m->projectShots())
+    dbUuidSource[ps.uuid] = ps.source;
+
+  auto resolveUuid = [&](QString &id) {
+    bool needNew = id.isEmpty();
+    if (!needNew) {
+      auto it = dbUuidSource.find(id);
+      if (it != dbUuidSource.end() && it.value() != mySource)
+        needNew = true;  // collision: owned by another storyboard
+    }
+    if (needNew) {
+      // Remove the stale thumbnail so the old file doesn't mislead future loads.
+      m->evictThumbFromDisk(id);
+      id = makeSourcedUuid(mySource);
+    }
+  };
+
   int n = qMin((int)m_shots.size(), m->shotCount());
   for (int i = 0; i < n; i++) {
     QString &bu = m_shots[i].data.uuid;
     QString &mu = m->shot(i).uuid;
     QString id  = !bu.isEmpty() ? bu : mu;
-    if (id.isEmpty()) id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    bu = mu = id;  // keep both copies consistent
+    resolveUuid(id);
+    bu = mu = id;
   }
-  for (int i = n; i < (int)m_shots.size(); i++)
-    if (m_shots[i].data.uuid.isEmpty())
-      m_shots[i].data.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  for (int i = n; i < (int)m_shots.size(); i++) {
+    QString &bu = m_shots[i].data.uuid;
+    resolveUuid(bu);
+  }
 }
 
 void StoryboardPanel::pushTrackingToBoard() {
@@ -2228,6 +2268,27 @@ void StoryboardPanel::saveZtoryc() {
   }
   syncWidgetsToData();
   QString path = m_currentZtoryPath;
+
+  // First-time creation: ask user whether to register as project storyboard.
+  // Only ask once per session (m_suppressProjectPublication sticky until reload).
+  // Guard: skip for empty/untitled scenes (no shots yet — nothing to register).
+  if (!QFile::exists(path) && !m_suppressProjectPublication && !m_shots.empty()) {
+    // Only prompt if the project DB exists (i.e., there IS a multi-scene project).
+    if (!ZtoryModel::instance()->projectDbPath().isEmpty()) {
+      QMessageBox ask(this);
+      ask.setWindowTitle(tr("Register as storyboard?"));
+      ask.setText(tr("Add this scene to the project as a storyboard?\n"
+                     "Its shots will appear in the Production Tracker."));
+      ask.setIcon(QMessageBox::Question);
+      auto *yesBtn = ask.addButton(tr("Yes — storyboard"), QMessageBox::AcceptRole);
+      auto *noBtn  = ask.addButton(tr("No — local only"),  QMessageBox::RejectRole);
+      Q_UNUSED(noBtn)
+      ask.exec();
+      if (ask.clickedButton() != yesBtn)
+        m_suppressProjectPublication = true;
+    }
+  }
+
   QFile file(path);
   if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
   QXmlStreamWriter xml(&file);
@@ -2357,12 +2418,20 @@ void StoryboardPanel::saveZtoryc() {
   xml.writeEndElement();
   xml.writeEndDocument();
   file.close();
-  // Publish structural metadata to the project DB. saveZtoryc() always writes
-  // role="storyboard", so this is always safe here. The guard mirrors loadZtoryc
-  // for the future case where saveZtoryc might be called on a role="shot" scene.
-  QString sourceFile = QFileInfo(path).fileName();
-  if (!sourceFile.isEmpty())
-    ZtoryModel::instance()->publishShotsToProjectDb(sourceFile);
+  // Publish structural metadata to the project DB (unless user opted out).
+  if (!m_suppressProjectPublication) {
+    QString sourceFile = QFileInfo(path).fileName();
+    if (!sourceFile.isEmpty()) {
+      ZtoryModel::instance()->publishShotsToProjectDb(sourceFile);
+      // Update thumbnail cache so Production Tracker keeps thumbs after scene switch.
+      ZtoryModel *m = ZtoryModel::instance();
+      for (int si = 0; si < (int)m_shots.size(); si++) {
+        QPixmap pm = firstPanelThumbnail(si);
+        if (!pm.isNull())
+          m->updateThumbCache(m_shots[si].data.uuid, pm);
+      }
+    }
+  }
 }
 
 void StoryboardPanel::loadZtoryc() {
@@ -2418,9 +2487,13 @@ void StoryboardPanel::loadZtoryc() {
     xml.readNext();
     if (xml.isStartElement()) {
       if (xml.name() == QLatin1String("ztoryc")) {
-        // Root element: read role attribute (absent in legacy files = storyboard).
-        QString r = xml.attributes().value("role").toString();
+        // Root element: read role + back-link attributes.
+        auto a = xml.attributes();
+        QString r = a.value("role").toString();
         if (!r.isEmpty()) sceneRole = r;
+        m_shotBackLinkUuid      = a.value("projectShot").toString();
+        m_shotBackLinkProject   = a.value("project").toString();
+        m_shotBackLinkTaskStage = QString();  // read from <project> below
       } else if (xml.name() == QLatin1String("project")) {
         auto a = xml.attributes();
         ZtoryModel::instance()->setProduction(a.value("production").toString());
@@ -2431,6 +2504,9 @@ void StoryboardPanel::loadZtoryc() {
         if (a.hasAttribute("defaultTechnique"))
           ZtoryModel::instance()->setDefaultTechnique(
               a.value("defaultTechnique").toString());
+        // B3c: read task stage from shot scene's <project> element.
+        if (a.hasAttribute("taskStage"))
+          m_shotBackLinkTaskStage = a.value("taskStage").toString();
       }
       else if (xml.name() == QLatin1String("technique")) {
         Technique t;
@@ -2713,6 +2789,38 @@ void StoryboardPanel::loadZtoryc() {
     saveZtoryc();
     m_currentZtoryPath.clear();  // refreshFromScene will set it authoritatively
   }
+  // role="shot" (B3c): load the project DB from the stored back-link path and
+  // advance the matching shot's task to WIP if it was Todo/Ready.
+  if (sceneRole == "shot") {
+    if (!m_shotBackLinkProject.isEmpty()) {
+      // Load the project DB from the absolute path stored in the .ztoryc.
+      QFile pf(m_shotBackLinkProject);
+      if (pf.exists()) {
+        // Temporarily point TProjectManager to the project file's directory so
+        // loadProjectDb() can find it, then restore.  Simpler: read directly.
+        ZtoryModel *m = ZtoryModel::instance();
+        m->loadProjectDbFromPath(m_shotBackLinkProject);
+        // Auto-WIP: if the shot's task (stored in m_shotBackLinkTaskStage) is
+        // Todo or Ready → advance to WIP.
+        if (!m_shotBackLinkUuid.isEmpty() && !m_shotBackLinkTaskStage.isEmpty()) {
+          for (ProjectShot &ps : m->projectShots_rw()) {
+            if (ps.uuid != m_shotBackLinkUuid) continue;
+            TaskState &ts = ps.tasks[m_shotBackLinkTaskStage];
+            if (ts.status == TaskStatus::Todo || ts.status == TaskStatus::Ready) {
+              ts.status = TaskStatus::Wip;
+              m->saveProjectDb();
+              emit m->taskStatusChanged();
+            }
+            break;
+          }
+        }
+      }
+    }
+    // Shot scenes don't publish to the project DB.
+    emit ZtoryModel::instance()->productionReloaded();
+    return;
+  }
+
   // Team now lives in the project-level DB (production.ztrack), shared across
   // the project's scenes. Load it after the .ztoryc (project file wins; if it
   // doesn't exist yet, the .ztoryc team migrates into it).
@@ -2723,8 +2831,15 @@ void StoryboardPanel::loadZtoryc() {
   // sources of the shot list.
   if (sceneRole == "storyboard") {
     QString src = QFileInfo(path).fileName();
-    if (!src.isEmpty())
+    if (!src.isEmpty()) {
       ZtoryModel::instance()->publishShotsToProjectDb(src);
+      ZtoryModel *m = ZtoryModel::instance();
+      for (int si = 0; si < (int)m_shots.size(); si++) {
+        QPixmap pm = firstPanelThumbnail(si);
+        if (!pm.isNull())
+          m->updateThumbCache(m_shots[si].data.uuid, pm);
+      }
+    }
   }
   // Project/team/assets are now populated in the model. refreshFromScene does
   // NOT emit modelReset, so the Production Tracker's non-shot tabs (Team /
@@ -4742,73 +4857,163 @@ static void removeInjectedAudio(TXsheet *childXsh, QList<int> cols) {
 
 void StoryboardPanel::onExportShots() {
   if (m_shots.empty()) {
-    QMessageBox::information(this, "Export Shots", "No shots to export.");
+    QMessageBox::information(this, tr("Export Shots"), tr("No shots to export."));
     return;
   }
 
-  // Popup selezione range
+  ZtoryModel *model = ZtoryModel::instance();
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return;
+
+  // ── Dialog ───────────────────────────────────────────────────────────────
   QDialog dlg(this);
-  dlg.setWindowTitle("Export Shots as Scenes");
-  QVBoxLayout *lay = new QVBoxLayout(&dlg);
+  dlg.setWindowTitle(tr("Export Shots as Scenes"));
+  dlg.setMinimumWidth(520);
+  auto *lay = new QVBoxLayout(&dlg);
+  lay->setSpacing(8);
+  lay->setContentsMargins(14, 14, 14, 14);
+  auto *form = new QFormLayout();
+  form->setLabelAlignment(Qt::AlignRight);
 
-  QHBoxLayout *rangeLayout = new QHBoxLayout();
-  QRadioButton *allRadio = new QRadioButton("All shots");
-  QRadioButton *rangeRadio = new QRadioButton("Range:");
-  allRadio->setChecked(true);
-  QSpinBox *fromSpin = new QSpinBox(); fromSpin->setMinimum(1); fromSpin->setMaximum((int)m_shots.size()); fromSpin->setValue(1);
-  QSpinBox *toSpin = new QSpinBox(); toSpin->setMinimum(1); toSpin->setMaximum((int)m_shots.size()); toSpin->setValue((int)m_shots.size());
-  QLabel *toLabel = new QLabel("to");
-  fromSpin->setEnabled(false); toSpin->setEnabled(false); toLabel->setEnabled(false);
-  rangeLayout->addWidget(allRadio);
-  rangeLayout->addWidget(rangeRadio);
-  rangeLayout->addWidget(fromSpin);
-  rangeLayout->addWidget(toLabel);
-  rangeLayout->addWidget(toSpin);
-  rangeLayout->addStretch();
-  lay->addLayout(rangeLayout);
-
-  QObject::connect(rangeRadio, &QRadioButton::toggled, [&](bool checked){
-    fromSpin->setEnabled(checked); toSpin->setEnabled(checked); toLabel->setEnabled(checked);
+  // Output directory
+  auto *dirRow = new QHBoxLayout();
+  auto *dirEdit = new QLineEdit(&dlg);
+  TFilePath scenesDir = scene->decodeFilePath(TFilePath("+scenes"));
+  dirEdit->setText(QString::fromStdWString(scenesDir.getWideString()));
+  auto *browseBtn = new QPushButton(tr("…"), &dlg);
+  browseBtn->setFixedWidth(28);
+  dirRow->addWidget(dirEdit);
+  dirRow->addWidget(browseBtn);
+  form->addRow(tr("Output folder:"), dirRow);
+  QObject::connect(browseBtn, &QPushButton::clicked, [&] {
+    QString d = QFileDialog::getExistingDirectory(&dlg, tr("Output folder"),
+                                                  dirEdit->text());
+    if (!d.isEmpty()) dirEdit->setText(d);
   });
 
-  QDialogButtonBox *bbox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  // Task stage (for {TASK} token and the naming preview)
+  auto *taskCombo = new QComboBox(&dlg);
+  // Build task list from the project default technique.
+  QStringList taskTypes;
+  if (const Technique *t = model->findTechnique(model->defaultTechnique()))
+    taskTypes = t->taskTypes;
+  if (taskTypes.isEmpty()) taskTypes << "Animation" << "Layout" << "Compositing";
+  for (const QString &tt : taskTypes)
+    taskCombo->addItem(
+        QString("%1  [%2]").arg(tt, ZtoryModel::taskShortCode(tt)),
+        ZtoryModel::taskShortCode(tt));
+  form->addRow(tr("Task stage:"), taskCombo);
+
+  // Version
+  auto *verSpin = new QSpinBox(&dlg);
+  verSpin->setRange(1, 99);
+  verSpin->setValue(1);
+  verSpin->setPrefix("v");
+  form->addRow(tr("Version:"), verSpin);
+
+  // Range
+  auto *rangeRow = new QHBoxLayout();
+  auto *allRadio   = new QRadioButton(tr("All shots"), &dlg);
+  auto *rangeRadio = new QRadioButton(tr("Range:"), &dlg);
+  allRadio->setChecked(true);
+  auto *fromSpin = new QSpinBox(&dlg);
+  auto *toSpin   = new QSpinBox(&dlg);
+  auto *toLabel  = new QLabel(tr("to"), &dlg);
+  fromSpin->setRange(1, (int)m_shots.size()); fromSpin->setValue(1);
+  toSpin->setRange(1, (int)m_shots.size());   toSpin->setValue((int)m_shots.size());
+  fromSpin->setEnabled(false); toSpin->setEnabled(false); toLabel->setEnabled(false);
+  rangeRow->addWidget(allRadio); rangeRow->addWidget(rangeRadio);
+  rangeRow->addWidget(fromSpin); rangeRow->addWidget(toLabel);
+  rangeRow->addWidget(toSpin); rangeRow->addStretch();
+  form->addRow(tr("Shots:"), rangeRow);
+  QObject::connect(rangeRadio, &QRadioButton::toggled, [&](bool on) {
+    fromSpin->setEnabled(on); toSpin->setEnabled(on); toLabel->setEnabled(on);
+  });
+
+  // Back-link checkbox (B3c)
+  auto *backLinkChk = new QCheckBox(
+      tr("Write project back-link (.ztoryc with role=\"shot\")"), &dlg);
+  backLinkChk->setChecked(!model->projectDbPath().isEmpty());
+  backLinkChk->setEnabled(!model->projectDbPath().isEmpty());
+  if (model->projectDbPath().isEmpty())
+    backLinkChk->setToolTip(tr("Save the scene first to create a project DB."));
+  form->addRow(QString(), backLinkChk);
+
+  // Naming preview
+  auto *previewLabel = new QLabel(&dlg);
+  previewLabel->setStyleSheet("color: #aaa; font-size: 11px;");
+  form->addRow(tr("Preview:"), previewLabel);
+
+  lay->addLayout(form);
+  auto *bbox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
   lay->addWidget(bbox);
   QObject::connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
   QObject::connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
+  // Update preview whenever relevant fields change
+  auto updatePreview = [&] {
+    if (m_shots.empty()) return;
+    const ShotData &sd = m_shots[0].data;
+    QString seqLabel;
+    for (const SequenceData &seq : model->sequences())
+      if (seq.uuid == sd.sequenceId) { seqLabel = seq.label; break; }
+    QMap<QString,QString> tok;
+    tok["PROD"]   = model->production();
+    tok["SEASON"] = model->season();
+    tok["EP"]     = model->episode();
+    tok["SEQ"]    = seqLabel;
+    tok["SHOT"]   = sd.label();
+    tok["TASK"]   = taskCombo->currentData().toString();
+    tok["VER"]    = QString::number(verSpin->value());
+    previewLabel->setText(model->resolveNamingPattern(tok) + ".tnz  (first shot)");
+  };
+  QObject::connect(taskCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+                   [&](int) { updatePreview(); });
+  QObject::connect(verSpin, qOverload<int>(&QSpinBox::valueChanged),
+                   [&](int) { updatePreview(); });
+  updatePreview();
+
   if (dlg.exec() != QDialog::Accepted) return;
 
+  // ── Export ───────────────────────────────────────────────────────────────
   int from = allRadio->isChecked() ? 0 : fromSpin->value() - 1;
   int to   = allRadio->isChecked() ? (int)m_shots.size() - 1 : toSpin->value() - 1;
-
-  // Export
-  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
-  TFilePath scenesDir = scene->decodeFilePath(TFilePath("+scenes"));
+  const QString taskCode   = taskCombo->currentData().toString();
+  const int     version    = verSpin->value();
+  const bool    writeLink  = backLinkChk->isChecked();
+  const QString outDir     = dirEdit->text().trimmed();
+  const QString projectDb  = model->projectDbPath();
+  TFilePath outDirFp(outDir.toStdWString());
   TXsheet *mainXsh = scene->getChildStack()->getTopXsheet();
-  // Use ZtoryModel fps (already synced from scene at load/new) to avoid pulling
-  // in the TSceneProperties include just for this one call.
-  double fps = (double)ZtoryModel::instance()->fps();
+  double fps = (double)model->fps();
+
+  if (!TFileStatus(outDirFp).doesExist()) TSystem::mkDir(outDirFp);
 
   int ok = 0, fail = 0;
   for (int i = from; i <= to; i++) {
-    std::string shotNumStr = m_shots[i].data.shotNumber.toStdString();
-    TFilePath outPath = scenesDir + TFilePath("sc" + shotNumStr + ".tnz");
+    const ShotData &sd = m_shots[i].data;
 
-    // Crea cartella scenes se non esiste
-    if (!TFileStatus(outPath.getParentDir()).doesExist())
-      TSystem::mkDir(outPath.getParentDir());
+    // Build filename from naming pattern
+    QString seqLabel;
+    for (const SequenceData &seq : model->sequences())
+      if (seq.uuid == sd.sequenceId) { seqLabel = seq.label; break; }
+    QMap<QString,QString> tok;
+    tok["PROD"]   = model->production();
+    tok["SEASON"] = model->season();
+    tok["EP"]     = model->episode();
+    tok["SEQ"]    = seqLabel;
+    tok["SHOT"]   = sd.label();
+    tok["TASK"]   = taskCode;
+    tok["VER"]    = QString::number(version);
+    QString baseName = model->resolveNamingPattern(tok);
+    if (baseName.isEmpty()) baseName = "shot_" + sd.label();
+    TFilePath outPath = outDirFp + TFilePath(baseName.toStdString() + ".tnz");
 
-    // Determina range del main xsheet per questo shot.
-    // ignoreLastStop=true: exclude the trailing stop-hold frame so the audio
-    // range matches the rendered video duration exactly (stop-hold is not
-    // rendered by the video renderer).
-    int shotCol = m_shots[i].data.xsheetColumn;
+    int shotCol = sd.xsheetColumn;
     int shotR0 = 0, shotR1 = 0;
     if (mainXsh && mainXsh->getColumn(shotCol))
-      mainXsh->getColumn(shotCol)->getRange(shotR0, shotR1,
-                                            /*ignoreLastStop=*/true);
+      mainXsh->getColumn(shotCol)->getRange(shotR0, shotR1, /*ignoreLastStop=*/true);
 
-    // Apri sottoscena
     TApp::instance()->getCurrentColumn()->setColumnIndex(shotCol);
     TColumnSelection *colSel = new TColumnSelection();
     colSel->selectColumn(shotCol, true);
@@ -4817,25 +5022,55 @@ void StoryboardPanel::onExportShots() {
 
     if (scene->getChildStack()->getAncestorCount() == 0) { fail++; continue; }
 
-    // Inietta audio principale nel child xsheet prima del salvataggio
     TXsheet *childXsh = TApp::instance()->getCurrentXsheet()->getXsheet();
     QList<int> injectedCols;
     if (mainXsh && childXsh && shotR1 >= shotR0)
       injectedCols = injectAudioForShot(mainXsh, childXsh, shotR0, shotR1, fps);
 
     bool saved = IoCmd::saveScene(outPath, IoCmd::SAVE_SUBXSHEET);
-    if (saved) ok++; else fail++;
 
-    // Rimuovi colonne audio temporanee (non devono restare nella sottoscena)
     if (!injectedCols.isEmpty() && childXsh)
       removeInjectedAudio(childXsh, injectedCols);
 
     ztoryCloseSubXsheet(1);
+
+    if (!saved) { fail++; continue; }
+    ok++;
+
+    // B3c: write companion .ztoryc with role="shot" + back-link to project
+    if (writeLink && !projectDb.isEmpty() && !sd.uuid.isEmpty()) {
+      QString ztorcPath = QString::fromStdWString(outPath.getWideString());
+      ztorcPath.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
+      QFile f(ztorcPath);
+      if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QXmlStreamWriter xml(&f);
+        xml.setAutoFormatting(true);
+        xml.writeStartDocument();
+        xml.writeStartElement("ztoryc");
+        xml.writeAttribute("version",     "2");
+        xml.writeAttribute("role",        "shot");
+        xml.writeAttribute("projectShot", sd.uuid);
+        xml.writeAttribute("project",     projectDb);
+        // Inherit project-level metadata so shot scene knows its context.
+        xml.writeStartElement("project");
+        xml.writeAttribute("production", model->production());
+        xml.writeAttribute("season",     model->season());
+        xml.writeAttribute("episode",    model->episode());
+        xml.writeAttribute("title",      model->title());
+        xml.writeAttribute("technique",
+            sd.technique.isEmpty() ? model->defaultTechnique() : sd.technique);
+        xml.writeAttribute("taskStage",  taskCode);
+        xml.writeEndElement();
+        xml.writeEndElement();
+        xml.writeEndDocument();
+        f.close();
+      }
+    }
   }
 
-  QString msg = QString("Export completato: %1 shot esportati").arg(ok);
-  if (fail > 0) msg += QString(", %1 falliti").arg(fail);
-  QMessageBox::information(this, "Export Shots", msg);
+  QString msg = tr("Export complete: %1 shot(s) exported").arg(ok);
+  if (fail > 0) msg += tr(", %1 failed").arg(fail);
+  QMessageBox::information(this, tr("Export Shots"), msg);
 }
 
 void StoryboardPanel::onExportAnimatic() {

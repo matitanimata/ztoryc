@@ -18,6 +18,7 @@
 #include "toonz/preferences.h"
 #include "mainwindow.h"
 #include "startuppopup.h"
+#include "toonzqt/filefield.h"
 
 #include <QFileInfo>
 #include <QDir>
@@ -715,10 +716,18 @@ void DvDirVersionControlProjectNode::makeCurrent() {
   pm->setCurrentProjectPath(projectPath);
   IoCmd::newScene();
   if (Preferences::instance()->isStartupPopupEnabled()) {
-    StartupPopup *popup = new StartupPopup();
-    popup->show();
-    popup->raise();
-    popup->activateWindow();
+    // If the project was picked from within an already-open startup popup's
+    // browser, close that browser and refresh the existing popup instead of
+    // spawning a second one.
+    if (StartupPopup *popup = StartupPopup::visibleDefaultInstance()) {
+      DVGui::FileField::getBrowserPopupController()->closePopup();
+      popup->refreshAfterProjectChange();
+    } else {
+      StartupPopup *newPopup = new StartupPopup();
+      newPopup->show();
+      newPopup->raise();
+      newPopup->activateWindow();
+    }
   }
 }
 
@@ -814,10 +823,18 @@ void DvDirModelProjectNode::makeCurrent() {
                                        RecentFiles::Project);
   IoCmd::newScene();
   if (Preferences::instance()->isStartupPopupEnabled()) {
-    StartupPopup *popup = new StartupPopup();
-    popup->show();
-    popup->raise();
-    popup->activateWindow();
+    // If the project was picked from within an already-open startup popup's
+    // browser, close that browser and refresh the existing popup instead of
+    // spawning a second one.
+    if (StartupPopup *popup = StartupPopup::visibleDefaultInstance()) {
+      DVGui::FileField::getBrowserPopupController()->closePopup();
+      popup->refreshAfterProjectChange();
+    } else {
+      StartupPopup *newPopup = new StartupPopup();
+      newPopup->show();
+      newPopup->raise();
+      newPopup->activateWindow();
+    }
   }
 }
 

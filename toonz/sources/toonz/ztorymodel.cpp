@@ -103,10 +103,11 @@ QString NumberingConfig::shotName(int idx) const {
 // ─── Singleton ────────────────────────────────────────────────────────────────
 
 ZtoryModel::ZtoryModel() : m_fps(24) {
-  // Default side-panel sets: Storyboard shows in animatic mode;
-  // Xsheet + Script show in shot mode.
   m_animaticSidePanels = QStringList{ "Storyboard" };
   m_shotSidePanels     = QStringList{ "Xsheet", "ZtoryScriptPanel" };
+  // Default naming pattern (B3d). Follows NABA convention with separate
+  // PROD and SEASON tokens — can be overridden per-project in Project tab.
+  m_namingPattern = "{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
   seedDefaultTechniques();
 }
 
@@ -259,6 +260,51 @@ TFilePath projectDbFilePath() {
 }
 }  // namespace
 
+QString ZtoryModel::projectDbPath() const {
+  TFilePath fp = projectDbFilePath();
+  return fp == TFilePath() ? QString()
+                           : QString::fromStdWString(fp.getWideString());
+}
+
+static QString thumbsDir() {
+  TFilePath fp = projectDbFilePath();
+  if (fp == TFilePath()) return QString();
+  return QString::fromStdWString(
+             (fp.getParentDir() + TFilePath("thumbs")).getWideString());
+}
+
+void ZtoryModel::updateThumbCache(const QString &uuid, const QPixmap &pm) {
+  if (uuid.isEmpty() || pm.isNull()) return;
+  m_thumbCache[uuid] = pm;
+  // Persist to disk so other sessions and scene-switches can reload it.
+  QString dir = thumbsDir();
+  if (dir.isEmpty()) return;
+  QDir().mkpath(dir);
+  pm.save(dir + "/" + uuid + ".png", "PNG");
+}
+
+void ZtoryModel::evictThumbFromDisk(const QString &uuid) {
+  if (uuid.isEmpty()) return;
+  m_thumbCache.remove(uuid);
+  QString dir = thumbsDir();
+  if (!dir.isEmpty()) QFile::remove(dir + "/" + uuid + ".png");
+}
+
+void ZtoryModel::loadThumbsFromDisk() {
+  QString dir = thumbsDir();
+  if (dir.isEmpty()) return;
+  QDir d(dir);
+  if (!d.exists()) return;
+  for (const QString &fn : d.entryList({"*.png"}, QDir::Files)) {
+    QString uuid = fn.left(fn.length() - 4);  // strip ".png"
+    if (!m_thumbCache.contains(uuid)) {       // don't overwrite in-memory version
+      QPixmap pm;
+      if (pm.load(dir + "/" + fn))
+        m_thumbCache[uuid] = pm;
+    }
+  }
+}
+
 void ZtoryModel::saveProjectDb() {
   TFilePath fp = projectDbFilePath();
   if (fp == TFilePath()) return;
@@ -350,16 +396,25 @@ void ZtoryModel::saveProjectDb() {
   xml.writeEndDocument();
 }
 
+void ZtoryModel::loadProjectDbFromPath(const QString &path) {
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+  loadProjectDbFromDevice(file);
+}
+
 void ZtoryModel::loadProjectDb() {
   TFilePath fp = projectDbFilePath();
   if (fp == TFilePath()) return;
   QFile file(QString::fromStdWString(fp.getWideString()));
   if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-    // No project DB yet: migrate the current project-level data (loaded from the
-    // .ztoryc) by creating the file, so it becomes the project-wide source.
     saveProjectDb();
     return;
   }
+  loadProjectDbFromDevice(file);
+}
+
+// Internal: parse a production.ztrack XML from an already-opened device.
+void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
   QStringList team;
   std::vector<Technique> techs;
   std::vector<Asset> assets;
@@ -452,6 +507,7 @@ void ZtoryModel::loadProjectDb() {
   m_assets    = assets;
   m_projectShots   = pshots;
   m_storyboardFiles = sboards;
+  loadThumbsFromDisk();
 }
 
 // ─── B3b — Project shots ──────────────────────────────────────────────────────
@@ -500,17 +556,16 @@ void ZtoryModel::publishShotsToProjectDb(const QString &sourceFile) {
   for (const ShotData &sd : m_shots) {
     if (sd.uuid.isEmpty()) continue;
     auto it = byUuid.find(sd.uuid);
-    if (it != byUuid.end()) {
-      // Existing project shot: update structural metadata only.
+    if (it != byUuid.end() && m_projectShots[it.value()].source == sourceFile) {
+      // Existing project shot that belongs to this source: update structural metadata.
       ProjectShot &ps = m_projectShots[it.value()];
-      ps.source = sourceFile;
       ps.seq    = seqLabel(sd);
       ps.label  = sd.label();
       ps.frames = sd.totalDuration();
       // technique: only update if the scene has a value (project may have an override)
       if (!sd.technique.isEmpty()) ps.technique = sd.technique;
-    } else {
-      // New shot: create with structure + copy initial task state from scene.
+    } else if (it == byUuid.end()) {
+      // Genuinely new shot: create with structure + copy initial task state from scene.
       ProjectShot ps;
       ps.uuid      = sd.uuid;
       ps.source    = sourceFile;
@@ -521,27 +576,40 @@ void ZtoryModel::publishShotsToProjectDb(const QString &sourceFile) {
       ps.tasks     = sd.tasks;
       m_projectShots.push_back(ps);
     }
+    // else: uuid found but belongs to a different source (storyboard copied from
+    // another — uuid collision). Leave the existing entry untouched; the current
+    // storyboard's copy of this shot is treated as distinct and NOT published
+    // (the scene .ztoryc should get a fresh uuid on next save to resolve the clash).
   }
 
   // Re-sort project shots: by source file order in m_storyboardFiles, then by
-  // their position in the current scene (order index) for the active storyboard.
+  // their position in the current scene for the active storyboard, or by their
+  // existing position in m_projectShots for shots from other storyboards.
   QHash<QString, int> sourceOrder;
   for (int i = 0; i < m_storyboardFiles.size(); i++)
     sourceOrder[m_storyboardFiles[i]] = i;
+  // sceneOrder: position in the currently open scene (uuid → index).
   QHash<QString, int> sceneOrder;
   for (int i = 0; i < (int)m_shots.size(); i++)
     if (!m_shots[i].uuid.isEmpty()) sceneOrder[m_shots[i].uuid] = i;
+  // prevOrder: position in m_projectShots BEFORE this sort — used to preserve
+  // the order of shots from storyboards that are not currently open.
+  QHash<QString, int> prevOrder;
+  for (int i = 0; i < (int)m_projectShots.size(); i++)
+    prevOrder[m_projectShots[i].uuid] = i;
 
   std::stable_sort(m_projectShots.begin(), m_projectShots.end(),
                    [&](const ProjectShot &a, const ProjectShot &b) {
                      int sa = sourceOrder.value(a.source, 999);
                      int sb = sourceOrder.value(b.source, 999);
                      if (sa != sb) return sa < sb;
-                     // Within the same source: use scene order for active storyboard,
-                     // otherwise preserve existing order (orderIndex from label).
-                     int oa = sceneOrder.value(a.uuid, 0);
-                     int ob = sceneOrder.value(b.uuid, 0);
-                     return oa < ob;
+                     // Within the same source: if this is the active storyboard use
+                     // the live scene order; otherwise preserve the existing DB order.
+                     bool aActive = sceneOrder.contains(a.uuid);
+                     bool bActive = sceneOrder.contains(b.uuid);
+                     if (aActive && bActive)
+                       return sceneOrder[a.uuid] < sceneOrder[b.uuid];
+                     return prevOrder.value(a.uuid, 0) < prevOrder.value(b.uuid, 0);
                    });
 
   saveProjectDb();
@@ -588,6 +656,64 @@ void ZtoryModel::setProjectShotTechnique(const QString &uuid,
       return;
     }
   }
+}
+
+// ─── B3d — Naming convention ──────────────────────────────────────────────────
+
+QString ZtoryModel::taskShortCode(const QString &taskType) {
+  // NABA-aligned short codes. Unknown types use the first 3-4 letters uppercased.
+  static const QHash<QString, QString> codes = {
+    { "Layout",          "LAY"  },
+    { "Key Animation",   "KAN"  },
+    { "Animation",       "ANIM" },
+    { "Inbetweening",    "INB"  },
+    { "Clean up",        "CU"   },
+    { "Scan & Clean",    "SCN"  },
+    { "Ink & Paint",     "INK"  },
+    { "X-Sheet",         "XSH"  },
+    { "Lighting",        "LGT"  },
+    { "Rig Removal",     "RIG"  },
+    { "Shooting",        "SHT"  },
+    { "Editing",         "EDT"  },
+    { "VFX",             "VFX"  },
+    { "Render",          "RND"  },
+    { "Compositing",     "COMP" },
+    { "Set-up",          "SET"  },
+    { "Rough",           "RGH"  },
+    { "Storyboard",      "STB"  },
+    { "Animatic",        "AMC"  },
+  };
+  auto it = codes.constFind(taskType);
+  if (it != codes.constEnd()) return it.value();
+  // Fallback: first 4 chars uppercase, spaces stripped.
+  return taskType.toUpper().remove(' ').left(4);
+}
+
+QString ZtoryModel::resolveNamingPattern(const QMap<QString,QString> &tokens) const {
+  QString result = m_namingPattern;
+  if (result.isEmpty())
+    result = "{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
+  // Replace {TOKEN} and {TOKEN:FORMAT} (format = zero-padding width).
+  static const QRegularExpression re(R"(\{(\w+)(?::(\d+))?\})");
+  // Collect all matches first (process right-to-left to preserve indices).
+  QList<QRegularExpressionMatch> matches;
+  QRegularExpressionMatchIterator it = re.globalMatch(result);
+  while (it.hasNext()) matches.prepend(it.next());
+  for (const QRegularExpressionMatch &m : matches) {
+    QString key = m.captured(1);
+    QString fmt = m.captured(2);  // digits only (the width)
+    QString val = tokens.value(key, "");
+    if (!fmt.isEmpty() && !val.isEmpty()) {
+      bool ok;
+      int n = val.toInt(&ok);
+      if (ok) val = QString("%1").arg(n, fmt.toInt(), 10, QChar('0'));
+    }
+    result.replace(m.capturedStart(), m.capturedLength(), val);
+  }
+  // Sanitize: replace spaces with _, strip characters invalid in filenames.
+  result.replace(' ', '_');
+  result.remove(QRegularExpression(R"([\\/:*?"<>|])"));
+  return result;
 }
 
 const QStringList &ZtoryModel::canonicalTaskOrder() {

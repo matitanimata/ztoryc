@@ -4,6 +4,7 @@
 #include <QString>
 #include <QStringList>
 #include <QMap>
+#include <QHash>
 #include <vector>
 #include <set>
 #include "toonz/txshchildlevel.h"  // for TXshLevelP
@@ -240,6 +241,10 @@ class ZtoryModel : public QObject {
   // ZtoryPanelNavigator always reflect the same toggle.
   bool        m_autoMatch = false;
 
+  // Persistent thumbnail cache keyed by shot uuid — survives scene switches so
+  // the Production Tracker can show thumbnails for all loaded storyboards.
+  QHash<QString, QPixmap> m_thumbCache;
+
   ZtoryModel();
 
 public:
@@ -273,12 +278,17 @@ public:
   // Project-level DB file (production.ztrack at the project root). B3 pilot:
   // for now it owns the team roster (truly project-wide, shared across the
   // project's scenes). Assets/techniques/shots will migrate here next.
-  void loadProjectDb();  // project file → model (authoritative); migrates if absent
-  void saveProjectDb();  // model → project file
-  // Clear/re-seed all project-level fields (production/season/title/episode/team/
-  // assets/techniques/projectShots) so data never leaks across scenes/projects.
-  // Called on scene switch BEFORE the .ztoryc migration read and loadProjectDb().
-  void resetProjectLevelDefaults();
+  void loadProjectDb();                              // from current project folder
+  void loadProjectDbFromPath(const QString &path);  // B3c: load from explicit path
+  void saveProjectDb();
+  QString projectDbPath() const;
+  // Non-const access to project shots (used by B3c auto-WIP).
+  std::vector<ProjectShot> &projectShots_rw() { return m_projectShots; }
+  // Thumbnail cache — persisted in <project>/thumbs/<uuid>.png.
+  const QHash<QString, QPixmap> &thumbCache() const { return m_thumbCache; }
+  void updateThumbCache(const QString &uuid, const QPixmap &pm);
+  void evictThumbFromDisk(const QString &uuid);  // remove stale PNG on uuid regeneration
+  void loadThumbsFromDisk();   // call after loadProjectDb to pre-fill cache
 
   // B3b — Project shots (multi-storyboard)
   const std::vector<ProjectShot> &projectShots() const { return m_projectShots; }
@@ -298,6 +308,14 @@ public:
   // Helper: effective technique for a ProjectShot (falls back to project default).
   QString techniqueForProjectShot(const ProjectShot &ps) const;
   QStringList taskTypesForProjectShot(const ProjectShot &ps) const;
+
+  // B3d — Naming convention
+  // Resolve m_namingPattern substituting token map. Tokens: PROD, SEASON, EP,
+  // SEQ, SHOT, TASK, VER. Optional format suffix: {VER:02} → zero-padded.
+  QString resolveNamingPattern(const QMap<QString,QString> &tokens) const;
+  // Default short code for a task type (Layout→LAY, Animation→ANIM, …).
+  // Used as the {TASK} token in the naming pattern.
+  static QString taskShortCode(const QString &taskType);
 
   // Set a shot's per-task status (in-app source of truth for production
   // tracking). Emits taskStatusChanged() so the Production Tracker refreshes;
@@ -498,6 +516,14 @@ public:
     m_autoMatch = on;
     emit autoMatchChanged(on);
   }
+
+  // Clear/re-seed all project-level fields (production/season/title/episode/team/
+  // assets/techniques/projectShots) so data never leaks across scenes/projects.
+  // Called on scene switch BEFORE the .ztoryc migration read and loadProjectDb().
+  void resetProjectLevelDefaults();
+
+private:
+  void loadProjectDbFromDevice(QIODevice &dev);  // shared XML parser
 
 signals:
   // Overlay display settings changed (light visibility/colour, camera-move

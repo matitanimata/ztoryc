@@ -101,6 +101,15 @@ public:
 
 public:
   explicit StartupPopup(Mode mode = DefaultMode);
+  ~StartupPopup() override;
+
+  // Returns an already-visible DefaultMode instance, or nullptr. Used to avoid
+  // spawning duplicate startup popups when changing project from the browser.
+  static StartupPopup *visibleDefaultInstance();
+
+  // Refresh the project combo + scene list after the current project changed
+  // (e.g. project picked from the browser tree), keeping this popup visible.
+  void refreshAfterProjectChange();
 
 protected:
   void showEvent(QShowEvent *) override;

@@ -211,6 +211,12 @@ struct Shot {
   // while m_shots is empty (being rebuilt) this is empty → saveZtoryc() returns
   // early.  This eliminates the cross-scene text contamination bug.
   QString m_currentZtoryPath;
+  // B3c back-link fields: populated when loadZtoryc reads role="shot".
+  QString m_shotBackLinkProject;    // absolute path to production.ztrack
+  QString m_shotBackLinkUuid;       // projectShot uuid
+  QString m_shotBackLinkTaskStage;  // task short code (e.g. "ANIM")
+  // B3: suppress publication for scenes the user chose to keep standalone.
+  bool    m_suppressProjectPublication = false;
   // Column index of the last shot edited while inside a sub-scene.
   // Set when xsheetChanged fires inside a sub-scene; used in showEvent to
   // invalidate that shot's stale thumbnail so it gets re-rendered on Board show.

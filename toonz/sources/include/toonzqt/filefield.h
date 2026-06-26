@@ -72,6 +72,7 @@ public:
     virtual QString getPath(bool codePath = true) { return QString(); };
     virtual void openPopup(QStringList, bool, QString,
                            const QWidget * = NULL){};
+    virtual void closePopup() {};
   };
 
   static BrowserPopupController *m_browserPopupController;

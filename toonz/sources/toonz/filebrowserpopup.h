@@ -491,6 +491,7 @@ public:
                  QString lastSelectedPath,
                  const QWidget *parentWidget = NULL) override;
   QString getPath(bool codePath = true) override;
+  void closePopup() override;
 };
 
 #endif  // FILEBROWSERPOPUP_H

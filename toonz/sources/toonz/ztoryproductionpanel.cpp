@@ -27,6 +27,7 @@
 #include <QFormLayout>
 #include <QProgressBar>
 #include <QSignalBlocker>
+#include <QTimer>
 
 #include <cassert>
 
@@ -326,6 +327,16 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   connect(m, &ZtoryModel::assetsChanged,     this, [this] { rebuildAssets(); });
   connect(m, &ZtoryModel::productionReloaded, this, &ZtoryProductionPanel::onModelChanged);
 
+  // Rebuild thumbnails when the Board finishes rendering a preview (panel 0 only —
+  // panel 0 is the shot thumbnail). Debounced: one rebuild after a burst of renders.
+  auto *thumbDebounce = new QTimer(this);
+  thumbDebounce->setSingleShot(true);
+  thumbDebounce->setInterval(400);
+  connect(thumbDebounce, &QTimer::timeout, this, [this] { rebuild(); });
+  connect(m, &ZtoryModel::previewUpdated, this, [thumbDebounce](int /*si*/, int pi) {
+    if (pi == 0) thumbDebounce->start();  // only panel 0 is used as shot thumbnail
+  });
+
   rebuild();
   reloadTeamTab();
   reloadProjectTab();
@@ -434,13 +445,20 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   m_titleEdit  = new QLineEdit(w);
   m_epEdit     = new QLineEdit(w);
   m_techCombo  = new QComboBox(w);
+  m_patternEdit = new QLineEdit(w);
+  m_patternEdit->setPlaceholderText("{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}");
+  m_patternEdit->setToolTip(
+      QObject::tr("Tokens: {PROD} {SEASON} {EP} {SEQ} {SHOT} {TASK} {VER}\n"
+                  "Format: {VER:02} = zero-padded to 2 digits\n"
+                  "Task codes: LAY, ANIM, KAN, INB, CU, VFX, COMP, AMC…"));
   form->addRow(QObject::tr("Production:"),        m_prodEdit);
   form->addRow(QObject::tr("Season:"),            m_seasonEdit);
   form->addRow(QObject::tr("Episode:"),           m_epEdit);
   form->addRow(QObject::tr("Title:"),             m_titleEdit);
   form->addRow(QObject::tr("Default technique:"), m_techCombo);
+  form->addRow(QObject::tr("Naming pattern:"),    m_patternEdit);
 
-  for (QLineEdit *e : {m_prodEdit, m_seasonEdit, m_titleEdit, m_epEdit})
+  for (QLineEdit *e : {m_prodEdit, m_seasonEdit, m_titleEdit, m_epEdit, m_patternEdit})
     connect(e, &QLineEdit::editingFinished, this,
             [this] { applyProjectFromFields(); });
   connect(m_techCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -460,6 +478,7 @@ void ZtoryProductionPanel::reloadProjectTab() {
   for (const Technique &t : m->techniques()) m_techCombo->addItem(t.name);
   int di = m_techCombo->findText(m->defaultTechnique());
   if (di >= 0) m_techCombo->setCurrentIndex(di);
+  if (m_patternEdit) m_patternEdit->setText(m->namingPattern());
   m_projLoading = false;
 }
 
@@ -472,6 +491,8 @@ void ZtoryProductionPanel::applyProjectFromFields() {
   m->setEpisode(m_epEdit->text().trimmed());
   if (!m_techCombo->currentText().isEmpty())
     m->setDefaultTechnique(m_techCombo->currentText());
+  if (m_patternEdit && !m_patternEdit->text().trimmed().isEmpty())
+    m->setNamingPattern(m_patternEdit->text().trimmed());
   m->saveProjectDb();  // project-meta lives in the project DB
   rebuild();  // default-technique change may alter which task columns apply
 }
@@ -870,12 +891,21 @@ void ZtoryProductionPanel::rebuild() {
       shotItem->setFont(f);
       m_table->setItem(i, 1, shotItem);
 
-      // Thumbnail — available only if this shot belongs to the open storyboard.
+      // Thumbnail — read from the persistent cache (keyed by uuid) so thumbs
+      // remain visible even after switching to a different storyboard scene.
       auto *thumb = new QTableWidgetItem();
       thumb->setFlags(Qt::ItemIsEnabled);
-      auto sceneIt = uuidToSceneIdx.find(ps.uuid);
-      if (board && sceneIt != uuidToSceneIdx.end()) {
-        QPixmap pm = board->firstPanelThumbnail(sceneIt.value());
+      {
+        QPixmap pm = m->thumbCache().value(ps.uuid);
+        if (pm.isNull()) {
+          // Fallback: live Board data if this shot belongs to the open scene.
+          auto sceneIt = uuidToSceneIdx.find(ps.uuid);
+          if (board && sceneIt != uuidToSceneIdx.end())
+            pm = board->firstPanelThumbnail(sceneIt.value());
+          // Warm the cache so future rebuilds don't need the Board.
+          if (!pm.isNull())
+            m->updateThumbCache(ps.uuid, pm);
+        }
         if (!pm.isNull())
           thumb->setData(Qt::DecorationRole,
                          pm.scaled(72, 40, Qt::KeepAspectRatio, Qt::SmoothTransformation));
@@ -1033,6 +1063,7 @@ void ZtoryProductionPanel::rebuild() {
 
   m_table->resizeColumnsToContents();
   m_table->resizeRowsToContents();
+
 }
 
 //-----------------------------------------------------------------------------

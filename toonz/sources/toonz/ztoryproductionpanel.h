@@ -38,6 +38,7 @@ class ZtoryProductionPanel final : public TPanel {
   QLineEdit    *m_prodEdit = nullptr, *m_titleEdit = nullptr, *m_epEdit = nullptr;
   QLineEdit    *m_seasonEdit = nullptr;
   QComboBox    *m_techCombo = nullptr;
+  QLineEdit    *m_patternEdit = nullptr;   // B3d: naming pattern
   bool          m_projLoading = false;
   // Assets tab
   QTableWidget *m_assetTable = nullptr;

@@ -70,6 +70,7 @@
 #include <QCoreApplication>
 #include <QMainWindow>
 #include <QApplication>
+#include <QTimer>
 
 //***********************************************************************************
 //    FileBrowserPopup  implementation
@@ -2411,6 +2412,11 @@ QString BrowserPopupController::getPath(bool codePath) {
   if (scene && codePath) fp = scene->codeFilePath(fp);
   std::cout << ::to_string(fp) << std::endl;
   return toQString(fp);
+}
+
+void BrowserPopupController::closePopup() {
+  // reject() makes a running exec() return so the modal browser closes cleanly.
+  if (m_browserPopup) m_browserPopup->reject();
 }
 
 //=============================================================================
