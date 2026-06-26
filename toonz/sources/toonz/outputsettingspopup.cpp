@@ -44,6 +44,14 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QComboBox>
+#include <QDialog>
+#include <QSpinBox>
+#include <QFormLayout>
+#include <QLineEdit>
+#include <QDialogButtonBox>
+#include <QRegularExpression>
+
+#include "ztorymodel.h"
 #include <QMainWindow>
 #include <QFrame>
 #include <QMessageBox>
@@ -625,6 +633,22 @@ QFrame *OutputSettingsPopup::createGeneralSettingsBox(bool isPreview) {
     fileGridLay->setColumnStretch(1, 1);
 
     lay->addLayout(fileGridLay);
+
+    // Ztoryc: build the output name from the project naming pattern (task + ver).
+    {
+      QHBoxLayout *patLay = new QHBoxLayout();
+      patLay->setContentsMargins(0, 0, 0, 0);
+      QPushButton *patBtn =
+          new QPushButton(tr("Name from project pattern…"), this);
+      patBtn->setToolTip(
+          tr("Compose the output file name from the project naming pattern in "
+             "the Production Tracker, picking the task and version."));
+      patLay->addStretch();
+      patLay->addWidget(patBtn);
+      lay->addLayout(patLay);
+      connect(patBtn, &QPushButton::clicked, this,
+              &OutputSettingsPopup::onNameFromPattern);
+    }
 
     // Version output
     QGridLayout* versionLay = new QGridLayout();
@@ -1496,6 +1520,85 @@ void OutputSettingsPopup::onNameChanged() {
   TApp::instance()->getCurrentScene()->setDirtyFlag(true);
 
   if (m_presetCombo) m_presetCombo->setCurrentIndex(0);
+}
+
+//-----------------------------------------------------------------------------
+/*! Ztoryc — compose the output file name from the project naming pattern.
+ *  Model A pipeline: one .tnz per shot reused across steps; the task lives only
+ *  in the render/clip name. PROD/SEASON/EP come from the project DB; SEQ/SHOT
+ *  are best-effort prefilled from the scene name; TASK and VER are picked here.
+ */
+void OutputSettingsPopup::onNameFromPattern() {
+  ToonzScene *scene = getCurrentScene();
+  if (!scene) return;
+  ZtoryModel *model = ZtoryModel::instance();
+
+  // Best-effort SEQ/SHOT detection from the scene file name (exported shots use
+  // SQ###/SH### labels).
+  QString sceneName = QString::fromStdString(scene->getScenePath().getName());
+  QString seqGuess, shotGuess;
+  QRegularExpressionMatch mSeq =
+      QRegularExpression("(SQ\\d+)", QRegularExpression::CaseInsensitiveOption)
+          .match(sceneName);
+  if (mSeq.hasMatch()) seqGuess = mSeq.captured(1).toUpper();
+  QRegularExpressionMatch mShot =
+      QRegularExpression("(SH\\d+)", QRegularExpression::CaseInsensitiveOption)
+          .match(sceneName);
+  if (mShot.hasMatch()) shotGuess = mShot.captured(1).toUpper();
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Output Name from Project Pattern"));
+  auto *form = new QFormLayout(&dlg);
+
+  auto *seqFld  = new QLineEdit(seqGuess, &dlg);
+  auto *shotFld = new QLineEdit(shotGuess, &dlg);
+  auto *taskCombo = new QComboBox(&dlg);
+  for (const QString &tt : ZtoryModel::canonicalTaskOrder())
+    taskCombo->addItem(QString("%1  [%2]").arg(tt, ZtoryModel::taskShortCode(tt)),
+                       ZtoryModel::taskShortCode(tt));
+  auto *verSpin = new QSpinBox(&dlg);
+  verSpin->setRange(1, 999);
+  verSpin->setValue(1);
+  verSpin->setPrefix("v");
+
+  form->addRow(tr("Sequence:"), seqFld);
+  form->addRow(tr("Shot:"),     shotFld);
+  form->addRow(tr("Task:"),     taskCombo);
+  form->addRow(tr("Version:"),  verSpin);
+
+  auto *preview = new QLabel(&dlg);
+  preview->setStyleSheet("color:#aaa; font-size:11px;");
+  form->addRow(tr("Preview:"), preview);
+
+  auto buildName = [&]() -> QString {
+    QMap<QString, QString> tok;
+    tok["PROD"]   = model->production();
+    tok["SEASON"] = model->season();
+    tok["EP"]     = model->episode();
+    tok["SEQ"]    = seqFld->text().trimmed();
+    tok["SHOT"]   = shotFld->text().trimmed();
+    tok["TASK"]   = taskCombo->currentData().toString();
+    tok["VER"]    = QString::number(verSpin->value());
+    return model->resolveNamingPattern(tok);
+  };
+  auto updatePreview = [&] { preview->setText(buildName()); };
+  updatePreview();
+  connect(seqFld,  &QLineEdit::textChanged, &dlg, [&](const QString &) { updatePreview(); });
+  connect(shotFld, &QLineEdit::textChanged, &dlg, [&](const QString &) { updatePreview(); });
+  connect(taskCombo, qOverload<int>(&QComboBox::currentIndexChanged), &dlg, [&](int) { updatePreview(); });
+  connect(verSpin, qOverload<int>(&QSpinBox::valueChanged), &dlg, [&](int) { updatePreview(); });
+
+  auto *bbox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  form->addRow(bbox);
+  connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+  if (dlg.exec() != QDialog::Accepted) return;
+
+  QString name = buildName();
+  if (name.isEmpty()) return;
+  m_fileNameFld->setText(name);
+  onNameChanged();  // apply to the output properties
 }
 
 //-----------------------------------------------------------------------------

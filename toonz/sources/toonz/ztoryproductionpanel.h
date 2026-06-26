@@ -57,6 +57,9 @@ private:
   QWidget *buildShotsTab();
   void rebuild();                  // rebuild the shot × task matrix from ZtoryModel
   void editCell(int row, int col); // status/assignee picker for a clicked cell
+  // Full-project export: one XLSX with every tab (Shots across all storyboards,
+  // Team, Assets, Workflows, Project) sourced from the project DB.
+  void exportFullProject();
   // Team tab
   QWidget *buildTeamTab();
   void reloadTeamTab();            // model → list

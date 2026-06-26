@@ -344,8 +344,13 @@ DvDirTreeView::DvDirTreeView(QWidget *parent)
   ret = ret && connect(this->model(), SIGNAL(layoutChanged()), this,
                        SLOT(resizeToConts()));
 
+  // NB: pass `this` as the receiver context so the connection is auto-removed
+  // when this view is destroyed. Without it the lambda (which captures `this`)
+  // stays attached to the DvDirModel singleton and, after the view is gone,
+  // fires on a dangling pointer → crash on the next projectAdded (e.g. creating
+  // a new project after a room switch recreated this tree).
   ret = ret && connect(dynamic_cast<DvDirModel *>(this->model()),
-                       &DvDirModel::projectAdded, [=]() {
+                       &DvDirModel::projectAdded, this, [=]() {
                          collapseAll();
                          setCurrentNode(TProjectManager::instance()
                                             ->getCurrentProjectPath()

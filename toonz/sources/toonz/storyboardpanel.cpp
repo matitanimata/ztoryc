@@ -1129,7 +1129,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_exportSpreadsheetButton->setIcon(createQIcon("ztoryc_export_spreadsheet"));
   m_exportSpreadsheetButton->setIconSize(QSize(20, 20));
   m_exportSpreadsheetButton->setFixedSize(28, 28);
-  m_exportSpreadsheetButton->setToolTip(tr("Export Spreadsheet (XLSX)"));
+  m_exportSpreadsheetButton->setToolTip(tr("Export Storyboard Spreadsheet (XLSX)"));
   m_exportSpreadsheetButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
 
     m_techniqueButton = new QToolButton();
@@ -1584,7 +1584,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     {m_pasteButton,          "Paste the last copied shot after the current selection"},
     {m_mergeButton,          "Merge two adjacent shots into one (durations are summed)"},
     {m_exportPdfButton,      "Export the Board as PDF: thumbnails, dialog, and per-panel/shot durations"},
-    {m_exportSpreadsheetButton, "Export a production spreadsheet (.xlsx): one row per shot with thumbnail, timing, technique and per-task Kitsu status"},
+    {m_exportSpreadsheetButton, "Export a storyboard spreadsheet (.xlsx): one row per shot in THIS storyboard with thumbnail, timing, technique and per-task Kitsu status. For the whole project (all storyboards + all tabs) use Export Project Spreadsheet in the Production Tracker"},
     {m_techniqueButton,      "Assign a production technique (Tradigital, Cut-out, 3D…) to the selected shot(s); it drives which tasks apply in the spreadsheet"},
     {m_exportShotsButton,    "Export each shot as a standalone scene"},
     {m_exportAnimaticButton, "Export the full animatic as a video with audio"},
@@ -2229,6 +2229,11 @@ QPixmap StoryboardPanel::firstPanelThumbnail(int shotIdx) const {
 }
 
 void StoryboardPanel::saveZtoryc() {
+  // Shot scenes (role="shot") have a companion .ztoryc authored once at export.
+  // Never rewrite it here — saveZtoryc always writes role="storyboard", which
+  // would corrupt the back-link (and make the shot show the SB badge / open in
+  // the wrong workflow).
+  if (m_currentSceneIsShot) return;
   // Use m_currentZtoryPath (set at end of refreshFromScene) instead of
   // ztoryPath() so we never write m_shots data to a different scene's file.
   // While m_shots is being rebuilt (clearShots clears it), this is empty →
@@ -2434,12 +2439,24 @@ void StoryboardPanel::saveZtoryc() {
   }
 }
 
+// Identity (.ztoryc path) of the scene we last auto-switched workflow for. Used
+// to fire the room switch only once per scene open, so panel recreation from the
+// switch itself — and the user's later manual switch — aren't overridden.
+static QString s_lastAutoWorkflowScene;
+
 void StoryboardPanel::loadZtoryc() {
   // Imported screenplay path read from this scene's .ztoryc.  Stays empty when
   // the scene has none — so opening a scene without a screenplay (or a brand
   // new scene) clears the Script panel instead of leaving a stale one loaded.
   QString scriptFromFile;
   m_loadingZtoryc = true;  // suppress scriptFileChanged→saveZtoryc during load
+  // Reset role/back-link state so values from a previous scene don't leak (and a
+  // new/empty scene is never mistaken for a shot scene).
+  m_currentSceneIsShot    = false;
+  m_shotBackLinkProject   = QString();
+  m_shotBackLinkUuid      = QString();
+  m_shotBackLinkTaskStage = QString();
+  m_shotBackLinkTechnique = QString();
   QString path = ztoryPath();
   if (path.isEmpty()) {
     ZtoryModel::instance()->setScriptFile(scriptFromFile);
@@ -2494,6 +2511,7 @@ void StoryboardPanel::loadZtoryc() {
         m_shotBackLinkUuid      = a.value("projectShot").toString();
         m_shotBackLinkProject   = a.value("project").toString();
         m_shotBackLinkTaskStage = QString();  // read from <project> below
+        m_shotBackLinkTechnique = QString();  // read from <project> below
       } else if (xml.name() == QLatin1String("project")) {
         auto a = xml.attributes();
         ZtoryModel::instance()->setProduction(a.value("production").toString());
@@ -2507,6 +2525,9 @@ void StoryboardPanel::loadZtoryc() {
         // B3c: read task stage from shot scene's <project> element.
         if (a.hasAttribute("taskStage"))
           m_shotBackLinkTaskStage = a.value("taskStage").toString();
+        // Shot technique authored at export — drives the workflow to open in.
+        if (a.hasAttribute("technique"))
+          m_shotBackLinkTechnique = a.value("technique").toString();
       }
       else if (xml.name() == QLatin1String("technique")) {
         Technique t;
@@ -2781,6 +2802,9 @@ void StoryboardPanel::loadZtoryc() {
   // freshly-loaded Board copy). Backfill uuids for pre-uuid (legacy) scenes.
   pullTrackingFromBoard();
   ensureShotUuids();
+  // Mark shot scenes BEFORE any saveZtoryc() below so the companion .ztoryc is
+  // never rewritten with role="storyboard".
+  m_currentSceneIsShot = (sceneRole == "shot");
   // Persist the SFH-explosion repair so the scene loads cleanly next time.
   // m_currentZtoryPath is still empty here (set by refreshFromScene after we
   // return), so temporarily anchor it so saveZtoryc() can write.
@@ -2789,32 +2813,58 @@ void StoryboardPanel::loadZtoryc() {
     saveZtoryc();
     m_currentZtoryPath.clear();  // refreshFromScene will set it authoritatively
   }
-  // role="shot" (B3c): load the project DB from the stored back-link path and
-  // advance the matching shot's task to WIP if it was Todo/Ready.
+  // role="shot": load the project DB from the stored back-link path and, on the
+  // first open, advance ONLY the first task after the storyboard (usually
+  // Layout) Ready/Todo → WIP (Model A: opening the single shot scene means work
+  // has started on its first pipeline step). Later tasks stay Todo.
   if (sceneRole == "shot") {
+    QString shotTech;  // technique of this shot → drives the workflow to open in
     if (!m_shotBackLinkProject.isEmpty()) {
       // Load the project DB from the absolute path stored in the .ztoryc.
       QFile pf(m_shotBackLinkProject);
       if (pf.exists()) {
-        // Temporarily point TProjectManager to the project file's directory so
-        // loadProjectDb() can find it, then restore.  Simpler: read directly.
         ZtoryModel *m = ZtoryModel::instance();
         m->loadProjectDbFromPath(m_shotBackLinkProject);
-        // Auto-WIP: if the shot's task (stored in m_shotBackLinkTaskStage) is
-        // Todo or Ready → advance to WIP.
-        if (!m_shotBackLinkUuid.isEmpty() && !m_shotBackLinkTaskStage.isEmpty()) {
+        if (!m_shotBackLinkUuid.isEmpty()) {
           for (ProjectShot &ps : m->projectShots_rw()) {
             if (ps.uuid != m_shotBackLinkUuid) continue;
-            TaskState &ts = ps.tasks[m_shotBackLinkTaskStage];
-            if (ts.status == TaskStatus::Todo || ts.status == TaskStatus::Ready) {
-              ts.status = TaskStatus::Wip;
-              m->saveProjectDb();
-              emit m->taskStatusChanged();
+            QStringList tts;
+            QString tech = ps.technique.isEmpty() ? m->defaultTechnique()
+                                                  : ps.technique;
+            shotTech = tech;
+            if (const Technique *t = m->findTechnique(tech)) tts = t->taskTypes;
+            if (!tts.isEmpty()) {
+              TaskState &ts = ps.tasks[tts.first()];
+              if (ts.status == TaskStatus::Todo ||
+                  ts.status == TaskStatus::Ready) {
+                ts.status = TaskStatus::Wip;
+                m->saveProjectDb();
+                emit m->taskStatusChanged();
+              }
             }
             break;
           }
         }
       }
+    }
+    // Open the room/workflow matching the shot's technique. Prefer the technique
+    // authored in the shot's .ztoryc (set at export); fall back to the project
+    // DB lookup. Techniques without a dedicated workflow (Traditional, 3D/CGI,
+    // Generic, Live…) fall back to 2D Tradigital. Deferred so it runs after the
+    // scene load settles (switching rooms mid-load can blank the viewers).
+    // Dedup: only auto-switch ONCE per scene open. loadZtoryc runs per-panel and
+    // again after a room switch recreates panels — without this guard each call
+    // re-schedules the command, and the late ones override the user's manual
+    // room switch.
+    if (ZtoryModel::autoWorkflowDetection() && path != s_lastAutoWorkflowScene) {
+      s_lastAutoWorkflowScene = path;
+      QString effTech = !m_shotBackLinkTechnique.isEmpty()
+                            ? m_shotBackLinkTechnique
+                            : shotTech;
+      QString wfCmd = ZtoryModel::workflowCommand("shot", effTech);
+      QTimer::singleShot(0, this, [wfCmd] {
+        CommandManager::instance()->execute(wfCmd.toStdString().c_str());
+      });
     }
     // Shot scenes don't publish to the project DB.
     emit ZtoryModel::instance()->productionReloaded();
@@ -2840,6 +2890,16 @@ void StoryboardPanel::loadZtoryc() {
           m->updateThumbCache(m_shots[si].data.uuid, pm);
       }
     }
+  }
+  // A storyboard scene opens directly in the Storyboard workflow (like shot
+  // scenes open in their technique's workflow). Deferred so it runs after the
+  // scene load settles (switching rooms mid-load can blank the viewers).
+  if (sceneRole == "storyboard" && ZtoryModel::autoWorkflowDetection() &&
+      path != s_lastAutoWorkflowScene) {
+    s_lastAutoWorkflowScene = path;
+    QTimer::singleShot(0, this, [] {
+      CommandManager::instance()->execute(MI_WorkflowStoryboard);
+    });
   }
   // Project/team/assets are now populated in the model. refreshFromScene does
   // NOT emit modelReset, so the Production Tracker's non-shot tabs (Team /
@@ -4891,18 +4951,10 @@ void StoryboardPanel::onExportShots() {
     if (!d.isEmpty()) dirEdit->setText(d);
   });
 
-  // Task stage (for {TASK} token and the naming preview)
-  auto *taskCombo = new QComboBox(&dlg);
-  // Build task list from the project default technique.
-  QStringList taskTypes;
-  if (const Technique *t = model->findTechnique(model->defaultTechnique()))
-    taskTypes = t->taskTypes;
-  if (taskTypes.isEmpty()) taskTypes << "Animation" << "Layout" << "Compositing";
-  for (const QString &tt : taskTypes)
-    taskCombo->addItem(
-        QString("%1  [%2]").arg(tt, ZtoryModel::taskShortCode(tt)),
-        ZtoryModel::taskShortCode(tt));
-  form->addRow(tr("Task stage:"), taskCombo);
+  // Model A: one .tnz per shot reused across all pipeline steps. No task stage
+  // is picked here — the task belongs only to the render/clip name (Output
+  // Settings → "Name from project pattern"). On export the shot's tasks advance
+  // Todo→Ready; on first open of the shot scene they advance Ready→Wip.
 
   // Version
   auto *verSpin = new QSpinBox(&dlg);
@@ -4950,6 +5002,16 @@ void StoryboardPanel::onExportShots() {
   QObject::connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
   QObject::connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
+  // Model A: the exported .tnz is a single scene reused across pipeline steps,
+  // so the shot file name must NOT carry the {TASK} token (the task belongs only
+  // to the render/clip name, set later from Output Settings). Strip {TASK} and a
+  // neighbouring separator from the project pattern.
+  QString exportPattern = model->namingPattern();
+  if (exportPattern.isEmpty())
+    exportPattern = "{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
+  exportPattern.remove(QRegularExpression(
+      R"((?:[_\-.]\{TASK(?::\d+)?\})|(?:\{TASK(?::\d+)?\}[_\-.])|\{TASK(?::\d+)?\})"));
+
   // Update preview whenever relevant fields change
   auto updatePreview = [&] {
     if (m_shots.empty()) return;
@@ -4963,12 +5025,10 @@ void StoryboardPanel::onExportShots() {
     tok["EP"]     = model->episode();
     tok["SEQ"]    = seqLabel;
     tok["SHOT"]   = sd.label();
-    tok["TASK"]   = taskCombo->currentData().toString();
     tok["VER"]    = QString::number(verSpin->value());
-    previewLabel->setText(model->resolveNamingPattern(tok) + ".tnz  (first shot)");
+    previewLabel->setText(
+        ZtoryModel::resolvePattern(exportPattern, tok) + ".tnz  (first shot)");
   };
-  QObject::connect(taskCombo, qOverload<int>(&QComboBox::currentIndexChanged),
-                   [&](int) { updatePreview(); });
   QObject::connect(verSpin, qOverload<int>(&QSpinBox::valueChanged),
                    [&](int) { updatePreview(); });
   updatePreview();
@@ -4978,7 +5038,6 @@ void StoryboardPanel::onExportShots() {
   // ── Export ───────────────────────────────────────────────────────────────
   int from = allRadio->isChecked() ? 0 : fromSpin->value() - 1;
   int to   = allRadio->isChecked() ? (int)m_shots.size() - 1 : toSpin->value() - 1;
-  const QString taskCode   = taskCombo->currentData().toString();
   const int     version    = verSpin->value();
   const bool    writeLink  = backLinkChk->isChecked();
   const QString outDir     = dirEdit->text().trimmed();
@@ -5003,9 +5062,9 @@ void StoryboardPanel::onExportShots() {
     tok["EP"]     = model->episode();
     tok["SEQ"]    = seqLabel;
     tok["SHOT"]   = sd.label();
-    tok["TASK"]   = taskCode;
     tok["VER"]    = QString::number(version);
-    QString baseName = model->resolveNamingPattern(tok);
+    // Task intentionally excluded from the .tnz name (see exportPattern above).
+    QString baseName = ZtoryModel::resolvePattern(exportPattern, tok);
     if (baseName.isEmpty()) baseName = "shot_" + sd.label();
     TFilePath outPath = outDirFp + TFilePath(baseName.toStdString() + ".tnz");
 
@@ -5039,6 +5098,16 @@ void StoryboardPanel::onExportShots() {
 
     // B3c: write companion .ztoryc with role="shot" + back-link to project
     if (writeLink && !projectDb.isEmpty() && !sd.uuid.isEmpty()) {
+      // Effective technique = the project DB value (edited in the Production
+      // Tracker) is authoritative; fall back to the Board's per-shot value, then
+      // the project default. This keeps the exported workflow and the per-task
+      // Ready/Wip advances consistent with what the user set in the tracker.
+      QString tech;
+      for (const ProjectShot &ps : model->projectShots())
+        if (ps.uuid == sd.uuid) { tech = ps.technique; break; }
+      if (tech.isEmpty()) tech = sd.technique;
+      if (tech.isEmpty()) tech = model->defaultTechnique();
+
       QString ztorcPath = QString::fromStdWString(outPath.getWideString());
       ztorcPath.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
       QFile f(ztorcPath);
@@ -5057,15 +5126,30 @@ void StoryboardPanel::onExportShots() {
         xml.writeAttribute("season",     model->season());
         xml.writeAttribute("episode",    model->episode());
         xml.writeAttribute("title",      model->title());
-        xml.writeAttribute("technique",
-            sd.technique.isEmpty() ? model->defaultTechnique() : sd.technique);
-        xml.writeAttribute("taskStage",  taskCode);
+        xml.writeAttribute("technique",  tech);
         xml.writeEndElement();
         xml.writeEndElement();
         xml.writeEndDocument();
         f.close();
       }
+
+      // Export advances ONLY the first task after the storyboard (usually
+      // Layout) Todo→Ready; later tasks stay Todo.
+      QStringList tts;
+      if (const Technique *t = model->findTechnique(tech)) tts = t->taskTypes;
+      if (!tts.isEmpty())
+        for (ProjectShot &ps : model->projectShots_rw()) {
+          if (ps.uuid != sd.uuid) continue;
+          TaskState &st = ps.tasks[tts.first()];
+          if (st.status == TaskStatus::Todo) st.status = TaskStatus::Ready;
+          break;
+        }
     }
+  }
+
+  if (writeLink && !projectDb.isEmpty()) {
+    model->saveProjectDb();
+    emit model->taskStatusChanged();  // refresh the Production Tracker
   }
 
   QString msg = tr("Export complete: %1 shot(s) exported").arg(ok);

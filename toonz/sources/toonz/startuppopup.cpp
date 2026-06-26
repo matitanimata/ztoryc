@@ -270,10 +270,24 @@ StartupPopup::StartupPopup(Mode mode)
       m_loadWorkflowCB->addItem(tr("Cutout Digital Mode"));
       m_loadWorkflowCB->addItem(tr("Stop-Motion Mode"));
       wfRow->addWidget(m_loadWorkflowCB, 1);
+      // Auto-detect: when checked, the workflow follows the scene's role/
+      // technique and the manual combo is ignored (and disabled).
+      m_autoWorkflowCB = new QCheckBox(tr("Automatic"), loadWidget);
+      m_autoWorkflowCB->setToolTip(
+          tr("Open each scene in the workflow matching its role/technique "
+             "(storyboard → Storyboard; shots → their technique)."));
+      m_autoWorkflowCB->setChecked(ZtoryModel::autoWorkflowDetection());
+      m_loadWorkflowCB->setEnabled(!m_autoWorkflowCB->isChecked());
+      wfRow->addWidget(m_autoWorkflowCB);
+      connect(m_autoWorkflowCB, &QCheckBox::toggled, this, [this](bool on) {
+        ZtoryModel::setAutoWorkflowDetection(on);
+        m_loadWorkflowCB->setEnabled(!on);
+      });
       // Hide workflow selector in sub-scene mode (no room switch needed)
       if (mode == LoadSubSceneMode) {
         wfRow->itemAt(0)->widget()->hide();  // label
         m_loadWorkflowCB->hide();
+        m_autoWorkflowCB->hide();
       }
       loadLay->addLayout(wfRow);
 
@@ -970,15 +984,34 @@ void StartupPopup::onExistingSceneClicked(int index) {
   } else {
     TApp::instance()->getCurrentScene()->setDirtyFlag(false);
     IoCmd::loadScene(TFilePath(path.toStdWString()), true, true);
-    // Apply the selected workflow AFTER loading so rooms are not cleared
-    // while the scene load is still in progress (caused black screen on switch).
-    static const char *kCmds[] = {
-      MI_WorkflowStoryboard, MI_Workflow2D,
-      MI_WorkflowCutout,     MI_WorkflowStopMotion
-    };
-    int wfIdx = m_loadWorkflowCB->currentIndex();
-    const char *cmd = (wfIdx >= 0 && wfIdx < 4) ? kCmds[wfIdx] : MI_WorkflowStoryboard;
-    CommandManager::instance()->execute(cmd);
+    // Apply the workflow AFTER loading so rooms are not cleared mid-load (caused
+    // a black screen on switch).
+    QString cmd;
+    if (ZtoryModel::autoWorkflowDetection()) {
+      // Auto: derive the workflow from the scene's .ztoryc (role + technique).
+      // Done here (not only in the Board) so it works even when the current room
+      // has no Storyboard panel to run loadZtoryc.
+      QString role = "storyboard", technique;
+      QString ztoryPath = path;
+      ztoryPath.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
+      QFile zf(ztoryPath);
+      if (zf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QString head = QString::fromUtf8(zf.read(1024));
+        if (head.contains("role=\"shot\"")) role = "shot";
+        QRegularExpressionMatch mt =
+            QRegularExpression("technique=\"([^\"]*)\"").match(head);
+        if (mt.hasMatch()) technique = mt.captured(1);
+      }
+      cmd = ZtoryModel::workflowCommand(role, technique);
+    } else {
+      static const char *kCmds[] = {
+        MI_WorkflowStoryboard, MI_Workflow2D,
+        MI_WorkflowCutout,     MI_WorkflowStopMotion
+      };
+      int wfIdx = m_loadWorkflowCB->currentIndex();
+      cmd = (wfIdx >= 0 && wfIdx < 4) ? kCmds[wfIdx] : MI_WorkflowStoryboard;
+    }
+    CommandManager::instance()->execute(cmd.toStdString().c_str());
     hide();
   }
 }
@@ -1782,12 +1815,23 @@ void StartupScenesList::addScene(const QString &name, const QString &path) {
   else
     pixmap = createScenePreview(name, TFilePath(path));
 
-  // Storyboard badge: if a .ztoryc sidecar exists, paint an "SB" pill over the
-  // thumbnail so the user can tell storyboard scenes from regular ones.
+  // Storyboard badge: if a .ztoryc sidecar with role="storyboard" exists, paint
+  // an "SB" pill over the thumbnail so the user can tell storyboard scenes from
+  // regular ones. Exported shot scenes (role="shot") are NOT storyboards.
   if (path != ":") {
     QString ztoryPath = path;
     ztoryPath.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
-    if (QFile::exists(ztoryPath) && !pixmap.isNull()) {
+    bool isStoryboard = false;
+    if (QFile::exists(ztoryPath)) {
+      QFile zf(ztoryPath);
+      if (zf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        // The root <ztoryc role="…"> is near the top; a small read suffices.
+        QString head = QString::fromUtf8(zf.read(512));
+        // Default/legacy role is "storyboard" when the attribute is absent.
+        isStoryboard = !head.contains("role=\"shot\"");
+      }
+    }
+    if (isStoryboard && !pixmap.isNull()) {
       QPainter p(&pixmap);
       p.setRenderHint(QPainter::Antialiasing);
       const int pad = 3, h = 14, r = 4;

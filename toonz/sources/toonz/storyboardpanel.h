@@ -215,6 +215,8 @@ struct Shot {
   QString m_shotBackLinkProject;    // absolute path to production.ztrack
   QString m_shotBackLinkUuid;       // projectShot uuid
   QString m_shotBackLinkTaskStage;  // task short code (e.g. "ANIM")
+  QString m_shotBackLinkTechnique;  // shot technique authored at export time
+  bool    m_currentSceneIsShot = false;  // true when the open scene is role="shot"
   // B3: suppress publication for scenes the user chose to keep standalone.
   bool    m_suppressProjectPublication = false;
   // Column index of the last shot edited while inside a sub-scene.

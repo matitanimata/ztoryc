@@ -3,9 +3,29 @@
 #include "ztorymodel.h"
 #include "storyboardpanel.h"
 
+#include "toonzqt/gutil.h"
+
 #include "tundo.h"
+#include "tapp.h"
+#include "toonz/tscenehandle.h"
+#include "toonz/toonzscene.h"
+
+#include "xlsxdocument.h"
+#include "xlsxformat.h"
+#include "xlsxdatavalidation.h"
+#include "xlsxconditionalformatting.h"
+#include "xlsxworksheet.h"
+#include "xlsxcellrange.h"
+#include "xlsxcellreference.h"
 
 #include <QVBoxLayout>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QImage>
+#include <QFileInfo>
+
+#include <set>
+#include <algorithm>
 #include <QHeaderView>
 #include <QTableWidgetItem>
 #include <QColor>
@@ -19,10 +39,12 @@
 #include <QDialog>
 #include <QLabel>
 #include <QListWidget>
+#include <QAbstractItemModel>
 #include <QDialogButtonBox>
 #include <QTabWidget>
 #include <QComboBox>
 #include <QPushButton>
+#include <QToolButton>
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QProgressBar>
@@ -307,9 +329,9 @@ public:
 ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   m_tabs = new QTabWidget(this);
   m_tabs->setDocumentMode(true);
+  m_tabs->addTab(buildProjectTab(),   QObject::tr("Project"));
   m_tabs->addTab(buildShotsTab(),     QObject::tr("Shots"));
   m_tabs->addTab(buildTeamTab(),      QObject::tr("Team"));
-  m_tabs->addTab(buildProjectTab(),   QObject::tr("Project"));
   m_tabs->addTab(buildAssetsTab(),    QObject::tr("Assets"));
   m_tabs->addTab(buildWorkflowsTab(), QObject::tr("Workflows"));
 
@@ -375,7 +397,355 @@ QWidget *ZtoryProductionPanel::buildShotsTab() {
   auto *lay = new QVBoxLayout(w);
   lay->setContentsMargins(0, 0, 0, 0);
   lay->addWidget(m_table);
+  // Full-project export (all storyboards + all tabs).
+  auto *exportRow = new QHBoxLayout();
+  exportRow->addStretch();
+  auto *exportBtn =
+      new QPushButton(QObject::tr("  Export Project Spreadsheet…"), w);
+  exportBtn->setIcon(createQIcon("ztoryc_export_spreadsheet"));
+  exportBtn->setIconSize(QSize(28, 20));  // wider than the Board's (whole project)
+  exportBtn->setToolTip(QObject::tr(
+      "Export one spreadsheet with every storyboard's shots plus the Project, "
+      "Team, Assets and Workflows tabs."));
+  connect(exportBtn, &QPushButton::clicked, this,
+          &ZtoryProductionPanel::exportFullProject);
+  exportRow->addWidget(exportBtn);
+  lay->addLayout(exportRow);
   return w;
+}
+
+//-----------------------------------------------------------------------------
+// Full-project XLSX export — every storyboard's shots + Team/Assets/Workflows/
+// Project, sourced entirely from the project DB (no open scene required).
+// Thumbnails come from the on-disk thumb cache keyed by shot uuid.
+
+void ZtoryProductionPanel::exportFullProject() {
+  using namespace QXlsx;
+  ZtoryModel *m = ZtoryModel::instance();
+
+  const std::vector<ProjectShot> &shots = m->projectShots();
+  if (shots.empty()) {
+    QMessageBox::information(this, QObject::tr("Export Full Project"),
+                            QObject::tr("The project has no shots to export."));
+    return;
+  }
+
+  // Suggested filename: production[_episode]_project.xlsx
+  QString base = m->production().trimmed();
+  QString ep   = m->episode().trimmed();
+  if (!ep.isEmpty()) base = (base.isEmpty() ? ep : base + "_" + ep);
+  base = base.isEmpty() ? QString("project") : base + "_project";
+  base.replace(' ', '_').replace('/', '_');
+  QString startDir;
+  if (!m->projectDbPath().isEmpty())
+    startDir = QFileInfo(m->projectDbPath()).absolutePath();
+  QString suggested = startDir.isEmpty() ? base + ".xlsx"
+                                         : startDir + "/" + base + ".xlsx";
+  QString path = QFileDialog::getSaveFileName(
+      this, QObject::tr("Export Full Project Spreadsheet"), suggested,
+      QObject::tr("Excel Spreadsheet (*.xlsx)"));
+  if (path.isEmpty()) return;
+  if (!path.endsWith(".xlsx", Qt::CaseInsensitive)) path += ".xlsx";
+
+  const int fps = m->fps() > 0 ? m->fps() : 24;
+
+  // ── Shared formats ────────────────────────────────────────────────────────
+  Format titleFmt; titleFmt.setFontBold(true); titleFmt.setFontSize(14);
+  Format subFmt;   subFmt.setFontBold(true);
+  Format hdrFmt;
+  hdrFmt.setFontBold(true);
+  hdrFmt.setFontColor(Qt::white);
+  hdrFmt.setPatternBackgroundColor(QColor("#2C3E50"));
+  hdrFmt.setHorizontalAlignment(Format::AlignHCenter);
+  hdrFmt.setVerticalAlignment(Format::AlignVCenter);
+  hdrFmt.setTextWrap(true);
+  Format cellFmt;   cellFmt.setVerticalAlignment(Format::AlignVCenter);
+  cellFmt.setTextWrap(true);
+  Format centerFmt;
+  centerFmt.setHorizontalAlignment(Format::AlignHCenter);
+  centerFmt.setVerticalAlignment(Format::AlignVCenter);
+  Format naFmt;
+  naFmt.setHorizontalAlignment(Format::AlignHCenter);
+  naFmt.setVerticalAlignment(Format::AlignVCenter);
+  naFmt.setFontColor(QColor("#BBBBBB"));
+  naFmt.setPatternBackgroundColor(QColor("#F0F0F0"));
+
+  const QString statusList = "\"TODO,READY,WIP,WFA,RETAKE,DONE\"";
+
+  Document xlsx;
+
+  // ── Helper: technique → ordered task types ────────────────────────────────
+  auto taskTypesOfTech = [&](const QString &techName) -> QStringList {
+    QString tn = techName.isEmpty() ? m->defaultTechnique() : techName;
+    const Technique *t = m->findTechnique(tn);
+    return t ? t->taskTypes : QStringList();
+  };
+
+  // ── Sort shots by source, then sequence, then label ───────────────────────
+  std::vector<int> order(shots.size());
+  for (int i = 0; i < (int)shots.size(); i++) order[i] = i;
+  std::sort(order.begin(), order.end(), [&](int a, int b) {
+    if (shots[a].source != shots[b].source) return shots[a].source < shots[b].source;
+    if (shots[a].seq != shots[b].seq)       return shots[a].seq < shots[b].seq;
+    return shots[a].label < shots[b].label;
+  });
+
+  // ── writeShotsSheet: one sheet for a given subset of shots + task columns ──
+  const QStringList fixedCols = {
+      QObject::tr("Thumbnail"), QObject::tr("Storyboard"),
+      QObject::tr("Sequence"),  QObject::tr("Shot"),
+      QObject::tr("Frames"),    QObject::tr("Sec/Fr"),
+      QObject::tr("Workflow")};
+  const int firstTaskCol = fixedCols.size() + 1;  // 1-based
+  const int headerRow    = 4;
+  const int firstDataRow = 5;
+
+  auto writeShotsSheet = [&](const QString &sheetName, const QString &subtitle,
+                             const std::vector<int> &shotIdxs,
+                             const QStringList &cols) {
+    xlsx.write(1, 1, m->production().isEmpty() ? QObject::tr("Production")
+                                               : m->production(), titleFmt);
+    if (!subtitle.isEmpty()) xlsx.write(2, 1, subtitle, subFmt);
+
+    for (int c = 0; c < fixedCols.size(); c++)
+      xlsx.write(headerRow, c + 1, fixedCols[c], hdrFmt);
+    for (int t = 0; t < cols.size(); t++) {
+      int sc = firstTaskCol + t * 2;
+      xlsx.write(headerRow, sc,     cols[t],                       hdrFmt);
+      xlsx.write(headerRow, sc + 1, cols[t] + QObject::tr(" — Who"), hdrFmt);
+    }
+    xlsx.setRowHeight(headerRow, 28);
+    xlsx.setColumnWidth(1, 23); xlsx.setColumnWidth(2, 20);
+    xlsx.setColumnWidth(3, 12); xlsx.setColumnWidth(4, 10);
+    xlsx.setColumnWidth(5, 8);  xlsx.setColumnWidth(6, 11);
+    xlsx.setColumnWidth(7, 15);
+    for (int t = 0; t < cols.size(); t++) {
+      xlsx.setColumnWidth(firstTaskCol + t * 2,     11);
+      xlsx.setColumnWidth(firstTaskCol + t * 2 + 1, 12);
+    }
+
+    int row = firstDataRow;
+    for (int si : shotIdxs) {
+      const ProjectShot &ps = shots[si];
+
+      QPixmap px = m->thumbCache().value(ps.uuid);
+      if (!px.isNull()) {
+        QImage thumb = px.toImage().scaled(128, 72, Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation);
+        thumb.setDotsPerMeterX(3780);  // 96 dpi
+        thumb.setDotsPerMeterY(3780);
+        xlsx.insertImage(row - 1, 0, thumb);  // 0-based anchor
+      }
+      xlsx.setRowHeight(row, 60);
+
+      xlsx.write(row, 2, ps.source, centerFmt);
+      xlsx.write(row, 3, ps.seq,    centerFmt);
+      xlsx.write(row, 4, ps.label,  centerFmt);
+      xlsx.write(row, 5, ps.frames, centerFmt);
+      xlsx.write(row, 6, QString("%1:%2").arg(ps.frames / fps)
+                             .arg(ps.frames % fps, 2, 10, QChar('0')), centerFmt);
+      QString tech = ps.technique.isEmpty() ? m->defaultTechnique() : ps.technique;
+      xlsx.write(row, 7, tech, centerFmt);
+
+      QStringList applicable = taskTypesOfTech(ps.technique);
+      for (int t = 0; t < cols.size(); t++) {
+        int sc = firstTaskCol + t * 2;
+        const QString &tt = cols[t];
+        if (!applicable.contains(tt)) {
+          xlsx.write(row, sc,     QString("N/A"), naFmt);
+          xlsx.write(row, sc + 1, QString(),      naFmt);
+          continue;
+        }
+        TaskState tsk = ps.tasks.value(tt);  // missing → default Todo
+        Format sf;
+        sf.setHorizontalAlignment(Format::AlignHCenter);
+        sf.setVerticalAlignment(Format::AlignVCenter);
+        sf.setFontBold(true);
+        xlsx.write(row, sc,     ZtoryModel::taskStatusLabel(tsk.status), sf);
+        xlsx.write(row, sc + 1, tsk.assignees.join(", "), centerFmt);
+      }
+      row++;
+    }
+
+    const int lastRow = row - 1;
+    if (lastRow < firstDataRow) return;
+
+    // Status dropdown on each status column.
+    for (int t = 0; t < cols.size(); t++) {
+      int sc = firstTaskCol + t * 2;
+      DataValidation dv(DataValidation::List);
+      dv.setFormula1(statusList);
+      dv.addRange(firstDataRow, sc, lastRow, sc);
+      dv.setAllowBlank(true);
+      xlsx.addDataValidation(dv);
+    }
+
+    // Colour-by-value over all status columns.
+    if (!cols.isEmpty()) {
+      ConditionalFormatting cf;
+      for (TaskStatus s : kAllStatuses) {
+        Format f;
+        f.setPatternBackgroundColor(statusColor(s));
+        f.setFontColor(isLightStatus(s) ? QColor(Qt::black) : QColor(Qt::white));
+        f.setFontBold(true);
+        cf.addHighlightCellsRule(ConditionalFormatting::Highlight_ContainsText,
+                                 ZtoryModel::taskStatusLabel(s), f);
+      }
+      for (int t = 0; t < cols.size(); t++)
+        cf.addRange(firstDataRow, firstTaskCol + t * 2,
+                    lastRow, firstTaskCol + t * 2);
+      xlsx.addConditionalFormatting(cf);
+    }
+
+    int lastCol = cols.isEmpty() ? fixedCols.size()
+                                 : firstTaskCol + cols.size() * 2 - 1;
+    if (QXlsx::Worksheet *ws = xlsx.currentWorksheet())
+      ws->setAutoFilter(QXlsx::CellRange(headerRow, 1, lastRow, lastCol));
+    QString fdb = QString("='%1'!%2:%3").arg(sheetName)
+        .arg(QXlsx::CellReference(headerRow, 1).toString(true, true))
+        .arg(QXlsx::CellReference(lastRow, lastCol).toString(true, true));
+    xlsx.defineName("_xlnm._FilterDatabase", fdb, QString(), sheetName);
+  };  // writeShotsSheet
+
+  auto sanitizeSheet = [](QString n) -> QString {
+    for (QChar c : QString("\\/?*:[]")) n.replace(c, ' ');
+    return n.trimmed().left(31);
+  };
+
+  // ── Project sheet — FIRST (rename the default sheet) ──────────────────────
+  {
+    QStringList existing = xlsx.sheetNames();
+    if (existing.isEmpty()) xlsx.addSheet(QObject::tr("Project"));
+    else                    xlsx.renameSheet(existing.first(), QObject::tr("Project"));
+    xlsx.write(1, 1, QObject::tr("Project"), titleFmt);
+    xlsx.setColumnWidth(1, 22); xlsx.setColumnWidth(2, 40);
+    int r = 3;
+    auto kv = [&](const QString &k, const QString &v) {
+      Format kf; kf.setFontBold(true);
+      xlsx.write(r, 1, k, kf);
+      xlsx.write(r, 2, v, cellFmt);
+      r++;
+    };
+    kv(QObject::tr("Production"),        m->production());
+    kv(QObject::tr("Title"),             m->title());
+    kv(QObject::tr("Season"),            m->season());
+    kv(QObject::tr("Episode"),           m->episode());
+    kv(QObject::tr("Default technique"), m->defaultTechnique());
+    {
+      std::set<QString> sources;
+      for (const ProjectShot &ps : shots) sources.insert(ps.source);
+      kv(QObject::tr("Storyboards"), QString::number((int)sources.size()));
+    }
+    kv(QObject::tr("Total shots"),       QString::number((int)shots.size()));
+    kv(QObject::tr("Team members"),      QString::number(m->team().size()));
+    kv(QObject::tr("Assets"),            QString::number((int)m->assets().size()));
+  }
+
+  // ── Overview sheet (all shots, union of task columns) ─────────────────────
+  std::set<QString> usedSet;
+  for (const ProjectShot &ps : shots)
+    for (const QString &tt : taskTypesOfTech(ps.technique)) usedSet.insert(tt);
+  QStringList allTaskCols;
+  for (const QString &tt : ZtoryModel::canonicalTaskOrder())
+    if (usedSet.count(tt)) { allTaskCols << tt; usedSet.erase(tt); }
+  for (const QString &tt : usedSet) allTaskCols << tt;  // custom types last
+
+  const QString overviewName = QObject::tr("Overview");
+  xlsx.addSheet(overviewName);
+
+  QString subtitle = m->title();
+  if (!m->episode().isEmpty())
+    subtitle += (subtitle.isEmpty() ? QString() : QString("  ·  ")) +
+                QObject::tr("Episode ") + m->episode();
+  writeShotsSheet(overviewName, subtitle, order, allTaskCols);
+
+  // ── One sheet per technique actually used ─────────────────────────────────
+  QStringList usedTechs;
+  for (const ProjectShot &ps : shots) {
+    QString tn = ps.technique.isEmpty() ? m->defaultTechnique() : ps.technique;
+    if (!usedTechs.contains(tn)) usedTechs << tn;
+  }
+  for (const QString &tn : usedTechs) {
+    std::vector<int> idxs;
+    for (int si : order) {
+      QString t = shots[si].technique.isEmpty() ? m->defaultTechnique()
+                                                : shots[si].technique;
+      if (t == tn) idxs.push_back(si);
+    }
+    QString sname = sanitizeSheet(tn);
+    if (sname.compare(overviewName, Qt::CaseInsensitive) == 0) sname += " (wf)";
+    if (!xlsx.addSheet(sname)) continue;
+    writeShotsSheet(sname, tn, idxs, taskTypesOfTech(tn));
+  }
+
+  // ── Team sheet ────────────────────────────────────────────────────────────
+  if (xlsx.addSheet(QObject::tr("Team"))) {
+    xlsx.write(1, 1, QObject::tr("Team"), titleFmt);
+    xlsx.write(3, 1, QObject::tr("Member"), hdrFmt);
+    xlsx.setColumnWidth(1, 30);
+    int r = 4;
+    for (const QString &name : m->team()) xlsx.write(r++, 1, name, cellFmt);
+  }
+
+  // ── Assets sheet ──────────────────────────────────────────────────────────
+  if (xlsx.addSheet(QObject::tr("Assets"))) {
+    const std::vector<Asset> &assets = m->assets();
+    std::set<QString> assetTaskSet;
+    for (const Asset &a : assets)
+      for (auto it = a.tasks.begin(); it != a.tasks.end(); ++it)
+        assetTaskSet.insert(it.key());
+    QStringList assetTaskCols;
+    for (const QString &k : assetTaskSet) assetTaskCols << k;
+
+    xlsx.write(1, 1, QObject::tr("Assets"), titleFmt);
+    const QStringList aFixed = {QObject::tr("Type"), QObject::tr("Name"),
+                                QObject::tr("Tags")};
+    for (int c = 0; c < aFixed.size(); c++) xlsx.write(3, c + 1, aFixed[c], hdrFmt);
+    for (int t = 0; t < assetTaskCols.size(); t++)
+      xlsx.write(3, aFixed.size() + 1 + t, assetTaskCols[t], hdrFmt);
+    xlsx.setColumnWidth(1, 14); xlsx.setColumnWidth(2, 24);
+    xlsx.setColumnWidth(3, 24);
+
+    int r = 4;
+    for (const Asset &a : assets) {
+      xlsx.write(r, 1, a.type, cellFmt);
+      xlsx.write(r, 2, a.name, cellFmt);
+      xlsx.write(r, 3, a.tags.join(", "), cellFmt);
+      for (int t = 0; t < assetTaskCols.size(); t++) {
+        int col = aFixed.size() + 1 + t;
+        if (!a.tasks.contains(assetTaskCols[t])) { xlsx.write(r, col, QString("N/A"), naFmt); continue; }
+        TaskState tsk = a.tasks.value(assetTaskCols[t]);
+        Format sf;
+        sf.setHorizontalAlignment(Format::AlignHCenter);
+        sf.setFontBold(true);
+        sf.setPatternBackgroundColor(statusColor(tsk.status));
+        sf.setFontColor(isLightStatus(tsk.status) ? QColor(Qt::black) : QColor(Qt::white));
+        xlsx.write(r, col, ZtoryModel::taskStatusLabel(tsk.status), sf);
+      }
+      r++;
+    }
+  }
+
+  // ── Workflows sheet ───────────────────────────────────────────────────────
+  if (xlsx.addSheet(QObject::tr("Workflows"))) {
+    xlsx.write(1, 1, QObject::tr("Workflows"), titleFmt);
+    xlsx.write(3, 1, QObject::tr("Technique"),  hdrFmt);
+    xlsx.write(3, 2, QObject::tr("Task types (in order)"), hdrFmt);
+    xlsx.setColumnWidth(1, 18); xlsx.setColumnWidth(2, 70);
+    int r = 4;
+    for (const Technique &t : m->techniques()) {
+      xlsx.write(r, 1, t.name, cellFmt);
+      xlsx.write(r, 2, t.taskTypes.join("  ›  "), cellFmt);
+      r++;
+    }
+  }
+
+  if (xlsx.saveAs(path))
+    QMessageBox::information(this, QObject::tr("Export Full Project"),
+                            QObject::tr("Saved:\n%1").arg(path));
+  else
+    QMessageBox::warning(this, QObject::tr("Export Full Project"),
+                         QObject::tr("Could not write the spreadsheet."));
 }
 
 //-----------------------------------------------------------------------------
@@ -728,13 +1098,26 @@ QWidget *ZtoryProductionPanel::buildWorkflowsTab() {
   rightCol->addWidget(
       new QLabel(QObject::tr("Task types (double-click to rename):"), w));
   m_taskTypeList = new QListWidget(w);
+  // Allow reordering task types by dragging (pipeline order matters).
+  m_taskTypeList->setDragDropMode(QAbstractItemView::InternalMove);
+  m_taskTypeList->setDefaultDropAction(Qt::MoveAction);
   rightCol->addWidget(m_taskTypeList);
   auto *rb    = new QHBoxLayout();
   auto *addTT = new QPushButton(QObject::tr("+ Task"), w);
   auto *remTT = new QPushButton(QObject::tr("− Task"), w);
+  auto *upTT   = new QToolButton(w);
+  auto *downTT = new QToolButton(w);
+  upTT->setArrowType(Qt::UpArrow);
+  downTT->setArrowType(Qt::DownArrow);
+  upTT->setToolTip(QObject::tr("Move task earlier in the pipeline"));
+  downTT->setToolTip(QObject::tr("Move task later in the pipeline"));
+  upTT->setFixedWidth(32);
+  downTT->setFixedWidth(32);
   rb->addWidget(addTT);
   rb->addWidget(remTT);
   rb->addStretch();
+  rb->addWidget(upTT);
+  rb->addWidget(downTT);
   rightCol->addLayout(rb);
   root->addLayout(rightCol, 2);
 
@@ -777,8 +1160,23 @@ QWidget *ZtoryProductionPanel::buildWorkflowsTab() {
     delete m_taskTypeList->currentItem();
     applyTaskTypesToTechnique();
   });
+  // Move current task up/down within the pipeline order.
+  auto moveCurrentTask = [this](int delta) {
+    int row = m_taskTypeList->currentRow();
+    int dst = row + delta;
+    if (row < 0 || dst < 0 || dst >= m_taskTypeList->count()) return;
+    QListWidgetItem *it = m_taskTypeList->takeItem(row);
+    m_taskTypeList->insertItem(dst, it);
+    m_taskTypeList->setCurrentRow(dst);
+    applyTaskTypesToTechnique();
+  };
+  connect(upTT,   &QPushButton::clicked, this, [moveCurrentTask] { moveCurrentTask(-1); });
+  connect(downTT, &QPushButton::clicked, this, [moveCurrentTask] { moveCurrentTask(+1); });
   connect(m_taskTypeList, &QListWidget::itemChanged, this,
           [this](QListWidgetItem *) { applyTaskTypesToTechnique(); });
+  // Persist the new order after a drag-and-drop reorder.
+  connect(m_taskTypeList->model(), &QAbstractItemModel::rowsMoved, this,
+          [this] { applyTaskTypesToTechnique(); });
   return w;
 }
 

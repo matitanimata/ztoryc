@@ -134,6 +134,7 @@ protected slots:
   void updateField();
   void onPathChanged();
   void onNameChanged();
+  void onNameFromPattern();  // Ztoryc: compose output name from project pattern
   void onFormatChanged(const QString &str);
   void openSettingsPopup();
   void onCameraChanged(const QString &str);

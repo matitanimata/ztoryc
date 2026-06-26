@@ -313,9 +313,22 @@ public:
   // Resolve m_namingPattern substituting token map. Tokens: PROD, SEASON, EP,
   // SEQ, SHOT, TASK, VER. Optional format suffix: {VER:02} → zero-padded.
   QString resolveNamingPattern(const QMap<QString,QString> &tokens) const;
+  // Resolve an arbitrary pattern string (same token grammar). Lets callers use
+  // a derived pattern, e.g. the project pattern with the {TASK} token removed.
+  static QString resolvePattern(const QString &pattern,
+                                const QMap<QString,QString> &tokens);
   // Default short code for a task type (Layout→LAY, Animation→ANIM, …).
   // Used as the {TASK} token in the naming pattern.
   static QString taskShortCode(const QString &taskType);
+
+  // App-level preference: when true, opening a scene auto-switches to the
+  // room/workflow matching its role/technique. Persisted via QSettings.
+  static bool autoWorkflowDetection();
+  static void setAutoWorkflowDetection(bool on);
+  // Workflow/room command id (MI_Workflow*) for a scene with the given role and
+  // technique. role "storyboard" → Storyboard; role "shot" → its technique's
+  // workflow (Cut-out/Stop-motion/…); unknown techniques → 2D Tradigital.
+  static QString workflowCommand(const QString &role, const QString &technique);
 
   // Set a shot's per-task status (in-app source of truth for production
   // tracking). Emits taskStatusChanged() so the Production Tracker refreshes;
@@ -524,6 +537,12 @@ public:
 
 private:
   void loadProjectDbFromDevice(QIODevice &dev);  // shared XML parser
+
+private slots:
+  // Global sceneSwitched handler: when an exported shot scene (role="shot")
+  // becomes current, advance its first pipeline task Ready/Todo→WIP. Lives here
+  // (not only in StoryboardPanel) so it fires regardless of the current room.
+  void onSceneSwitchedAdvanceShot();
 
 signals:
   // Overlay display settings changed (light visibility/colour, camera-move

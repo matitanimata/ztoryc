@@ -1,5 +1,6 @@
 #include "ztorymodel.h"
 #include "ztoryshotops.h"     // syncChildCameraToMain
+#include "menubarcommandids.h"  // MI_Workflow* ids for workflowCommand()
 #include "xsheetdragtool.h"   // XsheetGUI::setPlayRange
 #include "tapp.h"
 #include "toonz/toonzscene.h"
@@ -33,6 +34,7 @@
 #include <QRegularExpression>
 #include <QFileInfo>
 #include <QUuid>
+#include <QSettings>
 #include <climits>
 
 // ─── ZtoryNumbering ───────────────────────────────────────────────────────────
@@ -109,6 +111,61 @@ ZtoryModel::ZtoryModel() : m_fps(24) {
   // PROD and SEASON tokens — can be overridden per-project in Project tab.
   m_namingPattern = "{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
   seedDefaultTechniques();
+  // Room-independent shot auto-WIP (the StoryboardPanel version only runs when a
+  // Board panel is in the current room).
+  if (TApp::instance() && TApp::instance()->getCurrentScene())
+    connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
+            this, &ZtoryModel::onSceneSwitchedAdvanceShot);
+}
+
+// Advance the first pipeline task of an exported shot scene Ready/Todo→WIP when
+// it becomes current. Reads role/back-link from the scene's companion .ztoryc;
+// idempotent (only the first open changes anything) and safe for non-shot scenes
+// (returns early). Mirrors StoryboardPanel's logic but is always alive.
+void ZtoryModel::onSceneSwitchedAdvanceShot() {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return;
+  QString tnz = QString::fromStdWString(scene->getScenePath().getWideString());
+  if (tnz.isEmpty()) return;
+  QString ztorcPath = tnz;
+  ztorcPath.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
+  QFile f(ztorcPath);
+  if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+
+  QString role, uuid, projectDb, technique;
+  QXmlStreamReader xml(&f);
+  while (!xml.atEnd()) {
+    xml.readNext();
+    if (!xml.isStartElement()) continue;
+    if (xml.name() == QLatin1String("ztoryc")) {
+      auto a    = xml.attributes();
+      role      = a.value("role").toString();
+      uuid      = a.value("projectShot").toString();
+      projectDb = a.value("project").toString();
+    } else if (xml.name() == QLatin1String("project")) {
+      technique = xml.attributes().value("technique").toString();
+    }
+  }
+  if (role != "shot" || uuid.isEmpty() || projectDb.isEmpty()) return;
+  if (!QFile::exists(projectDb)) return;
+
+  loadProjectDbFromPath(projectDb);
+  for (ProjectShot &ps : m_projectShots) {
+    if (ps.uuid != uuid) continue;
+    QString tech = !technique.isEmpty() ? technique
+                   : (ps.technique.isEmpty() ? m_defaultTechnique : ps.technique);
+    QStringList tts;
+    if (const Technique *t = findTechnique(tech)) tts = t->taskTypes;
+    if (!tts.isEmpty()) {
+      TaskState &ts = ps.tasks[tts.first()];
+      if (ts.status == TaskStatus::Todo || ts.status == TaskStatus::Ready) {
+        ts.status = TaskStatus::Wip;
+        saveProjectDb();
+        emit taskStatusChanged();
+      }
+    }
+    break;
+  }
 }
 
 // ─── Production techniques / tasks ──────────────────────────────────────────
@@ -308,7 +365,21 @@ void ZtoryModel::loadThumbsFromDisk() {
 void ZtoryModel::saveProjectDb() {
   TFilePath fp = projectDbFilePath();
   if (fp == TFilePath()) return;
-  QFile file(QString::fromStdWString(fp.getWideString()));
+  QString path = QString::fromStdWString(fp.getWideString());
+
+  // DATA-LOSS FIREWALL: never overwrite an existing project DB when the model's
+  // project metadata, team AND assets are ALL empty. That combination is an
+  // unnatural state for a real project (it's the signature of a transient
+  // resetProjectLevelDefaults() that loadProjectDb() hasn't repopulated yet, or
+  // a stray save during a scene/room switch). Shots may be present (published
+  // from the scene) — without this guard such a save wipes production/team/
+  // assets while keeping the shots, exactly the observed data loss.
+  bool metaEmpty = m_production.isEmpty() && m_title.isEmpty() &&
+                   m_season.isEmpty() && m_episode.isEmpty() &&
+                   m_team.isEmpty() && m_assets.empty();
+  if (metaEmpty && QFile::exists(path)) return;
+
+  QFile file(path);
   if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
   QXmlStreamWriter xml(&file);
   xml.setAutoFormatting(true);
@@ -660,6 +731,28 @@ void ZtoryModel::setProjectShotTechnique(const QString &uuid,
 
 // ─── B3d — Naming convention ──────────────────────────────────────────────────
 
+bool ZtoryModel::autoWorkflowDetection() {
+  return QSettings().value("Ztoryc/autoWorkflowDetection", true).toBool();
+}
+
+QString ZtoryModel::workflowCommand(const QString &role,
+                                    const QString &technique) {
+  if (role == "shot") {
+    QString t = technique.toLower().trimmed();
+    if (t.contains("cut-out") || t.contains("cutout") || t.contains("cut out"))
+      return MI_WorkflowCutout;
+    if (t.contains("stop-motion") || t.contains("stopmotion") ||
+        t.contains("stop motion"))
+      return MI_WorkflowStopMotion;
+    return MI_Workflow2D;  // Tradigital (also Traditional/3D/Generic/Live)
+  }
+  return MI_WorkflowStoryboard;  // storyboard (and default/legacy)
+}
+
+void ZtoryModel::setAutoWorkflowDetection(bool on) {
+  QSettings().setValue("Ztoryc/autoWorkflowDetection", on);
+}
+
 QString ZtoryModel::taskShortCode(const QString &taskType) {
   // NABA-aligned short codes. Unknown types use the first 3-4 letters uppercased.
   static const QHash<QString, QString> codes = {
@@ -690,9 +783,15 @@ QString ZtoryModel::taskShortCode(const QString &taskType) {
 }
 
 QString ZtoryModel::resolveNamingPattern(const QMap<QString,QString> &tokens) const {
-  QString result = m_namingPattern;
-  if (result.isEmpty())
-    result = "{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
+  QString pat = m_namingPattern;
+  if (pat.isEmpty())
+    pat = "{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
+  return resolvePattern(pat, tokens);
+}
+
+QString ZtoryModel::resolvePattern(const QString &pattern,
+                                   const QMap<QString,QString> &tokens) {
+  QString result = pattern;
   // Replace {TOKEN} and {TOKEN:FORMAT} (format = zero-padding width).
   static const QRegularExpression re(R"(\{(\w+)(?::(\d+))?\})");
   // Collect all matches first (process right-to-left to preserve indices).
@@ -732,6 +831,11 @@ QStringList ZtoryModel::spreadsheetTaskColumns() const {
   std::set<QString> used;
   for (int si = 0; si < (int)m_shots.size(); si++)
     for (const QString &tt : taskTypesForShot(si)) used.insert(tt);
+  // Also cover the project-level shots: the Production Tracker shows those in
+  // project mode, and the open scene's m_shots may be empty (e.g. while a shot
+  // scene is current) — without this the task columns vanish.
+  for (const ProjectShot &ps : m_projectShots)
+    for (const QString &tt : taskTypesForProjectShot(ps)) used.insert(tt);
   QStringList cols;
   for (const QString &tt : canonicalTaskOrder())
     if (used.count(tt)) { cols << tt; used.erase(tt); }

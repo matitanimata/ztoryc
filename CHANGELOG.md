@@ -1,3 +1,54 @@
+## [2026-06-27] — Export progetto, naming render, status pipeline + fix crash/perdita-dati (v0.6.3)
+
+Sessione lunga: dall'export completo del progetto al ciclo di stato della pipeline
+(Modello A: un .tnz per shot riusato in tutte le fasi), più due fix pesanti
+(crash su nuovo progetto, perdita dati Production Tracker).
+
+### Added — Export & naming
+- **Export Project Spreadsheet** (Production Tracker → Shots): un singolo `.xlsx`
+  con TUTTI gli storyboard + TUTTI i tab → fogli `Project · Overview · <tecniche> ·
+  Team · Assets · Workflows`. Thumbnail dalla cache su disco (nessuna scena da aprire).
+- Board: l'export è rinominato **"Export Storyboard Spreadsheet"** (scena corrente);
+  il Production Tracker usa la stessa icona (più larga) per l'export di progetto.
+- **Riordino task** nel tab Workflows: drag&drop + frecce ▲▼ (QToolButton).
+- **Output name dal pattern di progetto** (Output Settings → "Name from project
+  pattern…"): compone il nome del render da PROD/SEASON/EP/SEQ/SHOT/TASK/VER con
+  preview live (Opzione 1 — Modello A: task solo nel nome dei render).
+- Tab `Project` spostato per primo (pannello + fogli export).
+
+### Added/Changed — Pipeline Modello A
+- **Export Shots**: rimosso il selettore Task stage; il `{TASK}` non finisce più nel
+  nome del `.tnz` (un solo file per shot riusato in tutte le fasi).
+- **Ciclo di stato del primo task** (di solito Layout): export → `READY`; primo
+  caricamento dello shot → `WIP`. Tecnica risolta dal **project DB** (quella impostata
+  nel tracker) → ogni shot apre nella room giusta e avanza il task corretto.
+- **Auto workflow detection**: aprendo una scena si entra nel workflow del suo
+  ruolo/tecnica (storyboard→Storyboard; shot→Cutout/StopMotion/Tradigital). Spunta
+  **"Automatic"** nello startup (persistente in QSettings); switch manuale sempre
+  possibile (auto-switch one-shot, deduplicato per scena).
+- Auto-WIP reso **room-indipendente**: listener globale su `ZtoryModel::sceneSwitched`
+  (prima viveva solo nello StoryboardPanel → non scattava nelle room senza Board).
+- Badge "SB" nello startup solo per `role="storyboard"` (non per gli shot esportati).
+
+### Fixed — Crash & perdita dati (alta priorità)
+- **CRASH creando un nuovo progetto** (`dvdirtreeview.cpp`): `connect(...projectAdded,
+  [=]{...})` senza receiver context → connessione dangling sul singleton `DvDirModel`;
+  dopo la distruzione del tree (room switch) il successivo `projectAdded` sparava su
+  `this` morto → SIGSEGV. Fix: passare `this` come context. **Candidato PR upstream.**
+- **Perdita dati Production Tracker** (production/team/assets svuotati): firewall in
+  `saveProjectDb()` — non sovrascrive un `.ztrack` esistente con meta+team+assets tutti
+  vuoti (firma di un reset transitorio non ancora ripopolato da `loadProjectDb`).
+- `saveZtoryc()` non riscrive più il `.ztoryc` companion delle scene `role="shot"`
+  (riscriveva `role="storyboard"` → badge SB + workflow sbagliato).
+- Colonne task del tracker non sparivano più aprendo uno shot: `spreadsheetTaskColumns()`
+  ora copre anche `m_projectShots` (non solo gli `m_shots` della scena aperta).
+
+### Upstream candidates
+- `dvdirtreeview.cpp` — dangling lambda connection su `DvDirModel::projectAdded` (crash
+  riproducibile su creazione progetto dopo distruzione del tree). Alto impatto, fix 1 riga.
+
+---
+
 ## [2026-06-26b] — Thumbnail persistenti multi-storyboard + fix popup startup/progetti (B3b)
 
 Sessione di hardening multi-scena del Production Tracker e fix UX della startup page.

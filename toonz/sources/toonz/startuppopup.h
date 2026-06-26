@@ -76,6 +76,7 @@ public:
   // Ztoryc: workflow + shot numbering
   QComboBox *m_workflowCB;       // in "Create" tab
   QComboBox *m_loadWorkflowCB;   // in "Load" tab
+  QCheckBox *m_autoWorkflowCB = nullptr;  // auto-detect workflow from scene
   QComboBox *m_numberingStyleCB;
   QSpinBox *m_numberingStepSB;
   QLineEdit *m_seqPrefixFld;
