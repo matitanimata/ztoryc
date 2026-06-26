@@ -2266,6 +2266,27 @@ void StoryboardPanel::saveZtoryc() {
       }
       xml.writeEndElement();
     }
+    // Assets (project-level) with their own task pipeline.
+    if (!model->assets().empty()) {
+      xml.writeStartElement("assets");
+      for (const Asset &as : model->assets()) {
+        xml.writeStartElement("asset");
+        xml.writeAttribute("uuid", as.uuid);
+        xml.writeAttribute("type", as.type);
+        xml.writeAttribute("name", as.name);
+        if (!as.tags.isEmpty()) xml.writeAttribute("tags", as.tags.join("|"));
+        for (auto it = as.tasks.constBegin(); it != as.tasks.constEnd(); ++it) {
+          xml.writeStartElement("atask");
+          xml.writeAttribute("type",   it.key());
+          xml.writeAttribute("status", ZtoryModel::taskStatusLabel(it.value().status));
+          if (!it.value().assignees.isEmpty())
+            xml.writeAttribute("assignee", it.value().assignees.join(", "));
+          xml.writeEndElement();
+        }
+        xml.writeEndElement();
+      }
+      xml.writeEndElement();
+    }
   }
   // Imported screenplay (Script panel) — project-relative path.
   {
@@ -2379,13 +2400,19 @@ void StoryboardPanel::loadZtoryc() {
   QString path = ztoryPath();
   if (path.isEmpty()) {
     ZtoryModel::instance()->setScriptFile(scriptFromFile);
+    ZtoryModel::instance()->setTeam(QStringList());
+    ZtoryModel::instance()->assets().clear();
     m_loadingZtoryc = false;
+    emit ZtoryModel::instance()->productionReloaded();
     return;
   }
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
     ZtoryModel::instance()->setScriptFile(scriptFromFile);
+    ZtoryModel::instance()->setTeam(QStringList());
+    ZtoryModel::instance()->assets().clear();
     m_loadingZtoryc = false;
+    emit ZtoryModel::instance()->productionReloaded();
     return;
   }
   // File exists: reset project metadata so stale values from a previous scene
@@ -2400,12 +2427,19 @@ void StoryboardPanel::loadZtoryc() {
   // scenes. Old files (no <sequence>) leave it empty → renumberAll() recreates
   // a default sequence if needed.
   ZtoryModel::instance()->sequences().clear();
+  // Same for the production roster + assets: a scene (or another project's
+  // scene) without a <team>/<assets> block must NOT inherit the previous
+  // scene's data. They are repopulated below if the file contains them.
+  ZtoryModel::instance()->setTeam(QStringList());
+  ZtoryModel::instance()->assets().clear();
 
   QXmlStreamReader xml(&file);
-  int si = -1, pi = -1;
+  int si = -1, pi = -1, ai = -1;
   std::vector<Technique> loadedTechs;  // technique presets from file (if any)
   QStringList loadedTeam;              // team roster from file (replaces model's)
   bool        hasTeamBlock = false;    // true once a <team> element is seen
+  std::vector<Asset> loadedAssets;     // assets from file (replaces model's)
+  bool        hasAssetsBlock = false;
   while (!xml.atEnd()) {
     xml.readNext();
     if (xml.isStartElement()) {
@@ -2433,6 +2467,37 @@ void StoryboardPanel::loadZtoryc() {
       else if (xml.name() == QLatin1String("person")) {
         QString nm = xml.attributes().value("name").toString().trimmed();
         if (!nm.isEmpty()) loadedTeam << nm;
+      }
+      else if (xml.name() == QLatin1String("assets")) {
+        hasAssetsBlock = true;  // an <assets> exists → replace model assets
+      }
+      else if (xml.name() == QLatin1String("asset")) {
+        Asset as;
+        as.uuid = xml.attributes().value("uuid").toString();
+        if (as.uuid.isEmpty())
+          as.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        as.type = xml.attributes().value("type").toString();
+        as.name = xml.attributes().value("name").toString();
+        QString tg = xml.attributes().value("tags").toString();
+        if (!tg.isEmpty()) as.tags = tg.split('|', Qt::SkipEmptyParts);
+        loadedAssets.push_back(as);
+        ai = (int)loadedAssets.size() - 1;
+      }
+      else if (xml.name() == QLatin1String("atask")) {
+        if (ai >= 0 && ai < (int)loadedAssets.size()) {
+          auto a       = xml.attributes();
+          QString type = a.value("type").toString();
+          if (!type.isEmpty()) {
+            TaskState ts;
+            ts.status = ZtoryModel::taskStatusFromLabel(a.value("status").toString());
+            for (const QString &p :
+                 a.value("assignee").toString().split(',', Qt::SkipEmptyParts)) {
+              QString t = p.trimmed();
+              if (!t.isEmpty()) ts.assignees << t;
+            }
+            loadedAssets[ai].tasks.insert(type, ts);
+          }
+        }
       }
       else if (xml.name() == QLatin1String("scriptFile")) {
         scriptFromFile = xml.readElementText();
@@ -2583,6 +2648,7 @@ void StoryboardPanel::loadZtoryc() {
   if (!loadedTechs.empty())
     ZtoryModel::instance()->techniques() = loadedTechs;
   if (hasTeamBlock) ZtoryModel::instance()->setTeam(loadedTeam);
+  if (hasAssetsBlock) ZtoryModel::instance()->assets() = loadedAssets;
 
   // ── SFH-explosion repair ─────────────────────────────────────────────────
   // The Stop-Frame-Hold bug (fixed in v0.2.x) wrote one PanelData entry per
@@ -2669,6 +2735,10 @@ void StoryboardPanel::loadZtoryc() {
     saveZtoryc();
     m_currentZtoryPath.clear();  // refreshFromScene will set it authoritatively
   }
+  // Project/team/assets are now populated in the model. refreshFromScene does
+  // NOT emit modelReset, so the Production Tracker's non-shot tabs (Team /
+  // Project / Assets) would otherwise stay stale after a scene reopen.
+  emit ZtoryModel::instance()->productionReloaded();
 }
 
 int StoryboardPanel::currentShotIndex() const {
@@ -6109,6 +6179,7 @@ void StoryboardPanel::onStoryboardSettings() {
   if (!techCombo->currentText().isEmpty())
     model->setDefaultTechnique(techCombo->currentText());
   saveZtoryc();
+  emit model->productionReloaded();  // refresh the Production Tracker's Project tab
 }
 
 //=============================================================================

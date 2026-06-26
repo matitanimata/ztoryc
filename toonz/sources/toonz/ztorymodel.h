@@ -146,6 +146,17 @@ struct ShotData {
   }
 };
 
+// A production asset (character, prop, environment, …). Project-level entity,
+// source-agnostic: it may have art attached or be just a name from the script
+// breakdown. Has its own task pipeline, mirroring shot tasks.
+struct Asset {
+  QString                  uuid;   // stable project-unique key
+  QString                  type;   // "Character" / "Prop" / "Environment" / "BG" / "FX"
+  QString                  name;
+  QMap<QString, TaskState> tasks;  // keyed by asset task-type name
+  QStringList              tags;   // free categorisation (future: breakdown / AI)
+};
+
 // ─── Animatic export burn-in ──────────────────────────────────────────────────
 // Set by the export-animatic dialog right before MI_Render and cleared after.
 // rendercommand.cpp reads it at render SETUP time and pins it into the
@@ -180,6 +191,7 @@ class ZtoryModel : public QObject {
   Q_OBJECT
 
   std::vector<ShotData>             m_shots;
+  std::vector<Asset>                m_assets;       // project-level asset list
   std::vector<SequenceData>         m_sequences;
   std::vector<std::vector<QPixmap>> m_previews; // [shotIdx][panelIdx]
   int                               m_fps;
@@ -251,6 +263,23 @@ public:
   void setShotTaskAssignees(int shotIdx, const QString &taskType,
                             const QStringList &assignees);
   void setShotTaskAssigneesByLabel(const QString &shotLabel, const QString &taskType,
+                                   const QStringList &assignees);
+
+  // ── Assets (project-level) ─────────────────────────────────────────────────
+  const std::vector<Asset> &assets() const { return m_assets; }
+  std::vector<Asset>       &assets()       { return m_assets; }
+  int  assetCount() const { return (int)m_assets.size(); }
+  void addAsset(const QString &type, const QString &name);  // assigns a uuid; emits
+  void removeAssetAt(int i);
+  // Asset task pipeline (fixed for now; the Workflows editor will make it custom).
+  static const QStringList &canonicalAssetTaskOrder();
+  // Edit asset tasks — keyed by index (live) or by uuid (undo-safe across reorders).
+  void setAssetTaskStatus(int i, const QString &taskType, TaskStatus status);
+  void setAssetTaskStatusByUuid(const QString &uuid, const QString &taskType,
+                                TaskStatus status);
+  void setAssetTaskAssignees(int i, const QString &taskType,
+                             const QStringList &assignees);
+  void setAssetTaskAssigneesByUuid(const QString &uuid, const QString &taskType,
                                    const QStringList &assignees);
 
   // ── Production techniques / tasks (Kitsu-aligned) ──────────────────────────
@@ -435,6 +464,8 @@ signals:
   void shotMoved(int fromIdx, int toIdx);
   void shotDataChanged(int shotIdx);
   void taskStatusChanged();  // a per-task status was edited (Production Tracker)
+  void assetsChanged();      // asset list or an asset task changed (Production Tracker)
+  void productionReloaded(); // .ztoryc finished loading (project/team/assets populated)
   void previewUpdated(int shotIdx, int panelIdx);
   void scriptFileChanged();  // imported screenplay changed (or cleared)
   void autoMatchChanged(bool on);  // auto-match toggle flipped

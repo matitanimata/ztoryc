@@ -182,6 +182,56 @@ void ZtoryModel::setShotTaskAssigneesByLabel(const QString &shotLabel,
     }
 }
 
+// ─── Assets ─────────────────────────────────────────────────────────────────
+
+const QStringList &ZtoryModel::canonicalAssetTaskOrder() {
+  static const QStringList order = {"Concept", "Rough", "Clean", "Color"};
+  return order;
+}
+
+void ZtoryModel::addAsset(const QString &type, const QString &name) {
+  Asset a;
+  a.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  a.type = type;
+  a.name = name;
+  m_assets.push_back(a);
+  emit assetsChanged();
+}
+
+void ZtoryModel::removeAssetAt(int i) {
+  if (i < 0 || i >= (int)m_assets.size()) return;
+  m_assets.erase(m_assets.begin() + i);
+  emit assetsChanged();
+}
+
+void ZtoryModel::setAssetTaskStatus(int i, const QString &taskType,
+                                    TaskStatus status) {
+  if (i < 0 || i >= (int)m_assets.size()) return;
+  m_assets[i].tasks[taskType].status = status;
+  emit assetsChanged();
+}
+
+void ZtoryModel::setAssetTaskStatusByUuid(const QString &uuid,
+                                          const QString &taskType,
+                                          TaskStatus status) {
+  for (int i = 0; i < (int)m_assets.size(); i++)
+    if (m_assets[i].uuid == uuid) { setAssetTaskStatus(i, taskType, status); return; }
+}
+
+void ZtoryModel::setAssetTaskAssignees(int i, const QString &taskType,
+                                       const QStringList &assignees) {
+  if (i < 0 || i >= (int)m_assets.size()) return;
+  m_assets[i].tasks[taskType].assignees = assignees;
+  emit assetsChanged();
+}
+
+void ZtoryModel::setAssetTaskAssigneesByUuid(const QString &uuid,
+                                             const QString &taskType,
+                                             const QStringList &assignees) {
+  for (int i = 0; i < (int)m_assets.size(); i++)
+    if (m_assets[i].uuid == uuid) { setAssetTaskAssignees(i, taskType, assignees); return; }
+}
+
 const QStringList &ZtoryModel::canonicalTaskOrder() {
   // Master column order: union of all known task types, stable across exports.
   static const QStringList order = {

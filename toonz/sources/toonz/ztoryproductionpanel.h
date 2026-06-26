@@ -38,6 +38,10 @@ class ZtoryProductionPanel final : public TPanel {
   QLineEdit    *m_prodEdit = nullptr, *m_titleEdit = nullptr, *m_epEdit = nullptr;
   QComboBox    *m_techCombo = nullptr;
   bool          m_projLoading = false;
+  // Assets tab
+  QTableWidget *m_assetTable = nullptr;
+  QStringList   m_assetTaskCols;
+  bool          m_assetLoading = false;
 
 public:
   ZtoryProductionPanel(QWidget *parent = nullptr);
@@ -55,8 +59,14 @@ private:
   QWidget *buildProjectTab();
   void reloadProjectTab();         // model → fields
   void applyProjectFromFields();   // fields → model + persist
+  // Assets tab
+  QWidget *buildAssetsTab();
+  void rebuildAssets();            // rebuild the asset × task matrix from ZtoryModel
+  void editAssetCell(int row, int col);
 
 private slots:
   void onModelChanged();
   void onCellClicked(int row, int col);
+  void onAssetCellClicked(int row, int col);
+  void onAssetItemChanged(QTableWidgetItem *it);
 };
