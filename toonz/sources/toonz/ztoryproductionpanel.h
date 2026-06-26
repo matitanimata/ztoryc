@@ -76,6 +76,8 @@ private:
 private slots:
   void onModelChanged();
   void onCellClicked(int row, int col);
+  void onShotContextMenu(const QPoint &pos);    // batch edit on selected task cells
   void onAssetCellClicked(int row, int col);
   void onAssetItemChanged(QTableWidgetItem *it);
+  void onAssetContextMenu(const QPoint &pos);
 };

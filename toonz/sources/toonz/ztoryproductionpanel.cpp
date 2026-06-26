@@ -26,6 +26,7 @@
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QProgressBar>
+#include <QSignalBlocker>
 
 #include <cassert>
 
@@ -133,6 +134,52 @@ struct TaskEditResult {
   QStringList assignees;
 };
 
+// Assignee picker: team checkboxes (+ free text), or plain text if no team.
+// Returns false if cancelled; otherwise fills `out`.
+bool pickAssignees(QWidget *parent, const QString &taskType,
+                   const QStringList &current, QStringList &out) {
+  const QStringList team = ZtoryModel::instance()->team();
+  if (team.isEmpty()) {
+    bool ok = false;
+    QString text = QInputDialog::getText(
+        parent, QObject::tr("Assignees"),
+        QObject::tr("People assigned to %1 (comma-separated):").arg(taskType),
+        QLineEdit::Normal, current.join(", "), &ok);
+    if (!ok) return false;
+    out = parseAssignees(text);
+    return true;
+  }
+  QDialog dlg(parent);
+  dlg.setWindowTitle(QObject::tr("Assignees — %1").arg(taskType));
+  QVBoxLayout *lay = new QVBoxLayout(&dlg);
+  lay->addWidget(new QLabel(QObject::tr("Assign to:"), &dlg));
+  QListWidget *list = new QListWidget(&dlg);
+  for (const QString &p : team) {
+    auto *it = new QListWidgetItem(p, list);
+    it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+    it->setCheckState(current.contains(p) ? Qt::Checked : Qt::Unchecked);
+  }
+  lay->addWidget(list);
+  QStringList extras;
+  for (const QString &a : current)
+    if (!team.contains(a)) extras << a;
+  lay->addWidget(new QLabel(QObject::tr("Others (comma-separated):"), &dlg));
+  QLineEdit *extraEdit = new QLineEdit(extras.join(", "), &dlg);
+  lay->addWidget(extraEdit);
+  auto *bb = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  QObject::connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  QObject::connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  lay->addWidget(bb);
+  if (dlg.exec() != QDialog::Accepted) return false;
+  out.clear();
+  for (int r = 0; r < list->count(); r++)
+    if (list->item(r)->checkState() == Qt::Checked)
+      out << list->item(r)->text();
+  out += parseAssignees(extraEdit->text());
+  return true;
+}
+
 TaskEditResult pickTaskEdit(QWidget *parent, const QString &taskType,
                             TaskStatus oldStatus, const QStringList &oldAssign) {
   TaskEditResult res;
@@ -156,47 +203,8 @@ TaskEditResult pickTaskEdit(QWidget *parent, const QString &taskType,
     res.status = static_cast<TaskStatus>(chosen->data().toInt());
     return res;
   }
-
-  // Assignees branch: pick from the project team, or free text if none defined.
-  const QStringList team = ZtoryModel::instance()->team();
   QStringList newAssign;
-  if (team.isEmpty()) {
-    bool ok = false;
-    QString text = QInputDialog::getText(
-        parent, QObject::tr("Assignees"),
-        QObject::tr("People assigned to %1 (comma-separated):").arg(taskType),
-        QLineEdit::Normal, oldAssign.join(", "), &ok);
-    if (!ok) return res;
-    newAssign = parseAssignees(text);
-  } else {
-    QDialog dlg(parent);
-    dlg.setWindowTitle(QObject::tr("Assignees — %1").arg(taskType));
-    QVBoxLayout *lay = new QVBoxLayout(&dlg);
-    lay->addWidget(new QLabel(QObject::tr("Assign to:"), &dlg));
-    QListWidget *list = new QListWidget(&dlg);
-    for (const QString &p : team) {
-      auto *it = new QListWidgetItem(p, list);
-      it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
-      it->setCheckState(oldAssign.contains(p) ? Qt::Checked : Qt::Unchecked);
-    }
-    lay->addWidget(list);
-    QStringList extras;
-    for (const QString &a : oldAssign)
-      if (!team.contains(a)) extras << a;
-    lay->addWidget(new QLabel(QObject::tr("Others (comma-separated):"), &dlg));
-    QLineEdit *extraEdit = new QLineEdit(extras.join(", "), &dlg);
-    lay->addWidget(extraEdit);
-    auto *bb = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    QObject::connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    QObject::connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    lay->addWidget(bb);
-    if (dlg.exec() != QDialog::Accepted) return res;
-    for (int r = 0; r < list->count(); r++)
-      if (list->item(r)->checkState() == Qt::Checked)
-        newAssign << list->item(r)->text();
-    newAssign += parseAssignees(extraEdit->text());
-  }
+  if (!pickAssignees(parent, taskType, oldAssign, newAssign)) return res;
   res.kind      = TaskEditResult::Assignees;
   res.assignees = newAssign;
   return res;
@@ -294,12 +302,18 @@ QWidget *ZtoryProductionPanel::buildShotsTab() {
   QWidget *w = new QWidget(this);
   m_table    = new QTableWidget(w);
   m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  m_table->setSelectionMode(QAbstractItemView::NoSelection);
+  m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
+  m_table->setSelectionBehavior(QAbstractItemView::SelectItems);
+  m_table->setContextMenuPolicy(Qt::CustomContextMenu);
   m_table->verticalHeader()->setVisible(false);
   m_table->setShowGrid(true);
   m_table->setAlternatingRowColors(false);
   connect(m_table, &QTableWidget::cellClicked, this,
           &ZtoryProductionPanel::onCellClicked);
+  connect(m_table, &QTableWidget::cellDoubleClicked, this,
+          [this](int r, int c) { editCell(r, c); });  // single-cell quick edit
+  connect(m_table, &QWidget::customContextMenuRequested, this,
+          &ZtoryProductionPanel::onShotContextMenu);
   auto *lay = new QVBoxLayout(w);
   lay->setContentsMargins(0, 0, 0, 0);
   lay->addWidget(m_table);
@@ -426,10 +440,13 @@ QWidget *ZtoryProductionPanel::buildAssetsTab() {
   lay->addLayout(btns);
 
   m_assetTable = new QTableWidget(w);
-  m_assetTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-  m_assetTable->setSelectionMode(QAbstractItemView::SingleSelection);
+  m_assetTable->setSelectionBehavior(QAbstractItemView::SelectItems);
+  m_assetTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
+  m_assetTable->setContextMenuPolicy(Qt::CustomContextMenu);
   m_assetTable->verticalHeader()->setVisible(false);
   lay->addWidget(m_assetTable);
+  connect(m_assetTable, &QWidget::customContextMenuRequested, this,
+          &ZtoryProductionPanel::onAssetContextMenu);
 
   connect(addBtn, &QPushButton::clicked, this, [this] {
     ZtoryModel::instance()->addAsset("Character", QObject::tr("New asset"));
@@ -443,6 +460,8 @@ QWidget *ZtoryProductionPanel::buildAssetsTab() {
   });
   connect(m_assetTable, &QTableWidget::cellClicked, this,
           &ZtoryProductionPanel::onAssetCellClicked);
+  connect(m_assetTable, &QTableWidget::cellDoubleClicked, this,
+          [this](int r, int c) { editAssetCell(r, c); });
   connect(m_assetTable, &QTableWidget::itemChanged, this,
           &ZtoryProductionPanel::onAssetItemChanged);
   return w;
@@ -475,7 +494,7 @@ void ZtoryProductionPanel::rebuildAssets() {
       const TaskState ts = as.tasks.value(m_assetTaskCols[c]);
       auto *it = new QTableWidgetItem();
       it->setTextAlignment(Qt::AlignCenter);
-      it->setFlags(Qt::ItemIsEnabled);
+      it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
       QString text = ZtoryModel::taskStatusLabel(ts.status);
       if (!ts.assignees.isEmpty()) text += "\n" + ts.assignees.join(", ");
       it->setText(text);
@@ -515,7 +534,70 @@ void ZtoryProductionPanel::onAssetCellClicked(int row, int col) {
     rebuildAssets();
     return;
   }
-  if (col >= 2) editAssetCell(row, col);
+  // Task cells: left-click selects only (double-click edits, right-click = menu).
+}
+
+void ZtoryProductionPanel::onAssetContextMenu(const QPoint &pos) {
+  ZtoryModel *m    = ZtoryModel::instance();
+  const int kFixed = 2;
+  struct Target { int row; QString uuid; QString task; };
+  QList<Target> targets;
+  for (QTableWidgetItem *it : m_assetTable->selectedItems()) {
+    int row = it->row(), col = it->column();
+    int ti  = col - kFixed;
+    if (ti < 0 || ti >= m_assetTaskCols.size()) continue;
+    if (row < 0 || row >= m->assetCount()) continue;
+    targets.append({row, m->assets()[row].uuid, m_assetTaskCols[ti]});
+  }
+  if (targets.isEmpty()) {
+    if (QTableWidgetItem *it = m_assetTable->itemAt(pos)) {
+      int row = it->row(), ti = it->column() - kFixed;
+      if (ti >= 0 && ti < m_assetTaskCols.size() && row >= 0 && row < m->assetCount())
+        targets.append({row, m->assets()[row].uuid, m_assetTaskCols[ti]});
+    }
+  }
+  if (targets.isEmpty()) return;
+
+  QMenu menu(this);
+  QMenu *sm = menu.addMenu(QObject::tr("Set status (%1 tasks)").arg(targets.size()));
+  for (TaskStatus s : kAllStatuses) {
+    QPixmap pm(14, 14);
+    pm.fill(statusColor(s));
+    sm->addAction(QIcon(pm), ZtoryModel::taskStatusLabel(s))
+        ->setData(static_cast<int>(s));
+  }
+  QAction *assignAct = menu.addAction(QObject::tr("Set assignees…"));
+  QAction *chosen    = menu.exec(m_assetTable->viewport()->mapToGlobal(pos));
+  if (!chosen) return;
+
+  TUndoManager::manager()->beginBlock();
+  {
+    QSignalBlocker block(m);
+    if (chosen == assignAct) {
+      QStringList newAssign;
+      const QStringList cur =
+          m->assets()[targets.first().row].tasks.value(targets.first().task).assignees;
+      if (pickAssignees(this, QObject::tr("selected tasks"), cur, newAssign))
+        for (const Target &t : targets) {
+          QStringList old = m->assets()[t.row].tasks.value(t.task).assignees;
+          if (old == newAssign) continue;
+          m->setAssetTaskAssigneesByUuid(t.uuid, t.task, newAssign);
+          TUndoManager::manager()->add(
+              new AssetAssigneeUndo(t.uuid, t.task, old, newAssign));
+        }
+    } else {
+      TaskStatus s = static_cast<TaskStatus>(chosen->data().toInt());
+      for (const Target &t : targets) {
+        TaskStatus old = m->assets()[t.row].tasks.value(t.task).status;
+        if (old == s) continue;
+        m->setAssetTaskStatusByUuid(t.uuid, t.task, s);
+        TUndoManager::manager()->add(new AssetStatusUndo(t.uuid, t.task, old, s));
+      }
+    }
+  }
+  TUndoManager::manager()->endBlock();
+  persistViaBoard();
+  rebuildAssets();
 }
 
 void ZtoryProductionPanel::editAssetCell(int row, int col) {
@@ -759,7 +841,7 @@ void ZtoryProductionPanel::rebuild() {
       const QString &tt = taskCols[c];
       auto *it = new QTableWidgetItem();
       it->setTextAlignment(Qt::AlignCenter);
-      it->setFlags(Qt::ItemIsEnabled);
+      it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
 
       if (!shotTasks.contains(tt)) {
         // Task type not part of this shot's technique → not applicable.
@@ -805,7 +887,80 @@ void ZtoryProductionPanel::onCellClicked(int row, int col) {
     emit m->taskStatusChanged();  // columns + progress refresh
     return;
   }
-  editCell(row, col);
+  // Task cells: a single left-click only selects (so shift/⌘ multi-select works
+  // for batch editing). Double-click edits one cell; right-click opens the menu.
+}
+
+//-----------------------------------------------------------------------------
+// Batch edit: apply a status / assignees to every selected, applicable task
+// cell at once (drag-select a block, then right-click).
+
+void ZtoryProductionPanel::onShotContextMenu(const QPoint &pos) {
+  ZtoryModel *m    = ZtoryModel::instance();
+  const int kFixed = 6;
+  struct Target { int shot; QString task; };
+  QList<Target> targets;
+  for (QTableWidgetItem *it : m_table->selectedItems()) {
+    int row = it->row(), col = it->column();
+    int ti  = col - kFixed;
+    if (ti < 0 || ti >= m_taskCols.size()) continue;
+    if (row < 0 || row >= m->shotCount()) continue;
+    const QString &tt = m_taskCols[ti];
+    if (!m->taskTypesForShot(row).contains(tt)) continue;  // skip N/A
+    targets.append({row, tt});
+  }
+  // Nothing selected → act on the right-clicked cell.
+  if (targets.isEmpty()) {
+    if (QTableWidgetItem *it = m_table->itemAt(pos)) {
+      int row = it->row(), ti = it->column() - kFixed;
+      if (ti >= 0 && ti < m_taskCols.size() && row >= 0 && row < m->shotCount() &&
+          m->taskTypesForShot(row).contains(m_taskCols[ti]))
+        targets.append({row, m_taskCols[ti]});
+    }
+  }
+  if (targets.isEmpty()) return;
+
+  QMenu menu(this);
+  QMenu *sm = menu.addMenu(QObject::tr("Set status (%1 tasks)").arg(targets.size()));
+  for (TaskStatus s : kAllStatuses) {
+    QPixmap pm(14, 14);
+    pm.fill(statusColor(s));
+    sm->addAction(QIcon(pm), ZtoryModel::taskStatusLabel(s))
+        ->setData(static_cast<int>(s));
+  }
+  QAction *assignAct = menu.addAction(QObject::tr("Set assignees…"));
+  QAction *chosen    = menu.exec(m_table->viewport()->mapToGlobal(pos));
+  if (!chosen) return;
+
+  TUndoManager::manager()->beginBlock();
+  {
+    QSignalBlocker block(m);  // one rebuild after the batch, not N
+    if (chosen == assignAct) {
+      QStringList newAssign;
+      const QStringList cur =
+          m->shot(targets.first().shot).tasks.value(targets.first().task).assignees;
+      if (pickAssignees(this, QObject::tr("selected tasks"), cur, newAssign))
+        for (const Target &t : targets) {
+          QStringList old = m->shot(t.shot).tasks.value(t.task).assignees;
+          if (old == newAssign) continue;
+          m->setShotTaskAssignees(t.shot, t.task, newAssign);
+          TUndoManager::manager()->add(
+              new AssigneeEditUndo(m->shot(t.shot).label(), t.task, old, newAssign));
+        }
+    } else {
+      TaskStatus s = static_cast<TaskStatus>(chosen->data().toInt());
+      for (const Target &t : targets) {
+        TaskStatus old = m->shot(t.shot).tasks.value(t.task).status;
+        if (old == s) continue;
+        m->setShotTaskStatus(t.shot, t.task, s);
+        TUndoManager::manager()->add(
+            new StatusEditUndo(m->shot(t.shot).label(), t.task, old, s));
+      }
+    }
+  }
+  TUndoManager::manager()->endBlock();
+  persistViaBoard();
+  rebuild();
 }
 
 //-----------------------------------------------------------------------------
