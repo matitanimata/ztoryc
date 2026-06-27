@@ -8,6 +8,7 @@
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QCheckBox>
+#include <QSpinBox>
 #include <QPushButton>
 #include <QComboBox>
 #include <QLabel>
@@ -65,6 +66,22 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
   root->addLayout(projRow);
   m_linkBtn->setEnabled(false);
   m_createBtn->setEnabled(false);
+
+  // Optional safety "handles" padded onto the pushed frame ranges (kept out of
+  // Ztoryc's internal board timing).
+  auto *handlesRow = new QHBoxLayout();
+  m_handlesCheck = new QCheckBox(tr("Push with handles"), this);
+  m_handlesCheck->setToolTip(
+      tr("Pad each shot's frame_in/frame_out in Kitsu by N frames of safety\n"
+         "margin (for layout/BG), leaving Ztoryc's board timing unchanged."));
+  m_handlesSpin = new QSpinBox(this);
+  m_handlesSpin->setRange(0, 240);
+  m_handlesSpin->setValue(12);
+  m_handlesSpin->setSuffix(tr(" fr"));
+  handlesRow->addWidget(m_handlesCheck);
+  handlesRow->addWidget(m_handlesSpin);
+  handlesRow->addStretch(1);
+  root->addLayout(handlesRow);
 
   // Shot push (Ztoryc → Kitsu) + status pull (Kitsu → Ztoryc); enabled once linked.
   m_pushShotsBtn = new QPushButton(tr("Push shots to Kitsu →"), this);
@@ -372,6 +389,8 @@ void KitsuConnectDialog::onPushShotsClicked() {
 
   // A shot in Kitsu must live under a sequence; default unsequenced shots to one.
   const QString kDefaultSeq = "SQ01";
+  // Optional safety handles padded onto the pushed ranges (timeline unchanged).
+  const int handles = m_handlesCheck->isChecked() ? m_handlesSpin->value() : 0;
 
   // Prefer the project-wide shot list (all storyboards); fall back to the open
   // scene's shots — mirroring what the Production Tracker actually displays.
@@ -386,9 +405,9 @@ void KitsuConnectDialog::onPushShotsClicked() {
       KitsuShotPush s;
       s.seq      = ps.seq.trimmed().isEmpty() ? kDefaultSeq : ps.seq.trimmed();
       s.name     = ps.label.trimmed();
-      s.nbFrames    = ps.frames;
-      s.frameIn     = frameRanges[i].first;
-      s.frameOut    = frameRanges[i].second;
+      s.frameIn     = std::max(1, frameRanges[i].first - handles);
+      s.frameOut    = frameRanges[i].second + handles;
+      s.nbFrames    = s.frameOut - s.frameIn + 1;
       s.kitsuShotId = ps.kitsuShotId;  // rename-proof update when known
       shots.push_back(s);
       for (auto it = ps.tasks.constBegin(); it != ps.tasks.constEnd(); ++it) {
@@ -412,10 +431,10 @@ void KitsuConnectDialog::onPushShotsClicked() {
       KitsuShotPush s;
       s.seq      = seq.isEmpty() ? kDefaultSeq : seq;
       s.name     = label;
-      s.nbFrames = dur;
-      s.frameIn  = acc + 1;
-      s.frameOut = acc + dur;
-      acc        = s.frameOut;
+      s.frameIn  = std::max(1, acc + 1 - handles);
+      s.frameOut = acc + dur + handles;
+      s.nbFrames = s.frameOut - s.frameIn + 1;
+      acc        = acc + dur;  // timeline advances by the real duration
       shots.push_back(s);
       for (auto it = sd.tasks.constBegin(); it != sd.tasks.constEnd(); ++it) {
         KitsuTaskPush tp;

@@ -20,6 +20,7 @@ class QPushButton;
 class QComboBox;
 class QLabel;
 class QTableWidget;
+class QSpinBox;
 
 class KitsuConnectDialog final : public QDialog {
   Q_OBJECT
@@ -47,6 +48,8 @@ private:
   QPushButton  *m_createBtn = nullptr;
   QPushButton  *m_pushShotsBtn = nullptr;
   QPushButton  *m_pullStatusBtn = nullptr;
+  QCheckBox    *m_handlesCheck = nullptr;  // add safety handles on push
+  QSpinBox     *m_handlesSpin  = nullptr;
   QTableWidget *m_statusTable  = nullptr;
   // Task statuses to push right after the shots land (Phase 3b).
   QVector<KitsuTaskPush> m_pendingTasks;
