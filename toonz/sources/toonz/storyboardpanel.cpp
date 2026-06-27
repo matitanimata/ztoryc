@@ -5187,14 +5187,17 @@ void StoryboardPanel::onExportShots() {
 namespace {
 // One per-shot video clip referenced by the FCPXML timeline.
 struct FcpxClip { QString name; QString file; int frames; };
+// One audio clip on a lane (each animatic sound column → its own lane, so
+// dialogue / music / fx stay mixable in DaVinci).
+struct FcpxAudio { QString name; QString file; int offset; int frames; int lane; };
 
-// Write an FCPXML 1.9 timeline that places each per-shot clip on the spine in
-// order (cumulative offsets) — a DaVinci Resolve / Premiere / FCP importable
-// edit of the animatic. Times are <frames>/<fps>s (integer fps). v1: video only;
-// drop the single animatic audio file onto the Resolve timeline by hand.
+// Write an FCPXML 1.9 timeline: per-shot clips on the spine (cumulative offsets)
+// plus each audio clip as a connected clip on its own lane — a DaVinci Resolve /
+// Premiere / FCP importable edit of the animatic. Times are <frames>/<fps>s.
 bool writeAnimaticFcpxml(const QString &path, const QString &projectName, int fps,
                          int width, int height,
-                         const std::vector<FcpxClip> &clips) {
+                         const std::vector<FcpxClip> &clips,
+                         const std::vector<FcpxAudio> &audio) {
   if (fps <= 0) fps = 25;
   if (clips.empty()) return false;
   QFile f(path);
@@ -5219,16 +5222,30 @@ bool writeAnimaticFcpxml(const QString &path, const QString &projectName, int fp
   x.writeAttribute("width", QString::number(width));
   x.writeAttribute("height", QString::number(height));
   x.writeEndElement();  // format
-  int idx = 0;
+  int vid = 0;
   for (const auto &c : clips) {
     x.writeStartElement("asset");
-    x.writeAttribute("id", QString("v%1").arg(++idx));
+    x.writeAttribute("id", QString("v%1").arg(++vid));
     x.writeAttribute("name", c.name);
     x.writeAttribute("start", "0s");
     x.writeAttribute("duration", dur(c.frames));
     x.writeAttribute("hasVideo", "1");
     x.writeAttribute("format", "r1");
     x.writeAttribute("src", QUrl::fromLocalFile(c.file).toString());
+    x.writeEndElement();
+  }
+  int aid = 0;
+  for (const auto &a : audio) {
+    x.writeStartElement("asset");
+    x.writeAttribute("id", QString("a%1").arg(++aid));
+    x.writeAttribute("name", a.name);
+    x.writeAttribute("start", "0s");
+    x.writeAttribute("duration", dur(a.frames));
+    x.writeAttribute("hasAudio", "1");
+    x.writeAttribute("audioSources", "1");
+    x.writeAttribute("audioChannels", "2");
+    x.writeAttribute("audioRate", "48000");
+    x.writeAttribute("src", QUrl::fromLocalFile(a.file).toString());
     x.writeEndElement();
   }
   x.writeEndElement();  // resources
@@ -5245,15 +5262,31 @@ bool writeAnimaticFcpxml(const QString &path, const QString &projectName, int fp
   x.writeAttribute("tcFormat", "NDF");
   x.writeStartElement("spine");
   int off = 0;
-  idx = 0;
-  for (const auto &c : clips) {
+  vid = 0;
+  for (size_t i = 0; i < clips.size(); i++) {
+    const auto &c = clips[i];
     x.writeStartElement("asset-clip");
-    x.writeAttribute("ref", QString("v%1").arg(++idx));
+    x.writeAttribute("ref", QString("v%1").arg(++vid));
     x.writeAttribute("offset", dur(off));
     x.writeAttribute("name", c.name);
     x.writeAttribute("start", "0s");
     x.writeAttribute("duration", dur(c.frames));
-    x.writeEndElement();
+    // Connected audio clips (lanes -1, -2, …) nested in the first video clip,
+    // offsets relative to the timeline start.
+    if (i == 0) {
+      aid = 0;
+      for (const auto &a : audio) {
+        x.writeStartElement("asset-clip");
+        x.writeAttribute("ref", QString("a%1").arg(++aid));
+        x.writeAttribute("lane", QString::number(a.lane));
+        x.writeAttribute("offset", dur(a.offset));
+        x.writeAttribute("name", a.name);
+        x.writeAttribute("start", "0s");
+        x.writeAttribute("duration", dur(a.frames));
+        x.writeEndElement();
+      }
+    }
+    x.writeEndElement();  // asset-clip (video)
     off += c.frames;
   }
   x.writeEndElement();  // spine
@@ -5347,7 +5380,13 @@ void StoryboardPanel::onExportAnimatic() {
   fcpxmlCheck->setToolTip(
       tr("Write an FCPXML edit that places the per-shot clips on a timeline,\n"
          "importable into DaVinci Resolve / Premiere / Final Cut.\n"
-         "Use together with 'One clip per shot'."));
+         "Requires 'One clip per shot' (the timeline references those clips)."));
+  // Only meaningful with per-shot clips: enable it only when that mode is active.
+  fcpxmlCheck->setEnabled(false);
+  connect(radioEach, &QRadioButton::toggled, fcpxmlCheck, [fcpxmlCheck](bool on) {
+    fcpxmlCheck->setEnabled(on);
+    if (!on) fcpxmlCheck->setChecked(false);
+  });
   mainLay->addWidget(fcpxmlCheck);
 
   // Render format comes from the native Render Settings — the dialog shows a
@@ -5735,11 +5774,43 @@ void StoryboardPanel::onExportAnimatic() {
       c.frames = r1 - r0 + 1;
       if (c.frames > 0) clips.push_back(c);
     }
+    // Gather audio: each main-xsheet sound column → its own lane, each of its
+    // column levels → an audio clip, so dialogue / music / fx stay separate and
+    // mixable in DaVinci.
+    std::vector<FcpxAudio> audioClips;
+    {
+      TXsheet *mainXsh = scene->getChildStack()->getTopXsheet();
+      const int baseFrame = shotFrameRange(rFrom).first;  // timeline origin
+      int lane = 0;
+      for (int mc = 0; mc < mainXsh->getColumnCount(); mc++) {
+        TXshColumn *col = mainXsh->getColumn(mc);
+        TXshSoundColumn *sc = col ? col->getSoundColumn() : nullptr;
+        if (!sc) continue;
+        --lane;  // -1, -2, -3 …
+        for (int li = 0; li < sc->getColumnLevelCount(); li++) {
+          ColumnLevel *cl = sc->getColumnLevel(li);
+          if (!cl || !cl->getSoundLevel()) continue;
+          const int s = cl->getStartFrame();
+          const int e = cl->getEndFrame();
+          if (e < s) continue;
+          QString file = QString::fromStdWString(
+              scene->decodeFilePath(cl->getSoundLevel()->getPath()).getWideString());
+          if (file.isEmpty()) continue;
+          FcpxAudio a;
+          a.name   = QFileInfo(file).completeBaseName();
+          a.file   = file;
+          a.offset = std::max(0, s - baseFrame);
+          a.frames = e - s + 1;
+          a.lane   = lane;
+          audioClips.push_back(a);
+        }
+      }
+    }
     int fps = (int)prop->getFrameRate();
     int w = scene->getCurrentCamera()->getRes().lx;
     int h = scene->getCurrentCamera()->getRes().ly;
     QString fcpxmlPath = QDir(outDir).filePath(nameEdit->text() + ".fcpxml");
-    if (writeAnimaticFcpxml(fcpxmlPath, sceneName, fps, w, h, clips))
+    if (writeAnimaticFcpxml(fcpxmlPath, sceneName, fps, w, h, clips, audioClips))
       QMessageBox::information(
           this, tr("Export to DaVinci"),
           tr("Timeline written:\n%1\n\nImport it in DaVinci Resolve (File → "
