@@ -441,6 +441,13 @@ public:
                           const std::vector<TRaster32P> &panels);
   // Clears model data only (no xsheet changes). Call before re-populating.
   void clearShots() { m_shots.clear(); m_previews.clear(); }
+  // Replace the model's shot list with the given one (the current scene's shots,
+  // authored by the Board). Used right before publishing to the project DB so a
+  // previously-open larger scene's leftover shots never leak into this project.
+  void setShotsFrom(const std::vector<ShotData> &shots) {
+    m_shots = shots;
+    m_previews.resize(m_shots.size());
+  }
   void removeShot(int shotIdx);
   void moveShot(int fromIdx, int toIdx);
   void cloneShot(int shotIdx);

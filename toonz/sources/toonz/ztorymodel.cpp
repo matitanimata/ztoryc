@@ -377,7 +377,25 @@ void ZtoryModel::saveProjectDb() {
   bool metaEmpty = m_production.isEmpty() && m_title.isEmpty() &&
                    m_season.isEmpty() && m_episode.isEmpty() &&
                    m_team.isEmpty() && m_assets.empty();
-  if (metaEmpty && QFile::exists(path)) return;
+  if (metaEmpty && QFile::exists(path)) {
+    // Block ONLY if the on-disk file actually carries metadata we would wipe
+    // (the transient-reset data-loss case). A brand-new project legitimately
+    // has empty meta — letting its shots persist is what enables a project
+    // Tracker to aggregate multiple storyboards. So if the on-disk meta is ALSO
+    // empty, there is nothing to lose: proceed with the save.
+    QFile rf(path);
+    if (rf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+      const QString disk = QString::fromUtf8(rf.readAll());
+      rf.close();
+      const bool diskHasMeta =
+          disk.contains(QRegularExpression("production=\"[^\"]+\"")) ||
+          disk.contains(QRegularExpression("season=\"[^\"]+\"")) ||
+          disk.contains(QRegularExpression("episode=\"[^\"]+\"")) ||
+          disk.contains(QRegularExpression("title=\"[^\"]+\"")) ||
+          disk.contains("<person ") || disk.contains("<asset ");
+      if (diskHasMeta) return;  // would wipe real metadata → block
+    }
+  }
 
   QFile file(path);
   if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;

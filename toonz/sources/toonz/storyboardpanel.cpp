@@ -2427,6 +2427,17 @@ void StoryboardPanel::saveZtoryc() {
   if (!m_suppressProjectPublication) {
     QString sourceFile = QFileInfo(path).fileName();
     if (!sourceFile.isEmpty()) {
+      {
+        // Sync the model's shot list to THIS scene's actual shots before
+        // publishing, so leftover shots from a previously-open (larger) scene
+        // never get written into this project (cross-project / cross-storyboard
+        // contamination).
+        ZtoryModel *m0 = ZtoryModel::instance();
+        std::vector<ShotData> sceneShots;
+        sceneShots.reserve(m_shots.size());
+        for (const auto &s : m_shots) sceneShots.push_back(s.data);
+        m0->setShotsFrom(sceneShots);
+      }
       ZtoryModel::instance()->publishShotsToProjectDb(sourceFile);
       // Update thumbnail cache so Production Tracker keeps thumbs after scene switch.
       ZtoryModel *m = ZtoryModel::instance();
@@ -2459,6 +2470,10 @@ void StoryboardPanel::loadZtoryc() {
   m_shotBackLinkTechnique = QString();
   QString path = ztoryPath();
   if (path.isEmpty()) {
+    // The scene has no companion .ztoryc (new/empty scene). Clear the model's
+    // shot list so it doesn't keep the PREVIOUS scene's shots — otherwise the
+    // next publish writes those shots into THIS project (cross-project leak).
+    ZtoryModel::instance()->clearShots();
     ZtoryModel::instance()->setScriptFile(scriptFromFile);
     ZtoryModel::instance()->resetProjectLevelDefaults();
     ZtoryModel::instance()->loadProjectDb();  // load this project's DB (or migrate defaults)
@@ -2468,6 +2483,7 @@ void StoryboardPanel::loadZtoryc() {
   }
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    ZtoryModel::instance()->clearShots();
     ZtoryModel::instance()->setScriptFile(scriptFromFile);
     ZtoryModel::instance()->resetProjectLevelDefaults();
     ZtoryModel::instance()->loadProjectDb();  // load this project's DB (or migrate defaults)
@@ -2882,6 +2898,14 @@ void StoryboardPanel::loadZtoryc() {
   if (sceneRole == "storyboard") {
     QString src = QFileInfo(path).fileName();
     if (!src.isEmpty()) {
+      {
+        // Same sync as in saveZtoryc: publish exactly THIS scene's shots.
+        ZtoryModel *m0 = ZtoryModel::instance();
+        std::vector<ShotData> sceneShots;
+        sceneShots.reserve(m_shots.size());
+        for (const auto &s : m_shots) sceneShots.push_back(s.data);
+        m0->setShotsFrom(sceneShots);
+      }
       ZtoryModel::instance()->publishShotsToProjectDb(src);
       ZtoryModel *m = ZtoryModel::instance();
       for (int si = 0; si < (int)m_shots.size(); si++) {
