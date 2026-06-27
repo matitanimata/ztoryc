@@ -85,6 +85,7 @@
 #include <QFile>
 #include <QTextStream>
 #include <QXmlStreamWriter>
+#include <QUrl>
 #include <QXmlStreamReader>
 #include <QRegularExpression>
 #include <QTimer>
@@ -5183,6 +5184,89 @@ void StoryboardPanel::onExportShots() {
   QMessageBox::information(this, tr("Export Shots"), msg);
 }
 
+namespace {
+// One per-shot video clip referenced by the FCPXML timeline.
+struct FcpxClip { QString name; QString file; int frames; };
+
+// Write an FCPXML 1.9 timeline that places each per-shot clip on the spine in
+// order (cumulative offsets) — a DaVinci Resolve / Premiere / FCP importable
+// edit of the animatic. Times are <frames>/<fps>s (integer fps). v1: video only;
+// drop the single animatic audio file onto the Resolve timeline by hand.
+bool writeAnimaticFcpxml(const QString &path, const QString &projectName, int fps,
+                         int width, int height,
+                         const std::vector<FcpxClip> &clips) {
+  if (fps <= 0) fps = 25;
+  if (clips.empty()) return false;
+  QFile f(path);
+  if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return false;
+  auto dur = [fps](int frames) { return QString("%1/%2s").arg(frames).arg(fps); };
+
+  int total = 0;
+  for (const auto &c : clips) total += c.frames;
+
+  QXmlStreamWriter x(&f);
+  x.setAutoFormatting(true);
+  x.writeStartDocument();
+  x.writeDTD("<!DOCTYPE fcpxml>");
+  x.writeStartElement("fcpxml");
+  x.writeAttribute("version", "1.9");
+
+  x.writeStartElement("resources");
+  x.writeStartElement("format");
+  x.writeAttribute("id", "r1");
+  x.writeAttribute("name", "FFVideoFormatRateUndefined");
+  x.writeAttribute("frameDuration", QString("1/%1s").arg(fps));
+  x.writeAttribute("width", QString::number(width));
+  x.writeAttribute("height", QString::number(height));
+  x.writeEndElement();  // format
+  int idx = 0;
+  for (const auto &c : clips) {
+    x.writeStartElement("asset");
+    x.writeAttribute("id", QString("v%1").arg(++idx));
+    x.writeAttribute("name", c.name);
+    x.writeAttribute("start", "0s");
+    x.writeAttribute("duration", dur(c.frames));
+    x.writeAttribute("hasVideo", "1");
+    x.writeAttribute("format", "r1");
+    x.writeAttribute("src", QUrl::fromLocalFile(c.file).toString());
+    x.writeEndElement();
+  }
+  x.writeEndElement();  // resources
+
+  x.writeStartElement("library");
+  x.writeStartElement("event");
+  x.writeAttribute("name", "Ztoryc");
+  x.writeStartElement("project");
+  x.writeAttribute("name", projectName + " animatic");
+  x.writeStartElement("sequence");
+  x.writeAttribute("format", "r1");
+  x.writeAttribute("duration", dur(total));
+  x.writeAttribute("tcStart", "0s");
+  x.writeAttribute("tcFormat", "NDF");
+  x.writeStartElement("spine");
+  int off = 0;
+  idx = 0;
+  for (const auto &c : clips) {
+    x.writeStartElement("asset-clip");
+    x.writeAttribute("ref", QString("v%1").arg(++idx));
+    x.writeAttribute("offset", dur(off));
+    x.writeAttribute("name", c.name);
+    x.writeAttribute("start", "0s");
+    x.writeAttribute("duration", dur(c.frames));
+    x.writeEndElement();
+    off += c.frames;
+  }
+  x.writeEndElement();  // spine
+  x.writeEndElement();  // sequence
+  x.writeEndElement();  // project
+  x.writeEndElement();  // event
+  x.writeEndElement();  // library
+  x.writeEndElement();  // fcpxml
+  x.writeEndDocument();
+  return true;
+}
+}  // namespace
+
 void StoryboardPanel::onExportAnimatic() {
   if (m_shots.empty()) {
     QMessageBox::information(this, tr("Export Animatic"), tr("No shots to export."));
@@ -5250,8 +5334,21 @@ void StoryboardPanel::onExportAnimatic() {
   modeVLay->addWidget(radioEach);
   mainLay->addWidget(modeGroup);
 
-  connect(radioRange, &QRadioButton::toggled,
-          rangeWidget, &QWidget::setEnabled);
+  // The shot range is meaningful for "Shot range" AND "One clip per shot" (export
+  // only the clips of a sub-range), so enable it for both.
+  connect(radioRange, &QRadioButton::toggled, rangeWidget, &QWidget::setEnabled);
+  connect(radioEach, &QRadioButton::toggled, rangeWidget, [rangeWidget, radioRange](bool on) {
+    rangeWidget->setEnabled(on || radioRange->isChecked());
+  });
+
+  // DaVinci / NLE handoff: also write an FCPXML edit referencing the per-shot clips.
+  auto *fcpxmlCheck = new QCheckBox(
+      tr("Also export DaVinci timeline (.fcpxml)"), &dlg);
+  fcpxmlCheck->setToolTip(
+      tr("Write an FCPXML edit that places the per-shot clips on a timeline,\n"
+         "importable into DaVinci Resolve / Premiere / Final Cut.\n"
+         "Use together with 'One clip per shot'."));
+  mainLay->addWidget(fcpxmlCheck);
 
   // Render format comes from the native Render Settings — the dialog shows a
   // live summary and a button to open them. The label refreshes while the
@@ -5587,7 +5684,14 @@ void StoryboardPanel::onExportAnimatic() {
     // the time rasterRender() reads it (via movieRenderer.setAudioRange(r0,r1)
     // in rendercommand.cpp), so updating props for the next shot while a render
     // is running on background threads no longer corrupts the audio.
-    for (int si = 0; si < (int)m_shots.size(); si++) {
+    // Honour the shot range when it's enabled (export only a sub-range of clips).
+    int pFrom = 0, pTo = (int)m_shots.size() - 1;
+    if (rangeWidget->isEnabled()) {
+      pFrom = fromCombo->currentIndex();
+      pTo   = toCombo->currentIndex();
+      if (pFrom > pTo) std::swap(pFrom, pTo);
+    }
+    for (int si = pFrom; si <= pTo && si < (int)m_shots.size(); si++) {
       auto [r0, r1] = shotFrameRange(si);
       QString shotNum = m_shots[si].data.shotNumber;
       // sequenceId is a UUID — resolve to human-readable label
@@ -5604,6 +5708,43 @@ void StoryboardPanel::onExportAnimatic() {
       prop->setRange(r0, r1, 1);
       CommandManager::instance()->execute(MI_Render);
     }
+  }
+
+  // DaVinci/NLE handoff: write an FCPXML referencing the per-shot clips (the
+  // same naming as the per-shot render), in shot order with cumulative offsets.
+  if (fcpxmlCheck->isChecked()) {
+    int rFrom = 0, rTo = (int)m_shots.size() - 1;
+    if (mode == 1 || (mode == 2 && rangeWidget->isEnabled())) {
+      rFrom = fromCombo->currentIndex();
+      rTo   = toCombo->currentIndex();
+      if (rFrom > rTo) std::swap(rFrom, rTo);
+    }
+    std::vector<FcpxClip> clips;
+    for (int si = rFrom; si <= rTo && si < (int)m_shots.size(); si++) {
+      auto [r0, r1] = shotFrameRange(si);
+      QString shotNum = m_shots[si].data.shotNumber;
+      QString seqPart;
+      if (!m_shots[si].data.sequenceId.isEmpty()) {
+        const SequenceData *seq =
+            ZtoryModel::instance()->findSequence(m_shots[si].data.sequenceId);
+        seqPart = (seq ? seq->label : m_shots[si].data.sequenceId) + "_";
+      }
+      FcpxClip c;
+      c.name   = seqPart + shotNum;
+      c.file   = QDir(outDir).filePath(sceneName + "_" + seqPart + shotNum + "." + ext);
+      c.frames = r1 - r0 + 1;
+      if (c.frames > 0) clips.push_back(c);
+    }
+    int fps = (int)prop->getFrameRate();
+    int w = scene->getCurrentCamera()->getRes().lx;
+    int h = scene->getCurrentCamera()->getRes().ly;
+    QString fcpxmlPath = QDir(outDir).filePath(nameEdit->text() + ".fcpxml");
+    if (writeAnimaticFcpxml(fcpxmlPath, sceneName, fps, w, h, clips))
+      QMessageBox::information(
+          this, tr("Export to DaVinci"),
+          tr("Timeline written:\n%1\n\nImport it in DaVinci Resolve (File → "
+             "Import → Timeline). The per-shot clips are referenced by name.")
+              .arg(fcpxmlPath));
   }
 
   // Clear the burn-in config so later renders (menu Render, preview…) are
