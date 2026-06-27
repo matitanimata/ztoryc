@@ -307,6 +307,7 @@ void KitsuClient::pushShots(const QString &projectId, const QString &episodeName
   m_pushQueue       = shots;
   m_pushSeqIds.clear();
   m_pushShotIds.clear();
+  m_pushResolved.clear();
   m_pushEpisodeId.clear();
   m_pushIndex = m_pushCreated = m_pushUpdated = 0;
   pushEnsureEpisode();
@@ -386,6 +387,7 @@ void KitsuClient::pushLoadShots() {
 
 void KitsuClient::pushProcessNext() {
   if (m_pushIndex >= m_pushQueue.size()) {
+    emit shotIdsResolved(m_pushResolved);  // record ids so future syncs are rename-proof
     emit shotsPushed(true, m_pushCreated, m_pushUpdated,
                      tr("Done — %1 created, %2 updated.")
                          .arg(m_pushCreated)
@@ -393,6 +395,35 @@ void KitsuClient::pushProcessNext() {
     return;
   }
   const KitsuShotPush sh = m_pushQueue[m_pushIndex];
+  const QString resolvedKey = sh.seq + "\n" + sh.name;
+
+  // Common body (name/frames/timecode). Ztoryc is master on structure, so a PUT
+  // also renames the Kitsu shot back to Ztoryc's name if it diverged.
+  QJsonObject data;
+  data["frame_in"]  = QString::number(sh.frameIn);
+  data["frame_out"] = QString::number(sh.frameOut);
+  QJsonObject body;
+  body["name"]      = sh.name;
+  body["nb_frames"] = sh.nbFrames;
+  body["data"]      = data;
+
+  // 1) Known Kitsu shot id → update THAT shot directly (rename-proof): no name
+  //    lookup, so a shot renamed in Kitsu isn't duplicated.
+  if (!sh.kitsuShotId.isEmpty()) {
+    QNetworkReply *ur = authPut("/api/data/shots/" + sh.kitsuShotId,
+                                QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(ur, &QNetworkReply::finished, this,
+            [this, ur, resolvedKey, id = sh.kitsuShotId]() {
+              ur->deleteLater();
+              const QByteArray ub = ur->readAll();
+              if (ur->error() != QNetworkReply::NoError) { pushFail(errorMessage(ur, ub)); return; }
+              m_pushResolved[resolvedKey] = id;
+              ++m_pushUpdated;
+              ++m_pushIndex;
+              pushProcessNext();
+            });
+    return;
+  }
 
   // Ensure the sequence exists before we can place a shot under it.
   if (!m_pushSeqIds.contains(sh.seq)) {
@@ -415,22 +446,16 @@ void KitsuClient::pushProcessNext() {
   }
 
   const QString seqId = m_pushSeqIds.value(sh.seq);
-  QJsonObject data;
-  data["frame_in"]  = QString::number(sh.frameIn);
-  data["frame_out"] = QString::number(sh.frameOut);
-  QJsonObject body;
-  body["name"]      = sh.name;
-  body["nb_frames"] = sh.nbFrames;
-  body["data"]      = data;
-
-  const QString key = seqId + "/" + sh.name;
+  const QString key   = seqId + "/" + sh.name;
   if (m_pushShotIds.contains(key)) {
-    QNetworkReply *ur = authPut("/api/data/shots/" + m_pushShotIds.value(key),
+    const QString id = m_pushShotIds.value(key);
+    QNetworkReply *ur = authPut("/api/data/shots/" + id,
                                 QJsonDocument(body).toJson(QJsonDocument::Compact));
-    connect(ur, &QNetworkReply::finished, this, [this, ur]() {
+    connect(ur, &QNetworkReply::finished, this, [this, ur, resolvedKey, id]() {
       ur->deleteLater();
       const QByteArray ub = ur->readAll();
       if (ur->error() != QNetworkReply::NoError) { pushFail(errorMessage(ur, ub)); return; }
+      m_pushResolved[resolvedKey] = id;
       ++m_pushUpdated;
       ++m_pushIndex;
       pushProcessNext();
@@ -440,10 +465,12 @@ void KitsuClient::pushProcessNext() {
     QNetworkReply *cr =
         authPost("/api/data/projects/" + m_pushProjectId + "/shots",
                  QJsonDocument(body).toJson(QJsonDocument::Compact));
-    connect(cr, &QNetworkReply::finished, this, [this, cr]() {
+    connect(cr, &QNetworkReply::finished, this, [this, cr, resolvedKey]() {
       cr->deleteLater();
       const QByteArray cb = cr->readAll();
       if (cr->error() != QNetworkReply::NoError) { pushFail(errorMessage(cr, cb)); return; }
+      const QString id = QJsonDocument::fromJson(cb).object().value("id").toString();
+      if (!id.isEmpty()) m_pushResolved[resolvedKey] = id;
       ++m_pushCreated;
       ++m_pushIndex;
       pushProcessNext();

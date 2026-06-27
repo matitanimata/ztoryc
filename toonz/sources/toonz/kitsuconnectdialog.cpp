@@ -207,6 +207,22 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
             m_statusLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
             m_statusLabel->setText(msg);
           });
+  connect(m_client, &KitsuClient::shotIdsResolved, this,
+          [](const QHash<QString, QString> &byKey) {
+            ZtoryModel *m = ZtoryModel::instance();
+            auto &pshots  = m->projectShots_rw();
+            bool dirty    = false;
+            for (ProjectShot &ps : pshots) {
+              const QString seq =
+                  ps.seq.trimmed().isEmpty() ? "SQ01" : ps.seq.trimmed();
+              auto it = byKey.find(seq + "\n" + ps.label.trimmed());
+              if (it != byKey.end() && ps.kitsuShotId != it.value()) {
+                ps.kitsuShotId = it.value();
+                dirty = true;
+              }
+            }
+            if (dirty) m->saveProjectDb();
+          });
   connect(m_client, &KitsuClient::tasksPushed, this,
           [this](bool ok, int, const QString &msg) {
             setBusy(false);
@@ -370,9 +386,10 @@ void KitsuConnectDialog::onPushShotsClicked() {
       KitsuShotPush s;
       s.seq      = ps.seq.trimmed().isEmpty() ? kDefaultSeq : ps.seq.trimmed();
       s.name     = ps.label.trimmed();
-      s.nbFrames = ps.frames;
-      s.frameIn  = frameRanges[i].first;
-      s.frameOut = frameRanges[i].second;
+      s.nbFrames    = ps.frames;
+      s.frameIn     = frameRanges[i].first;
+      s.frameOut    = frameRanges[i].second;
+      s.kitsuShotId = ps.kitsuShotId;  // rename-proof update when known
       shots.push_back(s);
       for (auto it = ps.tasks.constBegin(); it != ps.tasks.constEnd(); ++it) {
         KitsuTaskPush tp;

@@ -60,8 +60,9 @@ struct KitsuTaskStatus {
 // list, so we never pull shots back).
 //----------------------------------------------------------------------------
 struct KitsuShotPush {
-  QString seq;       // sequence name, e.g. "SQ010"
-  QString name;      // shot name,     e.g. "SH010"
+  QString seq;          // sequence name, e.g. "SQ010"
+  QString name;         // shot name,     e.g. "SH010"
+  QString kitsuShotId;  // if known, update THAT shot (rename-proof) instead of by name
   int     nbFrames = 0;
   int     frameIn  = 1;
   int     frameOut = 0;
@@ -170,6 +171,9 @@ signals:
   void projectCreated(bool ok, const KitsuProject &project, const QString &message);
   void projectUpdated(bool ok, const QString &message);
   void shotsPushProgress(const QString &message);
+  // Resolved Kitsu shot ids per "seq\nlabel" key — lets the caller record them so
+  // later syncs are rename-proof. Emitted just before shotsPushed.
+  void shotIdsResolved(const QHash<QString, QString> &byKey);
   void shotsPushed(bool ok, int created, int updated, const QString &message);
   void tasksPushed(bool ok, int statusesSet, const QString &message);
   void statusesPulled(bool ok, const QVector<KitsuPullEntry> &entries,
@@ -201,6 +205,7 @@ private:
   QVector<KitsuShotPush>     m_pushQueue;
   QHash<QString, QString>    m_pushSeqIds;   // seqName  -> sequence id
   QHash<QString, QString>    m_pushShotIds;  // "seqId/shotName" -> shot id
+  QHash<QString, QString>    m_pushResolved; // "seq\nlabel" -> resolved kitsu shot id
   int m_pushIndex   = 0;
   int m_pushCreated = 0;
   int m_pushUpdated = 0;
