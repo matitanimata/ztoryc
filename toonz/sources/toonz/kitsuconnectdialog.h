@@ -10,8 +10,10 @@
 //============================================================================
 
 #include <QDialog>
+#include <QVector>
 
-class KitsuClient;
+#include "kitsuclient.h"  // KitsuClient, KitsuTaskPush
+
 class QLineEdit;
 class QCheckBox;
 class QPushButton;
@@ -44,4 +46,6 @@ private:
   QPushButton  *m_createBtn = nullptr;
   QPushButton  *m_pushShotsBtn = nullptr;
   QTableWidget *m_statusTable  = nullptr;
+  // Task statuses to push right after the shots land (Phase 3b).
+  QVector<KitsuTaskPush> m_pendingTasks;
 };

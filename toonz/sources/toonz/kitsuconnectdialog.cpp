@@ -176,6 +176,20 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
           });
   connect(m_client, &KitsuClient::shotsPushed, this,
           [this](bool ok, int, int, const QString &msg) {
+            // Chain into task + status push once the shots exist.
+            if (ok && !m_pendingTasks.isEmpty()) {
+              m_statusLabel->setText(msg + tr("  Pushing task statuses…"));
+              m_client->pushTasks(ZtoryModel::instance()->kitsuProjectId(),
+                                  m_pendingTasks);
+              return;
+            }
+            setBusy(false);
+            updateBindingButtons();
+            m_statusLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
+            m_statusLabel->setText(msg);
+          });
+  connect(m_client, &KitsuClient::tasksPushed, this,
+          [this](bool ok, int, const QString &msg) {
             setBusy(false);
             updateBindingButtons();
             m_statusLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
@@ -247,6 +261,7 @@ void KitsuConnectDialog::onCreateClicked() {
 void KitsuConnectDialog::onPushShotsClicked() {
   ZtoryModel *m = ZtoryModel::instance();
   if (!m->isKitsuLinked()) return;
+  m_pendingTasks.clear();
 
   // A shot in Kitsu must live under a sequence; default unsequenced shots to one.
   const QString kDefaultSeq = "SQ01";
@@ -265,6 +280,12 @@ void KitsuConnectDialog::onPushShotsClicked() {
       s.frameIn  = 1;
       s.frameOut = ps.frames;
       shots.push_back(s);
+      for (auto it = ps.tasks.constBegin(); it != ps.tasks.constEnd(); ++it) {
+        KitsuTaskPush tp;
+        tp.seq = s.seq; tp.shot = s.name;
+        tp.taskType = it.key(); tp.status = it.value().status;
+        m_pendingTasks.push_back(tp);
+      }
     }
   } else {
     for (int i = 0; i < m->shotCount(); i++) {
@@ -282,6 +303,12 @@ void KitsuConnectDialog::onPushShotsClicked() {
       s.frameIn  = 1;
       s.frameOut = sd.totalDuration();
       shots.push_back(s);
+      for (auto it = sd.tasks.constBegin(); it != sd.tasks.constEnd(); ++it) {
+        KitsuTaskPush tp;
+        tp.seq = s.seq; tp.shot = s.name;
+        tp.taskType = it.key(); tp.status = it.value().status;
+        m_pendingTasks.push_back(tp);
+      }
     }
   }
   if (shots.isEmpty()) {

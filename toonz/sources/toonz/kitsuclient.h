@@ -67,6 +67,15 @@ struct KitsuShotPush {
   int     frameOut = 0;
 };
 
+// One shot-task whose status we push up to Kitsu (Phase 3b). taskType must match
+// a Kitsu task-type name (for_entity = Shot).
+struct KitsuTaskPush {
+  QString    seq;
+  QString    shot;
+  QString    taskType;
+  TaskStatus status = TaskStatus::Todo;
+};
+
 //----------------------------------------------------------------------------
 class KitsuClient : public QObject {
   Q_OBJECT
@@ -115,6 +124,11 @@ public:
   void pushShots(const QString &projectId, const QString &episodeName,
                  bool tvshow, const QVector<KitsuShotPush> &shots);
 
+  // Push-only task + status sync (Phase 3b): ensure each task exists on its shot
+  // and set its status to match Ztoryc. Requires task statuses already fetched.
+  // -> tasksPushed().
+  void pushTasks(const QString &projectId, const QVector<KitsuTaskPush> &tasks);
+
   QVector<KitsuProject>    projects() const { return m_projects; }
   QVector<KitsuTaskStatus> taskStatuses() const { return m_taskStatuses; }
 
@@ -134,6 +148,7 @@ signals:
   void projectUpdated(bool ok, const QString &message);
   void shotsPushProgress(const QString &message);
   void shotsPushed(bool ok, int created, int updated, const QString &message);
+  void tasksPushed(bool ok, int statusesSet, const QString &message);
   void networkError(const QString &message);
 
 private:
@@ -164,6 +179,28 @@ private:
   int m_pushIndex   = 0;
   int m_pushCreated = 0;
   int m_pushUpdated = 0;
+
+  // --- Task + status push (Phase 3b) -----------------------------------
+  void taskLoadTaskTypes();
+  void taskCreateNext();
+  void taskLoadSequences();
+  void taskLoadShots();
+  void taskLoadProjectTasks();
+  void taskApplyNext();
+  void taskFail(const QString &message);
+  QString statusIdFor(TaskStatus s) const;
+
+  QString m_taskProjectId;
+  QVector<KitsuTaskPush>   m_taskQueue;
+  QHash<QString, QString>  m_ttIdByName;     // Kitsu Shot task-type name -> id
+  QHash<QString, QString>  m_taskSeqIds;     // seq name -> sequence id
+  QHash<QString, QString>  m_taskShotIds;    // "seqId/shotName" -> shot id
+  QHash<QString, QString>  m_taskIdByKey;    // "shotId/ttId" -> task id
+  QHash<int, QString>      m_statusIdByZ;    // TaskStatus (int) -> Kitsu status id
+  QVector<QString>         m_ttCreateQueue;  // task-type ids to create-tasks for
+  int m_taskCreateIdx = 0;
+  int m_taskApplyIdx  = 0;
+  int m_taskStatusesSet = 0;
 
   QNetworkAccessManager *m_nam = nullptr;
 

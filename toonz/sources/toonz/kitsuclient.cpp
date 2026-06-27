@@ -441,6 +441,171 @@ void KitsuClient::pushProcessNext() {
 }
 
 //----------------------------------------------------------------------------
+// Task + status push (Phase 3b) — sequential async (push-only)
+//----------------------------------------------------------------------------
+
+QString KitsuClient::statusIdFor(TaskStatus s) const {
+  return m_statusIdByZ.value(static_cast<int>(s));
+}
+
+void KitsuClient::taskFail(const QString &message) {
+  emit tasksPushed(false, m_taskStatusesSet, message);
+}
+
+void KitsuClient::pushTasks(const QString &projectId,
+                            const QVector<KitsuTaskPush> &tasks) {
+  if (!isLoggedIn()) { emit tasksPushed(false, 0, tr("Not logged in.")); return; }
+  if (projectId.isEmpty() || tasks.isEmpty()) {
+    emit tasksPushed(true, 0, tr("No task statuses to push."));
+    return;
+  }
+  m_taskProjectId = projectId;
+  m_taskQueue     = tasks;
+  m_ttIdByName.clear();
+  m_taskSeqIds.clear();
+  m_taskShotIds.clear();
+  m_taskIdByKey.clear();
+  m_ttCreateQueue.clear();
+  m_taskCreateIdx = m_taskApplyIdx = m_taskStatusesSet = 0;
+
+  // Reverse status map: Ztoryc TaskStatus -> canonical Kitsu status id (only the
+  // six pipeline short names, so approved/rejected/neutral don't shadow them).
+  m_statusIdByZ.clear();
+  for (const KitsuTaskStatus &st : m_taskStatuses) {
+    const QString sn = st.shortName.toLower();
+    if (sn == "todo" || sn == "ready" || sn == "wip" || sn == "wfa" ||
+        sn == "retake" || sn == "done")
+      m_statusIdByZ.insert(static_cast<int>(mapStatus(st)), st.id);
+  }
+  taskLoadTaskTypes();
+}
+
+void KitsuClient::taskLoadTaskTypes() {
+  emit shotsPushProgress(tr("Loading task types…"));
+  QNetworkReply *r = m_nam->get(authGet("/api/data/task-types"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      if (o.value("for_entity").toString() == "Shot")
+        m_ttIdByName.insert(o.value("name").toString(), o.value("id").toString());
+    }
+    // Distinct task-type ids actually used by the queue (and known to Kitsu).
+    for (const KitsuTaskPush &t : m_taskQueue) {
+      const QString id = m_ttIdByName.value(t.taskType);
+      if (!id.isEmpty() && !m_ttCreateQueue.contains(id)) m_ttCreateQueue.push_back(id);
+    }
+    taskCreateNext();
+  });
+}
+
+void KitsuClient::taskCreateNext() {
+  if (m_taskCreateIdx >= m_ttCreateQueue.size()) { taskLoadSequences(); return; }
+  const QString ttId = m_ttCreateQueue[m_taskCreateIdx];
+  emit shotsPushProgress(tr("Creating tasks (%1/%2)…")
+                             .arg(m_taskCreateIdx + 1)
+                             .arg(m_ttCreateQueue.size()));
+  QNetworkReply *r = authPost("/api/actions/projects/" + m_taskProjectId +
+                                  "/task-types/" + ttId + "/shots/create-tasks",
+                              "{}");
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
+    ++m_taskCreateIdx;
+    taskCreateNext();
+  });
+}
+
+void KitsuClient::taskLoadSequences() {
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_taskProjectId + "/sequences"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_taskSeqIds.insert(o.value("name").toString(), o.value("id").toString());
+    }
+    taskLoadShots();
+  });
+}
+
+void KitsuClient::taskLoadShots() {
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_taskProjectId + "/shots"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_taskShotIds.insert(
+          o.value("parent_id").toString() + "/" + o.value("name").toString(),
+          o.value("id").toString());
+    }
+    taskLoadProjectTasks();
+  });
+}
+
+void KitsuClient::taskLoadProjectTasks() {
+  emit shotsPushProgress(tr("Reading existing tasks…"));
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_taskProjectId + "/tasks"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_taskIdByKey.insert(o.value("entity_id").toString() + "/" +
+                               o.value("task_type_id").toString(),
+                           o.value("id").toString());
+    }
+    taskApplyNext();
+  });
+}
+
+void KitsuClient::taskApplyNext() {
+  while (m_taskApplyIdx < m_taskQueue.size()) {
+    const KitsuTaskPush t = m_taskQueue[m_taskApplyIdx];
+    const QString ttId     = m_ttIdByName.value(t.taskType);
+    const QString seqId    = m_taskSeqIds.value(t.seq);
+    const QString shotId   = m_taskShotIds.value(seqId + "/" + t.shot);
+    const QString taskId   = m_taskIdByKey.value(shotId + "/" + ttId);
+    const QString statusId = statusIdFor(t.status);
+    // Skip anything we couldn't resolve (unknown task-type, shot or status).
+    if (ttId.isEmpty() || shotId.isEmpty() || taskId.isEmpty() ||
+        statusId.isEmpty()) {
+      ++m_taskApplyIdx;
+      continue;
+    }
+    emit shotsPushProgress(tr("Setting status (%1/%2)…")
+                               .arg(m_taskApplyIdx + 1)
+                               .arg(m_taskQueue.size()));
+    QJsonObject body;
+    body["task_status_id"] = statusId;
+    body["comment"]        = "Status synced from Ztoryc";
+    QNetworkReply *r = authPost("/api/actions/tasks/" + taskId + "/comment",
+                                QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(r, &QNetworkReply::finished, this, [this, r]() {
+      r->deleteLater();
+      const QByteArray b = r->readAll();
+      if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
+      ++m_taskStatusesSet;
+      ++m_taskApplyIdx;
+      taskApplyNext();
+    });
+    return;  // resume in the reply callback
+  }
+  emit tasksPushed(true, m_taskStatusesSet,
+                   tr("Done — %1 task statuses set in Kitsu.").arg(m_taskStatusesSet));
+}
+
+//----------------------------------------------------------------------------
 // Task statuses
 //----------------------------------------------------------------------------
 
