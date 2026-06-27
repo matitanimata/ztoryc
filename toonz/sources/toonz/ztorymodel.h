@@ -319,6 +319,10 @@ public:
 
   // B3b — Project shots (multi-storyboard)
   const std::vector<ProjectShot> &projectShots() const { return m_projectShots; }
+  // Cumulative frame ranges [in,out] (1-based) for each project shot, in
+  // m_projectShots order, reset at every source storyboard change. Maps onto
+  // Kitsu's frame_in/frame_out (the shot's start/end timecode in the edit).
+  std::vector<std::pair<int, int>> projectShotFrameRanges() const;
   const QVector<QString> &storyboardFiles() const { return m_storyboardFiles; }
   // Upsert scene shots (m_shots) into m_projectShots keyed by uuid; sourceFile
   // is the .tnz basename.  Preserves existing task progress; initialises tasks

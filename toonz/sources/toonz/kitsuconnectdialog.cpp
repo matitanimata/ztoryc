@@ -271,14 +271,17 @@ void KitsuConnectDialog::onPushShotsClicked() {
   QVector<KitsuShotPush> shots;
   int skipped = 0;
   if (!m->projectShots().empty()) {
-    for (const ProjectShot &ps : m->projectShots()) {
+    const auto frameRanges = m->projectShotFrameRanges();  // cumulative in/out
+    const auto &pshots = m->projectShots();
+    for (size_t i = 0; i < pshots.size(); i++) {
+      const ProjectShot &ps = pshots[i];
       if (ps.label.trimmed().isEmpty()) { ++skipped; continue; }
       KitsuShotPush s;
       s.seq      = ps.seq.trimmed().isEmpty() ? kDefaultSeq : ps.seq.trimmed();
       s.name     = ps.label.trimmed();
       s.nbFrames = ps.frames;
-      s.frameIn  = 1;
-      s.frameOut = ps.frames;
+      s.frameIn  = frameRanges[i].first;
+      s.frameOut = frameRanges[i].second;
       shots.push_back(s);
       for (auto it = ps.tasks.constBegin(); it != ps.tasks.constEnd(); ++it) {
         KitsuTaskPush tp;
@@ -288,10 +291,12 @@ void KitsuConnectDialog::onPushShotsClicked() {
       }
     }
   } else {
+    int acc = 0;  // running frame offset for cumulative in/out (edit timecode)
     for (int i = 0; i < m->shotCount(); i++) {
       const ShotData &sd  = m->shot(i);
+      const int dur       = sd.totalDuration();
       const QString label = sd.label().trimmed();
-      if (label.isEmpty()) { ++skipped; continue; }
+      if (label.isEmpty()) { acc += dur; ++skipped; continue; }
       QString seq;  // parent sequence label, if the shot belongs to one
       if (!sd.sequenceId.isEmpty())
         for (const SequenceData &sq : m->sequences())
@@ -299,9 +304,10 @@ void KitsuConnectDialog::onPushShotsClicked() {
       KitsuShotPush s;
       s.seq      = seq.isEmpty() ? kDefaultSeq : seq;
       s.name     = label;
-      s.nbFrames = sd.totalDuration();
-      s.frameIn  = 1;
-      s.frameOut = sd.totalDuration();
+      s.nbFrames = dur;
+      s.frameIn  = acc + 1;
+      s.frameOut = acc + dur;
+      acc        = s.frameOut;
       shots.push_back(s);
       for (auto it = sd.tasks.constBegin(); it != sd.tasks.constEnd(); ++it) {
         KitsuTaskPush tp;

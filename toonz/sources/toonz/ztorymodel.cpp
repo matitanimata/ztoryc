@@ -628,6 +628,22 @@ QStringList ZtoryModel::taskTypesForProjectShot(const ProjectShot &ps) const {
   return t ? t->taskTypes : QStringList();
 }
 
+std::vector<std::pair<int, int>> ZtoryModel::projectShotFrameRanges() const {
+  std::vector<std::pair<int, int>> ranges(m_projectShots.size());
+  QString curSource;
+  int acc = 0;
+  for (size_t i = 0; i < m_projectShots.size(); i++) {
+    const ProjectShot &ps = m_projectShots[i];
+    if (ps.source != curSource) { curSource = ps.source; acc = 0; }
+    const int dur = ps.frames > 0 ? ps.frames : 0;
+    const int in  = acc + 1;          // 1-based, like an edit timeline
+    const int out = acc + dur;        // inclusive last frame
+    ranges[i] = {in, out};
+    acc = out;
+  }
+  return ranges;
+}
+
 void ZtoryModel::publishShotsToProjectDb(const QString &sourceFile) {
   if (sourceFile.isEmpty()) return;
   // Register the storyboard file.

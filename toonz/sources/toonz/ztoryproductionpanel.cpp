@@ -425,6 +425,7 @@ void ZtoryProductionPanel::exportFullProject() {
   ZtoryModel *m = ZtoryModel::instance();
 
   const std::vector<ProjectShot> &shots = m->projectShots();
+  const auto frameRanges = m->projectShotFrameRanges();  // cumulative in/out
   if (shots.empty()) {
     QMessageBox::information(this, QObject::tr("Export Full Project"),
                             QObject::tr("The project has no shots to export."));
@@ -495,7 +496,7 @@ void ZtoryProductionPanel::exportFullProject() {
   const QStringList fixedCols = {
       QObject::tr("Thumbnail"), QObject::tr("Storyboard"),
       QObject::tr("Sequence"),  QObject::tr("Shot"),
-      QObject::tr("Frames"),    QObject::tr("Sec/Fr"),
+      QObject::tr("Frames"),    QObject::tr("In-Out"),
       QObject::tr("Workflow")};
   const int firstTaskCol = fixedCols.size() + 1;  // 1-based
   const int headerRow    = 4;
@@ -543,8 +544,9 @@ void ZtoryProductionPanel::exportFullProject() {
       xlsx.write(row, 3, ps.seq,    centerFmt);
       xlsx.write(row, 4, ps.label,  centerFmt);
       xlsx.write(row, 5, ps.frames, centerFmt);
-      xlsx.write(row, 6, QString("%1:%2").arg(ps.frames / fps)
-                             .arg(ps.frames % fps, 2, 10, QChar('0')), centerFmt);
+      const auto fr = (si < (int)frameRanges.size()) ? frameRanges[si]
+                                                     : std::make_pair(0, 0);
+      xlsx.write(row, 6, QString("%1-%2").arg(fr.first).arg(fr.second), centerFmt);
       QString tech = ps.technique.isEmpty() ? m->defaultTechnique() : ps.technique;
       xlsx.write(row, 7, tech, centerFmt);
 
@@ -1305,13 +1307,15 @@ void ZtoryProductionPanel::rebuild() {
   if (useProjectShots)
     headers << QObject::tr("Storyboard");
   headers << QObject::tr("Shot") << QString() << QObject::tr("Frames")
-          << QObject::tr("Sec/Fr") << QObject::tr("Workflow") << QObject::tr("Done");
+          << QObject::tr("In-Out") << QObject::tr("Workflow") << QObject::tr("Done");
   headers += taskCols;
   m_table->setHorizontalHeaderLabels(headers);
 
   if (useProjectShots) {
     // ── Project-shots mode: read from m_projectShots ────────────────────────
     const auto &pshots = m->projectShots();
+    // Cumulative frame in/out (edit timecode) per source — aligns with Kitsu.
+    const auto frameRanges = m->projectShotFrameRanges();
     // Build uuid→scene-index map for thumbnails of the open storyboard.
     QHash<QString, int> uuidToSceneIdx;
     for (int i = 0; i < m->shotCount(); i++)
@@ -1364,8 +1368,10 @@ void ZtoryProductionPanel::rebuild() {
       frItem->setFlags(Qt::ItemIsEnabled);
       frItem->setTextAlignment(Qt::AlignCenter);
       m_table->setItem(i, 3, frItem);
+      const auto fr = (i < (int)frameRanges.size()) ? frameRanges[i]
+                                                    : std::make_pair(0, 0);
       auto *tcItem = new QTableWidgetItem(
-          QString("%1:%2").arg(frames / fps).arg(frames % fps, 2, 10, QChar('0')));
+          QString("%1-%2").arg(fr.first).arg(fr.second));
       tcItem->setFlags(Qt::ItemIsEnabled);
       tcItem->setTextAlignment(Qt::AlignCenter);
       m_table->setItem(i, 4, tcItem);
@@ -1423,6 +1429,7 @@ void ZtoryProductionPanel::rebuild() {
     }
   } else {
     // ── Legacy mode: read from scene shots (m_shots) ────────────────────────
+    int legacyAcc = 0;  // running frame offset for cumulative in/out (timecode)
     for (int i = 0; i < m->shotCount(); i++) {
       const ShotData &sd = m->shot(i);
 
@@ -1447,8 +1454,9 @@ void ZtoryProductionPanel::rebuild() {
       frItem->setFlags(Qt::ItemIsEnabled);
       frItem->setTextAlignment(Qt::AlignCenter);
       m_table->setItem(i, 2, frItem);
-      auto *tcItem = new QTableWidgetItem(
-          QString("%1:%2").arg(frames / fps).arg(frames % fps, 2, 10, QChar('0')));
+      const int inF = legacyAcc + 1, outF = legacyAcc + frames;
+      legacyAcc = outF;
+      auto *tcItem = new QTableWidgetItem(QString("%1-%2").arg(inF).arg(outF));
       tcItem->setFlags(Qt::ItemIsEnabled);
       tcItem->setTextAlignment(Qt::AlignCenter);
       m_table->setItem(i, 3, tcItem);
