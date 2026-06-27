@@ -31,6 +31,7 @@ private:
   void onLinkClicked();    // bind the selected Kitsu project (pull)
   void onCreateClicked();  // create a new Kitsu project from the Ztoryc model (push)
   void onPushShotsClicked();  // push the Ztoryc shot list up to Kitsu
+  void onPullStatusClicked(); // pull task statuses down from Kitsu (review sync)
   void setBusy(bool busy);
   void updateBindingButtons();
 
@@ -45,6 +46,7 @@ private:
   QPushButton  *m_linkBtn   = nullptr;
   QPushButton  *m_createBtn = nullptr;
   QPushButton  *m_pushShotsBtn = nullptr;
+  QPushButton  *m_pullStatusBtn = nullptr;
   QTableWidget *m_statusTable  = nullptr;
   // Task statuses to push right after the shots land (Phase 3b).
   QVector<KitsuTaskPush> m_pendingTasks;

@@ -308,6 +308,9 @@ public:
   void loadProjectDb();                              // from current project folder
   void loadProjectDbFromPath(const QString &path);  // B3c: load from explicit path
   void saveProjectDb();
+  // Persist project-DB edits made directly via projectShots_rw() and refresh the
+  // Production Tracker (used by the Kitsu pull/review sync). One save + one signal.
+  void saveAndNotifyTasks();
   QString projectDbPath() const;
   // Non-const access to project shots (used by B3c auto-WIP).
   std::vector<ProjectShot> &projectShots_rw() { return m_projectShots; }

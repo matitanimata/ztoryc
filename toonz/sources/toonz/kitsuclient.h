@@ -76,6 +76,16 @@ struct KitsuTaskPush {
   TaskStatus status = TaskStatus::Todo;
 };
 
+// One shot-task status pulled DOWN from Kitsu (review sync). taskType is the
+// Kitsu task-type name; the caller matches it onto its Ztoryc task by
+// KitsuClient::normalizeTaskType().
+struct KitsuPullEntry {
+  QString    seq;
+  QString    shot;
+  QString    taskType;
+  TaskStatus status = TaskStatus::Todo;
+};
+
 //----------------------------------------------------------------------------
 class KitsuClient : public QObject {
   Q_OBJECT
@@ -129,6 +139,14 @@ public:
   // -> tasksPushed().
   void pushTasks(const QString &projectId, const QVector<KitsuTaskPush> &tasks);
 
+  // Pull task statuses DOWN from Kitsu (review sync: Kitsu is authoritative on
+  // WFA→Done/Retake). -> statusesPulled().
+  void pullStatuses(const QString &projectId);
+
+  // Canonical lowercased task-type key (handles Ztoryc↔Kitsu name aliases
+  // Render↔Rendering, VFX↔FX) so push and pull match the same tasks.
+  static QString normalizeTaskType(const QString &name);
+
   QVector<KitsuProject>    projects() const { return m_projects; }
   QVector<KitsuTaskStatus> taskStatuses() const { return m_taskStatuses; }
 
@@ -149,6 +167,8 @@ signals:
   void shotsPushProgress(const QString &message);
   void shotsPushed(bool ok, int created, int updated, const QString &message);
   void tasksPushed(bool ok, int statusesSet, const QString &message);
+  void statusesPulled(bool ok, const QVector<KitsuPullEntry> &entries,
+                      const QString &message);
   void networkError(const QString &message);
 
 private:
@@ -204,6 +224,19 @@ private:
   int m_taskCreateIdx = 0;
   int m_taskApplyIdx  = 0;
   int m_taskStatusesSet = 0;
+
+  // --- Pull statuses (review sync) -------------------------------------
+  void pullLoadSequences();
+  void pullLoadShots();
+  void pullLoadTaskTypes();
+  void pullLoadTasks();
+  void pullFail(const QString &message);
+
+  QString m_pullProjectId;
+  QHash<QString, QString> m_pullSeqName;     // sequence id   -> name
+  QHash<QString, QString> m_pullShotSeq;     // shot id       -> sequence name
+  QHash<QString, QString> m_pullShotName;    // shot id       -> shot name
+  QHash<QString, QString> m_pullTtName;      // task-type id  -> Kitsu name
 
   QNetworkAccessManager *m_nam = nullptr;
 

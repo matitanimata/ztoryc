@@ -66,13 +66,21 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
   m_linkBtn->setEnabled(false);
   m_createBtn->setEnabled(false);
 
-  // Push-only shot sync (Ztoryc -> Kitsu); enabled once linked.
+  // Shot push (Ztoryc → Kitsu) + status pull (Kitsu → Ztoryc); enabled once linked.
   m_pushShotsBtn = new QPushButton(tr("Push shots to Kitsu →"), this);
   m_pushShotsBtn->setToolTip(
-      tr("Create/update the project's shots in Kitsu from the Ztoryc shot list.\n"
+      tr("Create/update the project's shots + tasks in Kitsu from Ztoryc.\n"
          "Shots are push-only: they are never pulled back from Kitsu."));
   m_pushShotsBtn->setEnabled(false);
-  root->addWidget(m_pushShotsBtn);
+  m_pullStatusBtn = new QPushButton(tr("← Pull statuses from Kitsu"), this);
+  m_pullStatusBtn->setToolTip(
+      tr("Pull task statuses down from Kitsu (review sync): the supervisor's\n"
+         "WFA → Done/Retake on Kitsu appears back in the Production Tracker."));
+  m_pullStatusBtn->setEnabled(false);
+  auto *syncRow = new QHBoxLayout();
+  syncRow->addWidget(m_pushShotsBtn);
+  syncRow->addWidget(m_pullStatusBtn);
+  root->addLayout(syncRow);
 
   m_statusTable = new QTableWidget(0, 3, this);
   m_statusTable->setHorizontalHeaderLabels(
@@ -106,6 +114,8 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
           &KitsuConnectDialog::onCreateClicked);
   connect(m_pushShotsBtn, &QPushButton::clicked, this,
           &KitsuConnectDialog::onPushShotsClicked);
+  connect(m_pullStatusBtn, &QPushButton::clicked, this,
+          &KitsuConnectDialog::onPullStatusClicked);
 
   connect(m_client, &KitsuClient::loginFinished, this,
           [this](bool ok, const QString &msg) {
@@ -195,6 +205,41 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
             m_statusLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
             m_statusLabel->setText(msg);
           });
+  connect(m_client, &KitsuClient::statusesPulled, this,
+          [this](bool ok, const QVector<KitsuPullEntry> &entries, const QString &msg) {
+            setBusy(false);
+            updateBindingButtons();
+            if (!ok) {
+              m_statusLabel->setStyleSheet("color:#FF3860;");
+              m_statusLabel->setText(msg);
+              return;
+            }
+            // Apply pulled statuses (Kitsu authoritative on review).
+            ZtoryModel *m = ZtoryModel::instance();
+            auto &pshots  = m->projectShots_rw();
+            int updated   = 0;
+            for (const KitsuPullEntry &e : entries) {
+              const QString ekey = KitsuClient::normalizeTaskType(e.taskType);
+              for (ProjectShot &ps : pshots) {
+                if (ps.label.trimmed() != e.shot.trimmed()) continue;
+                const QString psseq =
+                    ps.seq.trimmed().isEmpty() ? "SQ01" : ps.seq.trimmed();
+                if (psseq != e.seq.trimmed()) continue;
+                for (const QString &tt : m->taskTypesForProjectShot(ps))
+                  if (KitsuClient::normalizeTaskType(tt) == ekey) {
+                    if (ps.tasks[tt].status != e.status) {
+                      ps.tasks[tt].status = e.status;
+                      ++updated;
+                    }
+                    break;
+                  }
+              }
+            }
+            if (updated > 0) m->saveAndNotifyTasks();
+            m_statusLabel->setStyleSheet("color:#22D160;");
+            m_statusLabel->setText(
+                tr("%1 (%2 updated in Ztoryc)").arg(msg).arg(updated));
+          });
 }
 
 void KitsuConnectDialog::updateBindingButtons() {
@@ -206,9 +251,19 @@ void KitsuConnectDialog::updateBindingButtons() {
     m_createBtn->setToolTip(
         tr("Your Kitsu role (%1) can't create projects — ask an admin/manager.")
             .arg(m_client->userRole()));
-  // Push needs a live session and a project already bound in the model.
-  m_pushShotsBtn->setEnabled(connected &&
-                             ZtoryModel::instance()->isKitsuLinked());
+  // Push/pull need a live session and a project already bound in the model.
+  const bool linked = connected && ZtoryModel::instance()->isKitsuLinked();
+  m_pushShotsBtn->setEnabled(linked);
+  m_pullStatusBtn->setEnabled(linked);
+}
+
+void KitsuConnectDialog::onPullStatusClicked() {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (!m->isKitsuLinked()) return;
+  setBusy(true);
+  m_statusLabel->setStyleSheet(QString());
+  m_statusLabel->setText(tr("Pulling statuses from Kitsu…"));
+  m_client->pullStatuses(m->kitsuProjectId());
 }
 
 void KitsuConnectDialog::onLinkClicked() {

@@ -362,6 +362,11 @@ void ZtoryModel::loadThumbsFromDisk() {
   }
 }
 
+void ZtoryModel::saveAndNotifyTasks() {
+  saveProjectDb();
+  emit taskStatusChanged();
+}
+
 void ZtoryModel::saveProjectDb() {
   TFilePath fp = projectDbFilePath();
   if (fp == TFilePath()) return;
