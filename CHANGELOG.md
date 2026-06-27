@@ -1,3 +1,42 @@
+## [2026-06-27c] — Kitsu M5 Fase 3b + fix contaminazione + sync bidirezionale + export DaVinci (branch feature/kitsu-m5-phase3b)
+
+Sessione lunga. Branch **feature/kitsu-m5-phase3b** (da master dopo il merge di 1+2+3a).
+
+### Fixed — bug critico tracker
+- **Contaminazione cross-progetto** (`84cba915e`): gli shot di uno storyboard finivano nel
+  `production.ztrack` di altri progetti/storyboard. Causa: `ZtoryModel::m_shots` cresceva ma non
+  si troncava per scene più piccole → al publish scriveva shot residui. Fix: `setShotsFrom()`
+  sincronizza il modello alla scena PRIMA di ogni publish; `clearShots()` sui rami early-return di
+  `loadZtoryc`; firewall `saveProjectDb` meno aggressivo (blocca solo se sul disco ci sono davvero
+  metadati) → ripristina l'aggregazione multi-storyboard. Trovato instrumentando (log su file).
+
+### Added — Kitsu (completamento sync bidirezionale)
+- **Fase 3b task+status push** (`201d73042`) + allineamento nomi task-type (`cd8693ccf`,
+  Render↔Rendering/VFX↔FX, case-insensitive).
+- **Frame in/out come timecode MM:SS:FR** (`065a52b0`/`e520b7e1`): colonna tracker 'Sec/Fr'→'In-Out'
+  cumulativo per source; export XLSX; push manda frame_in/out cumulativi.
+- **Pull status (review sync)** (`2e4e2eb5`): il supervisor mette WFA→Done/Retake su Kitsu e torna
+  in Ztoryc; match per shot+task con alias.
+- **Sessione persistente** (`caf3e561`): KitsuClient singleton, auto-connect con credenziali salvate,
+  password Remember default ON, dropdown pre-seleziona la produzione linkata.
+- **kitsuShotId per shot** (`6fc37c9e`) + **PUT-by-id nel push** (`afdb8eed`): link rename-proof.
+- **Handles** (`4e91a7b4`): checkbox 'Push with handles +N fr' padda frame_in/out su Kitsu.
+
+### Added — Export montaggio (DaVinci/NLE)
+- **FCPXML** (`db617160e`/`baedde6e0`): checkbox 'Also export DaVinci timeline' (solo con 'one clip
+  per shot'); clip per-shot in ordine + **audio multitraccia** (ogni colonna sonora → lane separata,
+  dialoghi/musica/fx mixabili in DaVinci). Range combinabile con 'one clip per shot'.
+
+### Notes / da fare
+- **Upload preview mp4 su Kitsu** + task **Storyboard** (WIP→WFA): contratto API nailato in memoria.
+- **FCPXML transizioni vere** (cross-dissolve da `transitionFrames`): da fare DOPO conferma import base.
+- Branch NON ancora mergiato in master.
+
+### Upstream candidates
+- Nessuno (codice Ztoryc-specifico).
+
+---
+
 ## [2026-06-27b] — Kitsu M5 Fase 1+2+3a (branch feature/kitsu-m5)
 
 Avvio dell'integrazione Kitsu (CGWire/Zou). Lavoro su **branch `feature/kitsu-m5`**,
