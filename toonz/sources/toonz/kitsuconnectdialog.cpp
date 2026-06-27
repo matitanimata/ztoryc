@@ -227,24 +227,39 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
             ZtoryModel *m = ZtoryModel::instance();
             auto &pshots  = m->projectShots_rw();
             int updated   = 0;
+            bool dirty    = false;
             for (const KitsuPullEntry &e : entries) {
               const QString ekey = KitsuClient::normalizeTaskType(e.taskType);
               for (ProjectShot &ps : pshots) {
-                if (ps.label.trimmed() != e.shot.trimmed()) continue;
-                const QString psseq =
-                    ps.seq.trimmed().isEmpty() ? "SQ01" : ps.seq.trimmed();
-                if (psseq != e.seq.trimmed()) continue;
+                // Prefer the stored Kitsu shot id (survives renames on either
+                // side); fall back to seq+label until the link is recorded.
+                bool match;
+                if (!ps.kitsuShotId.isEmpty() && !e.kitsuShotId.isEmpty())
+                  match = (ps.kitsuShotId == e.kitsuShotId);
+                else {
+                  const QString psseq =
+                      ps.seq.trimmed().isEmpty() ? "SQ01" : ps.seq.trimmed();
+                  match = (ps.label.trimmed() == e.shot.trimmed() &&
+                           psseq == e.seq.trimmed());
+                }
+                if (!match) continue;
+                // Record the Kitsu id so future syncs are rename-proof.
+                if (ps.kitsuShotId.isEmpty() && !e.kitsuShotId.isEmpty()) {
+                  ps.kitsuShotId = e.kitsuShotId;
+                  dirty = true;
+                }
                 for (const QString &tt : m->taskTypesForProjectShot(ps))
                   if (KitsuClient::normalizeTaskType(tt) == ekey) {
                     if (ps.tasks[tt].status != e.status) {
                       ps.tasks[tt].status = e.status;
                       ++updated;
+                      dirty = true;
                     }
                     break;
                   }
               }
             }
-            if (updated > 0) m->saveAndNotifyTasks();
+            if (dirty) m->saveAndNotifyTasks();
             m_statusLabel->setStyleSheet("color:#22D160;");
             m_statusLabel->setText(
                 tr("%1 (%2 updated in Ztoryc)").arg(msg).arg(updated));

@@ -484,6 +484,8 @@ void ZtoryModel::saveProjectDb() {
     xml.writeAttribute("frames",    QString::number(ps.frames));
     if (!ps.technique.isEmpty())
       xml.writeAttribute("technique", ps.technique);
+    if (!ps.kitsuShotId.isEmpty())
+      xml.writeAttribute("kitsuShotId", ps.kitsuShotId);
     for (auto it = ps.tasks.constBegin(); it != ps.tasks.constEnd(); ++it) {
       xml.writeStartElement("task");
       xml.writeAttribute("type",   it.key());
@@ -592,6 +594,7 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
       ps.label     = a.value("label").toString();
       ps.frames    = a.value("frames").toInt();
       ps.technique = a.value("technique").toString();
+      ps.kitsuShotId = a.value("kitsuShotId").toString();
       if (!ps.uuid.isEmpty()) {
         pshots.push_back(ps);
         psi = (int)pshots.size() - 1;

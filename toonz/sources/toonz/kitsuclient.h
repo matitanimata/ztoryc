@@ -82,6 +82,7 @@ struct KitsuTaskPush {
 struct KitsuPullEntry {
   QString    seq;
   QString    shot;
+  QString    kitsuShotId;  // Kitsu shot id — robust link across renames
   QString    taskType;
   TaskStatus status = TaskStatus::Todo;
 };

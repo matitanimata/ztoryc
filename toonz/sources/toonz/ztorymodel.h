@@ -168,6 +168,7 @@ struct ProjectShot {
   QString label;     // e.g. "SH010"
   int     frames = 0;
   QString technique;
+  QString kitsuShotId;  // Kitsu shot id once synced — keeps the link across renames
   QMap<QString, TaskState> tasks;  // progress — authoritative for the project DB
 };
 

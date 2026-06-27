@@ -715,10 +715,11 @@ void KitsuClient::pullLoadTasks() {
       const QString ttName   = m_pullTtName.value(o.value("task_type_id").toString());
       if (ttName.isEmpty() || !m_pullShotName.contains(shotId)) continue;
       KitsuPullEntry e;
-      e.seq      = m_pullShotSeq.value(shotId);
-      e.shot     = m_pullShotName.value(shotId);
-      e.taskType = ttName;
-      e.status   = toZtoryStatus(o.value("task_status_id").toString());
+      e.seq         = m_pullShotSeq.value(shotId);
+      e.shot        = m_pullShotName.value(shotId);
+      e.kitsuShotId = shotId;
+      e.taskType    = ttName;
+      e.status      = toZtoryStatus(o.value("task_status_id").toString());
       entries.push_back(e);
     }
     emit statusesPulled(true, entries,
