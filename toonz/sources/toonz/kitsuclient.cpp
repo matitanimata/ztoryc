@@ -448,6 +448,14 @@ QString KitsuClient::statusIdFor(TaskStatus s) const {
   return m_statusIdByZ.value(static_cast<int>(s));
 }
 
+QString KitsuClient::resolveTaskTypeId(const QString &ztorycName) const {
+  QString key = ztorycName.toLower();
+  // Ztoryc → Kitsu name aliases (Kitsu's defaults use "Rendering" and "FX").
+  if (key == "render")    key = "rendering";
+  else if (key == "vfx")  key = "fx";
+  return m_ttIdByName.value(key);  // keys stored lowercased in taskLoadTaskTypes
+}
+
 void KitsuClient::taskFail(const QString &message) {
   emit tasksPushed(false, m_taskStatusesSet, message);
 }
@@ -490,11 +498,12 @@ void KitsuClient::taskLoadTaskTypes() {
     for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
       const QJsonObject o = v.toObject();
       if (o.value("for_entity").toString() == "Shot")
-        m_ttIdByName.insert(o.value("name").toString(), o.value("id").toString());
+        m_ttIdByName.insert(o.value("name").toString().toLower(),
+                            o.value("id").toString());
     }
     // Distinct task-type ids actually used by the queue (and known to Kitsu).
     for (const KitsuTaskPush &t : m_taskQueue) {
-      const QString id = m_ttIdByName.value(t.taskType);
+      const QString id = resolveTaskTypeId(t.taskType);
       if (!id.isEmpty() && !m_ttCreateQueue.contains(id)) m_ttCreateQueue.push_back(id);
     }
     taskCreateNext();
@@ -572,7 +581,7 @@ void KitsuClient::taskLoadProjectTasks() {
 void KitsuClient::taskApplyNext() {
   while (m_taskApplyIdx < m_taskQueue.size()) {
     const KitsuTaskPush t = m_taskQueue[m_taskApplyIdx];
-    const QString ttId     = m_ttIdByName.value(t.taskType);
+    const QString ttId     = resolveTaskTypeId(t.taskType);
     const QString seqId    = m_taskSeqIds.value(t.seq);
     const QString shotId   = m_taskShotIds.value(seqId + "/" + t.shot);
     const QString taskId   = m_taskIdByKey.value(shotId + "/" + ttId);

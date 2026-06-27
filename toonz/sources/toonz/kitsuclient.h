@@ -189,6 +189,9 @@ private:
   void taskApplyNext();
   void taskFail(const QString &message);
   QString statusIdFor(TaskStatus s) const;
+  // Map a Ztoryc task-type name onto a Kitsu Shot task-type id, case-insensitively
+  // and with name aliases (Render→Rendering, VFX→FX). Empty if Kitsu has no match.
+  QString resolveTaskTypeId(const QString &ztorycName) const;
 
   QString m_taskProjectId;
   QVector<KitsuTaskPush>   m_taskQueue;
