@@ -256,6 +256,191 @@ void KitsuClient::updateProject(const QString &id, const KitsuProject &p) {
 }
 
 //----------------------------------------------------------------------------
+// Shot push — sequential async state machine (push-only: Ztoryc -> Kitsu)
+//----------------------------------------------------------------------------
+
+QNetworkRequest KitsuClient::authGet(const QString &path) const {
+  QNetworkRequest req((QUrl(m_baseUrl + path)));
+  req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
+  return req;
+}
+
+QNetworkReply *KitsuClient::authPost(const QString &path, const QByteArray &body) {
+  QNetworkRequest req((QUrl(m_baseUrl + path)));
+  req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+  req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
+  return m_nam->post(req, body);
+}
+
+QNetworkReply *KitsuClient::authPut(const QString &path, const QByteArray &body) {
+  QNetworkRequest req((QUrl(m_baseUrl + path)));
+  req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+  req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
+  return m_nam->put(req, body);
+}
+
+void KitsuClient::pushFail(const QString &message) {
+  emit shotsPushed(false, m_pushCreated, m_pushUpdated, message);
+}
+
+void KitsuClient::pushShots(const QString &projectId, const QString &episodeName,
+                            bool tvshow, const QVector<KitsuShotPush> &shots) {
+  if (!isLoggedIn()) { emit shotsPushed(false, 0, 0, tr("Not logged in.")); return; }
+  if (projectId.isEmpty()) {
+    emit shotsPushed(false, 0, 0, tr("Project not linked to Kitsu."));
+    return;
+  }
+  m_pushProjectId   = projectId;
+  m_pushEpisodeName = episodeName.trimmed();
+  m_pushTvshow      = tvshow;
+  m_pushQueue       = shots;
+  m_pushSeqIds.clear();
+  m_pushShotIds.clear();
+  m_pushEpisodeId.clear();
+  m_pushIndex = m_pushCreated = m_pushUpdated = 0;
+  pushEnsureEpisode();
+}
+
+void KitsuClient::pushEnsureEpisode() {
+  // Only tvshow productions have episodes; a blank episode name means "none".
+  if (!m_pushTvshow || m_pushEpisodeName.isEmpty()) { pushLoadSequences(); return; }
+  emit shotsPushProgress(tr("Ensuring episode %1…").arg(m_pushEpisodeName));
+  QNetworkReply *reply =
+      m_nam->get(authGet("/api/data/projects/" + m_pushProjectId + "/episodes"));
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    reply->deleteLater();
+    const QByteArray b = reply->readAll();
+    if (reply->error() != QNetworkReply::NoError) { pushFail(errorMessage(reply, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      if (o.value("name").toString() == m_pushEpisodeName) {
+        m_pushEpisodeId = o.value("id").toString();
+        break;
+      }
+    }
+    if (!m_pushEpisodeId.isEmpty()) { pushLoadSequences(); return; }
+    QJsonObject body;
+    body["name"] = m_pushEpisodeName;
+    QNetworkReply *cr =
+        authPost("/api/data/projects/" + m_pushProjectId + "/episodes",
+                 QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(cr, &QNetworkReply::finished, this, [this, cr]() {
+      cr->deleteLater();
+      const QByteArray cb = cr->readAll();
+      if (cr->error() != QNetworkReply::NoError) { pushFail(errorMessage(cr, cb)); return; }
+      m_pushEpisodeId = QJsonDocument::fromJson(cb).object().value("id").toString();
+      pushLoadSequences();
+    });
+  });
+}
+
+void KitsuClient::pushLoadSequences() {
+  emit shotsPushProgress(tr("Loading sequences…"));
+  QNetworkReply *reply =
+      m_nam->get(authGet("/api/data/projects/" + m_pushProjectId + "/sequences"));
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    reply->deleteLater();
+    const QByteArray b = reply->readAll();
+    if (reply->error() != QNetworkReply::NoError) { pushFail(errorMessage(reply, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      // For a tvshow, restrict to our episode so same-named sequences in other
+      // episodes don't get reused by mistake.
+      if (m_pushTvshow && !m_pushEpisodeId.isEmpty() &&
+          o.value("parent_id").toString() != m_pushEpisodeId)
+        continue;
+      m_pushSeqIds.insert(o.value("name").toString(), o.value("id").toString());
+    }
+    pushLoadShots();
+  });
+}
+
+void KitsuClient::pushLoadShots() {
+  emit shotsPushProgress(tr("Loading existing shots…"));
+  QNetworkReply *reply =
+      m_nam->get(authGet("/api/data/projects/" + m_pushProjectId + "/shots"));
+  connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+    reply->deleteLater();
+    const QByteArray b = reply->readAll();
+    if (reply->error() != QNetworkReply::NoError) { pushFail(errorMessage(reply, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_pushShotIds.insert(
+          o.value("parent_id").toString() + "/" + o.value("name").toString(),
+          o.value("id").toString());
+    }
+    pushProcessNext();
+  });
+}
+
+void KitsuClient::pushProcessNext() {
+  if (m_pushIndex >= m_pushQueue.size()) {
+    emit shotsPushed(true, m_pushCreated, m_pushUpdated,
+                     tr("Done — %1 created, %2 updated.")
+                         .arg(m_pushCreated)
+                         .arg(m_pushUpdated));
+    return;
+  }
+  const KitsuShotPush sh = m_pushQueue[m_pushIndex];
+
+  // Ensure the sequence exists before we can place a shot under it.
+  if (!m_pushSeqIds.contains(sh.seq)) {
+    emit shotsPushProgress(tr("Creating sequence %1…").arg(sh.seq));
+    QJsonObject body;
+    body["name"] = sh.seq;
+    if (m_pushTvshow && !m_pushEpisodeId.isEmpty())
+      body["episode_id"] = m_pushEpisodeId;
+    QNetworkReply *cr =
+        authPost("/api/data/projects/" + m_pushProjectId + "/sequences",
+                 QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(cr, &QNetworkReply::finished, this, [this, cr, seq = sh.seq]() {
+      cr->deleteLater();
+      const QByteArray cb = cr->readAll();
+      if (cr->error() != QNetworkReply::NoError) { pushFail(errorMessage(cr, cb)); return; }
+      m_pushSeqIds.insert(seq, QJsonDocument::fromJson(cb).object().value("id").toString());
+      pushProcessNext();  // retry the same shot now that its sequence exists
+    });
+    return;
+  }
+
+  const QString seqId = m_pushSeqIds.value(sh.seq);
+  QJsonObject data;
+  data["frame_in"]  = QString::number(sh.frameIn);
+  data["frame_out"] = QString::number(sh.frameOut);
+  QJsonObject body;
+  body["name"]      = sh.name;
+  body["nb_frames"] = sh.nbFrames;
+  body["data"]      = data;
+
+  const QString key = seqId + "/" + sh.name;
+  if (m_pushShotIds.contains(key)) {
+    QNetworkReply *ur = authPut("/api/data/shots/" + m_pushShotIds.value(key),
+                                QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(ur, &QNetworkReply::finished, this, [this, ur]() {
+      ur->deleteLater();
+      const QByteArray ub = ur->readAll();
+      if (ur->error() != QNetworkReply::NoError) { pushFail(errorMessage(ur, ub)); return; }
+      ++m_pushUpdated;
+      ++m_pushIndex;
+      pushProcessNext();
+    });
+  } else {
+    body["sequence_id"] = seqId;
+    QNetworkReply *cr =
+        authPost("/api/data/projects/" + m_pushProjectId + "/shots",
+                 QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(cr, &QNetworkReply::finished, this, [this, cr]() {
+      cr->deleteLater();
+      const QByteArray cb = cr->readAll();
+      if (cr->error() != QNetworkReply::NoError) { pushFail(errorMessage(cr, cb)); return; }
+      ++m_pushCreated;
+      ++m_pushIndex;
+      pushProcessNext();
+    });
+  }
+}
+
+//----------------------------------------------------------------------------
 // Task statuses
 //----------------------------------------------------------------------------
 

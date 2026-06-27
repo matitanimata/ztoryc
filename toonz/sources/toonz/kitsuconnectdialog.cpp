@@ -66,6 +66,14 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
   m_linkBtn->setEnabled(false);
   m_createBtn->setEnabled(false);
 
+  // Push-only shot sync (Ztoryc -> Kitsu); enabled once linked.
+  m_pushShotsBtn = new QPushButton(tr("Push shots to Kitsu →"), this);
+  m_pushShotsBtn->setToolTip(
+      tr("Create/update the project's shots in Kitsu from the Ztoryc shot list.\n"
+         "Shots are push-only: they are never pulled back from Kitsu."));
+  m_pushShotsBtn->setEnabled(false);
+  root->addWidget(m_pushShotsBtn);
+
   m_statusTable = new QTableWidget(0, 3, this);
   m_statusTable->setHorizontalHeaderLabels(
       {tr("Kitsu status"), tr("Color"), tr("Ztoryc status")});
@@ -96,6 +104,8 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
           &KitsuConnectDialog::onLinkClicked);
   connect(m_createBtn, &QPushButton::clicked, this,
           &KitsuConnectDialog::onCreateClicked);
+  connect(m_pushShotsBtn, &QPushButton::clicked, this,
+          &KitsuConnectDialog::onPushShotsClicked);
 
   connect(m_client, &KitsuClient::loginFinished, this,
           [this](bool ok, const QString &msg) {
@@ -150,11 +160,24 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
             m->setKitsuProject(p.id, p.name);
             m->saveProjectDb();
             m_statusLabel->setText(tr("Created & linked: %1").arg(p.name));
+            updateBindingButtons();     // push becomes available
             m_client->fetchProjects();  // refresh the dropdown with the new one
           });
   connect(m_client, &KitsuClient::projectUpdated, this,
           [this](bool ok, const QString &msg) {
             setBusy(false);
+            m_statusLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
+            m_statusLabel->setText(msg);
+          });
+  connect(m_client, &KitsuClient::shotsPushProgress, this,
+          [this](const QString &msg) {
+            m_statusLabel->setStyleSheet(QString());
+            m_statusLabel->setText(msg);
+          });
+  connect(m_client, &KitsuClient::shotsPushed, this,
+          [this](bool ok, int, int, const QString &msg) {
+            setBusy(false);
+            updateBindingButtons();
             m_statusLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
             m_statusLabel->setText(msg);
           });
@@ -169,6 +192,9 @@ void KitsuConnectDialog::updateBindingButtons() {
     m_createBtn->setToolTip(
         tr("Your Kitsu role (%1) can't create projects — ask an admin/manager.")
             .arg(m_client->userRole()));
+  // Push needs a live session and a project already bound in the model.
+  m_pushShotsBtn->setEnabled(connected &&
+                             ZtoryModel::instance()->isKitsuLinked());
 }
 
 void KitsuConnectDialog::onLinkClicked() {
@@ -193,6 +219,7 @@ void KitsuConnectDialog::onLinkClicked() {
 
   m_statusLabel->setStyleSheet("color:#22D160;");
   m_statusLabel->setText(tr("Linked to %1.").arg(sel.name));
+  updateBindingButtons();  // push becomes available now that we're linked
 }
 
 void KitsuConnectDialog::onCreateClicked() {
@@ -215,6 +242,61 @@ void KitsuConnectDialog::onCreateClicked() {
   m_statusLabel->setStyleSheet(QString());
   m_statusLabel->setText(tr("Creating project…"));
   m_client->createProject(p);
+}
+
+void KitsuConnectDialog::onPushShotsClicked() {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (!m->isKitsuLinked()) return;
+
+  // A shot in Kitsu must live under a sequence; default unsequenced shots to one.
+  const QString kDefaultSeq = "SQ01";
+
+  // Prefer the project-wide shot list (all storyboards); fall back to the open
+  // scene's shots — mirroring what the Production Tracker actually displays.
+  QVector<KitsuShotPush> shots;
+  int skipped = 0;
+  if (!m->projectShots().empty()) {
+    for (const ProjectShot &ps : m->projectShots()) {
+      if (ps.label.trimmed().isEmpty()) { ++skipped; continue; }
+      KitsuShotPush s;
+      s.seq      = ps.seq.trimmed().isEmpty() ? kDefaultSeq : ps.seq.trimmed();
+      s.name     = ps.label.trimmed();
+      s.nbFrames = ps.frames;
+      s.frameIn  = 1;
+      s.frameOut = ps.frames;
+      shots.push_back(s);
+    }
+  } else {
+    for (int i = 0; i < m->shotCount(); i++) {
+      const ShotData &sd  = m->shot(i);
+      const QString label = sd.label().trimmed();
+      if (label.isEmpty()) { ++skipped; continue; }
+      QString seq;  // parent sequence label, if the shot belongs to one
+      if (!sd.sequenceId.isEmpty())
+        for (const SequenceData &sq : m->sequences())
+          if (sq.uuid == sd.sequenceId) { seq = sq.label.trimmed(); break; }
+      KitsuShotPush s;
+      s.seq      = seq.isEmpty() ? kDefaultSeq : seq;
+      s.name     = label;
+      s.nbFrames = sd.totalDuration();
+      s.frameIn  = 1;
+      s.frameOut = sd.totalDuration();
+      shots.push_back(s);
+    }
+  }
+  if (shots.isEmpty()) {
+    m_statusLabel->setStyleSheet("color:#FF3860;");
+    m_statusLabel->setText(tr("No shots to push."));
+    return;
+  }
+
+  const bool tvshow = m->productionType() == "tvshow";
+  setBusy(true);
+  m_statusLabel->setStyleSheet(QString());
+  m_statusLabel->setText(tr("Pushing %1 shots…%2")
+                             .arg(shots.size())
+                             .arg(skipped ? tr(" (%1 skipped)").arg(skipped) : QString()));
+  m_client->pushShots(m->kitsuProjectId(), m->episode(), tvshow, shots);
 }
 
 void KitsuConnectDialog::onConnectClicked() {

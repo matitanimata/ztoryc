@@ -21,6 +21,7 @@
 
 class QNetworkAccessManager;
 class QNetworkReply;
+class QNetworkRequest;
 
 //----------------------------------------------------------------------------
 // A Kitsu project as returned by /api/data/projects/open. Note: the numeric-
@@ -52,6 +53,18 @@ struct KitsuTaskStatus {
   bool    isRetake          = false;
   bool    isFeedbackRequest = false;
   bool    isDefault         = false;
+};
+
+//----------------------------------------------------------------------------
+// One shot to push up to Kitsu (push-only: Ztoryc is authoritative on the shot
+// list, so we never pull shots back).
+//----------------------------------------------------------------------------
+struct KitsuShotPush {
+  QString seq;       // sequence name, e.g. "SQ010"
+  QString name;      // shot name,     e.g. "SH010"
+  int     nbFrames = 0;
+  int     frameIn  = 1;
+  int     frameOut = 0;
 };
 
 //----------------------------------------------------------------------------
@@ -97,6 +110,11 @@ public:
   // Push field updates onto an existing project -> projectUpdated().
   void updateProject(const QString &id, const KitsuProject &p);
 
+  // Push-only shot sync (Ztoryc -> Kitsu). Ensures the episode (tvshow) and the
+  // sequences exist, then upserts each shot by name. -> shotsPushed().
+  void pushShots(const QString &projectId, const QString &episodeName,
+                 bool tvshow, const QVector<KitsuShotPush> &shots);
+
   QVector<KitsuProject>    projects() const { return m_projects; }
   QVector<KitsuTaskStatus> taskStatuses() const { return m_taskStatuses; }
 
@@ -114,6 +132,8 @@ signals:
   void taskStatusesFetched(const QVector<KitsuTaskStatus> &statuses);
   void projectCreated(bool ok, const KitsuProject &project, const QString &message);
   void projectUpdated(bool ok, const QString &message);
+  void shotsPushProgress(const QString &message);
+  void shotsPushed(bool ok, int created, int updated, const QString &message);
   void networkError(const QString &message);
 
 private:
@@ -123,6 +143,27 @@ private:
   // Serialise a KitsuProject into the JSON body POST/PUT expect.
   QByteArray projectBody(const KitsuProject &p) const;
   static KitsuProject parseProject(const class QJsonObject &o);
+
+  // --- Shot push state machine (all steps are sequential async) --------
+  QNetworkRequest authGet(const QString &path) const;
+  QNetworkReply  *authPost(const QString &path, const QByteArray &body);
+  QNetworkReply  *authPut(const QString &path, const QByteArray &body);
+  void pushEnsureEpisode();
+  void pushLoadSequences();
+  void pushLoadShots();
+  void pushProcessNext();
+  void pushFail(const QString &message);
+
+  QString m_pushProjectId;
+  QString m_pushEpisodeName;
+  QString m_pushEpisodeId;
+  bool    m_pushTvshow = false;
+  QVector<KitsuShotPush>     m_pushQueue;
+  QHash<QString, QString>    m_pushSeqIds;   // seqName  -> sequence id
+  QHash<QString, QString>    m_pushShotIds;  // "seqId/shotName" -> shot id
+  int m_pushIndex   = 0;
+  int m_pushCreated = 0;
+  int m_pushUpdated = 0;
 
   QNetworkAccessManager *m_nam = nullptr;
 

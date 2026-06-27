@@ -28,6 +28,7 @@ private:
   void onConnectClicked();
   void onLinkClicked();    // bind the selected Kitsu project (pull)
   void onCreateClicked();  // create a new Kitsu project from the Ztoryc model (push)
+  void onPushShotsClicked();  // push the Ztoryc shot list up to Kitsu
   void setBusy(bool busy);
   void updateBindingButtons();
 
@@ -41,5 +42,6 @@ private:
   QComboBox    *m_projectCombo = nullptr;
   QPushButton  *m_linkBtn   = nullptr;
   QPushButton  *m_createBtn = nullptr;
+  QPushButton  *m_pushShotsBtn = nullptr;
   QTableWidget *m_statusTable  = nullptr;
 };
