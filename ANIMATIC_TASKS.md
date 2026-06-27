@@ -295,6 +295,46 @@ nella sub-scene corretta.
 
 ### 🆕 DA FARE (giugno 2026) — in cima per priorità
 
+**🆕🆕 PROSSIMO — M5: Integrazione Kitsu [brainstorming 2026-06-26/27].**
+Il prossimo grande filone. Tracking/review della pipeline via Kitsu (CGWire).
+- **Client config-driven** (`KitsuClient`, QtNetwork + QJsonDocument): un solo URL+login,
+  funziona identico su istanza locale docker, LAN, tunnel Cloudflare e **CGWire hosted**.
+- **Modello sync = partizione di autorità** (NON bidirezionale campo-per-campo):
+  Ztoryc autorità su struttura pre-produzione (shot/sequenze/timing/tecnica) → *push*;
+  Kitsu autorità su review (WFA→DONE/RETAKE del supervisor) → *pull*. Conflitto vero
+  ridotto a 1 campo (status stesso task) → last-write-wins su `updated_at`, Kitsu vince
+  sugli stati di approvazione.
+- **Upload-on-render**: opzione nei Render Settings → a render finito carica il filmato
+  come preview sul task e fa **WIP→WFA**. Niente problema 100MB: upload su **endpoint locale**
+  (LAN, salta Cloudflare); doppio URL `kitsu_local_url` / `kitsu_remote_url`. Proxy ffmpeg
+  opzionale per review leggere da remoto.
+- **Deployment-agnostico per altri utenti**: thin launcher sopra il docker-compose
+  UFFICIALE CGWire (immagini pullate a runtime, no fork del deploy) come companion opzionale;
+  oppure CGWire cloud (solo URL). Status/task_type **letti dal server**, mai hardcoded.
+- **Fasi:** (1) login JWT + pull progetti/task_status reali + mappa status; (2) push shot
+  list; (3) upload-on-render + sync status. **Partire dalla Fase 1** sull'istanza locale.
+
+**🆕 DOPO KITSU — Export montaggio (DaVinci Resolve) [brainstorming 2026-06-27].**
+Ultimo tassello della pipeline. L'animatic È già un rough edit (shot+timing+in/out+audio).
+- **Via consigliata:** export **OTIO** (OpenTimelineIO, nativo in Resolve) o FCPXML/EDL —
+  one-way Ztoryc→Resolve, portabile anche a Premiere/FCP. Round-trip solo se serve davvero.
+- Alternativa "live": Resolve Scripting API (Python) per popolare la timeline con un click.
+- Da verificare: cosa importa Resolve più pulito (OTIO vs FCPXML) + relink dei media.
+
+**✅ FATTO — RILASCIATO in 0.6.3 (2026-06-27) — Production Tracker DI PROGETTO (roadmap A→B3d).**
+Il tracker è ora un sottosistema di progetto completo (`production.ztrack`): shot list da
+TUTTI gli storyboard del progetto con timing + task per-tecnica + status; Asset list, Team,
+production data, **naming convention** e **Workflow** definibili/customizzabili. UUID v5
+stabili shot+asset, **back-link nei .tnz esportati** (Fase A), pipeline status automatica
+(export→READY, primo open→WIP), auto-workflow detection per tecnica, badge SB sugli
+storyboard. Restano per il design doc completo: **export-to-AI per animatix** (proiezione
+non ancora implementata) e l'integrazione **Kitsu** (M5, sopra). Vedi `DESIGN_production_tracker.md`.
+
+**✅ FATTO — RILASCIATO in 0.6.3 — Export to worksheet (XLSX di progetto).**
+`exportFullProject` (QXlsx): un .xlsx con tutti gli storyboard + tutti i tab (Project /
+Overview / per-tecnica / Team / Assets / Workflows), status colorati Kitsu + dropdown.
+Anche export per-scena sul Board ("Export Storyboard Spreadsheet").
+
 **✅ FATTO — RILASCIATO in 0.6.2 (2026-06-23) — Thumbnail panel (sketch grid → export to board).**
 Pannello (non ancora una "room") con griglia di panel su un raster contiguo MyPaint:
 export-to-board (ritaglio panel → livello OVL multi-frame + sotto-scena + shot reale) +
@@ -304,25 +344,13 @@ zoom-rotella + scrollbar + cursore pennello; griglia 4x4 default.
 Aperti (prossime release): tasto Canc nudo (focus), icone Lucide/Phosphor — vedi
 [[project_thumbnail_room_fase3]].
 
-**🆕 Production Tracker DI PROGETTO — DESIGN COMPLETO in `DESIGN_production_tracker.md`
-[brainstorming 2026-06-25].** Promozione del tracker da per-scena a sottosistema di
-progetto: un DB di produzione (Shot + Asset + task + casting/breakdown + Team) con 4
-proiezioni (pannello in-app, spreadsheet, Kitsu, **export-to-AI** per animatix). Roadmap
-A-E. **Fase 0 fatta** (pannello per-scena + editing status, commit `282af0c64`). Prossimo:
-Fase A (UUID stabili shot+asset + back-link nei .tnz esportati). MVP anticipabile = export
-AI-campione di una scena reale da mandare ad animatix. **Leggere il design doc prima di
-implementare qualsiasi fase.**
+**✅ FATTO — Task 54: Custom logo nel PDF storyboard.** Campo UI + resolve path + render
+(`painter.drawPixmap(...logoPixmap)` in `storyboardpanel.cpp`).
 
-**🆕 Export to worksheet (Excel production management) [richiesto utente, giugno 2026].**
-Finito lo storyboard, generare un file di production management con: produzione, episodio,
-titolo; poi per ogni scena: seq, shot, timing, + i task (layout, animazione, vfx,
-compositing, ...) con status (todo, ready, wip, wfa, retake, done). Versione "easy" in
-attesa dell'integrazione Kitsu (M5).
-- **Dati:** seq/shot/timing già in `ZtoryModel`; mancano i campi metadata (produzione/
-  episodio/titolo) e la matrice task×status (da aggiungere al modello o a un .ztoryc field).
-- **Tecnica:** C++/Qt non scrive `.xlsx` nativamente. Strategia: **prima CSV** (zero
-  dipendenze, valida lo schema dei campi con Franco), **poi QXlsx** (Qt-based, MIT) per
-  header colorati / dropdown status / formattazione "production".
+**✅ FATTO (auto-return) — Task 53: Shot ops in edit-shot mode.** Copy/Clone/Cut/Paste/Delete
+da dentro una sub-scena funzionano: `onCopyShot()` & co. risalgono al main xsheet
+(`while getAncestorCount()>0: MI_CloseChild`) prima di operare. Se in futuro serve l'operazione
+**in-place** (senza uscire dalla sub-scena), è un raffinamento separato.
 
 **✅ FATTO (2026-06-19, commit `d194149ad`) — Finalizzazione UI dedup: toolbar Board↔Animatic.**
 Niente bottoni shot duplicati tra Board e Animatic nelle room Ztoryc. I comandi shot
