@@ -56,6 +56,18 @@
 
 namespace {
 
+// Format a 1-based cumulative frame number as MM:SS:FR timecode (0-based, so the
+// first frame reads 00:00:00). Used for the In-Out column.
+QString frameToTimecode(int frame1Based, int fps) {
+  if (fps <= 0) fps = 25;
+  int f = frame1Based > 0 ? frame1Based - 1 : 0;  // 0-based for timecode
+  const int totalSec = f / fps;
+  return QString("%1:%2:%3")
+      .arg(totalSec / 60, 2, 10, QChar('0'))
+      .arg(totalSec % 60, 2, 10, QChar('0'))
+      .arg(f % fps,       2, 10, QChar('0'));
+}
+
 // Canonical Kitsu palette (matches the live Kitsu task_status colours):
 // Todo grey, Ready amber, WIP blue, WFA purple, Retake red, Done green.
 QColor statusColor(TaskStatus s) {
@@ -546,7 +558,9 @@ void ZtoryProductionPanel::exportFullProject() {
       xlsx.write(row, 5, ps.frames, centerFmt);
       const auto fr = (si < (int)frameRanges.size()) ? frameRanges[si]
                                                      : std::make_pair(0, 0);
-      xlsx.write(row, 6, QString("%1-%2").arg(fr.first).arg(fr.second), centerFmt);
+      xlsx.write(row, 6,
+                 frameToTimecode(fr.first, fps) + "-" + frameToTimecode(fr.second, fps),
+                 centerFmt);
       QString tech = ps.technique.isEmpty() ? m->defaultTechnique() : ps.technique;
       xlsx.write(row, 7, tech, centerFmt);
 
@@ -1371,7 +1385,7 @@ void ZtoryProductionPanel::rebuild() {
       const auto fr = (i < (int)frameRanges.size()) ? frameRanges[i]
                                                     : std::make_pair(0, 0);
       auto *tcItem = new QTableWidgetItem(
-          QString("%1-%2").arg(fr.first).arg(fr.second));
+          frameToTimecode(fr.first, fps) + "-" + frameToTimecode(fr.second, fps));
       tcItem->setFlags(Qt::ItemIsEnabled);
       tcItem->setTextAlignment(Qt::AlignCenter);
       m_table->setItem(i, 4, tcItem);
@@ -1456,7 +1470,8 @@ void ZtoryProductionPanel::rebuild() {
       m_table->setItem(i, 2, frItem);
       const int inF = legacyAcc + 1, outF = legacyAcc + frames;
       legacyAcc = outF;
-      auto *tcItem = new QTableWidgetItem(QString("%1-%2").arg(inF).arg(outF));
+      auto *tcItem = new QTableWidgetItem(
+          frameToTimecode(inF, fps) + "-" + frameToTimecode(outF, fps));
       tcItem->setFlags(Qt::ItemIsEnabled);
       tcItem->setTextAlignment(Qt::AlignCenter);
       m_table->setItem(i, 3, tcItem);
