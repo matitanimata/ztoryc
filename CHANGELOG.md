@@ -1,3 +1,45 @@
+## [2026-06-27b] — Kitsu M5 Fase 1+2+3a (branch feature/kitsu-m5)
+
+Avvio dell'integrazione Kitsu (CGWire/Zou). Lavoro su **branch `feature/kitsu-m5`**,
+NON su master. Validato contro l'istanza locale docker (localhost:8012) interrogando
+l'API reale per azzeccare i JSON shape e i contratti.
+
+### Added — Fase 1 (login + pull)
+- `kitsuclient.h/.cpp` — `KitsuClient` (QtNetwork, `Qt5::Network` già linkato): login JWT
+  (`/api/auth/login`), pull progetti (`/api/data/projects/open`) e task-status
+  (`/api/data/task-status`). Config in QSettings (`Ztoryc/Kitsu/*`).
+- Mappa status Kitsu→`TaskStatus` via `short_name` + fallback flag (`is_done/is_retake/
+  is_feedback_request`); colori già coincidenti con quelli Ztoryc.
+- `kitsuconnectdialog.h/.cpp` — dialog di connessione (URL/email/password, Connect,
+  dropdown progetti, tabella mapping status). Aperto da "Connect to Kitsu…" nel tab Project.
+
+### Added — Fase 2 (binding bidirezionale role-aware)
+- Campo progetto **`code`** (sigla breve, es. CS26) + nuovo token **`{CODE}`** nel naming
+  (3 resolver: outputsettings + storyboard ×2). Modello: `kitsuProjectId/Name`,
+  `productionType/Style`, `ratio`, `resolution`, `isKitsuLinked()`, tutto nel `.ztrack`.
+- KitsuClient: legge `user.role`, `canManageProjects()` (admin/manager), `createProject()`
+  (POST), `updateProject()` (PUT).
+- Dialog: **Link selected** (pull → scrive il modello, bind) e **Create new in Kitsu**
+  (push, role-gated). Tab Project: Production/Code read-only + label "🔗 Linked" quando legato.
+- Verificato in-app: create di una produzione su Kitsu + link con pull dei parametri. ✓
+
+### Added — Fase 3a (shot push, solo Ztoryc→Kitsu)
+- `KitsuClient::pushShots()` — macchina a stati sequenziale async: ensure episode (tvshow,
+  find-or-create) → sequences → shots; upsert per nome (POST nuovo / PUT esistente,
+  `nb_frames` + `data{frame_in,frame_out}`). Bottone "Push shots to Kitsu →".
+- Sorgente: `projectShots()` con fallback agli shot di scena; sequenza default **SQ01**
+  quando assente. Verificato in-app: 3 shot creati su Kitsu. ✓
+
+### Notes / da fare (prossima sessione)
+- Mancano su Kitsu: **thumbnail** shot (upload preview) e **task + status** sugli shot.
+- **Asset** bidirezionali (download/upload), route create da rifinire (non `/assets/new`).
+- Contratti API e decisioni in memoria `project_kitsu_m5_integration.md`.
+
+### Upstream candidates
+- Nessuno (codice tutto Ztoryc-specifico in file nuovi).
+
+---
+
 ## [2026-06-27] — Export progetto, naming render, status pipeline + fix crash/perdita-dati (v0.6.3)
 
 Sessione lunga: dall'export completo del progetto al ciclo di stato della pipeline
