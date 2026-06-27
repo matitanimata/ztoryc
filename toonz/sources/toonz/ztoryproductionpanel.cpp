@@ -2,6 +2,7 @@
 
 #include "ztorymodel.h"
 #include "storyboardpanel.h"
+#include "kitsuconnectdialog.h"
 
 #include "toonzqt/gutil.h"
 
@@ -811,24 +812,45 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   QWidget *w  = new QWidget(this);
   auto *form  = new QFormLayout(w);
   m_prodEdit   = new QLineEdit(w);
+  m_codeEdit   = new QLineEdit(w);
+  m_codeEdit->setPlaceholderText(QObject::tr("e.g. CS26 — short code used in {CODE}"));
+  m_codeEdit->setToolTip(QObject::tr(
+      "Short project code (Kitsu 'code'), used as the {CODE} naming token.\n"
+      "Keep it brief (≈3 chars, no spaces)."));
+  m_codeEdit->setMaxLength(16);
   m_seasonEdit = new QLineEdit(w);
   m_titleEdit  = new QLineEdit(w);
   m_epEdit     = new QLineEdit(w);
   m_techCombo  = new QComboBox(w);
   m_patternEdit = new QLineEdit(w);
-  m_patternEdit->setPlaceholderText("{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}");
+  m_patternEdit->setPlaceholderText("{PROD}_{CODE}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}");
   m_patternEdit->setToolTip(
-      QObject::tr("Tokens: {PROD} {SEASON} {EP} {SEQ} {SHOT} {TASK} {VER}\n"
+      QObject::tr("Tokens: {PROD} {CODE} {SEASON} {EP} {SEQ} {SHOT} {TASK} {VER}\n"
                   "Format: {VER:02} = zero-padded to 2 digits\n"
                   "Task codes: LAY, ANIM, KAN, INB, CU, VFX, COMP, AMC…"));
   form->addRow(QObject::tr("Production:"),        m_prodEdit);
+  form->addRow(QObject::tr("Code:"),              m_codeEdit);
   form->addRow(QObject::tr("Season:"),            m_seasonEdit);
   form->addRow(QObject::tr("Episode:"),           m_epEdit);
   form->addRow(QObject::tr("Title:"),             m_titleEdit);
   form->addRow(QObject::tr("Default technique:"), m_techCombo);
   form->addRow(QObject::tr("Naming pattern:"),    m_patternEdit);
 
-  for (QLineEdit *e : {m_prodEdit, m_seasonEdit, m_titleEdit, m_epEdit, m_patternEdit})
+  // M5 — Kitsu integration: link status + connection/binding dialog.
+  m_kitsuLabel = new QLabel(QObject::tr("Not linked to Kitsu."), w);
+  m_kitsuLabel->setWordWrap(true);
+  form->addRow(QObject::tr("Kitsu:"), m_kitsuLabel);
+  auto *kitsuBtn = new QPushButton(QObject::tr("Connect to Kitsu…"), w);
+  form->addRow(QString(), kitsuBtn);
+  connect(kitsuBtn, &QPushButton::clicked, this, [this] {
+    KitsuConnectDialog dlg(this);
+    dlg.exec();
+    // The dialog may have linked/created a project and written the model;
+    // reflect the new metadata (and read-only state) immediately.
+    reloadProjectTab();
+  });
+
+  for (QLineEdit *e : {m_prodEdit, m_codeEdit, m_seasonEdit, m_titleEdit, m_epEdit, m_patternEdit})
     connect(e, &QLineEdit::editingFinished, this,
             [this] { applyProjectFromFields(); });
   connect(m_techCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -841,6 +863,7 @@ void ZtoryProductionPanel::reloadProjectTab() {
   m_projLoading = true;
   ZtoryModel *m = ZtoryModel::instance();
   m_prodEdit->setText(m->production());
+  if (m_codeEdit) m_codeEdit->setText(m->code());
   m_seasonEdit->setText(m->season());
   m_titleEdit->setText(m->title());
   m_epEdit->setText(m->episode());
@@ -849,13 +872,39 @@ void ZtoryProductionPanel::reloadProjectTab() {
   int di = m_techCombo->findText(m->defaultTechnique());
   if (di >= 0) m_techCombo->setCurrentIndex(di);
   if (m_patternEdit) m_patternEdit->setText(m->namingPattern());
+
+  // M5 — when linked to Kitsu, that instance owns the project metadata: mirror
+  // it and make the synced fields read-only ("managed in Kitsu").
+  const bool linked = m->isKitsuLinked();
+  if (m_kitsuLabel) {
+    if (linked) {
+      QString info = tr("🔗 Linked: %1").arg(m->kitsuProjectName());
+      if (!m->productionType().isEmpty())
+        info += "  ·  " + m->productionType();
+      if (!m->resolution().isEmpty())
+        info += "  ·  " + m->resolution() + " @ " + QString::number(m->fps()) + "fps";
+      m_kitsuLabel->setText(info);
+      m_kitsuLabel->setStyleSheet("color:#22D160;");
+    } else {
+      m_kitsuLabel->setText(tr("Not linked to Kitsu."));
+      m_kitsuLabel->setStyleSheet(QString());
+    }
+  }
+  // Production + Code are owned by Kitsu when linked; keep them read-only so the
+  // local copy can't silently diverge from the server.
+  m_prodEdit->setReadOnly(linked);
+  if (m_codeEdit) m_codeEdit->setReadOnly(linked);
   m_projLoading = false;
 }
 
 void ZtoryProductionPanel::applyProjectFromFields() {
   if (m_projLoading || !m_prodEdit) return;
   ZtoryModel *m = ZtoryModel::instance();
-  m->setProduction(m_prodEdit->text().trimmed());
+  // Production/Code are Kitsu-owned while linked — don't write them back.
+  if (!m->isKitsuLinked()) {
+    m->setProduction(m_prodEdit->text().trimmed());
+    if (m_codeEdit) m->setCode(m_codeEdit->text().trimmed());
+  }
   m->setSeason(m_seasonEdit->text().trimmed());
   m->setTitle(m_titleEdit->text().trimmed());
   m->setEpisode(m_epEdit->text().trimmed());

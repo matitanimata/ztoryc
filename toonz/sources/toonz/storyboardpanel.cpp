@@ -5021,6 +5021,7 @@ void StoryboardPanel::onExportShots() {
       if (seq.uuid == sd.sequenceId) { seqLabel = seq.label; break; }
     QMap<QString,QString> tok;
     tok["PROD"]   = model->production();
+    tok["CODE"]   = model->code();
     tok["SEASON"] = model->season();
     tok["EP"]     = model->episode();
     tok["SEQ"]    = seqLabel;
@@ -5058,6 +5059,7 @@ void StoryboardPanel::onExportShots() {
       if (seq.uuid == sd.sequenceId) { seqLabel = seq.label; break; }
     QMap<QString,QString> tok;
     tok["PROD"]   = model->production();
+    tok["CODE"]   = model->code();
     tok["SEASON"] = model->season();
     tok["EP"]     = model->episode();
     tok["SEQ"]    = seqLabel;

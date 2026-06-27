@@ -389,12 +389,22 @@ void ZtoryModel::saveProjectDb() {
 
   xml.writeStartElement("project");
   xml.writeAttribute("production", m_production);
+  if (!m_code.isEmpty()) xml.writeAttribute("code", m_code);
   xml.writeAttribute("season",     m_season);
   xml.writeAttribute("episode",    m_episode);
   xml.writeAttribute("title",      m_title);
   xml.writeAttribute("defaultTechnique", m_defaultTechnique);
   if (!m_namingPattern.isEmpty())
     xml.writeAttribute("namingPattern", m_namingPattern);
+  // Kitsu (M5) binding + mirrored metadata.
+  if (!m_kitsuProjectId.isEmpty()) {
+    xml.writeAttribute("kitsuProjectId",   m_kitsuProjectId);
+    xml.writeAttribute("kitsuProjectName", m_kitsuProjectName);
+  }
+  if (!m_productionType.isEmpty())  xml.writeAttribute("productionType",  m_productionType);
+  if (!m_productionStyle.isEmpty()) xml.writeAttribute("productionStyle", m_productionStyle);
+  if (!m_ratio.isEmpty())           xml.writeAttribute("ratio",           m_ratio);
+  if (!m_resolution.isEmpty())      xml.writeAttribute("resolution",      m_resolution);
   xml.writeEndElement();
 
   xml.writeStartElement("team");
@@ -499,6 +509,7 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
     if (xml.name() == QLatin1String("project")) {
       auto a = xml.attributes();
       m_production = a.value("production").toString();
+      m_code       = a.value("code").toString();
       m_season     = a.value("season").toString();
       m_episode    = a.value("episode").toString();
       m_title      = a.value("title").toString();
@@ -506,6 +517,13 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
         m_defaultTechnique = a.value("defaultTechnique").toString();
       if (a.hasAttribute("namingPattern"))
         m_namingPattern = a.value("namingPattern").toString();
+      // Kitsu (M5) binding + mirrored metadata.
+      m_kitsuProjectId   = a.value("kitsuProjectId").toString();
+      m_kitsuProjectName = a.value("kitsuProjectName").toString();
+      m_productionType   = a.value("productionType").toString();
+      m_productionStyle  = a.value("productionStyle").toString();
+      m_ratio            = a.value("ratio").toString();
+      m_resolution       = a.value("resolution").toString();
     } else if (xml.name() == QLatin1String("person")) {
       QString nm = xml.attributes().value("name").toString().trimmed();
       if (!nm.isEmpty()) team << nm;

@@ -109,6 +109,8 @@ set(MOC_HEADERS
     ztoryproductionpanel.h
     ztorymodel.h
     ztoryshotops.h
+    kitsuclient.h
+    kitsuconnectdialog.h
     ztoryanimatic.h
     ztoryannotations.h
     ztorymonitorpanel.h
@@ -249,6 +251,8 @@ set(SOURCES
     ztoryproductionpanel.cpp
     ztorymodel.cpp
     ztoryshotops.cpp
+    kitsuclient.cpp
+    kitsuconnectdialog.cpp
     ztoryanimatic.cpp
     ztoryannotations.cpp
     ztorymonitorpanel.cpp

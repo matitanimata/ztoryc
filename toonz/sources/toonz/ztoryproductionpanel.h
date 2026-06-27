@@ -23,6 +23,7 @@ class QTabWidget;
 class QListWidget;
 class QLineEdit;
 class QComboBox;
+class QLabel;
 
 class ZtoryProductionPanel final : public TPanel {
   Q_OBJECT
@@ -37,8 +38,10 @@ class ZtoryProductionPanel final : public TPanel {
   // Project tab
   QLineEdit    *m_prodEdit = nullptr, *m_titleEdit = nullptr, *m_epEdit = nullptr;
   QLineEdit    *m_seasonEdit = nullptr;
+  QLineEdit    *m_codeEdit = nullptr;      // short project code (Kitsu code, {CODE} token)
   QComboBox    *m_techCombo = nullptr;
   QLineEdit    *m_patternEdit = nullptr;   // B3d: naming pattern
+  QLabel       *m_kitsuLabel = nullptr;    // M5: Kitsu link status
   bool          m_projLoading = false;
   // Assets tab
   QTableWidget *m_assetTable = nullptr;

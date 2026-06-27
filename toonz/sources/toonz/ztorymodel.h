@@ -217,10 +217,19 @@ class ZtoryModel : public QObject {
   // it when the scene is reopened.  Empty = no screenplay imported.
   QString                           m_scriptFile;
   QString                           m_production;  // user-defined production name
+  QString                           m_code;        // short project code (Kitsu code, e.g. CS26)
   QString                           m_title;       // user-defined project title
   QString                           m_episode;     // user-defined episode
   QString                           m_season;      // user-defined season (e.g. CS26)
   QString                           m_namingPattern; // export naming convention (B3d)
+  // Kitsu (M5) — project metadata kept aligned with the bound Kitsu project so
+  // the Production Tracker mirrors it as closely as possible.
+  QString                           m_kitsuProjectId;   // empty = not linked
+  QString                           m_kitsuProjectName; // cached for display
+  QString                           m_productionType;   // Kitsu: tvshow/short/featurefilm
+  QString                           m_productionStyle;  // Kitsu: 2d/3d/2d3d
+  QString                           m_ratio;            // Kitsu: e.g. 16:9
+  QString                           m_resolution;       // Kitsu: e.g. 1920x1080
   std::vector<Technique>            m_techniques;       // editable presets (seeded with defaults)
   QString                           m_defaultTechnique; // project default technique name
   QStringList                       m_team;             // project roster (names) for the assignee picker
@@ -269,6 +278,24 @@ public:
   void setEpisode(const QString &s)    { m_episode = s; }
   QString season() const { return m_season; }
   void    setSeason(const QString &s) { m_season = s; }
+  // Short project code (Kitsu code), used as the {CODE} naming token.
+  QString code() const { return m_code; }
+  void    setCode(const QString &s) { m_code = s; }
+  // Kitsu binding + mirrored project metadata.
+  QString kitsuProjectId()   const { return m_kitsuProjectId; }
+  QString kitsuProjectName() const { return m_kitsuProjectName; }
+  bool    isKitsuLinked()    const { return !m_kitsuProjectId.isEmpty(); }
+  void    setKitsuProject(const QString &id, const QString &name) {
+    m_kitsuProjectId = id; m_kitsuProjectName = name;
+  }
+  QString productionType()  const { return m_productionType; }
+  void    setProductionType(const QString &s) { m_productionType = s; }
+  QString productionStyle() const { return m_productionStyle; }
+  void    setProductionStyle(const QString &s) { m_productionStyle = s; }
+  QString ratio()       const { return m_ratio; }
+  void    setRatio(const QString &s) { m_ratio = s; }
+  QString resolution()  const { return m_resolution; }
+  void    setResolution(const QString &s) { m_resolution = s; }
   QString namingPattern() const { return m_namingPattern; }
   void    setNamingPattern(const QString &s) { m_namingPattern = s; }
   // Project team roster (people names) used by the Production Tracker's
