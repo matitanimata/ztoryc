@@ -36,6 +36,17 @@ KitsuClient::KitsuClient(QObject *parent)
 
 KitsuClient::~KitsuClient() = default;
 
+KitsuClient *KitsuClient::instance() {
+  // App-lifetime singleton (intentionally never deleted). loadSettings() once so
+  // the saved URL/email/password are available immediately.
+  static KitsuClient *s = nullptr;
+  if (!s) {
+    s = new KitsuClient();
+    s->loadSettings();
+  }
+  return s;
+}
+
 //----------------------------------------------------------------------------
 
 void KitsuClient::setBaseUrl(const QString &url) {

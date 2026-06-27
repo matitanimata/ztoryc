@@ -93,6 +93,10 @@ public:
   explicit KitsuClient(QObject *parent = nullptr);
   ~KitsuClient() override;
 
+  // App-lifetime singleton: keeps the JWT session (and fetched projects/statuses)
+  // alive across Connect-dialog opens, so the user stays logged in for the session.
+  static KitsuClient *instance();
+
   // --- Config (persisted in QSettings, group "Ztoryc/Kitsu") -----------
   QString baseUrl() const { return m_baseUrl; }
   void    setBaseUrl(const QString &url);  // trailing slash trimmed

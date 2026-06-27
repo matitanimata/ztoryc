@@ -17,7 +17,7 @@
 #include <QColor>
 
 KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
-    : QDialog(parent), m_client(new KitsuClient(this)) {
+    : QDialog(parent), m_client(KitsuClient::instance()) {
   setWindowTitle(tr("Connect to Kitsu"));
   setMinimumWidth(460);
 
@@ -99,11 +99,14 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
   root->addLayout(btnRow);
 
   // --- Wiring ----------------------------------------------------------
-  m_client->loadSettings();
+  // The client is an app-lifetime singleton (already loaded its settings), so the
+  // session and the saved URL/email/password survive across dialog opens.
   m_urlEdit->setText(m_client->baseUrl());
   m_emailEdit->setText(m_client->email());
-  m_savePwd->setChecked(m_client->hasSavedPassword());
-  if (m_client->hasSavedPassword()) m_pwdEdit->setText(QString());  // never echo
+  // Default "remember" to ON for convenience (typically a local/studio instance).
+  m_savePwd->setChecked(true);
+  if (m_client->hasSavedPassword())
+    m_pwdEdit->setPlaceholderText(tr("•••••• (saved)"));  // signal it's remembered
 
   connect(m_connectBtn, &QPushButton::clicked, this,
           &KitsuConnectDialog::onConnectClicked);
@@ -139,6 +142,12 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
                   QString("%1  (%2, %3 fps)")
                       .arg(p.name, p.resolution, p.fps),
                   p.id);
+            // Target the production this Ztoryc project is already bound to.
+            const QString boundId = ZtoryModel::instance()->kitsuProjectId();
+            if (!boundId.isEmpty()) {
+              int idx = m_projectCombo->findData(boundId);
+              if (idx >= 0) m_projectCombo->setCurrentIndex(idx);
+            }
             updateBindingButtons();
           });
   connect(m_client, &KitsuClient::taskStatusesFetched, this,
@@ -240,6 +249,18 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
             m_statusLabel->setText(
                 tr("%1 (%2 updated in Ztoryc)").arg(msg).arg(updated));
           });
+
+  // Reflect an existing session (the singleton stays logged in across opens), or
+  // auto-connect when we already have saved credentials — so the user doesn't
+  // have to log in again every time.
+  if (m_client->isLoggedIn()) {
+    m_statusLabel->setStyleSheet("color:#22D160;");
+    m_statusLabel->setText(tr("Connected as %1").arg(m_client->email()));
+    m_client->fetchProjects();      // repopulates the dropdown (+ bound project)
+    m_client->fetchTaskStatuses();  // repopulates the status table
+  } else if (!m_client->email().isEmpty() && m_client->hasSavedPassword()) {
+    onConnectClicked();
+  }
 }
 
 void KitsuConnectDialog::updateBindingButtons() {
