@@ -1,6 +1,7 @@
 #include "storyboardpanel.h"
 #include "ztoryshotops.h"
 #include "ztorylightgizmo.h"
+#include "kitsuclient.h"  // post-export upload to Kitsu
 
 // QXlsx (vendored, MIT) — production spreadsheet export.
 #include "xlsxdocument.h"
@@ -5521,6 +5522,24 @@ void StoryboardPanel::onExportAnimatic() {
   });
   mainLay->addWidget(fcpxmlCheck);
 
+  // Upload the per-shot clips to Kitsu right after export — matched to each
+  // shot's task by name + {TASK} code, set to WFA. Needs per-shot clips and a
+  // Kitsu-linked project.
+  const bool kitsuLinked = ZtoryModel::instance()->isKitsuLinked();
+  auto *kitsuUploadCheck =
+      new QCheckBox(tr("Upload clips to Kitsu after export"), &dlg);
+  kitsuUploadCheck->setToolTip(
+      tr("After exporting one clip per shot, upload each clip to its shot's task\n"
+         "on Kitsu (matched by shot name + {TASK} code) and set it to WFA.\n"
+         "Requires 'One clip per shot' and a project linked to Kitsu."));
+  kitsuUploadCheck->setEnabled(false);
+  connect(radioEach, &QRadioButton::toggled, kitsuUploadCheck,
+          [kitsuUploadCheck, kitsuLinked](bool on) {
+            kitsuUploadCheck->setEnabled(on && kitsuLinked);
+            if (!on) kitsuUploadCheck->setChecked(false);
+          });
+  mainLay->addWidget(kitsuUploadCheck);
+
   // Render format comes from the native Render Settings — the dialog shows a
   // live summary and a button to open them. The label refreshes while the
   // (non-modal) Output Settings popup is used, so the user always confirms
@@ -5995,6 +6014,45 @@ void StoryboardPanel::onExportAnimatic() {
           tr("Timeline written:\n%1\n\nImport it in DaVinci Resolve (File → "
              "Import → Timeline). The per-shot clips are referenced by name.")
               .arg(fcpxmlPath));
+  }
+
+  // Upload the freshly rendered per-shot clips to Kitsu (same matching as the
+  // Connect dialog: shot label + {TASK} code → task, set WFA). The per-shot
+  // render loop above is serialized, so the clips already exist on disk here.
+  if (mode == 2 && kitsuUploadCheck->isChecked()) {
+    int unmatched = 0, noId = 0;
+    QVector<KitsuPreviewUpload> uploads =
+        KitsuClient::buildUploadsFromFolder(outDir, unmatched, noId);
+    if (uploads.isEmpty()) {
+      QMessageBox::warning(
+          this, tr("Upload to Kitsu"),
+          noId ? tr("No clips uploaded — matched shots aren't on Kitsu yet "
+                    "(push shots first).")
+               : tr("No clips matched a shot name."));
+    } else {
+      // Optimistic local WFA mirror (the upload sets WFA on Kitsu too; a later
+      // pull reconciles if an upload fails).
+      auto &pshots = ZtoryModel::instance()->projectShots_rw();
+      bool dirty = false;
+      for (const KitsuPreviewUpload &u : uploads)
+        for (ProjectShot &ps : pshots)
+          if (ps.uuid == u.uuid) {
+            if (ps.tasks[u.taskType].status != TaskStatus::Wfa) {
+              ps.tasks[u.taskType].status = TaskStatus::Wfa;
+              dirty = true;
+            }
+            break;
+          }
+      if (dirty) ZtoryModel::instance()->saveAndNotifyTasks();
+      KitsuClient::instance()->uploadPreviews(
+          ZtoryModel::instance()->kitsuProjectId(), uploads);
+      QMessageBox::information(
+          this, tr("Upload to Kitsu"),
+          tr("Uploading %1 clip(s) to Kitsu…%2")
+              .arg(uploads.size())
+              .arg(noId ? tr("  (%1 shot(s) not on Kitsu yet)").arg(noId)
+                        : QString()));
+    }
   }
 
   // Clear the burn-in config so later renders (menu Render, preview…) are

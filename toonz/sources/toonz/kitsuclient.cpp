@@ -11,6 +11,7 @@
 #include <QUrl>
 #include <QFile>
 #include <QFileInfo>
+#include <QDir>
 #include <QMimeDatabase>
 
 namespace {
@@ -768,6 +769,91 @@ void KitsuClient::pullLoadTasks() {
 
 void KitsuClient::uplFail(const QString &message) {
   emit previewsUploaded(false, m_uplDone, message);
+}
+
+QVector<KitsuPreviewUpload> KitsuClient::buildUploadsFromFolder(
+    const QString &dir, int &outUnmatched, int &outNoId) {
+  outUnmatched = outNoId = 0;
+  QVector<KitsuPreviewUpload> uploads;
+  ZtoryModel *m = ZtoryModel::instance();
+  const auto &pshots = m->projectShots();
+  if (dir.isEmpty() || pshots.empty()) return uploads;
+
+  static const QStringList kExts =
+      {"mp4", "mov", "avi", "webm", "gif", "mkv", "m4v"};
+  QStringList filters;
+  for (const QString &e : kExts) filters << ("*." + e);
+  const QFileInfoList files =
+      QDir(dir).entryInfoList(filters, QDir::Files, QDir::Name);
+
+  for (const QFileInfo &fi : files) {
+    const QString base       = fi.completeBaseName();
+    // Match the shot whose label is the LONGEST one contained in the file name
+    // (so "scene_SH010.mp4" picks SH010, not SH01).
+    const ProjectShot *match = nullptr;
+    int bestLen              = 0;
+    for (const ProjectShot &ps : pshots) {
+      const QString label = ps.label.trimmed();
+      if (label.isEmpty()) continue;
+      if (base.contains(label, Qt::CaseInsensitive) && label.length() > bestLen) {
+        match   = &ps;
+        bestLen = label.length();
+      }
+    }
+    if (!match) { ++outUnmatched; continue; }
+    if (match->kitsuShotId.isEmpty()) { ++outNoId; continue; }
+    // Detect the task from the {TASK} short code in the name, limited to this
+    // shot's technique; default Storyboard for board/animatic previews.
+    QString task    = "Storyboard";
+    int     codeLen = 0;
+    for (const QString &tt : m->taskTypesForProjectShot(*match)) {
+      const QString code = ZtoryModel::taskShortCode(tt);
+      if (!code.isEmpty() && base.contains(code, Qt::CaseInsensitive) &&
+          code.length() > codeLen) {
+        task    = tt;
+        codeLen = code.length();
+      }
+    }
+    KitsuPreviewUpload u;
+    u.kitsuShotId = match->kitsuShotId;
+    u.uuid        = match->uuid;
+    u.shot        = match->label.trimmed();
+    u.taskType    = task;
+    u.filePath    = fi.absoluteFilePath();
+    u.status      = TaskStatus::Wfa;
+    uploads.push_back(u);
+  }
+  return uploads;
+}
+
+QVector<KitsuShotPush> KitsuClient::buildShotPushFromProject(
+    int handles, QVector<KitsuTaskPush> &outTasks, int &outSkipped) {
+  outTasks.clear();
+  outSkipped = 0;
+  QVector<KitsuShotPush> shots;
+  ZtoryModel *m = ZtoryModel::instance();
+  const QString kDefaultSeq = "SQ01";  // Kitsu shots must live under a sequence
+  const auto frameRanges = m->projectShotFrameRanges();  // cumulative in/out
+  const auto &pshots = m->projectShots();
+  for (size_t i = 0; i < pshots.size(); i++) {
+    const ProjectShot &ps = pshots[i];
+    if (ps.label.trimmed().isEmpty()) { ++outSkipped; continue; }
+    KitsuShotPush s;
+    s.seq         = ps.seq.trimmed().isEmpty() ? kDefaultSeq : ps.seq.trimmed();
+    s.name        = ps.label.trimmed();
+    s.frameIn     = qMax(1, frameRanges[i].first - handles);
+    s.frameOut    = frameRanges[i].second + handles;
+    s.nbFrames    = s.frameOut - s.frameIn + 1;
+    s.kitsuShotId = ps.kitsuShotId;  // rename-proof update when known
+    shots.push_back(s);
+    for (auto it = ps.tasks.constBegin(); it != ps.tasks.constEnd(); ++it) {
+      KitsuTaskPush tp;
+      tp.seq = s.seq; tp.shot = s.name;
+      tp.taskType = it.key(); tp.status = it.value().status;
+      outTasks.push_back(tp);
+    }
+  }
+  return shots;
 }
 
 void KitsuClient::uploadPreviews(const QString &projectId,

@@ -112,16 +112,11 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
          "Clips are matched to shots by the shot name in the file name."));
   m_uploadPrevBtn->setEnabled(false);
   root->addWidget(m_uploadPrevBtn);
+  root->addStretch(1);
 
-  m_statusTable = new QTableWidget(0, 3, this);
-  m_statusTable->setHorizontalHeaderLabels(
-      {tr("Kitsu status"), tr("Color"), tr("Ztoryc status")});
-  m_statusTable->horizontalHeader()->setStretchLastSection(true);
-  m_statusTable->verticalHeader()->setVisible(false);
-  m_statusTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  m_statusTable->setSelectionMode(QAbstractItemView::NoSelection);
-  root->addWidget(new QLabel(tr("Task status mapping:"), this));
-  root->addWidget(m_statusTable, 1);
+  // Ztoryc's TaskStatus values (Todo/Ready/Wip/Wfa/Retake/Done) are 1:1 with
+  // Kitsu's pipeline short_names, so the status mapping is resolved automatically
+  // in code (by short_name) — no user-facing mapping table is needed.
 
   auto *closeBtn = new QPushButton(tr("Close"), this);
   auto *btnRow   = new QHBoxLayout();
@@ -182,22 +177,6 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
               if (idx >= 0) m_projectCombo->setCurrentIndex(idx);
             }
             updateBindingButtons();
-          });
-  connect(m_client, &KitsuClient::taskStatusesFetched, this,
-          [this](const QVector<KitsuTaskStatus> &statuses) {
-            m_statusTable->setRowCount(statuses.size());
-            for (int i = 0; i < statuses.size(); ++i) {
-              const KitsuTaskStatus &s = statuses[i];
-              auto *nameItem = new QTableWidgetItem(s.name);
-              auto *colorItem = new QTableWidgetItem(s.color);
-              colorItem->setBackground(QColor(s.color));
-              auto *mapItem = new QTableWidgetItem(
-                  ZtoryModel::taskStatusLabel(KitsuClient::mapStatus(s)));
-              m_statusTable->setItem(i, 0, nameItem);
-              m_statusTable->setItem(i, 1, colorItem);
-              m_statusTable->setItem(i, 2, mapItem);
-            }
-            m_statusTable->resizeColumnsToContents();
           });
 
   connect(m_client, &KitsuClient::projectCreated, this,
@@ -404,62 +383,11 @@ void KitsuConnectDialog::onUploadPreviewsClicked() {
       this, tr("Folder with per-shot clips"));
   if (dir.isEmpty()) return;
 
-  // Candidate movie files in the folder.
-  static const QStringList kExts =
-      {"mp4", "mov", "avi", "webm", "gif", "mkv", "m4v"};
-  QStringList filters;
-  for (const QString &e : kExts) filters << ("*." + e);
-  const QFileInfoList files =
-      QDir(dir).entryInfoList(filters, QDir::Files, QDir::Name);
-  if (files.isEmpty()) {
-    m_statusLabel->setStyleSheet("color:#FF3860;");
-    m_statusLabel->setText(tr("No movie clips found in that folder."));
-    return;
-  }
-
-  // Match each file to the shot whose label is the LONGEST one contained in the
-  // file name — so "scene_SH010.mp4" picks SH010, not SH01.  The clip names are
-  // exported from label(), which is also the Kitsu shot name, so this lines up.
-  QVector<KitsuPreviewUpload> uploads;
   int unmatched = 0, noId = 0;
-  for (const QFileInfo &fi : files) {
-    const QString base       = fi.completeBaseName();
-    const ProjectShot *match = nullptr;
-    int bestLen              = 0;
-    for (const ProjectShot &ps : pshots) {
-      const QString label = ps.label.trimmed();
-      if (label.isEmpty()) continue;
-      if (base.contains(label, Qt::CaseInsensitive) &&
-          label.length() > bestLen) {
-        match   = &ps;
-        bestLen = label.length();
-      }
-    }
-    if (!match) { ++unmatched; continue; }
-    if (match->kitsuShotId.isEmpty()) { ++noId; continue; }
-    // Detect which task the clip belongs to from its name, using the short codes
-    // ({TASK} token in the naming pattern) of THIS shot's technique only — so a
-    // "..._LAY_..." render lands on Layout and "..._ANIM_..." on Animation.
-    // Board/animatic previews carry no task code and default to Storyboard.
-    QString task    = "Storyboard";
-    int     codeLen = 0;
-    for (const QString &tt : m->taskTypesForProjectShot(*match)) {
-      const QString code = ZtoryModel::taskShortCode(tt);
-      if (!code.isEmpty() && base.contains(code, Qt::CaseInsensitive) &&
-          code.length() > codeLen) {
-        task    = tt;
-        codeLen = code.length();
-      }
-    }
-    KitsuPreviewUpload u;
-    u.kitsuShotId = match->kitsuShotId;
-    u.shot        = match->label.trimmed();
-    u.taskType    = task;
-    u.filePath    = fi.absoluteFilePath();
-    u.status      = TaskStatus::Wfa;
-    uploads.push_back(u);
-    m_pendingPreviewStatus.push_back(qMakePair(match->uuid, u.taskType));
-  }
+  QVector<KitsuPreviewUpload> uploads =
+      KitsuClient::buildUploadsFromFolder(dir, unmatched, noId);
+  for (const KitsuPreviewUpload &u : uploads)
+    m_pendingPreviewStatus.push_back(qMakePair(u.uuid, u.taskType));
 
   if (uploads.isEmpty()) {
     m_statusLabel->setStyleSheet("color:#FF3860;");

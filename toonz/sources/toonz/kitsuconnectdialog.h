@@ -52,7 +52,6 @@ private:
   QPushButton  *m_uploadPrevBtn = nullptr;
   QCheckBox    *m_handlesCheck = nullptr;  // add safety handles on push
   QSpinBox     *m_handlesSpin  = nullptr;
-  QTableWidget *m_statusTable  = nullptr;
   // Task statuses to push right after the shots land (Phase 3b).
   QVector<KitsuTaskPush> m_pendingTasks;
   // (projectShot uuid, taskType) of the previews being uploaded — applied as

@@ -15,15 +15,20 @@
 //=============================================================================
 
 #include "pane.h"
+#include "kitsuclient.h"  // KitsuTaskPush (pending-tasks member)
 
 #include <QTableWidget>
 #include <QStringList>
+#include <QVector>
 
 class QTabWidget;
 class QListWidget;
 class QLineEdit;
 class QComboBox;
 class QLabel;
+class QPushButton;
+class QCheckBox;
+class QSpinBox;
 
 class ZtoryProductionPanel final : public TPanel {
   Q_OBJECT
@@ -43,6 +48,15 @@ class ZtoryProductionPanel final : public TPanel {
   QLineEdit    *m_patternEdit = nullptr;   // B3d: naming pattern
   QLabel       *m_kitsuLabel = nullptr;    // M5: Kitsu link status
   bool          m_projLoading = false;
+  // M5 — Kitsu sync controls, now always available in the Project tab (the
+  // session auto-connects and stays connected, so no need to open a dialog).
+  QPushButton  *m_kitsuPushBtn   = nullptr;
+  QPushButton  *m_kitsuPullBtn   = nullptr;
+  QPushButton  *m_kitsuUploadBtn = nullptr;
+  QCheckBox    *m_kitsuHandlesCheck = nullptr;
+  QSpinBox     *m_kitsuHandlesSpin  = nullptr;
+  QLabel       *m_kitsuSyncLabel = nullptr;
+  QVector<KitsuTaskPush> m_kitsuPendingTasks;  // pushed right after the shots land
   // Assets tab
   QTableWidget *m_assetTable = nullptr;
   QStringList   m_assetTaskCols;
@@ -54,6 +68,11 @@ class ZtoryProductionPanel final : public TPanel {
 
 public:
   ZtoryProductionPanel(QWidget *parent = nullptr);
+
+protected:
+  // Load the current project's DB when shown so the tracker works standalone
+  // (a production manager can view/edit it without opening a .tnz scene).
+  void showEvent(QShowEvent *e) override;
 
 private:
   // Shots tab
@@ -71,6 +90,11 @@ private:
   QWidget *buildProjectTab();
   void reloadProjectTab();         // model → fields
   void applyProjectFromFields();   // fields → model + persist
+  // Kitsu sync actions (Project tab); enabled only when the project is linked.
+  void onKitsuPush();              // push shots + task statuses to Kitsu
+  void onKitsuPull();              // pull task statuses (review sync) from Kitsu
+  void onKitsuUpload();            // upload per-shot clips from a chosen folder
+  void updateKitsuButtons();       // enable/disable sync buttons by link state
   // Assets tab
   QWidget *buildAssetsTab();
   void rebuildAssets();            // rebuild the asset × task matrix from ZtoryModel

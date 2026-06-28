@@ -95,6 +95,7 @@ struct KitsuPullEntry {
 //----------------------------------------------------------------------------
 struct KitsuPreviewUpload {
   QString    kitsuShotId;            // Kitsu shot id (entity) — required
+  QString    uuid;                   // project-shot uuid (for local status mirror)
   QString    shot;                   // shot name, for progress / reporting
   QString    taskType = "Storyboard";
   QString    filePath;               // local movie file to upload
@@ -167,6 +168,22 @@ public:
   // file (multipart). Requires task statuses already fetched. -> previewsUploaded().
   void uploadPreviews(const QString &projectId,
                       const QVector<KitsuPreviewUpload> &uploads);
+
+  // Match the movie files in `dir` to the project shots (by shot label) and to a
+  // task (by the {TASK} short code in the file name, limited to the shot's
+  // technique; defaults to Storyboard). Reads ZtoryModel::projectShots(). Shared
+  // by the Connect dialog and the post-export auto-upload. outUnmatched/outNoId
+  // report files with no matching shot / matched shots not yet pushed to Kitsu.
+  static QVector<KitsuPreviewUpload> buildUploadsFromFolder(const QString &dir,
+                                                            int &outUnmatched,
+                                                            int &outNoId);
+
+  // Build the shot + task push lists from the project's shots (ZtoryModel::
+  // projectShots()), padding frame ranges by `handles`. Shared by the Connect
+  // dialog and the Production Tracker's Project tab. outTasks gets the per-task
+  // statuses to push after the shots; outSkipped counts label-less shots.
+  static QVector<KitsuShotPush> buildShotPushFromProject(
+      int handles, QVector<KitsuTaskPush> &outTasks, int &outSkipped);
 
   // Canonical lowercased task-type key (handles Ztoryc↔Kitsu name aliases
   // Render↔Rendering, VFX↔FX) so push and pull match the same tasks.

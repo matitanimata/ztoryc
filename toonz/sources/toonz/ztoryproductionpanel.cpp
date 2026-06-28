@@ -46,6 +46,8 @@
 #include <QComboBox>
 #include <QPushButton>
 #include <QToolButton>
+#include <QCheckBox>
+#include <QSpinBox>
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QProgressBar>
@@ -362,6 +364,93 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   connect(m, &ZtoryModel::assetsChanged,     this, [this] { rebuildAssets(); });
   connect(m, &ZtoryModel::productionReloaded, this, &ZtoryProductionPanel::onModelChanged);
 
+  // --- Kitsu sync result handling (Project tab) ----------------------------
+  // KitsuClient is the app-lifetime singleton; keep these connected so the
+  // tracker's sync buttons report progress and apply results. The logic mirrors
+  // the (now optional) Connect dialog; both are idempotent, and the dialog is
+  // only ever open transiently, so there's no harmful double-handling.
+  KitsuClient *kc = KitsuClient::instance();
+  connect(kc, &KitsuClient::shotsPushProgress, this, [this](const QString &msg) {
+    if (m_kitsuSyncLabel) { m_kitsuSyncLabel->setStyleSheet(QString()); m_kitsuSyncLabel->setText(msg); }
+  });
+  connect(kc, &KitsuClient::shotsPushed, this, [this](bool ok, int, int, const QString &msg) {
+    if (ok && !m_kitsuPendingTasks.isEmpty()) {
+      if (m_kitsuSyncLabel) m_kitsuSyncLabel->setText(msg + tr("  Pushing task statuses…"));
+      KitsuClient::instance()->pushTasks(ZtoryModel::instance()->kitsuProjectId(),
+                                         m_kitsuPendingTasks);
+      m_kitsuPendingTasks.clear();
+      return;
+    }
+    if (m_kitsuSyncLabel) {
+      m_kitsuSyncLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
+      m_kitsuSyncLabel->setText(msg);
+    }
+    updateKitsuButtons();
+  });
+  connect(kc, &KitsuClient::shotIdsResolved, this, [](const QHash<QString, QString> &byKey) {
+    ZtoryModel *mm = ZtoryModel::instance();
+    auto &pshots = mm->projectShots_rw();
+    bool dirty = false;
+    for (ProjectShot &ps : pshots) {
+      const QString seq = ps.seq.trimmed().isEmpty() ? "SQ01" : ps.seq.trimmed();
+      auto it = byKey.find(seq + "\n" + ps.label.trimmed());
+      if (it != byKey.end() && ps.kitsuShotId != it.value()) { ps.kitsuShotId = it.value(); dirty = true; }
+    }
+    if (dirty) mm->saveProjectDb();
+  });
+  connect(kc, &KitsuClient::tasksPushed, this, [this](bool ok, int, const QString &msg) {
+    if (m_kitsuSyncLabel) {
+      m_kitsuSyncLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
+      m_kitsuSyncLabel->setText(msg);
+    }
+  });
+  connect(kc, &KitsuClient::previewsUploaded, this, [this](bool ok, int, const QString &msg) {
+    if (m_kitsuSyncLabel) {
+      m_kitsuSyncLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
+      m_kitsuSyncLabel->setText(msg);
+    }
+  });
+  connect(kc, &KitsuClient::statusesPulled, this,
+          [this](bool ok, const QVector<KitsuPullEntry> &entries, const QString &msg) {
+    if (!ok) {
+      if (m_kitsuSyncLabel) { m_kitsuSyncLabel->setStyleSheet("color:#FF3860;"); m_kitsuSyncLabel->setText(msg); }
+      return;
+    }
+    ZtoryModel *mm = ZtoryModel::instance();
+    auto &pshots = mm->projectShots_rw();
+    int updated = 0; bool dirty = false;
+    for (const KitsuPullEntry &e : entries) {
+      const QString ekey = KitsuClient::normalizeTaskType(e.taskType);
+      for (ProjectShot &ps : pshots) {
+        bool match;
+        if (!ps.kitsuShotId.isEmpty() && !e.kitsuShotId.isEmpty())
+          match = (ps.kitsuShotId == e.kitsuShotId);
+        else {
+          const QString psseq = ps.seq.trimmed().isEmpty() ? "SQ01" : ps.seq.trimmed();
+          match = (ps.label.trimmed() == e.shot.trimmed() && psseq == e.seq.trimmed());
+        }
+        if (!match) continue;
+        if (ps.kitsuShotId.isEmpty() && !e.kitsuShotId.isEmpty()) { ps.kitsuShotId = e.kitsuShotId; dirty = true; }
+        for (const QString &tt : mm->taskTypesForProjectShot(ps))
+          if (KitsuClient::normalizeTaskType(tt) == ekey) {
+            if (ps.tasks[tt].status != e.status) { ps.tasks[tt].status = e.status; ++updated; dirty = true; }
+            if (e.status == TaskStatus::Done) {
+              const QString nxt = mm->nextTaskType(mm->techniqueForProjectShot(ps), tt);
+              if (!nxt.isEmpty() && ps.tasks.value(nxt).status == TaskStatus::Todo) {
+                ps.tasks[nxt].status = TaskStatus::Ready; dirty = true;
+              }
+            }
+            break;
+          }
+      }
+    }
+    if (dirty) mm->saveAndNotifyTasks();
+    if (m_kitsuSyncLabel) {
+      m_kitsuSyncLabel->setStyleSheet("color:#22D160;");
+      m_kitsuSyncLabel->setText(tr("%1 (%2 updated)").arg(msg).arg(updated));
+    }
+  });
+
   // Rebuild thumbnails when the Board finishes rendering a preview (panel 0 only —
   // panel 0 is the shot thumbnail). Debounced: one rebuild after a burst of renders.
   auto *thumbDebounce = new QTimer(this);
@@ -377,6 +466,20 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   reloadProjectTab();
   rebuildAssets();
   reloadWorkflowsTab();
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoryProductionPanel::showEvent(QShowEvent *e) {
+  TPanel::showEvent(e);
+  // Standalone use: the Board normally drives loadProjectDb() when a scene opens,
+  // but a production manager may want to view/edit the tracker without opening a
+  // .tnz. loadProjectDb() locates the DB from the CURRENT PROJECT (not the
+  // scene) and only touches project-level data (shots list, team, assets,
+  // techniques) — never the open scene's shots — so it's safe to (re)load here.
+  // This also picks up a project switch made while the tracker was hidden.
+  ZtoryModel::instance()->loadProjectDb();
+  onModelChanged();  // rebuild every tab from the freshly loaded DB
 }
 
 //-----------------------------------------------------------------------------
@@ -864,7 +967,47 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
     // The dialog may have linked/created a project and written the model;
     // reflect the new metadata (and read-only state) immediately.
     reloadProjectTab();
+    updateKitsuButtons();
   });
+
+  // Kitsu sync controls — always available here (the session auto-connects and
+  // stays connected), so the user no longer has to open the Connect dialog.
+  m_kitsuHandlesCheck = new QCheckBox(QObject::tr("Push with handles"), w);
+  m_kitsuHandlesCheck->setToolTip(QObject::tr(
+      "Pad each shot's frame_in/out in Kitsu by N frames of safety margin,\n"
+      "leaving Ztoryc's board timing unchanged."));
+  m_kitsuHandlesSpin = new QSpinBox(w);
+  m_kitsuHandlesSpin->setRange(0, 240);
+  m_kitsuHandlesSpin->setValue(12);
+  m_kitsuHandlesSpin->setSuffix(QObject::tr(" fr"));
+  auto *handlesRow = new QHBoxLayout();
+  handlesRow->addWidget(m_kitsuHandlesCheck);
+  handlesRow->addWidget(m_kitsuHandlesSpin);
+  handlesRow->addStretch(1);
+  form->addRow(QString(), handlesRow);
+
+  m_kitsuPushBtn   = new QPushButton(QObject::tr("Push shots + statuses →"), w);
+  m_kitsuPullBtn   = new QPushButton(QObject::tr("← Pull statuses"), w);
+  m_kitsuUploadBtn = new QPushButton(QObject::tr("Upload shot previews →"), w);
+  m_kitsuPushBtn->setToolTip(QObject::tr(
+      "Create/update the project's shots + tasks in Kitsu from Ztoryc."));
+  m_kitsuPullBtn->setToolTip(QObject::tr(
+      "Pull task statuses down from Kitsu (the supervisor's WFA→Done/Retake)."));
+  m_kitsuUploadBtn->setToolTip(QObject::tr(
+      "Pick a folder of per-shot clips and upload each to its shot's task\n"
+      "(matched by shot name + {TASK} code), setting it to WFA."));
+  auto *syncRow = new QHBoxLayout();
+  syncRow->addWidget(m_kitsuPushBtn);
+  syncRow->addWidget(m_kitsuPullBtn);
+  form->addRow(QString(), syncRow);
+  form->addRow(QString(), m_kitsuUploadBtn);
+  m_kitsuSyncLabel = new QLabel(QString(), w);
+  m_kitsuSyncLabel->setWordWrap(true);
+  form->addRow(QString(), m_kitsuSyncLabel);
+
+  connect(m_kitsuPushBtn,   &QPushButton::clicked, this, &ZtoryProductionPanel::onKitsuPush);
+  connect(m_kitsuPullBtn,   &QPushButton::clicked, this, &ZtoryProductionPanel::onKitsuPull);
+  connect(m_kitsuUploadBtn, &QPushButton::clicked, this, &ZtoryProductionPanel::onKitsuUpload);
 
   for (QLineEdit *e : {m_prodEdit, m_codeEdit, m_seasonEdit, m_titleEdit, m_epEdit, m_patternEdit})
     connect(e, &QLineEdit::editingFinished, this,
@@ -910,7 +1053,81 @@ void ZtoryProductionPanel::reloadProjectTab() {
   // local copy can't silently diverge from the server.
   m_prodEdit->setReadOnly(linked);
   if (m_codeEdit) m_codeEdit->setReadOnly(linked);
+  updateKitsuButtons();
   m_projLoading = false;
+}
+
+void ZtoryProductionPanel::updateKitsuButtons() {
+  const bool linked = ZtoryModel::instance()->isKitsuLinked();
+  if (m_kitsuPushBtn)   m_kitsuPushBtn->setEnabled(linked);
+  if (m_kitsuPullBtn)   m_kitsuPullBtn->setEnabled(linked);
+  if (m_kitsuUploadBtn) m_kitsuUploadBtn->setEnabled(linked);
+  if (m_kitsuHandlesCheck) m_kitsuHandlesCheck->setEnabled(linked);
+  if (m_kitsuHandlesSpin)  m_kitsuHandlesSpin->setEnabled(linked);
+}
+
+void ZtoryProductionPanel::onKitsuPush() {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (!m->isKitsuLinked()) return;
+  const int handles =
+      m_kitsuHandlesCheck->isChecked() ? m_kitsuHandlesSpin->value() : 0;
+  int skipped = 0;
+  QVector<KitsuShotPush> shots =
+      KitsuClient::buildShotPushFromProject(handles, m_kitsuPendingTasks, skipped);
+  if (shots.isEmpty()) {
+    m_kitsuSyncLabel->setStyleSheet("color:#FF3860;");
+    m_kitsuSyncLabel->setText(tr("No shots to push."));
+    return;
+  }
+  const bool tvshow = m->productionType() == "tvshow";
+  m_kitsuSyncLabel->setStyleSheet(QString());
+  m_kitsuSyncLabel->setText(tr("Pushing %1 shots…").arg(shots.size()));
+  KitsuClient::instance()->pushShots(m->kitsuProjectId(), m->episode(), tvshow, shots);
+}
+
+void ZtoryProductionPanel::onKitsuPull() {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (!m->isKitsuLinked()) return;
+  m_kitsuSyncLabel->setStyleSheet(QString());
+  m_kitsuSyncLabel->setText(tr("Pulling statuses from Kitsu…"));
+  KitsuClient::instance()->pullStatuses(m->kitsuProjectId());
+}
+
+void ZtoryProductionPanel::onKitsuUpload() {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (!m->isKitsuLinked()) return;
+  const QString dir =
+      QFileDialog::getExistingDirectory(this, tr("Folder with per-shot clips"));
+  if (dir.isEmpty()) return;
+  int unmatched = 0, noId = 0;
+  QVector<KitsuPreviewUpload> uploads =
+      KitsuClient::buildUploadsFromFolder(dir, unmatched, noId);
+  if (uploads.isEmpty()) {
+    m_kitsuSyncLabel->setStyleSheet("color:#FF3860;");
+    m_kitsuSyncLabel->setText(
+        noId ? tr("Matched shots have no Kitsu id — push shots first.")
+             : tr("No clips matched a shot name."));
+    return;
+  }
+  // Optimistic local WFA mirror (the upload sets WFA on Kitsu too).
+  auto &pshots = m->projectShots_rw();
+  bool dirty = false;
+  for (const KitsuPreviewUpload &u : uploads)
+    for (ProjectShot &ps : pshots)
+      if (ps.uuid == u.uuid) {
+        if (ps.tasks[u.taskType].status != TaskStatus::Wfa) {
+          ps.tasks[u.taskType].status = TaskStatus::Wfa;
+          dirty = true;
+        }
+        break;
+      }
+  if (dirty) m->saveAndNotifyTasks();
+  m_kitsuSyncLabel->setStyleSheet(QString());
+  m_kitsuSyncLabel->setText(tr("Uploading %1 previews…%2")
+                                .arg(uploads.size())
+                                .arg(noId ? tr(" (%1 not on Kitsu yet)").arg(noId)
+                                          : QString()));
+  KitsuClient::instance()->uploadPreviews(m->kitsuProjectId(), uploads);
 }
 
 void ZtoryProductionPanel::applyProjectFromFields() {
