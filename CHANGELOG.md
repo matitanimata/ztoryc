@@ -1,3 +1,52 @@
+## [2026-06-28] — Fix export FCPXML, automazione status, sync multi-board, Kitsu opt-in, room Production (branch feature/kitsu-m5-phase3b)
+
+Sessione lunghissima. Tutto su **feature/kitsu-m5-phase3b** (NON mergiato in master).
+
+### Fixed — export / FCPXML
+- Clip per-shot che contenevano tutti gli shot: render serializzati (segnale
+  `ZtoryModel::renderFinished` + QEventLoop) — i render partivano concorrenti e si
+  contaminavano. (`ee6a10fbd`)
+- Full animatic più corto del montaggio: `shotFrameRange` escludeva la cella STOP_FRAME (SFH).
+- Audio FCPXML: in-point sorgente (`getStartOffset`) e durata visibile, prima ignorati.
+
+### Added — Kitsu (M5)
+- Upload preview mp4 (`uploadPreviews`): comment WFA → add-preview → POST multipart;
+  crea il task se manca; `set-main-preview` = thumbnail shot (primo frame). (`c1ac2d6ed`)
+- Automazione status: export shot→DONE/Layout READY; apertura .tnz→primo task non-Done WIP;
+  upload→WFA; pull DONE→successivo READY. Helper `firstProductionTaskType`/`nextTaskType`.
+- Controlli sync (Push/Pull/Upload/handles) spostati nel tab Project del tracker (sempre
+  disponibili); rimossa la tabella status mapping (Ztoryc↔Kitsu già 1:1). Helper condivisi
+  `buildUploadsFromFolder`/`buildShotPushFromProject`. (`27fa7fc54`)
+- Checkbox "Upload to Kitsu" nell'export (post-export auto-upload).
+- **Opt-in**: checkbox "Use Kitsu" nella creazione progetto (flag `useKitsu` nel .ztrack);
+  con off tutta la UI Kitsu è nascosta. `resetProjectLevelDefaults` azzera anche il binding
+  Kitsu (un nuovo progetto non eredita il link del precedente). (`b6985e45c`)
+
+### Fixed — numerazione Keep + multi-board
+- Keep numbering era rotta (regressione, anche in 0.6.3): `m_autoRenumber` era per-pannello →
+  spostato globale in `ZtoryModel`; e le label si riderivano per indice invece che dal nome
+  colonna (identità) → fix in `refreshFromScene`. (`57b01f3fb`)
+- Crash `addPanelWidget` su shot senza panel (guard). (`92a2bdfb3`)
+- Sync multi-board: `onModelResequenced` ricostruisce su drift di conteggio/ordine/widget;
+  bottoni Add sul board flottante; reorder cross-board in Keep. (`53c97c75b`, `d64fc458f`)
+  RESTA: reorder cross-board in modalità AUTO (deferred). Vedi project_multiboard_sync.
+
+### Added — Rooms / startup
+- Room di default Storyboard: Production Tracker + Thumbs (ordine tracker, thumbs,
+  ztoryc X, ztoryc T, browser). Tile PT azzurra nello startup → apre la room-set isolata
+  Production (solo il tracker, non è una scena; si esce con load/create scene). (`1f5b8704b`)
+- Production Tracker standalone: carica il .ztrack del progetto corrente su showEvent; gli edit
+  non sporcano più la scena untitled.
+
+### Note / RESTA
+- Branch NON mergiato. Restano un paio di rifiniture (da definire con Franco) + reorder
+  AUTO cross-board + transizioni vere FCPXML.
+
+### Upstream candidates
+- Nessuno (codice Ztoryc-specifico).
+
+---
+
 ## [2026-06-27c] — Kitsu M5 Fase 3b + fix contaminazione + sync bidirezionale + export DaVinci (branch feature/kitsu-m5-phase3b)
 
 Sessione lunga. Branch **feature/kitsu-m5-phase3b** (da master dopo il merge di 1+2+3a).
