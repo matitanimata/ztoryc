@@ -614,4 +614,16 @@ signals:
   // must NOT re-apply (it already shows the selection); appliers must not
   // write back to setSharedSelection or an update loop forms.
   void sharedSelectionChanged();
+  // A (non-preview) movie render has finished. Emitted from
+  // OnRenderCompleted::onDeliver in rendercommand.cpp via notifyRenderFinished().
+  // The per-shot animatic export (StoryboardPanel::onExportAnimatic) listens to
+  // this to render shots SEQUENTIALLY: concurrent renders of the same scene
+  // contaminate each other's output (per-shot clips ended up containing every
+  // shot), so each render must complete before the next starts.
+  void renderFinished();
+
+ public:
+  // Public emitter for renderFinished() — Qt signals are protected, so
+  // rendercommand.cpp (outside this class) routes completion through here.
+  void notifyRenderFinished() { emit renderFinished(); }
 };

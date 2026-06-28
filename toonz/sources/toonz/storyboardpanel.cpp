@@ -5189,7 +5189,14 @@ namespace {
 struct FcpxClip { QString name; QString file; int frames; };
 // One audio clip on a lane (each animatic sound column → its own lane, so
 // dialogue / music / fx stay mixable in DaVinci).
-struct FcpxAudio { QString name; QString file; int offset; int frames; int lane; };
+// offset  = position on the timeline (frames from timeline start)
+// frames  = visible duration of the clip (after head/tail trim)
+// srcStart= in-point into the source media (frames trimmed off the head)
+// srcLen  = full source length (frames) — the asset's available media
+struct FcpxAudio {
+  QString name; QString file;
+  int offset; int frames; int srcStart; int srcLen; int lane;
+};
 
 // Write an FCPXML 1.9 timeline: per-shot clips on the spine (cumulative offsets)
 // plus each audio clip as a connected clip on its own lane — a DaVinci Resolve /
@@ -5240,7 +5247,9 @@ bool writeAnimaticFcpxml(const QString &path, const QString &projectName, int fp
     x.writeAttribute("id", QString("a%1").arg(++aid));
     x.writeAttribute("name", a.name);
     x.writeAttribute("start", "0s");
-    x.writeAttribute("duration", dur(a.frames));
+    // The asset describes the whole media file, so its duration is the full
+    // source length — the clip below picks a sub-range of it via start/duration.
+    x.writeAttribute("duration", dur(a.srcLen > 0 ? a.srcLen : a.frames));
     x.writeAttribute("hasAudio", "1");
     x.writeAttribute("audioSources", "1");
     x.writeAttribute("audioChannels", "2");
@@ -5281,7 +5290,9 @@ bool writeAnimaticFcpxml(const QString &path, const QString &projectName, int fp
         x.writeAttribute("lane", QString::number(a.lane));
         x.writeAttribute("offset", dur(a.offset));
         x.writeAttribute("name", a.name);
-        x.writeAttribute("start", "0s");
+        // start = in-point into the source, so a trimmed/repositioned audio clip
+        // plays from where the user set it in the animatic (not from 0s).
+        x.writeAttribute("start", dur(a.srcStart));
         x.writeAttribute("duration", dur(a.frames));
         x.writeEndElement();
       }
@@ -5681,16 +5692,25 @@ void StoryboardPanel::onExportAnimatic() {
   int origR0, origR1, origStep;
   prop->getRange(origR0, origR1, origStep);
 
-  // Helper: compute frame range [start, end) for shot si in main xsheet
+  // Helper: compute frame range [start, end] for shot si in main xsheet.
+  // resequenceXsheet() packs shots contiguously and writes a STOP_FRAME (SFH)
+  // cell at row startFrame+duration to stop the implicit hold bleeding into the
+  // next shot.  That cell is NOT empty, so it must be excluded explicitly —
+  // otherwise every shot's range is one frame too long (the boundary row, which
+  // is also the next shot's first cell), making the per-shot montage longer than
+  // the full animatic and bleeding the next shot's first frame into the clip.
+  auto isRealCell = [](const TXshCell &c) {
+    return !c.isEmpty() && !c.getFrameId().isStopFrame();
+  };
   auto shotFrameRange = [&](int si) -> std::pair<int,int> {
     TXsheet *xsh = scene->getChildStack()->getTopXsheet();
     int col = m_shots[si].data.xsheetColumn;
     int r0 = 0, r1 = 0;
     for (int r = 0; r < xsh->getFrameCount(); r++) {
-      if (!xsh->getCell(r, col).isEmpty()) { r0 = r; break; }
+      if (isRealCell(xsh->getCell(r, col))) { r0 = r; break; }
     }
     for (int r = xsh->getFrameCount() - 1; r >= 0; r--) {
-      if (!xsh->getCell(r, col).isEmpty()) { r1 = r; break; }
+      if (isRealCell(xsh->getCell(r, col))) { r1 = r; break; }
     }
     return {r0, r1};
   };
@@ -5719,10 +5739,13 @@ void StoryboardPanel::onExportAnimatic() {
     CommandManager::instance()->execute(MI_Render);
 
   } else {
-    // One clip per shot — the audio range is now pinned inside MovieRenderer at
-    // the time rasterRender() reads it (via movieRenderer.setAudioRange(r0,r1)
-    // in rendercommand.cpp), so updating props for the next shot while a render
-    // is running on background threads no longer corrupts the audio.
+    // One clip per shot — render each shot SEQUENTIALLY, waiting for one render
+    // to finish before starting the next.  Renders run on background threads
+    // behind a non-modal progress dialog (modal breaks blocking-queued
+    // connections on macOS), so firing them back-to-back let them overlap and
+    // contaminate each other's output — per-shot clips ended up containing
+    // every shot.  We wait on ZtoryModel::renderFinished (emitted from
+    // OnRenderCompleted in rendercommand.cpp) so only one render is ever live.
     // Honour the shot range when it's enabled (export only a sub-range of clips).
     int pFrom = 0, pTo = (int)m_shots.size() - 1;
     if (rangeWidget->isEnabled()) {
@@ -5745,7 +5768,21 @@ void StoryboardPanel::onExportAnimatic() {
                           TFilePath(fname.toStdWString());
       prop->setPath(outPath);
       prop->setRange(r0, r1, 1);
+
+      // Block until this shot's render completes.  A timeout guards against the
+      // pathological case where a render never signals completion (e.g. it
+      // failed to start) so the export can never wedge the UI permanently.
+      QEventLoop renderLoop;
+      QMetaObject::Connection conn =
+          connect(ZtoryModel::instance(), &ZtoryModel::renderFinished,
+                  &renderLoop, &QEventLoop::quit);
+      QTimer renderTimeout;
+      renderTimeout.setSingleShot(true);
+      connect(&renderTimeout, &QTimer::timeout, &renderLoop, &QEventLoop::quit);
       CommandManager::instance()->execute(MI_Render);
+      renderTimeout.start(30 * 60 * 1000);  // 30-min safety cap per shot
+      renderLoop.exec();
+      disconnect(conn);
     }
   }
 
@@ -5790,18 +5827,33 @@ void StoryboardPanel::onExportAnimatic() {
         for (int li = 0; li < sc->getColumnLevelCount(); li++) {
           ColumnLevel *cl = sc->getColumnLevel(li);
           if (!cl || !cl->getSoundLevel()) continue;
-          const int s = cl->getStartFrame();
-          const int e = cl->getEndFrame();
-          if (e < s) continue;
+          // Honour head/tail trim: visible start/duration are the on-timeline
+          // edit; the source in-point is the number of frames trimmed off the
+          // head (getStartOffset), so the clip plays from where it was placed.
+          int visStart = cl->getVisibleStartFrame();  // timeline frame
+          int dur      = cl->getVisibleFrameCount();
+          int srcStart = cl->getStartOffset();        // in-point into source
+          if (dur <= 0) continue;
           QString file = QString::fromStdWString(
               scene->decodeFilePath(cl->getSoundLevel()->getPath()).getWideString());
           if (file.isEmpty()) continue;
+          int tlOffset = visStart - baseFrame;
+          if (tlOffset < 0) {
+            // Clip starts before the exported range — trim its head further so
+            // it lands at the timeline origin with the right source in-point.
+            srcStart += -tlOffset;
+            dur      -= -tlOffset;
+            tlOffset = 0;
+            if (dur <= 0) continue;
+          }
           FcpxAudio a;
-          a.name   = QFileInfo(file).completeBaseName();
-          a.file   = file;
-          a.offset = std::max(0, s - baseFrame);
-          a.frames = e - s + 1;
-          a.lane   = lane;
+          a.name     = QFileInfo(file).completeBaseName();
+          a.file     = file;
+          a.offset   = tlOffset;
+          a.frames   = dur;
+          a.srcStart = srcStart;
+          a.srcLen   = cl->getFrameCount();  // full source length
+          a.lane     = lane;
           audioClips.push_back(a);
         }
       }

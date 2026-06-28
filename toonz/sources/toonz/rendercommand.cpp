@@ -199,6 +199,10 @@ public:
         }
       }
     }
+
+    // Let a waiting batch (e.g. the per-shot animatic export) know this render
+    // is done, so it can start the next shot without overlapping renders.
+    if (!isPreview) ZtoryModel::instance()->notifyRenderFinished();
   }
 };
 
