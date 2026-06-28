@@ -3,11 +3,15 @@
 #include <QNetworkAccessManager>
 #include <QNetworkRequest>
 #include <QNetworkReply>
+#include <QHttpMultiPart>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QSettings>
 #include <QUrl>
+#include <QFile>
+#include <QFileInfo>
+#include <QMimeDatabase>
 
 namespace {
 const char *kGroupBaseUrl  = "Ztoryc/Kitsu/BaseUrl";
@@ -751,6 +755,175 @@ void KitsuClient::pullLoadTasks() {
     }
     emit statusesPulled(true, entries,
                         tr("Pulled %1 task statuses from Kitsu.").arg(entries.size()));
+  });
+}
+
+//----------------------------------------------------------------------------
+// Preview upload (Phase 4) — Ztoryc -> Kitsu, sequential async.
+// Per entry the Zou contract is three POSTs (verified live):
+//   1. /api/actions/tasks/<task>/comment {task_status_id, comment} -> comment id
+//   2. /api/actions/tasks/<task>/comments/<cid>/add-preview {}     -> preview id
+//   3. /api/pictures/preview-files/<pid>  (multipart file=...)     -> uploads it
+//----------------------------------------------------------------------------
+
+void KitsuClient::uplFail(const QString &message) {
+  emit previewsUploaded(false, m_uplDone, message);
+}
+
+void KitsuClient::uploadPreviews(const QString &projectId,
+                                 const QVector<KitsuPreviewUpload> &uploads) {
+  if (!isLoggedIn()) { emit previewsUploaded(false, 0, tr("Not logged in.")); return; }
+  if (projectId.isEmpty() || uploads.isEmpty()) {
+    emit previewsUploaded(true, 0, tr("No previews to upload."));
+    return;
+  }
+  m_uplProjectId = projectId;
+  m_uplQueue     = uploads;
+  m_ttIdByName.clear();
+  m_uplTaskIdByKey.clear();
+  m_uplIndex = m_uplDone = 0;
+
+  // Reverse status map (Ztoryc TaskStatus -> Kitsu status id), same six pipeline
+  // short names used by the task push, so Wfa/Done/etc. resolve correctly.
+  m_statusIdByZ.clear();
+  for (const KitsuTaskStatus &st : m_taskStatuses) {
+    const QString sn = st.shortName.toLower();
+    if (sn == "todo" || sn == "ready" || sn == "wip" || sn == "wfa" ||
+        sn == "retake" || sn == "done")
+      m_statusIdByZ.insert(static_cast<int>(mapStatus(st)), st.id);
+  }
+  uplLoadTaskTypes();
+}
+
+void KitsuClient::uplLoadTaskTypes() {
+  emit shotsPushProgress(tr("Loading task types…"));
+  QNetworkReply *r = m_nam->get(authGet("/api/data/task-types"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { uplFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      if (o.value("for_entity").toString() == "Shot")
+        m_ttIdByName.insert(o.value("name").toString().toLower(),
+                            o.value("id").toString());
+    }
+    uplLoadTasks();
+  });
+}
+
+void KitsuClient::uplLoadTasks() {
+  emit shotsPushProgress(tr("Reading existing tasks…"));
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_uplProjectId + "/tasks"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { uplFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_uplTaskIdByKey.insert(o.value("entity_id").toString() + "/" +
+                                  o.value("task_type_id").toString(),
+                              o.value("id").toString());
+    }
+    uplProcessNext();
+  });
+}
+
+void KitsuClient::uplProcessNext() {
+  while (m_uplIndex < m_uplQueue.size()) {
+    const KitsuPreviewUpload u = m_uplQueue[m_uplIndex];
+    const QString ttId     = resolveTaskTypeId(u.taskType);
+    const QString taskId   = m_uplTaskIdByKey.value(u.kitsuShotId + "/" + ttId);
+    const QString statusId = statusIdFor(u.status);
+    // Skip anything we can't resolve, or whose file is gone.
+    if (u.kitsuShotId.isEmpty() || ttId.isEmpty() || taskId.isEmpty() ||
+        statusId.isEmpty() || u.filePath.isEmpty() ||
+        !QFileInfo::exists(u.filePath)) {
+      ++m_uplIndex;
+      continue;
+    }
+    emit shotsPushProgress(tr("Uploading preview %1/%2 (%3)…")
+                               .arg(m_uplIndex + 1)
+                               .arg(m_uplQueue.size())
+                               .arg(u.shot));
+    uplPostComment(taskId, statusId, u.filePath, u.shot);
+    return;  // resume in the callback chain
+  }
+  emit previewsUploaded(true, m_uplDone,
+                        tr("Done — %1 previews uploaded to Kitsu.").arg(m_uplDone));
+}
+
+void KitsuClient::uplPostComment(const QString &taskId, const QString &statusId,
+                                 const QString &filePath, const QString &shot) {
+  QJsonObject body;
+  body["task_status_id"] = statusId;
+  body["comment"]        = tr("Storyboard preview uploaded from Ztoryc");
+  QNetworkReply *r = authPost("/api/actions/tasks/" + taskId + "/comment",
+                              QJsonDocument(body).toJson(QJsonDocument::Compact));
+  connect(r, &QNetworkReply::finished, this, [this, r, taskId, filePath, shot]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { uplFail(errorMessage(r, b)); return; }
+    const QString cid = QJsonDocument::fromJson(b).object().value("id").toString();
+    if (cid.isEmpty()) { uplFail(tr("Kitsu did not return a comment id.")); return; }
+    uplAddPreview(taskId, cid, filePath, shot);
+  });
+}
+
+void KitsuClient::uplAddPreview(const QString &taskId, const QString &commentId,
+                                const QString &filePath, const QString &shot) {
+  QNetworkReply *r = authPost(
+      "/api/actions/tasks/" + taskId + "/comments/" + commentId + "/add-preview",
+      QByteArray("{}"));
+  connect(r, &QNetworkReply::finished, this, [this, r, filePath]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { uplFail(errorMessage(r, b)); return; }
+    const QJsonObject o = QJsonDocument::fromJson(b).object();
+    // add-preview returns the created preview-file dict; id under "id", with
+    // "preview_file_id" as a fallback for older Zou builds.
+    QString pid = o.value("id").toString();
+    if (pid.isEmpty()) pid = o.value("preview_file_id").toString();
+    if (pid.isEmpty()) { uplFail(tr("Kitsu did not return a preview id.")); return; }
+    uplUploadFile(pid, filePath);
+  });
+}
+
+void KitsuClient::uplUploadFile(const QString &previewFileId,
+                                const QString &filePath) {
+  QFile *file = new QFile(filePath);
+  if (!file->open(QIODevice::ReadOnly)) {
+    delete file;
+    uplFail(tr("Cannot open %1").arg(QFileInfo(filePath).fileName()));
+    return;
+  }
+  QHttpMultiPart *mp = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+  QHttpPart filePart;
+  const QString mime =
+      QMimeDatabase().mimeTypeForFile(filePath).name();  // e.g. video/mp4
+  filePart.setHeader(QNetworkRequest::ContentTypeHeader,
+                     QVariant(mime.isEmpty() ? "application/octet-stream" : mime));
+  filePart.setHeader(
+      QNetworkRequest::ContentDispositionHeader,
+      QVariant("form-data; name=\"file\"; filename=\"" +
+               QFileInfo(filePath).fileName() + "\""));
+  filePart.setBodyDevice(file);
+  file->setParent(mp);  // file freed with the multipart
+  mp->append(filePart);
+
+  QNetworkRequest req(
+      (QUrl(m_baseUrl + "/api/pictures/preview-files/" + previewFileId)));
+  req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
+  QNetworkReply *r = m_nam->post(req, mp);
+  mp->setParent(r);  // multipart (and file) freed with the reply
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { uplFail(errorMessage(r, b)); return; }
+    ++m_uplDone;
+    ++m_uplIndex;
+    uplProcessNext();
   });
 }
 

@@ -5755,7 +5755,10 @@ void StoryboardPanel::onExportAnimatic() {
     }
     for (int si = pFrom; si <= pTo && si < (int)m_shots.size(); si++) {
       auto [r0, r1] = shotFrameRange(si);
-      QString shotNum = m_shots[si].data.shotNumber;
+      // Use label() (= the shot name pushed to Kitsu), not the legacy
+      // shotNumber, so the clip file name matches the Kitsu shot for preview
+      // upload matching.  label() falls back to shotNumber when no label is set.
+      QString shotNum = m_shots[si].data.label();
       // sequenceId is a UUID — resolve to human-readable label
       QString seqPart;
       if (!m_shots[si].data.sequenceId.isEmpty()) {
@@ -5798,7 +5801,10 @@ void StoryboardPanel::onExportAnimatic() {
     std::vector<FcpxClip> clips;
     for (int si = rFrom; si <= rTo && si < (int)m_shots.size(); si++) {
       auto [r0, r1] = shotFrameRange(si);
-      QString shotNum = m_shots[si].data.shotNumber;
+      // Use label() (= the shot name pushed to Kitsu), not the legacy
+      // shotNumber, so the clip file name matches the Kitsu shot for preview
+      // upload matching.  label() falls back to shotNumber when no label is set.
+      QString shotNum = m_shots[si].data.label();
       QString seqPart;
       if (!m_shots[si].data.sequenceId.isEmpty()) {
         const SequenceData *seq =

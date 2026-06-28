@@ -157,7 +157,12 @@ void ZtoryModel::onSceneSwitchedAdvanceShot() {
     QStringList tts;
     if (const Technique *t = findTechnique(tech)) tts = t->taskTypes;
     if (!tts.isEmpty()) {
-      TaskState &ts = ps.tasks[tts.first()];
+      // Opening the shot scene means *production* has started, so advance the
+      // first production task — not Storyboard, which precedes the .tnz work.
+      QString firstProd = tts.first();
+      for (const QString &tt : tts)
+        if (tt != "Storyboard") { firstProd = tt; break; }
+      TaskState &ts = ps.tasks[firstProd];
       if (ts.status == TaskStatus::Todo || ts.status == TaskStatus::Ready) {
         ts.status = TaskStatus::Wip;
         saveProjectDb();
@@ -174,19 +179,24 @@ void ZtoryModel::seedDefaultTechniques() {
   if (!m_techniques.empty()) return;
   // Editable presets — tasks per technique.  Stop-motion / Traditional / Live
   // are reasonable starting points to be refined later.
+  // Every pipeline starts with the Storyboard pass (it owns the board/animatic
+  // task that preview-upload sets to WFA), so it leads each technique.
   m_techniques = {
-    {"Tradigital",  {"Layout", "Key Animation", "Inbetweening", "Clean up",
-                     "Ink & Paint", "VFX", "Render", "Compositing"}},
-    {"Traditional", {"Layout", "Key Animation", "Inbetweening", "Clean up",
-                     "Scan & Clean", "Ink & Paint", "X-Sheet", "VFX",
+    {"Tradigital",  {"Storyboard", "Layout", "Key Animation", "Inbetweening",
+                     "Clean up", "Ink & Paint", "VFX", "Render", "Compositing"}},
+    {"Traditional", {"Storyboard", "Layout", "Key Animation", "Inbetweening",
+                     "Clean up", "Scan & Clean", "Ink & Paint", "X-Sheet", "VFX",
                      "Render", "Compositing"}},
-    {"Cut-out",     {"Layout", "Animation", "VFX", "Render", "Compositing"}},
-    {"3D / CGI",    {"Layout", "Animation", "Lighting", "Render", "Compositing"}},
-    {"Stop-motion", {"Set-up", "Layout", "Animation", "Rig Removal",
+    {"Cut-out",     {"Storyboard", "Layout", "Animation", "VFX", "Render",
+                     "Compositing"}},
+    {"3D / CGI",    {"Storyboard", "Layout", "Animation", "Lighting", "Render",
+                     "Compositing"}},
+    {"Stop-motion", {"Storyboard", "Set-up", "Layout", "Animation", "Rig Removal",
                      "Compositing"}},
     // Generic keeps every task active; Live is a trimmed live-action set.
     {"Generic", canonicalTaskOrder()},
-    {"Live",    {"Layout", "Shooting", "Editing", "VFX", "Compositing"}},
+    {"Live",    {"Storyboard", "Layout", "Shooting", "Editing", "VFX",
+                 "Compositing"}},
   };
   if (m_defaultTechnique.isEmpty()) m_defaultTechnique = "Tradigital";
 }
@@ -619,6 +629,11 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
   }
   m_team = team;  // project file is authoritative
   if (!techs.empty()) m_techniques = techs;
+  // Migration: older projects were seeded without the Storyboard task. Prepend
+  // it where missing so the board/animatic task exists (and can be pushed to
+  // Kitsu + receive preview uploads). Persisted on the next project save.
+  for (Technique &t : m_techniques)
+    if (!t.taskTypes.contains("Storyboard")) t.taskTypes.prepend("Storyboard");
   m_assets    = assets;
   m_projectShots   = pshots;
   m_storyboardFiles = sboards;
@@ -878,9 +893,10 @@ QString ZtoryModel::resolvePattern(const QString &pattern,
 const QStringList &ZtoryModel::canonicalTaskOrder() {
   // Master column order: union of all known task types, stable across exports.
   static const QStringList order = {
-    "Set-up", "Layout", "Key Animation", "Animation", "Inbetweening",
-    "Clean up", "Scan & Clean", "Ink & Paint", "X-Sheet", "Lighting",
-    "Rig Removal", "Shooting", "Editing", "VFX", "Render", "Compositing",
+    "Storyboard", "Set-up", "Layout", "Key Animation", "Animation",
+    "Inbetweening", "Clean up", "Scan & Clean", "Ink & Paint", "X-Sheet",
+    "Lighting", "Rig Removal", "Shooting", "Editing", "VFX", "Render",
+    "Compositing",
   };
   return order;
 }

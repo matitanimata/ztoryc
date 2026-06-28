@@ -16,6 +16,9 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QColor>
+#include <QFileDialog>
+#include <QDir>
+#include <QFileInfo>
 
 KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
     : QDialog(parent), m_client(KitsuClient::instance()) {
@@ -99,6 +102,17 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
   syncRow->addWidget(m_pullStatusBtn);
   root->addLayout(syncRow);
 
+  // Preview upload (Ztoryc → Kitsu): pick a folder of per-shot clips (exported
+  // with "one clip per shot"), attach each to its shot's Storyboard task and
+  // set it to WFA. Enabled once linked.
+  m_uploadPrevBtn = new QPushButton(tr("Upload shot previews to Kitsu →"), this);
+  m_uploadPrevBtn->setToolTip(
+      tr("Pick a folder of per-shot clips (exported with \"one clip per shot\").\n"
+         "Each clip is attached to its shot's Storyboard task and set to WFA.\n"
+         "Clips are matched to shots by the shot name in the file name."));
+  m_uploadPrevBtn->setEnabled(false);
+  root->addWidget(m_uploadPrevBtn);
+
   m_statusTable = new QTableWidget(0, 3, this);
   m_statusTable->setHorizontalHeaderLabels(
       {tr("Kitsu status"), tr("Color"), tr("Ztoryc status")});
@@ -136,6 +150,8 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
           &KitsuConnectDialog::onPushShotsClicked);
   connect(m_pullStatusBtn, &QPushButton::clicked, this,
           &KitsuConnectDialog::onPullStatusClicked);
+  connect(m_uploadPrevBtn, &QPushButton::clicked, this,
+          &KitsuConnectDialog::onUploadPreviewsClicked);
 
   connect(m_client, &KitsuClient::loginFinished, this,
           [this](bool ok, const QString &msg) {
@@ -247,6 +263,13 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
             m_statusLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
             m_statusLabel->setText(msg);
           });
+  connect(m_client, &KitsuClient::previewsUploaded, this,
+          [this](bool ok, int, const QString &msg) {
+            setBusy(false);
+            updateBindingButtons();
+            m_statusLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
+            m_statusLabel->setText(msg);
+          });
   connect(m_client, &KitsuClient::statusesPulled, this,
           [this](bool ok, const QVector<KitsuPullEntry> &entries, const QString &msg) {
             setBusy(false);
@@ -324,6 +347,7 @@ void KitsuConnectDialog::updateBindingButtons() {
   const bool linked = connected && ZtoryModel::instance()->isKitsuLinked();
   m_pushShotsBtn->setEnabled(linked);
   m_pullStatusBtn->setEnabled(linked);
+  m_uploadPrevBtn->setEnabled(linked);
 }
 
 void KitsuConnectDialog::onPullStatusClicked() {
@@ -333,6 +357,80 @@ void KitsuConnectDialog::onPullStatusClicked() {
   m_statusLabel->setStyleSheet(QString());
   m_statusLabel->setText(tr("Pulling statuses from Kitsu…"));
   m_client->pullStatuses(m->kitsuProjectId());
+}
+
+void KitsuConnectDialog::onUploadPreviewsClicked() {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (!m->isKitsuLinked()) return;
+
+  const auto &pshots = m->projectShots();
+  if (pshots.empty()) {
+    m_statusLabel->setStyleSheet("color:#FF3860;");
+    m_statusLabel->setText(tr("No project shots — push shots to Kitsu first."));
+    return;
+  }
+
+  const QString dir = QFileDialog::getExistingDirectory(
+      this, tr("Folder with per-shot clips"));
+  if (dir.isEmpty()) return;
+
+  // Candidate movie files in the folder.
+  static const QStringList kExts =
+      {"mp4", "mov", "avi", "webm", "gif", "mkv", "m4v"};
+  QStringList filters;
+  for (const QString &e : kExts) filters << ("*." + e);
+  const QFileInfoList files =
+      QDir(dir).entryInfoList(filters, QDir::Files, QDir::Name);
+  if (files.isEmpty()) {
+    m_statusLabel->setStyleSheet("color:#FF3860;");
+    m_statusLabel->setText(tr("No movie clips found in that folder."));
+    return;
+  }
+
+  // Match each file to the shot whose label is the LONGEST one contained in the
+  // file name — so "scene_SH010.mp4" picks SH010, not SH01.  The clip names are
+  // exported from label(), which is also the Kitsu shot name, so this lines up.
+  QVector<KitsuPreviewUpload> uploads;
+  int unmatched = 0, noId = 0;
+  for (const QFileInfo &fi : files) {
+    const QString base       = fi.completeBaseName();
+    const ProjectShot *match = nullptr;
+    int bestLen              = 0;
+    for (const ProjectShot &ps : pshots) {
+      const QString label = ps.label.trimmed();
+      if (label.isEmpty()) continue;
+      if (base.contains(label, Qt::CaseInsensitive) &&
+          label.length() > bestLen) {
+        match   = &ps;
+        bestLen = label.length();
+      }
+    }
+    if (!match) { ++unmatched; continue; }
+    if (match->kitsuShotId.isEmpty()) { ++noId; continue; }
+    KitsuPreviewUpload u;
+    u.kitsuShotId = match->kitsuShotId;
+    u.shot        = match->label.trimmed();
+    u.taskType    = "Storyboard";
+    u.filePath    = fi.absoluteFilePath();
+    u.status      = TaskStatus::Wfa;
+    uploads.push_back(u);
+  }
+
+  if (uploads.isEmpty()) {
+    m_statusLabel->setStyleSheet("color:#FF3860;");
+    m_statusLabel->setText(
+        noId ? tr("Matched shots have no Kitsu id — push shots to Kitsu first.")
+             : tr("No clips matched a shot name."));
+    return;
+  }
+
+  setBusy(true);
+  m_statusLabel->setStyleSheet(QString());
+  m_statusLabel->setText(
+      tr("Uploading %1 previews…%2")
+          .arg(uploads.size())
+          .arg(unmatched ? tr(" (%1 unmatched)").arg(unmatched) : QString()));
+  m_client->uploadPreviews(m->kitsuProjectId(), uploads);
 }
 
 void KitsuConnectDialog::onLinkClicked() {

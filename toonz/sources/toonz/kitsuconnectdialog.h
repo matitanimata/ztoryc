@@ -33,6 +33,7 @@ private:
   void onCreateClicked();  // create a new Kitsu project from the Ztoryc model (push)
   void onPushShotsClicked();  // push the Ztoryc shot list up to Kitsu
   void onPullStatusClicked(); // pull task statuses down from Kitsu (review sync)
+  void onUploadPreviewsClicked();  // upload per-shot preview movies to Kitsu
   void setBusy(bool busy);
   void updateBindingButtons();
 
@@ -48,6 +49,7 @@ private:
   QPushButton  *m_createBtn = nullptr;
   QPushButton  *m_pushShotsBtn = nullptr;
   QPushButton  *m_pullStatusBtn = nullptr;
+  QPushButton  *m_uploadPrevBtn = nullptr;
   QCheckBox    *m_handlesCheck = nullptr;  // add safety handles on push
   QSpinBox     *m_handlesSpin  = nullptr;
   QTableWidget *m_statusTable  = nullptr;

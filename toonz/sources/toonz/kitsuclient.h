@@ -89,6 +89,19 @@ struct KitsuPullEntry {
 };
 
 //----------------------------------------------------------------------------
+// One per-shot preview movie to upload to a Kitsu task (Phase 4: upload-on-
+// export). The task is resolved by kitsuShotId + taskType; uploading also sets
+// the task status (default Wfa — "waiting for approval" after a board pass).
+//----------------------------------------------------------------------------
+struct KitsuPreviewUpload {
+  QString    kitsuShotId;            // Kitsu shot id (entity) — required
+  QString    shot;                   // shot name, for progress / reporting
+  QString    taskType = "Storyboard";
+  QString    filePath;               // local movie file to upload
+  TaskStatus status   = TaskStatus::Wfa;
+};
+
+//----------------------------------------------------------------------------
 class KitsuClient : public QObject {
   Q_OBJECT
 public:
@@ -149,6 +162,12 @@ public:
   // WFA→Done/Retake). -> statusesPulled().
   void pullStatuses(const QString &projectId);
 
+  // Upload per-shot preview movies (Phase 4). For each entry: post a comment
+  // that sets the task status, attach a preview to it, then upload the movie
+  // file (multipart). Requires task statuses already fetched. -> previewsUploaded().
+  void uploadPreviews(const QString &projectId,
+                      const QVector<KitsuPreviewUpload> &uploads);
+
   // Canonical lowercased task-type key (handles Ztoryc↔Kitsu name aliases
   // Render↔Rendering, VFX↔FX) so push and pull match the same tasks.
   static QString normalizeTaskType(const QString &name);
@@ -178,6 +197,7 @@ signals:
   void tasksPushed(bool ok, int statusesSet, const QString &message);
   void statusesPulled(bool ok, const QVector<KitsuPullEntry> &entries,
                       const QString &message);
+  void previewsUploaded(bool ok, int uploaded, const QString &message);
   void networkError(const QString &message);
 
 private:
@@ -247,6 +267,23 @@ private:
   QHash<QString, QString> m_pullShotSeq;     // shot id       -> sequence name
   QHash<QString, QString> m_pullShotName;    // shot id       -> shot name
   QHash<QString, QString> m_pullTtName;      // task-type id  -> Kitsu name
+
+  // --- Preview upload (Phase 4) — sequential async, 3 steps per entry ----
+  void uplLoadTaskTypes();
+  void uplLoadTasks();
+  void uplProcessNext();
+  void uplPostComment(const QString &taskId, const QString &statusId,
+                      const QString &filePath, const QString &shot);
+  void uplAddPreview(const QString &taskId, const QString &commentId,
+                     const QString &filePath, const QString &shot);
+  void uplUploadFile(const QString &previewFileId, const QString &filePath);
+  void uplFail(const QString &message);
+
+  QString m_uplProjectId;
+  QVector<KitsuPreviewUpload> m_uplQueue;
+  QHash<QString, QString> m_uplTaskIdByKey;  // "entityId/ttId" -> task id
+  int m_uplIndex = 0;
+  int m_uplDone  = 0;
 
   QNetworkAccessManager *m_nam = nullptr;
 
