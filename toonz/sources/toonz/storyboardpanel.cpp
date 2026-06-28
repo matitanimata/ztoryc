@@ -1603,6 +1603,13 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
 }
 
 void StoryboardPanel::addPanelWidget(int shotIdx, int panelIdx) {
+  // Guard: a shot with no panels (or an out-of-range panelIdx) made
+  // panels[panelIdx].duration dereference a null vector buffer → EXC_BAD_ACCESS
+  // (observed on Add Shot from a second/floating Board panel whose local m_shots
+  // had drifted out of sync). Bail instead of crashing.
+  if (shotIdx < 0 || shotIdx >= (int)m_shots.size() || panelIdx < 0 ||
+      panelIdx >= (int)m_shots[shotIdx].data.panels.size())
+    return;
   Shot &shot = m_shots[shotIdx];
   PanelWidget *pw = new PanelWidget(m_container);
   pw->setFps(m_fps);
