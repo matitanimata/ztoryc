@@ -3447,8 +3447,32 @@ void StoryboardPanel::onModelResequenced() {
     }
   }
   bool drifted = (childCols.size() != m_shots.size());
-  for (int si = 0; !drifted && si < (int)m_shots.size(); si++)
-    if (m_shots[si].data.xsheetColumn != childCols[si]) drifted = true;
+  TStageObjectTree *tree = xsh->getStageObjectTree();
+  for (int si = 0; !drifted && si < (int)m_shots.size(); si++) {
+    // Drift if order differs from the scene OR a shot has no widget at all: an
+    // incremental insert path (onShotInserted with a bad index) can leave a shot
+    // in m_shots whose addPanelWidget bailed (guard) → no PanelWidget → invisible
+    // even though the count/order match. A full rebuild recreates the widgets.
+    if (m_shots[si].data.xsheetColumn != childCols[si] ||
+        m_shots[si].panels.empty()) {
+      drifted = true;
+      break;
+    }
+    // Reorder detection: a move swaps column CONTENT (cells), not column indices,
+    // so xsheetColumn still matches. The column's stage-object name is kept equal
+    // to the shot label by updateColumnName(); compare it against this shot's
+    // label — a mismatch means another panel reordered the shots underneath us.
+    TStageObject *obj =
+        tree ? tree->getStageObject(TStageObjectId::ColumnId(childCols[si]), false)
+             : nullptr;
+    if (obj) {
+      const QString colName = QString::fromStdString(obj->getName());
+      if (!colName.isEmpty() && colName != m_shots[si].data.label()) {
+        drifted = true;
+        break;
+      }
+    }
+  }
   if (drifted) {
     qWarning("[ZTORY] onModelResequenced: scene has %d shot columns, panel has %d "
              "(or order differs) -> full rebuild",

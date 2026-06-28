@@ -650,8 +650,15 @@ void MainWindow::updateZtoryToolbarDedup() {
   // Board, the Board hides its duplicate shot buttons; in a Board-only custom
   // room no Animatic is found, so the Board stays fully self-sufficient.
   bool hasAnimatic = !room->findChildren<ZtoryAnimaticPanel *>().isEmpty();
-  for (StoryboardPanel *board : room->findChildren<StoryboardPanel *>())
-    board->setShotButtonsHidden(hasAnimatic);
+  for (StoryboardPanel *board : room->findChildren<StoryboardPanel *>()) {
+    // A FLOATING Board has no docked timeline beside it, so it must keep its own
+    // shot buttons (add/etc.) even when the room contains an Animatic — the
+    // dedup only applies to a Board docked together with the timeline.
+    bool floating = false;
+    for (QWidget *p = board->parentWidget(); p; p = p->parentWidget())
+      if (TPanel *tp = dynamic_cast<TPanel *>(p)) { floating = tp->isFloating(); break; }
+    board->setShotButtonsHidden(hasAnimatic && !floating);
+  }
 }
 
 //-----------------------------------------------------------------------------
