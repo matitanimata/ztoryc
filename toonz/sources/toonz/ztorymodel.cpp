@@ -156,18 +156,21 @@ void ZtoryModel::onSceneSwitchedAdvanceShot() {
                    : (ps.technique.isEmpty() ? m_defaultTechnique : ps.technique);
     QStringList tts;
     if (const Technique *t = findTechnique(tech)) tts = t->taskTypes;
-    if (!tts.isEmpty()) {
-      // Opening the shot scene means *production* has started, so advance the
-      // first production task — not Storyboard, which precedes the .tnz work.
-      QString firstProd = tts.first();
-      for (const QString &tt : tts)
-        if (tt != "Storyboard") { firstProd = tt; break; }
-      TaskState &ts = ps.tasks[firstProd];
-      if (ts.status == TaskStatus::Todo || ts.status == TaskStatus::Ready) {
-        ts.status = TaskStatus::Wip;
+    // Opening the shot scene resumes work: walk the technique's tasks in order,
+    // skip Storyboard (the pre-.tnz board pass) and any already-Done task; the
+    // first not-Done task is the active one — if it's Ready (next up) or Retake
+    // (kicked back by review) it advances to Wip. value() avoids inserting empty
+    // Todo entries for tasks the artist hasn't reached yet.
+    for (const QString &tt : tts) {
+      if (tt == "Storyboard") continue;
+      const TaskStatus s = ps.tasks.value(tt).status;
+      if (s == TaskStatus::Done) continue;
+      if (s == TaskStatus::Ready || s == TaskStatus::Retake) {
+        ps.tasks[tt].status = TaskStatus::Wip;
         saveProjectDb();
         emit taskStatusChanged();
       }
+      break;  // first not-Done task handled — stop
     }
     break;
   }
@@ -649,6 +652,23 @@ QString ZtoryModel::techniqueForProjectShot(const ProjectShot &ps) const {
 QStringList ZtoryModel::taskTypesForProjectShot(const ProjectShot &ps) const {
   const Technique *t = findTechnique(techniqueForProjectShot(ps));
   return t ? t->taskTypes : QStringList();
+}
+
+QString ZtoryModel::firstProductionTaskType(const QString &technique) const {
+  const Technique *t = findTechnique(technique);
+  if (!t) return QString();
+  for (const QString &tt : t->taskTypes)
+    if (tt != "Storyboard") return tt;
+  return QString();
+}
+
+QString ZtoryModel::nextTaskType(const QString &technique,
+                                 const QString &afterTask) const {
+  const Technique *t = findTechnique(technique);
+  if (!t) return QString();
+  const int i = t->taskTypes.indexOf(afterTask);
+  if (i < 0 || i + 1 >= t->taskTypes.size()) return QString();
+  return t->taskTypes[i + 1];
 }
 
 std::vector<std::pair<int, int>> ZtoryModel::projectShotFrameRanges() const {

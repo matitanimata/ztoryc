@@ -240,6 +240,7 @@ class ZtoryModel : public QObject {
   std::vector<ZtoryClipEntry>       m_sharedClip;
   std::set<int>                     m_sharedSelection;
   NumberingConfig                   m_numberingConfig;
+  bool                              m_autoRenumber = true;  // global numbering mode
   ZtoryBurnInConfig                 m_burnIn;
 
   // Side-panel toggle: which panel types to show in animatic vs shot mode.
@@ -286,6 +287,14 @@ public:
   QString kitsuProjectId()   const { return m_kitsuProjectId; }
   QString kitsuProjectName() const { return m_kitsuProjectName; }
   bool    isKitsuLinked()    const { return !m_kitsuProjectId.isEmpty(); }
+  // True once at least one project shot has been created in Kitsu (has an id).
+  // The Board locks numbering to Keep mode in this case so shot labels stay put
+  // and the Kitsu links / statuses don't drift when a shot is added.
+  bool    hasKitsuShots()    const {
+    for (const ProjectShot &ps : m_projectShots)
+      if (!ps.kitsuShotId.isEmpty()) return true;
+    return false;
+  }
   void    setKitsuProject(const QString &id, const QString &name) {
     m_kitsuProjectId = id; m_kitsuProjectName = name;
   }
@@ -343,6 +352,15 @@ public:
   // Helper: effective technique for a ProjectShot (falls back to project default).
   QString techniqueForProjectShot(const ProjectShot &ps) const;
   QStringList taskTypesForProjectShot(const ProjectShot &ps) const;
+
+  // --- Status automation engine (shared task-order logic) --------------------
+  // First *production* task of a technique (the first one that isn't Storyboard);
+  // empty if the technique has none. Storyboard is the board/animatic pass that
+  // precedes the .tnz work, so production advances start from this task.
+  QString firstProductionTaskType(const QString &technique) const;
+  // The task that follows `afterTask` in the technique's order; empty if it is
+  // the last one (or not found). Drives the DONE → next-task-Ready cascade.
+  QString nextTaskType(const QString &technique, const QString &afterTask) const;
 
   // B3d — Naming convention
   // Resolve m_namingPattern substituting token map. Tokens: PROD, SEASON, EP,
@@ -474,6 +492,14 @@ public:
   void setNumberingConfig(const NumberingConfig &cfg);
   NumberingConfig       &numberingConfig()       { return m_numberingConfig; }
   const NumberingConfig &numberingConfig() const { return m_numberingConfig; }
+
+  // Numbering mode is GLOBAL (shared by every StoryboardPanel instance): the
+  // Board and the Shot-editor StoryStrip both renumber on add, so a per-panel
+  // flag let an Auto-mode panel clobber a Keep-mode panel's result. Keeping it
+  // on the model makes all panels agree. true = Auto (renumber all on insert),
+  // false = Keep (preserve existing labels, midpoint the new shot).
+  bool autoRenumber() const { return m_autoRenumber; }
+  void setAutoRenumber(bool on) { m_autoRenumber = on; }
 
   // Assign shotLabel + orderIndex to shot at si using the midpoint algorithm.
   // Falls back to alphabetical suffix (e.g. "SH010A") when no integer space.

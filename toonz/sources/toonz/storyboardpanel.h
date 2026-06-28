@@ -199,7 +199,9 @@ struct Shot {
   // Shot clipboard lives in ZtoryModel::sharedClip() — single source of truth
   // shared with the Animatic. The Board no longer keeps a local copy.
   int  m_fps;
-  bool m_autoRenumber;
+  // Numbering mode now lives in ZtoryModel (global, shared by all panels) —
+  // see ZtoryModel::autoRenumber(). Kept out of the panel to stop one panel's
+  // Auto mode from clobbering another panel's Keep mode on insert.
   // True while loadZtoryc() runs — suppresses the scriptFileChanged→saveZtoryc
   // re-save that would otherwise fire when loadZtoryc() publishes the
   // screenplay path it just read.
@@ -321,6 +323,9 @@ protected:
   void onPanelNavRequested(int shotIdx, int delta); // ◀ ▶ in collapsed view
   void onNumberingChanged(int comboIndex);
   void onNumberingConfig();   // opens the numbering settings dialog
+  // Lock numbering to Keep mode once shots exist in Kitsu, so adding a shot
+  // never renumbers existing ones (keeps labels + Kitsu links/statuses aligned).
+  void updateNumberingLock();
   void onRefreshPreviews();
   void onSetTechnique();
   void onXsheetChanged();

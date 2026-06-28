@@ -781,7 +781,8 @@ void KitsuClient::uploadPreviews(const QString &projectId,
   m_uplQueue     = uploads;
   m_ttIdByName.clear();
   m_uplTaskIdByKey.clear();
-  m_uplIndex = m_uplDone = 0;
+  m_uplTtCreate.clear();
+  m_uplTtIdx = m_uplIndex = m_uplDone = 0;
 
   // Reverse status map (Ztoryc TaskStatus -> Kitsu status id), same six pipeline
   // short names used by the task push, so Wfa/Done/etc. resolve correctly.
@@ -808,7 +809,33 @@ void KitsuClient::uplLoadTaskTypes() {
         m_ttIdByName.insert(o.value("name").toString().toLower(),
                             o.value("id").toString());
     }
-    uplLoadTasks();
+    // Distinct task-type ids the queue uploads to (so we can create the tasks if
+    // they don't exist yet — otherwise there's nothing to attach the preview to).
+    for (const KitsuPreviewUpload &u : m_uplQueue) {
+      const QString id = resolveTaskTypeId(u.taskType);
+      if (!id.isEmpty() && !m_uplTtCreate.contains(id)) m_uplTtCreate.push_back(id);
+    }
+    uplEnsureTasks();
+  });
+}
+
+void KitsuClient::uplEnsureTasks() {
+  // create-tasks is idempotent (only makes the missing ones); run it per used
+  // task-type so the shots have the task before we attach previews to it.
+  if (m_uplTtIdx >= m_uplTtCreate.size()) { uplLoadTasks(); return; }
+  const QString ttId = m_uplTtCreate[m_uplTtIdx];
+  emit shotsPushProgress(tr("Ensuring tasks (%1/%2)…")
+                             .arg(m_uplTtIdx + 1)
+                             .arg(m_uplTtCreate.size()));
+  QNetworkReply *r = authPost("/api/actions/projects/" + m_uplProjectId +
+                                  "/task-types/" + ttId + "/shots/create-tasks",
+                              "{}");
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { uplFail(errorMessage(r, b)); return; }
+    ++m_uplTtIdx;
+    uplEnsureTasks();
   });
 }
 
@@ -917,11 +944,28 @@ void KitsuClient::uplUploadFile(const QString &previewFileId,
   req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
   QNetworkReply *r = m_nam->post(req, mp);
   mp->setParent(r);  // multipart (and file) freed with the reply
-  connect(r, &QNetworkReply::finished, this, [this, r]() {
+  connect(r, &QNetworkReply::finished, this,
+          [this, r, previewFileId]() {
     r->deleteLater();
     const QByteArray b = r->readAll();
     if (r->error() != QNetworkReply::NoError) { uplFail(errorMessage(r, b)); return; }
     ++m_uplDone;
+    // Promote this preview to the shot's cover thumbnail so the grid shows the
+    // latest uploaded phase at a glance.
+    uplSetMainPreview(previewFileId);
+  });
+}
+
+void KitsuClient::uplSetMainPreview(const QString &previewFileId) {
+  QJsonObject body;
+  body["frame_number"] = 0;  // first frame of the clip as the shot thumbnail
+  QNetworkReply *r = authPut(
+      "/api/actions/preview-files/" + previewFileId + "/set-main-preview",
+      QJsonDocument(body).toJson(QJsonDocument::Compact));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    // Best-effort: the clip is already uploaded, so a failed thumbnail set must
+    // not abort the batch — just move on to the next entry.
     ++m_uplIndex;
     uplProcessNext();
   });

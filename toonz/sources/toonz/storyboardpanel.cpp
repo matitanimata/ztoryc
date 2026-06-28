@@ -1012,7 +1012,6 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     , m_columnsPerRow(qBound(1, (int)ZtoryBoardColumns, 8))
     , m_selectedShotIndex(-1)
     , m_fps(24)
-    , m_autoRenumber(true)
     , m_comboViewer(nullptr)
 {
   setObjectName("StoryboardPanel");
@@ -1445,6 +1444,11 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
           this, &StoryboardPanel::onNumberingChanged);
   connect(m_numberingBtn, &QToolButton::clicked,
           this, &StoryboardPanel::onNumberingConfig);
+  updateNumberingLock();  // freeze numbering if this project already has Kitsu shots
+  // Re-apply the lock whenever the project DB (re)loads — that's when the Kitsu
+  // shot ids become known (e.g. right after a push from the Connect dialog).
+  connect(ZtoryModel::instance(), &ZtoryModel::productionReloaded, this,
+          &StoryboardPanel::updateNumberingLock);
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
           this, &StoryboardPanel::refreshFromScene);
   connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
@@ -1719,7 +1723,7 @@ void StoryboardPanel::connectPanelWidget(PanelWidget *pw) {
     // If resetOnSeqChange is active, renumber all shots so SH numbers
     // are recalculated relative to their (new) sequence.
     const NumberingConfig &cfg = model->numberingConfig();
-    if (m_autoRenumber && cfg.resetOnSeqChange)
+    if (model->autoRenumber() && cfg.resetOnSeqChange)
       renumberAll();
     model->save();
     saveZtoryc();
@@ -1746,7 +1750,7 @@ void StoryboardPanel::renumberAll() {
   const int scale               = 100;
   for (int i = 0; i < (int)m_shots.size(); i++) {
     Shot &shot = m_shots[i];
-    if (m_autoRenumber) {
+    if (model->autoRenumber()) {
       // Auto mode: reassign ALL labels with clean sequential numbering.
       // This correctly handles inserts: the new shot takes the "next" position
       // and existing shots above it get renumbered (e.g. SH020→SH030).
@@ -3820,6 +3824,39 @@ void StoryboardPanel::refreshFromScene() {
       m_shots[si].panels[pi]->setNotes(m_shots[si].data.panels[pi].notes);
     }
   }
+  // Identity-preserving label restore (Keep mode). loadZtoryc() assigned labels
+  // by positional index, which misaligns after a middle insert from the timeline:
+  // the new empty column steals that index's label and every later shot's drawing
+  // appears to shift up (SH020 drawing → SH030). The xsheet column's stage-object
+  // name IS the shot label (kept in sync by updateColumnName) and it moves WITH
+  // the column on insert, so it's the reliable identity. Re-derive each shot's
+  // label from its column name: existing columns keep their real label; the
+  // freshly inserted column (default, non-label name) is cleared so renumberAll()
+  // gives it a midpoint label between its neighbours. Auto mode reassigns all by
+  // position anyway, so this only matters (and only runs) for Keep.
+  if (!ZtoryModel::instance()->autoRenumber()) {
+    const QString pfx = ZtoryModel::instance()->numberingConfig().shotPrefix;
+    TStageObjectTree *tree = xsh->getStageObjectTree();
+    for (int i = 0; i < (int)m_shots.size(); i++) {
+      int col = m_shots[i].data.xsheetColumn;
+      TStageObject *obj =
+          tree ? tree->getStageObject(TStageObjectId::ColumnId(col), false) : nullptr;
+      const QString name = obj ? QString::fromStdString(obj->getName()) : QString();
+      const bool looksLikeLabel = name.startsWith(pfx) &&
+                                  name.length() > pfx.length() &&
+                                  name.at(pfx.length()).isDigit();
+      if (looksLikeLabel) {
+        m_shots[i].data.shotLabel  = name;
+        m_shots[i].data.shotNumber = name;
+      } else {
+        m_shots[i].data.shotLabel.clear();  // fresh column → renumberAll midpoints it
+      }
+    }
+  }
+  // Freeze numbering BEFORE renumberAll: a Kitsu-linked project stores labels
+  // with Keep-mode suffixes (e.g. SH040A); auto-renumber here would overwrite
+  // them with clean sequential labels and desync the Kitsu links.
+  updateNumberingLock();
   renumberAll();
   rebuildGrid();
   // Re-sync labels + xsheet columns AFTER renumberAll so ZtoryModel always
@@ -4345,6 +4382,10 @@ void StoryboardPanel::onDeleteShot() {
 void StoryboardPanel::onAddShot() {
   auto before = captureSnapshot();
 
+  // Enforce Keep numbering if shots already live in Kitsu, so this insert can't
+  // renumber existing shots out from under their Kitsu links / statuses.
+  updateNumberingLock();
+
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (scene && scene->getChildStack()->getAncestorCount() > 0)
@@ -4383,10 +4424,14 @@ void StoryboardPanel::onAddShot() {
   PanelData pd;
   pd.startFrame = 0;
   pd.duration = duration;
-  shot.data.panels.push_back(pd);
+  // Assign the uuid up front (before addPanelWidget renders the first preview):
+  // updatePreview only warms the Production Tracker thumbnail cache when the shot
+  // has a uuid, so without this the new shot's thumbnail is never cached and the
+  // tracker shows a blank cell.
+  shot.data.uuid = makeSourcedUuid(QFileInfo(ztoryPath()).fileName());
   m_shots.insert(m_shots.begin() + insertAt, shot);
   addPanelWidget(insertAt, 0);
-  if (!m_autoRenumber) assignKeepNumbers(insertAt);
+  if (!ZtoryModel::instance()->autoRenumber()) assignKeepNumbers(insertAt);
   renumberAll();
   resequenceXsheet();
   rebuildGrid();
@@ -4731,12 +4776,12 @@ void StoryboardPanel::onPanelNavRequested(int shotIdx, int delta) {
 
 void StoryboardPanel::onNumberingChanged(int comboIndex) {
   if (comboIndex == 0) {
-    m_autoRenumber = true;
+    ZtoryModel::instance()->setAutoRenumber(true);
     // Non rinumera subito - lo farà al prossimo addShot
   } else if (comboIndex == 1) {
-    m_autoRenumber = false;
+    ZtoryModel::instance()->setAutoRenumber(false);
   } else if (comboIndex == 2) {
-    m_autoRenumber = true;
+    ZtoryModel::instance()->setAutoRenumber(true);
     for (int i = 0; i < (int)m_shots.size(); i++)
       m_shots[i].data.shotNumber = QString("%1").arg(i+1, 2, 10, QChar(48));
     renumberAll();
@@ -4745,6 +4790,35 @@ void StoryboardPanel::onNumberingChanged(int comboIndex) {
     m_numberingCombo->blockSignals(false);
   }
   saveZtoryc();
+}
+
+void StoryboardPanel::updateNumberingLock() {
+  if (!m_numberingCombo) return;
+  // Once shots are created in Kitsu, lock to Keep # so existing shot labels stay
+  // put — auto/renumber would shift them (SH020→SH030…) and desync the Kitsu
+  // links + Production Tracker statuses. New shots get a letter suffix instead.
+  const bool lock = ZtoryModel::instance()->hasKitsuShots();
+  if (lock) {
+    ZtoryModel::instance()->setAutoRenumber(false);
+    m_numberingCombo->blockSignals(true);
+    m_numberingCombo->setCurrentIndex(1);  // "Keep #"
+    m_numberingCombo->blockSignals(false);
+    m_numberingCombo->setEnabled(false);
+    m_numberingCombo->setToolTip(
+        tr("Locked to Keep # — shots exist in Kitsu, so numbering is frozen to "
+           "keep their links and statuses aligned."));
+  } else {
+    m_numberingCombo->setEnabled(true);
+    m_numberingCombo->setToolTip(QString());
+    // Mirror the GLOBAL numbering mode so every panel's combo agrees (Auto=0,
+    // Keep=1) — the mode lives on the model, not per-panel.
+    const int want = ZtoryModel::instance()->autoRenumber() ? 0 : 1;
+    if (m_numberingCombo->currentIndex() != want && want < m_numberingCombo->count()) {
+      m_numberingCombo->blockSignals(true);
+      m_numberingCombo->setCurrentIndex(want);
+      m_numberingCombo->blockSignals(false);
+    }
+  }
 }
 
 void StoryboardPanel::onNumberingConfig() {
@@ -4844,7 +4918,7 @@ void StoryboardPanel::onNumberingConfig() {
   cfg.resetOnSeqChange = resetOnSeqCB->isChecked();
 
   // If in auto-renumber mode, renumber all shots immediately (also updates visibility).
-  if (m_autoRenumber) {
+  if (ZtoryModel::instance()->autoRenumber()) {
     renumberAll();
     saveZtoryc();
   } else {
@@ -5160,17 +5234,22 @@ void StoryboardPanel::onExportShots() {
         f.close();
       }
 
-      // Export advances ONLY the first task after the storyboard (usually
-      // Layout) Todo→Ready; later tasks stay Todo.
+      // Export = the storyboard is locked in: mark Storyboard Done and advance
+      // the first production task (usually Layout) Todo→Ready; later tasks stay
+      // Todo until each predecessor is approved.
       QStringList tts;
       if (const Technique *t = model->findTechnique(tech)) tts = t->taskTypes;
-      if (!tts.isEmpty())
-        for (ProjectShot &ps : model->projectShots_rw()) {
-          if (ps.uuid != sd.uuid) continue;
-          TaskState &st = ps.tasks[tts.first()];
+      const QString firstProd = model->firstProductionTaskType(tech);
+      for (ProjectShot &ps : model->projectShots_rw()) {
+        if (ps.uuid != sd.uuid) continue;
+        if (tts.contains("Storyboard"))
+          ps.tasks["Storyboard"].status = TaskStatus::Done;
+        if (!firstProd.isEmpty()) {
+          TaskState &st = ps.tasks[firstProd];
           if (st.status == TaskStatus::Todo) st.status = TaskStatus::Ready;
-          break;
         }
+        break;
+      }
     }
   }
 

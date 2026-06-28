@@ -270,6 +270,7 @@ private:
 
   // --- Preview upload (Phase 4) — sequential async, 3 steps per entry ----
   void uplLoadTaskTypes();
+  void uplEnsureTasks();  // create-tasks for the task-types we'll upload to
   void uplLoadTasks();
   void uplProcessNext();
   void uplPostComment(const QString &taskId, const QString &statusId,
@@ -277,11 +278,14 @@ private:
   void uplAddPreview(const QString &taskId, const QString &commentId,
                      const QString &filePath, const QString &shot);
   void uplUploadFile(const QString &previewFileId, const QString &filePath);
+  void uplSetMainPreview(const QString &previewFileId);  // -> shot thumbnail
   void uplFail(const QString &message);
 
   QString m_uplProjectId;
   QVector<KitsuPreviewUpload> m_uplQueue;
   QHash<QString, QString> m_uplTaskIdByKey;  // "entityId/ttId" -> task id
+  QVector<QString>        m_uplTtCreate;     // distinct task-type ids to ensure
+  int m_uplTtIdx = 0;
   int m_uplIndex = 0;
   int m_uplDone  = 0;
 

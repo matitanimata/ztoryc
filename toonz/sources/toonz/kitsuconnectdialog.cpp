@@ -266,6 +266,24 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
   connect(m_client, &KitsuClient::previewsUploaded, this,
           [this](bool ok, int, const QString &msg) {
             setBusy(false);
+            // Mirror the WFA the upload set on Kitsu into the local tracker
+            // (only on success; a later pull would also bring it back).
+            if (ok && !m_pendingPreviewStatus.isEmpty()) {
+              ZtoryModel *m = ZtoryModel::instance();
+              auto &pshots  = m->projectShots_rw();
+              bool dirty    = false;
+              for (const auto &pr : m_pendingPreviewStatus)
+                for (ProjectShot &ps : pshots)
+                  if (ps.uuid == pr.first) {
+                    if (ps.tasks[pr.second].status != TaskStatus::Wfa) {
+                      ps.tasks[pr.second].status = TaskStatus::Wfa;
+                      dirty = true;
+                    }
+                    break;
+                  }
+              if (dirty) m->saveAndNotifyTasks();
+            }
+            m_pendingPreviewStatus.clear();
             updateBindingButtons();
             m_statusLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
             m_statusLabel->setText(msg);
@@ -310,6 +328,17 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
                       ps.tasks[tt].status = e.status;
                       ++updated;
                       dirty = true;
+                    }
+                    // Approval cascade: a task going Done unblocks the next one
+                    // (Todo→Ready), so the pipeline advances itself on review.
+                    if (e.status == TaskStatus::Done) {
+                      const QString nxt = m->nextTaskType(
+                          m->techniqueForProjectShot(ps), tt);
+                      if (!nxt.isEmpty() &&
+                          ps.tasks.value(nxt).status == TaskStatus::Todo) {
+                        ps.tasks[nxt].status = TaskStatus::Ready;
+                        dirty = true;
+                      }
                     }
                     break;
                   }
@@ -362,6 +391,7 @@ void KitsuConnectDialog::onPullStatusClicked() {
 void KitsuConnectDialog::onUploadPreviewsClicked() {
   ZtoryModel *m = ZtoryModel::instance();
   if (!m->isKitsuLinked()) return;
+  m_pendingPreviewStatus.clear();
 
   const auto &pshots = m->projectShots();
   if (pshots.empty()) {
@@ -407,13 +437,28 @@ void KitsuConnectDialog::onUploadPreviewsClicked() {
     }
     if (!match) { ++unmatched; continue; }
     if (match->kitsuShotId.isEmpty()) { ++noId; continue; }
+    // Detect which task the clip belongs to from its name, using the short codes
+    // ({TASK} token in the naming pattern) of THIS shot's technique only — so a
+    // "..._LAY_..." render lands on Layout and "..._ANIM_..." on Animation.
+    // Board/animatic previews carry no task code and default to Storyboard.
+    QString task    = "Storyboard";
+    int     codeLen = 0;
+    for (const QString &tt : m->taskTypesForProjectShot(*match)) {
+      const QString code = ZtoryModel::taskShortCode(tt);
+      if (!code.isEmpty() && base.contains(code, Qt::CaseInsensitive) &&
+          code.length() > codeLen) {
+        task    = tt;
+        codeLen = code.length();
+      }
+    }
     KitsuPreviewUpload u;
     u.kitsuShotId = match->kitsuShotId;
     u.shot        = match->label.trimmed();
-    u.taskType    = "Storyboard";
+    u.taskType    = task;
     u.filePath    = fi.absoluteFilePath();
     u.status      = TaskStatus::Wfa;
     uploads.push_back(u);
+    m_pendingPreviewStatus.push_back(qMakePair(match->uuid, u.taskType));
   }
 
   if (uploads.isEmpty()) {
@@ -426,10 +471,16 @@ void KitsuConnectDialog::onUploadPreviewsClicked() {
 
   setBusy(true);
   m_statusLabel->setStyleSheet(QString());
+  // Surface skipped clips so a not-yet-pushed shot (no Kitsu id) is visible
+  // rather than silently dropped — the user knows to push shots again.
+  QStringList skips;
+  if (unmatched) skips << tr("%1 unmatched").arg(unmatched);
+  if (noId)      skips << tr("%1 not on Kitsu yet").arg(noId);
   m_statusLabel->setText(
       tr("Uploading %1 previews…%2")
           .arg(uploads.size())
-          .arg(unmatched ? tr(" (%1 unmatched)").arg(unmatched) : QString()));
+          .arg(skips.isEmpty() ? QString()
+                               : QString(" (") + skips.join(", ") + ")"));
   m_client->uploadPreviews(m->kitsuProjectId(), uploads);
 }
 

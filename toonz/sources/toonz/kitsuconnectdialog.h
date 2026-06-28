@@ -55,4 +55,7 @@ private:
   QTableWidget *m_statusTable  = nullptr;
   // Task statuses to push right after the shots land (Phase 3b).
   QVector<KitsuTaskPush> m_pendingTasks;
+  // (projectShot uuid, taskType) of the previews being uploaded — applied as
+  // WFA in the local tracker once previewsUploaded() reports success.
+  QVector<QPair<QString, QString>> m_pendingPreviewStatus;
 };
