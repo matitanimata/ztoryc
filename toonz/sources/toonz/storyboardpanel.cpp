@@ -3425,7 +3425,14 @@ void StoryboardPanel::onModelResequenced() {
                    ? TApp::instance()->getCurrentScene()->getScene()->getChildStack()->getTopXsheet()
                    : nullptr;
   if (!xsh) return;
-  int xshShotCount = 0;
+  // Ground truth = the ordered list of child-level (shot) columns in the scene.
+  // EVERY Board instance (Board room, Shot board, floating) must match it, so we
+  // rebuild whenever this panel's shot list disagrees in COUNT *or ORDER*. The
+  // old check compared count only: a panel whose local m_shots had the right
+  // count but a shot at the wrong position (e.g. a second board that inserted at
+  // its own stale selection) silently stayed desynced — showing a different
+  // layout and, in the worst case, holding a shot with no panel widget.
+  std::vector<int> childCols;
   for (int col = 0; col < xsh->getColumnCount(); col++) {
     TXshColumn *column = xsh->getColumn(col);
     if (!column || column->isEmpty()) continue;
@@ -3434,14 +3441,18 @@ void StoryboardPanel::onModelResequenced() {
     for (int r = r0; r <= r1; r++) {
       TXshCell cell = xsh->getCell(r, col);
       if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
-        xshShotCount++;
+        childCols.push_back(col);
         break;
       }
     }
   }
-  if (xshShotCount != (int)m_shots.size()) {
-    qWarning("[ZTORY] onModelResequenced: xshShotCount=%d != shots=%d -> full rebuild",
-             xshShotCount, (int)m_shots.size());
+  bool drifted = (childCols.size() != m_shots.size());
+  for (int si = 0; !drifted && si < (int)m_shots.size(); si++)
+    if (m_shots[si].data.xsheetColumn != childCols[si]) drifted = true;
+  if (drifted) {
+    qWarning("[ZTORY] onModelResequenced: scene has %d shot columns, panel has %d "
+             "(or order differs) -> full rebuild",
+             (int)childCols.size(), (int)m_shots.size());
     refreshFromScene();
     // refreshFromScene() rebuilds the grid with blank thumbnails (lazy by
     // design, so scene LOAD never freezes). This branch only runs after an
