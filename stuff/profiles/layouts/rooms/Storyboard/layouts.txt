@@ -1,3 +1,5 @@
+tracker.ini
+thumbs.ini
 ztoryc.ini
 ztoryt.ini
 browser.ini

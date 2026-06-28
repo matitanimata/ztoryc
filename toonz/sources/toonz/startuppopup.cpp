@@ -965,6 +965,8 @@ void StartupPopup::refreshExistingScenes(TFilePath scenesFolder) {
     }
   }
   m_existingList->addScene(tr("New Scene"), ":");
+  // Production Tracker tile: opens the project tracker standalone (no scene).
+  m_existingList->addScene(tr("Production Tracker"), ":PT");
 
   QList<QString> recentFiles =
       RecentFiles::instance()->getFilesNameList(RecentFiles::Scene);
@@ -978,6 +980,18 @@ void StartupPopup::onExistingSceneClicked(int index) {
   if (m_mode == LoadSubSceneMode) return;
 
   QString path = m_existingList->getPath(index);
+  if (path == ":PT") {
+    // Open the Production Tracker as a full-screen room (no scene needed): enter
+    // the Storyboard workflow, then switch to its "Production Tracker" room. The
+    // tracker loads the current project's production.ztrack on show and saves
+    // edits immediately, so it works as a standalone "production" workspace.
+    CommandManager::instance()->execute(MI_WorkflowStoryboard);
+    if (MainWindow *mw =
+            dynamic_cast<MainWindow *>(TApp::instance()->getMainWindow()))
+      mw->switchToRoom("Production Tracker");  // matches tracker.ini name= literal
+    hide();
+    return;
+  }
   if (path == ":") {
     m_scenesTab->setCurrentIndex(1);
     m_nameFld->setFocus();
@@ -1023,7 +1037,7 @@ void StartupPopup::onLoadSelectedButton() {
   if (selected.isEmpty()) return;
   for (QListWidgetItem *item : selected) {
     QString path = item->data(Qt::UserRole).toString();
-    if (path.isEmpty() || path == ":") continue;
+    if (path.isEmpty() || path == ":" || path == ":PT") continue;
     IoCmd::loadSubScene(TFilePath(path.toStdWString()));
   }
   hide();
@@ -1812,13 +1826,33 @@ void StartupScenesList::addScene(const QString &name, const QString &path) {
   if (path == ":")
     pixmap =
         generateIconPixmap("new_scene", 1.0, m_iconSize, Qt::KeepAspectRatio);
-  else
+  else if (path == ":PT") {
+    // Special "Production Tracker" tile — opens the tracker standalone (no scene).
+    // A light-blue "PT" pill, mirroring the storyboard "SB" badge.
+    pixmap = QPixmap(m_iconSize);
+    pixmap.fill(QColor(38, 42, 48));
+    QPainter p(&pixmap);
+    p.setRenderHint(QPainter::Antialiasing);
+    QFont f = p.font(); f.setBold(true); f.setPixelSize(28); p.setFont(f);
+    p.setPen(QColor(80, 190, 245));
+    p.drawText(pixmap.rect(), Qt::AlignCenter, "PT");
+    const int pad = 3, h = 14, r = 4;
+    QString label("PT");
+    QFont bf = p.font(); bf.setBold(true); bf.setPixelSize(9); p.setFont(bf);
+    int w = p.fontMetrics().horizontalAdvance(label) + pad * 2 + 2;
+    QRect badge(pad, pixmap.height() - h - pad, w, h);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(40, 160, 230, 230));  // azzurro
+    p.drawRoundedRect(badge, r, r);
+    p.setPen(Qt::white);
+    p.drawText(badge, Qt::AlignCenter, label);
+  } else
     pixmap = createScenePreview(name, TFilePath(path));
 
   // Storyboard badge: if a .ztoryc sidecar with role="storyboard" exists, paint
   // an "SB" pill over the thumbnail so the user can tell storyboard scenes from
   // regular ones. Exported shot scenes (role="shot") are NOT storyboards.
-  if (path != ":") {
+  if (path != ":" && path != ":PT") {
     QString ztoryPath = path;
     ztoryPath.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
     bool isStoryboard = false;
