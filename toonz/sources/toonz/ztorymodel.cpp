@@ -540,6 +540,12 @@ void ZtoryModel::loadProjectDb() {
   if (fp == TFilePath()) return;
   QFile file(QString::fromStdWString(fp.getWideString()));
   if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    // This project has no production.ztrack yet. CRITICAL: do NOT saveProjectDb()
+    // with the model still holding the PREVIOUS project's data — that wrote one
+    // project's shots/meta into another project's .ztrack (cross-project
+    // contamination, observed when switching project then opening its Tracker).
+    // Start from a clean slate, then seed an empty DB for this project.
+    resetProjectLevelDefaults();
     saveProjectDb();
     return;
   }
@@ -548,6 +554,13 @@ void ZtoryModel::loadProjectDb() {
 
 // Internal: parse a production.ztrack XML from an already-opened device.
 void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
+  // Full clean slate before repopulating from THIS project's file. Some fields
+  // are written conditionally (e.g. defaultTechnique, namingPattern, code), so
+  // without a reset they would silently retain the previously-loaded project's
+  // values — a subtle cross-project leak. Shots/team/assets are replaced wholesale
+  // below; resetting first guarantees no field survives from another project.
+  resetProjectLevelDefaults();
+
   QStringList team;
   std::vector<Technique> techs;
   std::vector<Asset> assets;

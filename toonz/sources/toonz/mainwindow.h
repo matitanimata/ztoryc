@@ -108,6 +108,11 @@ public:
   Room *getRoom(int index) const;
   Room *getRoomByName(QString &roomName);
   void switchToRoom(const QString &name);
+  // Toggle main-window chrome (TopBar menubar + room tabs, native menu entries,
+  // main toolbar) for the current room: hidden in the standalone Production
+  // room, restored elsewhere. Idempotent; called on room change AND at startup
+  // (which restores the last room directly, bypassing switchRoomChoice).
+  void applyRoomChrome();
   // Enter the standalone "Production" room set (just the Production Tracker, no
   // other rooms — it's not a scene). Loading/creating a scene leaves it by
   // re-applying a normal workflow's rooms.

@@ -988,6 +988,13 @@ void StartupPopup::onExistingSceneClicked(int index) {
     if (MainWindow *mw =
             dynamic_cast<MainWindow *>(TApp::instance()->getMainWindow()))
       mw->enterProductionTrackerRoom();
+    // enterProductionTrackerRoom() no-ops when we are ALREADY in the Production
+    // room (e.g. the user picked a different project, then the PT tile again):
+    // the tracker's showEvent won't re-fire, so it would keep showing the old
+    // project. Force a reload of the (now current) project's DB and notify the
+    // panel to rebuild every tab.
+    ZtoryModel::instance()->loadProjectDb();
+    emit ZtoryModel::instance()->productionReloaded();
     hide();
     return;
   }

@@ -35,6 +35,10 @@ class ZtoryProductionPanel final : public TPanel {
   Q_OBJECT
 
   QTabWidget   *m_tabs  = nullptr;
+  // Exit bar: shown only when the tracker runs as the standalone Production
+  // room (which has no File menu) so the user can leave by opening a scene.
+  QWidget      *m_exitBar      = nullptr;
+  QPushButton  *m_openSceneBtn = nullptr;
   // Shots tab
   QTableWidget *m_table = nullptr;
   QStringList   m_taskCols;   // task-type per column (index 0 == table column 1)
@@ -114,4 +118,7 @@ private slots:
   void onAssetCellClicked(int row, int col);
   void onAssetItemChanged(QTableWidgetItem *it);
   void onAssetContextMenu(const QPoint &pos);
+  // Leave the standalone Production room: open the Startup screen so the user
+  // can load or create a scene (re-applies a normal workflow's rooms).
+  void onOpenScene();
 };

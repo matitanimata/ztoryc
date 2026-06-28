@@ -3,6 +3,8 @@
 #include "ztorymodel.h"
 #include "storyboardpanel.h"
 #include "kitsuconnectdialog.h"
+#include "startuppopup.h"
+#include "toonz/preferences.h"  // getCurrentRoomChoice (exit-bar gating)
 
 #include "toonzqt/gutil.h"
 
@@ -103,12 +105,32 @@ StoryboardPanel *findBoard() {
   return nullptr;
 }
 
-void persistViaBoard() {
-  if (auto *b = findBoard()) b->saveZtoryc();
+// Tracker edits change production.ztrack / the .ztoryc, never the .tnz scene.
+// In standalone mode (the Production room opened without a scene) the undo
+// registration and TUndoManager notifications would otherwise flag the empty
+// untitled scene "modified" (Untitled*), triggering a spurious "save scene?"
+// prompt when the user later loads/creates a scene to leave. Clear it after
+// every tracker persist — a titled scene is left untouched.
+void clearUntitledSceneDirty() {
+  TApp *app = TApp::instance();
+  if (app->getCurrentScene() && app->getCurrentScene()->getScene() &&
+      app->getCurrentScene()->getScene()->isUntitled())
+    app->getCurrentScene()->setDirtyFlag(false);
 }
 
+void persistViaBoard() {
+  if (auto *b = findBoard()) b->saveZtoryc();
+  clearUntitledSceneDirty();
+}
+
+// Project-level data (shot aggregation, assets, team, meta) lives in
+// production.ztrack, not the .ztoryc.
+void persistProjectDb() {
+  ZtoryModel::instance()->saveProjectDb();
+  clearUntitledSceneDirty();
+}
 // Assets are project-level: they live in production.ztrack, not the .ztoryc.
-void persistAssets() { ZtoryModel::instance()->saveProjectDb(); }
+void persistAssets() { persistProjectDb(); }
 
 // Undo for a single per-task status edit. Keyed by stable shotLabel so it
 // survives shot reordering between the edit and its undo.
@@ -263,11 +285,11 @@ public:
       : m_uuid(uuid), m_taskType(taskType), m_old(o), m_new(n) {}
   void undo() const override {
     ZtoryModel::instance()->setProjectShotTaskStatusByUuid(m_uuid, m_taskType, m_old);
-    ZtoryModel::instance()->saveProjectDb();
+    persistProjectDb();
   }
   void redo() const override {
     ZtoryModel::instance()->setProjectShotTaskStatusByUuid(m_uuid, m_taskType, m_new);
-    ZtoryModel::instance()->saveProjectDb();
+    persistProjectDb();
   }
   int getSize() const override { return sizeof(*this); }
   QString getHistoryString() override {
@@ -284,11 +306,11 @@ public:
       : m_uuid(uuid), m_taskType(taskType), m_old(o), m_new(n) {}
   void undo() const override {
     ZtoryModel::instance()->setProjectShotAssigneesByUuid(m_uuid, m_taskType, m_old);
-    ZtoryModel::instance()->saveProjectDb();
+    persistProjectDb();
   }
   void redo() const override {
     ZtoryModel::instance()->setProjectShotAssigneesByUuid(m_uuid, m_taskType, m_new);
-    ZtoryModel::instance()->saveProjectDb();
+    persistProjectDb();
   }
   int getSize() const override { return sizeof(*this); }
   QString getHistoryString() override {
@@ -351,8 +373,31 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   m_tabs->addTab(buildAssetsTab(),    QObject::tr("Assets"));
   m_tabs->addTab(buildWorkflowsTab(), QObject::tr("Workflows"));
 
+  // Exit bar — only meaningful when the tracker IS the standalone Production
+  // room (no File menu there). A button reopens the Startup screen so the user
+  // can load/create a scene and thereby leave the room. Hidden when docked in a
+  // normal room; toggled in showEvent() based on the current room.
+  m_exitBar     = new QWidget(this);
+  auto *barLay  = new QHBoxLayout(m_exitBar);
+  barLay->setContentsMargins(4, 4, 4, 2);
+  m_openSceneBtn = new QPushButton(QObject::tr("← Open or Create Scene…"),
+                                   m_exitBar);
+  m_openSceneBtn->setToolTip(
+      QObject::tr("Leave the Production room: load or create a scene"));
+  connect(m_openSceneBtn, &QPushButton::clicked, this,
+          &ZtoryProductionPanel::onOpenScene);
+  barLay->addWidget(m_openSceneBtn);
+  barLay->addStretch();
+  m_exitBar->hide();  // shown only in the standalone Production room
+
   // TPanel (a TDockWidget) mounts its content via setWidget, not setLayout.
-  setWidget(m_tabs);
+  QWidget *container = new QWidget(this);
+  auto *outer        = new QVBoxLayout(container);
+  outer->setContentsMargins(0, 0, 0, 0);
+  outer->setSpacing(0);
+  outer->addWidget(m_exitBar);
+  outer->addWidget(m_tabs);
+  setWidget(container);
 
   ZtoryModel *m = ZtoryModel::instance();
   connect(m, &ZtoryModel::modelReset,        this, &ZtoryProductionPanel::onModelChanged);
@@ -481,6 +526,30 @@ void ZtoryProductionPanel::showEvent(QShowEvent *e) {
   // This also picks up a project switch made while the tracker was hidden.
   ZtoryModel::instance()->loadProjectDb();
   onModelChanged();  // rebuild every tab from the freshly loaded DB
+
+  // Show the exit bar only when this tracker IS the standalone Production room.
+  // Gate on the room *choice* ("Production", the room-set folder name), not the
+  // room's display name (which is "Production Tracker").
+  bool standalone =
+      (Preferences::instance()->getCurrentRoomChoice() == "Production");
+  if (m_exitBar) m_exitBar->setVisible(standalone);
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoryProductionPanel::onOpenScene() {
+  // Reopen the Startup screen (full DefaultMode: create + load + recents,
+  // including the Production Tracker tile). Loading or creating a scene from
+  // here re-applies a normal workflow's rooms, leaving the Production room.
+  if (StartupPopup *p = StartupPopup::visibleDefaultInstance()) {
+    p->raise();
+    p->activateWindow();
+    return;
+  }
+  StartupPopup *popup = new StartupPopup(StartupPopup::DefaultMode);
+  popup->show();
+  popup->raise();
+  popup->activateWindow();
 }
 
 //-----------------------------------------------------------------------------
@@ -1327,17 +1396,6 @@ void ZtoryProductionPanel::onAssetContextMenu(const QPoint &pos) {
   rebuildAssets();
 }
 
-// Tracker edits change production.ztrack, not the .tnz scene. In standalone mode
-// (the Production room opened without a scene) the undo registration would
-// otherwise leave the empty untitled scene flagged "modified" (Untitled*). Clear
-// that — a titled scene is left untouched.
-static void clearUntitledSceneDirty() {
-  TApp *app = TApp::instance();
-  if (app->getCurrentScene() && app->getCurrentScene()->getScene() &&
-      app->getCurrentScene()->getScene()->isUntitled())
-    app->getCurrentScene()->setDirtyFlag(false);
-}
-
 void ZtoryProductionPanel::editAssetCell(int row, int col) {
   const int kFixed = 2;
   const int ti     = col - kFixed;
@@ -1789,7 +1847,7 @@ void ZtoryProductionPanel::onCellClicked(int row, int col) {
       if (row < 0 || row >= (int)m->projectShots().size()) return;
       const QString uuid = m->projectShots()[row].uuid;
       m->setProjectShotTechnique(uuid, ch->data().toString());
-      m->saveProjectDb();
+      persistProjectDb();
     } else {
       if (row < 0 || row >= m->shotCount()) return;
       m->shot(row).technique = ch->data().toString();
@@ -1912,7 +1970,7 @@ void ZtoryProductionPanel::onShotContextMenu(const QPoint &pos) {
     }
   }
   TUndoManager::manager()->endBlock();
-  if (usePS) m->saveProjectDb(); else persistViaBoard();
+  if (usePS) persistProjectDb(); else persistViaBoard();
   rebuild();
 }
 
@@ -1939,13 +1997,13 @@ void ZtoryProductionPanel::editCell(int row, int col) {
     if (r.kind == TaskEditResult::Status) {
       if (r.status == oldStatus) return;
       m->setProjectShotTaskStatusByUuid(uuid, taskType, r.status);
-      m->saveProjectDb();
+      persistProjectDb();
       TUndoManager::manager()->add(
           new ProjectShotStatusUndo(uuid, taskType, oldStatus, r.status));
     } else if (r.kind == TaskEditResult::Assignees) {
       if (r.assignees == oldAssign) return;
       m->setProjectShotAssigneesByUuid(uuid, taskType, r.assignees);
-      m->saveProjectDb();
+      persistProjectDb();
       TUndoManager::manager()->add(
           new ProjectShotAssigneeUndo(uuid, taskType, oldAssign, r.assignees));
     }

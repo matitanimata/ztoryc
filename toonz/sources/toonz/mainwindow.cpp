@@ -1468,6 +1468,24 @@ void MainWindow::switchRoomChoice(const QString &choice) {
           SLOT(setCurrentIndex(int)));
   m_isSwitchingRooms = false;
   updateWorkflowMenuChecks();
+  applyRoomChrome();
+}
+
+void MainWindow::applyRoomChrome() {
+  // The standalone Production room is a focused, scene-less workspace: hide the
+  // TopBar (it carries both the Ztoryc menubar and the room tabs) and the main
+  // toolbar so only the tracker — which provides its own "Open or Create Scene"
+  // button to leave — is shown. Every other room restores the normal chrome.
+  bool productionRoom =
+      (Preferences::instance()->getCurrentRoomChoice() == "Production");
+  m_topBar->setVisible(!productionRoom);
+  m_mainToolbar->setVisible(!productionRoom && ShowMainToolbarAction == 1);
+  // On macOS the QMenuBar is rendered natively (top of the screen), detached
+  // from the TopBar widget — hiding the TopBar doesn't hide it. Toggle each
+  // top-level menu (File, Edit, Scene, …) so the Production room shows a clean
+  // menu (macOS keeps only the mandatory Apple/app menu).
+  if (QMenuBar *mb = m_topBar->getMenuBar())
+    for (QAction *a : mb->actions()) a->setVisible(!productionRoom);
 }
 
 void MainWindow::updateWorkflowMenuChecks() {
@@ -1640,6 +1658,7 @@ void MainWindow::onCurrentRoomChanged(int newRoomIndex) {
   // Re-evaluate Ztoryc toolbar dedup for the room we just entered (deferred so
   // any panel re-parenting above has settled).
   QTimer::singleShot(0, this, [this] { updateZtoryToolbarDedup(); });
+  applyRoomChrome();
 }
 
 //-----------------------------------------------------------------------------
@@ -1767,6 +1786,10 @@ void MainWindow::onMenuCheckboxChanged() {
 void MainWindow::showEvent(QShowEvent *event) {
   getCurrentRoom()->layout()->setEnabled(true);  // See main function in
                                                  // main.cpp
+  // Startup restores the last room directly (bypassing switchRoomChoice), so
+  // apply the room chrome here too — otherwise relaunching into the Production
+  // room would still show the normal menubar/toolbars.
+  applyRoomChrome();
 }
 extern const char *applicationName;
 extern const char *applicationVersion;

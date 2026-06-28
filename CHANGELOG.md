@@ -1,3 +1,37 @@
+## [2026-06-28b] — Production Tracker standalone: rifiniture + fix contaminazione → RELEASE v0.7.0
+
+Sessione di rifinitura della room Production standalone. Branch
+**feature/kitsu-m5-phase3b** mergiato in **master** e rilasciato come **v0.7.0**
+(prima release con l'intera integrazione Kitsu M5 + export DaVinci/FCPXML +
+Production Tracker di progetto).
+
+### Fixed — Production Tracker standalone
+- **Cambio status non sporca piu' la scena**: editare uno status/assignee/tecnica nel
+  tracker non chiede piu' di salvare una scena. La registrazione undo marcava la scena
+  untitled come "modificata"; ora la pulizia del dirty-flag e' centralizzata nelle
+  funzioni di persist (persistViaBoard/persistProjectDb/persistAssets), quindi copre
+  anche il context-menu batch e undo/redo. (ztoryproductionpanel.cpp)
+- **Contaminazione cross-progetto degli shot** (in memoria E su disco): aprendo il
+  tracker di un progetto senza production.ztrack, il modello veniva salvato con ancora
+  dentro gli shot/metadati del progetto precedente -> finivano nel .ztrack dell'altro
+  progetto. Ora loadProjectDb() resetta i dati di progetto prima di creare il DB vuoto,
+  e loadProjectDbFromDevice() resetta prima di ripopolare dal file. (ztorymodel.cpp)
+- **Tile "Production Tracker" non ricaricava il progetto corrente**: rientrando nel tile
+  (es. dopo aver cambiato progetto) la room non si ricostruiva e il tracker restava sul
+  progetto precedente. Ora forza loadProjectDb() + productionReloaded. (startuppopup.cpp)
+
+### Added — Production Tracker standalone
+- **Uscita dalla room**: pulsante "<- Open or Create Scene..." in cima al tracker (solo
+  nella room Production standalone) che riapre la Startup page per caricare/creare una scena.
+- **Chrome pulita**: nella room Production la menubar nativa (File/Edit/...), i tab room e la
+  main toolbar sono nascosti - resta solo il tracker + il pulsante. Applicato anche al
+  riavvio dell'app (helper applyRoomChrome chiamato da room-change e startup). (mainwindow.cpp)
+
+### Upstream candidates
+- Nessuno (codice Ztoryc-specifico).
+
+---
+
 ## [2026-06-28] — Fix export FCPXML, automazione status, sync multi-board, Kitsu opt-in, room Production (branch feature/kitsu-m5-phase3b)
 
 Sessione lunghissima. Tutto su **feature/kitsu-m5-phase3b** (NON mergiato in master).
