@@ -225,6 +225,7 @@ class ZtoryModel : public QObject {
   QString                           m_namingPattern; // export naming convention (B3d)
   // Kitsu (M5) — project metadata kept aligned with the bound Kitsu project so
   // the Production Tracker mirrors it as closely as possible.
+  bool                              m_useKitsu = false; // opt-in Kitsu sync UI
   QString                           m_kitsuProjectId;   // empty = not linked
   QString                           m_kitsuProjectName; // cached for display
   QString                           m_productionType;   // Kitsu: tvshow/short/featurefilm
@@ -287,6 +288,11 @@ public:
   QString kitsuProjectId()   const { return m_kitsuProjectId; }
   QString kitsuProjectName() const { return m_kitsuProjectName; }
   bool    isKitsuLinked()    const { return !m_kitsuProjectId.isEmpty(); }
+  // Opt-in: the Kitsu sync UI is shown only when the project enables it (chosen
+  // at project creation). An already-linked project counts as using Kitsu too
+  // (backward compat for projects saved before the flag existed).
+  bool    useKitsu()         const { return m_useKitsu || isKitsuLinked(); }
+  void    setUseKitsu(bool on)     { m_useKitsu = on; }
   // True once at least one project shot has been created in Kitsu (has an id).
   // The Board locks numbering to Keep mode in this case so shot labels stay put
   // and the Kitsu links / statuses don't drift when a shot is added.

@@ -29,6 +29,7 @@ class QLabel;
 class QPushButton;
 class QCheckBox;
 class QSpinBox;
+class QGroupBox;
 
 class ZtoryProductionPanel final : public TPanel {
   Q_OBJECT
@@ -48,8 +49,9 @@ class ZtoryProductionPanel final : public TPanel {
   QLineEdit    *m_patternEdit = nullptr;   // B3d: naming pattern
   QLabel       *m_kitsuLabel = nullptr;    // M5: Kitsu link status
   bool          m_projLoading = false;
-  // M5 — Kitsu sync controls, now always available in the Project tab (the
-  // session auto-connects and stays connected, so no need to open a dialog).
+  // M5 — Kitsu sync controls, gated behind the project's opt-in flag (useKitsu):
+  // the whole group is hidden unless the project enables Kitsu.
+  QGroupBox    *m_kitsuGroup      = nullptr;
   QPushButton  *m_kitsuPushBtn   = nullptr;
   QPushButton  *m_kitsuPullBtn   = nullptr;
   QPushButton  *m_kitsuUploadBtn = nullptr;

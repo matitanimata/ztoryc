@@ -48,6 +48,7 @@
 #include <QToolButton>
 #include <QCheckBox>
 #include <QSpinBox>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QProgressBar>
@@ -955,28 +956,27 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   form->addRow(QObject::tr("Default technique:"), m_techCombo);
   form->addRow(QObject::tr("Naming pattern:"),    m_patternEdit);
 
-  // M5 — Kitsu integration: link status + connection/binding dialog.
-  m_kitsuLabel = new QLabel(QObject::tr("Not linked to Kitsu."), w);
+  // M5 — Kitsu integration, gated behind the project's opt-in flag: the whole
+  // group is hidden unless the project enables Kitsu (chosen at creation).
+  m_kitsuGroup = new QGroupBox(QObject::tr("Kitsu integration"), w);
+  auto *kgl = new QVBoxLayout(m_kitsuGroup);
+  m_kitsuLabel = new QLabel(QObject::tr("Not linked to Kitsu."), m_kitsuGroup);
   m_kitsuLabel->setWordWrap(true);
-  form->addRow(QObject::tr("Kitsu:"), m_kitsuLabel);
-  auto *kitsuBtn = new QPushButton(QObject::tr("Connect to Kitsu…"), w);
-  form->addRow(QString(), kitsuBtn);
+  kgl->addWidget(m_kitsuLabel);
+  auto *kitsuBtn = new QPushButton(QObject::tr("Connect to Kitsu…"), m_kitsuGroup);
+  kgl->addWidget(kitsuBtn);
   connect(kitsuBtn, &QPushButton::clicked, this, [this] {
     KitsuConnectDialog dlg(this);
     dlg.exec();
-    // The dialog may have linked/created a project and written the model;
-    // reflect the new metadata (and read-only state) immediately.
     reloadProjectTab();
     updateKitsuButtons();
   });
 
-  // Kitsu sync controls — always available here (the session auto-connects and
-  // stays connected), so the user no longer has to open the Connect dialog.
-  m_kitsuHandlesCheck = new QCheckBox(QObject::tr("Push with handles"), w);
+  m_kitsuHandlesCheck = new QCheckBox(QObject::tr("Push with handles"), m_kitsuGroup);
   m_kitsuHandlesCheck->setToolTip(QObject::tr(
       "Pad each shot's frame_in/out in Kitsu by N frames of safety margin,\n"
       "leaving Ztoryc's board timing unchanged."));
-  m_kitsuHandlesSpin = new QSpinBox(w);
+  m_kitsuHandlesSpin = new QSpinBox(m_kitsuGroup);
   m_kitsuHandlesSpin->setRange(0, 240);
   m_kitsuHandlesSpin->setValue(12);
   m_kitsuHandlesSpin->setSuffix(QObject::tr(" fr"));
@@ -984,11 +984,11 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   handlesRow->addWidget(m_kitsuHandlesCheck);
   handlesRow->addWidget(m_kitsuHandlesSpin);
   handlesRow->addStretch(1);
-  form->addRow(QString(), handlesRow);
+  kgl->addLayout(handlesRow);
 
-  m_kitsuPushBtn   = new QPushButton(QObject::tr("Push shots + statuses →"), w);
-  m_kitsuPullBtn   = new QPushButton(QObject::tr("← Pull statuses"), w);
-  m_kitsuUploadBtn = new QPushButton(QObject::tr("Upload shot previews →"), w);
+  m_kitsuPushBtn   = new QPushButton(QObject::tr("Push shots + statuses →"), m_kitsuGroup);
+  m_kitsuPullBtn   = new QPushButton(QObject::tr("← Pull statuses"), m_kitsuGroup);
+  m_kitsuUploadBtn = new QPushButton(QObject::tr("Upload shot previews →"), m_kitsuGroup);
   m_kitsuPushBtn->setToolTip(QObject::tr(
       "Create/update the project's shots + tasks in Kitsu from Ztoryc."));
   m_kitsuPullBtn->setToolTip(QObject::tr(
@@ -999,11 +999,12 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   auto *syncRow = new QHBoxLayout();
   syncRow->addWidget(m_kitsuPushBtn);
   syncRow->addWidget(m_kitsuPullBtn);
-  form->addRow(QString(), syncRow);
-  form->addRow(QString(), m_kitsuUploadBtn);
-  m_kitsuSyncLabel = new QLabel(QString(), w);
+  kgl->addLayout(syncRow);
+  kgl->addWidget(m_kitsuUploadBtn);
+  m_kitsuSyncLabel = new QLabel(QString(), m_kitsuGroup);
   m_kitsuSyncLabel->setWordWrap(true);
-  form->addRow(QString(), m_kitsuSyncLabel);
+  kgl->addWidget(m_kitsuSyncLabel);
+  form->addRow(m_kitsuGroup);
 
   connect(m_kitsuPushBtn,   &QPushButton::clicked, this, &ZtoryProductionPanel::onKitsuPush);
   connect(m_kitsuPullBtn,   &QPushButton::clicked, this, &ZtoryProductionPanel::onKitsuPull);
@@ -1058,6 +1059,8 @@ void ZtoryProductionPanel::reloadProjectTab() {
 }
 
 void ZtoryProductionPanel::updateKitsuButtons() {
+  // Opt-in: hide the whole Kitsu group unless the project uses Kitsu.
+  if (m_kitsuGroup) m_kitsuGroup->setVisible(ZtoryModel::instance()->useKitsu());
   const bool linked = ZtoryModel::instance()->isKitsuLinked();
   if (m_kitsuPushBtn)   m_kitsuPushBtn->setEnabled(linked);
   if (m_kitsuPullBtn)   m_kitsuPullBtn->setEnabled(linked);
@@ -1324,6 +1327,17 @@ void ZtoryProductionPanel::onAssetContextMenu(const QPoint &pos) {
   rebuildAssets();
 }
 
+// Tracker edits change production.ztrack, not the .tnz scene. In standalone mode
+// (the Production room opened without a scene) the undo registration would
+// otherwise leave the empty untitled scene flagged "modified" (Untitled*). Clear
+// that — a titled scene is left untouched.
+static void clearUntitledSceneDirty() {
+  TApp *app = TApp::instance();
+  if (app->getCurrentScene() && app->getCurrentScene()->getScene() &&
+      app->getCurrentScene()->getScene()->isUntitled())
+    app->getCurrentScene()->setDirtyFlag(false);
+}
+
 void ZtoryProductionPanel::editAssetCell(int row, int col) {
   const int kFixed = 2;
   const int ti     = col - kFixed;
@@ -1351,6 +1365,7 @@ void ZtoryProductionPanel::editAssetCell(int row, int col) {
     TUndoManager::manager()->add(
         new AssetAssigneeUndo(uuid, taskType, oldAssign, r.assignees));
   }
+  clearUntitledSceneDirty();
 }
 
 //-----------------------------------------------------------------------------
@@ -1956,6 +1971,7 @@ void ZtoryProductionPanel::editCell(int row, int col) {
           new AssigneeEditUndo(shotLabel, taskType, oldAssign, r.assignees));
     }
   }
+  clearUntitledSceneDirty();
 }
 
 //=============================================================================

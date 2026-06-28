@@ -2,6 +2,8 @@
 
 #include "projectpopup.h"
 
+#include "ztorymodel.h"  // opt-in Kitsu flag on project creation
+
 // Tnz6 includes
 #include "menubarcommandids.h"
 #include "tapp.h"
@@ -34,6 +36,7 @@
 
 // Qt includes
 #include <QPushButton>
+#include <QCheckBox>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QMainWindow>
@@ -551,6 +554,17 @@ ProjectCreatePopup::ProjectCreatePopup() : ProjectPopup(true) {
   m_nameAsLabel->hide();
   m_choosePrjLabel->hide();
   m_settingsBox->setVisible(false);
+
+  // Ztoryc: opt-in Kitsu integration, decided once at project creation (no later
+  // toggle, to avoid mid-project desync). When off, no Kitsu sync UI appears
+  // anywhere; the Production Tracker still works locally.
+  m_useKitsuCB = new QCheckBox(tr("Use Kitsu (CGWire) integration"), this);
+  m_useKitsuCB->setToolTip(
+      tr("Enable Kitsu sync (push/pull/upload) for this project.\n"
+         "Leave off for a local-only pipeline — the Production Tracker still\n"
+         "works and statuses can be changed manually."));
+  m_useKitsuCB->setChecked(false);
+  m_topLayout->addWidget(m_useKitsuCB);
 }
 
 //-----------------------------------------------------------------------------
@@ -619,6 +633,12 @@ void ProjectCreatePopup::createProject() {
   }
   pm->setCurrentProjectPath(projectPath);
   IoCmd::newScene();
+  // Ztoryc: start the new project's DB clean (don't inherit the previous
+  // project's metadata / Kitsu binding), then record the opt-in Kitsu choice.
+  ZtoryModel::instance()->resetProjectLevelDefaults();
+  if (m_useKitsuCB)
+    ZtoryModel::instance()->setUseKitsu(m_useKitsuCB->isChecked());
+  ZtoryModel::instance()->saveProjectDb();
   DvDirModel::instance()->refreshFolder(projectFolder.getParentDir());
   accept();
 }

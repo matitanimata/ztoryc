@@ -12,6 +12,7 @@
 #include <QPushButton>
 
 // forward declaration
+class QCheckBox;
 namespace DVGui {
 class FileField;
 class LineEdit;
@@ -98,6 +99,8 @@ protected:
 
 class ProjectCreatePopup final : public ProjectPopup {
   Q_OBJECT
+
+  QCheckBox *m_useKitsuCB = nullptr;  // opt-in Kitsu integration for the project
 
 public:
   ProjectCreatePopup();

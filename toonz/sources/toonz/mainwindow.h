@@ -108,6 +108,10 @@ public:
   Room *getRoom(int index) const;
   Room *getRoomByName(QString &roomName);
   void switchToRoom(const QString &name);
+  // Enter the standalone "Production" room set (just the Production Tracker, no
+  // other rooms — it's not a scene). Loading/creating a scene leaves it by
+  // re-applying a normal workflow's rooms.
+  void enterProductionTrackerRoom() { switchRoomChoice("Production"); }
 
   Room *getCurrentRoom() const;
   void refreshWriteSettings();

@@ -981,14 +981,13 @@ void StartupPopup::onExistingSceneClicked(int index) {
 
   QString path = m_existingList->getPath(index);
   if (path == ":PT") {
-    // Open the Production Tracker as a full-screen room (no scene needed): enter
-    // the Storyboard workflow, then switch to its "Production Tracker" room. The
-    // tracker loads the current project's production.ztrack on show and saves
-    // edits immediately, so it works as a standalone "production" workspace.
-    CommandManager::instance()->execute(MI_WorkflowStoryboard);
+    // Open the Production Tracker as a standalone room set (only the tracker, no
+    // other rooms — it's not a scene). It loads the current project's
+    // production.ztrack on show and saves edits immediately. The user leaves it
+    // by loading or creating a scene (which re-applies a normal workflow).
     if (MainWindow *mw =
             dynamic_cast<MainWindow *>(TApp::instance()->getMainWindow()))
-      mw->switchToRoom("Production Tracker");  // matches tracker.ini name= literal
+      mw->enterProductionTrackerRoom();
     hide();
     return;
   }

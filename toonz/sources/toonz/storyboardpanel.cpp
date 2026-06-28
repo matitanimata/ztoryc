@@ -5528,6 +5528,8 @@ void StoryboardPanel::onExportAnimatic() {
   const bool kitsuLinked = ZtoryModel::instance()->isKitsuLinked();
   auto *kitsuUploadCheck =
       new QCheckBox(tr("Upload clips to Kitsu after export"), &dlg);
+  // Opt-in: only show the Kitsu upload option when the project uses Kitsu.
+  kitsuUploadCheck->setVisible(ZtoryModel::instance()->useKitsu());
   kitsuUploadCheck->setToolTip(
       tr("After exporting one clip per shot, upload each clip to its shot's task\n"
          "on Kitsu (matched by shot name + {TASK} code) and set it to WFA.\n"

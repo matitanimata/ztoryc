@@ -307,6 +307,7 @@ void ZtoryModel::setAssetTaskAssigneesByUuid(const QString &uuid,
 
 void ZtoryModel::resetProjectLevelDefaults() {
   m_production.clear();
+  m_code.clear();
   m_season.clear();
   m_title.clear();
   m_episode.clear();
@@ -317,6 +318,16 @@ void ZtoryModel::resetProjectLevelDefaults() {
   m_techniques.clear();
   m_projectShots.clear();
   m_storyboardFiles.clear();
+  // Kitsu binding + opt-in flag are per-project too: clear them so a new project
+  // doesn't inherit the previous project's Kitsu link (which would wrongly keep
+  // the Kitsu UI visible even when the new project disabled it).
+  m_useKitsu = false;
+  m_kitsuProjectId.clear();
+  m_kitsuProjectName.clear();
+  m_productionType.clear();
+  m_productionStyle.clear();
+  m_ratio.clear();
+  m_resolution.clear();
   seedDefaultTechniques();  // re-seed presets + defaultTechnique = "Tradigital"
 }
 
@@ -432,6 +443,9 @@ void ZtoryModel::saveProjectDb() {
   xml.writeAttribute("defaultTechnique", m_defaultTechnique);
   if (!m_namingPattern.isEmpty())
     xml.writeAttribute("namingPattern", m_namingPattern);
+  // Opt-in Kitsu: the sync UI only shows when the project enables it (chosen at
+  // creation). The Production Tracker itself is always available.
+  if (m_useKitsu) xml.writeAttribute("useKitsu", "1");
   // Kitsu (M5) binding + mirrored metadata.
   if (!m_kitsuProjectId.isEmpty()) {
     xml.writeAttribute("kitsuProjectId",   m_kitsuProjectId);
@@ -555,6 +569,7 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
         m_defaultTechnique = a.value("defaultTechnique").toString();
       if (a.hasAttribute("namingPattern"))
         m_namingPattern = a.value("namingPattern").toString();
+      m_useKitsu = (a.value("useKitsu").toString() == "1");
       // Kitsu (M5) binding + mirrored metadata.
       m_kitsuProjectId   = a.value("kitsuProjectId").toString();
       m_kitsuProjectName = a.value("kitsuProjectName").toString();
