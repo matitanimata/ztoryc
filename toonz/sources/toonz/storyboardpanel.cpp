@@ -5642,10 +5642,11 @@ void StoryboardPanel::onExportShotsToProject() {
       stagedScenes, projectPath, targetOT->isChecked());
 
   // Copy the .ztoryc back-link companions next to the exported scenes (the
-  // Export Scene flow only copies the scene + its assets). Skipped for
-  // OpenToonz targets: OT ignores the file and it would only clutter the
-  // exported project — the Production Tracker statuses are updated anyway.
-  if (!targetOT->isChecked()) {
+  // Export Scene flow only copies the scene + its assets). Governed solely by
+  // the tracker checkbox, independent of target app: an OpenToonz-targeted
+  // export can still be re-opened in Ztoryc later purely to update production
+  // status, even if the actual drawing/animation work happens in OT.
+  if (trackerChk->isChecked()) {
     for (const TFilePath &newScene : exported) {
       TFilePath stagedZtoryc =
           stagingDir + (newScene.getWideName() + L".ztoryc");
