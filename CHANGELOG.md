@@ -21,8 +21,11 @@ OpenToonz o Tahoma. Tre iterazioni con test di Franco nella stessa sessione.
 - **Compatibilità OpenToonz**: conversione a explicit holds di tutte le scene esportate
   (ricorsiva nelle sub-xsheet) + copia del project file come `<nome>_otprj.xml`
   (coesiste con tahomaproject.xml: la cartella è valida per entrambe le app).
-  Il companion `.ztoryc` NON viene copiato nei progetti target OT (OT lo ignora);
-  gli stati del tracker si aggiornano comunque se la checkbox è attiva.
+  Il companion `.ztoryc` è governato **solo** dalla checkbox tracker, indipendentemente
+  dal target: un export mirato a OpenToonz può comunque essere riaperto in Ztoryc in
+  seguito solo per aggiornare lo stato produzione, anche se disegno/animazione
+  avvengono in OT (prima versione legava la scelta al target, rimosso dopo feedback
+  di Franco — spunto "tool standalone per tracker cross-app" salvato per il futuro).
 - **Combo "Asset organization"** (nell'export E in File ▸ New Project nativo):
   1) Project folders (default) · 2) Scene sub-folders (= flag nativo useSubScenePath)
   · 3) **Assets next to each scene** = `scenes/$scenepath/{drawings,extras,inputs,outputs,stopmotion}`
