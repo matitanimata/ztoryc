@@ -2093,7 +2093,12 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   int physW = int((pw->width() - 8) * dpr);
   if (physW < 64) physW = 320;   // widget not yet laid out — use safe default
   physW = qMin(physW, 1280);
-  int physH = qMax(1, qRound(physW / ZtoryShotOps::cameraAspect(scene)));
+  // Size the raster on the SUB-xsheet camera (the one renderFrame fits into
+  // the raster): a main/sub camera mismatch — divergent cameras in a reloaded
+  // scene, or the sync running after this render — would otherwise bake gray
+  // letterbox bands (bg color) into the thumbnail.
+  int physH =
+      qMax(1, qRound(physW / ZtoryShotOps::xsheetCameraAspect(subXsh)));
 
   // Letter index = how many camera-move panels precede this one in the shot,
   // so the first MOVE is A→B (panels without a move don't consume letters).
@@ -6830,8 +6835,12 @@ void StoryboardPanel::onExportPdf() {
             hq = IconGenerator::renderXsheetFrameRegion(
                 subXsh, frame, TDimension(cellW - 2, imgH - 2), placedRect);
           } else {
+            // Raster sized on the sub-xsheet camera: a main/sub mismatch would
+            // bake letterbox bands into the PDF cell (see updatePreview).
+            int rH = qMax(1, qRound((cellW - 2) /
+                                    ZtoryShotOps::xsheetCameraAspect(subXsh)));
             hq = IconGenerator::renderXsheetFrame(subXsh, frame,
-                     TDimension(cellW - 2, imgH - 2));
+                     TDimension(cellW - 2, rH));
           }
         }
         if (hq.isNull()) hq = pw->previewPixmap();
@@ -7045,8 +7054,10 @@ void StoryboardPanel::onExportSpreadsheet() {
           }
         }
         if (subXsh) {
+          int rH = qMax(1, qRound(140 /
+                                  ZtoryShotOps::xsheetCameraAspect(subXsh)));
           QPixmap px = IconGenerator::renderXsheetFrame(
-              subXsh, sd.panels[0].startFrame, TDimension(140, 79));
+              subXsh, sd.panels[0].startFrame, TDimension(140, rH));
           if (!px.isNull()) {
             // Exact pixel size + pinned DPI so QXlsx computes a predictable EMU
             // size (renderXsheetFrame may return a retina/2× image).

@@ -65,4 +65,11 @@ double cameraAspect(ToonzScene *scene);
 // framing.  Falls back to 1920x1080.
 TDimension cameraRes(ToonzScene *scene);
 
+// Per-xsheet variants: cameras are per-xsheet, so a thumbnail raster must be
+// sized on the camera of the xsheet actually rendered (renderFrame FITS that
+// camera inside the raster and letterboxes the rest with the bg color — a
+// main/sub camera mismatch bakes gray bands into the thumbnail otherwise).
+TDimension xsheetCameraRes(TXsheet *xsh);
+double xsheetCameraAspect(TXsheet *xsh);
+
 }  // namespace ZtoryShotOps

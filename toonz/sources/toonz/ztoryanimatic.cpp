@@ -42,6 +42,7 @@
 #include <QPushButton>
 #include <QToolButton>
 #include <QTimer>
+#include <QRegularExpression>
 #include <QVBoxLayout>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -2179,6 +2180,12 @@ ZtoryAnimaticTrack::ZtoryAnimaticTrack(QWidget *parent) : QWidget(parent) {
   connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
           this, &ZtoryAnimaticTrack::clearThumbCache);
 
+  // The cache is keyed by column index only: without this, opening another
+  // scene whose refresh doesn't pass through modelReset (or repaints before it
+  // arrives) would reuse the PREVIOUS scene's thumbnails on matching columns.
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
+          this, &ZtoryAnimaticTrack::clearThumbCache);
+
   // Lock button is painted in paintEvent and activated via mousePressEvent
   // hit-test — no child QToolButton needed.
 }
@@ -2259,7 +2266,14 @@ void ZtoryAnimaticTrack::refreshFromScene() {
     // Legge il numero shot dal nome della colonna (impostato da StoryboardPanel)
     QString colName = QString::fromStdString(
         mainXsh->getStageObject(mainXsh->getColumnObjectId(col))->getName());
-    b.shotNumber = colName.isEmpty() ? QString("%1").arg(col + 1, 2, 10, QChar('0')) : colName;
+    // Tahoma's default stage name ("Col5") means the Ztoryc rename hasn't run
+    // yet for this column (block built between shot insertion and the model
+    // resequence): fall back to positional numbering instead of leaking the
+    // internal default into the track.
+    static const QRegularExpression kDefaultColName("^Col\\d+$");
+    if (colName.isEmpty() || kDefaultColName.match(colName).hasMatch())
+      colName = QString("%1").arg((int)m_blocks.size() + 1, 2, 10, QChar('0'));
+    b.shotNumber = colName;
 
     // Transition length derived from the XD-out note column in this shot's
     // sub-scene — the physical, persisted source of truth (survives reload).
@@ -2274,11 +2288,13 @@ void ZtoryAnimaticTrack::refreshFromScene() {
     } else if (cl) {
       TXsheet *subXsh = cl->getXsheet();
       if (subXsh) {
-        // Render at the scene camera aspect (height fixed at 90) so a non-16:9
-        // camera (e.g. square) isn't squished — the draw code derives thumbW
-        // from the pixmap's own aspect.
-        double camAsp = ZtoryShotOps::cameraAspect(
-            TApp::instance()->getCurrentScene()->getScene());
+        // Render at the SUB-xsheet camera aspect (height fixed at 90): cameras
+        // are per-xsheet and renderFrame fits the rendered xsheet's camera into
+        // the raster — sizing on the main camera would bake gray letterbox
+        // bands into the thumb whenever main/sub cameras diverge (reloaded
+        // scenes, sync arriving after this render). The draw code derives
+        // thumbW from the pixmap's own aspect.
+        double camAsp = ZtoryShotOps::xsheetCameraAspect(subXsh);
         int thH = 90, thW = qMax(1, qRound(thH * camAsp));
         QPixmap px = IconGenerator::renderXsheetFrame(
             subXsh, 0, TDimension(thW, thH));
@@ -2386,9 +2402,17 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
       double aspect = b.thumbnail.width() / (double)qMax(b.thumbnail.height(), 1);
       int thumbH = h - 4;
       thumbW = (int)(thumbH * aspect);
-      thumbW = qMin(thumbW, w - 6);
+      int thumbY = 4;
+      if (thumbW > w - 6) {
+        // Narrow block: shrink uniformly (recompute height from the clamped
+        // width) instead of squeezing only the width — a stretched drawPixmap
+        // deforms the preview.
+        thumbW = w - 6;
+        thumbH = qMax(1, (int)(thumbW / qMax(aspect, 1e-6)));
+        thumbY = 4 + (h - 4 - thumbH) / 2;
+      }
       p.setOpacity(0.85);
-      p.drawPixmap(x + 2, 4, thumbW, thumbH, b.thumbnail);
+      p.drawPixmap(x + 2, thumbY, thumbW, thumbH, b.thumbnail);
       p.setOpacity(1.0);
     }
 

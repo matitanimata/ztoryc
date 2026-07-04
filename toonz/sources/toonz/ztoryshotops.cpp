@@ -99,10 +99,8 @@ bool syncAllCamerasFrom(ToonzScene *scene, TXsheet *srcXsh) {
   return changed;
 }
 
-TDimension cameraRes(ToonzScene *scene) {
+TDimension xsheetCameraRes(TXsheet *xsh) {
   const TDimension kDefault(1920, 1080);
-  if (!scene) return kDefault;
-  TXsheet *xsh = scene->getTopXsheet();
   if (!xsh) return kDefault;
   TStageObjectTree *tree = xsh->getStageObjectTree();
   TStageObject *camObj =
@@ -112,6 +110,17 @@ TDimension cameraRes(ToonzScene *scene) {
   TDimension res = cam->getRes();
   if (res.lx <= 0 || res.ly <= 0) return kDefault;
   return res;
+}
+
+double xsheetCameraAspect(TXsheet *xsh) {
+  TDimension res = xsheetCameraRes(xsh);
+  return (double)res.lx / (double)res.ly;
+}
+
+TDimension cameraRes(ToonzScene *scene) {
+  const TDimension kDefault(1920, 1080);
+  if (!scene) return kDefault;
+  return xsheetCameraRes(scene->getTopXsheet());
 }
 
 double cameraAspect(ToonzScene *scene) {
