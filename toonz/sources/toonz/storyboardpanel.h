@@ -283,6 +283,10 @@ public:
   void onExportSpreadsheet();
   void onExportSpreadsheetCsv();
   void onExportShots();
+  // Export shots into a brand-new external project (Tahoma or OpenToonz):
+  // stages one .tnz per shot in the current project, then hands them to
+  // ExportScenePopup which creates the project and collects the assets.
+  void onExportShotsToProject();
   void onExportAnimatic();
   // Storyboard Settings dialog (production/episode/title/technique/numbering).
   void onStoryboardSettings();
@@ -345,6 +349,13 @@ private:
   // Text-field undo: snapshot taken on focusIn, pushed on focusOut.
   bool m_textEditing = false;
   std::vector<ZtoryShotSnap> m_textUndoBefore;
+
+  // Shared core of onExportShots / onExportShotsToProject: saves each listed
+  // shot as a standalone .tnz (with animatic audio injected) into outDirFp.
+  // Returns the exported scene paths; failures are counted in `fail`.
+  QList<TFilePath> exportShotScenesToDir(const QList<int> &indices,
+                                         const TFilePath &outDirFp, int version,
+                                         bool writeLink, int &fail);
 };
 
 #endif // STORYBOARDPANEL_H

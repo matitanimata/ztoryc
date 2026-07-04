@@ -363,6 +363,7 @@ void TopBar::loadMenubar() {
       addMenuItem(ztoryExportMenu, MI_ZtoryExportSpreadsheetXlsx);
       addMenuItem(ztoryExportMenu, MI_ZtoryExportSpreadsheetCsv);
       addMenuItem(ztoryExportMenu, MI_ZtoryExportShots);
+      addMenuItem(ztoryExportMenu, MI_ZtoryExportShotsToProject);
       addMenuItem(ztoryExportMenu, MI_ZtoryExportAnimatic);
     }
   }

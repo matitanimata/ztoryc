@@ -2729,7 +2729,11 @@ void TXsheet::convertToExplicitHolds(int endPlayRange) {
         TXsheet *childXsh = level->getChildLevel()->getXsheet();
         if (visitedXshs.count(childXsh) == 0) {
           visitedXshs.insert(childXsh);
-          childXsh->convertToImplicitHolds();
+          // Recurse with the child's own length: converting the parent to
+          // explicit holds must not leave implicit holds inside sub-xsheets
+          // (was convertToImplicitHolds — copy-paste bug from the inverse
+          // function).
+          childXsh->convertToExplicitHolds(0);
         }
       }
 

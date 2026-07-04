@@ -101,6 +101,7 @@ class ProjectCreatePopup final : public ProjectPopup {
   Q_OBJECT
 
   QCheckBox *m_useKitsuCB = nullptr;  // opt-in Kitsu integration for the project
+  QComboBox *m_assetOrgCombo = nullptr;  // asset organization preset
 
 public:
   ProjectCreatePopup();

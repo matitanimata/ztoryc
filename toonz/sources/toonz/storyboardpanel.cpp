@@ -44,12 +44,16 @@
 #include "mainwindow.h"
 #include "toonzqt/gutil.h"
 #include "toonzqt/dvscrollwidget.h"
+#include "toonzqt/filefield.h"
+#include "toonz/preferences.h"
+#include <QStandardPaths>
 
 #include <QVBoxLayout>
 #include <QKeyEvent>
 #include <QShortcut>
 #include <QRadioButton>
 #include "iocommand.h"
+#include "exportscenepopup.h"
 #include "subscenecommand.h"
 #include "columnselection.h"
 #include "toonz/tproject.h"
@@ -5181,18 +5185,47 @@ void StoryboardPanel::onExportShots() {
   // ── Export ───────────────────────────────────────────────────────────────
   int from = allRadio->isChecked() ? 0 : fromSpin->value() - 1;
   int to   = allRadio->isChecked() ? (int)m_shots.size() - 1 : toSpin->value() - 1;
-  const int     version    = verSpin->value();
-  const bool    writeLink  = backLinkChk->isChecked();
-  const QString outDir     = dirEdit->text().trimmed();
-  const QString projectDb  = model->projectDbPath();
-  TFilePath outDirFp(outDir.toStdWString());
-  TXsheet *mainXsh = scene->getChildStack()->getTopXsheet();
-  double fps = (double)model->fps();
+  QList<int> indices;
+  for (int i = from; i <= to; i++) indices.append(i);
+
+  int fail = 0;
+  QList<TFilePath> exported = exportShotScenesToDir(
+      indices, TFilePath(dirEdit->text().trimmed().toStdWString()),
+      verSpin->value(), backLinkChk->isChecked(), fail);
+
+  QString msg =
+      tr("Export complete: %1 shot(s) exported").arg(exported.size());
+  if (fail > 0) msg += tr(", %1 failed").arg(fail);
+  QMessageBox::information(this, tr("Export Shots"), msg);
+}
+
+//-----------------------------------------------------------------------------
+
+QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
+    const QList<int> &indices, const TFilePath &outDirFp, int version,
+    bool writeLink, int &fail) {
+  QList<TFilePath> exported;
+  ZtoryModel *model = ZtoryModel::instance();
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return exported;
+
+  const QString projectDb = model->projectDbPath();
+  TXsheet *mainXsh        = scene->getChildStack()->getTopXsheet();
+  double fps              = (double)model->fps();
 
   if (!TFileStatus(outDirFp).doesExist()) TSystem::mkDir(outDirFp);
 
-  int ok = 0, fail = 0;
-  for (int i = from; i <= to; i++) {
+  // Model A: the exported .tnz is a single scene reused across pipeline steps,
+  // so the shot file name must NOT carry the {TASK} token (the task belongs
+  // only to the render/clip name). Strip {TASK} and a neighbouring separator.
+  QString exportPattern = model->namingPattern();
+  if (exportPattern.isEmpty())
+    exportPattern = "{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
+  exportPattern.remove(QRegularExpression(
+      R"((?:[_\-.]\{TASK(?::\d+)?\})|(?:\{TASK(?::\d+)?\}[_\-.])|\{TASK(?::\d+)?\})"));
+
+  for (int i : indices) {
+    if (i < 0 || i >= (int)m_shots.size()) { fail++; continue; }
     const ShotData &sd = m_shots[i].data;
 
     // Build filename from naming pattern
@@ -5238,7 +5271,7 @@ void StoryboardPanel::onExportShots() {
     ztoryCloseSubXsheet(1);
 
     if (!saved) { fail++; continue; }
-    ok++;
+    exported.append(outPath);
 
     // B3c: write companion .ztoryc with role="shot" + back-link to project
     if (writeLink && !projectDb.isEmpty() && !sd.uuid.isEmpty()) {
@@ -5301,9 +5334,347 @@ void StoryboardPanel::onExportShots() {
     emit model->taskStatusChanged();  // refresh the Production Tracker
   }
 
-  QString msg = tr("Export complete: %1 shot(s) exported").arg(ok);
-  if (fail > 0) msg += tr(", %1 failed").arg(fail);
-  QMessageBox::information(this, tr("Export Shots"), msg);
+  return exported;
+}
+
+//-----------------------------------------------------------------------------
+
+void StoryboardPanel::onExportShotsToProject() {
+  if (m_shots.empty()) {
+    QMessageBox::information(this, tr("Export Shots to New Project"),
+                             tr("No shots to export."));
+    return;
+  }
+  ZtoryModel *model = ZtoryModel::instance();
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return;
+  TProjectManager *pm = TProjectManager::instance();
+
+  // ── Single dialog: destination project + shot options ────────────────────
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Export Shots to New Project"));
+  dlg.setMinimumWidth(560);
+  auto *lay = new QVBoxLayout(&dlg);
+  lay->setSpacing(8);
+  lay->setContentsMargins(14, 14, 14, 14);
+
+  // Destination project — new (created on export) or an existing one (useful
+  // to gather shots from several storyboards into a single destination).
+  auto *projBox = new QGroupBox(tr("Destination project"), &dlg);
+  auto *projLay = new QVBoxLayout(projBox);
+
+  auto *destRow      = new QHBoxLayout();
+  auto *newProjRadio = new QRadioButton(tr("New project"), projBox);
+  auto *existRadio   = new QRadioButton(tr("Existing project"), projBox);
+  newProjRadio->setChecked(true);
+  destRow->addWidget(newProjRadio);
+  destRow->addWidget(existRadio);
+  destRow->addStretch();
+  projLay->addLayout(destRow);
+
+  // New-project fields
+  auto *newProjWidget = new QWidget(projBox);
+  auto *projForm      = new QFormLayout(newProjWidget);
+  projForm->setLabelAlignment(Qt::AlignRight);
+  projForm->setContentsMargins(0, 0, 0, 0);
+
+  auto *nameEdit = new QLineEdit(newProjWidget);
+  projForm->addRow(tr("Project name:"), nameEdit);
+
+  QString defaultLocation =
+      QStandardPaths::standardLocations(QStandardPaths::DocumentsLocation)[0];
+  QString prefLocation = Preferences::instance()->getDefaultProjectPath();
+  if (TSystem::doesExistFileOrLevel(TFilePath(prefLocation)))
+    defaultLocation = prefLocation;
+  auto *locationFld = new DVGui::FileField(newProjWidget, defaultLocation);
+  projForm->addRow(tr("Create in:"), locationFld);
+
+  auto *assetOrgCombo = new QComboBox(newProjWidget);
+  assetOrgCombo->addItem(tr("Project folders (drawings, extras...)"));
+  assetOrgCombo->addItem(tr("Scene sub-folders inside asset folders"));
+  assetOrgCombo->addItem(
+      tr("Assets folder next to each scene (scenes/<scene name>)"));
+  assetOrgCombo->setToolTip(
+      tr("Where the exported scenes keep their assets:\n"
+         "- Project folders: all scenes share the project-level folders.\n"
+         "- Scene sub-folders: each scene gets its own sub-folder inside "
+         "drawings/extras/inputs.\n"
+         "- Next to each scene: each scene folder in scenes/ holds all its "
+         "assets — handy for moving scenes between computers."));
+  projForm->addRow(tr("Asset organization:"), assetOrgCombo);
+  projLay->addWidget(newProjWidget);
+
+  // Existing-project picker
+  auto *projectTree = new ExportSceneTreeView(projBox);
+  projectTree->setFixedHeight(180);
+  projectTree->setVisible(false);
+  projLay->addWidget(projectTree);
+
+  // Target application (applies to both destinations)
+  auto *targetRow    = new QHBoxLayout();
+  auto *targetTahoma = new QRadioButton(tr("Tahoma2D / Ztoryc"), projBox);
+  auto *targetOT     = new QRadioButton(tr("OpenToonz"), projBox);
+  targetTahoma->setChecked(true);
+  targetOT->setToolTip(
+      tr("Converts the exported scenes to explicit holds and writes an "
+         "OpenToonz-readable project file."));
+  targetRow->addWidget(new QLabel(tr("Target application:"), projBox));
+  targetRow->addWidget(targetTahoma);
+  targetRow->addWidget(targetOT);
+  targetRow->addStretch();
+  projLay->addLayout(targetRow);
+  lay->addWidget(projBox);
+
+  // Asset folders — collapsed by default; when unchecked the exported project
+  // simply inherits the current project's folder layout.
+  auto *foldersBox = new QGroupBox(tr("Customize asset folders"), &dlg);
+  foldersBox->setCheckable(true);
+  foldersBox->setChecked(false);
+  foldersBox->setToolTip(
+      tr("When off, the new project uses the same folder layout as the "
+         "current one (drawings, extras, inputs...)."));
+  auto *foldersLay   = new QVBoxLayout(foldersBox);
+  auto *foldersInner = new QWidget(foldersBox);
+  auto *foldersForm  = new QFormLayout(foldersInner);
+  foldersForm->setLabelAlignment(Qt::AlignRight);
+  foldersForm->setContentsMargins(0, 0, 0, 0);
+  QList<QPair<std::string, DVGui::FileField *>> folderFlds;
+  {
+    auto currentProject = pm->getCurrentProject();
+    std::vector<std::string> folderNames;
+    pm->getFolderNames(folderNames);
+    for (const std::string &name : folderNames) {
+      QString qName = QString::fromStdString(name);
+      auto *ff      = new DVGui::FileField(foldersInner, qName);
+      TFilePath fp  = currentProject->getFolder(name);
+      if (fp != TFilePath()) ff->setPath(fp.getQString());
+      folderFlds.append(qMakePair(name, ff));
+      foldersForm->addRow("+" + qName + ":", ff);
+    }
+  }
+  foldersLay->addWidget(foldersInner);
+  foldersInner->setVisible(false);
+  QObject::connect(foldersBox, &QGroupBox::toggled,
+                   [&dlg, foldersInner](bool on) {
+                     foldersInner->setVisible(on);
+                     dlg.adjustSize();
+                   });
+  lay->addWidget(foldersBox);
+
+  // New/Existing destination toggle: swap the project fields for the tree.
+  QObject::connect(existRadio, &QRadioButton::toggled,
+                   [&dlg, newProjWidget, projectTree, foldersBox](bool on) {
+                     newProjWidget->setVisible(!on);
+                     projectTree->setVisible(on);
+                     foldersBox->setVisible(!on);
+                     dlg.adjustSize();
+                   });
+
+  // Asset organization presets update the (possibly hidden) folder fields so
+  // "Customize asset folders" always shows the effective layout.
+  QObject::connect(
+      assetOrgCombo, qOverload<int>(&QComboBox::currentIndexChanged),
+      [&folderFlds, pm](int idx) {
+        for (auto &f : folderFlds) {
+          const std::string &name = f.first;
+          // Per-scene folders only: palettes and scripts stay project-level
+          // (shared color design palettes / automation scripts).
+          if (name != "drawings" && name != "extras" && name != "inputs" &&
+              name != "outputs" && name != "stopmotion")
+            continue;
+          if (idx == 2)
+            f.second->setPath("scenes/$scenepath/" +
+                              QString::fromStdString(name));
+          else {
+            TFilePath fp = pm->getCurrentProject()->getFolder(name);
+            f.second->setPath(fp == TFilePath()
+                                  ? QString::fromStdString(name)
+                                  : fp.getQString());
+          }
+        }
+      });
+
+  // Shots
+  auto *shotsBox  = new QGroupBox(tr("Shots"), &dlg);
+  auto *shotsForm = new QFormLayout(shotsBox);
+  shotsForm->setLabelAlignment(Qt::AlignRight);
+
+  auto *verSpin = new QSpinBox(shotsBox);
+  verSpin->setRange(1, 99);
+  verSpin->setValue(1);
+  verSpin->setPrefix("v");
+  shotsForm->addRow(tr("Version:"), verSpin);
+
+  auto *rangeRow   = new QHBoxLayout();
+  auto *allRadio   = new QRadioButton(tr("All shots"), shotsBox);
+  auto *selRadio   = new QRadioButton(tr("Selected"), shotsBox);
+  auto *rangeRadio = new QRadioButton(tr("Range:"), shotsBox);
+  allRadio->setChecked(true);
+  auto *fromSpin = new QSpinBox(shotsBox);
+  auto *toSpin   = new QSpinBox(shotsBox);
+  auto *toLabel  = new QLabel(tr("to"), shotsBox);
+  fromSpin->setRange(1, (int)m_shots.size()); fromSpin->setValue(1);
+  toSpin->setRange(1, (int)m_shots.size());   toSpin->setValue((int)m_shots.size());
+  fromSpin->setEnabled(false); toSpin->setEnabled(false); toLabel->setEnabled(false);
+  selRadio->setEnabled(!m_selectedIndices.empty());
+  rangeRow->addWidget(allRadio); rangeRow->addWidget(selRadio);
+  rangeRow->addWidget(rangeRadio);
+  rangeRow->addWidget(fromSpin); rangeRow->addWidget(toLabel);
+  rangeRow->addWidget(toSpin); rangeRow->addStretch();
+  shotsForm->addRow(tr("Shots:"), rangeRow);
+  QObject::connect(rangeRadio, &QRadioButton::toggled, [&](bool on) {
+    fromSpin->setEnabled(on); toSpin->setEnabled(on); toLabel->setEnabled(on);
+  });
+
+  // Production Tracker link — plain wording: what it writes and what happens.
+  auto *trackerChk = new QCheckBox(
+      tr("Update Production Tracker (writes a .ztoryc file next to each "
+         "exported scene)"),
+      shotsBox);
+  trackerChk->setToolTip(
+      tr("On export, each shot's Storyboard task is marked Done and its first "
+         "production task becomes Ready in the Production Tracker.\n"
+         "The .ztoryc file links the exported scene back to this project: "
+         "opening the scene later advances its task to In Progress."));
+  trackerChk->setChecked(!model->projectDbPath().isEmpty());
+  trackerChk->setEnabled(!model->projectDbPath().isEmpty());
+  if (model->projectDbPath().isEmpty())
+    trackerChk->setToolTip(
+        tr("Save the scene first to create a project DB."));
+  shotsForm->addRow(QString(), trackerChk);
+  lay->addWidget(shotsBox);
+
+  auto *bbox = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  bbox->button(QDialogButtonBox::Ok)->setText(tr("Export"));
+  lay->addWidget(bbox);
+  // Validate the destination before leaving the dialog, so a bad name or a
+  // missing selection does not waste a full staging pass.
+  QObject::connect(bbox, &QDialogButtonBox::accepted, [&] {
+    if (existRadio->isChecked()) {
+      auto *node = dynamic_cast<DvDirModelFileFolderNode *>(
+          projectTree->getCurrentNode());
+      if (!node || !pm->isProject(node->getPath())) {
+        QMessageBox::warning(&dlg, tr("Export Shots to Project"),
+                             tr("The folder you selected is not a project."));
+        return;
+      }
+      dlg.accept();
+      return;
+    }
+    QString name = nameEdit->text().trimmed();
+    if (name.isEmpty()) {
+      QMessageBox::warning(&dlg, tr("Export Shots to New Project"),
+                           tr("The project name cannot be empty."));
+      return;
+    }
+    TFilePath projectFolder =
+        TFilePath(locationFld->getPath().toStdWString()) +
+        TFilePath(name.toStdWString());
+    if (TSystem::doesExistFileOrLevel(
+            pm->projectFolderToProjectPath(projectFolder))) {
+      QMessageBox::warning(&dlg, tr("Export Shots to New Project"),
+                           tr("Project '%1' already exists.").arg(name));
+      return;
+    }
+    dlg.accept();
+  });
+  QObject::connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  if (dlg.exec() != QDialog::Accepted) return;
+
+  QList<int> indices;
+  if (selRadio->isChecked()) {
+    for (int i : m_selectedIndices) indices.append(i);
+  } else {
+    int from = allRadio->isChecked() ? 0 : fromSpin->value() - 1;
+    int to =
+        allRadio->isChecked() ? (int)m_shots.size() - 1 : toSpin->value() - 1;
+    for (int i = from; i <= to; i++) indices.append(i);
+  }
+  if (indices.isEmpty()) return;
+
+  // ── Resolve the destination project (create it if new) ───────────────────
+  TFilePath projectPath;
+  if (existRadio->isChecked()) {
+    auto *node = dynamic_cast<DvDirModelFileFolderNode *>(
+        projectTree->getCurrentNode());
+    if (!node) return;  // validated on accept — belt and braces
+    projectPath = pm->projectFolderToProjectPath(node->getPath());
+  } else {
+    ExportScenePopup::NewProjectSpec spec;
+    spec.name     = nameEdit->text().trimmed();
+    spec.location = locationFld->getPath();
+    for (const auto &f : folderFlds)
+      spec.folders.append(qMakePair(f.first, f.second->getPath()));
+    spec.useSubScenePath = (assetOrgCombo->currentIndex() == 1);
+    spec.targetOpenToonz = targetOT->isChecked();
+    projectPath          = ExportScenePopup::createProjectFromSpec(spec);
+    if (projectPath == TFilePath()) return;
+  }
+
+  QApplication::setOverrideCursor(Qt::WaitCursor);
+
+  // ── Stage one .tnz per shot inside the current project ───────────────────
+  // The Export Scene machinery only imports scenes that belong to a project,
+  // so staging lives under the current project (+scenes). The extra "scenes"
+  // level makes the per-scene asset copies done on save (drawings/extras/...
+  // subfolders) land inside ztoryc_export_tmp as well: one rmDirTree cleans
+  // everything and re-exports never hit "file already exists" prompts.
+  TFilePath stagingRoot =
+      scene->decodeFilePath(TFilePath("+scenes")) + "ztoryc_export_tmp";
+  if (TFileStatus(stagingRoot).doesExist()) TSystem::rmDirTree(stagingRoot);
+  TFilePath stagingDir = stagingRoot + "scenes";
+
+  int fail = 0;
+  QList<TFilePath> staged = exportShotScenesToDir(
+      indices, stagingDir, verSpin->value(), trackerChk->isChecked(), fail);
+  if (staged.isEmpty()) {
+    QApplication::restoreOverrideCursor();
+    QMessageBox::warning(this, tr("Export Shots to New Project"),
+                         tr("Could not export the selected shots."));
+    TSystem::rmDirTree(stagingRoot);
+    return;
+  }
+
+  // ── Copy scenes + assets into the new project ─────────────────────────────
+  std::vector<TFilePath> stagedScenes(staged.begin(), staged.end());
+  std::vector<TFilePath> exported = ExportScenePopup::exportScenesToProject(
+      stagedScenes, projectPath, targetOT->isChecked());
+
+  // Copy the .ztoryc back-link companions next to the exported scenes (the
+  // Export Scene flow only copies the scene + its assets). Skipped for
+  // OpenToonz targets: OT ignores the file and it would only clutter the
+  // exported project — the Production Tracker statuses are updated anyway.
+  if (!targetOT->isChecked()) {
+    for (const TFilePath &newScene : exported) {
+      TFilePath stagedZtoryc =
+          stagingDir + (newScene.getWideName() + L".ztoryc");
+      if (!TSystem::doesExistFileOrLevel(stagedZtoryc)) continue;
+      TFilePath dstZtoryc =
+          newScene.getParentDir() + (newScene.getWideName() + L".ztoryc");
+      try {
+        if (TSystem::doesExistFileOrLevel(dstZtoryc))
+          TSystem::removeFileOrLevel(dstZtoryc);
+        TSystem::copyFile(dstZtoryc, stagedZtoryc);
+      } catch (...) {
+        // Non-fatal: the scene is exported, only the back-link is missing.
+      }
+    }
+  }
+
+  TSystem::rmDirTree(stagingRoot);
+  QApplication::restoreOverrideCursor();
+
+  if (exported.empty()) {
+    QMessageBox::warning(this, tr("Export Shots to New Project"),
+                         tr("Could not export the selected shots."));
+    return;
+  }
+  QString msg = tr("Exported %1 shot(s) to project: %2")
+                    .arg((int)exported.size())
+                    .arg(projectPath.getParentDir().getQString());
+  if (fail > 0) msg += tr("\n%1 shot(s) failed.").arg(fail);
+  QMessageBox::information(this, tr("Export Shots to New Project"), msg);
 }
 
 namespace {
@@ -7098,6 +7469,16 @@ public:
     if (auto *b = findZtoryBoard()) b->onExportShots(); else warnNoBoard();
   }
 } ztoryExportShotsCommand;
+
+class ZtoryExportShotsToProjectCommand final : public MenuItemHandler {
+public:
+  ZtoryExportShotsToProjectCommand()
+      : MenuItemHandler(MI_ZtoryExportShotsToProject) {}
+  void execute() override {
+    if (auto *b = findZtoryBoard()) b->onExportShotsToProject();
+    else warnNoBoard();
+  }
+} ztoryExportShotsToProjectCommand;
 
 class ZtoryExportAnimaticCommand final : public MenuItemHandler {
 public:

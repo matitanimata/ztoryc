@@ -13,6 +13,7 @@
 // TnzLib includes
 #include "toonz/tproject.h"
 #include "toonz/toonzscene.h"
+#include "toonz/txsheet.h"
 #include "toonz/sceneresources.h"
 #include "mainwindow.h"
 
@@ -502,10 +503,11 @@ void ExportSceneTreeView::focusInEvent(QFocusEvent *event) {
 //=============================================================================
 // ExportScenePopup
 
-ExportScenePopup::ExportScenePopup(std::vector<TFilePath> scenes)
+ExportScenePopup::ExportScenePopup(std::vector<TFilePath> scenes,
+                                   bool newProjectMode)
     : Dialog(TApp::instance()->getMainWindow(), true, false, "ExportScene")
     , m_scenes(scenes)
-    , m_createNewProject(false) {
+    , m_createNewProject(newProjectMode) {
   setWindowTitle(tr("Export Scene"));
 
   bool ret = true;
@@ -570,8 +572,49 @@ ExportScenePopup::ExportScenePopup(std::vector<TFilePath> scenes)
                               Qt::AlignRight | Qt::AlignVCenter);
   newProjectLayout->addWidget(m_projectLocationFld, 2, 1);
 
-  newProjectWidget->setLayout(chooseProjectLayout);
+  // Customizable asset-folder layout, prefilled from the current project but
+  // freely editable so the exported project is not tied to Ztoryc's structure.
+  {
+    TProjectManager *pm = TProjectManager::instance();
+    auto currentProject = pm->getCurrentProject();
+    std::vector<std::string> folderNames;
+    pm->getFolderNames(folderNames);
+    int row = 3;
+    for (const std::string &name : folderNames) {
+      QString qName = QString::fromStdString(name);
+      DVGui::FileField *ff = new DVGui::FileField(newProjectWidget, qName);
+      TFilePath fp = currentProject->getFolder(name);
+      if (fp != TFilePath()) ff->setPath(fp.getQString());
+      m_folderFlds.append(qMakePair(name, ff));
+      ret = ret && connect(ff->getField(), SIGNAL(focusIn()), this,
+                           SLOT(onProjectNameFocusIn()));
+      QLabel *label = new QLabel("+" + qName + ":", newProjectWidget);
+      newProjectLayout->addWidget(label, row, 0,
+                                  Qt::AlignRight | Qt::AlignVCenter);
+      newProjectLayout->addWidget(ff, row, 1);
+      row++;
+    }
+  }
+
   layout->addWidget(newProjectWidget);
+
+  // Target application: with OpenToonz the exported scenes get compatibility
+  // conversions (explicit holds) and an OT-readable project file.
+  QWidget *targetWidget     = new QWidget(this);
+  QHBoxLayout *targetLayout = new QHBoxLayout(targetWidget);
+  targetLayout->setContentsMargins(0, 0, 0, 0);
+  targetLayout->addWidget(new QLabel(tr("Target Application:"), targetWidget));
+  QButtonGroup *targetGroup = new QButtonGroup(this);
+  targetGroup->setExclusive(true);
+  m_targetTahomaButton = new QRadioButton(tr("Tahoma2D / Ztoryc"), targetWidget);
+  m_targetOTButton     = new QRadioButton(tr("OpenToonz"), targetWidget);
+  targetGroup->addButton(m_targetTahomaButton);
+  targetGroup->addButton(m_targetOTButton);
+  m_targetTahomaButton->setChecked(true);
+  targetLayout->addWidget(m_targetTahomaButton);
+  targetLayout->addWidget(m_targetOTButton);
+  targetLayout->addStretch();
+  layout->addWidget(targetWidget);
 
   ret = ret &&
         connect(group, SIGNAL(idClicked(int)), this, SLOT(switchMode(int)));
@@ -586,7 +629,11 @@ ExportScenePopup::ExportScenePopup(std::vector<TFilePath> scenes)
 
   addButtonBarWidget(okBtn, cancelBtn);
 
-  switchMode(0);
+  if (newProjectMode) {
+    m_newProjectButton->setChecked(true);
+    switchMode(1);
+  } else
+    switchMode(0);
   //  updateCommandLabel();
 
   assert(ret);
@@ -624,9 +671,9 @@ void ExportScenePopup::onProjectNameFocusIn() {
 //-----------------------------------------------------------------------------
 
 void ExportScenePopup::onExport() {
+  m_exportedScenes.clear();
   QApplication::setOverrideCursor(Qt::WaitCursor);
-  TProjectManager *pm      = TProjectManager::instance();
-  TFilePath oldProjectPath = pm->getCurrentProjectPath();
+  TProjectManager *pm = TProjectManager::instance();
   TFilePath projectPath;
   if (!m_createNewProject) {
     DvDirModelFileFolderNode *node =
@@ -646,22 +693,15 @@ void ExportScenePopup::onExport() {
       return;
     }
   }
-  pm->setCurrentProjectPath(projectPath);
 
-  std::vector<TFilePath> newScenes;
-  int i;
-  for (i = 0; i < m_scenes.size(); i++) {
-    TFilePath newScenePath = importScene(m_scenes[i]);
-    if (newScenePath == TFilePath()) continue;
-    newScenes.push_back(newScenePath);
-  }
-  pm->setCurrentProjectPath(oldProjectPath);
+  std::vector<TFilePath> newScenes = exportScenesToProject(
+      m_scenes, projectPath, m_targetOTButton->isChecked());
   if (newScenes.empty()) {
     QApplication::restoreOverrideCursor();
     DVGui::warning(tr("There was an error exporting the scene."));
     return;
   }
-  for (i = 0; i < newScenes.size(); i++) collectAssets(newScenes[i]);
+  m_exportedScenes = newScenes;
 
   QApplication::restoreOverrideCursor();
   QString message =
@@ -672,17 +712,62 @@ void ExportScenePopup::onExport() {
 
 //-----------------------------------------------------------------------------
 
-TFilePath ExportScenePopup::createNewProject() {
-  TProjectManager *pm = TProjectManager::instance();
-  TFilePath projectName(m_newProjectName->text().toStdWString());
-  if (projectName == TFilePath()) {
-    DVGui::warning(
-        tr("The project name cannot be empty or contain any of the following "
-           "characters:(new line)   \\ / : * ? \"  |"));
-    return TFilePath();
+bool ExportScenePopup::convertSceneToExplicitHolds(const TFilePath &scenePath) {
+  try {
+    ToonzScene scene;
+    scene.load(scenePath);
+    TXsheet *xsh = scene.getXsheet();
+    if (!xsh) return false;
+    // Materializes implicit holds up to the xsheet length, recursing into
+    // sub-xsheets. 0 = use each xsheet's own frame count as the range.
+    xsh->convertToExplicitHolds(0);
+    scene.save(scenePath);
+  } catch (...) {
+    DVGui::warning(tr("Could not convert %1 to explicit holds.")
+                       .arg(toQString(scenePath)));
+    return false;
   }
-  if (projectName.isAbsolute()) {
-    // bad project name
+  return true;
+}
+
+//-----------------------------------------------------------------------------
+
+void ExportScenePopup::writeOpenToonzProjectFile(const TFilePath &projectPath) {
+  // The Tahoma project file (tahomaproject.xml) and the OpenToonz one share
+  // the same XML format: a renamed copy makes the folder a valid OT project.
+  TFilePath projectFolder = projectPath.getParentDir();
+  TFilePath otProjectPath =
+      projectFolder + (projectFolder.getWideName() + L"_otprj.xml");
+  if (otProjectPath == projectPath) return;
+  if (!TSystem::doesExistFileOrLevel(projectPath)) return;
+  try {
+    if (TSystem::doesExistFileOrLevel(otProjectPath))
+      TSystem::removeFileOrLevel(otProjectPath);
+    TSystem::copyFile(otProjectPath, projectPath);
+  } catch (...) {
+    DVGui::warning(tr("Could not write the OpenToonz project file %1.")
+                       .arg(toQString(otProjectPath)));
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+TFilePath ExportScenePopup::createNewProject() {
+  NewProjectSpec spec;
+  spec.name     = m_newProjectName->text();
+  spec.location = m_projectLocationFld->getPath();
+  for (const auto &fld : m_folderFlds)
+    spec.folders.append(qMakePair(fld.first, fld.second->getPath()));
+  spec.targetOpenToonz = m_targetOTButton->isChecked();
+  return createProjectFromSpec(spec);
+}
+
+//-----------------------------------------------------------------------------
+
+TFilePath ExportScenePopup::createProjectFromSpec(const NewProjectSpec &spec) {
+  TProjectManager *pm = TProjectManager::instance();
+  TFilePath projectName(spec.name.toStdWString());
+  if (projectName == TFilePath() || projectName.isAbsolute()) {
     DVGui::warning(
         tr("The project name cannot be empty or contain any of the following "
            "characters:(new line)   \\ / : * ? \"  |"));
@@ -694,12 +779,12 @@ TFilePath ExportScenePopup::createNewProject() {
     return TFilePath();
   }
 
-  TFilePath newLocation   = TFilePath(m_projectLocationFld->getPath());
+  TFilePath newLocation   = TFilePath(spec.location.toStdWString());
   TFilePath projectFolder = newLocation + projectName;
   TFilePath projectPath   = pm->projectFolderToProjectPath(projectFolder);
 
   if (TSystem::doesExistFileOrLevel(projectPath)) {
-    error(tr("Project '%1' already exists").arg(m_newProjectName->text()));
+    error(tr("Project '%1' already exists").arg(spec.name));
     return TFilePath();
   }
 
@@ -711,13 +796,50 @@ TFilePath ExportScenePopup::createNewProject() {
   for (i = 0; i < (int)currentProject->getFolderCount(); i++)
     project->setFolder(currentProject->getFolderName(i),
                        currentProject->getFolder(i));
+  // User-customized asset folder layout overrides the inherited one.
+  for (const auto &fld : spec.folders) {
+    QString path = fld.second.trimmed();
+    if (path.isEmpty()) continue;
+    project->setFolder(fld.first, TFilePath(path.toStdWString()));
+  }
+  project->setUseSubScenePath(spec.useSubScenePath);
   project->save(projectPath);
   DvDirModel::instance()->refreshFolder(projectPath.getParentDir());
-  std::string newProj = project->getProjectFolder().getQString().toStdString();
   RecentFiles::instance()->addFilePath(project->getProjectFolder().getQString(),
                                        RecentFiles::Project);
   DvDirModel::instance()->forceRefresh();
   return projectPath;
+}
+
+//-----------------------------------------------------------------------------
+
+std::vector<TFilePath> ExportScenePopup::exportScenesToProject(
+    const std::vector<TFilePath> &scenes, const TFilePath &projectPath,
+    bool targetOpenToonz) {
+  TProjectManager *pm      = TProjectManager::instance();
+  TFilePath oldProjectPath = pm->getCurrentProjectPath();
+  pm->setCurrentProjectPath(projectPath);
+
+  std::vector<TFilePath> newScenes;
+  for (const TFilePath &scenePath : scenes) {
+    TFilePath newScenePath = importScene(scenePath);
+    if (newScenePath == TFilePath()) continue;
+    newScenes.push_back(newScenePath);
+  }
+  pm->setCurrentProjectPath(oldProjectPath);
+  if (newScenes.empty()) return newScenes;
+
+  for (const TFilePath &newScenePath : newScenes) collectAssets(newScenePath);
+
+  // OpenToonz compatibility pass: OT has no implicit-hold support, so the
+  // exported scenes must carry explicit holds or the xsheet timing is lost;
+  // OT also looks for a "<folder>_otprj.xml" project file.
+  if (targetOpenToonz) {
+    for (const TFilePath &newScenePath : newScenes)
+      convertSceneToExplicitHolds(newScenePath);
+    writeOpenToonzProjectFile(projectPath);
+  }
+  return newScenes;
 }
 
 //-----------------------------------------------------------------------------

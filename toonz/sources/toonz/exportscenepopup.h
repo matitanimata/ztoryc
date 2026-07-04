@@ -167,15 +167,47 @@ class ExportScenePopup final : public DVGui::Dialog {
   QLabel *m_pathFieldLabel;
   DVGui::FileField *m_projectLocationFld;
 
+  // Ztoryc: customizable asset-folder layout for the new project (the user is
+  // not forced to inherit the current project's folder structure) and target
+  // application toggle (OpenToonz needs compatibility conversions on export).
+  QList<QPair<std::string, DVGui::FileField *>> m_folderFlds;
+  QRadioButton *m_targetTahomaButton;
+  QRadioButton *m_targetOTButton;
+
   bool m_createNewProject;
 
+  // Filled on successful export — lets callers post-process the exported
+  // scenes (e.g. the Ztoryc Board copies the .ztoryc back-link companions).
+  std::vector<TFilePath> m_exportedScenes;
+
 public:
-  ExportScenePopup(std::vector<TFilePath> scenes);
+  ExportScenePopup(std::vector<TFilePath> scenes, bool newProjectMode = false);
 
   void setScenes(std::vector<TFilePath> scenes) {
     m_scenes = scenes;
     //    updateCommandLabel();
   }
+
+  const std::vector<TFilePath> &exportedScenes() const {
+    return m_exportedScenes;
+  }
+
+  // UI-independent export engine, reusable by other entry points (the Ztoryc
+  // Board "Export Shots to New Project" flow embeds these in its own dialog).
+  struct NewProjectSpec {
+    QString name;
+    QString location;  // parent folder the project is created in
+    QList<QPair<std::string, QString>> folders;  // folder name → custom path
+    bool useSubScenePath = false;  // "Separate assets into scene sub-folders"
+    bool targetOpenToonz = false;
+  };
+  //! Create the project on disk; empty path (+ DVGui warning) on failure.
+  static TFilePath createProjectFromSpec(const NewProjectSpec &spec);
+  //! Import scenes + collect assets into the project; OT compatibility pass
+  //! (explicit holds + _otprj.xml) when requested. Returns exported paths.
+  static std::vector<TFilePath> exportScenesToProject(
+      const std::vector<TFilePath> &scenes, const TFilePath &projectPath,
+      bool targetOpenToonz);
 
 protected slots:
   void switchMode(int id);
@@ -184,8 +216,12 @@ protected slots:
   void onExport();
 
 protected:
-  //! Create new project and return new project path.
+  //! Create new project from the dialog fields and return new project path.
   TFilePath createNewProject();
+  //! OpenToonz compatibility: materialize implicit holds in an exported scene.
+  static bool convertSceneToExplicitHolds(const TFilePath &scenePath);
+  //! OpenToonz compatibility: write a "<folder>_otprj.xml" project file copy.
+  static void writeOpenToonzProjectFile(const TFilePath &projectPath);
   //  void updateCommandLabel();
 };
 

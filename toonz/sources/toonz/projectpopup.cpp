@@ -565,6 +565,25 @@ ProjectCreatePopup::ProjectCreatePopup() : ProjectPopup(true) {
          "works and statuses can be changed manually."));
   m_useKitsuCB->setChecked(false);
   m_topLayout->addWidget(m_useKitsuCB);
+
+  // Ztoryc: asset organization preset, decided at creation (still adjustable
+  // later from Project Settings via the folder paths).
+  QHBoxLayout *assetOrgLay = new QHBoxLayout();
+  assetOrgLay->addWidget(new QLabel(tr("Asset organization:"), this));
+  m_assetOrgCombo = new QComboBox(this);
+  m_assetOrgCombo->addItem(tr("Project folders (drawings, extras...)"));
+  m_assetOrgCombo->addItem(tr("Scene sub-folders inside asset folders"));
+  m_assetOrgCombo->addItem(
+      tr("Assets folder next to each scene (scenes/<scene name>)"));
+  m_assetOrgCombo->setToolTip(
+      tr("Where scenes keep their assets:\n"
+         "- Project folders: all scenes share the project-level folders.\n"
+         "- Scene sub-folders: each scene gets its own sub-folder inside "
+         "drawings/extras/inputs.\n"
+         "- Next to each scene: each scene folder in scenes/ holds all its "
+         "assets — handy for moving scenes between computers."));
+  assetOrgLay->addWidget(m_assetOrgCombo, 1);
+  m_topLayout->addLayout(assetOrgLay);
 }
 
 //-----------------------------------------------------------------------------
@@ -617,6 +636,22 @@ void ProjectCreatePopup::createProject() {
 
   auto project = std::make_shared<TProject>();
   updateProjectFromFields(project);
+  // Ztoryc: apply the asset organization preset (the settings box with the
+  // folder fields is hidden in this popup, so the combo drives the layout).
+  if (m_assetOrgCombo) {
+    int idx = m_assetOrgCombo->currentIndex();
+    if (idx == 1)
+      project->setUseSubScenePath(true);
+    else if (idx == 2) {
+      // Per-scene folders only: palettes and scripts stay project-level
+      // (shared color design palettes / automation scripts).
+      const char *assetFolders[] = {"drawings", "extras", "inputs", "outputs",
+                                    "stopmotion"};
+      for (const char *n : assetFolders)
+        project->setFolder(n,
+                           TFilePath("scenes/$scenepath/" + std::string(n)));
+    }
+  }
   auto currentProject = pm->getCurrentProject();
   project->setSceneProperties(currentProject->getSceneProperties());
   try {
@@ -663,6 +698,8 @@ void ProjectCreatePopup::showEvent(QShowEvent *) {
   m_useSubSceneCbs->blockSignals(true);
   m_useSubSceneCbs->setChecked(false);
   m_useSubSceneCbs->blockSignals(false);
+
+  if (m_assetOrgCombo) m_assetOrgCombo->setCurrentIndex(0);
 
   QString defaultProjectLocation =
       Preferences::instance()->getDefaultProjectPath();

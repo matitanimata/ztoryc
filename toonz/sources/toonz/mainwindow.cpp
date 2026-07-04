@@ -2605,6 +2605,8 @@ void MainWindow::defineActions() {
                        QT_TR_NOOP("Production Spreadsheet (CSV)..."), "");
   createMenuFileAction(MI_ZtoryExportShots,
                        QT_TR_NOOP("Shots / Scenes..."), "");
+  createMenuFileAction(MI_ZtoryExportShotsToProject,
+                       QT_TR_NOOP("Shots to New Project..."), "");
   createMenuFileAction(MI_ZtoryExportAnimatic,
                        QT_TR_NOOP("Animatic..."), "");
   createMenuXsheetAction(MI_ZtoryStoryboardSettings,

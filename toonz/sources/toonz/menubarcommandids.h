@@ -581,6 +581,7 @@
 #define MI_ZtoryExportSpreadsheetXlsx "MI_ZtoryExportSpreadsheetXlsx"
 #define MI_ZtoryExportSpreadsheetCsv "MI_ZtoryExportSpreadsheetCsv"
 #define MI_ZtoryExportShots "MI_ZtoryExportShots"
+#define MI_ZtoryExportShotsToProject "MI_ZtoryExportShotsToProject"
 #define MI_ZtoryExportAnimatic "MI_ZtoryExportAnimatic"
 #define MI_ZtoryStoryboardSettings "MI_ZtoryStoryboardSettings"
 
