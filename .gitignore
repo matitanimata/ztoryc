@@ -100,3 +100,10 @@ thirdparty/superlu/SuperLU_4.1/TESTING/
 # Staged FFmpeg + Rhubarb from ci-scripts/osx/tahoma-bundle-apps.sh (or CI cache).
 # Dylibs and binaries — never commit; reproduce locally with the bundle script.
 /thirdparty/apps/
+
+# Private drafts (sponsorship material, manual, course) — not for the public repo
+/COURSE_DRAFT.md
+/COURSE_ZTORYC_8WEEKS_DRAFT.md
+/MANUAL.md
+/SPONSORS_DRAFT.md
+/SUPPORTERS.md
