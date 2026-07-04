@@ -1,3 +1,36 @@
+## [2026-07-05] — Fix bug durata transizione (cross-dissolve) + ricerca dissolve reale
+
+Sessione focalizzata sulle transizioni dell'animatic. Diagnosi guidata da tracing lldb
+dal vivo (mai patch alla cieca), come da workflow crash-diagnosi.
+
+### Fixed
+- **Durata cross-dissolve: shot B teneva il primo frame dopo una riduzione della
+  dissolvenza.** Repro (trace lldb): dissolvenza 0→12→22, poi ridotta a 12 → lo shot B
+  ripartiva tenendo il frame 1 invece di riprendere dal frame corretto. Root cause: NON
+  in `onTransitionChanged` (il suo shift head/tail è simmetrico e corretto), ma in
+  `ZtoryModel::resequenceXsheet()` che ricostruiva ogni colonna shot con frameId `1,2,3…`
+  puliti, **cancellando l'offset dell'head-hold** applicato per allineare lo shot B.
+  Siccome resequence gira dopo qualsiasi cambio (e su molte interazioni UI), tra due edit
+  l'offset veniva azzerato mentre l'head-hold nella sub-scena e la colonna XD-in
+  sopravvivevano → desync → B teneva il frame 1. Fix: nuovo helper
+  `ZtoryShotOps::xdInHeadOffset()` che legge la colonna XD-in (fonte di verità persistente);
+  resequence ora espone il sub-scene frame `r+1+headOffset`, rendendo l'offset self-healing
+  attraverso resequence / reload / undo. (ztorymodel.cpp, ztoryshotops.cpp/.h) Verificato
+  dal vivo da Franco.
+
+### In corso (non committato — prosegue nella prossima sessione)
+- **Dissolve reale nel viewer animatic** (overlap sotto-scene + Cross Dissolve nativo
+  `blendFx`): prima implementazione fatta e il blend RENDERIZZA una dissolvenza vera, ma
+  con 3 problemi da risolvere (crash al workflow-switch per registrazione fx incompleta;
+  interpolazione keyframe; e un problema strutturale: l'esposizione degli extra frame sulle
+  colonne shot corrompe `getRange()` → triangolo marker sparito + crescita cumulativa
+  durate). WIP revertito per tenere master sano; diagnosi completa + fix precisi salvati in
+  memoria per riprendere a caldo. Decisione Franco: timeline invariata, gli extra frame
+  dentro gli shot forniscono l'overlap.
+
+### Upstream candidates
+- Nessuno nuovo (il fix `xdInHeadOffset` è logica Ztoryc-specifica, non portabile upstream).
+
 ## [2026-07-04b] — Fix thumbnail (Board/Animatic/Thumbnails room), transizioni FCPXML per DaVinci, GitHub Sponsors
 
 Seconda parte della sessione del 2026-07-04 (continua dopo l'export progetto esterno,
