@@ -72,4 +72,13 @@ TDimension cameraRes(ToonzScene *scene);
 TDimension xsheetCameraRes(TXsheet *xsh);
 double xsheetCameraAspect(TXsheet *xsh);
 
+// Head-hold frame count (= T/2) baked into a sub-scene by a cross-dissolve on
+// its INCOMING edge, read from the persisted "XD-in" SoundText note column
+// (the single source of truth — it survives save/reload/undo, unlike the
+// transient main-xsheet frameIds).  resequenceXsheet() offsets the shot's
+// main-xsheet frameIds by this value so the dissolve head-hold copies are
+// skipped in the animatic (they stay visible only when the shot is opened in
+// SHOTEDITOR).  Returns 0 when the shot has no incoming cross-dissolve.
+int xdInHeadOffset(TXsheet *subXsh);
+
 }  // namespace ZtoryShotOps

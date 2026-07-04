@@ -265,4 +265,22 @@ int colDuration(TXsheet *xsh, int col) {
   return (r1 >= r0) ? r1 - r0 + 1 : 24;
 }
 
+int xdInHeadOffset(TXsheet *subXsh) {
+  if (!subXsh) return 0;
+  // Same probe as ztoryanimatic.cpp's xdNoteHalfCount("XD-in"): find the
+  // SoundText column named "XD-in" and return its row count (= T/2 head-hold).
+  for (int c = 0; c < subXsh->getColumnCount(); c++) {
+    TXshColumn *col = subXsh->getColumn(c);
+    if (!col || !col->getSoundTextColumn()) continue;
+    std::string colName =
+        subXsh->getStageObject(subXsh->getColumnObjectId(c))->getName();
+    if (colName == "XD-in") {
+      int r0 = 0, r1 = 0;
+      col->getRange(r0, r1);
+      return (r1 >= r0) ? (r1 - r0 + 1) : 0;
+    }
+  }
+  return 0;
+}
+
 }  // namespace ZtoryShotOps

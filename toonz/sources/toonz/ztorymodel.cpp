@@ -1859,9 +1859,20 @@ void ZtoryModel::resequenceXsheet() {
     // tester's "timeline wiped itself" / "adjusted length and everything
     // disappeared" reports.
     if (!cl) continue;
+    // Cross-dissolve head-hold: if this shot has an incoming dissolve, its
+    // sub-scene carries |headOffset| extra hold copies at the head (marked by
+    // the persisted "XD-in" note column).  Skip them by exposing sub-scene
+    // frame (r+1+headOffset) instead of (r+1), so the animatic shows the shot's
+    // real content on time.  Rebuilding the frameIds as a plain 1..N sequence
+    // (the old code) silently wiped the offset applied by onTransitionChanged,
+    // desyncing the main xsheet from the head-hold and making shot B hold its
+    // first frame after any resequence.  Deriving it from XD-in here makes the
+    // offset self-healing across resequence / reload / undo.
+    int headOffset = ZtoryShotOps::xdInHeadOffset(cl->getXsheet());
     for (int r = 0; r <= maxFrames; r++) xsh->clearCells(r, col);
     for (int r = 0; r < duration; r++)
-      xsh->setCell(startFrame + r, col, TXshCell(cl, TFrameId(r + 1)));
+      xsh->setCell(startFrame + r, col,
+                   TXshCell(cl, TFrameId(r + 1 + headOffset)));
     // Stop Frame Hold at startFrame+duration: prevents the shot's last
     // drawing from "bleeding" via implicit hold into the next shot during
     // animatic playback/render.  The shot's duration in the main xsheet IS
