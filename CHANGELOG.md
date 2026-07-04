@@ -1,3 +1,100 @@
+## [2026-07-04b] — Fix thumbnail (Board/Animatic/Thumbnails room), transizioni FCPXML per DaVinci, GitHub Sponsors
+
+Seconda parte della sessione del 2026-07-04 (continua dopo l'export progetto esterno,
+vedi entry precedente). Segnalazioni utente su thumbnail rotte + richiesta transizioni
+DaVinci + compilazione profilo GitHub Sponsors.
+
+### Fixed — thumbnail Board / Animatic / export
+- **Bande grigie al cambio formato camera + thumbs deformati alla riapertura scena**:
+  tutti i render di anteprima (Board panel preview, animatic track, export PDF/XLSX)
+  dimensionavano il raster sulla camera del MAIN xsheet invece che su quella della
+  **sub-xsheet renderizzata** — le camere sono per-xsheet, e `renderFrame` adatta la
+  camera dell'xsheet passato al raster, lasciando bande del colore di sfondo se le due
+  divergono. Nuovo `ZtoryShotOps::xsheetCameraRes/Aspect(TXsheet*)`, usato ovunque.
+  (storyboardpanel.cpp, ztoryanimatic.cpp, ztoryshotops.cpp/.h)
+- **Cache thumbnail dell'animatic track stale al cambio scena**: si puliva solo su
+  `modelReset`, non su `sceneSwitched` — una scena il cui refresh non passava per
+  quella via mostrava le thumb della scena precedente sulle colonne coincidenti.
+- **Blocchi corti in timeline**: se il blocco era più stretto della thumb, la larghezza
+  veniva schiacciata invece di rimpicciolire l'immagine uniformemente.
+- **"Col 5" invece del numero shot**: se un blocco veniva costruito tra l'inserimento
+  dello shot e il resequence del modello, appariva il nome colonna di default di Tahoma.
+  Ora c'è un fallback posizionale con regex `^Col\d+$`.
+
+### Fixed — Thumbnails room (cambio formato camera)
+- **Riscrittura completa del reflow** (`reanchorRaster`, condiviso da `onSceneChanged`
+  live e `persistLoad` in ricarica). Tre bug distinti segnalati dall'utente in un giro
+  di test iterativo:
+  1. Il vecchio reflow lavorava **per box**: una panoramica unita (merge) veniva tagliata
+     al confine box e perdeva contenuto → ora lavora **per regione** (una merge = una
+     regione unica).
+  2. **Griglia fantasma accumulata** sui cambi ripetuti di formato: i margini bianchi di
+     ogni box venivano ri-scalati insieme al contenuto, accumulando seam del resample →
+     ora si estrae **solo il bounding box dell'inchiostro** (soglia 248/255) su bianco
+     fresco ad ogni passaggio.
+  3. **Rimpicciolimento cumulativo** (square→HD→ultrawide→square non tornava alla
+     dimensione originale): ora la scala mantiene la frazione di altezza rispetto al
+     frame (`newBoxH/oldBoxH`, sale E scende), riducendo ulteriormente solo se
+     l'inchiostro scalato sborda la larghezza fissa del box — su richiesta esplicita
+     di Franco.
+  4. **Bordino scuro attorno al disegno** dopo il fix #2: `do_resample` riempie di nero
+     i campioni fuori raster; ora l'inchiostro viene imbottito con un margine bianco di
+     6px prima di scalare + pulizia di un frame di 2px sul risultato.
+  5. **Undo del cambio formato schiacciava i disegni**: lo snapshot undo non salvava
+     l'aspect ratio con cui era stato disposto il raster. Ora `Snapshot` include
+     `boxAspect`; il reflow stesso è annullabile (`pushUndo()` prima del reshape).
+  - **Griglia guida** ridisegnata in blu classico da animazione `#1D5C83` (tenue, bassa
+    opacità) invece di grigio — una linea grigia residua è quindi inequivocabilmente un
+    artefatto, non la guida. (ztorythumbnailcanvas.cpp/.h)
+- Fix upstream candidato aggiunto in questa sessione: `convertToExplicitHolds`
+  convertiva le sub-xsheet a IMPLICIT holds (copy-paste bug), vedi AGENTS.md.
+
+### Added — Export animatic → DaVinci (transizioni)
+- Le transizioni dell'animatic (colonne note XD-out/XD-in) sono ora scritte
+  nell'FCPXML come elementi `<transition>` Cross Dissolve: i clip adiacenti si
+  sovrappongono della durata della dissolvenza e gli offset audio vengono
+  compensati per restare sincronizzati. **Verificato funzionante in DaVinci
+  Resolve** (import reale delle dissolvenze). Bug corretto nello stesso giro:
+  la durata veniva letta dal mirror `.ztoryc` (spesso stale/0, transizioni
+  scritte a zero) invece che dalla colonna XD-out della sub-scena, fonte di
+  verità reale. (storyboardpanel.cpp)
+- **Hint scopribile**: il suggerimento per creare una transizione appariva solo
+  tenendo già premuto Alt/Option (quindi introvabile). Ora l'hint sul bordo
+  destro di uno shot con un successivo include "hold ⌥ Option/Alt and drag to
+  add a cross-dissolve" (label per piattaforma). (ztoryanimatic.cpp)
+
+### Chore
+- Rimossi dal tracking pubblico 5 file di bozze private (sponsor pricing, manuale,
+  corso) finiti nel repo per un `git add -A` incauto — ora in `.gitignore`, restano
+  solo in locale. Nessuna riscrittura della history su richiesta di Franco (il
+  contenuto non era abbastanza sensibile da giustificare un force-push).
+- Fix minore: checkbox "Update Production Tracker" nell'export progetto esterno —
+  il file `.ztoryc` di collegamento era legato a una regola automatica sul target
+  OT/Tahoma; ora è governato solo dalla checkbox (un export mirato a OpenToonz può
+  comunque essere riaperto in Ztoryc solo per aggiornare gli stati).
+
+### Non fatto — Profilo GitHub Sponsors (compilato manualmente, non da codice)
+- Bio, introduction, goal ($50/month), 7 tier (5 mensili + 2 one-time) compilati
+  nella dashboard GitHub Sponsors con testi bilingui EN/IT — in attesa di
+  approvazione GitHub. Sorgente di verità: `SPONSORS_DRAFT.md` (privato, gitignored).
+  Posizionamento aggiornato: "any production — 2D, stop motion, 3D or live-action"
+  (non solo 2D). Quando arriva l'approvazione: finalizzare blocco README +
+  `SUPPORTERS.md` da `SPONSORS_DRAFT.md` sezioni C/E.
+
+### Aperti / rimandati a prossima sessione
+- **Bug transizione**: cambiando la durata di una dissolvenza (es. 12→24 frame) lo
+  shot A non mostra gli ultimi 12 frame e lo shot B parte da 6 invece di 12 —
+  desync tra i due rami (coda A / testa B) di `onTransitionChanged`
+  (ztoryanimatic.cpp ~7252). Da riprodurre e tracciare passo-passo prima di
+  qualsiasi fix.
+- **Cross-dissolve reale nel viewer animatic** (non solo marker + export FCPXML):
+  approccio indicato da Franco — sovrapporre le colonne sub-scene sul main xsheet
+  durante la transizione e applicare l'effetto Cross Dissolve **nativo** di Tahoma
+  (il calcolo coda/testa esiste già via XD-out/XD-in). Va fatto DOPO il fix del bug
+  sopra. Vedi memoria project_animatic_real_dissolve_part2.
+
+---
+
 ## [2026-07-04] — Export shot → progetto esterno OpenToonz/Tahoma (dialog unico)
 
 Implementata la feature "Export progetto esterno" (memoria project_export_external_project_ot):
