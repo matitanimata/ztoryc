@@ -1,3 +1,57 @@
+## [2026-07-04] — Export shot → progetto esterno OpenToonz/Tahoma (dialog unico)
+
+Implementata la feature "Export progetto esterno" (memoria project_export_external_project_ot):
+gli shot del Board diventano un progetto autonomo con asset copiati, compatibile
+OpenToonz o Tahoma. Tre iterazioni con test di Franco nella stessa sessione.
+
+### Added
+- **File ▸ Export ▸ Ztoryc ▸ Shots to New Project...** (`MI_ZtoryExportShotsToProject`):
+  dialog unico con: destinazione **New project** (nome/posizione) o **Existing project**
+  (albero progetti — utile per raccogliere shot di più storyboard nello stesso progetto);
+  **Target application** Tahoma/OpenToonz; combo **Asset organization**; sezione asset
+  folders custom (ripiegata di default, prefilled dal progetto corrente); versione;
+  shots **All/Selected/Range**; checkbox Production Tracker con dicitura chiara
+  ("Update Production Tracker (writes a .ztoryc file next to each exported scene)" +
+  tooltip sugli avanzamenti di stato). (storyboardpanel.cpp/.h, menubar.cpp,
+  mainwindow.cpp, menubarcommandids.h)
+- **Motore riusabile in ExportScenePopup**: statiche `createProjectFromSpec` (NewProjectSpec:
+  nome, posizione, folder custom, useSubScenePath, targetOpenToonz) e
+  `exportScenesToProject` (import + collectAssets + passata OT). Il popup MI_ExportScenes
+  guadagna anche lui folder fields custom + toggle target. (exportscenepopup.h/.cpp)
+- **Compatibilità OpenToonz**: conversione a explicit holds di tutte le scene esportate
+  (ricorsiva nelle sub-xsheet) + copia del project file come `<nome>_otprj.xml`
+  (coesiste con tahomaproject.xml: la cartella è valida per entrambe le app).
+  Il companion `.ztoryc` NON viene copiato nei progetti target OT (OT lo ignora);
+  gli stati del tracker si aggiornano comunque se la checkbox è attiva.
+- **Combo "Asset organization"** (nell'export E in File ▸ New Project nativo):
+  1) Project folders (default) · 2) Scene sub-folders (= flag nativo useSubScenePath)
+  · 3) **Assets next to each scene** = `scenes/$scenepath/{drawings,extras,inputs,outputs,stopmotion}`
+  (layout storico di Franco, comodo per spostare scene tra computer). Palettes e scripts
+  restano a livello progetto (palette color design e script sono condivisi tra scene).
+  (projectpopup.cpp/.h)
+- Refactor: core di Export Shots estratto in `exportShotScenesToDir(indices, dir, ver,
+  writeLink, fail)` — riusato da entrambi i flussi, supporta indici sparsi (Selected).
+
+### Fixed
+- **convertToExplicitHolds convertiva le child xsheet a IMPLICIT** (txsheet.cpp ~2732,
+  copy-paste bug dalla funzione inversa): convertendo a explicit le sub-scene perdevano
+  il timing. Ora ricorre con `convertToExplicitHolds(0)`. **Candidato PR upstream**
+  (aggiunto alla lista in AGENTS.md).
+- **Staging autopulente senza prompt "already exists"**: le copie asset del salvataggio
+  sub-scene (takeCareSceneFolderItemsOnSaveSceneAs, scene subfolders) finivano fuori
+  dalla cartella temporanea (`scenes/extras/<nome>/`) → dal secondo export appariva il
+  prompt di overwrite. Ora lo staging è `+scenes/ztoryc_export_tmp/scenes/` così le
+  copie cadono DENTRO ztoryc_export_tmp → un solo rmDirTree (fatto anche preventivamente).
+
+### Notes
+- Edge case noto: se importScene rinomina una scena per collisione nel progetto target,
+  il companion .ztoryc non viene abbinato (raro).
+- Residui del primo test in `demoztoryc/scenes/extras/matitanimata__*` eliminabili a mano.
+- Il salvataggio del progetto forza sempre il nome `tahomaproject.xml`
+  (TProject::save → getLatestVersionProjectPath): per OT si copia il file, non si rinomina.
+
+---
+
 ## [2026-06-28b] — Production Tracker standalone: rifiniture + fix contaminazione → RELEASE v0.7.0
 
 Sessione di rifinitura della room Production standalone. Branch
