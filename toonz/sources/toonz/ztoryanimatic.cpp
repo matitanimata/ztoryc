@@ -2766,6 +2766,14 @@ void ZtoryAnimaticTrack::mouseMoveEvent(QMouseEvent *e) {
     return;
   }
   if (m_tool == SelectTool) {
+    // Modifier label matching the platform (Option on macOS, Alt elsewhere) so
+    // the transition shortcut is discoverable in the hint bar.
+    static const QString kMod =
+#ifdef Q_OS_MAC
+        QStringLiteral("⌥ Option");
+#else
+        QStringLiteral("Alt");
+#endif
     bool nearSeam = false;
     if (e->modifiers() & Qt::AltModifier) {
       for (int bi = 0; bi + 1 < (int)m_blocks.size(); bi++) {
@@ -2777,19 +2785,28 @@ void ZtoryAnimaticTrack::mouseMoveEvent(QMouseEvent *e) {
     if (nearSeam) {
       setCursor(Qt::SplitHCursor);
       TApp::instance()->showZtoryHint(
-          tr("Alt-drag the seam to add or remove a transition between the two shots"));
+          tr("Drag the seam to add or remove a cross-dissolve between the two "
+             "shots"));
     } else {
-      bool nearEdge = false;
-      for (auto &b : m_blocks) {
+      bool nearEdge     = false;
+      bool edgeHasNext  = false;  // a following shot exists → a transition is possible
+      for (int bi = 0; bi < (int)m_blocks.size(); bi++) {
+        auto &b = m_blocks[bi];
         int duration = b.f1 - b.f0 + 1;
         int bx1 = (int)((b.startFrameInMain + duration) * m_ppf);
-        if (mx >= bx1 - 6 && mx <= bx1 + 2) { nearEdge = true; break; }
+        if (mx >= bx1 - 6 && mx <= bx1 + 2) {
+          nearEdge    = true;
+          edgeHasNext = (bi + 1 < (int)m_blocks.size());
+          break;
+        }
       }
       setCursor(nearEdge ? Qt::SizeHorCursor : Qt::ArrowCursor);
-      if (nearEdge)
-        TApp::instance()->showZtoryHint(
-            tr("Drag the right edge to ripple-trim the shot"));
-      else
+      if (nearEdge) {
+        QString hint = tr("Drag the right edge to ripple-trim the shot");
+        if (edgeHasNext)
+          hint += tr("  --  hold %1 and drag to add a cross-dissolve").arg(kMod);
+        TApp::instance()->showZtoryHint(hint);
+      } else
         TApp::instance()->showZtoryHint(
             tr("Double-click to enter the shot and draw  --  "
                "Timing and audio are edited here in the Animatic"));
