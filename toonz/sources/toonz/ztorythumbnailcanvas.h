@@ -174,6 +174,13 @@ private:
   int regionIndexOf(int boxIndex) const;        // → region's top-left index
   QRect regionBoxRect(int topLeftIndex) const;  // region rect in box coords
 
+  // Reflow a raster laid out at oldBoxH into the current grid (m_cols/m_rows at
+  // m_boxH). Works per region (merged pans stay whole), scales each region
+  // uniformly (never deformed) and re-centres it. Used both on a live camera
+  // change and when loading a scene whose canvas was saved at another aspect.
+  TRaster32P reanchorRaster(const TRaster32P &oldRas, double oldBoxH,
+                            double newBoxH) const;
+
   // --- Transform tool internals --------------------------------------------
   void liftFloat(const QRectF &worldRect, bool copy);  // marquee → floating buf
   void liftFloatLasso(const QVector<QPointF> &worldPath, bool copy);
@@ -184,6 +191,9 @@ private:
     TRaster32P ras;
     int cols, rows;
     QVector<QRect> merges;
+    double boxAspect;  // camera aspect the raster was laid out at — restored
+                       // together with it so undoing across a camera-format
+                       // change never squishes the drawings into a stale grid
   };
   void pushUndo();   // snapshot current state before a mutating edit
   void undo();

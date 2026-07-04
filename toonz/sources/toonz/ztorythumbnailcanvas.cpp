@@ -175,58 +175,140 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
 
   const double oldBoxH = m_boxH;
   const int oldH       = m_ras ? m_ras->getLy() : 0;
-  m_boxAspect          = aspect;
-  m_boxH               = m_boxW / aspect;
-  const double newBoxH = m_boxH;
-  const int newH       = (int)gridH();
-  const int gw         = (int)gridW();
-  const int bw         = (int)m_boxW;
-  if (newH <= 0 || oldH <= 0 || oldBoxH <= 0.0 || !m_ras) return;
+  if (oldH <= 0 || oldBoxH <= 0.0 || !m_ras) return;
 
-  // Re-anchor every panel's drawing to the CENTRE of its (taller or shorter) new
-  // box.  Default is a pure translation that follows the box centre, so a drawing
-  // keeps its size and stays inside its panel; it is only scaled DOWN —
-  // proportionally (uniform X==Y) so it is never deformed — when it no longer
-  // fits.  Each panel is handled independently: a cross-panel panorama is thus
-  // re-anchored per panel, an accepted trade-off of the fixed-width grid (keeping
-  // each drawing inside its own panel takes priority).  We clone each panel's old
-  // content and place it with copy() (resample only into a dedicated buffer), so
-  // the filter never samples across a box edge — that left faint grid seams.
+  // Snapshot the pre-reshape canvas (raster + its aspect) so Cmd-Z reverts the
+  // camera-format reflow cleanly instead of leaving a stale grid.
+  pushUndo();
+  m_boxAspect = aspect;
+  m_boxH      = m_boxW / aspect;
+  m_ras       = reanchorRaster(m_ras, oldBoxH, m_boxH);
+  update();
+}
+
+TRaster32P ZtoryThumbnailCanvas::reanchorRaster(const TRaster32P &oldRas,
+                                                double oldBoxH,
+                                                double newBoxH) const {
+  const int oldW = oldRas ? oldRas->getLx() : 0;
+  const int oldH = oldRas ? oldRas->getLy() : 0;
+  const int gw   = (int)gridW();
+  const int newH = qMax(1, (int)(m_rows * newBoxH));
+  const int bw   = (int)m_boxW;
+
   TRaster32P nr(gw, newH);
   nr->fill(TPixel32::White);
-  // Width is unchanged, so only a shorter box forces a (proportional) scale-down.
-  const double s = qMin(1.0, newBoxH / oldBoxH);
-  for (int r = 0; r < m_rows; r++) {
-    const int sy0  = qBound(0, (int)(oldH - (r + 1) * oldBoxH), oldH);
-    const int sy1  = qBound(0, (int)(oldH - r * oldBoxH), oldH);
-    if (sy1 - sy0 < 1) continue;
-    const int nby0 = qBound(0, (int)(newH - (r + 1) * newBoxH), newH);  // new box bottom
-    for (int c = 0; c < m_cols; c++) {
-      const int sx0 = qBound(0, c * bw, gw);
-      const int sx1 = qBound(0, (c + 1) * bw, gw);
-      if (sx1 - sx0 < 1) continue;
-      // Independent (contiguous) copy of the panel's old content.
-      TRaster32P src = m_ras->extract(sx0, sy0, sx1 - 1, sy1 - 1)->clone();
+  if (!oldRas || oldW <= 0 || oldH <= 0 || oldBoxH <= 0.0) return nr;
 
-      TRaster32P content;
-      if (s >= 0.999) {
-        content = src;  // fits as-is → translate only, no resample, no seams
-      } else {
-        const int dw = qMax(1, (int)(src->getLx() * s));
-        const int dh = qMax(1, (int)(src->getLy() * s));
-        content      = TRaster32P(dw, dh);
-        content->fill(TPixel32::White);
-        TRop::resample(content, src, TScale(s, s));
+  // Work per REGION rather than per box: a merged pan is one region, every
+  // unmerged box is a 1×1 region.  A per-box pass split a cross-box panorama at
+  // the box edges — that broke merged pans and dropped their content.
+  QVector<QRect> regions = m_merges;  // box-coord rects (col,row,wspan,hspan)
+  for (int r = 0; r < m_rows; ++r)
+    for (int c = 0; c < m_cols; ++c)
+      if (mergeIndexAt(c, r) < 0) regions.push_back(QRect(c, r, 1, 1));
+
+  // Tight bounding box of the inked pixels in a raster (near-white ignored so
+  // resampling half-tones don't grow it), or an empty rect if the region is
+  // blank. Extracting only the ink — never the region's white margins — is what
+  // stops old box borders from accumulating as a faint ghost grid across
+  // repeated camera changes.
+  auto inkBBox = [](const TRaster32P &ras) -> TRect {
+    ras->lock();
+    const int w = ras->getLx(), h = ras->getLy();
+    int x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (int y = 0; y < h; ++y) {
+      TPixel32 *row = ras->pixels(y);
+      for (int x = 0; x < w; ++x) {
+        const TPixel32 &p = row[x];
+        if (p.r < 248 || p.g < 248 || p.b < 248) {
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
+        }
       }
-      // Centre the content in this panel's new box.
-      const int offX = sx0 + ((sx1 - sx0) - content->getLx()) / 2;
-      const int offY = qBound(0, nby0 + ((int)newBoxH - content->getLy()) / 2,
-                              newH - content->getLy());
-      nr->copy(content, TPoint(offX, offY));
     }
+    ras->unlock();
+    return (x1 < x0 || y1 < y0) ? TRect() : TRect(x0, y0, x1, y1);
+  };
+
+  // Paint an n-pixel white frame around a raster. do_resample() fills pixels
+  // whose filter kernel reaches past the source edge with black; a white frame
+  // over that outer band removes the faint border it would otherwise leave
+  // around the drawing (the band sits in the white margin, clear of the ink).
+  auto whiteFrame = [](TRaster32P r, int n) {
+    const int w = r->getLx(), h = r->getLy();
+    n           = qMin(n, qMin(w, h) / 2);
+    if (n <= 0) return;
+    TRaster32P(r->extract(0, 0, w - 1, n - 1))->fill(TPixel32::White);  // bottom
+    TRaster32P(r->extract(0, h - n, w - 1, h - 1))->fill(TPixel32::White);  // top
+    TRaster32P(r->extract(0, 0, n - 1, h - 1))->fill(TPixel32::White);   // left
+    TRaster32P(r->extract(w - n, 0, w - 1, h - 1))->fill(TPixel32::White);  // right
+  };
+
+  for (const QRect &reg : regions) {
+    const int sx0 = qBound(0, reg.x() * bw, oldW);
+    const int sx1 = qBound(0, (reg.x() + reg.width()) * bw, oldW);
+    const int sy0 =
+        qBound(0, (int)(oldH - (reg.y() + reg.height()) * oldBoxH), oldH);
+    const int sy1 = qBound(0, (int)(oldH - reg.y() * oldBoxH), oldH);
+    if (sx1 - sx0 < 1 || sy1 - sy0 < 1) continue;
+
+    // Isolate this region's ink (drop the white margins so they never carry
+    // forward as ghost seams).
+    TRaster32P src = oldRas->extract(sx0, sy0, sx1 - 1, sy1 - 1)->clone();
+    TRect ink      = inkBBox(src);
+    if (ink.isEmpty()) continue;  // blank region → stays white
+    const int inkW = ink.getLx();
+    const int inkH = ink.getLy();
+
+    const int nregW = reg.width() * bw;
+    const int nregH = qMax(1, (int)(reg.height() * newBoxH));
+
+    // Keep the drawing's height fraction of the frame constant: scale by the
+    // box-height ratio (grows AND shrinks, so a round-trip of camera changes
+    // restores the original size).  Reduce further only when the scaled ink
+    // would overflow the box — width first (fixed box width), then height.
+    double sc = newBoxH / oldBoxH;
+    sc        = qMin(sc, (double)nregW / qMax(1, inkW));
+    sc        = qMin(sc, (double)nregH / qMax(1, inkH));
+    if (sc <= 0.0) sc = 1.0;
+
+    TRaster32P content;
+    int cw, ch;
+    if (qAbs(sc - 1.0) < 1e-3) {
+      // No scaling → no resample, no edge artifact: copy the ink straight.
+      content = src->extract(ink)->clone();
+      cw      = content->getLx();
+      ch      = content->getLy();
+    } else {
+      // Pad the ink with a white margin so the resample filter samples white at
+      // the edges instead of running off the raster (which do_resample fills
+      // with black → a dark border around the drawing).  A white frame over the
+      // outermost band then clears any residue at the padded edge.
+      const int m = 6;
+      TRaster32P padded(inkW + 2 * m, inkH + 2 * m);
+      padded->fill(TPixel32::White);
+      padded->copy(src->extract(ink)->clone(), TPoint(m, m));
+      const int pw = padded->getLx(), ph = padded->getLy();
+      cw           = qMax(1, (int)(pw * sc));
+      ch           = qMax(1, (int)(ph * sc));
+      content      = TRaster32P(cw, ch);
+      content->fill(TPixel32::White);
+      TRop::resample(content, padded,
+                     TScale((double)cw / pw, (double)ch / ph));
+      whiteFrame(content, 2);
+    }
+
+    // Re-centre the drawing inside this region's new rectangle.
+    const int nx0 = qBound(0, reg.x() * bw, gw);
+    const int ny0 =
+        qBound(0, (int)(newH - (reg.y() + reg.height()) * newBoxH), newH);
+    const int offX = qBound(0, nx0 + (nregW - cw) / 2, qMax(0, gw - cw));
+    const int offY = qBound(0, ny0 + (nregH - ch) / 2, qMax(0, newH - ch));
+    nr->copy(content, TPoint(offX, offY));
   }
-  m_ras = nr;
-  update();
+  return nr;
 }
 
 //=============================================================================
@@ -503,17 +585,14 @@ void ZtoryThumbnailCanvas::persistLoad() {
   if (img.isNull()) return;
   TRaster32P r = rasterFromQImage(img, /*premultiply=*/false);
 
-  // The saved canvas may have been drawn at a different camera aspect; fit it to
-  // the current box height so panels still line up (width is fixed by m_boxW).
-  const int wantW = (int)gridW(), wantH = (int)gridH();
-  if (r->getLx() != wantW || r->getLy() != wantH) {
-    TRaster32P fit(wantW, wantH);
-    fit->fill(TPixel32::White);
-    TRop::resample(fit, r,
-                   TScale((double)wantW / r->getLx(),
-                          (double)wantH / r->getLy()));
-    r = fit;
-  }
+  // The saved canvas may have been drawn at a different camera aspect; reflow it
+  // to the current box height so panels still line up (width is fixed by
+  // m_boxW). Use the region-aware re-anchor — a plain full-raster resample here
+  // deformed the drawings vertically and split merged pans (thumbs looked
+  // squished/broken on reopening a scene saved at another aspect).
+  const double savedBoxH = r->getLy() / (double)qMax(1, m_rows);
+  if (r->getLx() != (int)gridW() || qAbs(savedBoxH - m_boxH) > 0.5)
+    r = reanchorRaster(r, savedBoxH, m_boxH);
   m_ras = r;
   clearSelection();
   updateScrollBars();
@@ -1100,7 +1179,7 @@ void ZtoryThumbnailCanvas::deleteFloat() {
 void ZtoryThumbnailCanvas::pushUndo() {
   if (!m_ras) return;
   static const size_t kMaxUndo = 16;
-  m_undo.push_back({m_ras->clone(), m_cols, m_rows, m_merges});
+  m_undo.push_back({m_ras->clone(), m_cols, m_rows, m_merges, m_boxAspect});
   if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
   m_redo.clear();  // a fresh edit invalidates the redo branch
 }
@@ -1110,6 +1189,12 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
   m_cols   = s.cols;
   m_rows   = s.rows;
   m_merges = s.merges;
+  // Restore the grid geometry the raster was laid out at, so it isn't stretched
+  // to whatever aspect the camera happens to be now.
+  if (s.boxAspect > 0.0) {
+    m_boxAspect = s.boxAspect;
+    m_boxH      = m_boxW / s.boxAspect;
+  }
   m_floatImg = QImage();  // any floating selection is dropped on undo/redo
   m_floatDrag = -1;
   clearSelection();
@@ -1121,7 +1206,7 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
 void ZtoryThumbnailCanvas::undo() {
   if (m_undo.empty()) return;
   if (!m_ras) return;
-  m_redo.push_back({m_ras->clone(), m_cols, m_rows, m_merges});
+  m_redo.push_back({m_ras->clone(), m_cols, m_rows, m_merges, m_boxAspect});
   Snapshot s = m_undo.back();
   m_undo.pop_back();
   restoreSnapshot(s);
@@ -1130,7 +1215,7 @@ void ZtoryThumbnailCanvas::undo() {
 void ZtoryThumbnailCanvas::redo() {
   if (m_redo.empty()) return;
   if (!m_ras) return;
-  m_undo.push_back({m_ras->clone(), m_cols, m_rows, m_merges});
+  m_undo.push_back({m_ras->clone(), m_cols, m_rows, m_merges, m_boxAspect});
   Snapshot s = m_redo.back();
   m_redo.pop_back();
   restoreSnapshot(s);
@@ -1170,8 +1255,11 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
 
   // Thin panel separators (overlay only — the surface itself is contiguous).
   // Drawn per box-edge so the borders INTERNAL to a merged region are skipped,
-  // making the merge read as one panorama panel.
-  QPen sep(QColor(170, 170, 170));
+  // making the merge read as one panorama panel.  Classic animation blue
+  // (#1D5C83) so the guide never reads as pencil — any residual GREY line is
+  // then obviously a drawing artifact, not the grid.  Kept faint (low alpha) so
+  // it stays as unobtrusive as the old grey guide.
+  QPen sep(QColor(29, 92, 131, 90));
   sep.setCosmetic(true);
   p.setPen(sep);
   for (int c = 1; c < m_cols; ++c)
@@ -1195,7 +1283,7 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
       p.drawLine(QPointF(x0, y), QPointF(x1, y));
     }
 
-  QPen border(QColor(110, 110, 110));
+  QPen border(QColor(29, 92, 131, 120));
   border.setCosmetic(true);
   p.setPen(border);
   p.drawRect(target);
