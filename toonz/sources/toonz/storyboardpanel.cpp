@@ -5685,7 +5685,10 @@ void StoryboardPanel::onExportShotsToProject() {
 
 namespace {
 // One per-shot video clip referenced by the FCPXML timeline.
-struct FcpxClip { QString name; QString file; int frames; };
+// transitionAfter = cross-dissolve length (frames) between this clip and the
+// next; 0 = hard cut. The two clips overlap by that many frames in the spine so
+// DaVinci inserts a real cross dissolve on import.
+struct FcpxClip { QString name; QString file; int frames; int transitionAfter = 0; };
 // One audio clip on a lane (each animatic sound column → its own lane, so
 // dialogue / music / fx stay mixable in DaVinci).
 // offset  = position on the timeline (frames from timeline start)
@@ -5710,8 +5713,37 @@ bool writeAnimaticFcpxml(const QString &path, const QString &projectName, int fp
   if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return false;
   auto dur = [fps](int frames) { return QString("%1/%2s").arg(frames).arg(fps); };
 
-  int total = 0;
-  for (const auto &c : clips) total += c.frames;
+  // Cross-dissolve overlaps, clamped so an overlap never exceeds either
+  // neighbouring clip. trans[i] = frames clip i overlaps clip i+1.
+  std::vector<int> trans(clips.size(), 0);
+  bool anyTransition = false;
+  for (size_t i = 0; i + 1 < clips.size(); i++) {
+    int t = qBound(0, clips[i].transitionAfter,
+                   qMin(clips[i].frames, clips[i + 1].frames));
+    trans[i] = t;
+    if (t > 0) anyTransition = true;
+  }
+  // Compensated (overlapped) timeline start of each clip, and a mapper from an
+  // original sequential frame to its overlapped position — used to keep the
+  // audio, which is placed in absolute sequential frames, synced to the video
+  // once the dissolves have pulled later clips earlier.
+  std::vector<int> compStart(clips.size(), 0);
+  {
+    int acc = 0;
+    for (size_t i = 0; i < clips.size(); i++) {
+      compStart[i] = acc;
+      acc += clips[i].frames - (i + 1 < clips.size() ? trans[i] : 0);
+    }
+  }
+  int total = clips.empty() ? 0 : compStart.back() + clips.back().frames;
+  auto compAudioFrame = [&](int origFrame) {
+    int shift = 0, seam = 0;
+    for (size_t i = 0; i + 1 < clips.size(); i++) {
+      seam += clips[i].frames;  // original sequential seam between i and i+1
+      if (origFrame >= seam) shift += trans[i];
+    }
+    return qMax(0, origFrame - shift);
+  };
 
   QXmlStreamWriter x(&f);
   x.setAutoFormatting(true);
@@ -5728,6 +5760,16 @@ bool writeAnimaticFcpxml(const QString &path, const QString &projectName, int fp
   x.writeAttribute("width", QString::number(width));
   x.writeAttribute("height", QString::number(height));
   x.writeEndElement();  // format
+  // Cross-dissolve effect the transition elements reference. DaVinci maps it to
+  // its own cross dissolve by name on import.
+  if (anyTransition) {
+    x.writeStartElement("effect");
+    x.writeAttribute("id", "rXd");
+    x.writeAttribute("name", "Cross Dissolve");
+    x.writeAttribute("uid", ".../Transitions.localized/Dissolves.localized/"
+                            "Cross Dissolve.localized/Cross Dissolve.motn");
+    x.writeEndElement();  // effect
+  }
   int vid = 0;
   for (const auto &c : clips) {
     x.writeStartElement("asset");
@@ -5769,25 +5811,25 @@ bool writeAnimaticFcpxml(const QString &path, const QString &projectName, int fp
   x.writeAttribute("tcStart", "0s");
   x.writeAttribute("tcFormat", "NDF");
   x.writeStartElement("spine");
-  int off = 0;
   vid = 0;
   for (size_t i = 0; i < clips.size(); i++) {
     const auto &c = clips[i];
     x.writeStartElement("asset-clip");
     x.writeAttribute("ref", QString("v%1").arg(++vid));
-    x.writeAttribute("offset", dur(off));
+    x.writeAttribute("offset", dur(compStart[i]));
     x.writeAttribute("name", c.name);
     x.writeAttribute("start", "0s");
     x.writeAttribute("duration", dur(c.frames));
     // Connected audio clips (lanes -1, -2, …) nested in the first video clip,
-    // offsets relative to the timeline start.
+    // offsets relative to the timeline start. Offsets are compensated for the
+    // dissolve overlaps so the audio stays synced to the pulled-earlier video.
     if (i == 0) {
       aid = 0;
       for (const auto &a : audio) {
         x.writeStartElement("asset-clip");
         x.writeAttribute("ref", QString("a%1").arg(++aid));
         x.writeAttribute("lane", QString::number(a.lane));
-        x.writeAttribute("offset", dur(a.offset));
+        x.writeAttribute("offset", dur(compAudioFrame(a.offset)));
         x.writeAttribute("name", a.name);
         // start = in-point into the source, so a trimmed/repositioned audio clip
         // plays from where the user set it in the animatic (not from 0s).
@@ -5797,7 +5839,19 @@ bool writeAnimaticFcpxml(const QString &path, const QString &projectName, int fp
       }
     }
     x.writeEndElement();  // asset-clip (video)
-    off += c.frames;
+
+    // Cross dissolve to the next clip: sits in the overlap the two clips share.
+    if (i + 1 < clips.size() && trans[i] > 0) {
+      x.writeStartElement("transition");
+      x.writeAttribute("name", "Cross Dissolve");
+      x.writeAttribute("offset", dur(compStart[i] + c.frames - trans[i]));
+      x.writeAttribute("duration", dur(trans[i]));
+      x.writeStartElement("filter-video");
+      x.writeAttribute("ref", "rXd");
+      x.writeAttribute("name", "Cross Dissolve");
+      x.writeEndElement();  // filter-video
+      x.writeEndElement();  // transition
+    }
   }
   x.writeEndElement();  // spine
   x.writeEndElement();  // sequence
@@ -6317,6 +6371,36 @@ void StoryboardPanel::onExportAnimatic() {
       rTo   = toCombo->currentIndex();
       if (rFrom > rTo) std::swap(rFrom, rTo);
     }
+    // Transition length (frames) between shot si and the next, read from the
+    // "XD-out" note column inside the shot's sub-scene — the persisted source of
+    // truth (m_shots[].data.transitionFrames is only a mirror and can be stale).
+    auto shotTransitionFrames = [&](int si) -> int {
+      TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+      int col      = m_shots[si].data.xsheetColumn;
+      TXshChildLevel *cl = nullptr;
+      for (int r = 0; r < xsh->getFrameCount(); r++) {
+        TXshCell cell = xsh->getCell(r, col);
+        if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+          cl = cell.m_level->getChildLevel();
+          break;
+        }
+      }
+      TXsheet *sub = cl ? cl->getXsheet() : nullptr;
+      if (!sub) return 0;
+      for (int c = 0; c < sub->getColumnCount(); c++) {
+        TXshColumn *scol = sub->getColumn(c);
+        if (!scol || !scol->getSoundTextColumn()) continue;
+        std::string nm =
+            sub->getStageObject(sub->getColumnObjectId(c))->getName();
+        if (nm == "XD-out") {
+          int a = 0, b = 0;
+          scol->getRange(a, b);
+          return (b >= a) ? (b - a + 1) * 2 : 0;  // rows = T/2
+        }
+      }
+      return 0;
+    };
+
     std::vector<FcpxClip> clips;
     for (int si = rFrom; si <= rTo && si < (int)m_shots.size(); si++) {
       auto [r0, r1] = shotFrameRange(si);
@@ -6334,6 +6418,11 @@ void StoryboardPanel::onExportAnimatic() {
       c.name   = seqPart + shotNum;
       c.file   = QDir(outDir).filePath(sceneName + "_" + seqPart + shotNum + "." + ext);
       c.frames = r1 - r0 + 1;
+      // Cross-dissolve to the next shot (0 = hard cut). Only meaningful when the
+      // next shot is also part of this export range; the writer clamps it to the
+      // neighbouring clip lengths.
+      if (si < rTo && si + 1 < (int)m_shots.size())
+        c.transitionAfter = shotTransitionFrames(si);
       if (c.frames > 0) clips.push_back(c);
     }
     // Gather audio: each main-xsheet sound column → its own lane, each of its
