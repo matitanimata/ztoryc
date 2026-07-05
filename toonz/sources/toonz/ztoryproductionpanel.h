@@ -59,6 +59,8 @@ class ZtoryProductionPanel final : public TPanel {
   QPushButton  *m_kitsuPushBtn   = nullptr;
   QPushButton  *m_kitsuPullBtn   = nullptr;
   QPushButton  *m_kitsuUploadBtn = nullptr;
+  QPushButton  *m_kitsuPushAssetsBtn = nullptr;
+  QPushButton  *m_kitsuPullAssetsBtn = nullptr;
   QCheckBox    *m_kitsuHandlesCheck = nullptr;
   QSpinBox     *m_kitsuHandlesSpin  = nullptr;
   QLabel       *m_kitsuSyncLabel = nullptr;
@@ -100,6 +102,8 @@ private:
   void onKitsuPush();              // push shots + task statuses to Kitsu
   void onKitsuPull();              // pull task statuses (review sync) from Kitsu
   void onKitsuUpload();            // upload per-shot clips from a chosen folder
+  void onKitsuPushAssets();        // push the asset list to Kitsu
+  void onKitsuPullAssets();        // import Kitsu-authored assets into the tracker
   void updateKitsuButtons();       // enable/disable sync buttons by link state
   // Assets tab
   QWidget *buildAssetsTab();

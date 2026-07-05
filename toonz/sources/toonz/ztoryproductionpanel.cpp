@@ -496,6 +496,57 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
       m_kitsuSyncLabel->setText(tr("%1 (%2 updated)").arg(msg).arg(updated));
     }
   });
+  // Asset sync results (bidirectional).
+  connect(kc, &KitsuClient::assetIdsResolved, this, [](const QHash<QString, QString> &byKey) {
+    ZtoryModel *mm = ZtoryModel::instance();
+    bool dirty = false;
+    for (Asset &a : mm->assets()) {
+      auto it = byKey.find(a.type + "\n" + a.name.trimmed());
+      if (it != byKey.end() && a.kitsuAssetId != it.value()) { a.kitsuAssetId = it.value(); dirty = true; }
+    }
+    if (dirty) mm->saveProjectDb();
+  });
+  connect(kc, &KitsuClient::assetsPushed, this, [this](bool ok, int, int, const QString &msg) {
+    if (m_kitsuSyncLabel) {
+      m_kitsuSyncLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
+      m_kitsuSyncLabel->setText(msg);
+    }
+    updateKitsuButtons();
+  });
+  connect(kc, &KitsuClient::assetsPulled, this,
+          [this](bool ok, const QVector<KitsuAsset> &assets, const QString &msg) {
+    if (!ok) {
+      if (m_kitsuSyncLabel) { m_kitsuSyncLabel->setStyleSheet("color:#FF3860;"); m_kitsuSyncLabel->setText(msg); }
+      return;
+    }
+    // Import Kitsu-authored assets: match by id, then type+name; add the new ones.
+    ZtoryModel *mm = ZtoryModel::instance();
+    int added = 0, linked = 0;
+    bool dirty = false;
+    for (const KitsuAsset &ka : assets) {
+      if (ka.name.trimmed().isEmpty()) continue;
+      Asset *found = nullptr;
+      for (Asset &a : mm->assets()) {
+        if (!ka.kitsuAssetId.isEmpty() && a.kitsuAssetId == ka.kitsuAssetId) { found = &a; break; }
+        if (a.kitsuAssetId.isEmpty() && a.type == ka.type &&
+            a.name.trimmed().compare(ka.name.trimmed(), Qt::CaseInsensitive) == 0)
+          found = &a;  // keep looking for a stronger id match
+      }
+      if (found) {
+        if (found->kitsuAssetId != ka.kitsuAssetId) { found->kitsuAssetId = ka.kitsuAssetId; ++linked; dirty = true; }
+        continue;
+      }
+      mm->addAsset(ka.type, ka.name.trimmed());
+      mm->assets().back().kitsuAssetId = ka.kitsuAssetId;
+      ++added;
+      dirty = true;
+    }
+    if (dirty) { mm->saveProjectDb(); rebuildAssets(); }
+    if (m_kitsuSyncLabel) {
+      m_kitsuSyncLabel->setStyleSheet("color:#22D160;");
+      m_kitsuSyncLabel->setText(tr("%1 (%2 added, %3 linked)").arg(msg).arg(added).arg(linked));
+    }
+  });
 
   // Rebuild thumbnails when the Board finishes rendering a preview (panel 0 only —
   // panel 0 is the shot thumbnail). Debounced: one rebuild after a burst of renders.
@@ -1069,6 +1120,18 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   syncRow->addWidget(m_kitsuPushBtn);
   syncRow->addWidget(m_kitsuPullBtn);
   kgl->addLayout(syncRow);
+
+  m_kitsuPushAssetsBtn = new QPushButton(QObject::tr("Push assets to Kitsu →"), m_kitsuGroup);
+  m_kitsuPullAssetsBtn = new QPushButton(QObject::tr("← Pull assets from Kitsu"), m_kitsuGroup);
+  m_kitsuPushAssetsBtn->setToolTip(QObject::tr(
+      "Create the project's assets in Kitsu from Ztoryc (upsert by type+name)."));
+  m_kitsuPullAssetsBtn->setToolTip(QObject::tr(
+      "Import assets authored in Kitsu into the tracker (matched by type+name)."));
+  auto *assetRow = new QHBoxLayout();
+  assetRow->addWidget(m_kitsuPushAssetsBtn);
+  assetRow->addWidget(m_kitsuPullAssetsBtn);
+  kgl->addLayout(assetRow);
+
   kgl->addWidget(m_kitsuUploadBtn);
   m_kitsuSyncLabel = new QLabel(QString(), m_kitsuGroup);
   m_kitsuSyncLabel->setWordWrap(true);
@@ -1078,6 +1141,8 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   connect(m_kitsuPushBtn,   &QPushButton::clicked, this, &ZtoryProductionPanel::onKitsuPush);
   connect(m_kitsuPullBtn,   &QPushButton::clicked, this, &ZtoryProductionPanel::onKitsuPull);
   connect(m_kitsuUploadBtn, &QPushButton::clicked, this, &ZtoryProductionPanel::onKitsuUpload);
+  connect(m_kitsuPushAssetsBtn, &QPushButton::clicked, this, &ZtoryProductionPanel::onKitsuPushAssets);
+  connect(m_kitsuPullAssetsBtn, &QPushButton::clicked, this, &ZtoryProductionPanel::onKitsuPullAssets);
 
   for (QLineEdit *e : {m_prodEdit, m_codeEdit, m_seasonEdit, m_titleEdit, m_epEdit, m_patternEdit})
     connect(e, &QLineEdit::editingFinished, this,
@@ -1134,6 +1199,8 @@ void ZtoryProductionPanel::updateKitsuButtons() {
   if (m_kitsuPushBtn)   m_kitsuPushBtn->setEnabled(linked);
   if (m_kitsuPullBtn)   m_kitsuPullBtn->setEnabled(linked);
   if (m_kitsuUploadBtn) m_kitsuUploadBtn->setEnabled(linked);
+  if (m_kitsuPushAssetsBtn) m_kitsuPushAssetsBtn->setEnabled(linked);
+  if (m_kitsuPullAssetsBtn) m_kitsuPullAssetsBtn->setEnabled(linked);
   if (m_kitsuHandlesCheck) m_kitsuHandlesCheck->setEnabled(linked);
   if (m_kitsuHandlesSpin)  m_kitsuHandlesSpin->setEnabled(linked);
 }
@@ -1200,6 +1267,28 @@ void ZtoryProductionPanel::onKitsuUpload() {
                                 .arg(noId ? tr(" (%1 not on Kitsu yet)").arg(noId)
                                           : QString()));
   KitsuClient::instance()->uploadPreviews(m->kitsuProjectId(), uploads);
+}
+
+void ZtoryProductionPanel::onKitsuPushAssets() {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (!m->isKitsuLinked()) return;
+  const QVector<KitsuAsset> assets = KitsuClient::buildAssetsFromModel();
+  if (assets.isEmpty()) {
+    m_kitsuSyncLabel->setStyleSheet("color:#FF3860;");
+    m_kitsuSyncLabel->setText(tr("No assets to push."));
+    return;
+  }
+  m_kitsuSyncLabel->setStyleSheet(QString());
+  m_kitsuSyncLabel->setText(tr("Pushing %1 assets…").arg(assets.size()));
+  KitsuClient::instance()->pushAssets(m->kitsuProjectId(), assets);
+}
+
+void ZtoryProductionPanel::onKitsuPullAssets() {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (!m->isKitsuLinked()) return;
+  m_kitsuSyncLabel->setStyleSheet(QString());
+  m_kitsuSyncLabel->setText(tr("Pulling assets from Kitsu…"));
+  KitsuClient::instance()->pullAssets(m->kitsuProjectId());
 }
 
 void ZtoryProductionPanel::applyProjectFromFields() {
@@ -1321,8 +1410,7 @@ void ZtoryProductionPanel::onAssetCellClicked(int row, int col) {
   if (row < 0 || row >= m->assetCount()) return;
   if (col == 0) {  // Type picker
     QMenu menu(this);
-    const char *types[] = {"Character", "Prop", "Environment", "BG", "FX"};
-    for (const char *t : types) menu.addAction(QString::fromLatin1(t));
+    for (const QString &t : ZtoryModel::canonicalAssetTypes()) menu.addAction(t);
     QAction *ch = menu.exec(QCursor::pos());
     if (!ch) return;
     m->assets()[row].type = ch->text();

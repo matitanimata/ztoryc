@@ -584,6 +584,15 @@ ProjectCreatePopup::ProjectCreatePopup() : ProjectPopup(true) {
          "assets — handy for moving scenes between computers."));
   assetOrgLay->addWidget(m_assetOrgCombo, 1);
   m_topLayout->addLayout(assetOrgLay);
+
+  // The "Separate assets into scene sub-folders" checkbox is superseded here by
+  // the asset-organization combo (its "Scene sub-folders inside asset folders"
+  // preset is the same setting). Hiding it avoids a redundant, conflicting
+  // control — e.g. leaving it on with "Assets folder next to each scene" would
+  // double-nest by scene name. createProject() reads it as unchecked (showEvent
+  // resets it), so the combo is the single source of truth. It stays visible in
+  // ProjectSettingsPopup, which has no combo.
+  m_useSubSceneCbs->hide();
 }
 
 //-----------------------------------------------------------------------------

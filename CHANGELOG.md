@@ -1,3 +1,53 @@
+## [2026-07-05c] — Kitsu: dual URL + asset bidirezionali + sync spostato nella tab Project
+
+Sessione dedicata a completare l'integrazione Kitsu (M5) e a mettere ordine nella UI
+di sync. Route asset Zou inchiodate dal sorgente live. Rilasciata come **v0.8.0**
+(bundle con il lavoro dissolvenze del 07-05b, bumpato a 0.8.0 ma non ancora rilasciato).
+
+### Added
+- **Kitsu dual URL local/remote** — oltre all'URL primario (login + tutto il sync
+  leggero) c'è un **Local URL** opzionale: stessa istanza Kitsu via LAN, usato SOLO per
+  l'upload dei preview (salta il limite body del proxy remoto, es. i 100MB di Cloudflare).
+  `uplProbeLocalThenRun()` fa un probe con `setTransferTimeout(4000)` prima di partire:
+  se il LAN endpoint non risponde → fallback automatico al primario. Il JWT è
+  instance-wide, vale su entrambi gli URL. Zero impatto su push/pull/login (param `base`
+  opzionale sugli auth builder). Campo "Local URL:" nel Connect dialog.
+- **Kitsu asset bidirezionali** — push/pull delle entità asset Ztoryc↔Kitsu.
+  `pushAssets()` (upsert per type+name: crea i mancanti, non duplica), `pullAssets()`
+  (importa nel tracker gli asset creati in Kitsu, match per id poi type+name),
+  `kitsuAssetId` su `Asset` (link rename-proof, persistito nel .ztrack). Tassonomia
+  **allineata a Kitsu**: Character/Prop/FX/Environment (`ZtoryModel::canonicalAssetTypes()`,
+  sorgente unica UI + sync); legacy "BG" → "Environment" in load; "Audio" resta solo
+  cartella asset, non asset-type. Route Zou verificate dal sorgente live:
+  `GET /api/data/asset-types`, `GET /api/data/projects/<pid>/assets`,
+  `POST /api/data/projects/<pid>/asset-types/<atid>/assets/new`. **Testato end-to-end.**
+
+### Changed
+- **FCPXML export: rebrand label DaVinci → NLE generico** — checkbox "Also export editing
+  timeline", titolo "Export editing timeline", body "your NLE (DaVinci Resolve, Premiere
+  Pro or Final Cut Pro)". DaVinci ora è solo uno dei tre target.
+- **Comandi sync spostati dal Connect popup alla tab Project** — il Connect popup ora
+  contiene SOLO connessione (URL/Local URL/email/password) + binding progetto (Link/Create).
+  Tutti i push/pull (shots/statuses/asset) e l'upload preview vivono nella tab Project,
+  dove si lavora. Eliminata anche una duplicazione latente (popup e tab ascoltavano gli
+  stessi signal del singleton). Aggiunta la riga Push/Pull assets alla tab.
+- **Create Project popup: nascosto il checkbox "Separate assets into scene sub-folders"** —
+  il combo "Asset organization" lo supersede (il suo preset "Scene sub-folders" è la stessa
+  identica impostazione). Evita il footgun del doppio-nesting per nome-scena quando era
+  attivo insieme a "Assets folder next to each scene". Il checkbox resta nel Project
+  Settings popup (che non ha il combo).
+
+### Upstream candidates
+- Nessuno nuovo.
+
+### Notes
+- Restano per Kitsu: sync dei **task-status degli asset** (concept/rough/clean/color) —
+  oggi è bidirezionale solo l'ENTITÀ asset, non i suoi status. Route
+  `/actions/projects/<pid>/task-types/<ttid>/assets/create-tasks` già verificata.
+- La spec **struttura cartelle PRODUCTION/** (wizard Nuova produzione, ASSETS/PROJECT/OUTPUT)
+  resta da implementare: è ciò che darebbe una "casa" ai file degli asset (oggi il sync
+  scambia solo i metadati, non l'arte; `Asset` non ha ancora un campo path).
+
 ## [2026-07-05b] — Dissolvenze reali nell'animatic (render-time) + undo transizioni
 
 Completato il filone "dissolve reale Parte 2": le cross-dissolve ora si vedono

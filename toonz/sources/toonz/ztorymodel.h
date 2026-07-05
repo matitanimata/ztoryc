@@ -152,8 +152,9 @@ struct ShotData {
 // breakdown. Has its own task pipeline, mirroring shot tasks.
 struct Asset {
   QString                  uuid;   // stable project-unique key
-  QString                  type;   // "Character" / "Prop" / "Environment" / "BG" / "FX"
+  QString                  type;   // "Character" / "Prop" / "FX" / "Environment" (Kitsu-aligned)
   QString                  name;
+  QString kitsuAssetId;  // Kitsu asset (entity) id once synced — link across renames
   QMap<QString, TaskState> tasks;  // keyed by asset task-type name
   QStringList              tags;   // free categorisation (future: breakdown / AI)
 };
@@ -410,6 +411,10 @@ public:
   int  assetCount() const { return (int)m_assets.size(); }
   void addAsset(const QString &type, const QString &name);  // assigns a uuid; emits
   void removeAssetAt(int i);
+  // Canonical asset types, aligned 1:1 with Kitsu's default asset-types so the
+  // bidirectional sync maps by name without a translation table. Legacy "BG"
+  // assets are migrated to "Environment" on load.
+  static const QStringList &canonicalAssetTypes();
   // Asset task pipeline (fixed for now; the Workflows editor will make it custom).
   static const QStringList &canonicalAssetTaskOrder();
   // Edit asset tasks — keyed by index (live) or by uuid (undo-safe across reorders).

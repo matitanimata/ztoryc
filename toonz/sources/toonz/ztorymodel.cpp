@@ -257,6 +257,11 @@ void ZtoryModel::setShotTaskAssigneesByLabel(const QString &shotLabel,
 
 // ─── Assets ─────────────────────────────────────────────────────────────────
 
+const QStringList &ZtoryModel::canonicalAssetTypes() {
+  static const QStringList types = {"Character", "Prop", "FX", "Environment"};
+  return types;
+}
+
 const QStringList &ZtoryModel::canonicalAssetTaskOrder() {
   static const QStringList order = {"Concept", "Rough", "Clean", "Color"};
   return order;
@@ -480,6 +485,8 @@ void ZtoryModel::saveProjectDb() {
     xml.writeAttribute("uuid", as.uuid);
     xml.writeAttribute("type", as.type);
     xml.writeAttribute("name", as.name);
+    if (!as.kitsuAssetId.isEmpty())
+      xml.writeAttribute("kitsuAssetId", as.kitsuAssetId);
     if (!as.tags.isEmpty()) xml.writeAttribute("tags", as.tags.join("|"));
     for (auto it = as.tasks.constBegin(); it != as.tasks.constEnd(); ++it) {
       xml.writeStartElement("atask");
@@ -603,7 +610,10 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
       auto a   = xml.attributes();
       as.uuid  = a.value("uuid").toString();
       as.type  = a.value("type").toString();
+      // Legacy taxonomy: "BG" folded into "Environment" (Kitsu-aligned types).
+      if (as.type == QLatin1String("BG")) as.type = "Environment";
       as.name  = a.value("name").toString();
+      as.kitsuAssetId = a.value("kitsuAssetId").toString();
       QString tg = a.value("tags").toString();
       if (!tg.isEmpty()) as.tags = tg.split('|', Qt::SkipEmptyParts);
       assets.push_back(as);

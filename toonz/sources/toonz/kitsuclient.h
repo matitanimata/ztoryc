@@ -10,6 +10,14 @@
 // Deployment-agnostic by design: a single base URL (local docker, LAN, tunnel
 // or CGWire hosted) chosen by the user. URL + credentials persist in QSettings
 // under the "Ztoryc/Kitsu" group, so the same build talks to any instance.
+//
+// Dual URL (local/remote): the base URL above is the *primary* address used for
+// login and every light API call (it may be a Cloudflare tunnel or CGWire host,
+// reachable from anywhere). An optional *local* URL points at the SAME instance
+// over the LAN; when set and reachable it carries the heavy preview upload —
+// bypassing the remote proxy's body-size cap (e.g. Cloudflare's 100 MB) and its
+// latency. The JWT is instance-wide, so it validates on either address. When the
+// local URL is empty or unreachable, uploads fall back to the primary URL.
 //============================================================================
 
 #include "ztorymodel.h"  // TaskStatus
@@ -68,6 +76,16 @@ struct KitsuShotPush {
   int     frameOut = 0;
 };
 
+// One production asset synced with Kitsu. Bidirectional: new assets are pushed
+// up (create), and assets authored in Kitsu are pulled down to import. type is a
+// canonical asset type (Character/Prop/FX/Environment) matched to a Kitsu
+// asset-type by name; kitsuAssetId links the two rename-proof once known.
+struct KitsuAsset {
+  QString type;
+  QString name;
+  QString kitsuAssetId;  // non-empty → it already exists in Kitsu
+};
+
 // One shot-task whose status we push up to Kitsu (Phase 3b). taskType must match
 // a Kitsu task-type name (for_entity = Shot).
 struct KitsuTaskPush {
@@ -116,6 +134,10 @@ public:
   // --- Config (persisted in QSettings, group "Ztoryc/Kitsu") -----------
   QString baseUrl() const { return m_baseUrl; }
   void    setBaseUrl(const QString &url);  // trailing slash trimmed
+  // Optional LAN-direct address of the SAME Kitsu instance, used only for the
+  // heavy preview upload. Empty = uploads use the primary URL (baseUrl).
+  QString localUrl() const { return m_localUrl; }
+  void    setLocalUrl(const QString &url);  // trailing slash trimmed
   QString email() const { return m_email; }
   void    setEmail(const QString &email) { m_email = email; }
   // Kept in memory for the session; only written to QSettings when the caller
@@ -162,6 +184,16 @@ public:
   // Pull task statuses DOWN from Kitsu (review sync: Kitsu is authoritative on
   // WFA→Done/Retake). -> statusesPulled().
   void pullStatuses(const QString &projectId);
+
+  // Bidirectional asset sync. pushAssets creates the assets missing in Kitsu
+  // (upsert by type+name, resolving each canonical type onto a Kitsu asset-type)
+  // -> assetsPushed(). pullAssets fetches the project's assets so ones authored
+  // in Kitsu can be imported into the tracker -> assetsPulled().
+  void pushAssets(const QString &projectId, const QVector<KitsuAsset> &assets);
+  void pullAssets(const QString &projectId);
+
+  // Build the asset push list from the project's assets (ZtoryModel::assets()).
+  static QVector<KitsuAsset> buildAssetsFromModel();
 
   // Upload per-shot preview movies (Phase 4). For each entry: post a comment
   // that sets the task status, attach a preview to it, then upload the movie
@@ -214,6 +246,12 @@ signals:
   void tasksPushed(bool ok, int statusesSet, const QString &message);
   void statusesPulled(bool ok, const QVector<KitsuPullEntry> &entries,
                       const QString &message);
+  // Resolved Kitsu asset ids per "type\nname" key — lets the caller store them so
+  // later syncs are rename-proof. Emitted just before assetsPushed.
+  void assetIdsResolved(const QHash<QString, QString> &byKey);
+  void assetsPushed(bool ok, int created, int updated, const QString &message);
+  void assetsPulled(bool ok, const QVector<KitsuAsset> &assets,
+                    const QString &message);
   void previewsUploaded(bool ok, int uploaded, const QString &message);
   void networkError(const QString &message);
 
@@ -226,9 +264,19 @@ private:
   static KitsuProject parseProject(const class QJsonObject &o);
 
   // --- Shot push state machine (all steps are sequential async) --------
-  QNetworkRequest authGet(const QString &path) const;
-  QNetworkReply  *authPost(const QString &path, const QByteArray &body);
-  QNetworkReply  *authPut(const QString &path, const QByteArray &body);
+  // base defaults to m_baseUrl; the preview-upload machine passes uploadBase()
+  // so only that traffic is routed to the (optional) LAN-direct endpoint.
+  QNetworkRequest authGet(const QString &path,
+                          const QString &base = QString()) const;
+  QNetworkReply  *authPost(const QString &path, const QByteArray &body,
+                           const QString &base = QString());
+  QNetworkReply  *authPut(const QString &path, const QByteArray &body,
+                          const QString &base = QString());
+  // Base URL the current preview upload uses: the local endpoint if it was
+  // resolved reachable at the start of uploadPreviews(), else the primary URL.
+  QString uploadBase() const {
+    return m_uploadBase.isEmpty() ? m_baseUrl : m_uploadBase;
+  }
   void pushEnsureEpisode();
   void pushLoadSequences();
   void pushLoadShots();
@@ -285,7 +333,29 @@ private:
   QHash<QString, QString> m_pullShotName;    // shot id       -> shot name
   QHash<QString, QString> m_pullTtName;      // task-type id  -> Kitsu name
 
+  // --- Asset sync (bidirectional) — sequential async ---------------------
+  void asPushLoadTypes();    // GET /api/data/asset-types
+  void asPushLoadAssets();   // GET /api/data/projects/<pid>/assets (existing)
+  void asPushProcessNext();
+  void asPushFail(const QString &message);
+  void asPullLoadTypes();
+  void asPullLoadAssets();
+  void asPullFail(const QString &message);
+
+  QString m_asProjectId;
+  QVector<KitsuAsset>     m_asQueue;
+  QHash<QString, QString> m_asTypeIdByName;  // asset-type name(lower) -> id (push)
+  QHash<QString, QString> m_asTypeNameById;  // id -> asset-type name    (pull)
+  QHash<QString, QString> m_asExisting;      // "typeId/name(lower)" -> asset id
+  QHash<QString, QString> m_asResolved;      // "type\nname" -> kitsu asset id
+  int m_asIndex   = 0;
+  int m_asCreated = 0;
+  int m_asUpdated = 0;
+
   // --- Preview upload (Phase 4) — sequential async, 3 steps per entry ----
+  // Resolve which base URL the upload uses (local if reachable, else primary),
+  // then kick off the upload machine.
+  void uplProbeLocalThenRun();
   void uplLoadTaskTypes();
   void uplEnsureTasks();  // create-tasks for the task-types we'll upload to
   void uplLoadTasks();
@@ -299,6 +369,7 @@ private:
   void uplFail(const QString &message);
 
   QString m_uplProjectId;
+  QString m_uploadBase;  // resolved per run: local URL if reachable, else empty
   QVector<KitsuPreviewUpload> m_uplQueue;
   QHash<QString, QString> m_uplTaskIdByKey;  // "entityId/ttId" -> task id
   QVector<QString>        m_uplTtCreate;     // distinct task-type ids to ensure
@@ -309,6 +380,7 @@ private:
   QNetworkAccessManager *m_nam = nullptr;
 
   QString m_baseUrl;
+  QString m_localUrl;  // optional LAN-direct address for uploads (see uploadBase)
   QString m_email;
   QString m_password;
   bool    m_passwordSaved = false;

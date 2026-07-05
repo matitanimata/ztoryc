@@ -16,6 +16,7 @@
 
 namespace {
 const char *kGroupBaseUrl  = "Ztoryc/Kitsu/BaseUrl";
+const char *kGroupLocalUrl = "Ztoryc/Kitsu/LocalUrl";  // optional upload endpoint
 const char *kGroupEmail    = "Ztoryc/Kitsu/Email";
 const char *kGroupPassword = "Ztoryc/Kitsu/Password";  // local convenience only
 const char *kGroupHasPwd   = "Ztoryc/Kitsu/PasswordSaved";
@@ -59,9 +60,15 @@ void KitsuClient::setBaseUrl(const QString &url) {
   while (m_baseUrl.endsWith('/')) m_baseUrl.chop(1);
 }
 
+void KitsuClient::setLocalUrl(const QString &url) {
+  m_localUrl = url.trimmed();
+  while (m_localUrl.endsWith('/')) m_localUrl.chop(1);
+}
+
 void KitsuClient::loadSettings() {
   QSettings s;
   setBaseUrl(s.value(kGroupBaseUrl, "http://localhost:8012").toString());
+  setLocalUrl(s.value(kGroupLocalUrl).toString());
   m_email         = s.value(kGroupEmail).toString();
   m_passwordSaved = s.value(kGroupHasPwd, false).toBool();
   if (m_passwordSaved) m_password = s.value(kGroupPassword).toString();
@@ -70,6 +77,7 @@ void KitsuClient::loadSettings() {
 void KitsuClient::saveSettings(bool savePassword) {
   QSettings s;
   s.setValue(kGroupBaseUrl, m_baseUrl);
+  s.setValue(kGroupLocalUrl, m_localUrl);
   s.setValue(kGroupEmail, m_email);
   m_passwordSaved = savePassword;
   s.setValue(kGroupHasPwd, savePassword);
@@ -275,21 +283,24 @@ void KitsuClient::updateProject(const QString &id, const KitsuProject &p) {
 // Shot push — sequential async state machine (push-only: Ztoryc -> Kitsu)
 //----------------------------------------------------------------------------
 
-QNetworkRequest KitsuClient::authGet(const QString &path) const {
-  QNetworkRequest req((QUrl(m_baseUrl + path)));
+QNetworkRequest KitsuClient::authGet(const QString &path,
+                                     const QString &base) const {
+  QNetworkRequest req((QUrl((base.isEmpty() ? m_baseUrl : base) + path)));
   req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
   return req;
 }
 
-QNetworkReply *KitsuClient::authPost(const QString &path, const QByteArray &body) {
-  QNetworkRequest req((QUrl(m_baseUrl + path)));
+QNetworkReply *KitsuClient::authPost(const QString &path, const QByteArray &body,
+                                     const QString &base) {
+  QNetworkRequest req((QUrl((base.isEmpty() ? m_baseUrl : base) + path)));
   req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
   req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
   return m_nam->post(req, body);
 }
 
-QNetworkReply *KitsuClient::authPut(const QString &path, const QByteArray &body) {
-  QNetworkRequest req((QUrl(m_baseUrl + path)));
+QNetworkReply *KitsuClient::authPut(const QString &path, const QByteArray &body,
+                                    const QString &base) {
+  QNetworkRequest req((QUrl((base.isEmpty() ? m_baseUrl : base) + path)));
   req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
   req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
   return m_nam->put(req, body);
@@ -760,6 +771,180 @@ void KitsuClient::pullLoadTasks() {
 }
 
 //----------------------------------------------------------------------------
+// Asset sync (bidirectional) — Ztoryc <-> Kitsu, sequential async.
+// Routes verified against live Zou:
+//   asset-types  : GET  /api/data/asset-types
+//   project assets: GET /api/data/projects/<pid>/assets
+//   create asset : POST /api/data/projects/<pid>/asset-types/<atid>/assets/new
+//                  body {name, description, data}
+//----------------------------------------------------------------------------
+
+QVector<KitsuAsset> KitsuClient::buildAssetsFromModel() {
+  QVector<KitsuAsset> out;
+  const auto &assets = ZtoryModel::instance()->assets();
+  for (const Asset &a : assets) {
+    if (a.name.trimmed().isEmpty()) continue;  // unnamed rows aren't real assets
+    KitsuAsset ka;
+    ka.type         = a.type;
+    ka.name         = a.name.trimmed();
+    ka.kitsuAssetId = a.kitsuAssetId;
+    out.push_back(ka);
+  }
+  return out;
+}
+
+void KitsuClient::asPushFail(const QString &message) {
+  emit assetsPushed(false, m_asCreated, m_asUpdated, message);
+}
+
+void KitsuClient::pushAssets(const QString &projectId,
+                             const QVector<KitsuAsset> &assets) {
+  if (!isLoggedIn()) { emit assetsPushed(false, 0, 0, tr("Not logged in.")); return; }
+  if (projectId.isEmpty() || assets.isEmpty()) {
+    emit assetsPushed(true, 0, 0, tr("No assets to push."));
+    return;
+  }
+  m_asProjectId = projectId;
+  m_asQueue     = assets;
+  m_asTypeIdByName.clear();
+  m_asExisting.clear();
+  m_asResolved.clear();
+  m_asIndex = m_asCreated = m_asUpdated = 0;
+  asPushLoadTypes();
+}
+
+void KitsuClient::asPushLoadTypes() {
+  emit shotsPushProgress(tr("Reading Kitsu asset types…"));
+  QNetworkReply *r = m_nam->get(authGet("/api/data/asset-types"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { asPushFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_asTypeIdByName.insert(o.value("name").toString().toLower(),
+                              o.value("id").toString());
+    }
+    asPushLoadAssets();
+  });
+}
+
+void KitsuClient::asPushLoadAssets() {
+  emit shotsPushProgress(tr("Reading existing Kitsu assets…"));
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_asProjectId + "/assets"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { asPushFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_asExisting.insert(o.value("entity_type_id").toString() + "/" +
+                              o.value("name").toString().toLower(),
+                          o.value("id").toString());
+    }
+    asPushProcessNext();
+  });
+}
+
+void KitsuClient::asPushProcessNext() {
+  while (m_asIndex < m_asQueue.size()) {
+    const KitsuAsset a  = m_asQueue[m_asIndex];
+    const QString typeId = m_asTypeIdByName.value(a.type.toLower());
+    const QString key    = a.type + "\n" + a.name;
+    // No matching Kitsu asset-type → can't create it there; skip.
+    if (typeId.isEmpty()) { ++m_asIndex; continue; }
+    // Already linked, or an asset with this type+name exists → record + move on.
+    QString existing = a.kitsuAssetId;
+    if (existing.isEmpty())
+      existing = m_asExisting.value(typeId + "/" + a.name.toLower());
+    if (!existing.isEmpty()) {
+      m_asResolved.insert(key, existing);
+      ++m_asUpdated;
+      ++m_asIndex;
+      continue;
+    }
+    // Create it.
+    emit shotsPushProgress(tr("Creating asset %1/%2 (%3)…")
+                               .arg(m_asIndex + 1)
+                               .arg(m_asQueue.size())
+                               .arg(a.name));
+    QJsonObject body;
+    body["name"]        = a.name;
+    body["description"] = "";
+    body["data"]        = QJsonObject();
+    QNetworkReply *r = authPost("/api/data/projects/" + m_asProjectId +
+                                    "/asset-types/" + typeId + "/assets/new",
+                                QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(r, &QNetworkReply::finished, this, [this, r, key]() {
+      r->deleteLater();
+      const QByteArray b = r->readAll();
+      if (r->error() != QNetworkReply::NoError) { asPushFail(errorMessage(r, b)); return; }
+      const QString id = QJsonDocument::fromJson(b).object().value("id").toString();
+      if (!id.isEmpty()) m_asResolved.insert(key, id);
+      ++m_asCreated;
+      ++m_asIndex;
+      asPushProcessNext();
+    });
+    return;  // resume in the callback
+  }
+  emit assetIdsResolved(m_asResolved);
+  emit assetsPushed(true, m_asCreated, m_asUpdated,
+                    tr("Assets synced — %1 created, %2 already in Kitsu.")
+                        .arg(m_asCreated)
+                        .arg(m_asUpdated));
+}
+
+void KitsuClient::asPullFail(const QString &message) {
+  emit assetsPulled(false, {}, message);
+}
+
+void KitsuClient::pullAssets(const QString &projectId) {
+  if (!isLoggedIn()) { emit assetsPulled(false, {}, tr("Not logged in.")); return; }
+  if (projectId.isEmpty()) { emit assetsPulled(false, {}, tr("No project.")); return; }
+  m_asProjectId = projectId;
+  m_asTypeNameById.clear();
+  asPullLoadTypes();
+}
+
+void KitsuClient::asPullLoadTypes() {
+  emit shotsPushProgress(tr("Reading Kitsu asset types…"));
+  QNetworkReply *r = m_nam->get(authGet("/api/data/asset-types"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { asPullFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_asTypeNameById.insert(o.value("id").toString(), o.value("name").toString());
+    }
+    asPullLoadAssets();
+  });
+}
+
+void KitsuClient::asPullLoadAssets() {
+  emit shotsPushProgress(tr("Reading Kitsu assets…"));
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_asProjectId + "/assets"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { asPullFail(errorMessage(r, b)); return; }
+    QVector<KitsuAsset> out;
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      KitsuAsset a;
+      a.kitsuAssetId = o.value("id").toString();
+      a.name         = o.value("name").toString();
+      a.type = m_asTypeNameById.value(o.value("entity_type_id").toString());
+      if (!a.name.isEmpty()) out.push_back(a);
+    }
+    emit assetsPulled(true, out,
+                      tr("Pulled %1 assets from Kitsu.").arg(out.size()));
+  });
+}
+
+//----------------------------------------------------------------------------
 // Preview upload (Phase 4) — Ztoryc -> Kitsu, sequential async.
 // Per entry the Zou contract is three POSTs (verified live):
 //   1. /api/actions/tasks/<task>/comment {task_status_id, comment} -> comment id
@@ -865,6 +1050,7 @@ void KitsuClient::uploadPreviews(const QString &projectId,
   }
   m_uplProjectId = projectId;
   m_uplQueue     = uploads;
+  m_uploadBase.clear();  // resolved by uplProbeLocalThenRun() below
   m_ttIdByName.clear();
   m_uplTaskIdByKey.clear();
   m_uplTtCreate.clear();
@@ -879,12 +1065,45 @@ void KitsuClient::uploadPreviews(const QString &projectId,
         sn == "retake" || sn == "done")
       m_statusIdByZ.insert(static_cast<int>(mapStatus(st)), st.id);
   }
-  uplLoadTaskTypes();
+  uplProbeLocalThenRun();
+}
+
+void KitsuClient::uplProbeLocalThenRun() {
+  // No LAN override configured → upload straight to the primary URL.
+  if (m_localUrl.isEmpty()) { uplLoadTaskTypes(); return; }
+
+  emit shotsPushProgress(tr("Checking local upload endpoint…"));
+  QNetworkRequest req((QUrl(m_localUrl + "/api/")));
+  req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
+  req.setTransferTimeout(4000);  // fail fast when the LAN box isn't around
+  QNetworkReply *r = m_nam->get(req);
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QNetworkReply::NetworkError e = r->error();
+    // "Reachable" means the host answered at all: even a 401/403/404 proves the
+    // instance is up on the LAN. Only connection-level failures (refused, host
+    // not found, timeout) fall back to the remote URL.
+    const bool reachable = e == QNetworkReply::NoError ||
+                           e == QNetworkReply::AuthenticationRequiredError ||
+                           e == QNetworkReply::ContentAccessDenied ||
+                           e == QNetworkReply::ContentNotFoundError ||
+                           e == QNetworkReply::ContentOperationNotPermittedError;
+    if (reachable) {
+      m_uploadBase = m_localUrl;
+      emit shotsPushProgress(
+          tr("Uploading via local endpoint (%1)…").arg(m_localUrl));
+    } else {
+      m_uploadBase.clear();  // → uploadBase() yields m_baseUrl
+      emit shotsPushProgress(
+          tr("Local endpoint unreachable — uploading via %1.").arg(m_baseUrl));
+    }
+    uplLoadTaskTypes();
+  });
 }
 
 void KitsuClient::uplLoadTaskTypes() {
   emit shotsPushProgress(tr("Loading task types…"));
-  QNetworkReply *r = m_nam->get(authGet("/api/data/task-types"));
+  QNetworkReply *r = m_nam->get(authGet("/api/data/task-types", uploadBase()));
   connect(r, &QNetworkReply::finished, this, [this, r]() {
     r->deleteLater();
     const QByteArray b = r->readAll();
@@ -915,7 +1134,7 @@ void KitsuClient::uplEnsureTasks() {
                              .arg(m_uplTtCreate.size()));
   QNetworkReply *r = authPost("/api/actions/projects/" + m_uplProjectId +
                                   "/task-types/" + ttId + "/shots/create-tasks",
-                              "{}");
+                              "{}", uploadBase());
   connect(r, &QNetworkReply::finished, this, [this, r]() {
     r->deleteLater();
     const QByteArray b = r->readAll();
@@ -927,8 +1146,8 @@ void KitsuClient::uplEnsureTasks() {
 
 void KitsuClient::uplLoadTasks() {
   emit shotsPushProgress(tr("Reading existing tasks…"));
-  QNetworkReply *r =
-      m_nam->get(authGet("/api/data/projects/" + m_uplProjectId + "/tasks"));
+  QNetworkReply *r = m_nam->get(
+      authGet("/api/data/projects/" + m_uplProjectId + "/tasks", uploadBase()));
   connect(r, &QNetworkReply::finished, this, [this, r]() {
     r->deleteLater();
     const QByteArray b = r->readAll();
@@ -972,8 +1191,9 @@ void KitsuClient::uplPostComment(const QString &taskId, const QString &statusId,
   QJsonObject body;
   body["task_status_id"] = statusId;
   body["comment"]        = tr("Storyboard preview uploaded from Ztoryc");
-  QNetworkReply *r = authPost("/api/actions/tasks/" + taskId + "/comment",
-                              QJsonDocument(body).toJson(QJsonDocument::Compact));
+  QNetworkReply *r =
+      authPost("/api/actions/tasks/" + taskId + "/comment",
+               QJsonDocument(body).toJson(QJsonDocument::Compact), uploadBase());
   connect(r, &QNetworkReply::finished, this, [this, r, taskId, filePath, shot]() {
     r->deleteLater();
     const QByteArray b = r->readAll();
@@ -988,7 +1208,7 @@ void KitsuClient::uplAddPreview(const QString &taskId, const QString &commentId,
                                 const QString &filePath, const QString &shot) {
   QNetworkReply *r = authPost(
       "/api/actions/tasks/" + taskId + "/comments/" + commentId + "/add-preview",
-      QByteArray("{}"));
+      QByteArray("{}"), uploadBase());
   connect(r, &QNetworkReply::finished, this, [this, r, filePath]() {
     r->deleteLater();
     const QByteArray b = r->readAll();
@@ -1026,7 +1246,7 @@ void KitsuClient::uplUploadFile(const QString &previewFileId,
   mp->append(filePart);
 
   QNetworkRequest req(
-      (QUrl(m_baseUrl + "/api/pictures/preview-files/" + previewFileId)));
+      (QUrl(uploadBase() + "/api/pictures/preview-files/" + previewFileId)));
   req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
   QNetworkReply *r = m_nam->post(req, mp);
   mp->setParent(r);  // multipart (and file) freed with the reply
@@ -1047,7 +1267,7 @@ void KitsuClient::uplSetMainPreview(const QString &previewFileId) {
   body["frame_number"] = 0;  // first frame of the clip as the shot thumbnail
   QNetworkReply *r = authPut(
       "/api/actions/preview-files/" + previewFileId + "/set-main-preview",
-      QJsonDocument(body).toJson(QJsonDocument::Compact));
+      QJsonDocument(body).toJson(QJsonDocument::Compact), uploadBase());
   connect(r, &QNetworkReply::finished, this, [this, r]() {
     r->deleteLater();
     // Best-effort: the clip is already uploaded, so a failed thumbnail set must
