@@ -1,3 +1,24 @@
+## [2026-07-05d] — Fix Ztoryc Monitor (post-0.8.0, per la prossima release)
+
+Due bug del Ztoryc Monitor segnalati da Franco dopo il rilascio della 0.8.0.
+Committati su master (28172e59a), NON in 0.8.0 → prossima release.
+
+### Fixed
+- **Layout tracce del Monitor**: gap spurio tra traccia video e audio + traccia
+  video "invisibile" all'apertura. Causa: in `ztorymonitorpanel.cpp` la
+  `m_timelineLay` (QVBoxLayout della timeline, dentro uno splitter più alto delle
+  righe fixed-height) **non aveva un `addStretch` finale** → lo spazio verticale
+  in eccesso veniva distribuito TRA i widget. Fix: `addStretch(1)` dopo il track +
+  inserimento delle tracce audio prima dello stretch (stesso pattern del pannello
+  Animatic).
+- **Set Key nascosto nei viewer always-main**: il rombo Set Key (keyframe navigator
+  = custom widget del FlipConsole) era visibile nel viewer animatic e nel Monitor.
+  Poiché questi viewer lavorano sul MAIN xsheet — dove mettere chiavi su una colonna
+  shot non è permesso — il navigator ora è nascosto nel costruttore di
+  `ZtoryAnimaticViewer` e ri-forzato a ogni `showEvent` (via
+  `setCustomizemask(~eShowCustom)`, instance-local → il viewer normale resta intatto).
+  Copre viewer standalone + Monitor. Follow-up possibile: bloccare anche lo shortcut.
+
 ## [2026-07-05c] — Kitsu: dual URL + asset bidirezionali + sync spostato nella tab Project
 
 Sessione dedicata a completare l'integrazione Kitsu (M5) e a mettere ordine nella UI
