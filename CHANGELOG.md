@@ -1,3 +1,48 @@
+## [2026-07-05b] — Dissolvenze reali nell'animatic (render-time) + undo transizioni
+
+Completato il filone "dissolve reale Parte 2": le cross-dissolve ora si vedono
+DAVVERO nel play della timeline animatic E nell'export come filmato, non piu' solo
+come marker (triangolo). Diagnosi guidata da crash log + ragionamento sul render tree.
+
+### Added
+- **Cross-dissolve reali renderizzate** nel viewer animatic e nell'export MOV. Il
+  blend e' iniettato al RENDER (`scenefx.cpp`, `FxBuilder::makePF(TXsheetFx)`) come
+  `blendFx` nativo transiente costruito PER-FRAME, MAI persistito nel fx dag. Gated
+  sulle colonne note XD-in/XD-out -> zero impatto sul rendering Tahoma normale. Un solo
+  meccanismo copre viewer + export. **Chaining A->B->C nativo** (per-frame e' attiva al
+  massimo una dissolvenza). Interpolazione **ease-in-out** (smoothstep).
+- **Undo/redo sulle transizioni** (`UndoTransition`, approccio replay QPointer-safe):
+  in cronologia come "Change Cross-Dissolve".
+
+### Fixed
+- **Interpolazione a scatti (0->100 invece di rampa)**: root cause = il costruttore di
+  `TDoubleKeyframe` NON inizializza `m_prevType` (garbage); `setKeyframe()` lo copia nel
+  `m_type` del segmento (il tipo d'interpolazione letto da `getValue`) -> rampa resa come
+  Constant step. Fix lato chiamante: `m_prevType` esplicito + `m_isKeyframe=true`.
+- **Crescita cumulativa della durata shot** modificando/rimuovendo la dix (osservato:
+  uno shot da 24 frame diventava 40): il teardown delle celle di overlap ora gira
+  all'INIZIO di `onTransitionChanged`, quando le colonne XD tengono ancora il valore
+  VECCHIO (coerente con l'overlap esposto) -> strip completo. Prima il teardown leggeva
+  il valore NUOVO e strippava il conteggio sbagliato, lasciando celle stale.
+- **Crash su undo e su cambio-workflow** (2D tradigital <-> storyboard) dopo una dix:
+  eliminata la causa alla radice passando da fx persistiti nel dag a render-time
+  injection -> non esiste piu' nessun oggetto fx da danglare in undo/selezione/room-load.
+
+### Modified / Architettura
+- `ZtoryShotOps::applyCrossDissolves` ora espone SOLO le celle di overlap (colA tail-extra
+  continue senza buco + stop, colB head-extra); `teardownCrossDissolves`/`shotTrueSpan`
+  riscritti **fx-free**, basati sulle colonne XD (geometrici).
+- `ZtorycVersion.cmake`: bump 0.7.0 -> 0.8.0.
+
+### Upstream candidates
+- Nessuno nuovo. Il bug `m_prevType` non inizializzato e' in core Tahoma
+  (`tdoublekeyframe.cpp`) ma il nostro fix e' lato chiamante; segnalabile come hardening
+  del costruttore se si vuole contribuire.
+
+### Note
+- Restano da fare (prossima sessione): Kitsu asset bidirezionali + dual URL local/remote;
+  rebrand label export FCPXML da "DaVinci" a generico (Resolve/FCP/Premiere).
+
 ## [2026-07-05] — Fix bug durata transizione (cross-dissolve) + ricerca dissolve reale
 
 Sessione focalizzata sulle transizioni dell'animatic. Diagnosi guidata da tracing lldb

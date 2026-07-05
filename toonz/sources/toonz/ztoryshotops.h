@@ -81,4 +81,50 @@ double xsheetCameraAspect(TXsheet *xsh);
 // SHOTEDITOR).  Returns 0 when the shot has no incoming cross-dissolve.
 int xdInHeadOffset(TXsheet *subXsh);
 
+// Tail-hold frame count (= T/2) baked into a sub-scene by a cross-dissolve on
+// its OUTGOING edge, read from the persisted "XD-out" SoundText note column.
+// Mirror of xdInHeadOffset() for the outgoing side.  Returns 0 when the shot has
+// no outgoing cross-dissolve.
+int xdOutTailCount(TXsheet *subXsh);
+
+// Placement of one shot on the main xsheet after resequenceXsheet()'s layout
+// pass: which column, where it starts, how many cells it spans and its
+// sub-scene.  Collected during the placement loop and handed to
+// applyCrossDissolves() so the dissolve pass never re-reads getRange() (which
+// the exposed overlap cells would inflate).
+struct ShotLayout {
+  int col;
+  int startFrame;
+  int duration;
+  TXsheet *subXsh;
+};
+
+// Real cross-dissolve rendering in the animatic viewer AND the MOV export.
+// For every consecutive shot pair that carries a cross-dissolve
+// (half = xdOutTailCount(A) == xdInHeadOffset(B) > 0) this exposes the overlap
+// material on the main xsheet WITHOUT shifting any shot — colA's tail-extra is
+// laid strictly after its boundary stop-frame, colB's head-extra strictly
+// before its start — and inserts a keyframed native blendFx ("blendFx") that
+// cross-dissolves colA (down) into colB (up) across the window centred on the
+// cut.  The blend replaces the two column fxs as an xsheet terminal.  Must run
+// at the END of resequenceXsheet(), after teardownCrossDissolves() cleared the
+// previous pass.  Idempotent for a given layout.
+void applyCrossDissolves(TXsheet *mainXsh, const std::vector<ShotLayout> &shots);
+
+// True on-timeline span of a shot column, EXCLUDING the cross-dissolve overlap
+// cells that applyCrossDissolves() exposes for rendering (head-extra before the
+// shot's start, tail-extra after its boundary stop-frame).  Both the animatic
+// track (block layout) and any duration consumer must use this instead of a raw
+// getRange(), or the overlap inflates durations and hides the transition marker.
+// Writes the true start row + cell count and returns false for empty/non-shot
+// columns.
+bool shotTrueSpan(TXsheet *mainXsh, int col, int &startOut, int &durationOut);
+
+// Undo of applyCrossDissolves(): removes every "ZXD_" blendFx node (restoring
+// its two column fxs as terminals) and strips the exposed overlap cells so
+// getRange() reports each shot's TRUE duration again.  Must run at the START of
+// resequenceXsheet(), before the layout loop measures durations.  A no-op when
+// no dissolves are present, so it is always safe to call.
+void teardownCrossDissolves(TXsheet *mainXsh);
+
 }  // namespace ZtoryShotOps

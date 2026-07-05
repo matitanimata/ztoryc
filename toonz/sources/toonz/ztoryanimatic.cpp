@@ -39,6 +39,7 @@
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QApplication>
+#include <QPointer>
 #include <QPushButton>
 #include <QToolButton>
 #include <QTimer>
@@ -1176,6 +1177,34 @@ public:
   QString getHistoryString() override { return m_label; }
 };
 
+// Undo/redo of a cross-dissolve transition edit.  Replays the change through the
+// panel (reaching the stored half from the current XD state, which is fully
+// reversible) rather than snapshotting cells.  QPointer makes undo a safe no-op
+// if the animatic panel was closed in the meantime.
+class UndoTransition final : public TUndo {
+  QPointer<ZtoryAnimaticPanel> m_panel;
+  int m_colA, m_colB, m_oldFrames, m_newFrames;
+
+public:
+  UndoTransition(ZtoryAnimaticPanel *panel, int colA, int colB, int oldFrames,
+                 int newFrames)
+      : m_panel(panel)
+      , m_colA(colA)
+      , m_colB(colB)
+      , m_oldFrames(oldFrames)
+      , m_newFrames(newFrames) {}
+  void undo() const override {
+    if (m_panel) m_panel->undoRedoTransition(m_colA, m_colB, m_oldFrames);
+  }
+  void redo() const override {
+    if (m_panel) m_panel->undoRedoTransition(m_colA, m_colB, m_newFrames);
+  }
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override {
+    return QObject::tr("Change Cross-Dissolve");
+  }
+};
+
 class UndoAddAudioTrack final : public TUndo {
   int m_col;  // column index that was inserted
 public:
@@ -2257,6 +2286,16 @@ void ZtoryAnimaticTrack::refreshFromScene() {
     if (!cl) continue;
     int startFrame = r0;
     int duration = r1 - r0 + 1;
+    // Exclude cross-dissolve overlap cells (head-extra / tail-extra) so the
+    // block sits at the shot's TRUE position and length — otherwise a dissolve
+    // stretches the block and swallows the transition triangle.
+    {
+      int ts = 0, td = 0;
+      if (ZtoryShotOps::shotTrueSpan(mainXsh, col, ts, td)) {
+        startFrame = ts;
+        duration   = td;
+      }
+    }
 
     ShotBlock b;
     b.col = col;
@@ -7256,6 +7295,16 @@ void ZtoryAnimaticPanel::onTransitionChanged(int colA, int colB, int frames) {
   TXsheet *xsh = scene->getChildStack()->getTopXsheet();
   if (!xsh) return;
 
+  // Strip any currently-exposed cross-dissolve overlap cells FIRST, while the XD
+  // note columns still hold the OLD half (they match the exposed overlap).  If
+  // we let the code below rewrite the XD columns first, a later teardown would
+  // read the NEW half and strip the wrong cell count — leaving stale overlap on
+  // the main columns that inflates getRange() and grows the shot duration
+  // cumulatively (observed: a 24-frame shot became 40 after editing/removing the
+  // dissolve).  resequenceXsheet() re-exposes the overlap for the new half at
+  // the end.
+  ZtoryShotOps::teardownCrossDissolves(xsh);
+
   // Helper: find the TXsheet of a child-level column in mainXsh
   auto getSubXsh = [&](int col) -> TXsheet * {
     TXshColumn *c = xsh->getColumn(col);
@@ -7291,6 +7340,7 @@ void ZtoryAnimaticPanel::onTransitionChanged(int colA, int colB, int frames) {
   int prevHalf = xdNoteHalfCount(subA, kXDOutName);
   int newHalf  = frames / 2;
   int delta    = newHalf - prevHalf; // >0 add, <0 remove
+  int oldFrames = prevHalf * 2;      // captured for undo before any XD change
 
   // Keep the model mirror in sync for any other consumer.
   ZtoryModel *model = ZtoryModel::instance();
@@ -7435,11 +7485,33 @@ void ZtoryAnimaticPanel::onTransitionChanged(int colA, int colB, int frames) {
     }
   }
 
+  // Re-run the resequence so the cross-dissolve overlap cells are (re)built from
+  // the XD note columns we just wrote.  This is the single source that renders
+  // the real dissolve (the blend is injected at render time in scenefx.cpp) in
+  // both the animatic viewer and the MOV export; it also re-derives colB's
+  // head-offset frameIds authoritatively.
+  ZtoryModel::instance()->resequenceXsheet();
+
   StoryboardPanel *board = findBoardPanel();
   if (board) board->saveZtoryc();
   m_track->refreshFromScene();
   app->getCurrentScene()->notifySceneChanged();
   app->getCurrentXsheet()->notifyXsheetChanged();
+
+  // Make the transition edit undoable.  We replay the change (reach the target
+  // half from the current XD state) rather than snapshot cells, because a single
+  // onTransitionChanged() reaches any target value reversibly.  Suppressed while
+  // an undo/redo is itself replaying, to avoid re-registering.
+  if (!m_suppressTransitionUndo && oldFrames != frames)
+    TUndoManager::manager()->add(
+        new UndoTransition(this, colA, colB, oldFrames, frames));
+}
+
+// Replay a transition change during undo/redo without registering a new undo.
+void ZtoryAnimaticPanel::undoRedoTransition(int colA, int colB, int frames) {
+  m_suppressTransitionUndo = true;
+  onTransitionChanged(colA, colB, frames);
+  m_suppressTransitionUndo = false;
 }
 
 void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {

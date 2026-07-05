@@ -815,6 +815,82 @@ PlacedFx FxBuilder::makePF(TFx *fx) {
 
 //-------------------------------------------------------------------
 
+// ── Ztoryc animatic cross-dissolve — render-time injection ──────────────────
+// The Ztoryc animatic shows real cross-dissolves without any persisted fx node:
+// resequenceXsheet() exposes overlap CELLS on the two shot columns, and here, at
+// render time, the incoming shot is composited with a native blendFx instead of
+// a hard "over" for the frames inside the dissolve window.  Everything is gated
+// on the "XD-in"/"XD-out" SoundText note columns that exist only inside a Ztoryc
+// animatic's shot sub-scenes, so a normal Tahoma scene never triggers any of it.
+
+static int ztoryXdNoteRows(TXsheet *sub, const char *name) {
+  if (!sub) return 0;
+  for (int c = 0; c < sub->getColumnCount(); c++) {
+    TXshColumn *col = sub->getColumn(c);
+    if (!col || !col->getSoundTextColumn()) continue;
+    std::string nm = sub->getStageObject(sub->getColumnObjectId(c))->getName();
+    if (nm == name) {
+      int r0 = 0, r1 = 0;
+      col->getRange(r0, r1);
+      return (r1 >= r0) ? r1 - r0 + 1 : 0;
+    }
+  }
+  return 0;
+}
+
+static TXsheet *ztoryColumnSub(TXsheet *xsh, int col) {
+  TXshColumn *column = xsh->getColumn(col);
+  if (!column || column->isEmpty()) return nullptr;
+  int r0 = 0, r1 = 0;
+  column->getRange(r0, r1);
+  for (int r = r0; r <= r1; r++) {
+    TXshCell cell = xsh->getCell(r, col);
+    if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
+      return cell.m_level->getChildLevel()->getXsheet();
+  }
+  return nullptr;
+}
+
+// If a cross-dissolve is active at `frame`, return true and set colBOut to the
+// incoming shot's column index and valueOut to the blendFx value (0=outgoing A,
+// 100=incoming B).  At most one dissolve is active per frame (shot windows do
+// not overlap), so chaining needs no special handling.
+static bool ztoryDissolveAtFrame(TXsheet *xsh, int frame, int &colBOut,
+                                 double &valueOut) {
+  if (!xsh) return false;
+  std::vector<int> shots;
+  int n = xsh->getColumnCount();
+  for (int c = 0; c < n; c++)
+    if (ztoryColumnSub(xsh, c)) shots.push_back(c);
+  for (size_t k = 0; k + 1 < shots.size(); k++) {
+    int colA = shots[k], colB = shots[k + 1];
+    int half = ztoryXdNoteRows(ztoryColumnSub(xsh, colA), "XD-out");
+    if (half <= 0 || half != ztoryXdNoteRows(ztoryColumnSub(xsh, colB), "XD-in"))
+      continue;
+    // X = colB's real start = first colB row whose frameId exceeds the head-hold.
+    int r0 = 0, r1 = 0;
+    xsh->getColumn(colB)->getRange(r0, r1);
+    int X = r0;
+    for (int r = r0; r <= r1; r++) {
+      TXshCell cell = xsh->getCell(r, colB);
+      if (!cell.isEmpty() && !cell.getFrameId().isStopFrame() &&
+          cell.getFrameId().getNumber() > half) {
+        X = r;
+        break;
+      }
+    }
+    int winStart = X - half, winEnd = X + half;  // [winStart, winEnd)
+    if (frame >= winStart && frame < winEnd) {
+      double t = (double)(frame - winStart) / (double)(2 * half);
+      double e = t * t * (3.0 - 2.0 * t);  // smoothstep ease-in-out
+      colBOut  = colB;
+      valueOut = e * 100.0;
+      return true;
+    }
+  }
+  return false;
+}
+
 PlacedFx FxBuilder::makePF(TXsheetFx *fx) {
   if (!m_expandXSheet)  // Xsheet expansion is typically blocked for render-tree
                         // building of post-xsheet fxs only.
@@ -827,17 +903,6 @@ PlacedFx FxBuilder::makePF(TXsheetFx *fx) {
   // Expand the render-tree from terminal fxs
   TFxSet *fxs = m_xsh->getFxDag()->getTerminalFxs();
   int m       = fxs->getFxCount();
-  // --- DIAGNOSTIC ---
-  for (int di = 0; di < m; di++) {
-    TFx *dfx = fxs->getFx(di);
-    std::string dtn = dfx ? typeid(*dfx).name() : "null";
-    TColumnFx *dcfx = dfx ? dynamic_cast<TColumnFx *>(dfx) : nullptr;
-    if (dcfx) {
-      int ci = dcfx->getColumnIndex();
-      TXshCell cell = m_xsh->getCell(m_frame, ci);
-    }
-  }
-  // --- END DIAGNOSTIC ---
   if (m == 0) {
     PlacedFx ret;
     ret.m_isPostXsheetNode = true;
@@ -859,6 +924,13 @@ PlacedFx FxBuilder::makePF(TXsheetFx *fx) {
   std::sort(pfs.begin(),
             pfs.end());  // Sort each terminal depending on Z/SO/Column index
 
+  // Ztoryc animatic cross-dissolve: is the incoming shot column blended (not
+  // hard-over'd) at this frame?  At most one dissolve is active per frame.
+  int ztoryDissolveColB  = -1;
+  double ztoryDissolveVal = 0.0;
+  bool ztoryHasDissolve =
+      ztoryDissolveAtFrame(m_xsh, m_frame, ztoryDissolveColB, ztoryDissolveVal);
+
   // Compose them in a cascade of overs (or affines 'leftXsheetPort' cases)
   TFxP currentFx =
       pfs[0].makeFx();  // Adds an NaAffineFx if pf.m_aff is not the identity
@@ -874,6 +946,17 @@ PlacedFx FxBuilder::makePF(TXsheetFx *fx) {
       inputFx      = TFxUtil::makeAffine(inputFx, pfs[i].m_aff.inv());
       pfs[i].m_leftXsheetPort->setFx(inputFx.getPointer());
       currentFx = fx;
+    } else if (ztoryHasDissolve && pfs[i].m_columnIndex == ztoryDissolveColB) {
+      // Cross-dissolve the incoming shot (up) over the accumulated composite
+      // (down) — which at these frames is the outgoing shot — with a transient
+      // native blendFx built for THIS frame only (never persisted in the dag).
+      TFxP blendFx = TFx::create("blendFx");
+      blendFx->connect("Source1", fx.getPointer());         // up   = incoming B
+      blendFx->connect("Source2", currentFx.getPointer());  // down = outgoing A
+      if (TDoubleParam *vp = dynamic_cast<TDoubleParam *>(
+              blendFx->getParams()->getParam("value")))
+        vp->setDefaultValue(ztoryDissolveVal);  // 0→A, 100→B
+      currentFx = blendFx;
     } else {
       if (Preferences::instance()
               ->isShowRasterImagesDarkenBlendedInViewerEnabled())

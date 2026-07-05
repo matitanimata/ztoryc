@@ -1820,6 +1820,12 @@ void ZtoryModel::resequenceXsheet() {
   int numCols = xsh->getColumnCount();
   int maxFrames = xsh->getFrameCount() + 200;
   int startFrame = 0;
+  // Cross-dissolve pass — STEP 0: strip the overlap cells + blend fx placed by
+  // the previous resequence, so the layout loop below measures each shot's TRUE
+  // duration (the exposed overlap cells otherwise inflate getRange() and the
+  // shots grow cumulatively).  No-op when no dissolve is present.
+  ZtoryShotOps::teardownCrossDissolves(xsh);
+  std::vector<ZtoryShotOps::ShotLayout> dissolveLayout;
   for (int col = 0; col < numCols; col++) {
     TXshColumn *column = xsh->getColumn(col);
     if (!column || column->isEmpty()) continue;
@@ -1883,8 +1889,14 @@ void ZtoryModel::resequenceXsheet() {
     // stays glued to the current boundary.
     xsh->setCell(startFrame + duration, col,
                  TXshCell(cl, TFrameId(TFrameId::STOP_FRAME)));
+    dissolveLayout.push_back(
+        {col, startFrame, duration, cl->getXsheet()});
     startFrame += duration;
   }
+  // Cross-dissolve pass — STEP N: re-expose overlap + rebuild the blend fx on
+  // the freshly laid-out (clean) columns.  Keyed off the persisted XD note
+  // columns, so it is self-healing across resequence / reload / undo.
+  ZtoryShotOps::applyCrossDissolves(xsh, dissolveLayout);
   xsh->updateFrameCount();
 
   // Always pin the main xsheet mark-out to the last occupied frame (video OR

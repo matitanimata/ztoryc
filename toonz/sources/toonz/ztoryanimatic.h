@@ -868,6 +868,12 @@ public slots:
   void onShotDurationChanged(int col, int newF1);
   void onRollEdit(int colA, int newDurA, int colB, int newDurB);
   void onTransitionChanged(int colA, int colB, int frames);
+  // Replay a transition change during undo/redo (suppresses re-registering).
+  void undoRedoTransition(int colA, int colB, int frames);
+
+private:
+  bool m_suppressTransitionUndo = false;  // set during undo/redo replay
+public slots:
   void onRazorRequested(int col, int splitFrame);
   void onShotMoved(int col, int newStartFrame);
   void onMergeWithNext(int col);
