@@ -351,7 +351,17 @@ void DvDirModelFileFolderNode::getChildrenNames(
   if (!folderPathStatus.isDirectory()) return;
 
   QStringList dirItems;
-  TSystem::readDirectory_DirItems(dirItems, m_path);
+  try {
+    TSystem::readDirectory_DirItems(dirItems, m_path);
+  } catch (...) {
+    // A folder we can't enumerate (permission denied, a OneDrive/cloud
+    // placeholder or reparse point, a path that vanished mid-browse) must not
+    // take down the whole app: readDirectory_DirItems throws TSystemException,
+    // and this is reached from the directory tree's populate/click path where an
+    // uncaught throw aborts (a reproducible Windows crash on some Documents
+    // folders). Degrade gracefully to an empty folder instead.
+    return;
+  }
   for (const QString &name : dirItems) names.push_back(name.toStdWString());
 
   QDir dir(toQString(m_path));

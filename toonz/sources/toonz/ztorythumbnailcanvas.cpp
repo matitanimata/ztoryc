@@ -585,15 +585,20 @@ void ZtoryThumbnailCanvas::persistLoad() {
   if (img.isNull()) return;
   TRaster32P r = rasterFromQImage(img, /*premultiply=*/false);
 
-  // The saved canvas may have been drawn at a different camera aspect; reflow it
-  // to the current box height so panels still line up (width is fixed by
-  // m_boxW). Use the region-aware re-anchor — a plain full-raster resample here
-  // deformed the drawings vertically and split merged pans (thumbs looked
-  // squished/broken on reopening a scene saved at another aspect).
+  // Adopt the saved box geometry as-is — do NOT reflow against the live camera
+  // here. At scene-open time the app camera is often still the default (e.g.
+  // 1920x1080) and only switches to the scene's real format a moment later,
+  // firing onSceneChanged(). Reflowing now would target the wrong (default)
+  // aspect, and onSceneChanged would then reflow AGAIN: a lossy double pass that
+  // — because each region is clamped to fit a single box — compressed tall
+  // drawings (a full-column stroke got squished to one row on reopen). Instead
+  // take the raster at its saved box height and set m_boxAspect from it, so
+  // onSceneChanged does the single correct reflow only if the real camera aspect
+  // actually differs (and short-circuits when it matches, the common case).
   const double savedBoxH = r->getLy() / (double)qMax(1, m_rows);
-  if (r->getLx() != (int)gridW() || qAbs(savedBoxH - m_boxH) > 0.5)
-    r = reanchorRaster(r, savedBoxH, m_boxH);
-  m_ras = r;
+  m_boxH                 = savedBoxH;
+  m_boxAspect            = m_boxW / savedBoxH;
+  m_ras                  = r;
   clearSelection();
   updateScrollBars();
   update();

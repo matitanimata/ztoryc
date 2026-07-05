@@ -70,7 +70,24 @@ TFilePath importScene(TFilePath scenePath) {
   }
 
   TFilePath path = scene.getScenePath();
-  scene.save(scene.getScenePath());
+  try {
+    // A freshly created export project may not have its scene folder on disk yet.
+    // ToonzScene::save touches a temp file there, and TSystem::touchFile throws
+    // TSystemException if the folder is missing — previously uncaught, so the
+    // export aborted the whole app (SIGABRT). Create the parent dir first and
+    // report any save failure as a normal error instead of crashing.
+    TSystem::touchParentDir(scene.decodeFilePath(path));
+    scene.save(path);
+  } catch (TException &e) {
+    DVGui::error(QObject::tr("Cannot save the exported scene %1: %2")
+                     .arg(toQString(path))
+                     .arg(QString::fromStdWString(e.getMessage())));
+    return TFilePath();
+  } catch (...) {
+    DVGui::error(
+        QObject::tr("Cannot save the exported scene %1.").arg(toQString(path)));
+    return TFilePath();
+  }
   DvDirModel::instance()->refreshFolder(
       TProjectManager::instance()->getCurrentProjectPath().getParentDir());
   return path;
