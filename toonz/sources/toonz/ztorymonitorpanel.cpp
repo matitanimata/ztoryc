@@ -222,7 +222,13 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
   m_timelineLay->addWidget(toolbar);
   m_timelineLay->addWidget(m_ruler);
   m_timelineLay->addWidget(m_track);
-  // Audio tracks are inserted here dynamically by refreshAudioTracks().
+  // Audio tracks are inserted just before this trailing stretch by
+  // refreshAudioTracks(). The stretch is essential: the timeline sits in a
+  // splitter pane that is usually taller than the fixed-height rows, and without
+  // a stretch to soak up the extra vertical space a QVBoxLayout spreads it
+  // *between* the rows — leaving a gap between the video and audio tracks (and
+  // making the video track hard to spot before any audio is loaded).
+  m_timelineLay->addStretch(1);
 
   // ── Splitter: viewer (resizable) on top, timeline+toolbar at bottom ───────
   QSplitter *splitter = new QSplitter(Qt::Vertical, this);
@@ -418,7 +424,10 @@ void ZtoryMonitorPanel::refreshAudioTracks() {
     at->setCurrentFrame(ZtoryAnimaticController::instance()->currentFrame());
     connect(at, &ZtoryAudioTrack::zoomChanged,
             this, &ZtoryMonitorPanel::onZoomChanged);
-    m_timelineLay->addWidget(at);
+    // Insert before the trailing stretch so the rows stay packed at the top.
+    int insertIdx = m_timelineLay->count() - 1;
+    if (insertIdx < 0) insertIdx = 0;
+    m_timelineLay->insertWidget(insertIdx, at);
     m_audioTracks.append(at);
   }
 }

@@ -3151,6 +3151,14 @@ ZtoryAnimaticViewer::ZtoryAnimaticViewer(QWidget *parent)
   connect(m_flipConsole, SIGNAL(playStateChanged(bool)),
           ctrl->frameHandle(), SLOT(setPlaying(bool)));
 
+  // Hide the Set Key (keyframe navigator) on the console by default: the animatic
+  // is a timing/preview surface, and Set Key here drops a keyframe on the shot's
+  // first frame in the sub-scene — meaningless and surprising. Still re-enablable
+  // from the console's customize (☰) menu. setCustomizemask is instance-local and
+  // not persisted, so the normal Scene Viewer console is unaffected.
+  m_flipConsole->setCustomizemask(m_flipConsole->getCustomizeMask() &
+                                  ~eShowCustom);
+
   // Don't let this viewer become the global active viewer
   disconnect(TApp::instance(), SIGNAL(activeViewerChanged()),
              this, SLOT(onActiveViewerChanged()));
@@ -3694,6 +3702,14 @@ void ZtoryAnimaticViewer::showEvent(QShowEvent *e) {
   // slots such as updateFrameRange() and changeWindowTitle().  Those would
   // set the FlipConsole range from the sub-scene's frame count (wrong).
   BaseViewerPanel::showEvent(e);
+
+  // Enforce on every show: no Set Key in the always-main animatic preview.
+  // This viewer targets the MAIN xsheet, where dropping a keyframe on a shot
+  // column is not allowed — so keep the keyframe navigator (the console's custom
+  // widget) hidden even if a customize toggle or a base re-init turned it back on.
+  if (m_flipConsole)
+    m_flipConsole->setCustomizemask(m_flipConsole->getCustomizeMask() &
+                                    ~eShowCustom);
 
   TApp *app  = TApp::instance();
   auto *ctrl = ZtoryAnimaticController::instance();
