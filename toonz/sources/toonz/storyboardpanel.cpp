@@ -5940,10 +5940,10 @@ void StoryboardPanel::onExportAnimatic() {
 
   // DaVinci / NLE handoff: also write an FCPXML edit referencing the per-shot clips.
   auto *fcpxmlCheck = new QCheckBox(
-      tr("Also export DaVinci timeline (.fcpxml)"), &dlg);
+      tr("Also export editing timeline (.fcpxml)"), &dlg);
   fcpxmlCheck->setToolTip(
       tr("Write an FCPXML edit that places the per-shot clips on a timeline,\n"
-         "importable into DaVinci Resolve / Premiere / Final Cut.\n"
+         "importable into DaVinci Resolve, Premiere Pro or Final Cut Pro.\n"
          "Requires 'One clip per shot' (the timeline references those clips)."));
   // Only meaningful with per-shot clips: enable it only when that mode is active.
   fcpxmlCheck->setEnabled(false);
@@ -6478,9 +6478,10 @@ void StoryboardPanel::onExportAnimatic() {
     QString fcpxmlPath = QDir(outDir).filePath(nameEdit->text() + ".fcpxml");
     if (writeAnimaticFcpxml(fcpxmlPath, sceneName, fps, w, h, clips, audioClips))
       QMessageBox::information(
-          this, tr("Export to DaVinci"),
-          tr("Timeline written:\n%1\n\nImport it in DaVinci Resolve (File → "
-             "Import → Timeline). The per-shot clips are referenced by name.")
+          this, tr("Export editing timeline"),
+          tr("Timeline written:\n%1\n\nImport it into your NLE (DaVinci Resolve, "
+             "Premiere Pro or Final Cut Pro). The per-shot clips are referenced "
+             "by name.")
               .arg(fcpxmlPath));
   }
 
