@@ -5371,6 +5371,12 @@ void StoryboardPanel::onExportShotsToProject() {
   auto *destRow      = new QHBoxLayout();
   auto *newProjRadio = new QRadioButton(tr("New project"), projBox);
   auto *existRadio   = new QRadioButton(tr("Existing project"), projBox);
+  // Own exclusive group: without it these share projBox's implicit auto-exclusive
+  // group with the Target-application radios below, so clicking Tahoma/OpenToonz
+  // would deselect New/Existing (and vice versa).
+  auto *destGroup = new QButtonGroup(&dlg);
+  destGroup->addButton(newProjRadio);
+  destGroup->addButton(existRadio);
   newProjRadio->setChecked(true);
   destRow->addWidget(newProjRadio);
   destRow->addWidget(existRadio);
@@ -5419,6 +5425,10 @@ void StoryboardPanel::onExportShotsToProject() {
   auto *targetRow    = new QHBoxLayout();
   auto *targetTahoma = new QRadioButton(tr("Tahoma2D / Ztoryc"), projBox);
   auto *targetOT     = new QRadioButton(tr("OpenToonz"), projBox);
+  // Separate exclusive group (independent of New/Existing above).
+  auto *targetGroup = new QButtonGroup(&dlg);
+  targetGroup->addButton(targetTahoma);
+  targetGroup->addButton(targetOT);
   targetTahoma->setChecked(true);
   targetOT->setToolTip(
       tr("Converts the exported scenes to explicit holds and writes an "
