@@ -4,10 +4,14 @@
 #include "tundo.h"
 
 // TnzLib includes
+#include "toonz/ikccd.h"
 #include "toonz/tobjecthandle.h"
 #include "toonz/txsheethandle.h"
 
 #include "plastictool.h"
+
+#include <cmath>
+#include <limits>
 
 using namespace PlasticToolLocals;
 
@@ -127,7 +131,9 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
     assert(vd);
 
     // Move selected branch
-    if (m_keepDistance.getValue()) {
+    if (m_ikDrag.getValue() && deformedSkeleton().vertex(m_svSel).parent() >= 0) {
+      moveVertexIK_animate(frame, m_svSel, pos);
+    } else if (m_keepDistance.getValue()) {
       ::setKeyframe(vd->m_params[SkVD::ANGLE],
                     frame);  // Set a keyframe for it. It must be done
                              // to set the correct function interpolation
@@ -150,6 +156,103 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
     // it's better to call the following directly
     m_deformedSkeleton.invalidate();
     invalidate();
+  }
+}
+
+//------------------------------------------------------------------------
+
+// SuperPlastic adapter: solves the whole root -> v chain against the mouse
+// position with the shared CCD solver (toonz/ikccd.h), then writes back the
+// per-vertex ANGLE deformation params only — distances are never altered, so
+// the rig keeps its proportions. Children hanging off the chain follow via
+// the ordinary FK rebuild of the deformed skeleton.
+void PlasticTool::moveVertexIK_animate(double frame, int v,
+                                       const TPointD &pos) {
+  const PlasticSkeleton &orig    = *skeleton();
+  PlasticSkeleton &defSkel       = deformedSkeleton();
+  const double quietNaN          = std::numeric_limits<double>::quiet_NaN();
+  const double noBoundThreshold  = 1e9;  // vertex bounds default to +-DBL_MAX
+
+  // Serial chain from the skeleton root down to the dragged vertex
+  std::vector<int> chainVx;
+  for (int cur = v; cur >= 0; cur = defSkel.vertex(cur).parent())
+    chainVx.push_back(cur);
+  std::reverse(chainVx.begin(), chainVx.end());
+
+  int boneCount = int(chainVx.size()) - 1;
+  if (boneCount < 1) return;
+
+  // Absolute direction angle of the polar reference for a vertex, replicating
+  // updateBranchPositions(): the parent bone direction, walking further up on
+  // degenerate (zero-length) bones, world +x at the root.
+  auto parentDirAngle = [](const PlasticSkeleton &skel, int vx) -> double {
+    for (int p = vx; p >= 0;) {
+      int pp = skel.vertex(p).parent();
+      if (pp < 0) return 0.0;
+      TPointD d = skel.vertex(p).P() - skel.vertex(pp).P();
+      if (norm2(d) > 1e-8) return atan2(d.y, d.x);
+      p = pp;
+    }
+    return 0.0;
+  };
+  auto wrapAngle = [](double a) {
+    while (a > M_PI) a -= 2.0 * M_PI;
+    while (a < -M_PI) a += 2.0 * M_PI;
+    return a;
+  };
+
+  // Rest angles come from the ORIGINAL skeleton: the deformed bone direction
+  // is Rot(rest + ANGLE param) * parentDir, so solver-space bone angles map
+  // to ANGLE params as (solved relative angle - rest angle).
+  IKChain chain;
+  std::vector<double> restAngle(boneCount);
+  chain.currentPositions.reserve(boneCount + 1);
+  for (int i = 0; i <= boneCount; ++i)
+    chain.currentPositions.push_back(defSkel.vertex(chainVx[i]).P());
+
+  for (int i = 0; i < boneCount; ++i) {
+    const PlasticSkeletonVertex &ovx = orig.vertex(chainVx[i + 1]);
+    TPointD od   = ovx.P() - orig.vertex(chainVx[i]).P();
+    double rest  = wrapAngle(atan2(od.y, od.x) - parentDirAngle(orig, chainVx[i]));
+    restAngle[i] = rest;
+
+    IKBone bone;
+    bone.length      = norm(chain.currentPositions[i + 1] -
+                            chain.currentPositions[i]);
+    bone.parentIndex = i - 1;
+    bone.angleMin    = (ovx.m_minAngle < -noBoundThreshold)
+                           ? quietNaN
+                           : rest + ovx.m_minAngle * M_PI_180;
+    bone.angleMax    = (ovx.m_maxAngle > noBoundThreshold)
+                           ? quietNaN
+                           : rest + ovx.m_maxAngle * M_PI_180;
+    chain.bones.push_back(bone);
+  }
+
+  IKTarget target;
+  target.position = pos;
+
+  std::vector<TPointD> solved =
+      SolveIK_CCD(chain, target, 30, 0.5 * getPixelSize());
+
+  // Write back the ANGLE params along the chain (root vertex excluded: it has
+  // no ANGLE). Values are kept within 180 degrees of the previous ones so the
+  // Function Editor curves don't jump by full turns.
+  double prevAbs = 0.0;
+  for (int i = 0; i < boneCount; ++i) {
+    TPointD d      = solved[i + 1] - solved[i];
+    double absAng  = (norm2(d) > 1e-8) ? atan2(d.y, d.x) : prevAbs;
+    double newDelta = wrapAngle((absAng - prevAbs) - restAngle[i]) * M_180_PI;
+    prevAbs        = absAng;
+
+    SkVD *vd = m_sd->vertexDeformation(::skeletonId(), chainVx[i + 1]);
+    assert(vd);
+    double oldDelta = vd->m_params[SkVD::ANGLE]->getValue(frame);
+    while (newDelta - oldDelta > 180.0) newDelta -= 360.0;
+    while (newDelta - oldDelta < -180.0) newDelta += 360.0;
+
+    ::setKeyframe(vd->m_params[SkVD::ANGLE], frame);
+    vd->m_params[SkVD::ANGLE]->setValue(frame, newDelta);
   }
 }
 

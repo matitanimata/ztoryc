@@ -122,6 +122,9 @@ private:
       m_globalKey;  //!< Whether animating a vertex will cause EVERY vertex to
   TBoolProperty
       m_keepDistance;  //!< Whether animation editing can alter vertex distances
+  TBoolProperty
+      m_ikDrag;  //!< Whether animation editing solves the whole chain with IK
+                 //!< (SuperPlastic CCD solver) instead of single-vertex FK
 
   TStringProperty m_minAngle,
       m_maxAngle;  //!< Minimum and maximum angle values allowed
@@ -333,6 +336,7 @@ protected:
   void mouseMove_animate(const TPointD &pos, const TMouseEvent &me);
   void leftButtonDown_animate(const TPointD &pos, const TMouseEvent &me);
   void leftButtonDrag_animate(const TPointD &pos, const TMouseEvent &me);
+  void moveVertexIK_animate(double frame, int v, const TPointD &pos);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
   void addContextMenuActions_animate(QMenu *menu);
 

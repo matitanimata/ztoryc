@@ -919,6 +919,7 @@ PlasticTool::PlasticTool()
     , m_rigidValue("rigidValue")
     , m_globalKey("globalKeyframe", true)
     , m_keepDistance("keepDistance", true)
+    , m_ikDrag("inverseKinematics", false)
     , m_minAngle("minAngle", L"")
     , m_maxAngle("maxAngle", L"")
     , m_distanceRelay("distanceRelay")
@@ -955,6 +956,7 @@ PlasticTool::PlasticTool()
 
   m_propGroup[ANIMATE_IDX].bind(m_globalKey);
   m_propGroup[ANIMATE_IDX].bind(m_keepDistance);
+  m_propGroup[ANIMATE_IDX].bind(m_ikDrag);
   m_propGroup[ANIMATE_IDX].bind(m_minAngle);
   m_propGroup[ANIMATE_IDX].bind(m_maxAngle);
 
@@ -970,6 +972,7 @@ PlasticTool::PlasticTool()
   m_rigidValue.setId("RigidValue");
   m_globalKey.setId("GlobalKey");
   m_keepDistance.setId("KeepDistance");
+  m_ikDrag.setId("PlasticInverseKinematics");
   m_minAngle.setId("MinAngle");
   m_maxAngle.setId("MaxAngle");
   m_distanceRelay.setId("DistanceRelay");
@@ -1028,6 +1031,7 @@ void PlasticTool::updateTranslation() {
 
   m_globalKey.setQStringName(tr("Global Key"));
   m_keepDistance.setQStringName(tr("Keep Distance"));
+  m_ikDrag.setQStringName(tr("Inverse Kinematics"));
   m_minAngle.setQStringName(tr("Angle Bounds"));
   m_maxAngle.setQStringName("");
 }
