@@ -1,3 +1,45 @@
+## [2026-07-07] — SUPERPLASTIC: adapter Plastic Tool con pin/foot-planting (re-rooting + vincolo per-frame)
+
+Sessione lunga e iterativa sul branch `feature/superplastic` (build separata Ztoryc-SP,
+master NON toccato). Costruito l'adapter del solver CCD sul Plastic Tool fino al
+foot-planting reale, raffinato in più giri sul feedback diretto di Franco.
+
+### Added — branch feature/superplastic (NON su master)
+- **Adapter Plastic → SolveIK_CCD** (commit d528b8ad2): checkbox "Inverse Kinematics" nelle
+  opzioni Animate (default off). Attiva, il drag di un vertice risolve la catena
+  radice→vertice col solver CCD condiviso, riscrivendo solo gli ANGLE (distanze intatte →
+  proporzioni preservate). Gli Angle Bounds per-vertice diventano veri limiti IK.
+- **Pin IK keyframabile** (2016a2eb5): nuovo param `PIN` nel SkVD (step/Constant,
+  retrocompatibile via serializzazione tag-based), bottone "Pin" checkable, diamante ciano
+  sul vertice pinnato. Escluso da Set Key/Rest/isFullKeyframe.
+- **Il pin diventa la radice della gerarchia** (ecd6746a0): re-rooting vero — il vertice
+  pinnato è la base fissa, la maniglia raggiunge il mouse, ogni altro vertice (radice
+  originale inclusa) segue liberamente. Modello chiarito da Franco ("altrimenti non è
+  utilizzabile").
+- **Pin = vincolo per-frame** (c7bcf22c5): risolto il drift sugli intercalati (IK-vs-
+  interpolazione-FK). Il pin ora memorizza una posizione TARGET (`PINTX/PINTY`) e a OGNI
+  frame lo scheletro è traslato rigidamente così il pin cade esatto sul target — piantato
+  su tutti gli intercalati, non solo alle chiavi. Applicato sia in vista tool sia in
+  deformazione mesh (render coerente).
+
+### Notes / percorso
+- Scartata dopo verifica l'idea di pilotare il transform di COLONNA per il free-root: nel
+  Plastic tutto è in spazio locale e la colonna sposta tutto in blocco (piede+corpo) → non
+  può piantare il piede mentre il corpo trasla. La libertà mancante è interna alla
+  deformazione (prima offset di radice ROOTX/ROOTY, poi evoluto in PINTX/PINTY + shift a
+  eval-time).
+- Gotcha risolto: build_and_deploy fa `open Ztoryc.app` → istanza stale tiene il QLockFile
+  single-instance dopo il rename → Ztoryc-SP "si chiude da sola" (NON un crash). Ricetta
+  rename aggiornata (pkill + rm lock prima del rename, cp del plist completo generato).
+
+### Limiti noti aperti (prossima sessione)
+- Limiti angolari non applicati in modalità pin (re-root). Possibile ribaltamento del verso
+  di piega senza pole vector (Franco: "un po' difficoltoso da controllare").
+- Adapter Skeleton Tool ancora da fare (il pin drift stock è in `computeIkRootOffset`).
+
+### Extra
+- Trapiantati i set di pennelli MyPaint `aotz` e `slos_mpb` da OpenToonz a Ztoryc/Tahoma2D.
+
 ## [2026-07-06c] — SUPERPLASTIC avviato: branch separato + core solver IK CCD (task 58)
 
 Avviato il filone SUPERPLASTIC (spec: `Drive/Ztoryc/SUPERPLASTIC.md` — solver IK
