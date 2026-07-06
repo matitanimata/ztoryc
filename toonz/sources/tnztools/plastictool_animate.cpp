@@ -378,7 +378,7 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
   if (rootIdx < 0) return;
 
   SkVD *rvd = m_sd->vertexDeformation(::skeletonId(), rootIdx);
-  if (!rvd) return;
+  if (!rvd || !rvd->m_params[SkVD::ROOTX] || !rvd->m_params[SkVD::ROOTY]) return;
   double newX = rvd->m_params[SkVD::ROOTX]->getValue(frame) + residual.x;
   double newY = rvd->m_params[SkVD::ROOTY]->getValue(frame) + residual.y;
   ::setKeyframe(rvd->m_params[SkVD::ROOTX], frame);

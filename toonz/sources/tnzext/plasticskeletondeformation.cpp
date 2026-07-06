@@ -525,7 +525,8 @@ void PlasticSkeletonDeformation::Imp::updateBranchPositions(
     // so a pinned descendant can stay planted while the body moves. All
     // children rebuild relative to this, so the whole skeleton shifts with it.
     auto rt = m_vds.find(dvx.name());
-    if (rt != m_vds.end()) {
+    if (rt != m_vds.end() && rt->m_vd.m_params[SkVD::ROOTX] &&
+        rt->m_vd.m_params[SkVD::ROOTY]) {
       const SkVD &rvd = rt->m_vd;
       dvx.P() = originalSkeleton.vertex(v).P() +
                 TPointD(rvd.m_params[SkVD::ROOTX]->getValue(frame),
