@@ -337,6 +337,8 @@ protected:
   void leftButtonDown_animate(const TPointD &pos, const TMouseEvent &me);
   void leftButtonDrag_animate(const TPointD &pos, const TMouseEvent &me);
   void moveVertexIK_animate(double frame, int v, const TPointD &pos);
+  void solveChainIK_animate(const std::vector<int> &chainVx,
+                            const TPointD &target, double frame, bool useLimits);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
 
   // SuperPlastic IK anchor (pin). The pinned vertex is kept fixed while IK
