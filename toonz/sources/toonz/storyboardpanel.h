@@ -353,9 +353,14 @@ private:
   // Shared core of onExportShots / onExportShotsToProject: saves each listed
   // shot as a standalone .tnz (with animatic audio injected) into outDirFp.
   // Returns the exported scene paths; failures are counted in `fail`.
-  QList<TFilePath> exportShotScenesToDir(const QList<int> &indices,
-                                         const TFilePath &outDirFp, int version,
-                                         bool writeLink, int &fail);
+  // assetCopies (optional, out): per exported scene basename, the list of
+  // (coded project-folder level path, resolved SOURCE file) that the export
+  // machinery won't copy on its own (+extras/+drawings levels). The caller
+  // copies these into the destination project after import.
+  QList<TFilePath> exportShotScenesToDir(
+      const QList<int> &indices, const TFilePath &outDirFp, int version,
+      bool writeLink, int &fail,
+      QHash<QString, QList<QPair<TFilePath, TFilePath>>> *assetCopies = nullptr);
 };
 
 #endif // STORYBOARDPANEL_H

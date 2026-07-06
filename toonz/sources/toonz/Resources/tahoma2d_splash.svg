@@ -23,7 +23,7 @@
         font-weight="300"
         letter-spacing="2.5"
         fill="#888888"
-        text-anchor="middle">STORYBOARD · ANIMATIC · ANIMATION</text>
+        text-anchor="middle">OPEN STORYBOARD TOOL</text>
 
   <!-- Version painted dynamically in main.cpp from ZtorycVersion.cmake -->
 </svg>

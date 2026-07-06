@@ -834,7 +834,9 @@ void StartupPopup::updateProjectCB() {
   RecentFiles::instance()->addFilePath(currentProjectPath,
                                        RecentFiles::Project);
 
-  TFilePath sandboxFp = pm->getSandboxProjectFolder() + "tahomaproject.xml";
+  // Resolve the sandbox's actual project file (ztorycproject.xml, or the legacy
+  // tahomaproject.xml) rather than hard-coding the name.
+  TFilePath sandboxFp = pm->getSandboxProjectPath();
   m_projectPaths.push_back(sandboxFp);
   m_projectsCB->addItem("sandbox");
   m_projectsCB->setItemData(0, pm->getSandboxProjectFolder().getQString(),

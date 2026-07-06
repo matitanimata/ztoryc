@@ -32,6 +32,8 @@
 #include "toonz/txsheethandle.h"
 #include "toonz/txshleveltypes.h"
 #include "toonz/txshlevelcolumn.h"
+#include "toonz/txshlevel.h"
+#include "toonz/txshsimplelevel.h"
 #include "toonz/txshmeshcolumn.h"
 #include "toonzqt/stageobjectsdata.h"
 #include "tfxattributes.h"
@@ -5208,7 +5210,8 @@ void StoryboardPanel::onExportShots() {
 
 QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
     const QList<int> &indices, const TFilePath &outDirFp, int version,
-    bool writeLink, int &fail) {
+    bool writeLink, int &fail,
+    QHash<QString, QList<QPair<TFilePath, TFilePath>>> *assetCopies) {
   QList<TFilePath> exported;
   ZtoryModel *model = ZtoryModel::instance();
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
@@ -5220,40 +5223,39 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
 
   if (!TFileStatus(outDirFp).doesExist()) TSystem::mkDir(outDirFp);
 
-  // Model A: the exported .tnz is a single scene reused across pipeline steps,
-  // so the shot file name must NOT carry the {TASK} token (the task belongs
-  // only to the render/clip name). Strip {TASK} and a neighbouring separator.
-  QString exportPattern = model->namingPattern();
-  if (exportPattern.isEmpty())
-    exportPattern = "{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
-  exportPattern.remove(QRegularExpression(
-      R"((?:[_\-.]\{TASK(?::\d+)?\})|(?:\{TASK(?::\d+)?\}[_\-.])|\{TASK(?::\d+)?\})"));
+  (void)version;  // exported .tnz name uses the shot convention, not a version
 
   for (int i : indices) {
     if (i < 0 || i >= (int)m_shots.size()) { fail++; continue; }
     const ShotData &sd = m_shots[i].data;
 
-    // Build filename from naming pattern
+    // The exported .tnz follows the shot naming convention: SEQ_SHOT (e.g.
+    // "sq01_sh010") or just SHOT ("sh010") when the shot has no sequence. The
+    // full production naming pattern is NOT used here — with empty tokens it
+    // produced malformed names full of stray separators (e.g. "_01___sh010_V01").
     QString seqLabel;
     for (const SequenceData &seq : model->sequences())
       if (seq.uuid == sd.sequenceId) { seqLabel = seq.label; break; }
-    QMap<QString,QString> tok;
-    tok["PROD"]   = model->production();
-    tok["CODE"]   = model->code();
-    tok["SEASON"] = model->season();
-    tok["EP"]     = model->episode();
-    tok["SEQ"]    = seqLabel;
-    tok["SHOT"]   = sd.label();
-    tok["VER"]    = QString::number(version);
-    // Task intentionally excluded from the .tnz name (see exportPattern above).
-    QString baseName = ZtoryModel::resolvePattern(exportPattern, tok);
+    const QString shotLbl = sd.label().trimmed();
+    const QString seqLbl  = seqLabel.trimmed();
+    QString baseName = seqLbl.isEmpty() ? shotLbl : (seqLbl + "_" + shotLbl);
     if (baseName.isEmpty()) baseName = "shot_" + sd.label();
     TFilePath outPath = outDirFp + TFilePath(baseName.toStdString() + ".tnz");
 
     int shotCol = sd.xsheetColumn;
     int shotR0 = 0, shotR1 = 0;
-    if (mainXsh && mainXsh->getColumn(shotCol))
+    int trueStart = 0, trueDur = 0;
+    if (mainXsh &&
+        ZtoryShotOps::shotTrueSpan(mainXsh, shotCol, trueStart, trueDur) &&
+        trueDur > 0) {
+      // Use the TRUE on-timeline span (excludes the cross-dissolve overlap cells)
+      // so the injected audio matches the exported sub-scene duration. getRange()
+      // includes the dissolve overlap, making the audio overshoot the shot.
+      shotR0 = trueStart;
+      shotR1 = trueStart + trueDur - 1;
+    } else if (mainXsh && mainXsh->getColumn(shotCol)) {
       mainXsh->getColumn(shotCol)->getRange(shotR0, shotR1, /*ignoreLastStop=*/true);
+    }
 
     TApp::instance()->getCurrentColumn()->setColumnIndex(shotCol);
     TColumnSelection *colSel = new TColumnSelection();
@@ -5264,11 +5266,77 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
     if (scene->getChildStack()->getAncestorCount() == 0) { fail++; continue; }
 
     TXsheet *childXsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+
     QList<int> injectedCols;
     if (mainXsh && childXsh && shotR1 >= shotR0)
       injectedCols = injectAudioForShot(mainXsh, childXsh, shotR0, shotR1, fps);
 
+    // Capture the SOURCE file of each project-folder level (coded '+' path),
+    // keyed by the level, BEFORE save. Neither takeCareSceneFolderItems (only
+    // $scenefolder) nor the ResourceCollector (skips '+' paths) copies these, and
+    // saving a renamed sub-scene relocates the per-scene +extras path so the
+    // PNGs/audio would go missing. Run AFTER injectAudioForShot so the injected
+    // animatic-audio sound level is included (trim lives in the column offsets).
+    // Only for the export-to-project flow (assetCopies != null). The plain
+    // "Export Shots" flow already carries its assets via the native save, so
+    // capturing/copying here would interfere with it (it regressed a flow that
+    // always worked).
+    QList<QPair<TXshLevel *, TFilePath>> srcByLevel;
+    if (assetCopies && childXsh) {
+      std::set<TXshLevel *> usedLevels;
+      childXsh->getUsedLevels(usedLevels);
+      for (TXshLevel *lv : usedLevels) {
+        if (!lv) continue;
+        TFilePath coded;
+        if (TXshSimpleLevel *sl = lv->getSimpleLevel())
+          coded = sl->getPath();
+        else if (TXshSoundLevel *snd = lv->getSoundLevel())
+          coded = snd->getPath();
+        else
+          continue;
+        if (coded.isEmpty() || coded.getWideString()[0] != L'+') continue;
+        const TFilePath srcAbs = scene->decodeFilePath(coded);
+        if (!srcAbs.isEmpty() && TSystem::doesExistFileOrLevel(srcAbs))
+          srcByLevel.append(qMakePair(lv, srcAbs));
+      }
+    }
+
     bool saved = IoCmd::saveScene(outPath, IoCmd::SAVE_SUBXSHEET);
+
+    // After save, copy each captured source to the level's FINAL resolved
+    // location. Reading the post-save path aligns with whatever relocation the
+    // save applied (instead of guessing before it), which is what made earlier
+    // attempts flaky. Also record the final coded paths so the export-to-project
+    // caller can copy them into the destination project after import.
+    if (saved && childXsh && !srcByLevel.isEmpty()) {
+      ToonzScene savedTs;
+      savedTs.setProject(TProjectManager::instance()->getCurrentProject());
+      savedTs.setScenePath(outPath);
+      QList<QPair<TFilePath, TFilePath>> list;
+      for (const auto &pr : srcByLevel) {
+        TXshLevel *lv = pr.first;
+        TFilePath finalCoded;
+        if (TXshSimpleLevel *sl = lv->getSimpleLevel())
+          finalCoded = sl->getPath();
+        else if (TXshSoundLevel *snd = lv->getSoundLevel())
+          finalCoded = snd->getPath();
+        if (finalCoded.isEmpty()) continue;
+        const TFilePath finalAbs = savedTs.decodeFilePath(finalCoded);
+        if (!finalAbs.isEmpty() && finalAbs != pr.second &&
+            !TSystem::doesExistFileOrLevel(finalAbs)) {
+          try {
+            TSystem::touchParentDir(finalAbs);
+            TXshSimpleLevel::copyFiles(finalAbs, pr.second);
+            if (!TSystem::doesExistFileOrLevel(finalAbs))
+              TSystem::copyFile(finalAbs, pr.second);
+          } catch (...) {
+          }
+        }
+        if (assetCopies && finalCoded.getWideString()[0] == L'+')
+          list.append(qMakePair(finalCoded, pr.second));
+      }
+      if (assetCopies && !list.isEmpty()) assetCopies->insert(baseName, list);
+    }
 
     if (!injectedCols.isEmpty() && childXsh)
       removeInjectedAudio(childXsh, injectedCols);
@@ -5641,8 +5709,12 @@ void StoryboardPanel::onExportShotsToProject() {
   TFilePath stagingDir = stagingRoot + "scenes";
 
   int fail = 0;
+  // Source files of project-folder levels (+extras/+drawings) per exported
+  // scene: the export machinery won't copy these, so we do it below.
+  QHash<QString, QList<QPair<TFilePath, TFilePath>>> assetCopies;
   QList<TFilePath> staged = exportShotScenesToDir(
-      indices, stagingDir, verSpin->value(), trackerChk->isChecked(), fail);
+      indices, stagingDir, verSpin->value(), trackerChk->isChecked(), fail,
+      &assetCopies);
   if (staged.isEmpty()) {
     QApplication::restoreOverrideCursor();
     QMessageBox::warning(this, tr("Export Shots to New Project"),
@@ -5655,6 +5727,45 @@ void StoryboardPanel::onExportShotsToProject() {
   std::vector<TFilePath> stagedScenes(staged.begin(), staged.end());
   std::vector<TFilePath> exported = ExportScenePopup::exportScenesToProject(
       stagedScenes, projectPath, targetOT->isChecked());
+
+  // Copy the project-folder levels (+extras/+drawings) that the export won't:
+  // for each exported scene, resolve the (portable) coded path in the TARGET
+  // project's own folder organization and copy the source frames there. This
+  // works whatever the destination settings are — including an existing project
+  // whose layout differs from the storyboard's source project.
+  if (!assetCopies.isEmpty()) {
+    TProjectManager *pmgr = TProjectManager::instance();
+    TFilePath savedPrj    = pmgr->getCurrentProjectPath();
+    pmgr->setCurrentProjectPath(projectPath);
+    auto targetProject = pmgr->getCurrentProject();
+    for (const TFilePath &newScene : exported) {
+      const QString base = QString::fromStdWString(newScene.getWideName());
+      auto it            = assetCopies.find(base);
+      if (it == assetCopies.end()) continue;
+      // Resolve the coded path in the target WITHOUT loading the scene: loading
+      // re-reads resources (which aren't copied yet) → "cannot load" popups and
+      // a hang. Setting the project + scene path is enough for decodeFilePath.
+      ToonzScene ts;
+      ts.setProject(targetProject);
+      ts.setScenePath(newScene);
+      for (const auto &pr : it.value()) {
+        const TFilePath dstAbs = ts.decodeFilePath(pr.first);  // coded → target
+        if (dstAbs.isEmpty() || dstAbs == pr.second) continue;
+        if (TSystem::doesExistFileOrLevel(dstAbs)) continue;
+        try {
+          TSystem::touchParentDir(dstAbs);
+          // Image levels can be multi-frame → copyFiles; a single file (e.g. a
+          // .wav sound level) may not be handled, so fall back to a plain copy.
+          TXshSimpleLevel::copyFiles(dstAbs, pr.second);
+          if (!TSystem::doesExistFileOrLevel(dstAbs) &&
+              TSystem::doesExistFileOrLevel(pr.second))
+            TSystem::copyFile(dstAbs, pr.second);
+        } catch (...) {
+        }
+      }
+    }
+    pmgr->setCurrentProjectPath(savedPrj);
+  }
 
   // Copy the .ztoryc back-link companions next to the exported scenes (the
   // Export Scene flow only copies the scene + its assets). Governed solely by

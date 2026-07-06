@@ -14,6 +14,10 @@
 #include "toonz/tproject.h"
 #include "toonz/toonzscene.h"
 #include "toonz/txsheet.h"
+#include "toonz/txshlevel.h"
+#include "toonz/txshchildlevel.h"
+#include "toonz/txshleveltypes.h"
+#include "toonz/levelset.h"
 #include "toonz/sceneresources.h"
 #include "mainwindow.h"
 
@@ -69,7 +73,12 @@ TFilePath importScene(TFilePath scenePath) {
     return TFilePath();
   }
 
-  TFilePath path = scene.getScenePath();
+  // Save directly into the target project's scenes/ folder. The staged scene's
+  // path carries the ztoryc_export_tmp/scenes/ staging prefix; saving at that
+  // relative path recreates scenes/ztoryc_export_tmp/scenes/ inside the target
+  // instead of a flat scenes/<shot>.tnz.
+  TFilePath path =
+      TFilePath("+scenes") + (scene.getScenePath().getWideName() + L".tnz");
   try {
     // A freshly created export project may not have its scene folder on disk yet.
     // ToonzScene::save touches a temp file there, and TSystem::touchFile throws
@@ -90,7 +99,7 @@ TFilePath importScene(TFilePath scenePath) {
   }
   DvDirModel::instance()->refreshFolder(
       TProjectManager::instance()->getCurrentProjectPath().getParentDir());
-  return path;
+  return scene.decodeFilePath(path);  // absolute path in the target project
 }
 
 //------------------------------------------------------------------------
@@ -738,6 +747,16 @@ bool ExportScenePopup::convertSceneToExplicitHolds(const TFilePath &scenePath) {
     // Materializes implicit holds up to the xsheet length, recursing into
     // sub-xsheets. 0 = use each xsheet's own frame count as the range.
     xsh->convertToExplicitHolds(0);
+    // Drop the per-xsheet In/Out markers on the main xsheet and every sub-xsheet:
+    // they are a Tahoma/Ztoryc addition and OpenToonz rejects the scene with
+    // "xsheet, unknown tag: inOutMarkers" on load.
+    xsh->setInOutMarkers(0, -1);
+    std::vector<TXshLevel *> levels;
+    scene.getLevelSet()->listLevels(levels);
+    for (TXshLevel *lv : levels) {
+      TXshChildLevel *cl = lv ? lv->getChildLevel() : nullptr;
+      if (cl && cl->getXsheet()) cl->getXsheet()->setInOutMarkers(0, -1);
+    }
     scene.save(scenePath);
   } catch (...) {
     DVGui::warning(tr("Could not convert %1 to explicit holds.")

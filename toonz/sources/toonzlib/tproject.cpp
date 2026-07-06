@@ -128,10 +128,12 @@ TFilePath getProjectFile(const TFilePath &fp) {
   const std::wstring &fpName     = fp.getWideName();
   const std::wstring &folderName = fp.getParentDir().getWideName();
 
-  // Look for a tahoma project file
-  std::wstring tahoma            = L"tahomaproject";
+  // Look for a Ztoryc project file, then the legacy Tahoma one (back-compat:
+  // projects created before the rename still open).
   QDir dir(fp.getQString());
-  TFilePath path = fp + (tahoma + xmlExt);
+  TFilePath path = fp + (std::wstring(L"ztorycproject") + xmlExt);
+  if (TFileStatus(path).doesExist()) return path;
+  path = fp + (std::wstring(L"tahomaproject") + xmlExt);
   if (TFileStatus(path).doesExist()) return path;
 
   // Look for compatible OpenToonz project files
@@ -155,8 +157,8 @@ TFilePath getProjectFile(const TFilePath &fp) {
 //! this function updates it to the most recent; otherwise,
 //! it is left untouched.
 TFilePath getLatestVersionProjectPath(const TFilePath &path) {
-  // Always return a tahoma project file
-  return path.withName(L"tahomaproject");
+  // Always return a Ztoryc project file
+  return path.withName(L"ztorycproject");
 
 /*
   const std::wstring &suffix = getProjectSuffix(path);
@@ -189,7 +191,7 @@ TFilePath searchProjectPath(TFilePath folder) {
   if (projectPath != TFilePath()) return projectPath;
 
   // If none exist in the folder, build the name with the most recent suffix
-  return folder + TFilePath(L"tahomaproject" + xmlExt);
+  return folder + TFilePath(L"ztorycproject" + xmlExt);
 }
 
 //===================================================================
@@ -765,8 +767,8 @@ void TProject::load(const TFilePath &projectPath) {
 bool TProject::isAProjectPath(const TFilePath &fp) {
   if (fp.isAbsolute() && fp.getType() == "xml") {
     const std::wstring &fpName = fp.getWideName();
-    // Check if it's a tahoma project
-    if (fpName == L"tahomaproject") return true;
+    // Ztoryc project, or the legacy Tahoma one (back-compat).
+    if (fpName == L"ztorycproject" || fpName == L"tahomaproject") return true;
 
     // Check if it is a compatiable OpenToonz project
     for (int i = 0; i < OTprjSuffixCount; ++i)

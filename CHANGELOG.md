@@ -1,3 +1,37 @@
+## [2026-07-06] — Export shot→progetto: molti fix + WIP; rebrand project file/splash
+
+Sessione maratona sull'export "Shots to New Project" (Tahoma e OpenToonz) + rifiniture
+di branding. Diversi fix solidi; il transfer degli asset (+extras/audio) verso un NUOVO
+progetto resta FRAGILE — dettagli e root cause in memoria `project_export_project_assets_wip`.
+Post-0.8.0, per la prossima release.
+
+### Fixed
+- **Cartelle nidificate** nell'export a progetto: importScene salvava al path di staging
+  (`+scenes/ztoryc_export_tmp/scenes/<shot>`) ricreando la nidificazione nel target. Ora
+  salva piatto in `+scenes/<basename>.tnz` e ritorna il path assoluto.
+- **Nome scena malformato** (`_01___sh010_V01`): l'export usava il pattern di produzione
+  con token vuoti. Ora convenzione shot: `SEQ_SHOT` (o `SHOT` senza sequenza).
+- **`inOutMarkers` unknown tag in OpenToonz**: convertSceneToExplicitHolds azzera i marker
+  In/Out su main + sub-xsheet prima del save → OT non rigetta più la scena.
+- **Timing audio con cross-dissolve**: l'audio usava getRange() (includeva l'overlap della
+  dissolvenza → audio troppo lungo). Ora usa `ZtoryShotOps::shotTrueSpan()` (durata vera).
+- **Crash file-browser Windows / crash export** già in 07-05c/precedenti.
+
+### Changed
+- **Project file `tahomaproject.xml` → `ztorycproject.xml`** (retrocompat: riconosce anche
+  il legacy). Aggiornati getProjectFile/searchProjectPath/getLatestVersionProjectPath/
+  isAProjectPath (tproject.cpp) + sandbox path in startuppopup.cpp.
+- **Splash tagline**: "STORYBOARD · ANIMATIC · ANIMATION" → "OPEN STORYBOARD TOOL".
+- Radio New/Existing e Target OT/Tahoma nell'export dialog in QButtonGroup separati.
+
+### WIP / aperti (prossima sessione)
+- Transfer +extras/audio verso NUOVO progetto: fragile/intermittente (i livelli
+  project-folder non sono copiati dalla macchina di export; il self-containment indovina
+  la risoluzione a tempo-apertura e la manca). Audio in OT non caricato/trimmato.
+  → serve logging diagnostico su un export reale, non patch al buio.
+- Immagine About (`ztoryc_about.png`): testo "storyboard animatic animation" disegnato nel
+  PNG → va rigenerata.
+
 ## [2026-07-05d] — Fix Ztoryc Monitor (post-0.8.0, per la prossima release)
 
 Due bug del Ztoryc Monitor segnalati da Franco dopo il rilascio della 0.8.0.
