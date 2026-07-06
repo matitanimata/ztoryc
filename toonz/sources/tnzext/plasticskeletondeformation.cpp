@@ -36,8 +36,10 @@ DEFINE_CLASS_CODE(PlasticSkeletonDeformation, 121)
 
 namespace {
 
-static const char *parNames[SkVD::PARAMS_COUNT] = {"Angle", "Distance", "SO"};
-static const char *parMeasures[SkVD::PARAMS_COUNT] = {"angle", "fxLength", ""};
+static const char *parNames[SkVD::PARAMS_COUNT] = {"Angle", "Distance", "SO",
+                                                   "Pin"};
+static const char *parMeasures[SkVD::PARAMS_COUNT] = {"angle", "fxLength", "",
+                                                      ""};
 
 //------------------------------------------------------------------
 
@@ -79,7 +81,9 @@ SkVD::Keyframe SkVD::getKeyframe(double frame) const {
 //------------------------------------------------------------------
 
 void SkVD::setKeyframe(double frame) {
-  for (int p = 0; p < PARAMS_COUNT; ++p)
+  // Only the transform params (ANGLE/DISTANCE/SO) — PIN is an IK anchor toggle
+  // and must NOT get a spurious keyframe from a plain Set Key.
+  for (int p = 0; p < PIN; ++p)
     m_params[p]->setKeyframe(m_params[p]->getKeyframeAt(frame));
 }
 
@@ -129,7 +133,9 @@ bool SkVD::isKeyframe(double frame) const {
 //------------------------------------------------------------------
 
 bool SkVD::isFullKeyframe(double frame) const {
-  for (int p = 0; p < PARAMS_COUNT; ++p)
+  // PIN excluded: it's an independent IK anchor toggle, not part of the
+  // vertex transform, so it must not affect the full/partial key indicator.
+  for (int p = 0; p < PIN; ++p)
     if (!m_params[p]->isKeyframe(frame)) return false;
 
   return true;

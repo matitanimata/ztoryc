@@ -338,6 +338,12 @@ protected:
   void leftButtonDrag_animate(const TPointD &pos, const TMouseEvent &me);
   void moveVertexIK_animate(double frame, int v, const TPointD &pos);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
+
+  // SuperPlastic IK anchor (pin). The pinned vertex is kept fixed while IK
+  // solving at a given frame; the anchor is keyframeable so it can switch over
+  // time (e.g. the support foot in a walk cycle).
+  int pinnedVertexAtFrame(double frame) const;  //!< -1 if none
+  void togglePinAtCurrentFrame();               //!< pin/unpin selected vertex
   void addContextMenuActions_animate(QMenu *menu);
 
   void draw_mesh();
@@ -432,6 +438,7 @@ private:
   ToolOptionParamRelayField *m_distanceField, *m_angleField, *m_soField;
   QComboBox *m_interpolationCombo;
   QPushButton *m_setKeyButton, *m_setRestKeyButton;
+  QPushButton *m_pinButton;  //!< SuperPlastic IK anchor toggle
   bool m_updateControls;
 
   void updateControls();
@@ -460,6 +467,7 @@ private slots:
 
   void onSetKey();
   void onSetRestKey();
+  void onPinButton();
   void onInterpolationComboActivated(int index);
   void onFrameSwitched();
   void onPlayingStatusChanged();

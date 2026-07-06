@@ -161,9 +161,9 @@ void setKeyframe(SkVD *vd, double frame) {
   // type (by user preference, which is TnzLib stuff), etc...
 
   // Traverse vd's parameters. In case they don't have a keyframe at current
-  // frame, add one.
-  for (int p = 0; p < SkVD::PARAMS_COUNT; ++p)
-    setKeyframe(vd->m_params[p], frame);
+  // frame, add one. PIN excluded: the IK anchor is toggled explicitly, Set Key
+  // must not create anchor keyframes.
+  for (int p = 0; p < SkVD::PIN; ++p) setKeyframe(vd->m_params[p], frame);
 }
 
 //------------------------------------------------------------------------
@@ -531,6 +531,13 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   m_setRestKeyButton->setToolTip(tr("Set Rest Key"));
   m_setRestKeyButton->setIcon(createQIcon("rest_key"));
 
+  // SuperPlastic: pin/unpin the selected vertex as IK anchor at current frame
+  m_pinButton = new QPushButton(tr("Pin"), this);
+  m_pinButton->setFixedSize(QSize(34, 20));
+  m_pinButton->setCheckable(true);
+  m_pinButton->setToolTip(
+      tr("Pin the selected vertex as IK anchor (keyframeable)"));
+
   QHBoxLayout *animateLayout = animateOptionsBox->hLayout();
   animateLayout->insertWidget(0, m_soField);
   animateLayout->insertWidget(0, soLabel);
@@ -538,6 +545,7 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   animateLayout->insertWidget(0, angleLabel);
   animateLayout->insertWidget(0, m_distanceField);
   animateLayout->insertWidget(0, distanceLabel);
+  animateLayout->insertWidget(0, m_pinButton);
   animateLayout->insertWidget(0, m_setRestKeyButton);
   animateLayout->insertWidget(0, m_setKeyButton);
   animateLayout->insertWidget(0, m_interpolationCombo);
@@ -565,6 +573,8 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   ret = ret && connect(m_setKeyButton, SIGNAL(clicked()), SLOT(onSetKey()));
 
   ret = ret && connect(m_setRestKeyButton, SIGNAL(clicked()), SLOT(onSetRestKey()));
+
+  ret = ret && connect(m_pinButton, SIGNAL(clicked()), SLOT(onPinButton()));
 
   ret = ret && connect(m_interpolationCombo, SIGNAL(activated(int)), this,
                        SLOT(onInterpolationComboActivated(int)));
@@ -675,6 +685,12 @@ void PlasticToolOptionsBox::updateControls() {
 
   m_setKeyButton->setEnabled(enableWidget);
   m_setRestKeyButton->setEnabled(enableWidget);
+
+  // Reflect the current vertex's IK anchor state on the Pin button.
+  m_pinButton->setEnabled(enableWidget);
+  bool isPinned =
+      vd && vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5;
+  m_pinButton->setChecked(isPinned);
 
   bool enableInterpolation =
       enableWidget && canSetInterpolation(frame, stageObj);
@@ -874,6 +890,13 @@ void PlasticToolOptionsBox::onSetRestKey() {
     l_plasticTool.setGlobalRestKey_undo();
   else if (TSelection::getCurrent() == &l_plasticTool.m_svSel)
     l_plasticTool.setRestKey_undo();
+}
+
+//-----------------------------------------------------------------------------
+
+void PlasticToolOptionsBox::onPinButton() {
+  l_plasticTool.togglePinAtCurrentFrame();
+  updateControls();
 }
 
 //-----------------------------------------------------------------------------
@@ -1643,7 +1666,7 @@ void PlasticTool::setRestKey() {
   SkVD *vd     = m_sd->vertexDeformation(::skeletonId(), m_svSel);
   double frame = ::frame();
 
-  for (int p = 0; p != SkVD::PARAMS_COUNT; ++p)
+  for (int p = 0; p != SkVD::PIN; ++p)  // PIN anchor untouched by Set Rest Key
     vd->m_params[p]->setValue(frame, vd->m_params[p]->getDefaultValue());
 }
 
@@ -1658,7 +1681,7 @@ void PlasticTool::setGlobalRestKey() {
   for (; vdt != vdEnd; ++vdt) {
     SkVD *vd = (*vdt).second;
 
-    for (int p = 0; p != SkVD::PARAMS_COUNT; ++p)
+    for (int p = 0; p != SkVD::PIN; ++p)  // PIN anchor untouched by Set Rest Key
       vd->m_params[p]->setValue(frame, vd->m_params[p]->getDefaultValue());
   }
 }

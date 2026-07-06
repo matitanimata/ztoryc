@@ -56,6 +56,10 @@ public:
     ANGLE = 0,  //!< Distance from parent vertex (delta)
     DISTANCE,   //!< Angle with parent edge (delta)
     SO,         //!< Vertex's stacking order
+    PIN,        //!< SuperPlastic IK anchor: >=0.5 means this vertex is pinned
+                //!< (kept fixed) while solving the chain at the current frame.
+                //!< Keyframeable/step-interpolated so the anchor can switch
+                //!< over time (e.g. the support foot in a walk cycle).
     PARAMS_COUNT
   };
 
