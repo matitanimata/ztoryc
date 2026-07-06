@@ -1,3 +1,41 @@
+## [2026-07-06c] — SUPERPLASTIC avviato: branch separato + core solver IK CCD (task 58)
+
+Avviato il filone SUPERPLASTIC (spec: `Drive/Ztoryc/SUPERPLASTIC.md` — solver IK
+condiviso Skeleton/Plastic + task 59-62 collegate) su **branch separato con build
+separata**: master NON viene toccato da questo lavoro.
+
+### Added — branch feature/superplastic (commit 3f15802fa, NON su master)
+- **Setup**: worktree git `/Volumes/ZioSam/tahoma2d-workspace/tahoma2d-superplastic`
+  (branch `feature/superplastic`), build Ninja separata configurata nella root del
+  worktree (stessi flag della release). `thirdparty/` rsyncato dal workspace
+  principale (le lib compilate, es. libtiff.a, non sono in git). Build:
+  `ZTORYC_WORKSPACE=.../tahoma2d-superplastic ./build_and_deploy.sh`.
+- **Core solver `SolveIK_CCD`** (`include/toonz/ikccd.h` + `toonzlib/ikccd.cpp`):
+  CCD in spazio angolare relativo (limiti per-bone = clamp diretto, il motivo della
+  scelta CCD vs FABRIK), pole vector con mirror sulla linea root→target, nudge
+  progressivo della root per uscire dalle pose singolari collineari (CCD stalla se
+  catena e target sono allineati), `IKSolveInfo` con ambiguità-senza-pole segnalata
+  al chiamante (non risolta in silenzio). Tipi adattati a `TPointD` (nessun Point2D
+  nel codebase). Test standalone 5/5 verdi: target raggiungibile, zero drift su
+  solve ripetuti, clamp limiti, scelta lato con pole, target irraggiungibile.
+
+### Notes — findings esplorazione (decisivi per i prossimi step)
+- Esiste già un solver IK in toonzlib: **`IKEngine`** (Jacobiano DLS, `ikengine.cpp`),
+  usato SOLO dal drag dello Skeleton Tool (`IKTool` in skeletonsubtools.cpp). Plastic
+  non lo usa: fa FK ricorsivo (`updateBranchPositions`,
+  plasticskeletondeformation.cpp:492). Scelto comunque il nuovo CCD come da spec
+  (pulito, deterministico, limiti+pole nativi); IKEngine resta come riferimento.
+- **Il pin per-frame NON è in IKTool** ma in `TStageObject::computeIkRootOffset()`
+  (tstageobject.cpp:1429): tiene fermo il piede TRASLANDO la radice (compensazione
+  con l'inversa del placement FK del piede), gli angoli tra keyframe restano
+  interpolazione FK. Il drift nasce lì (catena changeFootAff tra pin successivi +
+  caching lazyData/m_ikflag). Quindi il fix drift = modifica alla valutazione
+  per-frame del placement, da progettare a mente fresca — non uno swap del solver
+  nel drag. Il drift nel drag su nuovo pin è invece in `IKTool::computeIHateIK()`
+  (skeletonsubtools.cpp:925).
+- Prossimi step: (1) design del re-solve per-frame in/accanto a computeIkRootOffset,
+  (2) adapter drag IKTool→SolveIK_CCD con parità senza pin, (3) adapter Plastic.
+
 ## [2026-07-06b] — Fix export (target OT/Tahoma/Ztoryc, audio trimmato) + timing transizioni + Board — release 0.8.1
 
 Sessione dedicata ai tre problemi grossi segnalati da Franco: export (normale e a
