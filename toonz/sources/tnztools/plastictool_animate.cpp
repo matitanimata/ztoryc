@@ -396,21 +396,14 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
   }
 
   // ---- Write-back into the fixed root-down parameterization ----
+  // Only the shape (relative angles) is stored; the pin's absolute planting is
+  // handled per-frame at evaluation via its PINTX/PINTY target, so the original
+  // root moves freely via that eval-time shift rather than a written offset.
   int skelId = ::skeletonId();
 
-  // Original root placed via its offset (moves freely like any other vertex).
-  if (rootIdx >= 0) {
-    SkVD *rvd = m_sd->vertexDeformation(skelId, rootIdx);
-    if (rvd && rvd->m_params[SkVD::ROOTX] && rvd->m_params[SkVD::ROOTY]) {
-      TPointD offNew = desired[rootIdx] - orig.vertex(rootIdx).P();
-      ::setKeyframe(rvd->m_params[SkVD::ROOTX], frame);
-      rvd->m_params[SkVD::ROOTX]->setValue(frame, offNew.x);
-      ::setKeyframe(rvd->m_params[SkVD::ROOTY], frame);
-      rvd->m_params[SkVD::ROOTY]->setValue(frame, offNew.y);
-    }
-  }
-
   // ANGLE of every non-root vertex whose relative angle actually changed.
+  // Only the shape (relative angles) is stored; the pin's absolute planting is
+  // handled per-frame at evaluation via its PINTX/PINTY target.
   auto parentDir = [&](const std::function<TPointD(int)> &posFn, int vx) {
     for (int p = vx; p >= 0;) {
       int pp = orig.vertex(p).parent();
@@ -481,6 +474,18 @@ void PlasticTool::togglePinAtCurrentFrame() {
   TDoubleKeyframe kf(frame, pinned ? 0.0 : 1.0);
   kf.m_type = kf.m_prevType = TDoubleKeyframe::Constant;
   vd->m_params[SkVD::PIN]->setKeyframe(kf);
+
+  // When pinning ON, record where the vertex is now as its planting target.
+  // The eval-time constraint then holds it there on every frame. Constant
+  // interpolation so a single pin keeps the same spot until re-planted.
+  if (!pinned && vd->m_params[SkVD::PINTX] && vd->m_params[SkVD::PINTY]) {
+    TPointD p = deformedSkeleton().vertex(v).P();
+    for (int c : {SkVD::PINTX, SkVD::PINTY}) {
+      TDoubleKeyframe tk(frame, c == SkVD::PINTX ? p.x : p.y);
+      tk.m_type = tk.m_prevType = TDoubleKeyframe::Constant;
+      vd->m_params[c]->setKeyframe(tk);
+    }
+  }
 
   m_sd->getKeyframeAt(frame, undo->m_newValues);
   TUndoManager::manager()->add(undo);

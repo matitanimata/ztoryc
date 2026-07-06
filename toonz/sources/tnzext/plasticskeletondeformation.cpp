@@ -37,7 +37,7 @@ DEFINE_CLASS_CODE(PlasticSkeletonDeformation, 121)
 namespace {
 
 static const char *parNames[SkVD::PARAMS_COUNT] = {
-    "Angle", "Distance", "SO", "Pin", "RootX", "RootY"};
+    "Angle", "Distance", "SO", "Pin", "PinTX", "PinTY"};
 static const char *parMeasures[SkVD::PARAMS_COUNT] = {
     "angle", "fxLength", "", "", "fxLength", "fxLength"};
 
@@ -520,19 +520,6 @@ void PlasticSkeletonDeformation::Imp::updateBranchPositions(
 
   PlasticSkeletonVertex &dvx = deformedSkeleton.vertex(v);
   int vParent                = dvx.parent();
-  if (vParent < 0) {
-    // SuperPlastic free-root: translate the skeleton root by its solved offset
-    // so a pinned descendant can stay planted while the body moves. All
-    // children rebuild relative to this, so the whole skeleton shifts with it.
-    auto rt = m_vds.find(dvx.name());
-    if (rt != m_vds.end() && rt->m_vd.m_params[SkVD::ROOTX] &&
-        rt->m_vd.m_params[SkVD::ROOTY]) {
-      const SkVD &rvd = rt->m_vd;
-      dvx.P() = originalSkeleton.vertex(v).P() +
-                TPointD(rvd.m_params[SkVD::ROOTX]->getValue(frame),
-                        rvd.m_params[SkVD::ROOTY]->getValue(frame));
-    }
-  }
   if (vParent >= 0) {
     // Rebuild vertex position
     const TPointD &ovxPos       = originalSkeleton.vertex(v).P();
@@ -900,6 +887,32 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   if (!skeleton.vertices().empty())
     m_imp->updateBranchPositions(*origSkel, skeleton, frame,
                                  skeleton.vertices().begin().m_idx);
+
+  // SuperPlastic pin constraint (per-frame): if a vertex is pinned at this
+  // frame, rigidly translate the whole skeleton so it lands exactly on its
+  // target (PINTX,PINTY). Being enforced at EVERY frame — not just where the
+  // angles were keyframed — this keeps the pin planted through in-betweens.
+  const tcg::list<PlasticSkeleton::vertex_type> &verts = skeleton.vertices();
+  for (auto vt = verts.begin(); vt != verts.end(); ++vt) {
+    auto it = m_imp->m_vds.find(vt->name());
+    if (it == m_imp->m_vds.end()) continue;
+    const SkVD &vd = it->m_vd;
+    if (!vd.m_params[SkVD::PIN] || !vd.m_params[SkVD::PINTX] ||
+        !vd.m_params[SkVD::PINTY])
+      continue;
+    if (vd.m_params[SkVD::PIN]->getValue(frame) < 0.5) continue;
+    // Skip pins that never got a target (avoid snapping to the origin).
+    if (vd.m_params[SkVD::PINTX]->isDefault() &&
+        vd.m_params[SkVD::PINTY]->isDefault())
+      continue;
+    TPointD target(vd.m_params[SkVD::PINTX]->getValue(frame),
+                   vd.m_params[SkVD::PINTY]->getValue(frame));
+    TPointD shift = target - vt->P();
+    if (norm2(shift) < 1e-12) break;
+    for (auto st = verts.begin(); st != verts.end(); ++st)
+      skeleton.vertex(st.m_idx).P() += shift;
+    break;  // a single active pin
+  }
 }
 
 //------------------------------------------------------------------

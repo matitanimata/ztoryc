@@ -60,10 +60,11 @@ public:
                 //!< (kept fixed) while solving the chain at the current frame.
                 //!< Keyframeable/step-interpolated so the anchor can switch
                 //!< over time (e.g. the support foot in a walk cycle).
-    ROOTX,      //!< SuperPlastic free-root translation of the skeleton root
-    ROOTY,      //!< (local space). Only meaningful on the root vertex; solved
-                //!< automatically so a pinned vertex stays planted while the
-                //!< body translates (foot-planting). Keyframeable.
+    PINTX,      //!< SuperPlastic pin TARGET position (local space) for this
+    PINTY,      //!< vertex. Meaningful only where PIN>=0.5. At evaluation the
+                //!< whole skeleton is translated so the pinned vertex lands on
+                //!< (PINTX,PINTY) — a true per-frame constraint, so the pin
+                //!< stays planted on in-between frames, not just on keyframes.
     PARAMS_COUNT
   };
 
