@@ -35,6 +35,10 @@
 #include "toonz/txshlevel.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txshmeshcolumn.h"
+#include "toonz/txshsoundcolumn.h"
+#include "toonz/txshsoundlevel.h"
+#include "toonz/levelset.h"
+#include "tsound_io.h"
 #include "toonzqt/stageobjectsdata.h"
 #include "tfxattributes.h"
 #include "toonz/fxdag.h"
@@ -3193,10 +3197,16 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
     int r0 = 0, r1 = 0;
     // ignoreLastStop=true: drop the trailing Stop Frame Hold so timelineDuration
     // is the shot's true length. Without it the +1 widens the panel-visibility
-    // filter (f < timelineDuration) below and lets a boundary frame through as a
-    // phantom 1-frame panel.
+    // filter (f < visibleEnd) below and lets a boundary frame through as a
+    // phantom 1-frame panel. r0/r1 are also reused below to locate the child
+    // level, so getRange always runs.
     mc->getRange(r0, r1, /*ignoreLastStop=*/true);
     timelineDuration = (r1 >= r0) ? r1 - r0 + 1 : 0;
+    // NET duration: shotTrueSpan excludes any exposed cross-dissolve overlap
+    // cells (the gross getRange above would inflate every panel's duration).
+    int ts = 0, td = 0;
+    if (ZtoryShotOps::shotTrueSpan(mainXsh, mainCol, ts, td))
+      timelineDuration = td;
     if (timelineDuration <= 0) return;
     xsh = nullptr;
     for (int r = r0; r <= r1 && !xsh; r++) {
@@ -3211,8 +3221,11 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
     timelineDuration = xsh->getFrameCount();  // fallback
     AncestorNode *anc = scene->getChildStack()->getAncestorInfo(depth - 1);
     if (anc && anc->m_xsheet) {
-      TXshColumn *mc = anc->m_xsheet->getColumn(mainCol);
-      if (mc) {
+      // NET duration (dissolve overlap excluded) — same as the main branch.
+      int ts = 0, td = 0;
+      if (ZtoryShotOps::shotTrueSpan(anc->m_xsheet, mainCol, ts, td)) {
+        timelineDuration = td;
+      } else if (TXshColumn *mc = anc->m_xsheet->getColumn(mainCol)) {
         int r0 = 0, r1 = 0;
         // ignoreLastStop=true: same SFH-inflation guard as the main-xsheet branch.
         mc->getRange(r0, r1, /*ignoreLastStop=*/true);
@@ -3291,11 +3304,27 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
   }
 
   // Keep only panels whose start frame falls within the timeline-visible range.
-  // Panels beyond timelineDuration are hidden from the Board.
+  // Panel frames are SUB-SCENE rows: with an incoming cross-dissolve the sub
+  // content is shifted down by headHalf hold copies (XD-in), so the visible
+  // window of sub rows is [0, headHalf + timelineDuration).
+  int headHalf   = ZtoryShotOps::xdInHeadOffset(xsh);
+  int visibleEnd = timelineDuration + headHalf;
   std::vector<int> panelFrames;
   for (int f : allPanelFrames)
-    if (f < timelineDuration) panelFrames.push_back(f);
+    if (f < visibleEnd) panelFrames.push_back(f);
   if (panelFrames.empty()) panelFrames.push_back(0);
+
+  // Per-panel durations in TIMELINE frames. Boundaries are sub rows, but the
+  // partials must add up to the NET timelineDuration: the first panel absorbs
+  // the head hold copies (same drawing as the real first frame), so subtract
+  // them from its count.
+  std::vector<int> panelDur(panelFrames.size());
+  for (int i = 0; i < (int)panelFrames.size(); i++)
+    panelDur[i] = (i + 1 < (int)panelFrames.size())
+                      ? panelFrames[i + 1] - panelFrames[i]
+                      : visibleEnd - panelFrames[i];
+  if (headHalf > 0 && panelFrames[0] == 0)
+    panelDur[0] = qMax(1, panelDur[0] - headHalf);
 
   Shot &shot = m_shots[shotIdx];
   int newPanelCount = (int)panelFrames.size();
@@ -3304,9 +3333,7 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
     // Count unchanged — update durations only (timeline may have been resized)
     for (int i = 0; i < newPanelCount; i++) {
       shot.data.panels[i].startFrame = panelFrames[i];
-      shot.data.panels[i].duration   = (i+1 < newPanelCount)
-                                       ? panelFrames[i+1] - panelFrames[i]
-                                       : timelineDuration - panelFrames[i];
+      shot.data.panels[i].duration   = panelDur[i];
       if (i < (int)shot.panels.size())
         shot.panels[i]->setDuration(shot.data.panels[i].duration);
       // Re-compute camera move data (duration/frame may have changed)
@@ -3331,9 +3358,7 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
     shot.data.panels.pop_back();
   for (int i = 0; i < newPanelCount; i++) {
     shot.data.panels[i].startFrame = panelFrames[i];
-    shot.data.panels[i].duration   = (i+1 < newPanelCount)
-                                     ? panelFrames[i+1] - panelFrames[i]
-                                     : timelineDuration - panelFrames[i];
+    shot.data.panels[i].duration   = panelDur[i];
     if (useCameraKeys)
       computeCameraMove(xsh, shot.data.panels[i], timelineDuration, scene);
   }
@@ -3506,13 +3531,27 @@ void StoryboardPanel::onModelResequenced() {
     int col = m_shots[si].data.xsheetColumn;
     TXshColumn *column = xsh->getColumn(col);
     if (!column) continue;
-    int r0 = 0, r1 = 0;
+    int duration = 0;
+    // NET duration (dissolve overlap excluded); fallback getRange with
     // ignoreLastStop=true: skip the trailing Stop Frame Hold placed by
     // ZtoryModel::resequenceXsheet() so the duration shown in the Board
     // matches the shot's actual animatic length (not inflated by +1).
-    column->getRange(r0, r1, /*ignoreLastStop=*/true);
-    int duration = r1 - r0 + 1;
-    if (!m_shots[si].data.panels.empty()) {
+    int ts = 0, td = 0;
+    if (ZtoryShotOps::shotTrueSpan(xsh, col, ts, td)) {
+      duration = td;
+    } else {
+      int r0 = 0, r1 = 0;
+      column->getRange(r0, r1, /*ignoreLastStop=*/true);
+      duration = r1 - r0 + 1;
+    }
+    // T: (total) updates for every panel; D: (partial) only for single-panel
+    // shots — same rule as onXsheetChanged. This loop used to overwrite
+    // panels[0].duration with the TOTAL unconditionally, so on every model
+    // resequence the first panel of a multi-panel shot showed the whole shot
+    // length until the shot was re-entered (detectAndUpdatePanels fixed it).
+    for (PanelWidget *pw : m_shots[si].panels)
+      pw->setTotalDuration(duration);
+    if (m_shots[si].data.panels.size() == 1) {
       m_shots[si].data.panels[0].duration = duration;
       if (!m_shots[si].panels.empty())
         m_shots[si].panels[0]->setDuration(duration);
@@ -3726,11 +3765,19 @@ void StoryboardPanel::onXsheetChanged() {
     int col = m_shots[si].data.xsheetColumn;
     TXshColumn *column = xsh->getColumn(col);
     if (!column) continue;
-    int r0 = 0, r1 = 0;
-    // ignoreLastStop=true: exclude the resequence SFH (matches onModelResequenced)
-    // so T:/D: show the shot's true length, not length+1.
-    column->getRange(r0, r1, /*ignoreLastStop=*/true);
-    int duration = r1 - r0 + 1;
+    int duration = 0;
+    // NET duration: shotTrueSpan excludes any exposed cross-dissolve overlap
+    // cells. Fallback getRange with ignoreLastStop=true: exclude the
+    // resequence SFH (matches onModelResequenced) so T:/D: show the shot's
+    // true length, not length+1.
+    int ts = 0, td = 0;
+    if (ZtoryShotOps::shotTrueSpan(xsh, col, ts, td)) {
+      duration = td;
+    } else {
+      int r0 = 0, r1 = 0;
+      column->getRange(r0, r1, /*ignoreLastStop=*/true);
+      duration = r1 - r0 + 1;
+    }
     // Always update T: display to reflect actual timeline duration
     for (PanelWidget *pw : m_shots[si].panels)
       pw->setTotalDuration(duration);
@@ -3927,6 +3974,15 @@ void StoryboardPanel::refreshFromScene() {
       ZtoryModel::instance()->shot(i).transitionFrames =
           m_shots[i].data.transitionFrames;
   }
+  // Re-detect panels for every shot while still in the main-xsheet context, so
+  // partial durations are correct right away. Without this pass the panels stay
+  // whatever the placeholder/.ztoryc said — often a single panel whose partial
+  // equals the shot's TOTAL duration — until the shot is entered, because the
+  // panel-detect timer only fires from inside a sub-scene. Main context only:
+  // in sub context detectAndUpdatePanels reads the currently open xsheet and is
+  // valid only for the open shot.
+  if (scene->getChildStack()->getAncestorCount() == 0)
+    for (int si = 0; si < (int)m_shots.size(); si++) detectAndUpdatePanels(si);
   // Thumbnails are NOT rendered automatically on scene load.
   // renderXsheetFrame() is synchronous and can take several seconds per panel on
   // scenes with complex sub-xsheets (many raster layers, high resolution).
@@ -4993,14 +5049,55 @@ void StoryboardPanel::onRefreshPreviews() {
   updateVisiblePreviews();
 }
 
+namespace {
+// Diagnostic log for the shot-export flows: one line per asset decision,
+// dumped as ztoryc_export_log.txt next to the exported scenes. Debugging aid
+// for the intermittent "+extras/audio missing after export" reports — remove
+// once the asset transfer is proven solid.
+QStringList g_ztoryExportLog;
+void exportLog(const QString &s) { g_ztoryExportLog << s; }
+void dumpExportLog(const TFilePath &dir) {
+  if (g_ztoryExportLog.isEmpty()) return;
+  QFile f(QString::fromStdWString(
+      (dir + "ztoryc_export_log.txt").getWideString()));
+  if (f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    QTextStream ts(&f);
+    for (const QString &l : g_ztoryExportLog) ts << l << "\n";
+  }
+  g_ztoryExportLog.clear();
+}
+}  // namespace
+
 // ── Audio export helper ───────────────────────────────────────────────────────
 // Injects a temporary sound column into childXsh containing only the audio
 // that falls within [shotR0, shotR1] of the main xsheet.
-// Returns the list of column indices inserted (to be removed after save).
-// One column per audio column in the main xsheet that overlaps the shot range.
-static QList<int> injectAudioForShot(TXsheet *mainXsh, TXsheet *childXsh,
-                                     int shotR0, int shotR1, double fps) {
+// Returns the list of column indices inserted (to be removed after save);
+// the sound levels created for the injection are appended to injectedLevels
+// (to be removed from the scene cast after save — the wav FILES stay, they
+// are the exported shot's audio asset).
+//
+// The shot's slice of each audio column is rendered to a physically TRIMMED
+// wav in +extras (<baseName>_audio[N].wav) and exposed with a plain
+// ColumnLevel (startFrame 0, no offsets). The previous approach cloned the
+// original ColumnLevels (whole mp3 + trim in startFrame/offsets): OpenToonz
+// cannot decode mp3 at all and neither stock app reliably honored the
+// negative-startFrame trim, so the exported column showed up empty or with
+// the whole track. A trimmed wav with zero offsets survives any target, and
+// the '+'-coded path rides the same capture/copy machinery as the other
+// project-folder assets.
+static QList<int> injectAudioForShot(ToonzScene *scene, TXsheet *mainXsh,
+                                     TXsheet *childXsh, int shotR0, int shotR1,
+                                     double fps, const QString &baseName,
+                                     QList<TXshLevel *> &injectedLevels) {
   QList<int> injected;
+  int audioIdx = 0;
+  // Incoming cross-dissolve: the sub-scene carries headHalf hold copies at
+  // rows 0..headHalf-1 and the REAL content starts at row headHalf. The wav
+  // slice is NET ([shotR0, shotR1] comes from shotTrueSpan, extras excluded),
+  // so it must be placed at row headHalf — at row 0 it would play headHalf
+  // frames early. The head-hold rows stay silent (that material belongs to
+  // the previous shot's dissolve window).
+  int headOffset = ZtoryShotOps::xdInHeadOffset(childXsh);
   int mainCols = mainXsh->getColumnCount();
   for (int mc = 0; mc < mainCols; mc++) {
     TXshColumn *col = mainXsh->getColumn(mc);
@@ -5008,48 +5105,67 @@ static QList<int> injectAudioForShot(TXsheet *mainXsh, TXsheet *childXsh,
     TXshSoundColumn *srcSc = col->getSoundColumn();
     if (!srcSc) continue;
 
-    // Collect ColumnLevels that overlap [shotR0, shotR1]
-    QList<ColumnLevel *> toInsert;
-    for (int li = 0; li < srcSc->getColumnLevelCount(); li++) {
+    // Skip columns with no audible material in [shotR0, shotR1].
+    bool overlaps = false;
+    for (int li = 0; li < srcSc->getColumnLevelCount() && !overlaps; li++) {
       ColumnLevel *cl = srcSc->getColumnLevel(li);
-      if (!cl) continue;
-      int vsf = cl->getVisibleStartFrame();
-      int vef = cl->getVisibleEndFrame();
-      if (vsf > shotR1 || vef < shotR0) continue;  // no overlap
-
-      // Clip to shot boundary
-      int clipStart     = std::max(vsf, shotR0);
-      int clipEnd       = std::min(vef, shotR1);
-      int addStartOff   = clipStart - vsf;
-      int addEndOff     = vef - clipEnd;
-
-      // Clone and adjust: startFrame relative to shot start (frame 0).
-      // IMPORTANT: use cl->getStartFrame() (raw, before offset), NOT vsf
-      // (= startFrame + startOffset). Using vsf would shift the audible
-      // region by startOffset frames, making the clip play too late AND
-      // extending its visible end past the shot boundary.
-      ColumnLevel *newCl = new ColumnLevel(
-          cl->getSoundLevel(),
-          cl->getStartFrame() - shotR0,            // startFrame relative to shot
-          cl->getStartOffset() + addStartOff,      // trimmed start
-          cl->getEndOffset()   + addEndOff,        // trimmed end
-          fps);
-      toInsert.append(newCl);
+      if (cl && cl->getVisibleStartFrame() <= shotR1 &&
+          cl->getVisibleEndFrame() >= shotR0)
+        overlaps = true;
     }
-    if (toInsert.isEmpty()) continue;
+    if (!overlaps) continue;
 
-    // Insert a new sound column at the end of the child xsheet
+    // Render the slice. toFrame is exclusive (same convention as scrub()).
+    TSoundTrackP st = srcSc->getOverallSoundTrack(shotR0, shotR1 + 1, fps);
+    if (!st || st->getSampleCount() == 0) continue;
+
+    audioIdx++;
+    QString wavName = baseName + "_audio" +
+                      (audioIdx > 1 ? QString::number(audioIdx) : QString()) +
+                      ".wav";
+    TFilePath codedWav =
+        TFilePath("+extras") + TFilePath(wavName.toStdWString());
+    TFilePath absWav = scene->decodeFilePath(codedWav);
+    try {
+      TSystem::touchParentDir(absWav);
+      if (TSystem::doesExistFileOrLevel(absWav))
+        TSystem::removeFileOrLevel(absWav);
+      TSoundTrackWriter::save(absWav, st);
+    } catch (...) {
+      exportLog(QString("[%1] audio-trim WRITE FAILED %2")
+                    .arg(baseName, absWav.getQString()));
+      continue;
+    }
+
+    // loadLevel registers the level in the cast and codes the path back to
+    // +extras/<wavName> relative to the current project.
+    TXshLevel *lv = nullptr;
+    try {
+      lv = scene->loadLevel(absWav);
+    } catch (...) {
+    }
+    if (!lv || !lv->getSoundLevel()) {
+      exportLog(QString("[%1] audio-trim LOAD FAILED %2")
+                    .arg(baseName, absWav.getQString()));
+      continue;
+    }
+    injectedLevels.append(lv);
+    exportLog(QString("[%1] audio-trim wrote %2 (frames %3-%4)")
+                  .arg(baseName, absWav.getQString())
+                  .arg(shotR0)
+                  .arg(shotR1));
+
+    // Insert a new sound column at the end of the child xsheet.
     int newCol = childXsh->getColumnCount();
     childXsh->insertColumn(newCol, TXshColumn::eSoundType);
     TXshSoundColumn *dstSc = childXsh->getColumn(newCol)->getSoundColumn();
-    if (!dstSc) { for (auto *c : toInsert) delete c; continue; }
-
+    if (!dstSc) continue;
     dstSc->setFrameRate(fps);
-    for (ColumnLevel *cl : toInsert)
-      // adoptLevel() is the public counterpart of the protected insertColumnLevel():
-      // it takes ownership of cl and places its visible start at targetFrame.
-      // Passing cl->getVisibleStartFrame() keeps the position we set in the constructor.
-      dstSc->adoptLevel(cl, cl->getVisibleStartFrame());
+    // adoptLevel() is the public counterpart of the protected
+    // insertColumnLevel(): it takes ownership and places the visible start at
+    // the target frame — headOffset, where the shot's real content begins.
+    dstSc->adoptLevel(new ColumnLevel(lv->getSoundLevel(), 0, 0, 0, fps),
+                      headOffset);
 
     // Mark column as reserved audio (visible in xsheet but !a drawing col)
     TStageObject *obj = childXsh->getStageObjectTree()
@@ -5196,9 +5312,10 @@ void StoryboardPanel::onExportShots() {
   for (int i = from; i <= to; i++) indices.append(i);
 
   int fail = 0;
+  const TFilePath outDir(dirEdit->text().trimmed().toStdWString());
   QList<TFilePath> exported = exportShotScenesToDir(
-      indices, TFilePath(dirEdit->text().trimmed().toStdWString()),
-      verSpin->value(), backLinkChk->isChecked(), fail);
+      indices, outDir, verSpin->value(), backLinkChk->isChecked(), fail);
+  dumpExportLog(outDir);
 
   QString msg =
       tr("Export complete: %1 shot(s) exported").arg(exported.size());
@@ -5220,6 +5337,11 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
   const QString projectDb = model->projectDbPath();
   TXsheet *mainXsh        = scene->getChildStack()->getTopXsheet();
   double fps              = (double)model->fps();
+
+  g_ztoryExportLog.clear();
+  exportLog(QString("[export] %1 shot(s) -> %2")
+                .arg(indices.size())
+                .arg(outDirFp.getQString()));
 
   if (!TFileStatus(outDirFp).doesExist()) TSystem::mkDir(outDirFp);
 
@@ -5268,8 +5390,10 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
     TXsheet *childXsh = TApp::instance()->getCurrentXsheet()->getXsheet();
 
     QList<int> injectedCols;
+    QList<TXshLevel *> injectedLevels;
     if (mainXsh && childXsh && shotR1 >= shotR0)
-      injectedCols = injectAudioForShot(mainXsh, childXsh, shotR0, shotR1, fps);
+      injectedCols = injectAudioForShot(scene, mainXsh, childXsh, shotR0,
+                                        shotR1, fps, baseName, injectedLevels);
 
     // Capture the SOURCE file of each project-folder level (coded '+' path),
     // keyed by the level, BEFORE save. Neither takeCareSceneFolderItems (only
@@ -5277,12 +5401,15 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
     // saving a renamed sub-scene relocates the per-scene +extras path so the
     // PNGs/audio would go missing. Run AFTER injectAudioForShot so the injected
     // animatic-audio sound level is included (trim lives in the column offsets).
-    // Only for the export-to-project flow (assetCopies != null). The plain
-    // "Export Shots" flow already carries its assets via the native save, so
-    // capturing/copying here would interfere with it (it regressed a flow that
-    // always worked).
+    // Runs for BOTH export flows: the plain "Export Shots" misses these assets
+    // too whenever the project organization makes '+' paths depend on the scene
+    // name (e.g. "Assets next to each scene"). Unlike the old pre-save guessing
+    // (which interfered with the native save and was gated out), this only READS
+    // paths before the save and copies missing files after it — the native save
+    // itself is untouched. Only the assetCopies recording stays project-export
+    // specific.
     QList<QPair<TXshLevel *, TFilePath>> srcByLevel;
-    if (assetCopies && childXsh) {
+    if (childXsh) {
       std::set<TXshLevel *> usedLevels;
       childXsh->getUsedLevels(usedLevels);
       for (TXshLevel *lv : usedLevels) {
@@ -5296,8 +5423,16 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
           continue;
         if (coded.isEmpty() || coded.getWideString()[0] != L'+') continue;
         const TFilePath srcAbs = scene->decodeFilePath(coded);
-        if (!srcAbs.isEmpty() && TSystem::doesExistFileOrLevel(srcAbs))
+        if (!srcAbs.isEmpty() && TSystem::doesExistFileOrLevel(srcAbs)) {
           srcByLevel.append(qMakePair(lv, srcAbs));
+          exportLog(QString("[%1] capture coded=%2 src=%3")
+                        .arg(baseName, coded.getQString(),
+                             srcAbs.getQString()));
+        } else {
+          exportLog(QString("[%1] capture coded=%2 SRC MISSING at %3")
+                        .arg(baseName, coded.getQString(),
+                             srcAbs.getQString()));
+        }
       }
     }
 
@@ -5329,8 +5464,25 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
             TXshSimpleLevel::copyFiles(finalAbs, pr.second);
             if (!TSystem::doesExistFileOrLevel(finalAbs))
               TSystem::copyFile(finalAbs, pr.second);
+            exportLog(QString("[%1] post-save copy %2 -> %3 : %4")
+                          .arg(baseName, pr.second.getQString(),
+                               finalAbs.getQString(),
+                               TSystem::doesExistFileOrLevel(finalAbs)
+                                   ? "OK"
+                                   : "FAILED"));
           } catch (...) {
+            exportLog(QString("[%1] post-save copy %2 -> %3 : EXCEPTION")
+                          .arg(baseName, pr.second.getQString(),
+                               finalAbs.getQString()));
           }
+        } else {
+          exportLog(QString("[%1] post-save %2 -> %3 : %4")
+                        .arg(baseName, finalCoded.getQString(),
+                             finalAbs.getQString(),
+                             finalAbs == pr.second ? "same as src"
+                             : TSystem::doesExistFileOrLevel(finalAbs)
+                                 ? "already exists"
+                                 : "empty resolve"));
         }
         if (assetCopies && finalCoded.getWideString()[0] == L'+')
           list.append(qMakePair(finalCoded, pr.second));
@@ -5340,6 +5492,10 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
 
     if (!injectedCols.isEmpty() && childXsh)
       removeInjectedAudio(childXsh, injectedCols);
+    // Drop the trimmed-audio levels from the storyboard scene's cast (the wav
+    // files stay on disk — they are the exported shots' audio assets).
+    for (TXshLevel *lv : injectedLevels)
+      scene->getLevelSet()->removeLevel(lv);
 
     ztoryCloseSubXsheet(1);
 
@@ -5491,17 +5647,23 @@ void StoryboardPanel::onExportShotsToProject() {
 
   // Target application (applies to both destinations)
   auto *targetRow    = new QHBoxLayout();
-  auto *targetTahoma = new QRadioButton(tr("Tahoma2D / Ztoryc"), projBox);
+  auto *targetZtoryc = new QRadioButton(tr("Ztoryc"), projBox);
+  auto *targetTahoma = new QRadioButton(tr("Tahoma2D"), projBox);
   auto *targetOT     = new QRadioButton(tr("OpenToonz"), projBox);
   // Separate exclusive group (independent of New/Existing above).
   auto *targetGroup = new QButtonGroup(&dlg);
+  targetGroup->addButton(targetZtoryc);
   targetGroup->addButton(targetTahoma);
   targetGroup->addButton(targetOT);
-  targetTahoma->setChecked(true);
+  targetZtoryc->setChecked(true);
+  targetTahoma->setToolTip(
+      tr("Strips the Ztoryc-only In/Out markers and writes a "
+         "tahomaproject.xml so stock Tahoma2D recognizes the project."));
   targetOT->setToolTip(
       tr("Converts the exported scenes to explicit holds and writes an "
          "OpenToonz-readable project file."));
   targetRow->addWidget(new QLabel(tr("Target application:"), projBox));
+  targetRow->addWidget(targetZtoryc);
   targetRow->addWidget(targetTahoma);
   targetRow->addWidget(targetOT);
   targetRow->addStretch();
@@ -5676,6 +5838,12 @@ void StoryboardPanel::onExportShotsToProject() {
   }
   if (indices.isEmpty()) return;
 
+  ExportScenePopup::ExportTarget exportTarget =
+      targetOT->isChecked() ? ExportScenePopup::ExportTarget::OpenToonz
+      : targetTahoma->isChecked()
+          ? ExportScenePopup::ExportTarget::Tahoma
+          : ExportScenePopup::ExportTarget::Ztoryc;
+
   // ── Resolve the destination project (create it if new) ───────────────────
   TFilePath projectPath;
   if (existRadio->isChecked()) {
@@ -5690,7 +5858,7 @@ void StoryboardPanel::onExportShotsToProject() {
     for (const auto &f : folderFlds)
       spec.folders.append(qMakePair(f.first, f.second->getPath()));
     spec.useSubScenePath = (assetOrgCombo->currentIndex() == 1);
-    spec.targetOpenToonz = targetOT->isChecked();
+    spec.target          = exportTarget;
     projectPath          = ExportScenePopup::createProjectFromSpec(spec);
     if (projectPath == TFilePath()) return;
   }
@@ -5724,9 +5892,13 @@ void StoryboardPanel::onExportShotsToProject() {
   }
 
   // ── Copy scenes + assets into the new project ─────────────────────────────
+  // Export with target Ztoryc here: the target compatibility pass re-loads
+  // and re-saves each scene, so it must run only AFTER the '+' project-folder
+  // asset copies below — otherwise the animatic audio (still missing at that
+  // point) is loaded empty and dropped from the re-saved scene.
   std::vector<TFilePath> stagedScenes(staged.begin(), staged.end());
   std::vector<TFilePath> exported = ExportScenePopup::exportScenesToProject(
-      stagedScenes, projectPath, targetOT->isChecked());
+      stagedScenes, projectPath, ExportScenePopup::ExportTarget::Ztoryc);
 
   // Copy the project-folder levels (+extras/+drawings) that the export won't:
   // for each exported scene, resolve the (portable) coded path in the TARGET
@@ -5750,8 +5922,19 @@ void StoryboardPanel::onExportShotsToProject() {
       ts.setScenePath(newScene);
       for (const auto &pr : it.value()) {
         const TFilePath dstAbs = ts.decodeFilePath(pr.first);  // coded → target
-        if (dstAbs.isEmpty() || dstAbs == pr.second) continue;
-        if (TSystem::doesExistFileOrLevel(dstAbs)) continue;
+        if (dstAbs.isEmpty() || dstAbs == pr.second) {
+          exportLog(QString("[%1] project-copy %2 : %3")
+                        .arg(base, pr.first.getQString(),
+                             dstAbs.isEmpty() ? "empty resolve"
+                                              : "same as src"));
+          continue;
+        }
+        if (TSystem::doesExistFileOrLevel(dstAbs)) {
+          exportLog(QString("[%1] project-copy %2 -> %3 : already exists")
+                        .arg(base, pr.first.getQString(),
+                             dstAbs.getQString()));
+          continue;
+        }
         try {
           TSystem::touchParentDir(dstAbs);
           // Image levels can be multi-frame → copyFiles; a single file (e.g. a
@@ -5760,12 +5943,34 @@ void StoryboardPanel::onExportShotsToProject() {
           if (!TSystem::doesExistFileOrLevel(dstAbs) &&
               TSystem::doesExistFileOrLevel(pr.second))
             TSystem::copyFile(dstAbs, pr.second);
+          exportLog(QString("[%1] project-copy %2 -> %3 : %4")
+                        .arg(base, pr.second.getQString(), dstAbs.getQString(),
+                             TSystem::doesExistFileOrLevel(dstAbs)
+                                 ? "OK"
+                                 : "FAILED"));
         } catch (...) {
+          exportLog(QString("[%1] project-copy %2 -> %3 : EXCEPTION")
+                        .arg(base, pr.second.getQString(),
+                             dstAbs.getQString()));
         }
       }
     }
     pmgr->setCurrentProjectPath(savedPrj);
   }
+
+  // Now that every asset (including the '+' project-folder copies above) is in
+  // place, run the target compatibility pass (explicit holds / marker strip /
+  // project file for stock Tahoma2D or OpenToonz).
+  exportLog(QString("[compat] target=%1 on %2 scene(s)")
+                .arg(exportTarget == ExportScenePopup::ExportTarget::OpenToonz
+                         ? "OpenToonz"
+                     : exportTarget == ExportScenePopup::ExportTarget::Tahoma
+                         ? "Tahoma2D"
+                         : "Ztoryc")
+                .arg((int)exported.size()));
+  ExportScenePopup::applyTargetCompatibility(exported, projectPath,
+                                             exportTarget);
+  dumpExportLog(projectPath.getParentDir());
 
   // Copy the .ztoryc back-link companions next to the exported scenes (the
   // Export Scene flow only copies the scene + its assets). Governed solely by

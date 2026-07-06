@@ -171,6 +171,7 @@ class ExportScenePopup final : public DVGui::Dialog {
   // not forced to inherit the current project's folder structure) and target
   // application toggle (OpenToonz needs compatibility conversions on export).
   QList<QPair<std::string, DVGui::FileField *>> m_folderFlds;
+  QRadioButton *m_targetZtorycButton;
   QRadioButton *m_targetTahomaButton;
   QRadioButton *m_targetOTButton;
 
@@ -192,6 +193,12 @@ public:
     return m_exportedScenes;
   }
 
+  // Target application of an export. Ztoryc keeps everything as-is; stock
+  // Tahoma2D needs the Ztoryc-only per-xsheet In/Out markers stripped and a
+  // tahomaproject.xml project file; OpenToonz additionally needs explicit
+  // holds and a "<folder>_otprj.xml" project file.
+  enum class ExportTarget { Ztoryc, Tahoma, OpenToonz };
+
   // UI-independent export engine, reusable by other entry points (the Ztoryc
   // Board "Export Shots to New Project" flow embeds these in its own dialog).
   struct NewProjectSpec {
@@ -199,15 +206,24 @@ public:
     QString location;  // parent folder the project is created in
     QList<QPair<std::string, QString>> folders;  // folder name → custom path
     bool useSubScenePath = false;  // "Separate assets into scene sub-folders"
-    bool targetOpenToonz = false;
+    ExportTarget target  = ExportTarget::Ztoryc;
   };
   //! Create the project on disk; empty path (+ DVGui warning) on failure.
   static TFilePath createProjectFromSpec(const NewProjectSpec &spec);
-  //! Import scenes + collect assets into the project; OT compatibility pass
-  //! (explicit holds + _otprj.xml) when requested. Returns exported paths.
+  //! Import scenes + collect assets into the project, then run the
+  //! target-specific compatibility pass. Returns exported paths.
   static std::vector<TFilePath> exportScenesToProject(
       const std::vector<TFilePath> &scenes, const TFilePath &projectPath,
-      bool targetOpenToonz);
+      ExportTarget target);
+  //! Target-specific compatibility pass alone. Callers that copy extra assets
+  //! AFTER exportScenesToProject (the Ztoryc Board flow copies '+' project
+  //! folder levels) must export with target Ztoryc and run this at the very
+  //! end: the pass re-loads and re-saves each scene, so any resource still
+  //! missing at that point (e.g. the animatic audio) would be loaded empty
+  //! and silently dropped from the re-saved scene.
+  static void applyTargetCompatibility(const std::vector<TFilePath> &scenes,
+                                       const TFilePath &projectPath,
+                                       ExportTarget target);
 
 protected slots:
   void switchMode(int id);
@@ -218,10 +234,19 @@ protected slots:
 protected:
   //! Create new project from the dialog fields and return new project path.
   TFilePath createNewProject();
-  //! OpenToonz compatibility: materialize implicit holds in an exported scene.
+  //! Target application chosen in the dialog radio buttons.
+  ExportTarget selectedTarget() const;
+  //! OpenToonz compatibility: materialize implicit holds in an exported scene
+  //! (also strips the Ztoryc-only In/Out markers).
   static bool convertSceneToExplicitHolds(const TFilePath &scenePath);
+  //! Tahoma2D compatibility: strip the Ztoryc-only per-xsheet In/Out markers
+  //! from an exported scene (stock Tahoma rejects the inOutMarkers tag).
+  static bool stripSceneInOutMarkers(const TFilePath &scenePath);
   //! OpenToonz compatibility: write a "<folder>_otprj.xml" project file copy.
   static void writeOpenToonzProjectFile(const TFilePath &projectPath);
+  //! Tahoma2D compatibility: write a "tahomaproject.xml" project file copy
+  //! (Ztoryc projects are saved as ztorycproject.xml, unknown to stock Tahoma).
+  static void writeTahomaProjectFile(const TFilePath &projectPath);
   //  void updateCommandLabel();
 };
 

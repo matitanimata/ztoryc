@@ -1915,7 +1915,11 @@ void ZtoryModel::resequenceXsheet() {
   // comes from the native play range whenever the two are out of sync.
   // Using xsh->getFrameCount() (not videoFrameCount) here so that a long audio
   // column that extends past the last shot is also covered.
-  {
+  // ONLY at main level: setPlayRange acts on the CURRENT context, so when a
+  // resequence fires while a sub-scene is open (e.g. editing a transition from
+  // inside the shot) this would move the shot's mark-out to the end of the
+  // MAIN timeline. The sub's range is owned by ztorySetShotRange.
+  if (scene->getChildStack()->getAncestorCount() == 0) {
     int lastFrame = xsh->getFrameCount() - 1;
     if (lastFrame >= 0)
       XsheetGUI::setPlayRange(0, lastFrame, 1, false);

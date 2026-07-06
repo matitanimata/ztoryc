@@ -1,3 +1,59 @@
+## [2026-07-06b] — Fix export (target OT/Tahoma/Ztoryc, audio trimmato) + timing transizioni + Board — release 0.8.1
+
+Sessione dedicata ai tre problemi grossi segnalati da Franco: export (normale e a
+progetto esterno), timing con transizioni, refresh durate parziali del Board.
+Tutto verificato da Franco su casi reali. Rilasciata come **v0.8.1** (solo fix).
+
+### Fixed — Export
+- **Target sdoppiati Ztoryc / Tahoma2D / OpenToonz** (dialog Board + Export Scene
+  nativo). Tahoma2D: strip dei marker In/Out per-xsheet (feature solo-Ztoryc,
+  Tahoma stock rigettava la scena) + copia del project file come
+  **`tahomaproject.xml`** (il rename a ztorycproject.xml aveva rotto il
+  riconoscimento del progetto in Tahoma stock). OT invariato (explicit holds +
+  `_otprj.xml`). Enum `ExportTarget`, `stripSceneInOutMarkers`,
+  `writeTahomaProjectFile` in exportscenepopup.
+- **Audio export riprogettato: WAV fisicamente trimmato per shot.** La vecchia
+  iniezione clonava i ColumnLevel (file intero + trim in startFrame negativi e
+  offset): OT non decodifica mp3 → colonna vuota; il trim a offset era fragile
+  anche in Tahoma/Ztoryc. Ora `injectAudioForShot` renderizza la fetta netta
+  dello shot (`getOverallSoundTrack`) in `+extras/<shot>_audio[N].wav` e
+  inietta una colonna semplice senza offset. Con XD-in il piazzamento parte da
+  `headHalf` (allineato al contenuto reale, righe head mute). I wav viaggiano
+  col meccanismo capture/copy dei path `+`.
+- **Ordine compat/copie**: il pass di compatibilità target (explicit holds /
+  strip marker) faceva load+save PRIMA delle copie +extras/audio → sound level
+  caricato vuoto e perso. Ora `applyTargetCompatibility()` separato, eseguito
+  dal Board DOPO le copie asset.
+- **Export normale allineato ai settaggi progetto**: il capture/copy dei livelli
+  '+' (post-save, non invasivo) ora gira anche nel plain Export Shots — prima
+  con layout "assets next to scene" gli asset non venivano trovati.
+- **Logging diagnostico**: `ztoryc_export_log.txt` accanto alle scene esportate
+  (capture / post-save / project-copy / audio-trim / compat).
+
+### Fixed — Timing con transizioni (semantica NETTA unificata)
+- `onShotDurationChanged`: teardown dissolvenze PRIMA di misurare (il drag del
+  track emette durate nette, il confronto con getRange lorda faceva
+  crescere/ridurre lo shot dei frame extra). Range In/Out ricalcolato per
+  coprire head/tail extra (convenzione onTransitionChanged).
+- `onMatchSubsceneDuration`: misura netta (skip colonne sound/note XD;
+  net = contenuto − headHalf − tailHalf); no-op guard su shotTrueSpan (prima
+  netto-vs-lordo → resize storm con auto-match).
+- **Markout dentro lo shot**: il pin del play range in
+  `ZtoryModel::resequenceXsheet` ora gira SOLO a livello main — modificando la
+  transizione da dentro lo shot il markout saltava alla fine della timeline main.
+
+### Fixed — Board
+- **Primo panel = durata totale**: `onModelResequenced` sovrascriveva a ogni
+  resequence la durata parziale del panel 0 con la durata totale (anche per
+  shot multi-panel). Ora T: per tutti, D: solo single-panel, durate nette.
+- `detectAndUpdatePanels` + `onXsheetChanged`: timelineDuration netta via
+  shotTrueSpan; filtro panel head-aware (`f < net + headHalf`); primo panel
+  assorbe le head-hold. Detection di tutti gli shot a fine `refreshFromScene`
+  (prima girava solo da dentro lo shot).
+
+### Release
+- v0.8.1 (patch, solo fix): include anche i fix Ztoryc Monitor del 07-05d
+  (layout tracce + Set Key nascosto) e i fix export/crash del 07-05/06.
 ## [2026-07-06] — Export shot→progetto: molti fix + WIP; rebrand project file/splash
 
 Sessione maratona sull'export "Shots to New Project" (Tahoma e OpenToonz) + rifiniture

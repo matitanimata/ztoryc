@@ -7552,6 +7552,15 @@ void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
 
   TXshColumn *column = mainXsh->getColumn(col);
   if (!column || column->isEmpty()) return;
+
+  // newF1 comes from the track blocks, which are built on shotTrueSpan() —
+  // i.e. NET durations, dissolve overlap excluded.  Strip any exposed overlap
+  // cells FIRST (same as ZtoryModel::resequenceXsheet does) so currentDuration
+  // below is net too; otherwise with a dissolve the gross getRange() is
+  // compared against a net target and the shot grows/shrinks by the extra
+  // frames.  resequenceXsheet() re-exposes the overlap at the end.
+  ZtoryShotOps::teardownCrossDissolves(mainXsh);
+
   int r0 = 0, r1 = 0;
   // ignoreLastStop=true: skip the trailing SFH so currentDuration is the
   // shot's actual length, not +1.  Otherwise the trim math would compare
@@ -7599,8 +7608,15 @@ void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
   // Sync the sub-xsheet's Out marker to the new duration.
   // ztorySetShotRange updates s_frameRangeMap so the correct Out is shown
   // the next time the shot is opened for editing.
-  // Range is [0, newDuration-1] (0-based, inclusive).
-  ztorySetShotRange(col, 0, newDuration - 1);
+  // newDuration is NET; with a cross-dissolve the sub-scene carries headHalf
+  // hold copies before and tailHalf extra frames after the real content, and
+  // the Ztoryc convention (see onTransitionChanged) is that the editing range
+  // covers them too so the animator can work on the dissolve material.
+  int rangeOut = newDuration - 1;
+  if (TXsheet *subXsh = typeCell.m_level->getChildLevel()->getXsheet())
+    rangeOut += ZtoryShotOps::xdInHeadOffset(subXsh) +
+                ZtoryShotOps::xdOutTailCount(subXsh);
+  ztorySetShotRange(col, 0, rangeOut);
 
   // If this shot's sub-xsheet is currently open, also update the live
   // play range so the FlipConsole markers move immediately.
@@ -7618,7 +7634,7 @@ void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
         shotXsh = cell.m_level->getChildLevel()->getXsheet();
     }
     if (shotXsh && shotXsh == curXsh)
-      XsheetGUI::setPlayRange(0, newDuration - 1, 1, false);
+      XsheetGUI::setPlayRange(0, rangeOut, 1, false);
   }
 
   m_track->refreshFromScene();
@@ -7759,7 +7775,10 @@ void ZtoryAnimaticPanel::onMatchSubsceneDuration(int col) {
   for (int c = 0; c < subXsh->getColumnCount(); c++) {
     int r0 = 0, r1 = 0;
     TXshColumn *column = subXsh->getColumn(c);
-    if (!column) continue;
+    // Skip audio and the XD-in/XD-out dissolve note columns: they are utility
+    // columns, not drawing content, and must not drive the shot duration.
+    if (!column || column->getSoundColumn() || column->getSoundTextColumn())
+      continue;
     // ignoreLastStop=true: skip trailing SFH so r1 lands on the last real
     // drawing, not on the stop-frame cell (which is NOT empty and would
     // inflate lastFrame by +1 → empty frame at mark-out).
@@ -7775,16 +7794,32 @@ void ZtoryAnimaticPanel::onMatchSubsceneDuration(int col) {
   }
 
   if (lastFrame < 0) return;  // sottoscena completamente vuota
-  int newDuration = lastFrame + 1;
+
+  // NET duration: with a cross-dissolve the sub-scene content includes
+  // headHalf hold copies at the start (XD-in) and tailHalf extra frames at
+  // the end (XD-out).  Those belong to the transition overlap, not to the
+  // shot's on-timeline length — matching against the gross content grew the
+  // shot by the extra frames (and desynced audio and Board durations).
+  int headHalf = ZtoryShotOps::xdInHeadOffset(subXsh);
+  int tailHalf = ZtoryShotOps::xdOutTailCount(subXsh);
+  int newDuration = lastFrame + 1 - headHalf - tailHalf;
+  if (newDuration <= 0) return;
 
   // No-op guard: while drawing inside the sub-scene every stroke burst lands
   // here (xsheetChanged → auto-match debounce), but the duration almost never
   // changes. Without this check each burst ran a full column resize +
   // resequenceXsheet + refreshFromScene, lagging the brush badly.
+  // Compare NET vs NET: shotTrueSpan excludes any exposed dissolve overlap
+  // (getRange would be gross → guard never hits → resize storm on dissolves).
   {
-    int m0 = 0, m1 = 0;
-    mainCol->getRange(m0, m1, /*ignoreLastStop=*/true);
-    if (m1 - m0 + 1 == newDuration) return;
+    int ts = 0, td = 0;
+    if (ZtoryShotOps::shotTrueSpan(mainXsh, col, ts, td)) {
+      if (td == newDuration) return;
+    } else {
+      int m0 = 0, m1 = 0;
+      mainCol->getRange(m0, m1, /*ignoreLastStop=*/true);
+      if (m1 - m0 + 1 == newDuration) return;
+    }
   }
 
   // Apply new duration. Call directly — the signal connection would cause a

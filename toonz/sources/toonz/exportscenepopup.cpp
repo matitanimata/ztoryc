@@ -624,19 +624,29 @@ ExportScenePopup::ExportScenePopup(std::vector<TFilePath> scenes,
 
   layout->addWidget(newProjectWidget);
 
-  // Target application: with OpenToonz the exported scenes get compatibility
-  // conversions (explicit holds) and an OT-readable project file.
+  // Target application: stock Tahoma2D needs the Ztoryc-only In/Out markers
+  // stripped and a tahomaproject.xml; OpenToonz additionally needs explicit
+  // holds and an OT-readable project file.
   QWidget *targetWidget     = new QWidget(this);
   QHBoxLayout *targetLayout = new QHBoxLayout(targetWidget);
   targetLayout->setContentsMargins(0, 0, 0, 0);
   targetLayout->addWidget(new QLabel(tr("Target Application:"), targetWidget));
   QButtonGroup *targetGroup = new QButtonGroup(this);
   targetGroup->setExclusive(true);
-  m_targetTahomaButton = new QRadioButton(tr("Tahoma2D / Ztoryc"), targetWidget);
+  m_targetZtorycButton = new QRadioButton(tr("Ztoryc"), targetWidget);
+  m_targetTahomaButton = new QRadioButton(tr("Tahoma2D"), targetWidget);
   m_targetOTButton     = new QRadioButton(tr("OpenToonz"), targetWidget);
+  targetGroup->addButton(m_targetZtorycButton);
   targetGroup->addButton(m_targetTahomaButton);
   targetGroup->addButton(m_targetOTButton);
-  m_targetTahomaButton->setChecked(true);
+  m_targetZtorycButton->setChecked(true);
+  m_targetTahomaButton->setToolTip(
+      tr("Strips the Ztoryc-only In/Out markers and writes a "
+         "tahomaproject.xml so stock Tahoma2D recognizes the project."));
+  m_targetOTButton->setToolTip(
+      tr("Converts the exported scenes to explicit holds and writes an "
+         "OpenToonz-readable project file."));
+  targetLayout->addWidget(m_targetZtorycButton);
   targetLayout->addWidget(m_targetTahomaButton);
   targetLayout->addWidget(m_targetOTButton);
   targetLayout->addStretch();
@@ -720,8 +730,8 @@ void ExportScenePopup::onExport() {
     }
   }
 
-  std::vector<TFilePath> newScenes = exportScenesToProject(
-      m_scenes, projectPath, m_targetOTButton->isChecked());
+  std::vector<TFilePath> newScenes =
+      exportScenesToProject(m_scenes, projectPath, selectedTarget());
   if (newScenes.empty()) {
     QApplication::restoreOverrideCursor();
     DVGui::warning(tr("There was an error exporting the scene."));
@@ -738,6 +748,22 @@ void ExportScenePopup::onExport() {
 
 //-----------------------------------------------------------------------------
 
+namespace {
+// Drop the per-xsheet In/Out markers on the main xsheet and every sub-xsheet:
+// they are a Ztoryc addition and both stock Tahoma2D and OpenToonz reject the
+// scene with "xsheet, unknown tag: inOutMarkers" on load.
+void stripInOutMarkers(ToonzScene &scene) {
+  TXsheet *xsh = scene.getXsheet();
+  if (xsh) xsh->setInOutMarkers(0, -1);
+  std::vector<TXshLevel *> levels;
+  scene.getLevelSet()->listLevels(levels);
+  for (TXshLevel *lv : levels) {
+    TXshChildLevel *cl = lv ? lv->getChildLevel() : nullptr;
+    if (cl && cl->getXsheet()) cl->getXsheet()->setInOutMarkers(0, -1);
+  }
+}
+}  // namespace
+
 bool ExportScenePopup::convertSceneToExplicitHolds(const TFilePath &scenePath) {
   try {
     ToonzScene scene;
@@ -747,19 +773,26 @@ bool ExportScenePopup::convertSceneToExplicitHolds(const TFilePath &scenePath) {
     // Materializes implicit holds up to the xsheet length, recursing into
     // sub-xsheets. 0 = use each xsheet's own frame count as the range.
     xsh->convertToExplicitHolds(0);
-    // Drop the per-xsheet In/Out markers on the main xsheet and every sub-xsheet:
-    // they are a Tahoma/Ztoryc addition and OpenToonz rejects the scene with
-    // "xsheet, unknown tag: inOutMarkers" on load.
-    xsh->setInOutMarkers(0, -1);
-    std::vector<TXshLevel *> levels;
-    scene.getLevelSet()->listLevels(levels);
-    for (TXshLevel *lv : levels) {
-      TXshChildLevel *cl = lv ? lv->getChildLevel() : nullptr;
-      if (cl && cl->getXsheet()) cl->getXsheet()->setInOutMarkers(0, -1);
-    }
+    stripInOutMarkers(scene);
     scene.save(scenePath);
   } catch (...) {
     DVGui::warning(tr("Could not convert %1 to explicit holds.")
+                       .arg(toQString(scenePath)));
+    return false;
+  }
+  return true;
+}
+
+//-----------------------------------------------------------------------------
+
+bool ExportScenePopup::stripSceneInOutMarkers(const TFilePath &scenePath) {
+  try {
+    ToonzScene scene;
+    scene.load(scenePath);
+    stripInOutMarkers(scene);
+    scene.save(scenePath);
+  } catch (...) {
+    DVGui::warning(tr("Could not strip the In/Out markers from %1.")
                        .arg(toQString(scenePath)));
     return false;
   }
@@ -788,14 +821,41 @@ void ExportScenePopup::writeOpenToonzProjectFile(const TFilePath &projectPath) {
 
 //-----------------------------------------------------------------------------
 
+void ExportScenePopup::writeTahomaProjectFile(const TFilePath &projectPath) {
+  // Ztoryc saves its project file as ztorycproject.xml, which stock Tahoma2D
+  // does not recognize; the format is identical, so a renamed copy makes the
+  // folder a valid Tahoma project (Ztoryc keeps preferring ztorycproject.xml).
+  TFilePath tahomaProjectPath = projectPath.withName(L"tahomaproject");
+  if (tahomaProjectPath == projectPath) return;
+  if (!TSystem::doesExistFileOrLevel(projectPath)) return;
+  try {
+    if (TSystem::doesExistFileOrLevel(tahomaProjectPath))
+      TSystem::removeFileOrLevel(tahomaProjectPath);
+    TSystem::copyFile(tahomaProjectPath, projectPath);
+  } catch (...) {
+    DVGui::warning(tr("Could not write the Tahoma2D project file %1.")
+                       .arg(toQString(tahomaProjectPath)));
+  }
+}
+
+//-----------------------------------------------------------------------------
+
 TFilePath ExportScenePopup::createNewProject() {
   NewProjectSpec spec;
   spec.name     = m_newProjectName->text();
   spec.location = m_projectLocationFld->getPath();
   for (const auto &fld : m_folderFlds)
     spec.folders.append(qMakePair(fld.first, fld.second->getPath()));
-  spec.targetOpenToonz = m_targetOTButton->isChecked();
+  spec.target = selectedTarget();
   return createProjectFromSpec(spec);
+}
+
+//-----------------------------------------------------------------------------
+
+ExportScenePopup::ExportTarget ExportScenePopup::selectedTarget() const {
+  if (m_targetOTButton->isChecked()) return ExportTarget::OpenToonz;
+  if (m_targetTahomaButton->isChecked()) return ExportTarget::Tahoma;
+  return ExportTarget::Ztoryc;
 }
 
 //-----------------------------------------------------------------------------
@@ -851,7 +911,7 @@ TFilePath ExportScenePopup::createProjectFromSpec(const NewProjectSpec &spec) {
 
 std::vector<TFilePath> ExportScenePopup::exportScenesToProject(
     const std::vector<TFilePath> &scenes, const TFilePath &projectPath,
-    bool targetOpenToonz) {
+    ExportTarget target) {
   TProjectManager *pm      = TProjectManager::instance();
   TFilePath oldProjectPath = pm->getCurrentProjectPath();
   pm->setCurrentProjectPath(projectPath);
@@ -867,15 +927,34 @@ std::vector<TFilePath> ExportScenePopup::exportScenesToProject(
 
   for (const TFilePath &newScenePath : newScenes) collectAssets(newScenePath);
 
-  // OpenToonz compatibility pass: OT has no implicit-hold support, so the
-  // exported scenes must carry explicit holds or the xsheet timing is lost;
-  // OT also looks for a "<folder>_otprj.xml" project file.
-  if (targetOpenToonz) {
-    for (const TFilePath &newScenePath : newScenes)
-      convertSceneToExplicitHolds(newScenePath);
-    writeOpenToonzProjectFile(projectPath);
-  }
+  applyTargetCompatibility(newScenes, projectPath, target);
   return newScenes;
+}
+
+//-----------------------------------------------------------------------------
+
+void ExportScenePopup::applyTargetCompatibility(
+    const std::vector<TFilePath> &scenes, const TFilePath &projectPath,
+    ExportTarget target) {
+  // OpenToonz has no implicit-hold support, so the exported scenes must carry
+  // explicit holds or the xsheet timing is lost; OT also looks for a
+  // "<folder>_otprj.xml" project file. Stock Tahoma2D keeps implicit holds
+  // but still rejects the Ztoryc-only In/Out markers and only recognizes
+  // tahomaproject.xml. A Ztoryc target needs no conversion.
+  switch (target) {
+  case ExportTarget::OpenToonz:
+    for (const TFilePath &scenePath : scenes)
+      convertSceneToExplicitHolds(scenePath);
+    writeOpenToonzProjectFile(projectPath);
+    break;
+  case ExportTarget::Tahoma:
+    for (const TFilePath &scenePath : scenes)
+      stripSceneInOutMarkers(scenePath);
+    writeTahomaProjectFile(projectPath);
+    break;
+  case ExportTarget::Ztoryc:
+    break;
+  }
 }
 
 //-----------------------------------------------------------------------------
