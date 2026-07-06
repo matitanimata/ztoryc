@@ -60,6 +60,10 @@ public:
                 //!< (kept fixed) while solving the chain at the current frame.
                 //!< Keyframeable/step-interpolated so the anchor can switch
                 //!< over time (e.g. the support foot in a walk cycle).
+    ROOTX,      //!< SuperPlastic free-root translation of the skeleton root
+    ROOTY,      //!< (local space). Only meaningful on the root vertex; solved
+                //!< automatically so a pinned vertex stays planted while the
+                //!< body translates (foot-planting). Keyframeable.
     PARAMS_COUNT
   };
 

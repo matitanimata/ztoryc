@@ -36,10 +36,10 @@ DEFINE_CLASS_CODE(PlasticSkeletonDeformation, 121)
 
 namespace {
 
-static const char *parNames[SkVD::PARAMS_COUNT] = {"Angle", "Distance", "SO",
-                                                   "Pin"};
-static const char *parMeasures[SkVD::PARAMS_COUNT] = {"angle", "fxLength", "",
-                                                      ""};
+static const char *parNames[SkVD::PARAMS_COUNT] = {
+    "Angle", "Distance", "SO", "Pin", "RootX", "RootY"};
+static const char *parMeasures[SkVD::PARAMS_COUNT] = {
+    "angle", "fxLength", "", "", "fxLength", "fxLength"};
 
 //------------------------------------------------------------------
 
@@ -520,6 +520,18 @@ void PlasticSkeletonDeformation::Imp::updateBranchPositions(
 
   PlasticSkeletonVertex &dvx = deformedSkeleton.vertex(v);
   int vParent                = dvx.parent();
+  if (vParent < 0) {
+    // SuperPlastic free-root: translate the skeleton root by its solved offset
+    // so a pinned descendant can stay planted while the body moves. All
+    // children rebuild relative to this, so the whole skeleton shifts with it.
+    auto rt = m_vds.find(dvx.name());
+    if (rt != m_vds.end()) {
+      const SkVD &rvd = rt->m_vd;
+      dvx.P() = originalSkeleton.vertex(v).P() +
+                TPointD(rvd.m_params[SkVD::ROOTX]->getValue(frame),
+                        rvd.m_params[SkVD::ROOTY]->getValue(frame));
+    }
+  }
   if (vParent >= 0) {
     // Rebuild vertex position
     const TPointD &ovxPos       = originalSkeleton.vertex(v).P();

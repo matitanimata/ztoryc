@@ -319,12 +319,15 @@ void PlasticTool::solveChainIK_animate(const std::vector<int> &chainVx,
 // SuperPlastic IK adapter (Animate mode). Writes back only per-vertex ANGLE
 // params — distances untouched, proportions preserved.
 //
-// The skeleton is always rebuilt root-down from a fixed root, so foot-planting
-// is done in TWO stages:
+// The skeleton is rebuilt root-down from the root, so foot-planting is done in
+// THREE stages:
 //  1. Solve root -> dragged vertex so the handle reaches the mouse (honoring
 //     angle bounds).
-//  2. If a pin is set at this frame and it drifted, solve handle -> pin (handle
-//     now fixed) to bring the pinned vertex back to where it was — planting it.
+//  2. If a pin drifted, solve handle -> pin (handle now fixed) to bend the
+//     chain back toward the planted position (natural limb bending).
+//  3. Whatever gap remains is absorbed by the free-root translation offset:
+//     the whole local skeleton shifts so the pinned vertex is planted exactly
+//     while the body translates — the missing DOF a fixed root cannot provide.
 // With no pin, only stage 1 runs (identical to before).
 void PlasticTool::moveVertexIK_animate(double frame, int v,
                                        const TPointD &pos) {
@@ -346,16 +349,42 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
 
   if (!hasPin) return;
 
-  // Rebuild with stage-1 angles, then check whether the pin drifted.
+  // Stage 2: handle -> pin (handle fixed) bends the chain back toward planted.
   m_deformedSkeleton.invalidate();
-  PlasticSkeleton &rebuilt = deformedSkeleton();
-  TPointD pinNow           = rebuilt.vertex(pin).P();
-  if (norm(pinNow - pinTarget) <= 0.5 * getPixelSize()) return;
+  {
+    PlasticSkeleton &rebuilt = deformedSkeleton();
+    if (norm(rebuilt.vertex(pin).P() - pinTarget) > 0.5 * getPixelSize()) {
+      std::vector<int> path = skeletonPath(rebuilt, v, pin);  // v ... pin
+      if (path.size() >= 2)
+        solveChainIK_animate(path, pinTarget, frame, /*useLimits*/ false);
+    }
+  }
 
-  // Stage 2: handle -> pin (handle fixed) restores the planted vertex.
-  std::vector<int> path = skeletonPath(rebuilt, v, pin);  // v ... pin
-  if (path.size() >= 2)
-    solveChainIK_animate(path, pinTarget, frame, /*useLimits*/ false);
+  // Stage 3: free-root translation absorbs the remaining gap, planting the pin
+  // exactly. The root offset shifts the whole skeleton, so this also carries
+  // the dragged handle along — that translation is the body advancing.
+  m_deformedSkeleton.invalidate();
+  PlasticSkeleton &rebuilt2 = deformedSkeleton();
+  TPointD residual          = pinTarget - rebuilt2.vertex(pin).P();
+  if (norm(residual) <= 1e-4) return;
+
+  int rootIdx = -1;
+  for (auto vt = rebuilt2.vertices().begin(); vt != rebuilt2.vertices().end();
+       ++vt)
+    if (vt->parent() < 0) {
+      rootIdx = vt.m_idx;
+      break;
+    }
+  if (rootIdx < 0) return;
+
+  SkVD *rvd = m_sd->vertexDeformation(::skeletonId(), rootIdx);
+  if (!rvd) return;
+  double newX = rvd->m_params[SkVD::ROOTX]->getValue(frame) + residual.x;
+  double newY = rvd->m_params[SkVD::ROOTY]->getValue(frame) + residual.y;
+  ::setKeyframe(rvd->m_params[SkVD::ROOTX], frame);
+  rvd->m_params[SkVD::ROOTX]->setValue(frame, newX);
+  ::setKeyframe(rvd->m_params[SkVD::ROOTY], frame);
+  rvd->m_params[SkVD::ROOTY]->setValue(frame, newY);
 }
 
 //------------------------------------------------------------------------
