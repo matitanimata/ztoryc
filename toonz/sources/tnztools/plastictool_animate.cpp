@@ -343,15 +343,24 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
 //------------------------------------------------------------------------
 
 int PlasticTool::pinnedVertexAtFrame(double frame) const {
-  if (!m_sd) return -1;
+  std::vector<int> pins = pinnedVerticesAtFrame(frame);
+  return pins.empty() ? -1 : pins.front();
+}
+
+//------------------------------------------------------------------------
+
+std::vector<int> PlasticTool::pinnedVerticesAtFrame(double frame) const {
+  std::vector<int> pins;
+  if (!m_sd) return pins;
   PlasticSkeletonP skel = skeleton();
-  if (!skel) return -1;
+  if (!skel) return pins;
   int skelId = ::skeletonId();
   for (auto vt = skel->vertices().begin(); vt != skel->vertices().end(); ++vt) {
     SkVD *vd = m_sd->vertexDeformation(skelId, vt.m_idx);
-    if (vd && vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5) return vt.m_idx;
+    if (vd && vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5)
+      pins.push_back(vt.m_idx);
   }
-  return -1;
+  return pins;
 }
 
 //------------------------------------------------------------------------
@@ -373,15 +382,23 @@ void PlasticTool::togglePinAtCurrentFrame() {
   kf.m_type = kf.m_prevType = TDoubleKeyframe::Constant;
   vd->m_params[SkVD::PIN]->setKeyframe(kf);
 
-  // When pinning ON, record where the vertex is now as its planting target.
-  // The eval-time constraint then holds it there on every frame. Constant
-  // interpolation so a single pin keeps the same spot until re-planted.
-  if (!pinned && vd->m_params[SkVD::PINTX] && vd->m_params[SkVD::PINTY]) {
-    TPointD p = deformedSkeleton().vertex(v).P();
-    for (int c : {SkVD::PINTX, SkVD::PINTY}) {
-      TDoubleKeyframe tk(frame, c == SkVD::PINTX ? p.x : p.y);
-      tk.m_type = tk.m_prevType = TDoubleKeyframe::Constant;
-      vd->m_params[c]->setKeyframe(tk);
+  // When pinning ON, record where each ACTIVE pin is right now as its planting
+  // target — the new one plus every already-active pin. Re-anchoring them all
+  // at this frame keeps the whole set self-consistent, so the rigid constraint
+  // evaluates to the identity here and adding a second pin does not disturb the
+  // pose: both pins stay exactly where they are. Constant interpolation so they
+  // hold until re-planted.
+  if (!pinned) {
+    for (int pv : pinnedVerticesAtFrame(frame)) {
+      SkVD *pvd = m_sd->vertexDeformation(::skeletonId(), pv);
+      if (!pvd || !pvd->m_params[SkVD::PINTX] || !pvd->m_params[SkVD::PINTY])
+        continue;
+      TPointD p = deformedSkeleton().vertex(pv).P();
+      for (int c : {SkVD::PINTX, SkVD::PINTY}) {
+        TDoubleKeyframe tk(frame, c == SkVD::PINTX ? p.x : p.y);
+        tk.m_type = tk.m_prevType = TDoubleKeyframe::Constant;
+        pvd->m_params[c]->setKeyframe(tk);
+      }
     }
   }
 
@@ -493,22 +510,22 @@ void PlasticTool::draw_animate() {
     drawSelections(m_sd, deformedSkeleton, pixelSize);
     drawAngleLimits(m_sd, m_skelId, m_svSel, pixelSize);
 
-    // SuperPlastic: mark the IK anchor (pinned vertex) at the current frame
-    // with a cyan diamond so the animator sees what is planted.
-    int pin = pinnedVertexAtFrame(::frame());
-    if (pin >= 0) {
-      TPointD p  = deformedSkeleton.vertex(pin).P();
-      double r   = 9.0 * pixelSize;
-      glColor4ub(0, 220, 255, 255);
-      glLineWidth(2.0f * m_viewer->getDevPixRatio());
+    // SuperPlastic: mark every IK anchor (pinned vertex) at the current frame
+    // with a cyan diamond so the animator sees what is planted — during the
+    // double-support frame of a walk there can be two at once.
+    double r = 9.0 * pixelSize;
+    glColor4ub(0, 220, 255, 255);
+    glLineWidth(2.0f * m_viewer->getDevPixRatio());
+    for (int pin : pinnedVerticesAtFrame(::frame())) {
+      TPointD p = deformedSkeleton.vertex(pin).P();
       glBegin(GL_LINE_LOOP);
       glVertex2d(p.x, p.y - r);
       glVertex2d(p.x + r, p.y);
       glVertex2d(p.x, p.y + r);
       glVertex2d(p.x - r, p.y);
       glEnd();
-      glLineWidth(1.0f);
     }
+    glLineWidth(1.0f);
   }
 
   drawHighlights(m_sd, &deformedSkeleton, pixelSize);

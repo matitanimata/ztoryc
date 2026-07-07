@@ -342,7 +342,8 @@ protected:
   // SuperPlastic IK anchor (pin). The pinned vertex is kept fixed while IK
   // solving at a given frame; the anchor is keyframeable so it can switch over
   // time (e.g. the support foot in a walk cycle).
-  int pinnedVertexAtFrame(double frame) const;  //!< -1 if none
+  int pinnedVertexAtFrame(double frame) const;  //!< first pin, -1 if none
+  std::vector<int> pinnedVerticesAtFrame(double frame) const;  //!< all pins
   void togglePinAtCurrentFrame();               //!< pin/unpin selected vertex
   void addContextMenuActions_animate(QMenu *menu);
 
