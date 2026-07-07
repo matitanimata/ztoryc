@@ -124,20 +124,27 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
   // Track mouse position
   m_pos = pos;
 
-  if (m_sd && m_svSel.hasSingleObject() &&
-      m_svSel > 0)  // Avoid move if vertex is root
-  {
+  double frame = ::frame();
+
+  // The native root normally can't be moved (it has no ANGLE/DISTANCE params).
+  // But under IK with an active pin the pin is the temporary root, so the native
+  // root becomes an ordinary manipulable vertex: its rotation about its pin-ward
+  // neighbour is stored in that neighbour's ANGLE and preserves bone lengths.
+  bool isRoot = m_svSel.hasSingleObject() &&
+                deformedSkeleton().vertex(m_svSel).parent() < 0;
+  bool ikPin  = m_ikDrag.getValue() && pinnedVertexAtFrame(frame) >= 0;
+
+  if (m_sd && m_svSel.hasSingleObject() && (!isRoot || ikPin)) {
     l_suspendParamsObservation = true;  // Automatic params notification happen
     // twice (1 x param) - dealing with it manually
-
-    double frame = ::frame();
 
     // First, retrieve selected vertex's deformation
     SkVD *vd = m_sd->vertexDeformation(::skeletonId(), m_svSel);
     assert(vd);
 
     // Move selected branch
-    if (m_ikDrag.getValue() && deformedSkeleton().vertex(m_svSel).parent() >= 0) {
+    if (m_ikDrag.getValue() &&
+        (deformedSkeleton().vertex(m_svSel).parent() >= 0 || ikPin)) {
       moveVertexIK_animate(frame, m_svSel, pos);
     } else if (m_keepDistance.getValue()) {
       ::setKeyframe(vd->m_params[SkVD::ANGLE],
@@ -177,123 +184,24 @@ inline double wrapPi(double a) {
 
 }  // namespace
 
-//------------------------------------------------------------------------
-
-// Solves the serial chain \a chainVx (base = chainVx[0], kept fixed) so its
-// last vertex reaches \a target, then writes back the ANGLE deformation params
-// of the chain vertices (distances untouched). ANGLE is re-derived from each
-// vertex's solved position relative to its ORIGINAL-tree parent, so the result
-// stays valid even when the chain traverses tree edges backwards (as in the
-// pin-restore stage). Angle bounds are honored only when \a useLimits is set
-// (the root->handle stage), where every chain edge runs parent->child.
-void PlasticTool::solveChainIK_animate(const std::vector<int> &chainVx,
-                                       const TPointD &target, double frame,
-                                       bool useLimits) {
-  int boneCount = int(chainVx.size()) - 1;
-  if (boneCount < 1) return;
-
-  const PlasticSkeleton &orig = *skeleton();
-  PlasticSkeleton &defSkel    = deformedSkeleton();
-
-  IKChain chain;
-  const double quietNaN = std::numeric_limits<double>::quiet_NaN();
-  const double bigBound = 1e9;  // vertex bounds default to +-DBL_MAX
-  for (int i = 0; i <= boneCount; ++i)
-    chain.currentPositions.push_back(defSkel.vertex(chainVx[i]).P());
-
-  for (int i = 0; i < boneCount; ++i) {
-    IKBone bone;
-    bone.length      = norm(chain.currentPositions[i + 1] -
-                            chain.currentPositions[i]);
-    bone.parentIndex = i - 1;
-    bone.angleMin = bone.angleMax = quietNaN;
-    if (useLimits) {
-      const PlasticSkeletonVertex &ovx = orig.vertex(chainVx[i + 1]);
-      TPointD od  = orig.vertex(chainVx[i + 1]).P() - orig.vertex(chainVx[i]).P();
-      auto pdir   = [&](int vx) {
-        for (int p = vx; p >= 0;) {
-          int pp = orig.vertex(p).parent();
-          if (pp < 0) return 0.0;
-          TPointD dd = orig.vertex(p).P() - orig.vertex(pp).P();
-          if (norm2(dd) > 1e-8) return atan2(dd.y, dd.x);
-          p = pp;
-        }
-        return 0.0;
-      };
-      double rest   = wrapPi(atan2(od.y, od.x) - pdir(chainVx[i]));
-      bone.angleMin = (ovx.m_minAngle < -bigBound)
-                          ? quietNaN
-                          : rest + ovx.m_minAngle * M_PI_180;
-      bone.angleMax = (ovx.m_maxAngle > bigBound)
-                          ? quietNaN
-                          : rest + ovx.m_maxAngle * M_PI_180;
-    }
-    chain.bones.push_back(bone);
-  }
-
-  IKTarget ikTarget;
-  ikTarget.position = target;
-  std::vector<TPointD> solved =
-      SolveIK_CCD(chain, ikTarget, 30, 0.5 * getPixelSize());
-
-  // New positions for the chain vertices; everything else keeps its current
-  // deformed position (used as parent reference during write-back).
-  std::map<int, TPointD> np;
-  for (int i = 0; i <= boneCount; ++i) np[chainVx[i]] = solved[i];
-  auto newPos = [&](int idx) {
-    auto it = np.find(idx);
-    return (it != np.end()) ? it->second : defSkel.vertex(idx).P();
-  };
-  // Absolute direction of a vertex's polar reference, using \a posFn positions.
-  auto parentDir = [&](const std::function<TPointD(int)> &posFn, int vx) {
-    for (int p = vx; p >= 0;) {
-      int pp = orig.vertex(p).parent();
-      if (pp < 0) return 0.0;
-      TPointD dd = posFn(p) - posFn(pp);
-      if (norm2(dd) > 1e-8) return atan2(dd.y, dd.x);
-      p = pp;
-    }
-    return 0.0;
-  };
-  std::function<TPointD(int)> origFn = [&](int idx) {
-    return orig.vertex(idx).P();
-  };
-  std::function<TPointD(int)> newFn = [&](int idx) { return newPos(idx); };
-
-  for (int i = 1; i <= boneCount; ++i) {
-    int w  = chainVx[i];
-    int op = orig.vertex(w).parent();
-    if (op < 0) continue;  // skeleton root has no ANGLE param
-    TPointD od  = orig.vertex(w).P() - orig.vertex(op).P();
-    double rest = wrapPi(atan2(od.y, od.x) - parentDir(origFn, op));
-    TPointD nd  = newPos(w) - newPos(op);
-    double nAbs = (norm2(nd) > 1e-8) ? atan2(nd.y, nd.x) : 0.0;
-    double newDelta = wrapPi(nAbs - parentDir(newFn, op) - rest) * M_180_PI;
-
-    SkVD *vd = m_sd->vertexDeformation(::skeletonId(), w);
-    if (!vd) continue;
-    double oldDelta = vd->m_params[SkVD::ANGLE]->getValue(frame);
-    while (newDelta - oldDelta > 180.0) newDelta -= 360.0;
-    while (newDelta - oldDelta < -180.0) newDelta += 360.0;
-
-    ::setKeyframe(vd->m_params[SkVD::ANGLE], frame);
-    vd->m_params[SkVD::ANGLE]->setValue(frame, newDelta);
-  }
-}
-
-//------------------------------------------------------------------------
-
-// SuperPlastic IK adapter (Animate mode). Writes back only per-vertex ANGLE
-// params (distances untouched) plus the free-root offset — no pin means a plain
-// root -> handle serial solve (angle bounds honored).
+// SuperPlastic IK adapter (Animate mode). Posing is always a SINGLE-JOINT,
+// local operation — never a chain solve (distributing a drag over the whole
+// root->handle chain, as the earlier CCD did, reconfigured the body
+// unpredictably).
 //
-// With a pin, the PINNED VERTEX BECOMES THE ROOT of the hierarchy for this
-// drag: it is the fixed base, the dragged handle reaches the mouse, and every
-// other vertex — including the skeleton's own root — follows freely. The result
-// is expressed back in the fixed root-down parameterization the deformer uses:
-// each vertex's ANGLE from its solved position, and the original root placed via
-// its ROOTX/ROOTY offset. That offset is exactly what lets the original root
-// move like any other vertex while the pin stays planted.
+// With NO pin: plain local handling in the ORIGINAL hierarchy — dragging a
+// vertex rotates only its own joint, descendants follow rigidly, nothing toward
+// the root moves.
+//
+// With a pin: THE PIN IS A TEMPORARY ROOT. The hierarchy is re-rooted at the
+// pin (BFS), and v is manipulated as a single joint of THAT tree: the bone
+// (reParent(v), v) rotates about reParent(v) — which stays fixed — carrying v
+// and its re-rooted subtree rigidly, while everything on the pin side (the pin
+// included) stays put. This is exactly how one manipulates a normal skeleton
+// whose root is the pinned vertex. The resulting shape is written back into the
+// deformer's fixed root-down ANGLE params; the pin's absolute planting is kept
+// per-frame at EVALUATION via its PINTX/PINTY target (applyPinConstraint), so a
+// pinned foot never drifts on the in-betweens.
 void PlasticTool::moveVertexIK_animate(double frame, int v,
                                        const TPointD &pos) {
   if (!m_sd || !skeleton()) return;
@@ -301,17 +209,21 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
 
   int pin = pinnedVertexAtFrame(frame);
   if (pin < 0 || pin == v) {
-    // No pin: root-anchored serial solve.
-    PlasticSkeleton &defSkel = deformedSkeleton();
-    std::vector<int> chainVx;
-    for (int cur = v; cur >= 0; cur = defSkel.vertex(cur).parent())
-      chainVx.push_back(cur);
-    std::reverse(chainVx.begin(), chainVx.end());  // root ... v
-    solveChainIK_animate(chainVx, pos, frame, /*useLimits*/ true);
+    // No pin (or dragging the pin itself): local single joint, original tree.
+    if (orig.vertex(v).parent() < 0) return;  // the root has no ANGLE param
+    SkVD *vd = m_sd->vertexDeformation(::skeletonId(), v);
+    if (!vd) return;
+    ::setKeyframe(vd->m_params[SkVD::ANGLE], frame);
+    if (m_keepDistance.getValue()) {
+      m_sd->updateAngle(*skeleton(), deformedSkeleton(), frame, v, pos);
+    } else {
+      ::setKeyframe(vd->m_params[SkVD::DISTANCE], frame);
+      m_sd->updatePosition(*skeleton(), deformedSkeleton(), frame, v, pos);
+    }
     return;
   }
 
-  // ---- Re-root at the pin ----
+  // ---- Pin active: re-root at the pin ----
   PlasticSkeleton &defSkel = deformedSkeleton();
   std::map<int, TPointD> curPos;
   int rootIdx = -1;
@@ -321,7 +233,6 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
     if (vt->parent() < 0) rootIdx = vt.m_idx;
   }
 
-  // Undirected adjacency, then BFS from the pin: re-rooted parent + order.
   std::map<int, std::vector<int>> adj;
   const auto &edges = defSkel.edges();
   for (auto et = edges.begin(); et != edges.end(); ++et) {
@@ -329,7 +240,6 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
     adj[et->vertex(1)].push_back(et->vertex(0));
   }
   std::map<int, int> reParent;
-  std::vector<int> order;
   {
     std::set<int> visited;
     std::queue<int> q;
@@ -339,7 +249,6 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
     while (!q.empty()) {
       int u = q.front();
       q.pop();
-      order.push_back(u);
       for (int w : adj[u])
         if (!visited.count(w)) {
           visited.insert(w);
@@ -350,60 +259,49 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
     if (!visited.count(v)) return;  // disconnected
   }
 
-  // Path pin -> handle, solved with CCD keeping the pin fixed.
-  std::vector<int> path;
-  for (int cur = v; cur >= 0; cur = reParent[cur]) path.push_back(cur);
-  std::reverse(path.begin(), path.end());  // path[0] == pin
-  int boneCount = int(path.size()) - 1;
-  if (boneCount < 1) return;
+  int rp = reParent[v];
+  if (rp < 0) return;  // v is the pin itself
+  TPointD pivot = curPos[rp];
 
-  IKChain chain;
-  for (int i = 0; i <= boneCount; ++i)
-    chain.currentPositions.push_back(curPos[path[i]]);
-  for (int i = 0; i < boneCount; ++i) {
-    IKBone bone;
-    bone.length      = norm(chain.currentPositions[i + 1] -
-                            chain.currentPositions[i]);
-    bone.parentIndex = i - 1;
-    bone.angleMin = bone.angleMax = std::numeric_limits<double>::quiet_NaN();
-    chain.bones.push_back(bone);
+  // Single-joint rotation about the pivot (the re-rooted parent), at CONSTANT
+  // bone length — v travels on a circle to follow the mouse angle. This is a
+  // pure rigid rotation of v's subtree, so it stays a valid FK configuration
+  // (all bone lengths preserved) that the deformer reproduces exactly. We do
+  // NOT translate to reach the mouse precisely: that would change one bone's
+  // length without writing its DISTANCE param, corrupting the FK rebuild (a
+  // non-uniform error the pin's translation-only constraint cannot correct,
+  // which made the whole chain toward the native root explode).
+  TPointD oldD = curPos[v] - pivot;
+  TPointD newD = pos - pivot;
+  if (norm2(oldD) < 1e-12 || norm2(newD) < 1e-12) return;
+  double theta = wrapPi(atan2(newD.y, newD.x) - atan2(oldD.y, oldD.x));
+  double c = cos(theta), s = sin(theta);
+  auto rotAbout = [&](const TPointD &p) {
+    TPointD d = p - pivot;
+    return pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+  };
+
+  // v's re-rooted subtree = vertices reached from v descending re-rooted edges.
+  std::set<int> moved;
+  {
+    std::queue<int> q;
+    q.push(v);
+    moved.insert(v);
+    while (!q.empty()) {
+      int u = q.front();
+      q.pop();
+      for (int w : adj[u])
+        if (reParent.count(w) && reParent[w] == u && !moved.count(w)) {
+          moved.insert(w);
+          q.push(w);
+        }
+    }
   }
-  IKTarget ikTarget;
-  ikTarget.position = pos;
-  std::vector<TPointD> solved =
-      SolveIK_CCD(chain, ikTarget, 30, 0.5 * getPixelSize());
 
-  // Desired positions: pin fixed, path from CCD, everything else follows its
-  // re-rooted parent rigidly (unmoved branches keep their relative shape).
   std::map<int, TPointD> desired = curPos;
-  std::map<int, double> frameRot;
-  frameRot[pin] = 0.0;
-  for (int i = 1; i <= boneCount; ++i) {
-    desired[path[i]] = solved[i];
-    TPointD od       = curPos[path[i]] - curPos[path[i - 1]];
-    TPointD nd       = solved[i] - solved[i - 1];
-    frameRot[path[i]] = wrapPi(atan2(nd.y, nd.x) - atan2(od.y, od.x));
-  }
-  for (int u : order) {
-    if (frameRot.count(u)) continue;  // pin or path
-    int rp  = reParent[u];
-    double r = frameRot[rp];
-    double c = cos(r), s = sin(r);
-    TPointD off  = curPos[u] - curPos[rp];
-    desired[u]   = desired[rp] + TPointD(c * off.x - s * off.y,
-                                         s * off.x + c * off.y);
-    frameRot[u]  = r;
-  }
+  for (int u : moved) desired[u] = rotAbout(curPos[u]);
 
   // ---- Write-back into the fixed root-down parameterization ----
-  // Only the shape (relative angles) is stored; the pin's absolute planting is
-  // handled per-frame at evaluation via its PINTX/PINTY target, so the original
-  // root moves freely via that eval-time shift rather than a written offset.
-  int skelId = ::skeletonId();
-
-  // ANGLE of every non-root vertex whose relative angle actually changed.
-  // Only the shape (relative angles) is stored; the pin's absolute planting is
-  // handled per-frame at evaluation via its PINTX/PINTY target.
   auto parentDir = [&](const std::function<TPointD(int)> &posFn, int vx) {
     for (int p = vx; p >= 0;) {
       int pp = orig.vertex(p).parent();
@@ -419,11 +317,11 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
   };
   std::function<TPointD(int)> desFn = [&](int idx) { return desired[idx]; };
 
+  int skelId = ::skeletonId();
   for (auto &kv : curPos) {
-    int w = kv.first;
-    if (w == rootIdx) continue;
+    int w  = kv.first;
     int op = orig.vertex(w).parent();
-    if (op < 0) continue;
+    if (op < 0) continue;  // skeleton root has no ANGLE param
     TPointD od  = orig.vertex(w).P() - orig.vertex(op).P();
     double rest = wrapPi(atan2(od.y, od.x) - parentDir(origFn, op));
     TPointD nd  = desired[w] - desired[op];
@@ -435,7 +333,7 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
     double oldDelta = vd->m_params[SkVD::ANGLE]->getValue(frame);
     while (newDelta - oldDelta > 180.0) newDelta -= 360.0;
     while (newDelta - oldDelta < -180.0) newDelta += 360.0;
-    if (fabs(newDelta - oldDelta) < 1e-4) continue;  // rigidly-following branch
+    if (fabs(newDelta - oldDelta) < 1e-4) continue;  // unchanged joint
 
     ::setKeyframe(vd->m_params[SkVD::ANGLE], frame);
     vd->m_params[SkVD::ANGLE]->setValue(frame, newDelta);
