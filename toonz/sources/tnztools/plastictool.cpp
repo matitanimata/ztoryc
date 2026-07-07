@@ -161,8 +161,10 @@ void setKeyframe(SkVD *vd, double frame) {
   // type (by user preference, which is TnzLib stuff), etc...
 
   // Traverse vd's parameters. In case they don't have a keyframe at current
-  // frame, add one. PIN excluded: the IK anchor is toggled explicitly, Set Key
-  // must not create anchor keyframes.
+  // frame, add one. PIN/PINTX/PINTY excluded: the anchor is toggled explicitly
+  // (with its own Constant keys). A global Set Key must NOT re-key them — it
+  // would capture the CURRENT constant-extrapolated target and propagate a stale
+  // pin position onto later frames.
   for (int p = 0; p < SkVD::PIN; ++p) setKeyframe(vd->m_params[p], frame);
 }
 

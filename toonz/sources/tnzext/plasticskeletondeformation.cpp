@@ -82,7 +82,9 @@ SkVD::Keyframe SkVD::getKeyframe(double frame) const {
 
 void SkVD::setKeyframe(double frame) {
   // Only the transform params (ANGLE/DISTANCE/SO) — PIN is an IK anchor toggle
-  // and must NOT get a spurious keyframe from a plain Set Key.
+  // and must NOT get a spurious keyframe from a plain Set Key. NOTE: the tool's
+  // Set Key does NOT go through here (it uses a TnzLib KeyframeSetter helper in
+  // plastictool.cpp); the pin-locking on global key lives there.
   for (int p = 0; p < PIN; ++p)
     m_params[p]->setKeyframe(m_params[p]->getKeyframeAt(frame));
 }

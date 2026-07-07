@@ -377,28 +377,41 @@ void PlasticTool::togglePinAtCurrentFrame() {
   m_sd->getKeyframeAt(frame, undo->m_oldValues);
 
   bool pinned = vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5;
+
+  // Capture the planting target BEFORE flagging the pin: read where the vertex
+  // is right now (still unpinned at this frame), from a fresh evaluation. If we
+  // set PIN first, the eval would re-plant this vertex on its OLD target (a
+  // leftover Constant key from an earlier pin range) and we'd capture that stale
+  // spot instead of the current one — which is exactly what shifted everything.
+  bool capture =
+      !pinned && vd->m_params[SkVD::PINTX] && vd->m_params[SkVD::PINTY];
+  TPointD target;
+  if (capture) {
+    m_deformedSkeleton.invalidate();
+    target = deformedSkeleton().vertex(v).P();
+  }
+
+  // First-ever pin key on this vertex, past frame 1: anchor a 0 at frame 1 so
+  // the pin is confined to [frame, ...). Without it a lone "on" key extrapolates
+  // constant backwards and the foot reads as pinned on every earlier frame too.
+  if (!pinned && frame > 1.0 &&
+      vd->m_params[SkVD::PIN]->getKeyframeCount() == 0) {
+    TDoubleKeyframe base(1.0, 0.0);
+    base.m_type = base.m_prevType = TDoubleKeyframe::Constant;
+    vd->m_params[SkVD::PIN]->setKeyframe(base);
+  }
   // Constant (step) interpolation so the anchor holds between keyframes.
   TDoubleKeyframe kf(frame, pinned ? 0.0 : 1.0);
   kf.m_type = kf.m_prevType = TDoubleKeyframe::Constant;
   vd->m_params[SkVD::PIN]->setKeyframe(kf);
 
-  // When pinning ON, record where each ACTIVE pin is right now as its planting
-  // target — the new one plus every already-active pin. Re-anchoring them all
-  // at this frame keeps the whole set self-consistent, so the rigid constraint
-  // evaluates to the identity here and adding a second pin does not disturb the
-  // pose: both pins stay exactly where they are. Constant interpolation so they
-  // hold until re-planted.
-  if (!pinned) {
-    for (int pv : pinnedVerticesAtFrame(frame)) {
-      SkVD *pvd = m_sd->vertexDeformation(::skeletonId(), pv);
-      if (!pvd || !pvd->m_params[SkVD::PINTX] || !pvd->m_params[SkVD::PINTY])
-        continue;
-      TPointD p = deformedSkeleton().vertex(pv).P();
-      for (int c : {SkVD::PINTX, SkVD::PINTY}) {
-        TDoubleKeyframe tk(frame, c == SkVD::PINTX ? p.x : p.y);
-        tk.m_type = tk.m_prevType = TDoubleKeyframe::Constant;
-        pvd->m_params[c]->setKeyframe(tk);
-      }
+  // Write the captured target (only this pin — re-anchoring others would shift
+  // them). Constant so it holds until re-planted.
+  if (capture) {
+    for (int c : {SkVD::PINTX, SkVD::PINTY}) {
+      TDoubleKeyframe tk(frame, c == SkVD::PINTX ? target.x : target.y);
+      tk.m_type = tk.m_prevType = TDoubleKeyframe::Constant;
+      vd->m_params[c]->setKeyframe(tk);
     }
   }
 
