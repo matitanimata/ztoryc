@@ -2,6 +2,7 @@
 
 // TnzCore includes
 #include "tundo.h"
+#include "tgl.h"
 
 // TnzLib includes
 #include "toonz/ikccd.h"
@@ -95,6 +96,10 @@ void PlasticTool::mouseMove_animate(const TPointD &pos, const TMouseEvent &me) {
     int v = deformedSkeleton().closestVertex(pos, &d);
     if (v >= 0 && d < highlightRadius) m_svHigh = v;
 
+    // Controller gizmo hover: handles win over vertices, like the click does
+    m_ctrlHighlight = controllerHitTest_animate(pos);
+    if (m_ctrlHighlight != CtrlNone) m_svHigh = -1;
+
     invalidate();
   }
 }
@@ -106,29 +111,28 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
   // Track mouse position
   m_pressedPos = m_pos = pos;
 
-  // Squash & stretch controller gizmo, hit-tested FIRST (it must not touch
-  // the vertex selection). The controller is an affine ON TOP of the
-  // skeleton: its pivot follows the deformed root (plus a keyframeable
-  // offset) and its scale handle hangs diagonally off the pivot.
-  // Ctrl+drag moves the pivot itself (with vertex snapping).
-  TPointD gizmoC;
-  if (m_sd && squashPivot_animate(gizmoC)) {
-    double pixelSize = getPixelSize();
-    SkVD *vd         = rootVd_animate();
-    TPointD h        = gizmoC + TPointD(40.0 * pixelSize, 40.0 * pixelSize);
-    if (vd && norm(pos - h) < 8.0 * pixelSize) {
-      m_scaleDragging   = true;
+  // Controller gizmo, hit-tested FIRST (it must not touch the vertex
+  // selection): a full Animate-tool replica whose pivot follows the deformed
+  // root. All controller values at press time are the drag baselines.
+  int device = m_sd ? controllerHitTest_animate(pos) : (int)CtrlNone;
+  if (device != CtrlNone) {
+    SkVD *vd = rootVd_animate();
+    TPointD gizmoC;
+    if (vd && squashPivot_animate(gizmoC)) {
+      auto oldVal = [&](SkVD::Params p, double def) {
+        return vd->m_params[p] ? vd->m_params[p]->getValue(::frame()) : def;
+      };
+      m_ctrlDevice      = device;
       m_scaleDragCenter = gizmoC;
-      m_scaleOldX       = vd->m_params[SkVD::SCALEX]->getValue(::frame());
-      m_scaleOldY       = vd->m_params[SkVD::SCALEY]->getValue(::frame());
+      m_scaleOldX       = oldVal(SkVD::SCALEX, 1.0);
+      m_scaleOldY       = oldVal(SkVD::SCALEY, 1.0);
+      m_ctrlOldRot      = oldVal(SkVD::ROT, 0.0);
+      m_ctrlOldTX       = oldVal(SkVD::TRANSX, 0.0);
+      m_ctrlOldTY       = oldVal(SkVD::TRANSY, 0.0);
+      m_ctrlOldShX      = oldVal(SkVD::SHEARX, 0.0);
+      m_ctrlOldShY      = oldVal(SkVD::SHEARY, 0.0);
       m_sd->getKeyframeAt(frame(), m_pressedSkDF);  // undo baseline
       invalidate();
-      return;
-    }
-    if (vd && me.isCtrlPressed()) {
-      m_pivotDragging = true;
-      m_sd->getKeyframeAt(frame(), m_pressedSkDF);  // undo baseline
-      pivotDrag_animate(pos);
       return;
     }
   }
@@ -152,12 +156,8 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
   // Track mouse position
   m_pos = pos;
 
-  if (m_scaleDragging) {
-    scaleDrag_animate(pos, me);
-    return;
-  }
-  if (m_pivotDragging) {
-    pivotDrag_animate(pos);
+  if (m_ctrlDevice != CtrlNone) {
+    controllerDrag_animate(pos, me);
     return;
   }
 
@@ -275,6 +275,9 @@ void PlasticTool::scaleDrag_animate(const TPointD &pos, const TMouseEvent &me) {
 
   int constraint = m_scaleConstraint.getIndex();  // 0 none, 1 A/R, 2 mass
   if (constraint == 0 && me.isShiftPressed()) constraint = 1;
+  // The main scale handle is UNIFORM (like the Animate tool's "Scale"): free
+  // per-axis scaling belongs to the offset square (CtrlScaleXY)
+  if (m_ctrlDevice == CtrlScale && constraint == 0) constraint = 1;
 
   if (constraint == 1) {
     TPointD c = pos - m_pressedPos;
@@ -347,6 +350,267 @@ void PlasticTool::pivotDrag_animate(const TPointD &pos) {
   l_suspendParamsObservation = false;
 
   invalidate();
+}
+
+//------------------------------------------------------------------------
+
+// Full controller drag dispatch: position/rotation/shear here, pivot and
+// scale in their dedicated handlers. Math replicated from the Animate tool's
+// DragPositionTool / DragRotationTool / DragShearTool (Shift = axis lock,
+// Alt = precise 1/10).
+void PlasticTool::controllerDrag_animate(const TPointD &pos,
+                                         const TMouseEvent &me) {
+  switch (m_ctrlDevice) {
+  case CtrlPivot:
+    pivotDrag_animate(pos);
+    return;
+  case CtrlScale:
+  case CtrlScaleXY:
+    scaleDrag_animate(pos, me);
+    return;
+  case CtrlMove:
+  case CtrlRot:
+  case CtrlShear:
+    break;
+  default:
+    return;
+  }
+
+  SkVD *vd = rootVd_animate();
+  if (!vd) return;
+  double frame = ::frame();
+
+  int pA = -1, pB = -1;
+  double vA = 0.0, vB = 0.0;
+
+  if (m_ctrlDevice == CtrlMove) {
+    TPointD d = pos - m_pressedPos;
+    if (me.isShiftPressed()) {
+      if (fabs(d.x) > fabs(d.y))
+        d.y = 0.0;
+      else
+        d.x = 0.0;
+    }
+    if (me.isAltPressed()) d = 0.1 * d;
+    pA = SkVD::TRANSX, vA = m_ctrlOldTX + d.x;
+    pB = SkVD::TRANSY, vB = m_ctrlOldTY + d.y;
+  } else if (m_ctrlDevice == CtrlRot) {
+    TPointD a = m_pressedPos - m_scaleDragCenter;
+    TPointD b = pos - m_scaleDragCenter;
+    if (norm2(a) < 1e-8 || norm2(b) < 1e-8) return;
+    double ang = atan2(cross(a, b), a * b) * (180.0 / M_PI);
+    if (me.isAltPressed()) ang *= 0.1;
+    pA = SkVD::ROT, vA = m_ctrlOldRot + ang;
+  } else {  // CtrlShear
+    TPointD a = m_pressedPos - m_scaleDragCenter;
+    TPointD b = pos - m_scaleDragCenter;
+    double fx = a.x - b.x, fy = b.y - a.y;
+    if (me.isShiftPressed()) {
+      if (fabs(fx) > fabs(fy))
+        fy = 0.0;
+      else
+        fx = 0.0;
+    }
+    if (me.isAltPressed()) fx *= 0.1, fy *= 0.1;
+    pA = SkVD::SHEARX, vA = m_ctrlOldShX + 0.01 * fx;
+    pB = SkVD::SHEARY, vB = m_ctrlOldShY + 0.01 * fy;
+  }
+
+  l_suspendParamsObservation = true;
+  if (pA >= 0 && vd->m_params[pA]) {
+    ::setKeyframe(vd->m_params[pA], frame);
+    vd->m_params[pA]->setValue(frame, vA);
+  }
+  if (pB >= 0 && vd->m_params[pB]) {
+    ::setKeyframe(vd->m_params[pB], frame);
+    vd->m_params[pB]->setValue(frame, vB);
+  }
+  l_suspendParamsObservation = false;
+
+  invalidate();
+}
+
+//------------------------------------------------------------------------
+
+// Hit-test of the controller gizmo handles, in tool-local coordinates.
+// Same layout as the Animate tool: rotation on top, scale bottom-left (plus
+// the free-axis square), shear bottom-right, move at the bottom, pivot ring
+// around the center (the inner area is left to vertex picking: the pivot
+// usually sits on the root vertex).
+int PlasticTool::controllerHitTest_animate(const TPointD &pos) {
+  if (!m_sd) return CtrlNone;
+  TPointD C;
+  if (!squashPivot_animate(C)) return CtrlNone;
+
+  double u           = getPixelSize();
+  const double delta = 30.0;
+
+  TPointD rotP   = C + u * TPointD(0, delta);
+  TPointD scaleP = C + u * TPointD(-delta, -delta);
+  TPointD sxyP   = scaleP + u * TPointD(10, 10);
+  TPointD shearP = C + u * TPointD(delta, -delta);
+  TPointD moveP  = C + u * TPointD(0, -delta);
+
+  if (norm(pos - rotP) < 8.0 * u) return CtrlRot;
+  if (norm(pos - sxyP) < 5.0 * u) return CtrlScaleXY;
+  if (norm(pos - scaleP) < 5.0 * u) return CtrlScale;
+  if (norm(pos - shearP) < 8.0 * u) return CtrlShear;
+  if (norm(pos - moveP) < 8.0 * u) return CtrlMove;
+
+  double dc = norm(pos - C);
+  if (dc > 5.0 * u && dc < 12.0 * u) return CtrlPivot;
+
+  return CtrlNone;
+}
+
+//------------------------------------------------------------------------
+
+namespace {
+
+// Same dynamic-contrast scheme as the Ztoryc Animate tool gizmo (edittool):
+// complementary hue with luminance forced opposite to the sampled background;
+// the highlighted variant is a vivid distinct hue at mid lightness.
+TPixel32 ctrlContrastColor(const TPixel32 &bg, bool highlighted) {
+  double r = bg.r / 255.0, g = bg.g / 255.0, b = bg.b / 255.0;
+  double mx = std::max({r, g, b}), mn = std::min({r, g, b}), d = mx - mn;
+  double h = 0.0, s = 0.0, l = (mx + mn) / 2.0;
+  if (d > 1e-6) {
+    s = (l > 0.5) ? d / (2.0 - mx - mn) : d / (mx + mn);
+    if (mx == r)
+      h = (g - b) / d + (g < b ? 6.0 : 0.0);
+    else if (mx == g)
+      h = (b - r) / d + 2.0;
+    else
+      h = (r - g) / d + 4.0;
+    h /= 6.0;
+  }
+  double L = 0.299 * r + 0.587 * g + 0.114 * b;
+  double nh, ns, nl;
+  if (highlighted) {
+    nh = h + 0.5 + 0.42;
+    ns = 0.95;
+    nl = (L > 0.5) ? 0.42 : 0.66;
+  } else {
+    nh = h + 0.5;
+    ns = (s < 0.18) ? 0.0 : 0.85;
+    nl = (L > 0.5) ? 0.14 : 0.94;
+  }
+  nh -= std::floor(nh);
+  auto hue = [](double p, double q, double t) {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6.0) return p + (q - p) * 6 * t;
+    if (t < 1 / 2.0) return q;
+    if (t < 2 / 3.0) return p + (q - p) * (2 / 3.0 - t) * 6;
+    return p;
+  };
+  double q  = nl < 0.5 ? nl * (1 + ns) : nl + ns - nl * ns;
+  double p  = 2 * nl - q;
+  double rr = hue(p, q, nh + 1 / 3.0), gg = hue(p, q, nh),
+         bb = hue(p, q, nh - 1 / 3.0);
+  return TPixel32(int(rr * 255), int(gg * 255), int(bb * 255), 255);
+}
+
+}  // namespace
+
+// Draws the full controller gizmo with the Animate-tool dynamic colors: the
+// framebuffer is sampled under the pivot BEFORE drawing, so the gizmo
+// contrasts with the artwork behind it; the hovered/dragged handle uses the
+// highlighted variant.
+void PlasticTool::drawController_animate(double pixelSize) {
+  TPointD C;
+  if (!squashPivot_animate(C)) return;
+
+  double u           = pixelSize;
+  const double delta = 30.0;
+
+  // Sample the background under the pivot (viewer window coordinates)
+  TPixel32 bg(128, 128, 128, 255);
+  if (m_viewer) {
+    TPointD wc  = getMatrix() * C;
+    TPointD p   = m_viewer->worldToPos(wc);
+    int dpr     = m_viewer->getDevPixRatio();
+    GLint vp[4] = {0, 0, 0, 0};
+    glGetIntegerv(GL_VIEWPORT, vp);
+    const int S = 7;
+    int x       = vp[0] + (int)(p.x * dpr);
+    int y       = vp[1] + vp[3] - (int)(p.y * dpr);
+    x           = std::max(vp[0], std::min(x, vp[0] + vp[2] - S));
+    y           = std::max(vp[1], std::min(y, vp[1] + vp[3] - S));
+    unsigned char buf[S * S * 4];
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(x, y, S, S, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    long r = 0, g = 0, b = 0;
+    const int n = S * S;
+    for (int i = 0; i < n; ++i) {
+      r += buf[i * 4];
+      g += buf[i * 4 + 1];
+      b += buf[i * 4 + 2];
+    }
+    bg = TPixel32(int(r / n), int(g / n), int(b / n), 255);
+  }
+  const TPixel32 normal = ctrlContrastColor(bg, false);
+  const TPixel32 hi     = ctrlContrastColor(bg, true);
+
+  // While dragging, only the active device is marked; otherwise the hover
+  int mark      = (m_ctrlDevice != CtrlNone) ? m_ctrlDevice : m_ctrlHighlight;
+  auto colorFor = [&](int device) {
+    const TPixel32 &c = (mark == device) ? hi : normal;
+    glColor4ub(c.r, c.g, c.b, 255);
+  };
+  auto normalColor = [&]() { glColor4ub(normal.r, normal.g, normal.b, 255); };
+
+  glLineWidth(1.5f * m_viewer->getDevPixRatio());
+
+  TPointD rotP   = C + u * TPointD(0, delta);
+  TPointD scaleP = C + u * TPointD(-delta, -delta);
+  TPointD sxyP   = scaleP + u * TPointD(10, 10);
+  TPointD shearP = C + u * TPointD(delta, -delta);
+  TPointD moveP  = C + u * TPointD(0, -delta);
+
+  // Connecting spokes first, in the normal color
+  normalColor();
+  tglDrawSegment(rotP, C);
+  tglDrawSegment(scaleP, C);
+  tglDrawSegment(shearP, C);
+  tglDrawSegment(moveP, C);
+
+  // Pivot: double circle (drag the ring to move it, with vertex snapping)
+  colorFor(CtrlPivot);
+  tglDrawCircle(C, 10.0 * u);
+  tglDrawCircle(C, 8.0 * u);
+
+  // Rotation: disk on top
+  colorFor(CtrlRot);
+  tglDrawDisk(rotP, 5.0 * u);
+
+  // Scale: uniform square + free-axis square, bottom-left
+  double r3 = 3.0 * u;
+  colorFor(CtrlScale);
+  tglDrawRect(scaleP.x - r3, scaleP.y - r3, scaleP.x + r3, scaleP.y + r3);
+  colorFor(CtrlScaleXY);
+  tglDrawRect(sxyP.x - r3, sxyP.y - r3, sxyP.x + r3, sxyP.y + r3);
+
+  // Shear: parallelogram, bottom-right
+  colorFor(CtrlShear);
+  glBegin(GL_LINE_LOOP);
+  glVertex2d(shearP.x - u * 6, shearP.y - u * 3);
+  glVertex2d(shearP.x - u * 3, shearP.y - u * 3);
+  glVertex2d(shearP.x + u * 6, shearP.y + u * 3);
+  glVertex2d(shearP.x + u * 3, shearP.y + u * 3);
+  glEnd();
+
+  // Move: filled diamond at the bottom
+  colorFor(CtrlMove);
+  double r4 = 4.0 * u;
+  glBegin(GL_QUADS);
+  glVertex2d(moveP.x, moveP.y - r4);
+  glVertex2d(moveP.x + r4, moveP.y);
+  glVertex2d(moveP.x, moveP.y + r4);
+  glVertex2d(moveP.x - r4, moveP.y);
+  glEnd();
+
+  glLineWidth(1.0f);
 }
 
 //------------------------------------------------------------------------
@@ -1127,11 +1391,11 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
   // Track mouse position
   m_pos = pos;
 
-  // End of a controller-gizmo drag (scale handle or pivot): own undo path,
-  // independent of the vertex selection; the global-key logic is skipped on
-  // purpose (the controller is not part of the vertex transform params).
-  bool gizmoDrag  = m_scaleDragging || m_pivotDragging;
-  m_scaleDragging = m_pivotDragging = false;
+  // End of a controller-gizmo drag: own undo path, independent of the vertex
+  // selection; the global-key logic is skipped on purpose (the controller is
+  // not part of the vertex transform params).
+  bool gizmoDrag = (m_ctrlDevice != CtrlNone);
+  m_ctrlDevice   = CtrlNone;
 
   if (gizmoDrag && m_dragged && m_sd) {
     AnimateValuesUndo *undo =
@@ -1318,41 +1582,10 @@ void PlasticTool::draw_animate() {
     }
     glLineWidth(1.0f);
 
-    // SuperPlastic squash & stretch controller gizmo: pivot crosshair (it
-    // follows the deformed root + keyframeable offset; Ctrl+drag moves it,
-    // snapping to vertices) and an Animate-tool style scale handle hanging
-    // diagonally off it (Shift = A/R, Alt = precise, "Maintain:" combo).
-    TPointD gizmoC;
-    if (squashPivot_animate(gizmoC)) {
-      double cr = 7.0 * pixelSize;
-      glColor4ub(255, 160, 0, m_pivotDragging ? 255 : 200);
-      glBegin(GL_LINE_LOOP);  // pivot circle
-      for (int i = 0; i < 24; ++i) {
-        double a = i * (2.0 * M_PI / 24.0);
-        glVertex2d(gizmoC.x + cr * cos(a), gizmoC.y + cr * sin(a));
-      }
-      glEnd();
-      glBegin(GL_LINES);  // pivot cross
-      glVertex2d(gizmoC.x - cr, gizmoC.y);
-      glVertex2d(gizmoC.x + cr, gizmoC.y);
-      glVertex2d(gizmoC.x, gizmoC.y - cr);
-      glVertex2d(gizmoC.x, gizmoC.y + cr);
-      glEnd();
-
-      TPointD h = gizmoC + TPointD(40.0 * pixelSize, 40.0 * pixelSize);
-      double hr = 4.0 * pixelSize;
-      glColor4ub(255, 160, 0, m_scaleDragging ? 255 : 200);
-      glBegin(GL_LINES);
-      glVertex2d(gizmoC.x, gizmoC.y);
-      glVertex2d(h.x, h.y);
-      glEnd();
-      glBegin(GL_QUADS);
-      glVertex2d(h.x - hr, h.y - hr);
-      glVertex2d(h.x + hr, h.y - hr);
-      glVertex2d(h.x + hr, h.y + hr);
-      glVertex2d(h.x - hr, h.y + hr);
-      glEnd();
-    }
+    // SuperPlastic controller gizmo: full Animate-tool replica ON TOP of the
+    // skeleton (pivot / move / rotate / scale / shear), with the dynamic
+    // background-contrast colors of the Ztoryc Animate tool.
+    drawController_animate(pixelSize);
   }
 
   drawHighlights(m_sd, &deformedSkeleton, pixelSize);

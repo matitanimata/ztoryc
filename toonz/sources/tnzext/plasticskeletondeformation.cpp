@@ -40,10 +40,12 @@ namespace {
 
 static const char *parNames[SkVD::PARAMS_COUNT] = {
     "Angle",  "Distance", "SO",     "Pin",    "PinTX",
-    "PinTY",  "ScaleX",   "ScaleY", "PivotX", "PivotY"};
+    "PinTY",  "ScaleX",   "ScaleY", "PivotX", "PivotY",
+    "TransX", "TransY",   "Rotation", "ShearX", "ShearY"};
 static const char *parMeasures[SkVD::PARAMS_COUNT] = {
-    "angle",    "fxLength", "",      "",      "fxLength",
-    "fxLength", "scale",    "scale", "fxLength", "fxLength"};
+    "angle",    "fxLength", "",         "",         "fxLength",
+    "fxLength", "scale",    "scale",    "fxLength", "fxLength",
+    "fxLength", "fxLength", "angle",    "shear",    "shear"};
 
 //------------------------------------------------------------------
 
@@ -1070,12 +1072,20 @@ TAffine PlasticSkeletonDeformation::getSquashControllerAffine(
   auto it = m_imp->m_vds.find(skel->vertex(rootIdx).name());
   if (it == m_imp->m_vds.end()) return TAffine();
   const SkVD &vd = it->m_vd;
-  if (!vd.m_params[SkVD::SCALEX] || !vd.m_params[SkVD::SCALEY])
-    return TAffine();
 
-  double sx = vd.m_params[SkVD::SCALEX]->getValue(frame);
-  double sy = vd.m_params[SkVD::SCALEY]->getValue(frame);
-  if (fabs(sx - 1.0) <= 1e-9 && fabs(sy - 1.0) <= 1e-9) return TAffine();
+  auto val = [&vd, frame](SkVD::Params p, double def) {
+    return vd.m_params[p] ? vd.m_params[p]->getValue(frame) : def;
+  };
+
+  double sx  = val(SkVD::SCALEX, 1.0), sy = val(SkVD::SCALEY, 1.0);
+  double rot = val(SkVD::ROT, 0.0);
+  double shx = val(SkVD::SHEARX, 0.0), shy = val(SkVD::SHEARY, 0.0);
+  double tx  = val(SkVD::TRANSX, 0.0), ty = val(SkVD::TRANSY, 0.0);
+
+  if (fabs(sx - 1.0) <= 1e-9 && fabs(sy - 1.0) <= 1e-9 &&
+      fabs(rot) <= 1e-9 && fabs(shx) <= 1e-9 && fabs(shy) <= 1e-9 &&
+      fabs(tx) <= 1e-9 && fabs(ty) <= 1e-9)
+    return TAffine();
 
   // Degenerate/negative scales would collapse or flip the mesh: clamp
   sx = std::max(sx, 0.01);
@@ -1089,12 +1099,13 @@ TAffine PlasticSkeletonDeformation::getSquashControllerAffine(
   if (deformed.empty()) return TAffine();
 
   TPointD C = deformed.vertex(rootIdx).P();
-  if (vd.m_params[SkVD::PIVOTX])
-    C.x += vd.m_params[SkVD::PIVOTX]->getValue(frame);
-  if (vd.m_params[SkVD::PIVOTY])
-    C.y += vd.m_params[SkVD::PIVOTY]->getValue(frame);
+  C.x += val(SkVD::PIVOTX, 0.0);
+  C.y += val(SkVD::PIVOTY, 0.0);
 
-  return TTranslation(C) * TScale(sx, sy) * TTranslation(-C);
+  // Same composition order as the Toonz stage placement: translation, then
+  // rotation, shear and scale about the pivot
+  return TTranslation(tx, ty) * TTranslation(C) * TRotation(rot) *
+         TShear(shx, shy) * TScale(sx, sy) * TTranslation(-C);
 }
 
 //------------------------------------------------------------------

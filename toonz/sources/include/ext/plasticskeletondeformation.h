@@ -78,6 +78,11 @@ public:
                 //!< the DEFORMED root position: the pivot follows the
                 //!< character and can be moved/animated (default 0 = pivot on
                 //!< the root vertex).
+    TRANSX,     //!< Controller position offset (composed after the
+    TRANSY,     //!< pivot-anchored transform).
+    ROT,        //!< Controller rotation (degrees) about the pivot.
+    SHEARX,     //!< Controller shear about the pivot.
+    SHEARY,
     PARAMS_COUNT
   };
 

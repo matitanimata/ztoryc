@@ -159,13 +159,25 @@ private:
       m_pressedVxsPos;   //!< Position of selected vertices at mouse press
   SkDKey m_pressedSkDF;  //!< Skeleton deformation keyframes at mouse press
 
-  // SuperPlastic squash & stretch gizmo (Animate-tool style controller ON TOP
-  // of the skeleton: scale handle + keyframeable pivot following the root)
-  bool m_scaleDragging = false;  //!< Whether the scale handle is being dragged
-  bool m_pivotDragging = false;  //!< Whether the pivot is being moved (Ctrl)
-  TPointD m_scaleDragCenter;     //!< Controller pivot position at press
-  double m_scaleOldX = 1.0,      //!< SCALEX/SCALEY values at press time
-      m_scaleOldY    = 1.0;
+  // SuperPlastic controller gizmo: a full Animate-tool replica ON TOP of the
+  // skeleton (position/rotation/scale/shear about a keyframeable pivot that
+  // follows the deformed root), with per-handle hover highlight and dynamic
+  // contrast colors like the Ztoryc Animate tool gizmo.
+  enum SquashCtrlDevice {
+    CtrlNone = 0,
+    CtrlPivot,    //!< double circle at the pivot: moves the pivot (snaps)
+    CtrlMove,     //!< bottom handle: TRANSX/TRANSY
+    CtrlRot,      //!< top handle: ROT about the pivot
+    CtrlScale,    //!< bottom-left square: uniform scale (Mass via combo)
+    CtrlScaleXY,  //!< offset square: free per-axis scale
+    CtrlShear     //!< bottom-right parallelogram: SHEARX/SHEARY
+  };
+  int m_ctrlDevice    = CtrlNone;  //!< Handle being dragged
+  int m_ctrlHighlight = CtrlNone;  //!< Handle under the mouse
+  TPointD m_scaleDragCenter;       //!< Controller pivot position at press
+  double m_scaleOldX = 1.0,        //!< Controller values at press time
+      m_scaleOldY = 1.0, m_ctrlOldRot = 0.0, m_ctrlOldTX = 0.0,
+         m_ctrlOldTY = 0.0, m_ctrlOldShX = 0.0, m_ctrlOldShY = 0.0;
 
   // Selection/Highlighting-related vars
 
@@ -362,8 +374,11 @@ protected:
                                const std::map<int, TPointD> &curPos,
                                const std::map<int, TPointD> &desired);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
+  void controllerDrag_animate(const TPointD &pos, const TMouseEvent &me);
   void scaleDrag_animate(const TPointD &pos, const TMouseEvent &me);
   void pivotDrag_animate(const TPointD &pos);
+  int controllerHitTest_animate(const TPointD &pos);  //!< SquashCtrlDevice
+  void drawController_animate(double pixelSize);
   SkVD *rootVd_animate(int *rootIdx = 0);  //!< ROOT vertex's deformation
   bool squashPivot_animate(TPointD &C);    //!< controller pivot (local coords)
 
