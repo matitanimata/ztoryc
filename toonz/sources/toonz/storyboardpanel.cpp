@@ -4426,11 +4426,28 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
 // ── UndoBoardState ────────────────────────────────────────────────────────────
 
 void UndoBoardState::undo() const {
+  // Levels must be back in the cast before the columns that reference them.
+  if (!m_removedLevels.empty()) {
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    TLevelSet *ls     = scene ? scene->getLevelSet() : nullptr;
+    if (ls)
+      for (const TXshLevelP &lvl : m_removedLevels)
+        if (!ls->getLevel(lvl->getName())) ls->insertLevel(lvl.getPointer());
+  }
   m_panel->restoreFromSnapshot(m_before);
 }
 
 void UndoBoardState::redo() const {
   m_panel->restoreFromSnapshot(m_after);
+  // Drop them from the cast again once nothing exposes them; the smart
+  // pointers here keep the objects alive for a later undo.
+  if (!m_removedLevels.empty()) {
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    TLevelSet *ls     = scene ? scene->getLevelSet() : nullptr;
+    if (ls)
+      for (const TXshLevelP &lvl : m_removedLevels)
+        ls->removeLevel(lvl.getPointer(), false);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4457,6 +4474,30 @@ void StoryboardPanel::onDeleteShot() {
 
   disconnect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged, this, &StoryboardPanel::onXsheetChanged);
 
+  // Levels exposed by the shots being deleted: their sub-scene child level plus
+  // everything used inside it (the OVL drawings).  Collected BEFORE the columns
+  // go away; afterwards we drop from the cast only those left with no user, so
+  // deleting a shot frees its level name again instead of leaving an orphan
+  // that later forces export-to-board to disambiguate (or, before the guard,
+  // to hang).  Shots sharing a level (Copy) keep it alive via isLevelUsed().
+  std::set<TXshLevel *> shotLevels;
+  {
+    ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+    TXsheet *top    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
+    if (top) {
+      int frameCount = top->getFrameCount();
+      for (int col : xshCols)
+        for (int r = 0; r <= frameCount; r++) {
+          TXshCell cell = top->getCell(r, col);
+          if (cell.isEmpty() || !cell.m_level) continue;
+          shotLevels.insert(cell.m_level.getPointer());
+          if (TXshChildLevel *cl = cell.m_level->getChildLevel())
+            cl->getXsheet()->getUsedLevels(shotLevels);
+          break;  // one cell is enough: the column exposes a single sub-scene
+        }
+    }
+  }
+
   for (int col : xshCols) {
     // Cerca il board shot corrispondente a questa colonna xsheet.
     int si = -1;
@@ -4482,11 +4523,27 @@ void StoryboardPanel::onDeleteShot() {
   renumberAll();
   ZtoryModel::instance()->resequenceXsheet();
   rebuildGrid();
+
+  // Purge the now-unused levels from the cast (kept alive by the undo item).
+  std::vector<TXshLevelP> removedLevels;
+  {
+    ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+    TXsheet *top    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
+    TLevelSet *ls   = scn ? scn->getLevelSet() : nullptr;
+    if (top && ls)
+      for (TXshLevel *lvl : shotLevels) {
+        if (!lvl || top->isLevelUsed(lvl)) continue;
+        removedLevels.push_back(TXshLevelP(lvl));
+        ls->removeLevel(lvl, false);  // keep alive: the undo item owns it now
+      }
+  }
+
   saveZtoryc();
 
   auto after = captureSnapshot();
   TUndoManager::manager()->add(
-      new UndoBoardState(this, tr("Delete Shot"), std::move(before), std::move(after)));
+      new UndoBoardState(this, tr("Delete Shot"), std::move(before), std::move(after),
+                         std::move(removedLevels)));
 }
 
 void StoryboardPanel::onAddShot() {
