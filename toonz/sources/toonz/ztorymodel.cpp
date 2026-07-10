@@ -8,6 +8,7 @@
 #include "toonz/txshcell.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/levelproperties.h"   // LevelProperties (export-to-board level)
+#include "toonz/levelset.h"          // TLevelSet (unique level name check)
 #include "toonz/stage.h"             // Stage::standardDpi
 #include "toonz/tcamera.h"           // TCamera dpi for export-to-board
 #include "trasterimage.h"            // TRasterImageP (export-to-board frames)
@@ -1393,14 +1394,23 @@ void ZtoryModel::addShotFromRasters(const QString &name,
   if (baseLabel.isEmpty()) baseLabel = "thumb";
   std::wstring levelName = baseLabel.toStdWString();
   {
-    auto existsOnDisk = [&](const std::wstring &nm) {
+    // A name is unusable if it is already loaded in the scene's level set (a
+    // level can exist in RAM without being on disk yet) or its default path
+    // exists on disk.
+    auto nameTaken = [&](const std::wstring &nm) {
+      if (scene->getLevelSet() && scene->getLevelSet()->getLevel(nm))
+        return true;
       return TSystem::doesExistFileOrLevel(
           scene->decodeFilePath(scene->getDefaultLevelPath(OVL_XSHLEVEL, nm)));
     };
     int guard = 0;
-    while (existsOnDisk(levelName) && guard < 25)
+    while (nameTaken(levelName) && guard < 25)
       levelName =
           baseLabel.toStdWString() + std::wstring(1, (wchar_t)(L'B' + guard++));
+    // Handing createNewLevel a taken name is the hang described above: its own
+    // "_N" disambiguation collapses back to the same level name and never
+    // terminates.  Give up cleanly instead of freezing the application.
+    if (nameTaken(levelName)) return rollback();
   }
 
   TXshLevel *rl =
