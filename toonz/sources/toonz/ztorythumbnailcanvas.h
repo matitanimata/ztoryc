@@ -33,6 +33,8 @@
 #include <QTransform>
 #include <QVector>
 
+#include <map>
+#include <utility>
 #include <vector>
 
 class QTimer;
@@ -186,9 +188,18 @@ private:
   void liftFloatLasso(const QVector<QPointF> &worldPath, bool copy);
   bool handleTransformKey(QKeyEvent *e);  // → true if the key was consumed
 
-  // --- Undo / redo (full-canvas snapshots) ---------------------------------
+  // --- Undo / redo ----------------------------------------------------------
+  // A snapshot is either a full-canvas copy (structural edits: resize, paste,
+  // transform…) or, for brush strokes, just the tiles the stroke touched.
+  // Cloning the whole surface per stroke cost ~31 MB on a 4x15 grid — the hitch
+  // at stroke start, and up to 500 MB of history.
+  struct Patch {
+    TPoint pos;       // top-left of the tile in raster coords
+    TRaster32P before;
+  };
   struct Snapshot {
-    TRaster32P ras;
+    TRaster32P ras;   // null when this is a stroke (patches) snapshot
+    std::vector<Patch> patches;
     int cols, rows;
     QVector<QRect> merges;
     double boxAspect;  // camera aspect the raster was laid out at — restored
@@ -199,6 +210,17 @@ private:
   void undo();
   void redo();
   void restoreSnapshot(const Snapshot &s);
+  Snapshot makeMetaSnapshot() const;      // grid metadata, no pixels
+  void applyPatches(const std::vector<Patch> &patches);
+  std::vector<Patch> capturePatchesAt(const std::vector<Patch> &like) const;
+  void trimHistory();
+
+  // Stroke tile recording (copy-on-write, driven by askWrite()).
+  bool askWrite(const TRect &rect) override;
+  void beginStrokeRecording();
+  void endStrokeRecording();
+  bool m_recordingStroke = false;
+  std::map<std::pair<int, int>, TRaster32P> m_strokeTiles;  // tile key → before
   bool handleUndoKey(QKeyEvent *e);  // Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z
   QTransform floatLocalToWorld() const;   // base-image px → world coords
   QPointF floatHandleWorld(int h) const;  // h: 0..3 corners, 4 = rotate handle

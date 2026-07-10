@@ -686,7 +686,9 @@ void ZtoryThumbnailCanvas::beginStroke(const QPointF &widgetPos, double pressure
   const QPointF w = widgetToWorld(widgetPos);
   if (w.x() < 0 || w.y() < 0 || w.x() > gridW() || w.y() > gridH()) return;
 
-  pushUndo();   // snapshot before the stroke modifies the canvas
+  // Record only the tiles the stroke touches (see askWrite): a full-canvas
+  // clone here was the stall at stroke start.
+  beginStrokeRecording();
   setFocus();   // so Cmd-Z reaches us right after drawing
 
   // Erasers paint white onto the opaque page; brushes use the chosen ink.
@@ -732,6 +734,7 @@ void ZtoryThumbnailCanvas::endStroke() {
   delete m_brush;
   m_brush    = nullptr;
   m_stroking = false;
+  endStrokeRecording();  // turn the touched tiles into one undo entry
   update();
   schedulePersistSave();
 }
@@ -1181,12 +1184,107 @@ void ZtoryThumbnailCanvas::deleteFloat() {
 // Undo / redo — full-canvas snapshots (raster + grid + merges)
 //=============================================================================
 
-void ZtoryThumbnailCanvas::pushUndo() {
-  if (!m_ras) return;
+static const int kUndoTile = 256;  // tile side for stroke copy-on-write
+
+ZtoryThumbnailCanvas::Snapshot ZtoryThumbnailCanvas::makeMetaSnapshot() const {
+  Snapshot s;
+  s.ras       = TRaster32P();
+  s.cols      = m_cols;
+  s.rows      = m_rows;
+  s.merges    = m_merges;
+  s.boxAspect = m_boxAspect;
+  return s;
+}
+
+void ZtoryThumbnailCanvas::trimHistory() {
   static const size_t kMaxUndo = 16;
-  m_undo.push_back({m_ras->clone(), m_cols, m_rows, m_merges, m_boxAspect});
   if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
   m_redo.clear();  // a fresh edit invalidates the redo branch
+}
+
+void ZtoryThumbnailCanvas::pushUndo() {
+  if (!m_ras) return;
+  Snapshot s = makeMetaSnapshot();
+  s.ras      = m_ras->clone();
+  m_undo.push_back(s);
+  trimHistory();
+}
+
+// Copy the tiles listed in \a like out of the current raster (used to build the
+// opposite-direction snapshot when undoing/redoing a stroke).
+std::vector<ZtoryThumbnailCanvas::Patch>
+ZtoryThumbnailCanvas::capturePatchesAt(const std::vector<Patch> &like) const {
+  std::vector<Patch> out;
+  if (!m_ras) return out;
+  out.reserve(like.size());
+  for (const Patch &p : like) {
+    const int lx = p.before->getLx(), ly = p.before->getLy();
+    // Geometry changed under us (undo across a resize): skip rather than
+    // read out of bounds.  The resize's own full snapshot restores the pixels.
+    if (p.pos.x < 0 || p.pos.y < 0 || p.pos.x + lx > m_ras->getLx() ||
+        p.pos.y + ly > m_ras->getLy())
+      continue;
+    TRaster32P cur(lx, ly);
+    cur->copy(m_ras->extract(p.pos.x, p.pos.y, p.pos.x + lx - 1,
+                             p.pos.y + ly - 1));
+    out.push_back({p.pos, cur});
+  }
+  return out;
+}
+
+void ZtoryThumbnailCanvas::applyPatches(const std::vector<Patch> &patches) {
+  if (!m_ras) return;
+  for (const Patch &p : patches) {
+    if (p.pos.x < 0 || p.pos.y < 0 ||
+        p.pos.x + p.before->getLx() > m_ras->getLx() ||
+        p.pos.y + p.before->getLy() > m_ras->getLy())
+      continue;
+    m_ras->copy(p.before, p.pos);
+  }
+}
+
+void ZtoryThumbnailCanvas::beginStrokeRecording() {
+  m_strokeTiles.clear();
+  m_recordingStroke = true;
+}
+
+// Turn the tiles saved during the stroke into one undo entry.  Nothing touched
+// → nothing to undo.
+void ZtoryThumbnailCanvas::endStrokeRecording() {
+  m_recordingStroke = false;
+  if (m_strokeTiles.empty()) return;
+  Snapshot s = makeMetaSnapshot();
+  s.patches.reserve(m_strokeTiles.size());
+  for (auto &kv : m_strokeTiles)
+    s.patches.push_back(
+        {TPoint(kv.first.first * kUndoTile, kv.first.second * kUndoTile),
+         kv.second});
+  m_strokeTiles.clear();
+  m_undo.push_back(std::move(s));
+  trimHistory();
+}
+
+// The brush calls this before writing \a rect: save the untouched pixels of any
+// tile it overlaps, once.  This is the whole stroke undo cost.
+bool ZtoryThumbnailCanvas::askWrite(const TRect &rect) {
+  if (!m_recordingStroke || !m_ras) return true;
+  const int rx0 = std::max(0, rect.x0), ry0 = std::max(0, rect.y0);
+  const int rx1 = std::min(m_ras->getLx() - 1, rect.x1);
+  const int ry1 = std::min(m_ras->getLy() - 1, rect.y1);
+  if (rx0 > rx1 || ry0 > ry1) return true;
+
+  for (int ty = ry0 / kUndoTile; ty <= ry1 / kUndoTile; ++ty)
+    for (int tx = rx0 / kUndoTile; tx <= rx1 / kUndoTile; ++tx) {
+      auto key = std::make_pair(tx, ty);
+      if (m_strokeTiles.count(key)) continue;  // already saved: copy-on-write
+      const int x0 = tx * kUndoTile, y0 = ty * kUndoTile;
+      const int x1 = std::min(x0 + kUndoTile - 1, m_ras->getLx() - 1);
+      const int y1 = std::min(y0 + kUndoTile - 1, m_ras->getLy() - 1);
+      TRaster32P tile(x1 - x0 + 1, y1 - y0 + 1);
+      tile->copy(m_ras->extract(x0, y0, x1, y1));
+      m_strokeTiles[key] = tile;
+    }
+  return true;
 }
 
 void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
@@ -1208,22 +1306,48 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
   update();
 }
 
+// A patch snapshot only swaps the touched tiles: build the opposite entry from
+// the current pixels of those same tiles, then paste the stored ones back.
 void ZtoryThumbnailCanvas::undo() {
   if (m_undo.empty()) return;
   if (!m_ras) return;
-  m_redo.push_back({m_ras->clone(), m_cols, m_rows, m_merges, m_boxAspect});
   Snapshot s = m_undo.back();
   m_undo.pop_back();
-  restoreSnapshot(s);
+
+  if (s.ras) {
+    Snapshot cur = makeMetaSnapshot();
+    cur.ras      = m_ras->clone();
+    m_redo.push_back(std::move(cur));
+    restoreSnapshot(s);
+    return;
+  }
+  Snapshot cur = makeMetaSnapshot();
+  cur.patches  = capturePatchesAt(s.patches);
+  m_redo.push_back(std::move(cur));
+  applyPatches(s.patches);
+  schedulePersistSave();
+  update();
 }
 
 void ZtoryThumbnailCanvas::redo() {
   if (m_redo.empty()) return;
   if (!m_ras) return;
-  m_undo.push_back({m_ras->clone(), m_cols, m_rows, m_merges, m_boxAspect});
   Snapshot s = m_redo.back();
   m_redo.pop_back();
-  restoreSnapshot(s);
+
+  if (s.ras) {
+    Snapshot cur = makeMetaSnapshot();
+    cur.ras      = m_ras->clone();
+    m_undo.push_back(std::move(cur));
+    restoreSnapshot(s);
+    return;
+  }
+  Snapshot cur = makeMetaSnapshot();
+  cur.patches  = capturePatchesAt(s.patches);
+  m_undo.push_back(std::move(cur));
+  applyPatches(s.patches);
+  schedulePersistSave();
+  update();
 }
 
 bool ZtoryThumbnailCanvas::handleUndoKey(QKeyEvent *e) {
@@ -1255,8 +1379,17 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   const QPointF tl = worldToWidget(QPointF(0, 0));
   const QRectF target(tl, QSizeF(gridW() * m_zoom, gridH() * m_zoom));
 
-  QImage img = rasterToQImage(m_ras, /*premultiplied=*/true, /*mirrored=*/true);
-  p.drawImage(target, img);
+  // rasterToQImage() wraps the raster memory without copying, but mirrored=true
+  // deep-copies the whole surface (~31 MB on a 4x15 grid) on EVERY repaint —
+  // i.e. on every mouse move while drawing.  Take the zero-copy view and let
+  // the painter apply the vertical flip: Qt then only touches the pixels inside
+  // the clip region.
+  QImage img = rasterToQImage(m_ras, /*premultiplied=*/true, /*mirrored=*/false);
+  p.save();
+  p.translate(target.left(), target.top() + target.height());
+  p.scale(1.0, -1.0);
+  p.drawImage(QRectF(0.0, 0.0, target.width(), target.height()), img);
+  p.restore();
 
   // Thin panel separators (overlay only — the surface itself is contiguous).
   // Drawn per box-edge so the borders INTERNAL to a merged region are skipped,
