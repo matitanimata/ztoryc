@@ -1,3 +1,108 @@
+## [2026-07-07c] — SUPERPLASTIC: timing pin corretto (fix "shift al 2° passo")
+
+Branch `feature/superplastic` (Ztoryc-SP, master intatto). Commit `ed8daf47e`. ✅ Franco "meraviglioso".
+
+### Fixed — keyframing dei pin IK
+- **Pin fantasma all'indietro**: una chiave PIN=1 messa a un frame > 1 si estrapolava costante
+  all'indietro → il piede risultava pinnato anche sui frame precedenti. Fix: baseline PIN=0 al
+  frame 1 alla prima chiave "on" (confina il pin a [frame, …)).
+- **Target stale ("il 2° pin prende i valori di un frame passato" e sposta tutto)**: il target
+  PINTX/PINTY veniva catturato DOPO aver attivato PIN → l'eval ripiantava il vertice sul suo
+  target vecchio (residuo Constant di un pin precedente) e si registrava quella posizione stale.
+  Fix: cattura del target PRIMA di attivare PIN (posizione reale corrente). Diagnosi via log su
+  file dei keyframe reali.
+- **Global Set Key** non keyframa più PIN/PINTX/PINTY: propagava in avanti il target vecchio
+  (Constant), inquinando i frame successivi. I pin restano keyframati dal loro toggle.
+
+### Aperti (prossima sessione)
+Ri-abilitare la eval a 2 target (centroide + CCD per-pin, oggi rivertita) ora che i pin fantasma
+sono risolti; anomalia braccio→gamba nella manipolazione; comando one-click "cambio appoggio".
+
+## [2026-07-07b] — SUPERPLASTIC: manipolazione IK rifatta (root libera / pin=root provvisoria)
+
+Branch `feature/superplastic` (build separata Ztoryc-SP, master NON toccato). Rifatta da capo
+la manipolazione IK del Plastic Tool sul modello corretto emerso dal feedback diretto di Franco.
+
+### Fixed / Reworked — manipolazione IK a 1 pin (✅ Franco: "MERAVIGLIOSO")
+- **Posa sempre a giunto singolo locale**, mai chain-solve: il CCD nel drag distribuiva la
+  rotazione su tutta la catena radice→handle riconfigurando il corpo in modo incontrollabile.
+  Rimosso il CCD/`solveChainIK_animate` dal drag.
+- **Senza pin**: giunto singolo sulla gerarchia originale (come manipolazione normale).
+- **Con pin**: il pin è una **root provvisoria** (re-root BFS); il drag ruota solo il bone verso
+  il genitore-re-rooted a lunghezza costante, il sottoalbero segue rigido, il lato-pin resta
+  fermo; planting a eval-time via PINTX/PINTY (traslazione rigida singola).
+- **La ROOT nativa è manipolabile** sotto IK con pin — era l'unico vertice il cui drag non era
+  rappresentabile (niente ANGLE): ruota attorno al vicino verso il pin, l'angolo scritto è quello
+  del vicino, conserva le lunghezze. Sbloccarla ha risolto l'ingestibilità della zona vicino alla
+  root. (commit `13ca6724d`)
+
+### WIP parcheggiato — due pin / IK a 2 target (NON attivo)
+- Tentato foot-planting a 2 pin (centroide+traslazione, CCD per-pin per snappare ogni pin, draw
+  multi-diamante, `pinnedVerticesAtFrame`, re-àncoraggio pin). Multipli bug nei test di Franco:
+  shift al 2° passo (pin "fantasma" non rilasciati — PIN keyframe Constant persiste), il 2° pin
+  non blocca il movimento della gamba del 1°, anomalia braccio→gamba. **L'eval a 2 pin è stato
+  RIVERTITO al single-pin** (`git checkout` di `plasticskeletondeformation.cpp`) per non regredire
+  la root libera a 1 pin. Lo scaffolding lato-tool (helper multi-pin + draw) resta committato come
+  base. Da rifare la prossima sessione partendo dalla **semantica di rilascio/switch dei pin** (un
+  pin vale solo nel suo intervallo) + comando one-click "cambio appoggio". Dettaglio dei 4 punti
+  aperti nella memoria `project-superplastic-worktree`.
+
+## [2026-07-07b] — Board/thumbnail room: hang export risolto + performance (disegno e timeline)
+
+Sessione di debug su master, tutta guidata da evidenze (`sample` sul processo bloccato),
+su segnalazioni di Franco sulla scena `SB_maggiolatazombie`.
+
+### Fixed — hang dell'export-to-board
+- **Causa (root)**: `StoryboardPanel::onDeleteShot` cancellava la colonna dell'xsheet ma
+  lasciava nel cast la sotto-scena e i suoi livelli OVL. Il nome restava occupato → il Send
+  to Board successivo riusava l'etichetta → `createNewLevel` riceveva un nome già nel
+  levelSet → la sua disambiguazione `_N` viene riletta come **separatore di frame**
+  (`sh150_1` → livello `sh150`) → **loop infinito**. Confermato dal sample: 100% dei campioni
+  in `addShotFromRasters → createNewLevel → doesExistFileOrLevel`.
+  Fix (`2bdb3d19e`): raccolta dei livelli esposti dagli shot cancellati (child level +
+  `getUsedLevels()` della sotto-scena, ricorsivo) e rimozione dal cast dei soli livelli senza
+  utilizzatori (`isLevelUsed` → un Copy Shot che condivide il livello lo mantiene). I livelli
+  non vengono distrutti: `UndoBoardState` li possiede via `TXshLevelP` e li reinserisce in
+  `undo()` prima di ripristinare le colonne.
+- **Rete di sicurezza** (`be4856c69`): in `addShotFromRasters` il controllo di collisione ora
+  guarda **levelSet in RAM + disco** (prima solo disco: i livelli restano in RAM fino al
+  salvataggio) e fa rollback invece di passare a `createNewLevel` un nome occupato.
+
+### Performance — thumbnail room (lag di disegno)
+- `paintEvent` chiamava `rasterToQImage(..., mirrored=true)`: il wrapper è a costo zero ma
+  `QImage::mirrored()` **deep-copia l'intera superficie** (~31 MB su griglia 4×15) a **ogni
+  repaint**, cioè a ogni mouse move durante il tratto. Ora vista zero-copy + flip via
+  trasformazione del painter.
+- `pushUndo()` clonava tutto il raster a **ogni inizio tratto** (hitch) e con `kMaxUndo=16` la
+  cronologia arrivava a ~500 MB (pressione di memoria → lag intermittenti che alteravano il
+  segno). I tratti usano ora un undo **copy-on-write a tile 256×256** via `askWrite()` (che il
+  pennello MyPaint chiama prima di scrivere). Snapshot pieno mantenuto per resize/paste/transform.
+  Commit `91f167a2b`.
+
+### Performance — timeline animatic (stallo ~2s a ogni trim)
+- Sample: `onShotDurationChanged → resequenceXsheet → modelReset → clearThumbCache`, poi
+  `refreshFromScene` rirenderizzava **ogni** shot con `IconGenerator::renderXsheetFrame` →
+  `ToonzScene::renderFrame` → **`QtOfflineGL::createContext`** (un contesto GL offscreen nuovo
+  per thumbnail, da solo ~40% dello stallo). Ma trimmare cambia la durata, non il disegno.
+- La cache era chiavata sull'**indice di colonna**, quindi andava svuotata a ogni `modelReset`
+  (i riordini fanno scalare gli indici). Ora è chiavata sul **nome della sotto-scena**, stabile
+  a trim/riordini/cancellazioni. Clear rimosso da `modelReset`; aggiunto all'uscita da una
+  sotto-scena (unico punto da cui un disegno può cambiare). Commit `2f20de7f2`.
+
+### Upstream candidates
+- **Loop infinito di `createNewLevel` con nome livello occupato** (`toonzlib/toonzscene.cpp`):
+  il suffisso `_N` della disambiguazione viene riletto da `TFilePath` come separatore di frame,
+  quindi il nome collassa su sé stesso e il ciclo non termina mai. Codice Tahoma/OpenToonz
+  condiviso, innescabile da chiunque. Alta priorità.
+
+### Note / aperti
+- **Falsa pista scagionata**: l'hang era stato attribuito a un incolla di thumb in uno shot
+  nuovo; era solo un tentativo di workaround di Franco. Lezione: il primo stack ("main thread
+  in `nextEventMatchingMask`") era stato campionato a processo non bloccato e portava fuori
+  strada — il `sample` sul processo davvero bloccato ha dato la risposta in un colpo.
+- Resta il costo di `StoryboardPanel::refreshFromScene()` a ogni resequence, che include
+  `loadZtoryc()` (**rilettura del `.ztoryc` da disco**). Prossimo candidato performance.
+
 ## [2026-07-07] — SUPERPLASTIC: adapter Plastic Tool con pin/foot-planting (re-rooting + vincolo per-frame)
 
 Sessione lunga e iterativa sul branch `feature/superplastic` (build separata Ztoryc-SP,
