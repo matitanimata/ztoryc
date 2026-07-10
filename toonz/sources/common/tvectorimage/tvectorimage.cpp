@@ -1490,6 +1490,12 @@ img->m_imp->m_strokes[i]->m_groupId==idNew;
 void TVectorImage::recomputeRegionsIfNeeded() {
   if (!m_imp->m_justLoaded) return;
 
+  forceRegionsRecompute();
+}
+
+//-------------------------------------------------------------------
+
+void TVectorImage::forceRegionsRecompute() {
   m_imp->m_justLoaded = false;
 
   std::vector<int> v(m_imp->m_strokes.size());
