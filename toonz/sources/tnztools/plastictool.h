@@ -139,8 +139,8 @@ private:
   TDoubleParamRelayProperty m_soRelay;     //!< Relay property for vertex so
 
   TDoubleParamRelayProperty
-      m_scaleXRelay,  //!< SuperPlastic squash & stretch relays — always bound
-      m_scaleYRelay;  //!< to the ROOT vertex's SCALEX/SCALEY (delta from 1)
+      m_scaleXRelay,  //!< SuperPlastic squash & stretch relays — bound to the
+      m_scaleYRelay;  //!< SELECTED vertex (= scale pivot), delta from 1
 
   TDoubleParamRelayProperty
       m_skelIdRelay;  //!< Relay property for m_sd's skeleton id

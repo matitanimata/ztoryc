@@ -1486,25 +1486,11 @@ void PlasticTool::onSelectionChanged() {
     m_angleRelay.setParam(TDoubleParamP());
   }
 
-  // Squash & stretch relays: always bound to the ROOT vertex's deformation,
-  // whatever the selection — the scale is a whole-skeleton pose param anchored
-  // at the deformed root.
-  {
-    SkVD *rootVd = 0;
-    if (m_sd) {
-      if (PlasticSkeletonP skel = m_sd->skeleton(::skeletonId()))
-        for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
-             ++vt)
-          if (vt->parent() < 0) {
-            rootVd = m_sd->vertexDeformation(::skeletonId(), vt.m_idx);
-            break;
-          }
-    }
-    m_scaleXRelay.setParam(rootVd ? rootVd->m_params[SkVD::SCALEX]
-                                  : TDoubleParamP());
-    m_scaleYRelay.setParam(rootVd ? rootVd->m_params[SkVD::SCALEY]
-                                  : TDoubleParamP());
-  }
+  // Squash & stretch relays: bound to the SELECTED vertex, which is the scale
+  // pivot (Animate-tool style). With IK pins, select the pin to squash from —
+  // the other pins hold their targets, stretching their limb if needed.
+  m_scaleXRelay.setParam(vd ? vd->m_params[SkVD::SCALEX] : TDoubleParamP());
+  m_scaleYRelay.setParam(vd ? vd->m_params[SkVD::SCALEY] : TDoubleParamP());
 
   m_vertexName.notifyListeners();
   m_interpolate.notifyListeners();

@@ -65,14 +65,18 @@ public:
                 //!< whole skeleton is translated so the pinned vertex lands on
                 //!< (PINTX,PINTY) — a true per-frame constraint, so the pin
                 //!< stays planted on in-between frames, not just on keyframes.
-    SCALEX,     //!< SuperPlastic squash & stretch, stored on the ROOT vertex
-    SCALEY,     //!< only: DELTA from 1.0 (0 = neutral, like ANGLE/DISTANCE are
-                //!< deltas), so untouched params stay default and are not
-                //!< serialized. At evaluation the whole deformed skeleton is
-                //!< scaled by (1+SCALEX, 1+SCALEY) around the DEFORMED root
-                //!< position — an anchor that follows the character — BEFORE
-                //!< the pin constraints, so planted feet stay planted while
-                //!< squashing.
+    SCALEX,     //!< SuperPlastic squash & stretch: DELTA from 1.0 (0 =
+    SCALEY,     //!< neutral, like ANGLE/DISTANCE are deltas), so untouched
+                //!< params stay default and are not serialized. Keyed on the
+                //!< vertex that was ACTIVE when squashing — the Animate-tool
+                //!< style pivot. At evaluation the whole deformed skeleton is
+                //!< scaled by (1+SCALEX, 1+SCALEY) around that vertex's
+                //!< DEFORMED position (an anchor that follows the character),
+                //!< BEFORE the pin constraints. If the anchor is itself a
+                //!< pinned vertex it becomes the PRIMARY pin, and every OTHER
+                //!< pin is re-planted even at the cost of stretching its limb
+                //!< (keep-distance off: hanging from a bar, squashing from the
+                //!< foot pin stretches the gripping arm).
     PARAMS_COUNT
   };
 

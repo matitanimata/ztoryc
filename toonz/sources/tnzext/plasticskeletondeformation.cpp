@@ -892,33 +892,36 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
     m_imp->updateBranchPositions(*origSkel, skeleton, frame,
                                  skeleton.vertices().begin().m_idx);
 
-  // SuperPlastic squash & stretch: whole-skeleton scale keyframed on the ROOT
-  // vertex (SCALEX/SCALEY = delta from 1), anchored at the DEFORMED root so
-  // the anchor follows the character — the stage-object center can't, since
-  // all the advancement lives in mesh-local space (pin shifts at eval time).
-  // Applied BEFORE the pin constraints: the primary pin's rigid translation
-  // then re-plants the foot, so squashing never slides the support foot.
+  // SuperPlastic squash & stretch: whole-skeleton scale (SCALEX/SCALEY =
+  // delta from 1) anchored at the DEFORMED position of the vertex carrying
+  // the keys — the vertex that was ACTIVE when squashing, Animate-tool style
+  // pivot that follows the character (the stage-object center can't, since
+  // all the advancement lives in mesh-local space via eval-time pin shifts).
+  // Applied BEFORE the pin constraints; if the anchor is itself pinned it
+  // becomes the PRIMARY pin below, so the squash stays based on it while
+  // every other pin is re-planted even at the cost of stretching its limb.
+  int scaleAnchor = -1;
   {
     const tcg::list<PlasticSkeleton::vertex_type> &vs = skeleton.vertices();
     for (auto vt = vs.begin(); vt != vs.end(); ++vt) {
-      if (vt->parent() >= 0) continue;  // root only
       auto it = m_imp->m_vds.find(vt->name());
-      if (it == m_imp->m_vds.end()) break;
+      if (it == m_imp->m_vds.end()) continue;
       const SkVD &vd = it->m_vd;
-      if (!vd.m_params[SkVD::SCALEX] || !vd.m_params[SkVD::SCALEY]) break;
+      if (!vd.m_params[SkVD::SCALEX] || !vd.m_params[SkVD::SCALEY]) continue;
       double sx = 1.0 + vd.m_params[SkVD::SCALEX]->getValue(frame);
       double sy = 1.0 + vd.m_params[SkVD::SCALEY]->getValue(frame);
+      if (fabs(sx - 1.0) <= 1e-9 && fabs(sy - 1.0) <= 1e-9) continue;
       // Degenerate/negative scales would collapse or flip the mesh: clamp.
       sx = std::max(sx, 0.01);
       sy = std::max(sy, 0.01);
-      if (fabs(sx - 1.0) > 1e-9 || fabs(sy - 1.0) > 1e-9) {
-        const TPointD C = vt->P();
-        for (auto st = vs.begin(); st != vs.end(); ++st) {
-          TPointD &P = skeleton.vertex(st.m_idx).P();
-          P = TPointD(C.x + sx * (P.x - C.x), C.y + sy * (P.y - C.y));
-        }
+      const TPointD C = vt->P();
+      for (auto st = vs.begin(); st != vs.end(); ++st) {
+        TPointD &P = skeleton.vertex(st.m_idx).P();
+        P = TPointD(C.x + sx * (P.x - C.x), C.y + sy * (P.y - C.y));
       }
-      break;
+      // Typically a single vertex carries scale keys; with more, each scale
+      // is applied in vertex order and the LAST one drives the pin priority.
+      scaleAnchor = (int)vt.m_idx;
     }
   }
 
@@ -1000,6 +1003,18 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
                      return a.since < b.since;
                    });
 
+  // A pinned squash anchor overrides seniority as the PRIMARY pin: the squash
+  // must stay based on it (rigid translation keeps it planted untouched),
+  // while the other pins bend/stretch to hold.
+  if (scaleAnchor >= 0)
+    for (size_t i = 1; i < pins.size(); ++i)
+      if (pins[i].idx == scaleAnchor) {
+        ActivePin anchorPin = pins[i];
+        pins.erase(pins.begin() + i);
+        pins.insert(pins.begin(), anchorPin);
+        break;
+      }
+
   // Primary (oldest) pin: rigid whole-skeleton translation.
   TPointD shift = pins[0].target - skeleton.vertex(pins[0].idx).P();
   if (norm2(shift) > 1e-12)
@@ -1034,6 +1049,8 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
     const double tol2 = 1e-6;
     for (int sweep = 0; sweep < SWEEPS; ++sweep) {
       if (norm2(target - skeleton.vertex(pinV).P()) < tol2) break;
+      // (CCD sweeps below; with an active squash a final exact closer with
+      // stretch follows after the loop)
       // Nearest-to-pin pivot first: classic CCD sweep order. The anchor
       // itself (j == aIdx) is a valid LAST pivot: rotating only path[j+1]'s
       // subtree about it bends this limb's attachment bone too — without it,
@@ -1053,6 +1070,30 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
           TPointD &P = skeleton.vertex(v).P();
           TPointD d  = P - pivot;
           P = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+        }
+      }
+    }
+
+    // With an active squash the pin must hold even beyond the limb's reach
+    // (hanging from a bar while squashing from the foot pin): close exactly
+    // with a rigid re-aim plus a uniform STRETCH of the free sub-chain about
+    // its divergence anchor — keep-distance is off by design here. Without
+    // squash the CCD-only behavior is preserved (bone lengths untouched).
+    if (scaleAnchor >= 0 && aIdx < (int)path.size() - 1) {
+      const TPointD A = skeleton.vertex(path[aIdx]).P();
+      TPointD cur     = skeleton.vertex(pinV).P() - A;
+      TPointD tgt     = target - A;
+      if (norm2(tgt - cur) > tol2 && norm2(cur) > 1e-8 && norm2(tgt) > 1e-8) {
+        double ang = atan2(cross(cur, tgt), cur * tgt);
+        double s   = sqrt(norm2(tgt) / norm2(cur));
+        // Rotation and uniform scale about A combined in one 2x2 transform
+        double c = cos(ang) * s, sn = sin(ang) * s;
+        std::vector<int> sub;
+        locals::collectSubtree(skeleton, path[aIdx + 1], sub);
+        for (int v : sub) {
+          TPointD &P = skeleton.vertex(v).P();
+          TPointD d  = P - A;
+          P = A + TPointD(c * d.x - sn * d.y, sn * d.x + c * d.y);
         }
       }
     }
