@@ -109,13 +109,22 @@ su segnalazioni di Franco sulla scena `SB_maggiolatazombie`.
   anche la detection dei riordini** per gli shot da export-to-board, finora di fatto rotta.
 - Verificato sul log, stessi trim: `full rebuild` **24 → 0**.
 
+### Performance — StoryStrip (stesso pattern)
+- `ZtoryStoryStrip` (room SHOTEDITOR) aveva la stessa cache chiavata per colonna, svuotata su
+  `modelReset` → un `renderXsheetFrame` + contesto GL nuovo per shot a ogni trim/riordino.
+  Stessa correzione: chiave = nome sotto-scena, clear su uscita da sotto-scena + `sceneSwitched`.
+  Commit `68098976e`. Da verificare visivamente.
+
 ### Note
 - **Falsa pista scagionata**: l'hang era stato attribuito a un incolla di thumb in uno shot
   nuovo; era solo un tentativo di workaround di Franco. Lezione: il primo stack ("main thread
   in `nextEventMatchingMask`") era stato campionato a processo non bloccato e portava fuori
   strada — il `sample` sul processo davvero bloccato ha dato la risposta in un colpo.
-- `ZtoryStoryStrip` ha ancora la cache thumbnail chiavata per colonna (stesso pattern
-  dell'AnimaticTrack prima del fix) — non toccato.
+- **Tecnica**: lanciare il bundle del workspace da terminale con stderr su file e leggere i
+  `qWarning` `[ZTORY]` già presenti nel codice — dicono chi ricostruisce e perché, senza
+  aggiungere diagnostica. (NON `/Applications/Ztoryc.app`: è una copia vecchia.)
+- `ZtoryModel::removeShot()` risulta **codice morto** (nessun chiamante: la cancellazione passa
+  da `StoryboardPanel::onDeleteShot`). Non rimosso.
 
 ## [2026-07-07] — SUPERPLASTIC: adapter Plastic Tool con pin/foot-planting (re-rooting + vincolo per-frame)
 
