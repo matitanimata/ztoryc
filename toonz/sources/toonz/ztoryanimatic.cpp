@@ -3001,7 +3001,17 @@ ZtoryStoryStrip::ZtoryStoryStrip(QWidget *parent) : QWidget(parent) {
   setFixedHeight(kThumbH + 8);
   setMinimumWidth(100);
   setStyleSheet("background:#1a1a1a;");
-  connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
+  // Keyed by sub-scene level name, so a resequence (trim, reorder) no longer
+  // invalidates every render — each miss costs a fresh offline GL context.
+  // Drawings only change from inside a shot: refresh on the way back up.
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched,
+          this, [this]() {
+            ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
+            if (sc && sc->getChildStack()->getAncestorCount() == 0)
+              m_thumbCache.clear();
+          });
+  // Level names repeat across scenes: never reuse the previous scene's renders.
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
           this, [this]() { m_thumbCache.clear(); });
 }
 
@@ -3043,9 +3053,11 @@ void ZtoryStoryStrip::refreshFromScene() {
     QString colName = QString::fromStdString(
         xsh->getStageObject(xsh->getColumnObjectId(col))->getName());
     if (!colName.isEmpty()) e.shotNumber = colName;
-    // Render composed frame — cache per-column so we don't re-render every refresh
-    if (m_thumbCache.contains(col)) {
-      e.thumb = m_thumbCache.value(col);
+    // Render composed frame — cached by sub-scene level name, so trims and
+    // reorders reuse the render instead of rebuilding an offline GL context.
+    const QString thumbKey = QString::fromStdWString(cl->getName());
+    if (!thumbKey.isEmpty() && m_thumbCache.contains(thumbKey)) {
+      e.thumb = m_thumbCache.value(thumbKey);
     } else {
       // Render at the scene camera aspect (height fixed at 90) so a non-16:9
       // camera isn't squished.
@@ -3055,7 +3067,7 @@ void ZtoryStoryStrip::refreshFromScene() {
       QPixmap px = IconGenerator::renderXsheetFrame(
           cl->getXsheet(), 0, TDimension(thW, thH));
       if (!px.isNull()) {
-        m_thumbCache.insert(col, px);
+        m_thumbCache.insert(thumbKey, px);
         e.thumb = px;
       }
     }

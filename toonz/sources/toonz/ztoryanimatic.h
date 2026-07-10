@@ -528,7 +528,8 @@ private:
   std::vector<ThumbEntry> m_entries;
   int m_currentCol = -1;
   int m_scrollOffset = 0; // horizontal pixel offset
-  QHash<int, QPixmap> m_thumbCache; // col → rendered composite thumbnail
+  // Keyed by sub-scene level name, not column — see ZtoryAnimaticTrack.
+  QHash<QString, QPixmap> m_thumbCache;
   double m_thumbCacheAspect = -1.0; // camera aspect the cache was rendered at
   static constexpr int kThumbH = 54;
   static constexpr int kThumbW = 80;
