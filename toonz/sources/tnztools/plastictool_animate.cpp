@@ -578,17 +578,31 @@ void PlasticTool::drawController_animate(double pixelSize) {
   TPointD shearP = C + u * TPointD(delta, -delta);
   TPointD moveP  = C + u * TPointD(0, -delta);
 
-  // Connecting spokes first, in the normal color
+  // Connecting spokes first: DASHED, part of the visual identity that tells
+  // this controller apart from the column Animate tool (solid spokes there)
   normalColor();
+  glEnable(GL_LINE_STIPPLE);
+  glLineStipple(1, 0x0F0F);
   tglDrawSegment(rotP, C);
   tglDrawSegment(scaleP, C);
   tglDrawSegment(shearP, C);
   tglDrawSegment(moveP, C);
+  glDisable(GL_LINE_STIPPLE);
 
-  // Pivot: double circle (drag the ring to move it, with vertex snapping)
+  // Pivot: double HEXAGON (vs the Animate tool's double circle — the
+  // silhouette is the first thing the eye reads). Drag the ring to move the
+  // pivot, with vertex snapping.
   colorFor(CtrlPivot);
-  tglDrawCircle(C, 10.0 * u);
-  tglDrawCircle(C, 8.0 * u);
+  auto drawHex = [&](double r) {
+    glBegin(GL_LINE_LOOP);
+    for (int i = 0; i < 6; ++i) {
+      double a = (30.0 + i * 60.0) * (M_PI / 180.0);
+      glVertex2d(C.x + r * cos(a), C.y + r * sin(a));
+    }
+    glEnd();
+  };
+  drawHex(10.0 * u);
+  drawHex(8.0 * u);
 
   // Rotation: disk on top
   colorFor(CtrlRot);
@@ -620,27 +634,31 @@ void PlasticTool::drawController_animate(double pixelSize) {
   glVertex2d(moveP.x - r4, moveP.y);
   glEnd();
 
-  // Hover hints, like the Animate tool's labels (hidden while dragging)
+  // Hover hints, like the Animate tool's labels (hidden while dragging).
+  // The GLUT stroke text must be scaled by the device pixel ratio, exactly
+  // like edittool's `unit` — without it the hints are near-invisible on
+  // retina displays.
   if (m_ctrlDevice == CtrlNone && m_ctrlHighlight != CtrlNone) {
+    double tu = u * m_viewer->getDevPixRatio();
     glColor4ub(hi.r, hi.g, hi.b, 255);
     switch (m_ctrlHighlight) {
     case CtrlPivot:
-      ctrlDrawText(C + u * TPointD(14, 0), u, "Move pivot");
+      ctrlDrawText(C + u * TPointD(14, 0), tu, "Move pivot");
       break;
     case CtrlRot:
-      ctrlDrawText(rotP, u, "Rotate");
+      ctrlDrawText(rotP, tu, "Rotate");
       break;
     case CtrlScale:
-      ctrlDrawText(scaleP + u * TPointD(-16, -16), u, "Scale");
+      ctrlDrawText(scaleP + u * TPointD(-16, -16), tu, "Scale");
       break;
     case CtrlScaleXY:
-      ctrlDrawText(sxyP + u * TPointD(6, 6), u, "Horizontal/Vertical scale");
+      ctrlDrawText(sxyP + u * TPointD(6, 6), tu, "Horizontal/Vertical scale");
       break;
     case CtrlShear:
-      ctrlDrawText(shearP + u * TPointD(0, -10), u, "Shear");
+      ctrlDrawText(shearP + u * TPointD(0, -10), tu, "Shear");
       break;
     case CtrlMove:
-      ctrlDrawText(moveP + u * TPointD(0, -12), u, "Move");
+      ctrlDrawText(moveP + u * TPointD(0, -12), tu, "Move");
       break;
     }
   }
@@ -1433,6 +1451,10 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
   m_ctrlDevice   = CtrlNone;
 
   if (gizmoDrag && m_dragged && m_sd) {
+    // Global key: one key on every channel at this frame, controller included
+    // (keyed BEFORE the undo snapshot, so undo/redo capture them too)
+    if (m_globalKey.getValue()) ::setKeyframe(m_sd, ::frame());
+
     AnimateValuesUndo *undo =
         new AnimateValuesUndo(m_svSel.hasSingleObject() ? (int)m_svSel : -1);
     undo->m_oldValues = m_pressedSkDF;

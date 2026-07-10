@@ -177,6 +177,21 @@ void setKeyframe(const PlasticSkeletonDeformationP &sd, double frame) {
   sd->vertexDeformations(vdt, vdEnd);
 
   for (; vdt != vdEnd; ++vdt) setKeyframe((*vdt).second, frame);
+
+  // The SuperPlastic controller params (scale/pivot/position/rotation/shear,
+  // stored on the ROOT vertex's deformation) are part of the pose: a global
+  // key locks them too. The pin anchor params (PIN/PINTX/PINTY) stay excluded
+  // — see the note above.
+  if (PlasticSkeletonP skel = sd->skeleton(::skeletonId())) {
+    for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
+         ++vt)
+      if (vt->parent() < 0) {
+        if (SkVD *vd = sd->vertexDeformation(::skeletonId(), (int)vt.m_idx))
+          for (int p = SkVD::SCALEX; p < SkVD::PARAMS_COUNT; ++p)
+            if (vd->m_params[p]) setKeyframe(vd->m_params[p], frame);
+        break;
+      }
+  }
 }
 
 //------------------------------------------------------------------------
