@@ -128,6 +128,10 @@ private:
       m_ikDrag;  //!< Whether animation editing solves the whole chain with IK
                  //!< (SuperPlastic CCD solver) instead of single-vertex FK
 
+  TEnumProperty m_scaleConstraint;  //!< Squash & stretch constraint, like the
+                                    //!< Animate tool: None / Aspect Ratio /
+                                    //!< Mass (V = 1/H, area preserved)
+
   TStringProperty m_minAngle,
       m_maxAngle;  //!< Minimum and maximum angle values allowed
 
@@ -154,6 +158,12 @@ private:
   std::vector<TPointD>
       m_pressedVxsPos;   //!< Position of selected vertices at mouse press
   SkDKey m_pressedSkDF;  //!< Skeleton deformation keyframes at mouse press
+
+  // SuperPlastic squash & stretch gizmo (Animate-tool style scale handle)
+  bool m_scaleDragging = false;  //!< Whether the scale handle is being dragged
+  TPointD m_scaleDragCenter;     //!< Scale pivot (selected vertex) at press
+  double m_scaleOldX = 1.0,      //!< SCALEX/SCALEY values at press time
+      m_scaleOldY    = 1.0;
 
   // Selection/Highlighting-related vars
 
@@ -350,6 +360,7 @@ protected:
                                const std::map<int, TPointD> &curPos,
                                const std::map<int, TPointD> &desired);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
+  void scaleDrag_animate(const TPointD &pos, const TMouseEvent &me);
 
   // SuperPlastic IK anchor (pin). The pinned vertex is kept fixed while IK
   // solving at a given frame; the anchor is keyframeable so it can switch over

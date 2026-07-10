@@ -41,7 +41,7 @@ namespace {
 static const char *parNames[SkVD::PARAMS_COUNT] = {
     "Angle", "Distance", "SO", "Pin", "PinTX", "PinTY", "ScaleX", "ScaleY"};
 static const char *parMeasures[SkVD::PARAMS_COUNT] = {
-    "angle", "fxLength", "", "", "fxLength", "fxLength", "", ""};
+    "angle", "fxLength", "", "", "fxLength", "fxLength", "scale", "scale"};
 
 //------------------------------------------------------------------
 
@@ -154,8 +154,15 @@ void SkVD::deleteKeyframe(double frame) {
 //------------------------------------------------------------------
 
 void SkVD::saveData(TOStream &os) {
-  for (int p = 0; p < PARAMS_COUNT; ++p)
-    if (!m_params[p]->isDefault()) os.child(::parNames[p]) << *m_params[p];
+  for (int p = 0; p < PARAMS_COUNT; ++p) {
+    // SCALEX/SCALEY are scale FACTORS with default 1.0 (100%), but
+    // TDoubleParam::isDefault() only recognizes zero-defaults: check them
+    // explicitly so untouched scales are still not serialized.
+    bool isDef = (p >= SCALEX) ? (m_params[p]->getKeyframeCount() == 0 &&
+                                  m_params[p]->getDefaultValue() == 1.0)
+                               : m_params[p]->isDefault();
+    if (!isDef) os.child(::parNames[p]) << *m_params[p];
+  }
 }
 
 //------------------------------------------------------------------
@@ -477,6 +484,8 @@ void PlasticSkeletonDeformation::Imp::touchParams(SkVD &vd) {
     param->setName(parNames[p]);
     param->setMeasureName(parMeasures[p]);
     param->setGrammar(m_grammar);
+    // Scale factors are neutral at 1.0 (100%), not 0
+    if (p == SkVD::SCALEX || p == SkVD::SCALEY) param->setDefaultValue(1.0);
 
     vd.m_params[p] = param;
 
@@ -908,8 +917,8 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
       if (it == m_imp->m_vds.end()) continue;
       const SkVD &vd = it->m_vd;
       if (!vd.m_params[SkVD::SCALEX] || !vd.m_params[SkVD::SCALEY]) continue;
-      double sx = 1.0 + vd.m_params[SkVD::SCALEX]->getValue(frame);
-      double sy = 1.0 + vd.m_params[SkVD::SCALEY]->getValue(frame);
+      double sx = vd.m_params[SkVD::SCALEX]->getValue(frame);
+      double sy = vd.m_params[SkVD::SCALEY]->getValue(frame);
       if (fabs(sx - 1.0) <= 1e-9 && fabs(sy - 1.0) <= 1e-9) continue;
       // Degenerate/negative scales would collapse or flip the mesh: clamp.
       sx = std::max(sx, 0.01);

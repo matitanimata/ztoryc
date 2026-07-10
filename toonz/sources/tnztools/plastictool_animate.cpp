@@ -106,6 +106,27 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
   // Track mouse position
   m_pressedPos = m_pos = pos;
 
+  // Scale gizmo hit-test FIRST: clicking the handle must not touch the
+  // selection — the handle belongs to the selected vertex, which is the
+  // squash & stretch pivot.
+  if (m_sd && m_svSel.hasSingleObject()) {
+    double pixelSize = getPixelSize();
+    TPointD c        = deformedSkeleton().vertex(m_svSel).P();
+    TPointD h        = c + TPointD(40.0 * pixelSize, 40.0 * pixelSize);
+    if (norm(pos - h) < 8.0 * pixelSize) {
+      SkVD *vd = m_sd->vertexDeformation(::skeletonId(), m_svSel);
+      if (vd && vd->m_params[SkVD::SCALEX] && vd->m_params[SkVD::SCALEY]) {
+        m_scaleDragging   = true;
+        m_scaleDragCenter = c;
+        m_scaleOldX       = vd->m_params[SkVD::SCALEX]->getValue(::frame());
+        m_scaleOldY       = vd->m_params[SkVD::SCALEY]->getValue(::frame());
+        m_sd->getKeyframeAt(frame(), m_pressedSkDF);  // undo baseline
+        invalidate();
+        return;
+      }
+    }
+  }
+
   setSkeletonSelection(m_svHigh);
 
   if (m_svSel.hasSingleObject()) {
@@ -124,6 +145,11 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
                                          const TMouseEvent &me) {
   // Track mouse position
   m_pos = pos;
+
+  if (m_scaleDragging) {
+    scaleDrag_animate(pos, me);
+    return;
+  }
 
   double frame = ::frame();
 
@@ -171,6 +197,72 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
     m_deformedSkeleton.invalidate();
     invalidate();
   }
+}
+
+//------------------------------------------------------------------------
+
+// Replica of the Animate tool's DragScaleTool math, with the pivot on the
+// selected vertex: sqrt-damped axis factors, Shift = aspect ratio, Alt =
+// precise (1/10), "Maintain:" combo = A/R or Mass (V = 1/H) constraint.
+// Writes keyframed SCALEX/SCALEY on the pivot's deformation; the undo is the
+// standard AnimateValuesUndo added on button release.
+void PlasticTool::scaleDrag_animate(const TPointD &pos, const TMouseEvent &me) {
+  if (!m_sd || !m_svSel.hasSingleObject()) return;
+  SkVD *vd = m_sd->vertexDeformation(::skeletonId(), m_svSel);
+  if (!vd || !vd->m_params[SkVD::SCALEX] || !vd->m_params[SkVD::SCALEY])
+    return;
+
+  const double eps = 1e-8;
+  TPointD a        = m_pressedPos - m_scaleDragCenter;
+  TPointD b        = pos - m_scaleDragCenter;
+  if (norm2(a) < eps || norm2(b) < eps) return;
+  if (fabs(a.x) < eps || fabs(a.y) < eps) return;
+
+  double fx            = b.x / a.x;
+  if (fabs(fx) > 1) fx = (fx < 0 ? -1 : 1) * sqrt(fabs(fx));
+  double fy            = b.y / a.y;
+  if (fabs(fy) > 1) fy = (fy < 0 ? -1 : 1) * sqrt(fabs(fy));
+
+  int constraint = m_scaleConstraint.getIndex();  // 0 none, 1 A/R, 2 mass
+  if (constraint == 0 && me.isShiftPressed()) constraint = 1;
+
+  if (constraint == 1) {
+    TPointD c = pos - m_pressedPos;
+    if (fabs(c.x) > fabs(c.y))
+      fy = fx;
+    else
+      fx = fy;
+  } else if (constraint == 2) {
+    double bxay = b.x * a.y, byax = b.y * a.x;
+    if (fabs(bxay) < eps || fabs(byax) < eps) return;
+    fx = bxay / byax;
+    fy = byax / bxay;
+  }
+  if (fabs(fx) < eps || fabs(fy) < eps) return;
+
+  // Precise control while pressing Alt, like the Animate tool
+  if (me.isAltPressed()) {
+    fx = 1.0 + (fx - 1.0) * 0.1;
+    fy = 1.0 + (fy - 1.0) * 0.1;
+  }
+
+  double oldX                   = m_scaleOldX, oldY = m_scaleOldY;
+  if (fabs(oldX) < 0.001) oldX  = 0.001;
+  if (fabs(oldY) < 0.001) oldY  = 0.001;
+
+  double frame               = ::frame();
+  l_suspendParamsObservation = true;
+  ::setKeyframe(vd->m_params[SkVD::SCALEX], frame);
+  ::setKeyframe(vd->m_params[SkVD::SCALEY], frame);
+  vd->m_params[SkVD::SCALEX]->setValue(frame, oldX * fx);
+  vd->m_params[SkVD::SCALEY]->setValue(frame, oldY * fy);
+  l_suspendParamsObservation = false;
+
+  m_scaleXRelay.notifyListeners();  // Keep the toolbar fields live
+  m_scaleYRelay.notifyListeners();
+
+  m_deformedSkeleton.invalidate();
+  invalidate();
 }
 
 //------------------------------------------------------------------------
@@ -951,6 +1043,10 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
   // Track mouse position
   m_pos = pos;
 
+  // End of a scale-gizmo drag: the undo below (single selection + m_dragged)
+  // captures the SCALEX/SCALEY keys along with the rest of the SkVD keyframe.
+  m_scaleDragging = false;
+
   if (m_svSel.hasSingleObject() && m_dragged) {
     // Set a keyframe to each skeleton vertex, if that was requested
     if (m_globalKey.getValue())
@@ -1120,6 +1216,27 @@ void PlasticTool::draw_animate() {
       glEnd();
     }
     glLineWidth(1.0f);
+
+    // SuperPlastic squash & stretch gizmo: an Animate-tool style scale handle
+    // hanging diagonally off the selected vertex (the scale pivot). Drag it
+    // to scale around the vertex; Shift = A/R, Alt = precise, "Maintain:"
+    // combo = constraint.
+    if (selV >= 0) {
+      TPointD c  = deformedSkeleton.vertex(selV).P();
+      TPointD h  = c + TPointD(40.0 * pixelSize, 40.0 * pixelSize);
+      double hr  = 4.0 * pixelSize;
+      glColor4ub(255, 160, 0, m_scaleDragging ? 255 : 200);
+      glBegin(GL_LINES);
+      glVertex2d(c.x, c.y);
+      glVertex2d(h.x, h.y);
+      glEnd();
+      glBegin(GL_QUADS);
+      glVertex2d(h.x - hr, h.y - hr);
+      glVertex2d(h.x + hr, h.y - hr);
+      glVertex2d(h.x + hr, h.y + hr);
+      glVertex2d(h.x - hr, h.y + hr);
+      glEnd();
+    }
   }
 
   drawHighlights(m_sd, &deformedSkeleton, pixelSize);

@@ -65,9 +65,9 @@ public:
                 //!< whole skeleton is translated so the pinned vertex lands on
                 //!< (PINTX,PINTY) — a true per-frame constraint, so the pin
                 //!< stays planted on in-between frames, not just on keyframes.
-    SCALEX,     //!< SuperPlastic squash & stretch: DELTA from 1.0 (0 =
-    SCALEY,     //!< neutral, like ANGLE/DISTANCE are deltas), so untouched
-                //!< params stay default and are not serialized. Keyed on the
+    SCALEX,     //!< SuperPlastic squash & stretch: scale FACTORS (1.0 = 100%
+    SCALEY,     //!< = neutral; custom default handling in save/touchParams
+                //!< keeps untouched scales unserialized). Keyed on the
                 //!< vertex that was ACTIVE when squashing — the Animate-tool
                 //!< style pivot. At evaluation the whole deformed skeleton is
                 //!< scaled by (1+SCALEX, 1+SCALEY) around that vertex's

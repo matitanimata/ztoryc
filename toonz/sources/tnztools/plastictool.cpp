@@ -504,14 +504,14 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   ClickableLabel *soLabel = new ClickableLabel(tr("SO"));
   soLabel->setFixedHeight(20);
 
-  // SuperPlastic squash & stretch (delta from 1: 0 = neutral, 0.2 = 20%
-  // wider/taller). Anchored at the deformed root, keyframeable.
+  // SuperPlastic squash & stretch, in percent like the Animate tool's scale
+  // (100 = neutral). Anchored at the selected vertex, keyframeable.
   m_scaleXField = new ToolOptionParamRelayField(&l_plasticTool,
                                                 &l_plasticTool.m_scaleXRelay);
   m_scaleXField->setGlobalKey(&l_plasticTool.m_globalKey,
                               &l_plasticTool.m_relayGroup);
 
-  ClickableLabel *scaleXLabel = new ClickableLabel(tr("Squash X"));
+  ClickableLabel *scaleXLabel = new ClickableLabel(tr("Scale H"));
   scaleXLabel->setFixedHeight(20);
 
   m_scaleYField = new ToolOptionParamRelayField(&l_plasticTool,
@@ -519,7 +519,7 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   m_scaleYField->setGlobalKey(&l_plasticTool.m_globalKey,
                               &l_plasticTool.m_relayGroup);
 
-  ClickableLabel *scaleYLabel = new ClickableLabel(tr("Squash Y"));
+  ClickableLabel *scaleYLabel = new ClickableLabel(tr("Scale V"));
   scaleYLabel->setFixedHeight(20);
 
   m_noKeyIcon      = createQIcon("key_off");
@@ -982,6 +982,7 @@ PlasticTool::PlasticTool()
     , m_globalKey("globalKeyframe", true)
     , m_keepDistance("keepDistance", true)
     , m_ikDrag("inverseKinematics", false)
+    , m_scaleConstraint("scaleConstraint")
     , m_minAngle("minAngle", L"")
     , m_maxAngle("maxAngle", L"")
     , m_distanceRelay("distanceRelay")
@@ -1021,6 +1022,10 @@ PlasticTool::PlasticTool()
   m_propGroup[ANIMATE_IDX].bind(m_globalKey);
   m_propGroup[ANIMATE_IDX].bind(m_keepDistance);
   m_propGroup[ANIMATE_IDX].bind(m_ikDrag);
+  m_scaleConstraint.addValue(L"None");
+  m_scaleConstraint.addValue(L"Aspect Ratio");
+  m_scaleConstraint.addValue(L"Mass");
+  m_propGroup[ANIMATE_IDX].bind(m_scaleConstraint);
   m_propGroup[ANIMATE_IDX].bind(m_minAngle);
   m_propGroup[ANIMATE_IDX].bind(m_maxAngle);
 
@@ -1039,6 +1044,7 @@ PlasticTool::PlasticTool()
   m_globalKey.setId("GlobalKey");
   m_keepDistance.setId("KeepDistance");
   m_ikDrag.setId("PlasticInverseKinematics");
+  m_scaleConstraint.setId("PlasticScaleConstraint");
   m_minAngle.setId("MinAngle");
   m_maxAngle.setId("MaxAngle");
   m_distanceRelay.setId("DistanceRelay");
@@ -1100,6 +1106,10 @@ void PlasticTool::updateTranslation() {
   m_globalKey.setQStringName(tr("Global Key"));
   m_keepDistance.setQStringName(tr("Keep Distance"));
   m_ikDrag.setQStringName(tr("Inverse Kinematics"));
+  m_scaleConstraint.setQStringName(tr("Maintain:"));
+  m_scaleConstraint.setItemUIName(L"None", tr("None"));
+  m_scaleConstraint.setItemUIName(L"Aspect Ratio", tr("A/R"));
+  m_scaleConstraint.setItemUIName(L"Mass", tr("Mass"));
   m_minAngle.setQStringName(tr("Angle Bounds"));
   m_maxAngle.setQStringName("");
 }
@@ -2043,6 +2053,27 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
         m_vertexName.notifyListeners();
       }
     }
+  } else if (propertyName == "scaleXRelay" || propertyName == "scaleYRelay") {
+    // Squash & stretch constraint (like the Animate tool's "Maintain"):
+    // editing one axis drives the other — same value for Aspect Ratio,
+    // reciprocal for Mass (area preserved).
+    int constraint = m_scaleConstraint.getIndex();  // 0 none, 1 aspect, 2 mass
+    if (constraint != 0) {
+      bool fromX = (propertyName == "scaleXRelay");
+      TDoubleParamRelayProperty &src = fromX ? m_scaleXRelay : m_scaleYRelay;
+      TDoubleParamRelayProperty &dst = fromX ? m_scaleYRelay : m_scaleXRelay;
+      if (src.getParam() && dst.getParam()) {
+        double v = src.getValue();
+        double w =
+            (constraint == 1) ? v : (fabs(v) > 1e-4 ? 1.0 / v : 1.0);
+        if (fabs(dst.getValue() - w) > 1e-9) {
+          dst.setValue(w);
+          dst.notifyListeners();
+        }
+      }
+    }
+    m_deformedSkeleton.invalidate();
+    invalidate();
   } else if (propertyName == "interpolate") {
     if (m_sd && m_svSel >= 0) {
       // Set interpolation property to the associated skeleton vertex
