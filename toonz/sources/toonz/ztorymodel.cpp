@@ -1457,6 +1457,10 @@ void ZtoryModel::addShotFromRasters(const QString &name,
   // 4) Finalise the model entry now that the column exists.  xsheetColumn is
   //    critical: refreshPreview() uses it to render the sub-scene thumbnail.
   m_shots[si].xsheetColumn = col;
+  // Name the column after the shot, like every other shot-creating path: the
+  // Board's reorder detection compares this name against the shot label, and an
+  // unnamed column carries no ordering information.
+  updateColumnName(si);
 
   app->getCurrentXsheet()->notifyXsheetChanged();
   resequenceXsheet();

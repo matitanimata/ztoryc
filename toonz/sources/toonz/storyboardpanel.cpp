@@ -3499,10 +3499,15 @@ void StoryboardPanel::onModelResequenced() {
     // so xsheetColumn still matches. The column's stage-object name is kept equal
     // to the shot label by updateColumnName(); compare it against this shot's
     // label — a mismatch means another panel reordered the shots underneath us.
+    //
+    // Only when the column actually carries an explicit name: getName() falls
+    // back to "Col<N>" for unnamed columns, which never equals a shot label, so
+    // comparing it flagged drift on EVERY resequence — a full Board rebuild
+    // (loadZtoryc() re-reads the .ztoryc from disk) on every trim.
     TStageObject *obj =
         tree ? tree->getStageObject(TStageObjectId::ColumnId(childCols[si]), false)
              : nullptr;
-    if (obj) {
+    if (obj && obj->hasSpecifiedName()) {
       const QString colName = QString::fromStdString(obj->getName());
       if (!colName.isEmpty() && colName != m_shots[si].data.label()) {
         drifted = true;
