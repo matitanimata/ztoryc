@@ -1383,11 +1383,31 @@ void PlasticTool::onLeave() {
 
 void PlasticTool::onSelectionChanged() {
   SkVD *vd = 0;
+
+  // Hardening: on column/xsheet switches this runs while m_sd already points
+  // to the NEW column's deformation — which may not carry the current skelId
+  // (null skeleton), and m_svSel may be a stale index from the previous
+  // skeleton (vertices are a tcg::list with holes). Dereferencing blindly
+  // crashed (SIGSEGV clicking another column with the tool active). A stale
+  // selection is dropped so the rest of the tool can't trip on it either.
+  PlasticSkeletonP selSkel;
+  bool selValid = false;
   if (m_sd && m_svSel.hasSingleObject()) {
+    selSkel = m_sd->skeleton(::skeletonId());
+    if (selSkel)
+      for (auto vt = selSkel->vertices().begin();
+           vt != selSkel->vertices().end(); ++vt)
+        if ((int)vt.m_idx == (int)m_svSel) {
+          selValid = true;
+          break;
+        }
+    if (!selValid) m_svSel.selectNone();
+  }
+
+  if (selValid) {
     int skelId = ::skeletonId();
 
-    const PlasticSkeleton::vertex_type &vx =
-        m_sd->skeleton(skelId)->vertex(m_svSel);
+    const PlasticSkeleton::vertex_type &vx = selSkel->vertex(m_svSel);
 
     m_vertexName.setValue(vx.name().toStdWString());
     m_interpolate.setValue(vx.m_interpolate);

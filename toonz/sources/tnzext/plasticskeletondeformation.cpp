@@ -18,6 +18,8 @@
 #include <memory>
 #include <set>
 #include <map>
+#include <vector>
+#include <algorithm>
 
 // Boost includes
 #include <boost/iterator/transform_iterator.hpp>
@@ -890,10 +892,57 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
     m_imp->updateBranchPositions(*origSkel, skeleton, frame,
                                  skeleton.vertices().begin().m_idx);
 
-  // SuperPlastic pin constraint (per-frame): if a vertex is pinned at this
-  // frame, rigidly translate the whole skeleton so it lands exactly on its
-  // target (PINTX,PINTY). Being enforced at EVERY frame — not just where the
-  // angles were keyframed — this keeps the pin planted through in-betweens.
+  // SuperPlastic pin constraints (per-frame). The OLDEST active pin is planted
+  // by rigidly translating the whole skeleton onto its target (PINTX,PINTY):
+  // the root stays free and the animator's pose is untouched. Any FURTHER pin
+  // (double support in a walk) is planted by bending ONLY its own limb — CCD
+  // confined strictly below the point where its chain diverges from the ones
+  // already planted, so the first foot never moves. Enforced at EVERY frame,
+  // not just on keyframes, so pins hold through the in-betweens.
+  struct locals {
+    // Root-first chain of vertex indices from the skeleton root down to v.
+    static std::vector<int> pathFromRoot(const PlasticSkeleton &skel, int v) {
+      std::vector<int> path;
+      for (int p = v; p >= 0; p = skel.vertex(p).parent()) path.push_back(p);
+      std::reverse(path.begin(), path.end());
+      return path;
+    }
+
+    // v's subtree (v included), descending child edges only.
+    static void collectSubtree(PlasticSkeleton &skel, int v,
+                               std::vector<int> &out) {
+      out.push_back(v);
+      PlasticSkeletonVertex &vx = skel.vertex(v);
+      PlasticSkeleton::vertex_type::edges_iterator et, eEnd(vx.edgesEnd());
+      for (et = vx.edgesBegin(); et != eEnd; ++et) {
+        int vChild = skel.edge(*et).vertex(1);
+        if (vChild == v) continue;
+        collectSubtree(skel, vChild, out);
+      }
+    }
+
+    // First frame of the pin's current ON run (Constant keys): seniority
+    // decides which pin owns the translation, so toggling a second pin on
+    // never re-targets the first one (that would jump the whole pose).
+    static double activationFrame(const TDoubleParam &pin, double frame) {
+      double on = frame;
+      for (int k = pin.getKeyframeCount() - 1; k >= 0; --k) {
+        const TDoubleKeyframe &kf = pin.getKeyframe(k);
+        if (kf.m_frame > frame) continue;
+        if (kf.m_value < 0.5) break;
+        on = kf.m_frame;
+      }
+      return on;
+    }
+  };  // locals
+
+  struct ActivePin {
+    int idx;
+    TPointD target;
+    double since;
+  };
+  std::vector<ActivePin> pins;
+
   const tcg::list<PlasticSkeleton::vertex_type> &verts = skeleton.vertices();
   for (auto vt = verts.begin(); vt != verts.end(); ++vt) {
     auto it = m_imp->m_vds.find(vt->name());
@@ -903,17 +952,83 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
         !vd.m_params[SkVD::PINTY])
       continue;
     if (vd.m_params[SkVD::PIN]->getValue(frame) < 0.5) continue;
-    // Skip pins that never got a target (avoid snapping to the origin).
+    // Skip pins that never got a target (avoid snapping to the origin) —
+    // also shields against stale PIN flags left over in older scenes.
     if (vd.m_params[SkVD::PINTX]->isDefault() &&
         vd.m_params[SkVD::PINTY]->isDefault())
       continue;
     TPointD target(vd.m_params[SkVD::PINTX]->getValue(frame),
                    vd.m_params[SkVD::PINTY]->getValue(frame));
-    TPointD shift = target - vt->P();
-    if (norm2(shift) < 1e-12) break;
+    pins.push_back(
+        {(int)vt.m_idx, target,
+         locals::activationFrame(*vd.m_params[SkVD::PIN], frame)});
+  }
+  if (pins.empty()) return;
+
+  std::stable_sort(pins.begin(), pins.end(),
+                   [](const ActivePin &a, const ActivePin &b) {
+                     return a.since < b.since;
+                   });
+
+  // Primary (oldest) pin: rigid whole-skeleton translation.
+  TPointD shift = pins[0].target - skeleton.vertex(pins[0].idx).P();
+  if (norm2(shift) > 1e-12)
     for (auto st = verts.begin(); st != verts.end(); ++st)
       skeleton.vertex(st.m_idx).P() += shift;
-    break;  // a single active pin
+
+  if (pins.size() == 1) return;
+
+  // Vertices already committed to a planted chain: CCD below must not touch.
+  std::set<int> planted;
+  {
+    std::vector<int> p0 = locals::pathFromRoot(skeleton, pins[0].idx);
+    planted.insert(p0.begin(), p0.end());
+  }
+
+  for (size_t i = 1; i < pins.size(); ++i) {
+    const int pinV        = pins[i].idx;
+    const TPointD &target = pins[i].target;
+    std::vector<int> path = locals::pathFromRoot(skeleton, pinV);
+
+    // Anchor = deepest vertex of this chain already planted (at worst the
+    // root). CCD pivots live strictly below it: rotating their subtrees can
+    // never move a previously planted pin (disjoint by construction).
+    int aIdx = 0;
+    for (int j = (int)path.size() - 1; j >= 0; --j)
+      if (planted.count(path[j])) {
+        aIdx = j;
+        break;
+      }
+
+    const int SWEEPS  = 10;
+    const double tol2 = 1e-6;
+    for (int sweep = 0; sweep < SWEEPS; ++sweep) {
+      if (norm2(target - skeleton.vertex(pinV).P()) < tol2) break;
+      // Nearest-to-pin pivot first: classic CCD sweep order. The anchor
+      // itself (j == aIdx) is a valid LAST pivot: rotating only path[j+1]'s
+      // subtree about it bends this limb's attachment bone too — without it,
+      // a pose that puts the divergence point out of the limb's reach would
+      // tear the pin off with no joint able to compensate. Rotating just
+      // that subtree can never move the previously planted chains.
+      for (int j = (int)path.size() - 2; j >= aIdx; --j) {
+        const TPointD pivot = skeleton.vertex(path[j]).P();
+        TPointD cur = skeleton.vertex(pinV).P() - pivot;
+        TPointD tgt = target - pivot;
+        if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
+        double ang = atan2(cross(cur, tgt), cur * tgt);
+        double c = cos(ang), s = sin(ang);
+        std::vector<int> sub;
+        locals::collectSubtree(skeleton, path[j + 1], sub);
+        for (int v : sub) {
+          TPointD &P = skeleton.vertex(v).P();
+          TPointD d  = P - pivot;
+          P = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+        }
+      }
+    }
+
+    // This chain is now planted too: later pins must bend below it.
+    planted.insert(path.begin(), path.end());
   }
 }
 

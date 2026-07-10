@@ -27,6 +27,8 @@
 
 // STD includes
 #include <memory>
+#include <map>
+#include <vector>
 
 // tcg includes
 #include "tcg/tcg_base.h"
@@ -337,6 +339,12 @@ protected:
   void leftButtonDown_animate(const TPointD &pos, const TMouseEvent &me);
   void leftButtonDrag_animate(const TPointD &pos, const TMouseEvent &me);
   void moveVertexIK_animate(double frame, int v, const TPointD &pos);
+  void moveVertexMultiAnchor_animate(double frame, int v, const TPointD &pos,
+                                     const std::vector<int> &pins,
+                                     const std::map<int, TPointD> &curPos);
+  void writeBackAngles_animate(double frame,
+                               const std::map<int, TPointD> &curPos,
+                               const std::map<int, TPointD> &desired);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
 
   // SuperPlastic IK anchor (pin). The pinned vertex is kept fixed while IK
@@ -345,6 +353,7 @@ protected:
   int pinnedVertexAtFrame(double frame) const;  //!< first pin, -1 if none
   std::vector<int> pinnedVerticesAtFrame(double frame) const;  //!< all pins
   void togglePinAtCurrentFrame();               //!< pin/unpin selected vertex
+  void switchPinAtCurrentFrame();  //!< pin selected, release others at f+1
   void addContextMenuActions_animate(QMenu *menu);
 
   void draw_mesh();

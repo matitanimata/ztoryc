@@ -5,6 +5,7 @@
 
 // TnzLib includes
 #include "toonz/ikccd.h"
+#include "toonz/tframehandle.h"
 #include "toonz/tobjecthandle.h"
 #include "toonz/txsheethandle.h"
 
@@ -182,6 +183,382 @@ inline double wrapPi(double a) {
   return a;
 }
 
+// Root-first chain of vertex indices from the skeleton root down to v.
+std::vector<int> pathFromRoot(const PlasticSkeleton &skel, int v) {
+  std::vector<int> path;
+  for (int p = v; p >= 0; p = skel.vertex(p).parent()) path.push_back(p);
+  std::reverse(path.begin(), path.end());
+  return path;
+}
+
+// Whether u belongs to a's subtree in the original parenting (a included).
+bool isInSubtree(const PlasticSkeleton &skel, int u, int a) {
+  for (int p = u; p >= 0; p = skel.vertex(p).parent())
+    if (p == a) return true;
+  return false;
+}
+
+// Tree path a .. LCA .. b (both included).
+std::vector<int> pathBetween(const PlasticSkeleton &skel, int a, int b) {
+  std::vector<int> pa = pathFromRoot(skel, a), pb = pathFromRoot(skel, b);
+  size_t i = 0;
+  while (i < pa.size() && i < pb.size() && pa[i] == pb[i]) ++i;
+  std::vector<int> res;
+  for (size_t j = pa.size(); j-- > i;) res.push_back(pa[j]);
+  res.push_back(pa[i - 1]);  // the LCA (i >= 1: both paths share the root)
+  for (size_t j = i; j < pb.size(); ++j) res.push_back(pb[j]);
+  return res;
+}
+
+// Minimal subtree spanning all the pins (union of their pairwise paths).
+std::set<int> spanningOfPins(const PlasticSkeleton &skel,
+                             const std::vector<int> &pins) {
+  std::set<int> S;
+  for (size_t i = 0; i < pins.size(); ++i)
+    for (size_t j = i + 1; j < pins.size(); ++j) {
+      std::vector<int> path = pathBetween(skel, pins[i], pins[j]);
+      S.insert(path.begin(), path.end());
+    }
+  return S;
+}
+
+// Union of the chains v -> each pin, re-parented toward v (v is the T root).
+struct PinTree {
+  std::map<int, int> parentT;               // toward v; v -> -1
+  std::map<int, std::vector<int>> childT;   // away from v
+  std::map<int, double> len;                // bone length to parentT
+  std::map<int, int> depth;                 // hops from v
+  std::vector<int> order;                   // BFS from v outward
+};
+
+PinTree buildPinTree(const PlasticSkeleton &skel,
+                     const std::map<int, TPointD> &curPos, int v,
+                     const std::vector<int> &pins) {
+  PinTree T;
+  T.parentT[v] = -1;
+  for (int p : pins) {
+    std::vector<int> path = pathBetween(skel, v, p);
+    for (size_t k = 1; k < path.size(); ++k)
+      if (!T.parentT.count(path[k])) T.parentT[path[k]] = path[k - 1];
+  }
+  for (const auto &kv : T.parentT)
+    if (kv.second >= 0) {
+      T.childT[kv.second].push_back(kv.first);
+      T.len[kv.first] = norm(curPos.at(kv.first) - curPos.at(kv.second));
+    }
+  std::queue<int> q;
+  q.push(v);
+  T.depth[v] = 0;
+  while (!q.empty()) {
+    int u = q.front();
+    q.pop();
+    T.order.push_back(u);
+    auto ct = T.childT.find(u);
+    if (ct != T.childT.end())
+      for (int c : ct->second) {
+        T.depth[c] = T.depth[u] + 1;
+        q.push(c);
+      }
+  }
+  return T;
+}
+
+// FABRIK with multiple fixed anchors (the pins) and a dragged root (v): phase
+// A puts v on the mouse target pushing the chains outward; phase B nails every
+// pin back on its anchor pulling toward v, averaging at the junctions; a
+// stiffness pass then pulls proximal bones back toward their pre-drag
+// direction — FABRIK concentrates all the bending at the junction (clavicles
+// fold, elbows barely move), while an animator wants the DISTAL joints to
+// absorb first. Finally, exact bone lengths are restored (junction averaging
+// violates them, and the ANGLE-only write-back would turn that violation into
+// unplanted pins) and each pin is re-nailed rotating ONLY its exclusive
+// branch, which cannot disturb the other chains.
+void solveMultiAnchor(const PlasticSkeleton &orig, const PinTree &T,
+                      const std::map<int, TPointD> &anchor, const TPointD &t,
+                      std::map<int, TPointD> &P) {
+  auto dir = [](const TPointD &d) {
+    double n = norm(d);
+    return (n < 1e-9) ? TPointD(1.0, 0.0) : d * (1.0 / n);
+  };
+  auto rot = [](const TPointD &d, double ang) {
+    double c = cos(ang), s = sin(ang);
+    return TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+  };
+
+  // Per-joint stiffness (1 hop from v = stiff, fully flexible at 4+ hops)
+  // pulling toward the bone's REST orientation relative to its reference bone
+  // — not toward its direction at drag start: that acted as a ratchet (a
+  // clavicle stretched out of necessity stayed stretched when slack returned;
+  // with the rest reference it springs back to the natural pose).
+  struct StiffRef {
+    double stiff, rel;  // rest angle relative to the reference bone
+    int refA, refB;     // live reference bone (positions in P)...
+    TPointD constDir;   // ...or a fixed direction when the bone is off-tree
+  };
+  // Bones on the stretch from v toward the tree top are v's MOUNT to the
+  // torso: articulating them is exactly what dragging v means (dragging a
+  // shoulder pivots ITS clavicle), so they are exempt from stiffness. When v
+  // is the top itself (dragging the sternum), nothing is exempt and the
+  // clavicles keep their anatomical resistance.
+  std::set<int> mount;
+  {
+    int top = -1;
+    for (const auto &kv : T.parentT) {
+      int op = orig.vertex(kv.first).parent();
+      if (op < 0 || !T.parentT.count(op)) {
+        top = kv.first;
+        break;
+      }
+    }
+    for (int u = top; u >= 0 && u != T.order[0]; u = T.parentT.at(u))
+      mount.insert(u);
+  }
+
+  std::map<int, StiffRef> sref;
+  for (size_t k = 1; k < T.order.size(); ++k) {
+    int u = T.order[k], pu = T.parentT.at(u);
+    if (mount.count(u)) continue;  // v's articulation: fully flexible
+    StiffRef r;
+    r.stiff = std::max(0.0, 0.8 - 0.3 * (T.depth.at(u) - 1));
+    if (r.stiff <= 0.0) continue;
+    int ppu = T.parentT.at(pu);
+    TPointD refOrig;
+    if (ppu >= 0) {
+      r.refA = ppu, r.refB = pu;
+      refOrig = orig.vertex(pu).P() - orig.vertex(ppu).P();
+    } else {
+      int op = orig.vertex(pu).parent();  // pu == v: reach outside the tree
+      if (op >= 0 && T.parentT.count(op)) {
+        r.refA = op, r.refB = pu;
+        refOrig = orig.vertex(pu).P() - orig.vertex(op).P();
+      } else if (op >= 0) {
+        r.refA = r.refB = -1;
+        r.constDir = dir(P.at(pu) - P.at(op));  // body follows v rigidly
+        refOrig    = orig.vertex(pu).P() - orig.vertex(op).P();
+      } else {
+        r.refA = r.refB = -1;
+        r.constDir = TPointD(1.0, 0.0);
+        refOrig    = TPointD(1.0, 0.0);
+      }
+    }
+    TPointD boneOrig = orig.vertex(u).P() - orig.vertex(pu).P();
+    r.rel   = atan2(cross(refOrig, boneOrig), refOrig * boneOrig);
+    sref[u] = r;
+  }
+
+  const int ITERS = 10;
+  for (int it = 0; it < ITERS; ++it) {
+    P[T.order[0]] = t;
+    for (size_t k = 1; k < T.order.size(); ++k) {
+      int u = T.order[k], pu = T.parentT.at(u);
+      P[u] = P[pu] + T.len.at(u) * dir(P[u] - P[pu]);
+    }
+    for (size_t k = T.order.size(); k-- > 0;) {
+      int u   = T.order[k];
+      auto at = anchor.find(u);
+      if (at != anchor.end()) {
+        P[u] = at->second;  // a pin: nailed (even mid-chain)
+        continue;
+      }
+      auto ct = T.childT.find(u);
+      if (ct == T.childT.end() || ct->second.empty()) continue;  // v alone
+      TPointD acc(0.0, 0.0);
+      for (int c : ct->second)
+        acc = acc + P[c] + T.len.at(c) * dir(P[u] - P[c]);
+      P[u] = acc * (1.0 / (double)ct->second.size());
+    }
+    for (size_t k = 1; k < T.order.size(); ++k) {
+      int u   = T.order[k];
+      auto st = sref.find(u);
+      if (anchor.count(u) || st == sref.end()) continue;
+      const StiffRef &r = st->second;
+      int pu            = T.parentT.at(u);
+      TPointD refNow =
+          (r.refA >= 0) ? dir(P[r.refB] - P[r.refA]) : r.constDir;
+      TPointD restDir = rot(refNow, r.rel);
+      TPointD dNow    = dir(P[u] - P[pu]);
+      P[u] = P[pu] + T.len.at(u) * dir(dNow * (1.0 - r.stiff) +
+                                       restDir * r.stiff);
+    }
+  }
+
+  // Restore exact bone lengths from the junction outward.
+  for (size_t k = 1; k < T.order.size(); ++k) {
+    int u = T.order[k], pu = T.parentT.at(u);
+    P[u] = P[pu] + T.len.at(u) * dir(P[u] - P[pu]);
+  }
+
+  // Re-nail each pin with a confined CCD on its exclusive branch: pure
+  // rotations (lengths stay true) below the last vertex shared with other
+  // chains (rotating a shared vertex would move the other pins).
+  std::map<int, int> useCount;
+  for (const auto &ap : anchor)
+    for (int u = ap.first; u >= 0; u = T.parentT.at(u)) ++useCount[u];
+
+  for (const auto &ap : anchor) {
+    int p = ap.first;
+    std::vector<int> chain;
+    for (int u = p; u >= 0; u = T.parentT.at(u)) chain.push_back(u);
+    std::reverse(chain.begin(), chain.end());  // v .. p
+    int firstExcl = (int)chain.size();
+    for (int i = 0; i < (int)chain.size(); ++i)
+      if (useCount[chain[i]] < 2) {
+        firstExcl = i;
+        break;
+      }
+    // The last shared vertex (i == firstExcl-1) is a valid last pivot too,
+    // rotating ONLY this branch's subtree about it: the attachment bone can
+    // yield when the pin would otherwise be out of reach (the stiffness above
+    // is a preference, planting is a hard constraint) — and the other chains
+    // are never touched.
+    for (int sweep = 0; sweep < 8; ++sweep) {
+      if (norm2(ap.second - P[p]) < 1e-9) break;
+      for (int i = (int)chain.size() - 2; i >= firstExcl - 1; --i) {
+        const TPointD pivot = P[chain[i]];
+        TPointD cur = P[p] - pivot, tgt = ap.second - pivot;
+        if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
+        double ang = atan2(cross(cur, tgt), cur * tgt);
+        double c = cos(ang), s = sin(ang);
+        std::queue<int> q;
+        q.push(chain[i + 1]);
+        while (!q.empty()) {
+          int u = q.front();
+          q.pop();
+          auto ct = T.childT.find(u);
+          if (ct != T.childT.end())
+            for (int w : ct->second) q.push(w);
+          TPointD d = P[u] - pivot;
+          P[u]      = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+        }
+      }
+    }
+  }
+}
+
+// Completes a solved T with every off-tree vertex: whatever hangs BELOW a T
+// vertex rotates rigidly with its attachment bone; the body ABOVE the tree
+// (and all its limbs) translates with the tree's topmost vertex — nothing else
+// is nailed. Keeps all bone lengths, so the ANGLE write-back is exact.
+void rigidFollowOffTree(const PlasticSkeleton &skel,
+                        const std::map<int, TPointD> &curPos,
+                        std::map<int, TPointD> &desired,
+                        const std::map<int, int> &parentT) {
+  int top = -1;
+  for (const auto &kv : parentT) {
+    int op = skel.vertex(kv.first).parent();
+    if (op < 0 || !parentT.count(op)) {
+      top = kv.first;
+      break;
+    }
+  }
+  TPointD topShift = desired.at(top) - curPos.at(top);
+
+  for (const auto &kv : curPos) {
+    int w = kv.first;
+    if (parentT.count(w)) continue;
+    int a = -1;
+    for (int p = skel.vertex(w).parent(); p >= 0; p = skel.vertex(p).parent())
+      if (parentT.count(p)) {
+        a = p;
+        break;
+      }
+    if (a < 0) {  // body side, above the tree
+      desired[w] = curPos.at(w) + topShift;
+      continue;
+    }
+    int ap      = skel.vertex(a).parent();
+    double dphi = 0.0;
+    if (ap >= 0 && parentT.count(ap)) {
+      TPointD od = curPos.at(a) - curPos.at(ap);
+      TPointD nd = desired.at(a) - desired.at(ap);
+      if (norm2(od) > 1e-12 && norm2(nd) > 1e-12)
+        dphi = atan2(nd.y, nd.x) - atan2(od.y, od.x);
+    }
+    double c = cos(dphi), s = sin(dphi);
+    TPointD d  = curPos.at(w) - curPos.at(a);
+    desired[w] = desired.at(a) + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+  }
+}
+
+// Re-plant every pin except keepPin inside the `desired` position snapshot:
+// each one gets a confined CCD that bends ONLY its own limb — pivots strictly
+// below the point where its chain diverges from the chains already planted —
+// so the body stays exactly where the drag put it (nothing else is nailed)
+// and previously planted pins can never be disturbed. Returns the worst
+// squared miss, so the caller can refuse drags that tear a pin off.
+double replantOtherPins(const PlasticSkeleton &orig,
+                        const std::map<int, TPointD> &targets,
+                        std::map<int, TPointD> &desired,
+                        const std::vector<int> &pins, int keepPin) {
+  double worst2 = 0.0;
+  std::set<int> planted;
+  {
+    std::vector<int> p0 = pathFromRoot(orig, keepPin);
+    planted.insert(p0.begin(), p0.end());
+  }
+
+  for (int p : pins) {
+    if (p == keepPin) continue;
+    const TPointD target  = targets.at(p);
+    std::vector<int> path = pathFromRoot(orig, p);
+
+    int aIdx = 0;
+    for (int j = (int)path.size() - 1; j >= 0; --j)
+      if (planted.count(path[j])) {
+        aIdx = j;
+        break;
+      }
+
+    const int SWEEPS  = 10;
+    const double tol2 = 1e-6;
+    for (int sweep = 0; sweep < SWEEPS; ++sweep) {
+      if (norm2(target - desired.at(p)) < tol2) break;
+      // The anchor itself (j == aIdx) is a valid last pivot: rotating only
+      // path[j+1]'s subtree bends the limb's attachment bone too — without
+      // it, a body pose that puts the anchor out of the limb's reach tears
+      // the pin off with no joint able to compensate. That subtree is
+      // disjoint from the planted chains, so they can't be disturbed.
+      for (int j = (int)path.size() - 2; j >= aIdx; --j) {
+        const TPointD pivot = desired.at(path[j]);
+        TPointD cur = desired.at(p) - pivot;
+        TPointD tgt = target - pivot;
+        if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
+        double ang = atan2(cross(cur, tgt), cur * tgt);
+        double c = cos(ang), s = sin(ang);
+        for (auto &kv : desired) {
+          if (!isInSubtree(orig, kv.first, path[j + 1])) continue;
+          TPointD d = kv.second - pivot;
+          kv.second = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+        }
+      }
+    }
+
+    worst2 = std::max(worst2, norm2(target - desired.at(p)));
+    planted.insert(path.begin(), path.end());
+  }
+  return worst2;
+}
+
+// Absolute planting target (PINTX,PINTY) of each pin at the given frame —
+// anchoring to these instead of the current eval positions keeps small
+// per-event solver misses from accumulating into a visible drift.
+std::map<int, TPointD> pinTargetsAtFrame(
+    const SkDP &sd, int skelId, double frame, const std::vector<int> &pins,
+    const std::map<int, TPointD> &fallback) {
+  std::map<int, TPointD> targets;
+  for (int p : pins) {
+    SkVD *vd = sd->vertexDeformation(skelId, p);
+    if (vd && vd->m_params[SkVD::PINTX] && vd->m_params[SkVD::PINTY] &&
+        !(vd->m_params[SkVD::PINTX]->isDefault() &&
+          vd->m_params[SkVD::PINTY]->isDefault()))
+      targets[p] = TPointD(vd->m_params[SkVD::PINTX]->getValue(frame),
+                           vd->m_params[SkVD::PINTY]->getValue(frame));
+    else
+      targets[p] = fallback.at(p);
+  }
+  return targets;
+}
+
 }  // namespace
 
 // SuperPlastic IK adapter (Animate mode). Posing is always a SINGLE-JOINT,
@@ -193,22 +570,27 @@ inline double wrapPi(double a) {
 // vertex rotates only its own joint, descendants follow rigidly, nothing toward
 // the root moves.
 //
-// With a pin: THE PIN IS A TEMPORARY ROOT. The hierarchy is re-rooted at the
-// pin (BFS), and v is manipulated as a single joint of THAT tree: the bone
-// (reParent(v), v) rotates about reParent(v) — which stays fixed — carrying v
-// and its re-rooted subtree rigidly, while everything on the pin side (the pin
-// included) stays put. This is exactly how one manipulates a normal skeleton
-// whose root is the pinned vertex. The resulting shape is written back into the
-// deformer's fixed root-down ANGLE params; the pin's absolute planting is kept
-// per-frame at EVALUATION via its PINTX/PINTY target (applyPinConstraint), so a
-// pinned foot never drifts on the in-betweens.
+// With pins: THE PIN NEAREST TO THE DRAGGED VERTEX IS A TEMPORARY ROOT. The
+// hierarchy is re-rooted at it (BFS), and v is manipulated as a single joint of
+// THAT tree: the bone (reParent(v), v) rotates about reParent(v) — which stays
+// fixed — carrying v and its re-rooted subtree rigidly, while everything on the
+// pin side (the pin included) stays put. Rooting at the NEAREST pin keeps the
+// region around the pin being posed stable under the mouse. Any OTHER active
+// pin was carried along by the rigid rotation: it is re-planted right here, in
+// the manipulated snapshot, by bending only its own limb (replantOtherPins) —
+// the body stays free, but the written FK already satisfies every pin, so the
+// eval-time constraint has nothing left to correct against the drag. The
+// result is written back into the deformer's fixed root-down ANGLE params; the
+// pins' absolute planting is kept per-frame at EVALUATION via their PINTX/PINTY
+// targets, so pinned feet never drift on the in-betweens.
 void PlasticTool::moveVertexIK_animate(double frame, int v,
                                        const TPointD &pos) {
   if (!m_sd || !skeleton()) return;
   const PlasticSkeleton &orig = *skeleton();
 
-  int pin = pinnedVertexAtFrame(frame);
-  if (pin < 0 || pin == v) {
+  std::vector<int> pins = pinnedVerticesAtFrame(frame);
+  bool vIsPin = std::find(pins.begin(), pins.end(), v) != pins.end();
+  if (pins.empty() || vIsPin) {
     // No pin (or dragging the pin itself): local single joint, original tree.
     if (orig.vertex(v).parent() < 0) return;  // the root has no ANGLE param
     SkVD *vd = m_sd->vertexDeformation(::skeletonId(), v);
@@ -223,14 +605,22 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
     return;
   }
 
-  // ---- Pin active: re-root at the pin ----
+  // ---- Pins active: re-root at the pin nearest to v ----
   PlasticSkeleton &defSkel = deformedSkeleton();
   std::map<int, TPointD> curPos;
-  int rootIdx = -1;
   for (auto vt = defSkel.vertices().begin(); vt != defSkel.vertices().end();
-       ++vt) {
+       ++vt)
     curPos[vt.m_idx] = vt->P();
-    if (vt->parent() < 0) rootIdx = vt.m_idx;
+
+  // v BETWEEN the pins (on their spanning subtree): a single rigid pivot
+  // would nail one whole pin-side chain — hanging from a bar by both hands,
+  // one shoulder couldn't lift. Solve as a multi-anchor chain instead: every
+  // pin stays nailed, every chain toward v bends symmetrically, and the mouse
+  // target is clamped to what the chains can reach (the drag stiffens at
+  // end-of-range instead of tearing a pin off).
+  if (pins.size() >= 2 && spanningOfPins(orig, pins).count(v)) {
+    moveVertexMultiAnchor_animate(frame, v, pos, pins, curPos);
+    return;
   }
 
   std::map<int, std::vector<int>> adj;
@@ -239,6 +629,32 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
     adj[et->vertex(0)].push_back(et->vertex(1));
     adj[et->vertex(1)].push_back(et->vertex(0));
   }
+
+  // Nearest pin by tree distance: posing near a planted foot must behave the
+  // same whichever foot got pinned first.
+  int pin = -1;
+  {
+    std::set<int> pinSet(pins.begin(), pins.end());
+    std::set<int> visited;
+    std::queue<int> q;
+    q.push(v);
+    visited.insert(v);
+    while (!q.empty()) {
+      int u = q.front();
+      q.pop();
+      if (pinSet.count(u)) {
+        pin = u;
+        break;
+      }
+      for (int w : adj[u])
+        if (!visited.count(w)) {
+          visited.insert(w);
+          q.push(w);
+        }
+    }
+    if (pin < 0) return;  // no pin reachable from v
+  }
+
   std::map<int, int> reParent;
   {
     std::set<int> visited;
@@ -275,11 +691,6 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
   TPointD newD = pos - pivot;
   if (norm2(oldD) < 1e-12 || norm2(newD) < 1e-12) return;
   double theta = wrapPi(atan2(newD.y, newD.x) - atan2(oldD.y, oldD.x));
-  double c = cos(theta), s = sin(theta);
-  auto rotAbout = [&](const TPointD &p) {
-    TPointD d = p - pivot;
-    return pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
-  };
 
   // v's re-rooted subtree = vertices reached from v descending re-rooted edges.
   std::set<int> moved;
@@ -298,10 +709,97 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
     }
   }
 
-  std::map<int, TPointD> desired = curPos;
-  for (int u : moved) desired[u] = rotAbout(curPos[u]);
+  // Pose at a given rotation and re-plant the other pins (bending only their
+  // own limb); the returned residual tells whether some pin got out of reach.
+  std::map<int, TPointD> targets =
+      pinTargetsAtFrame(m_sd, ::skeletonId(), frame, pins, curPos);
+  auto poseWithTheta = [&](double th) {
+    double c = cos(th), s = sin(th);
+    std::map<int, TPointD> desired = curPos;
+    for (int u : moved) {
+      TPointD d  = curPos[u] - pivot;
+      desired[u] = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+    }
+    double resid2 = (pins.size() > 1)
+                        ? replantOtherPins(orig, targets, desired, pins, pin)
+                        : 0.0;
+    return std::make_pair(resid2, desired);
+  };
 
-  // ---- Write-back into the fixed root-down parameterization ----
+  // Hard pins: if the full rotation tears some pin off (its limb can't reach
+  // the target anymore), bisect down to the widest rotation that still keeps
+  // every pin planted — the drag stiffens at end-of-range instead of escaping.
+  double tol   = getPixelSize();
+  double tol2  = tol * tol;
+  auto attempt = poseWithTheta(theta);
+  std::map<int, TPointD> desired;
+  if (attempt.first <= tol2)
+    desired = std::move(attempt.second);
+  else {
+    double lo = 0.0, hi = theta;
+    desired = curPos;
+    for (int i = 0; i < 8; ++i) {
+      double mid = 0.5 * (lo + hi);
+      auto r     = poseWithTheta(mid);
+      if (r.first <= tol2) {
+        lo      = mid;
+        desired = std::move(r.second);
+      } else
+        hi = mid;
+    }
+  }
+
+  writeBackAngles_animate(frame, curPos, desired);
+}
+
+//------------------------------------------------------------------------
+
+// Symmetric posing of a vertex lying BETWEEN the pins: FABRIK over the tree
+// spanned by the chains v -> each pin (all pins nailed, target clamped to
+// reach), then the rest of the skeleton follows rigidly — the body above the
+// tree just translates, nothing besides the pins is anchored.
+void PlasticTool::moveVertexMultiAnchor_animate(
+    double frame, int v, const TPointD &pos, const std::vector<int> &pins,
+    const std::map<int, TPointD> &curPos) {
+  const PlasticSkeleton &orig = *skeleton();
+  PinTree T                   = buildPinTree(orig, curPos, v, pins);
+
+  std::map<int, TPointD> anchor =
+      pinTargetsAtFrame(m_sd, ::skeletonId(), frame, pins, curPos);
+
+  // Clamp the mouse target inside every pin's reach (alternating projection).
+  TPointD t = pos;
+  for (int it = 0; it < 4; ++it)
+    for (int p : pins) {
+      double L = 0.0;
+      for (int u = p; T.parentT.at(u) >= 0; u = T.parentT.at(u))
+        L += T.len.at(u);
+      TPointD d = t - anchor[p];
+      double n  = norm(d);
+      if (n > L) t = anchor[p] + d * (L / n);
+    }
+
+  std::map<int, TPointD> P = curPos;
+  solveMultiAnchor(orig, T, anchor, t, P);
+
+  std::map<int, TPointD> desired = curPos;
+  for (const auto &kv : T.parentT) desired[kv.first] = P[kv.first];
+  rigidFollowOffTree(orig, curPos, desired, T.parentT);
+
+  writeBackAngles_animate(frame, curPos, desired);
+}
+
+//------------------------------------------------------------------------
+
+// Converts a full desired-positions snapshot into the deformer's root-down
+// ANGLE parameterization, keyframing only the joints that actually changed.
+// Valid as long as `desired` preserves every bone length (rigid moves only):
+// DISTANCE params are never written here.
+void PlasticTool::writeBackAngles_animate(
+    double frame, const std::map<int, TPointD> &curPos,
+    const std::map<int, TPointD> &desired) {
+  const PlasticSkeleton &orig = *skeleton();
+
   auto parentDir = [&](const std::function<TPointD(int)> &posFn, int vx) {
     for (int p = vx; p >= 0;) {
       int pp = orig.vertex(p).parent();
@@ -315,16 +813,16 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
   std::function<TPointD(int)> origFn = [&](int idx) {
     return orig.vertex(idx).P();
   };
-  std::function<TPointD(int)> desFn = [&](int idx) { return desired[idx]; };
+  std::function<TPointD(int)> desFn = [&](int idx) { return desired.at(idx); };
 
   int skelId = ::skeletonId();
-  for (auto &kv : curPos) {
+  for (const auto &kv : curPos) {
     int w  = kv.first;
     int op = orig.vertex(w).parent();
     if (op < 0) continue;  // skeleton root has no ANGLE param
     TPointD od  = orig.vertex(w).P() - orig.vertex(op).P();
     double rest = wrapPi(atan2(od.y, od.x) - parentDir(origFn, op));
-    TPointD nd  = desired[w] - desired[op];
+    TPointD nd  = desired.at(w) - desired.at(op);
     double nAbs = (norm2(nd) > 1e-8) ? atan2(nd.y, nd.x) : 0.0;
     double newDelta = wrapPi(nAbs - parentDir(desFn, op) - rest) * M_180_PI;
 
@@ -391,6 +889,18 @@ void PlasticTool::togglePinAtCurrentFrame() {
     target = deformedSkeleton().vertex(v).P();
   }
 
+  // When unpinning, the eval-time correction (shift + limb CCD) that was
+  // planting this vertex vanishes with the key, and the pose would snap back
+  // to raw FK: snapshot the planted pose now, to bake it into the ANGLE
+  // params right after the key is written.
+  std::map<int, TPointD> planted;
+  if (pinned) {
+    m_deformedSkeleton.invalidate();
+    PlasticSkeleton &ds = deformedSkeleton();
+    for (auto vt = ds.vertices().begin(); vt != ds.vertices().end(); ++vt)
+      planted[vt.m_idx] = vt->P();
+  }
+
   // First-ever pin key on this vertex, past frame 1: anchor a 0 at frame 1 so
   // the pin is confined to [frame, ...). Without it a lone "on" key extrapolates
   // constant backwards and the foot reads as pinned on every earlier frame too.
@@ -413,6 +923,17 @@ void PlasticTool::togglePinAtCurrentFrame() {
       tk.m_type = tk.m_prevType = TDoubleKeyframe::Constant;
       vd->m_params[c]->setKeyframe(tk);
     }
+  }
+
+  // Bake the previously planted pose into the ANGLE params (compare against
+  // the fresh, unpinned FK): the vertex stays visually where it was.
+  if (pinned && !planted.empty()) {
+    m_deformedSkeleton.invalidate();
+    PlasticSkeleton &ds = deformedSkeleton();
+    std::map<int, TPointD> cur;
+    for (auto vt = ds.vertices().begin(); vt != ds.vertices().end(); ++vt)
+      cur[vt.m_idx] = vt->P();
+    writeBackAngles_animate(frame, cur, planted);
   }
 
   m_sd->getKeyframeAt(frame, undo->m_newValues);
@@ -461,6 +982,46 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
 
 //------------------------------------------------------------------------
 
+// One action = one support switch (walk cycle): pin the selected vertex at
+// the CURRENT frame and release every other active pin ONE FRAME LATER — the
+// double support lives on exactly this key, with no second manual unpin. The
+// release goes through togglePinAtCurrentFrame at f+1, so it inherits the
+// planted-pose bake and the undo handling; everything is grouped in a single
+// undo block.
+void PlasticTool::switchPinAtCurrentFrame() {
+  if (!m_sd || !m_svSel.hasSingleObject()) return;
+  double frame = ::frame();
+  int v        = m_svSel;
+
+  std::vector<int> pins = pinnedVerticesAtFrame(frame);
+  bool vPinned = std::find(pins.begin(), pins.end(), v) != pins.end();
+
+  TUndoManager::manager()->beginBlock();
+
+  if (!vPinned) togglePinAtCurrentFrame();
+
+  TFrameHandle *fh = TTool::getApplication()->getCurrentFrame();
+  int row0         = fh->getFrame();
+  fh->setFrame(row0 + 1);
+  for (int p : pins) {
+    if (p == v) continue;
+    SkVD *vd = m_sd->vertexDeformation(::skeletonId(), p);
+    if (!vd || !vd->m_params[SkVD::PIN]) continue;
+    if (vd->m_params[SkVD::PIN]->getValue(::frame()) < 0.5) continue;
+    setSkeletonSelection(p);
+    togglePinAtCurrentFrame();
+  }
+  fh->setFrame(row0);
+  setSkeletonSelection(v);
+
+  TUndoManager::manager()->endBlock();
+
+  m_deformedSkeleton.invalidate();
+  invalidate();
+}
+
+//------------------------------------------------------------------------
+
 void PlasticTool::addContextMenuActions_animate(QMenu *menu) {
   bool ret = true;
 
@@ -480,6 +1041,15 @@ void PlasticTool::addContextMenuActions_animate(QMenu *menu) {
 
   action = CommandManager::instance()->getAction(MI_SetGlobalRestKeyframes);
   menu->addAction(action);
+
+  if (m_svSel.hasSingleObject()) {
+    menu->addSeparator();
+    QAction *switchPin =
+        menu->addAction(QObject::tr("Switch Support Pin Here"));
+    ret = QObject::connect(switchPin, &QAction::triggered,
+                           [this] { switchPinAtCurrentFrame(); }) &&
+          ret;
+  }
 
   menu->addSeparator();
 
@@ -525,12 +1095,23 @@ void PlasticTool::draw_animate() {
 
     // SuperPlastic: mark every IK anchor (pinned vertex) at the current frame
     // with a cyan diamond so the animator sees what is planted — during the
-    // double-support frame of a walk there can be two at once.
+    // double-support frame of a walk there can be two at once. The SELECTED
+    // pin is drawn filled, so toggling/untoggling always has a visible target.
     double r = 9.0 * pixelSize;
-    glColor4ub(0, 220, 255, 255);
+    int selV = m_svSel.hasSingleObject() ? (int)m_svSel : -1;
     glLineWidth(2.0f * m_viewer->getDevPixRatio());
     for (int pin : pinnedVerticesAtFrame(::frame())) {
       TPointD p = deformedSkeleton.vertex(pin).P();
+      if (pin == selV) {
+        glColor4ub(0, 220, 255, 160);
+        glBegin(GL_QUADS);
+        glVertex2d(p.x, p.y - r);
+        glVertex2d(p.x + r, p.y);
+        glVertex2d(p.x, p.y + r);
+        glVertex2d(p.x - r, p.y);
+        glEnd();
+      }
+      glColor4ub(0, 220, 255, 255);
       glBegin(GL_LINE_LOOP);
       glVertex2d(p.x, p.y - r);
       glVertex2d(p.x + r, p.y);
