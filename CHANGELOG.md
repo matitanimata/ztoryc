@@ -95,13 +95,27 @@ su segnalazioni di Franco sulla scena `SB_maggiolatazombie`.
   quindi il nome collassa su sé stesso e il ciclo non termina mai. Codice Tahoma/OpenToonz
   condiviso, innescabile da chiunque. Alta priorità.
 
-### Note / aperti
+### Performance — Board: rebuild completo a ogni resequence (drift falso positivo)
+- Ogni trim ricostruiva da zero **ogni istanza di Board** (`clearShots` + rebuild widget +
+  `loadZtoryc()`, che **rilegge il `.ztoryc` da disco**). Misurato sul log: **24 `full rebuild`**
+  in pochi trim, con i conteggi coincidenti (42 shot = 42).
+- Causa: la detection di riordino confronta il nome della colonna con l'etichetta dello shot,
+  ma `TStageObject::getName()` per una colonna **senza nome esplicito** restituisce il default
+  `"Col<N>"` — mai uguale a `"sh130"`. Drift a ogni resequence, per sempre.
+- Colpevole a monte: `addShotFromRasters` (export-to-board) **non chiamava `updateColumnName()`**,
+  a differenza di ogni altro percorso di creazione shot → tutte le colonne anonime.
+- Fix (`5c245fd20`): (1) confronto solo se `obj->hasSpecifiedName()` — una colonna anonima non
+  porta informazione d'ordine; (2) `addShotFromRasters` nomina la colonna, il che **ripristina
+  anche la detection dei riordini** per gli shot da export-to-board, finora di fatto rotta.
+- Verificato sul log, stessi trim: `full rebuild` **24 → 0**.
+
+### Note
 - **Falsa pista scagionata**: l'hang era stato attribuito a un incolla di thumb in uno shot
   nuovo; era solo un tentativo di workaround di Franco. Lezione: il primo stack ("main thread
   in `nextEventMatchingMask`") era stato campionato a processo non bloccato e portava fuori
   strada — il `sample` sul processo davvero bloccato ha dato la risposta in un colpo.
-- Resta il costo di `StoryboardPanel::refreshFromScene()` a ogni resequence, che include
-  `loadZtoryc()` (**rilettura del `.ztoryc` da disco**). Prossimo candidato performance.
+- `ZtoryStoryStrip` ha ancora la cache thumbnail chiavata per colonna (stesso pattern
+  dell'AnimaticTrack prima del fix) — non toccato.
 
 ## [2026-07-07] — SUPERPLASTIC: adapter Plastic Tool con pin/foot-planting (re-rooting + vincolo per-frame)
 
