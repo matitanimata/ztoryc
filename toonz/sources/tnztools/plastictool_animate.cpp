@@ -511,6 +511,16 @@ TPixel32 ctrlContrastColor(const TPixel32 &bg, bool highlighted) {
   return TPixel32(int(rr * 255), int(gg * 255), int(bb * 255), 255);
 }
 
+// Hover hint next to a handle, same look as the Animate tool's labels
+void ctrlDrawText(const TPointD &p, double unit, const std::string &text) {
+  glPushMatrix();
+  glTranslated(p.x, p.y, 0.0);
+  double sc = unit * 1.6;
+  glScaled(sc, sc, 1);
+  tglDrawText(TPointD(8, -3), text);
+  glPopMatrix();
+}
+
 }  // namespace
 
 // Draws the full controller gizmo with the Animate-tool dynamic colors: the
@@ -609,6 +619,31 @@ void PlasticTool::drawController_animate(double pixelSize) {
   glVertex2d(moveP.x, moveP.y + r4);
   glVertex2d(moveP.x - r4, moveP.y);
   glEnd();
+
+  // Hover hints, like the Animate tool's labels (hidden while dragging)
+  if (m_ctrlDevice == CtrlNone && m_ctrlHighlight != CtrlNone) {
+    glColor4ub(hi.r, hi.g, hi.b, 255);
+    switch (m_ctrlHighlight) {
+    case CtrlPivot:
+      ctrlDrawText(C + u * TPointD(14, 0), u, "Move pivot");
+      break;
+    case CtrlRot:
+      ctrlDrawText(rotP, u, "Rotate");
+      break;
+    case CtrlScale:
+      ctrlDrawText(scaleP + u * TPointD(-16, -16), u, "Scale");
+      break;
+    case CtrlScaleXY:
+      ctrlDrawText(sxyP + u * TPointD(6, 6), u, "Horizontal/Vertical scale");
+      break;
+    case CtrlShear:
+      ctrlDrawText(shearP + u * TPointD(0, -10), u, "Shear");
+      break;
+    case CtrlMove:
+      ctrlDrawText(moveP + u * TPointD(0, -12), u, "Move");
+      break;
+    }
+  }
 
   glLineWidth(1.0f);
 }
