@@ -328,7 +328,11 @@ private:
   QMap<int, int> m_origDurations;
   std::set<int> m_selectedCols;
   int m_lastClickedCol = -1; // for Shift+click range selection
-  QHash<int, QPixmap> m_thumbCache; // col → rendered composite thumbnail
+  // Keyed by the shot's sub-scene level NAME, not by column: the name survives
+  // reorders and duration changes, so trimming a shot no longer invalidates
+  // every thumbnail (each miss costs a full renderXsheetFrame + a fresh
+  // offline GL context — seconds of stall on a long timeline).
+  QHash<QString, QPixmap> m_thumbCache;
   double m_thumbCacheAspect = -1.0; // camera aspect the cache was rendered at
   Tool m_tool = SelectTool;
   int m_razorHoverFrame = -1;

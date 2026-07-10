@@ -2204,14 +2204,21 @@ ZtoryAnimaticTrack::ZtoryAnimaticTrack(QWidget *parent) : QWidget(parent) {
   // ZtoryAnimaticPanel can verify focus is inside its subtree and fire shortcuts.
   setFocusPolicy(Qt::ClickFocus);
 
-  // Clear thumbnail cache on model reset (shots added/deleted/reordered) so
-  // new shots get fresh renders on the next refreshFromScene().
-  connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
-          this, &ZtoryAnimaticTrack::clearThumbCache);
+  // NOT cleared on modelReset any more: the cache is keyed by sub-scene level
+  // name, so shots added/deleted/reordered keep valid entries and a new shot
+  // simply misses.  Clearing there made every trim (which resequences, hence
+  // resets) re-render every thumbnail through a fresh offline GL context.
 
-  // The cache is keyed by column index only: without this, opening another
-  // scene whose refresh doesn't pass through modelReset (or repaints before it
-  // arrives) would reuse the PREVIOUS scene's thumbnails on matching columns.
+  // Drawings can only change from inside a shot, so refresh the renders when we
+  // come back up to the main xsheet.
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched,
+          this, [this]() {
+            ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
+            if (sc && sc->getChildStack()->getAncestorCount() == 0)
+              clearThumbCache();
+          });
+
+  // Level names repeat across scenes: never reuse the previous scene's renders.
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
           this, &ZtoryAnimaticTrack::clearThumbCache);
 
@@ -2319,11 +2326,13 @@ void ZtoryAnimaticTrack::refreshFromScene() {
     b.transitionFrames = xdNoteHalfCount(cl->getXsheet(), kXDOutName) * 2;
 
     // Thumbnail: render the composed sub-xsheet frame (all layers) at a small
-    // fixed size.  Use a per-column cache so refreshFromScene() called on every
-    // xsheetChanged does not re-render unless the shot set actually changed.
-    // Cache is cleared by clearThumbCache() which is called on model reset.
-    if (m_thumbCache.contains(col)) {
-      b.thumbnail = m_thumbCache.value(col);
+    // fixed size.  Cached by the sub-scene level NAME, which survives reorders
+    // and duration changes — so trimming a shot reuses the renders instead of
+    // rebuilding an offline GL context per shot.
+    const QString thumbKey =
+        cl ? QString::fromStdWString(cl->getName()) : QString();
+    if (!thumbKey.isEmpty() && m_thumbCache.contains(thumbKey)) {
+      b.thumbnail = m_thumbCache.value(thumbKey);
     } else if (cl) {
       TXsheet *subXsh = cl->getXsheet();
       if (subXsh) {
@@ -2338,7 +2347,7 @@ void ZtoryAnimaticTrack::refreshFromScene() {
         QPixmap px = IconGenerator::renderXsheetFrame(
             subXsh, 0, TDimension(thW, thH));
         if (!px.isNull()) {
-          m_thumbCache.insert(col, px);
+          m_thumbCache.insert(thumbKey, px);
           b.thumbnail = px;
         }
       }
