@@ -139,6 +139,10 @@ private:
   TDoubleParamRelayProperty m_soRelay;     //!< Relay property for vertex so
 
   TDoubleParamRelayProperty
+      m_scaleXRelay,  //!< SuperPlastic squash & stretch relays — always bound
+      m_scaleYRelay;  //!< to the ROOT vertex's SCALEX/SCALEY (delta from 1)
+
+  TDoubleParamRelayProperty
       m_skelIdRelay;  //!< Relay property for m_sd's skeleton id
 
   // Mouse-related vars
@@ -446,6 +450,8 @@ private:
 
   // Animate
   ToolOptionParamRelayField *m_distanceField, *m_angleField, *m_soField;
+  ToolOptionParamRelayField *m_scaleXField,
+      *m_scaleYField;  //!< SuperPlastic squash & stretch (root-anchored)
   QComboBox *m_interpolationCombo;
   QPushButton *m_setKeyButton, *m_setRestKeyButton;
   QPushButton *m_pinButton;  //!< SuperPlastic IK anchor toggle

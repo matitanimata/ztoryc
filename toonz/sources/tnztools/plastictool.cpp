@@ -504,6 +504,24 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   ClickableLabel *soLabel = new ClickableLabel(tr("SO"));
   soLabel->setFixedHeight(20);
 
+  // SuperPlastic squash & stretch (delta from 1: 0 = neutral, 0.2 = 20%
+  // wider/taller). Anchored at the deformed root, keyframeable.
+  m_scaleXField = new ToolOptionParamRelayField(&l_plasticTool,
+                                                &l_plasticTool.m_scaleXRelay);
+  m_scaleXField->setGlobalKey(&l_plasticTool.m_globalKey,
+                              &l_plasticTool.m_relayGroup);
+
+  ClickableLabel *scaleXLabel = new ClickableLabel(tr("Squash X"));
+  scaleXLabel->setFixedHeight(20);
+
+  m_scaleYField = new ToolOptionParamRelayField(&l_plasticTool,
+                                                &l_plasticTool.m_scaleYRelay);
+  m_scaleYField->setGlobalKey(&l_plasticTool.m_globalKey,
+                              &l_plasticTool.m_relayGroup);
+
+  ClickableLabel *scaleYLabel = new ClickableLabel(tr("Squash Y"));
+  scaleYLabel->setFixedHeight(20);
+
   m_noKeyIcon      = createQIcon("key_off");
   m_partialKeyIcon = createQIcon("key_partial");
   m_fullKeyIcon    = createQIcon("key_on");
@@ -541,6 +559,11 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
       tr("Pin the selected vertex as IK anchor (keyframeable)"));
 
   QHBoxLayout *animateLayout = animateOptionsBox->hLayout();
+  // Inserted first so they end up rightmost (everything is inserted at 0)
+  animateLayout->insertWidget(0, m_scaleYField);
+  animateLayout->insertWidget(0, scaleYLabel);
+  animateLayout->insertWidget(0, m_scaleXField);
+  animateLayout->insertWidget(0, scaleXLabel);
   animateLayout->insertWidget(0, m_soField);
   animateLayout->insertWidget(0, soLabel);
   animateLayout->insertWidget(0, m_angleField);
@@ -571,6 +594,20 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
                        SLOT(receiveMouseMove(QMouseEvent *)));
   ret = ret && connect(soLabel, SIGNAL(onMouseRelease(QMouseEvent *)),
                        m_soField, SLOT(receiveMouseRelease(QMouseEvent *)));
+  ret = ret && connect(scaleXLabel, SIGNAL(onMousePress(QMouseEvent *)),
+                       m_scaleXField, SLOT(receiveMousePress(QMouseEvent *)));
+  ret = ret && connect(scaleXLabel, SIGNAL(onMouseMove(QMouseEvent *)),
+                       m_scaleXField, SLOT(receiveMouseMove(QMouseEvent *)));
+  ret =
+      ret && connect(scaleXLabel, SIGNAL(onMouseRelease(QMouseEvent *)),
+                     m_scaleXField, SLOT(receiveMouseRelease(QMouseEvent *)));
+  ret = ret && connect(scaleYLabel, SIGNAL(onMousePress(QMouseEvent *)),
+                       m_scaleYField, SLOT(receiveMousePress(QMouseEvent *)));
+  ret = ret && connect(scaleYLabel, SIGNAL(onMouseMove(QMouseEvent *)),
+                       m_scaleYField, SLOT(receiveMouseMove(QMouseEvent *)));
+  ret =
+      ret && connect(scaleYLabel, SIGNAL(onMouseRelease(QMouseEvent *)),
+                     m_scaleYField, SLOT(receiveMouseRelease(QMouseEvent *)));
 
   ret = ret && connect(m_setKeyButton, SIGNAL(clicked()), SLOT(onSetKey()));
 
@@ -950,6 +987,8 @@ PlasticTool::PlasticTool()
     , m_distanceRelay("distanceRelay")
     , m_angleRelay("angleRelay")
     , m_soRelay("soRelay")
+    , m_scaleXRelay("scaleXRelay")
+    , m_scaleYRelay("scaleYRelay")
     , m_skelIdRelay("skelIdRelay")
     , m_pressedPos(TConsts::napd)
     , m_dragged(false)
@@ -988,6 +1027,8 @@ PlasticTool::PlasticTool()
   m_relayGroup.bind(m_distanceRelay);
   m_relayGroup.bind(m_angleRelay);
   m_relayGroup.bind(m_soRelay);
+  m_relayGroup.bind(m_scaleXRelay);
+  m_relayGroup.bind(m_scaleYRelay);
 
   m_mode.setId("SkeletonMode");
   m_vertexName.setId("VertexName");
@@ -1003,6 +1044,8 @@ PlasticTool::PlasticTool()
   m_distanceRelay.setId("DistanceRelay");
   m_angleRelay.setId("AngleRelay");
   m_soRelay.setId("SoRelay");
+  m_scaleXRelay.setId("ScaleXRelay");
+  m_scaleYRelay.setId("ScaleYRelay");
   m_skelIdRelay.setId("SkelIdRelay");
 
   // Attach to selections
@@ -1186,11 +1229,15 @@ void PlasticTool::onFrameSwitched() {
   m_distanceRelay.frame() = frame;
   m_angleRelay.frame()    = frame;
   m_soRelay.frame()       = frame;
+  m_scaleXRelay.frame()   = frame;
+  m_scaleYRelay.frame()   = frame;
   m_skelIdRelay.frame()   = frame;
 
   m_distanceRelay.notifyListeners();
   m_angleRelay.notifyListeners();
   m_soRelay.notifyListeners();
+  m_scaleXRelay.notifyListeners();
+  m_scaleYRelay.notifyListeners();
   m_skelIdRelay.notifyListeners();
 }
 
@@ -1439,6 +1486,26 @@ void PlasticTool::onSelectionChanged() {
     m_angleRelay.setParam(TDoubleParamP());
   }
 
+  // Squash & stretch relays: always bound to the ROOT vertex's deformation,
+  // whatever the selection — the scale is a whole-skeleton pose param anchored
+  // at the deformed root.
+  {
+    SkVD *rootVd = 0;
+    if (m_sd) {
+      if (PlasticSkeletonP skel = m_sd->skeleton(::skeletonId()))
+        for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
+             ++vt)
+          if (vt->parent() < 0) {
+            rootVd = m_sd->vertexDeformation(::skeletonId(), vt.m_idx);
+            break;
+          }
+    }
+    m_scaleXRelay.setParam(rootVd ? rootVd->m_params[SkVD::SCALEX]
+                                  : TDoubleParamP());
+    m_scaleYRelay.setParam(rootVd ? rootVd->m_params[SkVD::SCALEY]
+                                  : TDoubleParamP());
+  }
+
   m_vertexName.notifyListeners();
   m_interpolate.notifyListeners();
   m_minAngle.notifyListeners();
@@ -1447,6 +1514,8 @@ void PlasticTool::onSelectionChanged() {
   m_distanceRelay.notifyListeners();
   m_angleRelay.notifyListeners();
   m_soRelay.notifyListeners();
+  m_scaleXRelay.notifyListeners();
+  m_scaleYRelay.notifyListeners();
 }
 
 //------------------------------------------------------------------------

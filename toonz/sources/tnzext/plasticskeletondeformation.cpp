@@ -39,9 +39,9 @@ DEFINE_CLASS_CODE(PlasticSkeletonDeformation, 121)
 namespace {
 
 static const char *parNames[SkVD::PARAMS_COUNT] = {
-    "Angle", "Distance", "SO", "Pin", "PinTX", "PinTY"};
+    "Angle", "Distance", "SO", "Pin", "PinTX", "PinTY", "ScaleX", "ScaleY"};
 static const char *parMeasures[SkVD::PARAMS_COUNT] = {
-    "angle", "fxLength", "", "", "fxLength", "fxLength"};
+    "angle", "fxLength", "", "", "fxLength", "fxLength", "", ""};
 
 //------------------------------------------------------------------
 
@@ -891,6 +891,36 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   if (!skeleton.vertices().empty())
     m_imp->updateBranchPositions(*origSkel, skeleton, frame,
                                  skeleton.vertices().begin().m_idx);
+
+  // SuperPlastic squash & stretch: whole-skeleton scale keyframed on the ROOT
+  // vertex (SCALEX/SCALEY = delta from 1), anchored at the DEFORMED root so
+  // the anchor follows the character — the stage-object center can't, since
+  // all the advancement lives in mesh-local space (pin shifts at eval time).
+  // Applied BEFORE the pin constraints: the primary pin's rigid translation
+  // then re-plants the foot, so squashing never slides the support foot.
+  {
+    const tcg::list<PlasticSkeleton::vertex_type> &vs = skeleton.vertices();
+    for (auto vt = vs.begin(); vt != vs.end(); ++vt) {
+      if (vt->parent() >= 0) continue;  // root only
+      auto it = m_imp->m_vds.find(vt->name());
+      if (it == m_imp->m_vds.end()) break;
+      const SkVD &vd = it->m_vd;
+      if (!vd.m_params[SkVD::SCALEX] || !vd.m_params[SkVD::SCALEY]) break;
+      double sx = 1.0 + vd.m_params[SkVD::SCALEX]->getValue(frame);
+      double sy = 1.0 + vd.m_params[SkVD::SCALEY]->getValue(frame);
+      // Degenerate/negative scales would collapse or flip the mesh: clamp.
+      sx = std::max(sx, 0.01);
+      sy = std::max(sy, 0.01);
+      if (fabs(sx - 1.0) > 1e-9 || fabs(sy - 1.0) > 1e-9) {
+        const TPointD C = vt->P();
+        for (auto st = vs.begin(); st != vs.end(); ++st) {
+          TPointD &P = skeleton.vertex(st.m_idx).P();
+          P = TPointD(C.x + sx * (P.x - C.x), C.y + sy * (P.y - C.y));
+        }
+      }
+      break;
+    }
+  }
 
   // SuperPlastic pin constraints (per-frame). The OLDEST active pin is planted
   // by rigidly translating the whole skeleton onto its target (PINTX,PINTY):
