@@ -1343,6 +1343,10 @@ int PlasticTool::pinnedVertexAtFrame(double frame) const {
 std::vector<int> PlasticTool::pinnedVerticesAtFrame(double frame) const {
   std::vector<int> pins;
   if (!m_sd) return pins;
+  // Pins asleep (IK mode off): single gating point — no diamonds drawn, no
+  // pin-aware manipulation. Keys AND evaluation planting stay untouched, so
+  // toggling IK never moves the pose.
+  if (!m_sd->pinsEnabled()) return pins;
   PlasticSkeletonP skel = skeleton();
   if (!skel) return pins;
   int skelId = ::skeletonId();

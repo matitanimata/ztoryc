@@ -331,6 +331,13 @@ public:
   //! neutral. The skeleton evaluation itself is never affected.
   TAffine getSquashControllerAffine(int skeletonId, double frame) const;
 
+  //! SuperPlastic: whether the IK pin constraints are applied at evaluation.
+  //! Scene data (serialized; default enabled): leaving the tool's IK mode
+  //! puts the pins to sleep — hidden and not planted — WITHOUT touching
+  //! their keys, so re-enabling brings them back exactly as they were.
+  void enablePins(bool on);
+  bool pinsEnabled() const;
+
   void updatePosition(const PlasticSkeleton &originalSkeleton,
                       PlasticSkeleton &deformedSkeleton, double frame, int v,
                       const TPointD &pos);

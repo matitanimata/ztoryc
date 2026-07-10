@@ -740,8 +740,9 @@ void PlasticToolOptionsBox::updateControls() {
   m_setKeyButton->setEnabled(enableWidget);
   m_setRestKeyButton->setEnabled(enableWidget);
 
-  // Reflect the current vertex's IK anchor state on the Pin button.
-  m_pinButton->setEnabled(enableWidget);
+  // Reflect the current vertex's IK anchor state on the Pin button — pins
+  // can only be placed while IK mode is on (they are asleep otherwise).
+  m_pinButton->setEnabled(enableWidget && l_plasticTool.m_ikDrag.getValue());
   bool isPinned =
       vd && vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5;
   m_pinButton->setChecked(isPinned);
@@ -1206,6 +1207,23 @@ void PlasticTool::storeDeformation() {
     }
 
     m_skelIdRelay.notifyListeners();
+
+    // Keep the IK checkbox in sync with the deformation's pin state (scene
+    // data) — but only when the rig actually uses pins, so fresh rigs don't
+    // flip the checkbox on their own.
+    if (m_sd) {
+      bool hasPinKeys = false;
+      SkD::vd_iterator vdt, vdEnd;
+      m_sd->vertexDeformations(vdt, vdEnd);
+      for (; vdt != vdEnd && !hasPinKeys; ++vdt)
+        hasPinKeys =
+            (*vdt).second->m_params[SkVD::PIN] &&
+            (*vdt).second->m_params[SkVD::PIN]->getKeyframeCount() > 0;
+      if (hasPinKeys && m_ikDrag.getValue() != m_sd->pinsEnabled()) {
+        m_ikDrag.setValue(m_sd->pinsEnabled());
+        m_ikDrag.notifyListeners();
+      }
+    }
   }
 
   storeSkeletonId();
@@ -2161,6 +2179,17 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
       m_maxAngle.notifyListeners();  // NOTE: This should NOT invoke this
                                      // function recursively
     }
+  } else if (propertyName == "inverseKinematics") {
+    // Leaving IK mode puts the pins to sleep — hidden and not planted at
+    // evaluation, keys untouched; re-entering brings them back as they were.
+    // The flag lives on the deformation (scene data), so viewer and render
+    // stay coherent.
+    if (m_sd) {
+      m_sd->enablePins(m_ikDrag.getValue());
+      m_deformedSkeleton.invalidate();
+      invalidate();
+    }
+    if (m_mode.getIndex() == ANIMATE_IDX) m_ikDrag.notifyListeners();
   } else if (propertyName == "globalKeyframe") {
     if (m_mode.getIndex() == ANIMATE_IDX) m_globalKey.notifyListeners();
   } else if (propertyName == "keepDistance") {

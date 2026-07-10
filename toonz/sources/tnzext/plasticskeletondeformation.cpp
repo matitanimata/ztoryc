@@ -201,6 +201,10 @@ public:
 
   TDoubleParamP m_skelIdsParam;  //!< Curve of skeleton ids by xsheet frame
 
+  bool m_pinsEnabled = true;  //!< SuperPlastic: whether the IK pin
+                              //!< constraints are applied at evaluation
+                              //!< (scene data, keys untouched when off)
+
   std::set<TParamObserver *>
       m_observers;  //!< Set of the deformation's observers
 
@@ -912,6 +916,12 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   // out of the skeleton evaluation means pins, IK and pose manipulation never
   // interact with the scale.
 
+  // NOTE: the planting below is NOT gated by pinsEnabled — the flag only
+  // puts the pins to sleep in the TOOL UI (no diamonds, no pin manipulation).
+  // Removing the planting from the evaluation would shift the whole pose the
+  // moment IK mode is toggled, and viewer/render would diverge from the
+  // animation as authored.
+
   // SuperPlastic pin constraints (per-frame). The OLDEST active pin is planted
   // by rigidly translating the whole skeleton onto its target (PINTX,PINTY):
   // the root stays free and the animator's pose is untouched. Any FURTHER pin
@@ -1110,6 +1120,23 @@ TAffine PlasticSkeletonDeformation::getSquashControllerAffine(
 
 //------------------------------------------------------------------
 
+void PlasticSkeletonDeformation::enablePins(bool on) {
+  if (m_imp->m_pinsEnabled == on) return;
+  m_imp->m_pinsEnabled = on;
+
+  // The evaluation result changes: invalidate the associated deformers
+  PlasticDeformerStorage::instance()->invalidateDeformation(
+      this, PlasticDeformerStorage::NONE);
+}
+
+//------------------------------------------------------------------
+
+bool PlasticSkeletonDeformation::pinsEnabled() const {
+  return m_imp->m_pinsEnabled;
+}
+
+//------------------------------------------------------------------
+
 void PlasticSkeletonDeformation::updatePosition(
     const PlasticSkeleton &originalSkeleton, PlasticSkeleton &deformedSkeleton,
     double frame, int v, const TPointD &pos) {
@@ -1273,6 +1300,10 @@ void PlasticSkeletonDeformation::saveData(TOStream &os) {
     }
   }
   os.closeChild();
+
+  // SuperPlastic: pins put to sleep (tag only when disabled — old scenes and
+  // old readers are unaffected)
+  if (!m_imp->m_pinsEnabled) os.child("PinsDisabled") << 1;
 }
 
 //------------------------------------------------------------------
@@ -1308,6 +1339,10 @@ void PlasticSkeletonDeformation::loadData(TIStream &is) {
       }
 
       is.matchEndTag();
+    } else if (tagName == "PinsDisabled") {
+      int disabled = 0;
+      is >> disabled, is.matchEndTag();
+      m_imp->m_pinsEnabled = (disabled == 0);
     } else if (tagName == "SkelIdsParam")
       is >> *m_imp->m_skelIdsParam, is.matchEndTag();
     else if (tagName == "Skeletons") {
