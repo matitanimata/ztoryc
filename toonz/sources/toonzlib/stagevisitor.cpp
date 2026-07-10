@@ -1583,10 +1583,6 @@ void onMeshImage(TMeshImage *mi, const Stage::Player &player,
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glEnable(GL_LINE_SMOOTH);
 
-  // Push mesh coordinates
-  glPushMatrix();
-  tglMultMatrix(viewAff * meshToWorldAff);
-
   // Fetch deformation
   PlasticSkeletonDeformation *deformation = 0;
   double sdFrame;
@@ -1603,6 +1599,18 @@ void onMeshImage(TMeshImage *mi, const Stage::Player &player,
       sdFrame     = playerObj->paramsTime(player.m_frame);
     }
   }
+
+  // Push mesh coordinates. The SuperPlastic squash & stretch controller is an
+  // affine ON TOP of the deformed result: compose it (conjugated into mesh
+  // coordinates) so the wireframe matches the deformed image.
+  TAffine meshDrawAff = viewAff * meshToWorldAff;
+  if (deformation) {
+    const TAffine &ctrl = deformation->getSquashControllerAffine(
+        deformation->skeletonId(sdFrame), sdFrame);
+    meshDrawAff = meshDrawAff * worldMeshToMeshAff * ctrl * meshToWorldMeshAff;
+  }
+  glPushMatrix();
+  tglMultMatrix(meshDrawAff);
 
   UCHAR useOpacity = player.m_opacity;
   if (player.m_isLightTableEnabled && !player.m_isCurrentColumn)
@@ -1771,10 +1779,16 @@ void onPlasticDeformedImage(TStageObject *playerObj,
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glEnable(GL_LINE_SMOOTH);
 
-  // Push mesh coordinates
+  // Push mesh coordinates. The SuperPlastic squash & stretch controller is an
+  // affine ON TOP of the deformed result (pivot follows the deformed root):
+  // compose it, conjugated into mesh coordinates.
+  const TAffine &squashCtrl = deformation->getSquashControllerAffine(
+      deformation->skeletonId(sdFrame), sdFrame);
+
   glPushMatrix();
 
-  tglMultMatrix(viewAff * meshToWorldAff);
+  tglMultMatrix(viewAff * meshToWorldAff * worldMeshToMeshAff * squashCtrl *
+                meshToWorldMeshAff);
 
   glEnable(GL_TEXTURE_2D);
 

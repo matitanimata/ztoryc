@@ -159,9 +159,11 @@ private:
       m_pressedVxsPos;   //!< Position of selected vertices at mouse press
   SkDKey m_pressedSkDF;  //!< Skeleton deformation keyframes at mouse press
 
-  // SuperPlastic squash & stretch gizmo (Animate-tool style scale handle)
+  // SuperPlastic squash & stretch gizmo (Animate-tool style controller ON TOP
+  // of the skeleton: scale handle + keyframeable pivot following the root)
   bool m_scaleDragging = false;  //!< Whether the scale handle is being dragged
-  TPointD m_scaleDragCenter;     //!< Scale pivot (selected vertex) at press
+  bool m_pivotDragging = false;  //!< Whether the pivot is being moved (Ctrl)
+  TPointD m_scaleDragCenter;     //!< Controller pivot position at press
   double m_scaleOldX = 1.0,      //!< SCALEX/SCALEY values at press time
       m_scaleOldY    = 1.0;
 
@@ -361,7 +363,11 @@ protected:
                                const std::map<int, TPointD> &desired);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
   void scaleDrag_animate(const TPointD &pos, const TMouseEvent &me);
-  bool scaleAtFrame_animate(double frame, TPointD &C, double &sx, double &sy);
+  void pivotDrag_animate(const TPointD &pos);
+  SkVD *rootVd_animate(int *rootIdx = 0);  //!< ROOT vertex's deformation
+  bool squashPivot_animate(TPointD &C);    //!< controller pivot (local coords)
+
+  void updateMatrix() override;  //!< composes the squash controller affine
 
   // SuperPlastic IK anchor (pin). The pinned vertex is kept fixed while IK
   // solving at a given frame; the anchor is keyframeable so it can switch over

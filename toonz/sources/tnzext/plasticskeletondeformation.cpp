@@ -39,9 +39,11 @@ DEFINE_CLASS_CODE(PlasticSkeletonDeformation, 121)
 namespace {
 
 static const char *parNames[SkVD::PARAMS_COUNT] = {
-    "Angle", "Distance", "SO", "Pin", "PinTX", "PinTY", "ScaleX", "ScaleY"};
+    "Angle",  "Distance", "SO",     "Pin",    "PinTX",
+    "PinTY",  "ScaleX",   "ScaleY", "PivotX", "PivotY"};
 static const char *parMeasures[SkVD::PARAMS_COUNT] = {
-    "angle", "fxLength", "", "", "fxLength", "fxLength", "scale", "scale"};
+    "angle",    "fxLength", "",      "",      "fxLength",
+    "fxLength", "scale",    "scale", "fxLength", "fxLength"};
 
 //------------------------------------------------------------------
 
@@ -158,9 +160,10 @@ void SkVD::saveData(TOStream &os) {
     // SCALEX/SCALEY are scale FACTORS with default 1.0 (100%), but
     // TDoubleParam::isDefault() only recognizes zero-defaults: check them
     // explicitly so untouched scales are still not serialized.
-    bool isDef = (p >= SCALEX) ? (m_params[p]->getKeyframeCount() == 0 &&
-                                  m_params[p]->getDefaultValue() == 1.0)
-                               : m_params[p]->isDefault();
+    bool isDef = (p == SCALEX || p == SCALEY)
+                     ? (m_params[p]->getKeyframeCount() == 0 &&
+                        m_params[p]->getDefaultValue() == 1.0)
+                     : m_params[p]->isDefault();
     if (!isDef) os.child(::parNames[p]) << *m_params[p];
   }
 }
@@ -901,38 +904,11 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
     m_imp->updateBranchPositions(*origSkel, skeleton, frame,
                                  skeleton.vertices().begin().m_idx);
 
-  // SuperPlastic squash & stretch: whole-skeleton scale (SCALEX/SCALEY =
-  // delta from 1) anchored at the DEFORMED position of the vertex carrying
-  // the keys — the vertex that was ACTIVE when squashing, Animate-tool style
-  // pivot that follows the character (the stage-object center can't, since
-  // all the advancement lives in mesh-local space via eval-time pin shifts).
-  // Applied BEFORE the pin constraints; if the anchor is itself pinned it
-  // becomes the PRIMARY pin below, so the squash stays based on it while
-  // every other pin is re-planted even at the cost of stretching its limb.
-  int scaleAnchor = -1;
-  {
-    const tcg::list<PlasticSkeleton::vertex_type> &vs = skeleton.vertices();
-    for (auto vt = vs.begin(); vt != vs.end(); ++vt) {
-      auto it = m_imp->m_vds.find(vt->name());
-      if (it == m_imp->m_vds.end()) continue;
-      const SkVD &vd = it->m_vd;
-      if (!vd.m_params[SkVD::SCALEX] || !vd.m_params[SkVD::SCALEY]) continue;
-      double sx = vd.m_params[SkVD::SCALEX]->getValue(frame);
-      double sy = vd.m_params[SkVD::SCALEY]->getValue(frame);
-      if (fabs(sx - 1.0) <= 1e-9 && fabs(sy - 1.0) <= 1e-9) continue;
-      // Degenerate/negative scales would collapse or flip the mesh: clamp.
-      sx = std::max(sx, 0.01);
-      sy = std::max(sy, 0.01);
-      const TPointD C = vt->P();
-      for (auto st = vs.begin(); st != vs.end(); ++st) {
-        TPointD &P = skeleton.vertex(st.m_idx).P();
-        P = TPointD(C.x + sx * (P.x - C.x), C.y + sy * (P.y - C.y));
-      }
-      // Typically a single vertex carries scale keys; with more, each scale
-      // is applied in vertex order and the LAST one drives the pin priority.
-      scaleAnchor = (int)vt.m_idx;
-    }
-  }
+  // NOTE: the SuperPlastic squash & stretch (SCALEX/SCALEY) is NOT applied
+  // here — it is a controller ON TOP of the skeleton (an affine composed into
+  // the drawing/render transforms, see getSquashControllerAffine): keeping it
+  // out of the skeleton evaluation means pins, IK and pose manipulation never
+  // interact with the scale.
 
   // SuperPlastic pin constraints (per-frame). The OLDEST active pin is planted
   // by rigidly translating the whole skeleton onto its target (PINTX,PINTY):
@@ -1012,18 +988,6 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
                      return a.since < b.since;
                    });
 
-  // A pinned squash anchor overrides seniority as the PRIMARY pin: the squash
-  // must stay based on it (rigid translation keeps it planted untouched),
-  // while the other pins bend/stretch to hold.
-  if (scaleAnchor >= 0)
-    for (size_t i = 1; i < pins.size(); ++i)
-      if (pins[i].idx == scaleAnchor) {
-        ActivePin anchorPin = pins[i];
-        pins.erase(pins.begin() + i);
-        pins.insert(pins.begin(), anchorPin);
-        break;
-      }
-
   // Primary (oldest) pin: rigid whole-skeleton translation.
   TPointD shift = pins[0].target - skeleton.vertex(pins[0].idx).P();
   if (norm2(shift) > 1e-12)
@@ -1058,8 +1022,6 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
     const double tol2 = 1e-6;
     for (int sweep = 0; sweep < SWEEPS; ++sweep) {
       if (norm2(target - skeleton.vertex(pinV).P()) < tol2) break;
-      // (CCD sweeps below; with an active squash a final exact closer with
-      // stretch follows after the loop)
       // Nearest-to-pin pivot first: classic CCD sweep order. The anchor
       // itself (j == aIdx) is a valid LAST pivot: rotating only path[j+1]'s
       // subtree about it bends this limb's attachment bone too — without it,
@@ -1083,33 +1045,56 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
       }
     }
 
-    // With an active squash the pin must hold even beyond the limb's reach
-    // (hanging from a bar while squashing from the foot pin): close exactly
-    // with a rigid re-aim plus a uniform STRETCH of the free sub-chain about
-    // its divergence anchor — keep-distance is off by design here. Without
-    // squash the CCD-only behavior is preserved (bone lengths untouched).
-    if (scaleAnchor >= 0 && aIdx < (int)path.size() - 1) {
-      const TPointD A = skeleton.vertex(path[aIdx]).P();
-      TPointD cur     = skeleton.vertex(pinV).P() - A;
-      TPointD tgt     = target - A;
-      if (norm2(tgt - cur) > tol2 && norm2(cur) > 1e-8 && norm2(tgt) > 1e-8) {
-        double ang = atan2(cross(cur, tgt), cur * tgt);
-        double s   = sqrt(norm2(tgt) / norm2(cur));
-        // Rotation and uniform scale about A combined in one 2x2 transform
-        double c = cos(ang) * s, sn = sin(ang) * s;
-        std::vector<int> sub;
-        locals::collectSubtree(skeleton, path[aIdx + 1], sub);
-        for (int v : sub) {
-          TPointD &P = skeleton.vertex(v).P();
-          TPointD d  = P - A;
-          P = A + TPointD(c * d.x - sn * d.y, sn * d.x + c * d.y);
-        }
-      }
-    }
-
     // This chain is now planted too: later pins must bend below it.
     planted.insert(path.begin(), path.end());
   }
+}
+
+//------------------------------------------------------------------
+
+TAffine PlasticSkeletonDeformation::getSquashControllerAffine(
+    int skelId, double frame) const {
+  const PlasticSkeletonP &skel = skeleton(skelId);
+  if (!skel || skel->empty()) return TAffine();
+
+  // The controller params live on the ROOT vertex's deformation
+  const tcg::list<PlasticSkeleton::vertex_type> &vs = skel->vertices();
+  int rootIdx = -1;
+  for (auto vt = vs.begin(); vt != vs.end(); ++vt)
+    if (vt->parent() < 0) {
+      rootIdx = (int)vt.m_idx;
+      break;
+    }
+  if (rootIdx < 0) return TAffine();
+
+  auto it = m_imp->m_vds.find(skel->vertex(rootIdx).name());
+  if (it == m_imp->m_vds.end()) return TAffine();
+  const SkVD &vd = it->m_vd;
+  if (!vd.m_params[SkVD::SCALEX] || !vd.m_params[SkVD::SCALEY])
+    return TAffine();
+
+  double sx = vd.m_params[SkVD::SCALEX]->getValue(frame);
+  double sy = vd.m_params[SkVD::SCALEY]->getValue(frame);
+  if (fabs(sx - 1.0) <= 1e-9 && fabs(sy - 1.0) <= 1e-9) return TAffine();
+
+  // Degenerate/negative scales would collapse or flip the mesh: clamp
+  sx = std::max(sx, 0.01);
+  sy = std::max(sy, 0.01);
+
+  // Pivot = DEFORMED root position + keyframeable offset: it follows the
+  // character (the stage-object center can't — the advancement lives in
+  // mesh-local space via the eval-time pin shifts) and can be animated
+  PlasticSkeleton deformed;
+  storeDeformedSkeleton(skelId, frame, deformed);
+  if (deformed.empty()) return TAffine();
+
+  TPointD C = deformed.vertex(rootIdx).P();
+  if (vd.m_params[SkVD::PIVOTX])
+    C.x += vd.m_params[SkVD::PIVOTX]->getValue(frame);
+  if (vd.m_params[SkVD::PIVOTY])
+    C.y += vd.m_params[SkVD::PIVOTY]->getValue(frame);
+
+  return TTranslation(C) * TScale(sx, sy) * TTranslation(-C);
 }
 
 //------------------------------------------------------------------

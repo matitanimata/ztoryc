@@ -67,16 +67,17 @@ public:
                 //!< stays planted on in-between frames, not just on keyframes.
     SCALEX,     //!< SuperPlastic squash & stretch: scale FACTORS (1.0 = 100%
     SCALEY,     //!< = neutral; custom default handling in save/touchParams
-                //!< keeps untouched scales unserialized). Keyed on the
-                //!< vertex that was ACTIVE when squashing — the Animate-tool
-                //!< style pivot. At evaluation the whole deformed skeleton is
-                //!< scaled by (1+SCALEX, 1+SCALEY) around that vertex's
-                //!< DEFORMED position (an anchor that follows the character),
-                //!< BEFORE the pin constraints. If the anchor is itself a
-                //!< pinned vertex it becomes the PRIMARY pin, and every OTHER
-                //!< pin is re-planted even at the cost of stretching its limb
-                //!< (keep-distance off: hanging from a bar, squashing from the
-                //!< foot pin stretches the gripping arm).
+                //!< keeps untouched scales unserialized). Stored on the ROOT
+                //!< vertex's deformation. NOT part of the skeleton evaluation:
+                //!< the scale is a CONTROLLER on top of it — an affine
+                //!< composed into the drawing/render transforms (see
+                //!< getSquashControllerAffine) — so pins, IK and pose
+                //!< manipulation never interact with it.
+    PIVOTX,     //!< Pivot of the squash & stretch controller, stored on the
+    PIVOTY,     //!< ROOT vertex's deformation as a keyframeable OFFSET from
+                //!< the DEFORMED root position: the pivot follows the
+                //!< character and can be moved/animated (default 0 = pivot on
+                //!< the root vertex).
     PARAMS_COUNT
   };
 
@@ -316,6 +317,14 @@ public:
 
   void storeDeformedSkeleton(int skeletonId, double frame,
                              PlasticSkeleton &skeleton) const;
+
+  //! SuperPlastic squash & stretch controller: the affine (in skeleton/world
+  //! mesh coordinates) to be composed ON TOP of the deformed result —
+  //! T(C)·S·T(-C), where S = the root deformation's SCALEX/SCALEY factors and
+  //! C = the DEFORMED root position plus the keyframeable PIVOTX/PIVOTY
+  //! offset (so the pivot follows the character). Identity when the scale is
+  //! neutral. The skeleton evaluation itself is never affected.
+  TAffine getSquashControllerAffine(int skeletonId, double frame) const;
 
   void updatePosition(const PlasticSkeleton &originalSkeleton,
                       PlasticSkeleton &deformedSkeleton, double frame, int v,

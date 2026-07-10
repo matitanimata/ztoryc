@@ -1224,9 +1224,27 @@ void PlasticTool::updateDeformedSkeleton(PlasticSkeleton &deformedSkeleton) {
 
 //------------------------------------------------------------------------
 
+void PlasticTool::updateMatrix() {
+  TTool::updateMatrix();
+
+  // SuperPlastic squash & stretch: the controller affine (an Animate tool ON
+  // TOP of the skeleton, pivot following the deformed root) is composed into
+  // the tool matrix, so overlay and mouse coordinates stay coherent with the
+  // deformed image while every manipulation keeps happening in
+  // pre-controller space. Animation mode only: the other modes display the
+  // original, undeformed column.
+  if (m_sd && m_mode.getIndex() == ANIMATE_IDX)
+    setMatrix(getMatrix() *
+              m_sd->getSquashControllerAffine(::skeletonId(), ::sdFrame()));
+}
+
+//------------------------------------------------------------------------
+
 void PlasticTool::onFrameSwitched() {
   storeSkeletonId();
   storeMeshImage();
+
+  updateMatrix();  // the controller affine is frame-dependent
 
   switch (m_mode.getIndex()) {
   case ANIMATE_IDX:
@@ -1496,11 +1514,14 @@ void PlasticTool::onSelectionChanged() {
     m_angleRelay.setParam(TDoubleParamP());
   }
 
-  // Squash & stretch relays: bound to the SELECTED vertex, which is the scale
-  // pivot (Animate-tool style). With IK pins, select the pin to squash from —
-  // the other pins hold their targets, stretching their limb if needed.
-  m_scaleXRelay.setParam(vd ? vd->m_params[SkVD::SCALEX] : TDoubleParamP());
-  m_scaleYRelay.setParam(vd ? vd->m_params[SkVD::SCALEY] : TDoubleParamP());
+  // Squash & stretch relays: always bound to the ROOT vertex's deformation,
+  // the home of the controller params (the pivot is a separate keyframeable
+  // offset, moved with Ctrl+drag on its crosshair in the viewer).
+  SkVD *rootVd = rootVd_animate();
+  m_scaleXRelay.setParam(rootVd ? rootVd->m_params[SkVD::SCALEX]
+                                : TDoubleParamP());
+  m_scaleYRelay.setParam(rootVd ? rootVd->m_params[SkVD::SCALEY]
+                                : TDoubleParamP());
 
   m_vertexName.notifyListeners();
   m_interpolate.notifyListeners();
@@ -2072,6 +2093,7 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
         }
       }
     }
+    updateMatrix();  // the controller affine depends on the scale values
     m_deformedSkeleton.invalidate();
     invalidate();
   } else if (propertyName == "interpolate") {
