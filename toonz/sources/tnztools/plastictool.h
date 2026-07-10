@@ -361,6 +361,7 @@ protected:
                                const std::map<int, TPointD> &desired);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
   void scaleDrag_animate(const TPointD &pos, const TMouseEvent &me);
+  bool scaleAtFrame_animate(double frame, TPointD &C, double &sx, double &sy);
 
   // SuperPlastic IK anchor (pin). The pinned vertex is kept fixed while IK
   // solving at a given frame; the anchor is keyframeable so it can switch over

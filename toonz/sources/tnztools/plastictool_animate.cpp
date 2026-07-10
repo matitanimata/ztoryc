@@ -169,6 +169,30 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
     SkVD *vd = m_sd->vertexDeformation(::skeletonId(), m_svSel);
     assert(vd);
 
+    // With an active squash the displayed skeleton is scale-composed: FK
+    // deltas measured on it get written into pre-scale params, and every
+    // mouse move compounds the error (feedback loop — the pose "explodes"
+    // under non-uniform scale). Conjugate instead: un-scale a working copy
+    // about the displayed anchor and map the mouse the same way — that space
+    // is FK up to a rigid translation, where the delta math is exact.
+    PlasticSkeleton unscaledSkel;
+    PlasticSkeleton *workSkel = &deformedSkeleton();
+    TPointD workPos           = pos;
+    {
+      TPointD C;
+      double sx, sy;
+      if (scaleAtFrame_animate(frame, C, sx, sy)) {
+        unscaledSkel   = deformedSkeleton();
+        const auto &vs = unscaledSkel.vertices();
+        for (auto vt = vs.begin(); vt != vs.end(); ++vt) {
+          TPointD &P = unscaledSkel.vertex(vt.m_idx).P();
+          P = TPointD(C.x + (P.x - C.x) / sx, C.y + (P.y - C.y) / sy);
+        }
+        workSkel = &unscaledSkel;
+        workPos = TPointD(C.x + (pos.x - C.x) / sx, C.y + (pos.y - C.y) / sy);
+      }
+    }
+
     // Move selected branch
     if (m_ikDrag.getValue() &&
         (deformedSkeleton().vertex(m_svSel).parent() >= 0 || ikPin)) {
@@ -178,15 +202,14 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
                     frame);  // Set a keyframe for it. It must be done
                              // to set the correct function interpolation
                              // type and other stuff.
-      m_sd->updateAngle(*skeleton(), deformedSkeleton(), frame, m_svSel, pos);
+      m_sd->updateAngle(*skeleton(), *workSkel, frame, m_svSel, workPos);
     } else {
       ::setKeyframe(vd->m_params[SkVD::ANGLE],
                     frame);  // Same here. NOTE: Not setting a frame on
       ::setKeyframe(vd->m_params[SkVD::DISTANCE],
                     frame);  // vd directly due to SkVD::SO
 
-      m_sd->updatePosition(*skeleton(), deformedSkeleton(), frame, m_svSel,
-                           pos);
+      m_sd->updatePosition(*skeleton(), *workSkel, frame, m_svSel, workPos);
     }
 
     l_suspendParamsObservation = false;
@@ -197,6 +220,37 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
     m_deformedSkeleton.invalidate();
     invalidate();
   }
+}
+
+//------------------------------------------------------------------------
+
+// Whether a squash & stretch scale is active at the given frame, mirroring
+// the eval in storeDeformedSkeleton (same anchor pick and clamping). C is the
+// anchor's DISPLAYED position: the scale fixed point up to the rigid pin
+// translation, which preserves angle deltas and distances anyway.
+bool PlasticTool::scaleAtFrame_animate(double frame, TPointD &C, double &sx,
+                                       double &sy) {
+  if (!m_sd) return false;
+  PlasticSkeletonP skel = m_sd->skeleton(::skeletonId());
+  if (!skel) return false;
+
+  int anchor     = -1;
+  const auto &vs = skel->vertices();
+  for (auto vt = vs.begin(); vt != vs.end(); ++vt) {
+    SkVD *vd = m_sd->vertexDeformation(::skeletonId(), (int)vt.m_idx);
+    if (!vd || !vd->m_params[SkVD::SCALEX] || !vd->m_params[SkVD::SCALEY])
+      continue;
+    double x = vd->m_params[SkVD::SCALEX]->getValue(frame);
+    double y = vd->m_params[SkVD::SCALEY]->getValue(frame);
+    if (fabs(x - 1.0) <= 1e-9 && fabs(y - 1.0) <= 1e-9) continue;
+    sx     = std::max(x, 0.01);
+    sy     = std::max(y, 0.01);
+    anchor = (int)vt.m_idx;  // last one wins, like the eval
+  }
+  if (anchor < 0) return false;
+
+  C = deformedSkeleton().vertex(anchor).P();
+  return true;
 }
 
 //------------------------------------------------------------------------
