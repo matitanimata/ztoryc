@@ -1033,73 +1033,104 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
 
   if (pins.size() == 1) return;
 
-  // Vertices already committed to a planted chain: CCD below must not touch.
-  std::set<int> planted;
-  {
-    std::vector<int> p0 = locals::pathFromRoot(skeleton, pins[0].idx);
-    planted.insert(p0.begin(), p0.end());
-  }
-
-  for (size_t i = 1; i < pins.size(); ++i) {
-    const int pinV        = pins[i].idx;
-    const TPointD &target = pins[i].target;
-    std::vector<int> path = locals::pathFromRoot(skeleton, pinV);
-
-    // Anchor = deepest vertex of this chain already planted (at worst the
-    // root). CCD pivots live strictly below it: rotating their subtrees can
-    // never move a previously planted pin (disjoint by construction).
-    int aIdx = 0;
-    for (int j = (int)path.size() - 1; j >= 0; --j)
-      if (planted.count(path[j])) {
-        aIdx = j;
-        break;
-      }
-
-    const int SWEEPS  = 10;
-    const double tol2 = 1e-6;
-    for (int sweep = 0; sweep < SWEEPS; ++sweep) {
-      if (norm2(target - skeleton.vertex(pinV).P()) < tol2) break;
-      // Nearest-to-pin pivot first: classic CCD sweep order. The anchor
-      // itself (j == aIdx) is a valid LAST pivot: rotating only path[j+1]'s
-      // subtree about it bends this limb's attachment bone too — without it,
-      // a pose that puts the divergence point out of the limb's reach would
-      // tear the pin off with no joint able to compensate. Rotating just
-      // that subtree can never move the previously planted chains.
-      for (int j = (int)path.size() - 2; j >= aIdx; --j) {
-        const TPointD pivot = skeleton.vertex(path[j]).P();
-        TPointD cur = skeleton.vertex(pinV).P() - pivot;
-        TPointD tgt = target - pivot;
-        if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
-        double ang = atan2(cross(cur, tgt), cur * tgt);
-
-        // Angular limits: this rotation changes exactly the ORIGINAL relative
-        // angle of joint path[j+1] (the path follows the original parenting),
-        // so clamp it within the joint's min/max. A stiff limb stops at its
-        // limit instead of hyper-extending even when it's the pin PLANTING
-        // that bends it (the classic "grab the shoulder, the pinned elbow
-        // folds backwards" case); the pin may then simply not reach its
-        // target on this limb.
-        const PlasticSkeletonVertex &jvx = origSkel->vertex(path[j + 1]);
-        if (jvx.m_minAngle > -1e9 || jvx.m_maxAngle < 1e9) {
-          double curRel = locals::relAngleDeg(skeleton, *origSkel, path[j + 1]);
-          double lo     = (jvx.m_minAngle - curRel) * (M_PI / 180.0);
-          double hi     = (jvx.m_maxAngle - curRel) * (M_PI / 180.0);
-          ang           = std::min(std::max(ang, lo), hi);
-        }
-
-        double c = cos(ang), s = sin(ang);
-        std::vector<int> sub;
-        locals::collectSubtree(skeleton, path[j + 1], sub);
-        for (int v : sub) {
-          TPointD &P = skeleton.vertex(v).P();
-          TPointD d  = P - pivot;
-          P = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
-        }
-      }
+  // Plant every secondary pin: CCD on its own limb, below the point where it
+  // diverges from the already-planted chains. Re-runnable — the primary chain
+  // is the fixed seed each pass (used by the two-foot correction below).
+  auto plantSecondaries = [&]() {
+    // Vertices already committed to a planted chain: CCD below must not touch.
+    std::set<int> planted;
+    {
+      std::vector<int> p0 = locals::pathFromRoot(skeleton, pins[0].idx);
+      planted.insert(p0.begin(), p0.end());
     }
 
-    // This chain is now planted too: later pins must bend below it.
-    planted.insert(path.begin(), path.end());
+    for (size_t i = 1; i < pins.size(); ++i) {
+      const int pinV        = pins[i].idx;
+      const TPointD &target = pins[i].target;
+      std::vector<int> path = locals::pathFromRoot(skeleton, pinV);
+
+      // Anchor = deepest vertex of this chain already planted (at worst the
+      // root). CCD pivots live strictly below it: rotating their subtrees can
+      // never move a previously planted pin (disjoint by construction).
+      int aIdx = 0;
+      for (int j = (int)path.size() - 1; j >= 0; --j)
+        if (planted.count(path[j])) {
+          aIdx = j;
+          break;
+        }
+
+      const int SWEEPS  = 10;
+      const double tol2 = 1e-6;
+      for (int sweep = 0; sweep < SWEEPS; ++sweep) {
+        if (norm2(target - skeleton.vertex(pinV).P()) < tol2) break;
+        // Nearest-to-pin pivot first: classic CCD sweep order. The anchor
+        // itself (j == aIdx) is a valid LAST pivot: rotating only path[j+1]'s
+        // subtree about it bends this limb's attachment bone too — without it,
+        // a pose that puts the divergence point out of the limb's reach would
+        // tear the pin off with no joint able to compensate. Rotating just
+        // that subtree can never move the previously planted chains.
+        for (int j = (int)path.size() - 2; j >= aIdx; --j) {
+          const TPointD pivot = skeleton.vertex(path[j]).P();
+          TPointD cur = skeleton.vertex(pinV).P() - pivot;
+          TPointD tgt = target - pivot;
+          if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
+          double ang = atan2(cross(cur, tgt), cur * tgt);
+
+          // Angular limits: this rotation changes exactly the ORIGINAL
+          // relative angle of joint path[j+1] (the path follows the original
+          // parenting), so clamp it within the joint's min/max. A stiff limb
+          // stops at its limit instead of hyper-extending even when it's the
+          // pin PLANTING that bends it (the classic "grab the shoulder, the
+          // pinned elbow folds backwards" case); the pin may then simply not
+          // reach its target on this limb.
+          const PlasticSkeletonVertex &jvx = origSkel->vertex(path[j + 1]);
+          if (jvx.m_minAngle > -1e9 || jvx.m_maxAngle < 1e9) {
+            double curRel =
+                locals::relAngleDeg(skeleton, *origSkel, path[j + 1]);
+            double lo = (jvx.m_minAngle - curRel) * (M_PI / 180.0);
+            double hi = (jvx.m_maxAngle - curRel) * (M_PI / 180.0);
+            ang       = std::min(std::max(ang, lo), hi);
+          }
+
+          double c = cos(ang), s = sin(ang);
+          std::vector<int> sub;
+          locals::collectSubtree(skeleton, path[j + 1], sub);
+          for (int v : sub) {
+            TPointD &P = skeleton.vertex(v).P();
+            TPointD d  = P - pivot;
+            P = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+          }
+        }
+      }
+
+      // This chain is now planted too: later pins must bend below it.
+      planted.insert(path.begin(), path.end());
+    }
+  };  // plantSecondaries
+
+  plantSecondaries();
+
+  // Two-foot hard constraint: a secondary pin dragged past the reach of its
+  // limb must NOT lift off the ground. Pull the whole skeleton toward the
+  // average pin residual and re-plant, a few passes: the body settles at the
+  // feasible middle where every foot stays ~planted and the motion is
+  // naturally limited (the support resists), instead of one foot detaching.
+  // No-op when all pins already reach (residual ~0) → the exact primary
+  // planting of the common case is preserved untouched.
+  for (int pass = 0; pass < 6; ++pass) {
+    TPointD resid(0.0, 0.0);
+    double maxr2 = 0.0;
+    for (const ActivePin &pin : pins) {
+      TPointD r = pin.target - skeleton.vertex(pin.idx).P();
+      resid     = resid + r;
+      maxr2     = std::max(maxr2, norm2(r));
+    }
+    if (maxr2 < 1e-4) break;  // every foot essentially planted
+    resid = resid * (1.0 / (double)pins.size());
+    if (norm2(resid) < 1e-9) break;  // already balanced; can't improve
+    for (auto st = verts.begin(); st != verts.end(); ++st)
+      skeleton.vertex(st.m_idx).P() += resid;
+    plantSecondaries();  // re-bend the secondary limbs from the new body pos
   }
 }
 
