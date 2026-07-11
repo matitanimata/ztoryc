@@ -26,6 +26,10 @@
 #include <QString>
 #include <QVector>
 #include <QHash>
+#include <QSet>
+#include <QPair>
+
+#include <functional>
 
 class QNetworkAccessManager;
 class QNetworkReply;
@@ -86,34 +90,56 @@ struct KitsuAsset {
   QString kitsuAssetId;  // non-empty → it already exists in Kitsu
 };
 
+// A Kitsu person (team member). name is the display name (full_name); id is the
+// Kitsu person id used to resolve task assignees.
+struct KitsuPerson {
+  QString id;
+  QString name;
+};
+
 // One shot-task whose status we push up to Kitsu (Phase 3b). taskType must match
 // a Kitsu task-type name (for_entity = Shot).
 struct KitsuTaskPush {
-  QString    seq;
-  QString    shot;
-  QString    taskType;
-  TaskStatus status = TaskStatus::Todo;
+  QString     seq;
+  QString     shot;
+  QString     taskType;
+  TaskStatus  status = TaskStatus::Todo;
+  QStringList assignees;  // Ztoryc assignee names to add (add-only) in Kitsu
 };
 
 // One asset-task whose status we push up to Kitsu. The asset is resolved by
 // type+name (as pushed by pushAssets); taskType must match a Kitsu task-type
 // with for_entity = Asset. Mirrors KitsuTaskPush for the asset entity.
 struct KitsuAssetTaskPush {
-  QString    assetType;
-  QString    assetName;
-  QString    taskType;
-  TaskStatus status = TaskStatus::Todo;
+  QString     assetType;
+  QString     assetName;
+  QString     taskType;
+  TaskStatus  status = TaskStatus::Todo;
+  QStringList assignees;  // Ztoryc assignee names to add (add-only) in Kitsu
 };
 
 // One shot-task status pulled DOWN from Kitsu (review sync). taskType is the
 // Kitsu task-type name; the caller matches it onto its Ztoryc task by
 // KitsuClient::normalizeTaskType().
 struct KitsuPullEntry {
-  QString    seq;
-  QString    shot;
-  QString    kitsuShotId;  // Kitsu shot id — robust link across renames
-  QString    taskType;
-  TaskStatus status = TaskStatus::Todo;
+  QString     seq;
+  QString     shot;
+  QString     kitsuShotId;  // Kitsu shot id — robust link across renames
+  QString     taskType;
+  TaskStatus  status = TaskStatus::Todo;
+  QStringList assignees;  // assignee display names read from Kitsu
+};
+
+// One asset-task status pulled DOWN from Kitsu (review sync). Mirrors
+// KitsuPullEntry for the asset entity; the caller matches the asset by
+// kitsuAssetId first, then type+name, and the task by normalizeTaskType().
+struct KitsuAssetStatusEntry {
+  QString     assetType;
+  QString     assetName;
+  QString     kitsuAssetId;  // Kitsu asset id — robust link across renames
+  QString     taskType;
+  TaskStatus  status = TaskStatus::Todo;
+  QStringList assignees;  // assignee display names read from Kitsu
 };
 
 //----------------------------------------------------------------------------
@@ -202,6 +228,14 @@ public:
   void pushAssets(const QString &projectId, const QVector<KitsuAsset> &assets);
   void pullAssets(const QString &projectId);
 
+  // Pull asset TASK statuses DOWN from Kitsu (review sync; mirror of
+  // pullStatuses for the asset entity). -> assetStatusesPulled().
+  void pullAssetStatuses(const QString &projectId);
+
+  // Pull the project's TEAM (its Kitsu persons) down into the roster used by the
+  // assignee picker. -> teamPulled().
+  void pullTeam(const QString &projectId);
+
   // Push asset TASK statuses (mirror of pushTasks for the asset entity): ensure
   // each task exists on its asset and set its status. Chained after pushAssets so
   // the asset entities already exist. -> assetTasksPushed().
@@ -273,6 +307,11 @@ signals:
   void assetsPushed(bool ok, int created, int updated, const QString &message);
   void assetsPulled(bool ok, const QVector<KitsuAsset> &assets,
                     const QString &message);
+  void assetStatusesPulled(bool ok,
+                           const QVector<KitsuAssetStatusEntry> &entries,
+                           const QString &message);
+  void teamPulled(bool ok, const QVector<KitsuPerson> &persons,
+                  const QString &message);
   void previewsUploaded(bool ok, int uploaded, const QString &message);
   void networkError(const QString &message);
 
@@ -335,11 +374,14 @@ private:
   QHash<QString, QString>  m_taskSeqIds;     // seq name -> sequence id
   QHash<QString, QString>  m_taskShotIds;    // "seqId/shotName" -> shot id
   QHash<QString, QString>  m_taskIdByKey;    // "shotId/ttId" -> task id
+  QHash<QString, QString>  m_taskStatusByKey; // "shotId/ttId" -> current status id
+  QHash<QString, QSet<QString>> m_taskAssigneesByKey; // "shotId/ttId" -> person ids
   QHash<int, QString>      m_statusIdByZ;    // TaskStatus (int) -> Kitsu status id
   QVector<QString>         m_ttCreateQueue;  // task-type ids to create-tasks for
   int m_taskCreateIdx = 0;
   int m_taskApplyIdx  = 0;
   int m_taskStatusesSet = 0;
+  int m_taskUnchanged   = 0;  // already at target status -> skipped
 
   // --- Pull statuses (review sync) -------------------------------------
   void pullLoadSequences();
@@ -388,10 +430,44 @@ private:
   QHash<QString, QString> m_atAssetTypeIdByName;// asset-type name(lower) -> id
   QHash<QString, QString> m_atAssetIds;         // "typeId/name(lower)" -> asset id
   QHash<QString, QString> m_atTaskIdByKey;      // "assetId/ttId" -> task id
+  QHash<QString, QString> m_atStatusByKey;      // "assetId/ttId" -> current status id
+  QHash<QString, QSet<QString>> m_atAssigneesByKey; // "assetId/ttId" -> person ids
   QVector<QString>        m_atTtCreateQueue;    // task-type ids to create-tasks for
   int m_atCreateIdx    = 0;
   int m_atApplyIdx     = 0;
   int m_atStatusesSet  = 0;
+  int m_atUnchanged    = 0;  // already at target status -> skipped
+
+  // --- Asset-task status pull (review sync; mirror of the shot pull) ------
+  void apLoadTypes();      // GET /api/data/asset-types (id -> name)
+  void apLoadAssets();     // GET project assets (id -> name/type)
+  void apLoadTaskTypes();  // GET /api/data/task-types (for_entity = Asset)
+  void apLoadTasks();      // GET project tasks -> build entries
+  void apFail(const QString &message);
+
+  QString m_apProjectId;
+  QHash<QString, QString> m_apAssetTypeName;  // asset-type id -> name
+  QHash<QString, QString> m_apAssetName;      // asset id      -> name
+  QHash<QString, QString> m_apAssetType;      // asset id      -> asset-type name
+  QHash<QString, QString> m_apTtName;         // task-type id  -> Kitsu name (Asset)
+
+  // --- Team / assignees (persons) — shared by pulls and the assign pass ---
+  // GET /api/data/persons (id<->name maps) then GET the project (team person
+  // ids into m_teamPersonIds), then run `next`. The team set is what the assign
+  // pass is allowed to touch, so Ztoryc never assigns anyone outside the team.
+  void loadRosterThen(const QString &projectId, std::function<void()> next);
+  void teamFail(const QString &message);
+  // Assign each (taskId, personId) in m_assignQueue sequentially (add-only),
+  // then invoke m_assignOnDone. Kitsu route: PUT /actions/tasks/<id>/assign.
+  void assignRun();
+
+  QString m_teamProjectId;
+  QHash<QString, QString> m_personNameById;   // person id     -> display name (all)
+  QHash<QString, QString> m_personIdByName;   // name(lower)   -> person id  (all)
+  QSet<QString>           m_teamPersonIds;    // project team person ids (assignable)
+  QVector<QPair<QString, QString>> m_assignQueue;  // (taskId, personId) to add
+  int m_assignIdx = 0;
+  std::function<void()> m_assignOnDone;
 
   // --- Preview upload (Phase 4) — sequential async, 3 steps per entry ----
   // Resolve which base URL the upload uses (local if reachable, else primary),

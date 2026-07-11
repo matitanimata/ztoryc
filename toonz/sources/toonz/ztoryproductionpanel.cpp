@@ -481,6 +481,9 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
         for (const QString &tt : mm->taskTypesForProjectShot(ps))
           if (KitsuClient::normalizeTaskType(tt) == ekey) {
             if (ps.tasks[tt].status != e.status) { ps.tasks[tt].status = e.status; ++updated; dirty = true; }
+            // Add-only assignee merge (mirrors the add-only push).
+            for (const QString &nm : e.assignees)
+              if (!ps.tasks[tt].assignees.contains(nm)) { ps.tasks[tt].assignees.push_back(nm); dirty = true; }
             if (e.status == TaskStatus::Done) {
               const QString nxt = mm->nextTaskType(mm->techniqueForProjectShot(ps), tt);
               if (!nxt.isEmpty() && ps.tasks.value(nxt).status == TaskStatus::Todo) {
@@ -561,9 +564,77 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
     if (dirty) { mm->saveProjectDb(); rebuildAssets(); }
     if (m_kitsuSyncLabel) {
       m_kitsuSyncLabel->setStyleSheet("color:#22D160;");
-      m_kitsuSyncLabel->setText(tr("%1 (%2 added, %3 linked)").arg(msg).arg(added).arg(linked));
+      m_kitsuSyncLabel->setText(tr("%1 (%2 added, %3 linked)  Pulling asset statuses…")
+                                    .arg(msg).arg(added).arg(linked));
+    }
+    // Entities are now imported/linked; pull their review statuses down too so
+    // the single "Pull assets" action mirrors the supervisor's asset state.
+    KitsuClient::instance()->pullAssetStatuses(ZtoryModel::instance()->kitsuProjectId());
+  });
+  connect(kc, &KitsuClient::assetStatusesPulled, this,
+          [this](bool ok, const QVector<KitsuAssetStatusEntry> &entries, const QString &msg) {
+    if (!ok) {
+      if (m_kitsuSyncLabel) { m_kitsuSyncLabel->setStyleSheet("color:#FF3860;"); m_kitsuSyncLabel->setText(msg); }
+      return;
+    }
+    ZtoryModel *mm = ZtoryModel::instance();
+    int updated = 0; bool dirty = false;
+    for (const KitsuAssetStatusEntry &e : entries) {
+      const QString ekey = KitsuClient::normalizeTaskType(e.taskType);
+      for (Asset &a : mm->assets()) {
+        bool match;
+        if (!a.kitsuAssetId.isEmpty() && !e.kitsuAssetId.isEmpty())
+          match = (a.kitsuAssetId == e.kitsuAssetId);
+        else
+          match = (a.type == e.assetType &&
+                   a.name.trimmed().compare(e.assetName.trimmed(), Qt::CaseInsensitive) == 0);
+        if (!match) continue;
+        if (a.kitsuAssetId.isEmpty() && !e.kitsuAssetId.isEmpty()) { a.kitsuAssetId = e.kitsuAssetId; dirty = true; }
+        for (const QString &tt : mm->assetTaskTypesForType(a.type))
+          if (KitsuClient::normalizeTaskType(tt) == ekey) {
+            if (a.tasks[tt].status != e.status) { a.tasks[tt].status = e.status; ++updated; dirty = true; }
+            for (const QString &nm : e.assignees)
+              if (!a.tasks[tt].assignees.contains(nm)) { a.tasks[tt].assignees.push_back(nm); dirty = true; }
+            break;
+          }
+      }
+    }
+    if (dirty) { mm->saveProjectDb(); rebuildAssets(); }
+    if (m_kitsuSyncLabel) {
+      m_kitsuSyncLabel->setStyleSheet("color:#22D160;");
+      m_kitsuSyncLabel->setText(tr("%1 (%2 updated)").arg(msg).arg(updated));
     }
   });
+  connect(kc, &KitsuClient::teamPulled, this,
+          [this](bool ok, const QVector<KitsuPerson> &persons, const QString &msg) {
+    if (!ok) {
+      if (m_kitsuSyncLabel) { m_kitsuSyncLabel->setStyleSheet("color:#FF3860;"); m_kitsuSyncLabel->setText(msg); }
+      return;
+    }
+    ZtoryModel *mm = ZtoryModel::instance();
+    QStringList roster = mm->team();
+    int added = 0;
+    for (const KitsuPerson &p : persons)
+      if (!p.name.trimmed().isEmpty() && !roster.contains(p.name, Qt::CaseInsensitive)) {
+        roster.push_back(p.name);
+        ++added;
+      }
+    if (added > 0) { mm->setTeam(roster); mm->saveProjectDb(); rebuild(); }
+    if (m_kitsuSyncLabel) {
+      m_kitsuSyncLabel->setStyleSheet("color:#22D160;");
+      m_kitsuSyncLabel->setText(added > 0 ? tr("%1 (%2 added)").arg(msg).arg(added) : msg);
+    }
+  });
+  // As soon as we're connected, pull the project's team so the assignee picker is
+  // populated from Kitsu (Kitsu is authoritative on the roster while linked).
+  connect(kc, &KitsuClient::loginFinished, this, [this](bool ok, const QString &) {
+    ZtoryModel *mm = ZtoryModel::instance();
+    if (ok && mm->isKitsuLinked())
+      KitsuClient::instance()->pullTeam(mm->kitsuProjectId());
+  });
+  // Panel opened while already connected+linked (e.g. reopened room): pull now.
+  if (kc->isLoggedIn() && m->isKitsuLinked())
+    kc->pullTeam(m->kitsuProjectId());
 
   // Rebuild thumbnails when the Board finishes rendering a preview (panel 0 only —
   // panel 0 is the shot thumbnail). Debounced: one rebuild after a burst of renders.
@@ -1248,6 +1319,9 @@ void ZtoryProductionPanel::onKitsuPull() {
   if (!m->isKitsuLinked()) return;
   m_kitsuSyncLabel->setStyleSheet(QString());
   m_kitsuSyncLabel->setText(tr("Pulling statuses from Kitsu…"));
+  // Also refresh the team roster (project members) from Kitsu; independent async
+  // call, populates the assignee picker.
+  KitsuClient::instance()->pullTeam(m->kitsuProjectId());
   KitsuClient::instance()->pullStatuses(m->kitsuProjectId());
 }
 
