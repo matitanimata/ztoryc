@@ -372,7 +372,8 @@ protected:
                                      const std::map<int, TPointD> &curPos);
   void writeBackAngles_animate(double frame,
                                const std::map<int, TPointD> &curPos,
-                               const std::map<int, TPointD> &desired);
+                               const std::map<int, TPointD> &desired,
+                               bool clampToLimits = true);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
   void controllerDrag_animate(const TPointD &pos, const TMouseEvent &me);
   void scaleDrag_animate(const TPointD &pos, const TMouseEvent &me);

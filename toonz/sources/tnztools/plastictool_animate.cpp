@@ -1290,7 +1290,7 @@ void PlasticTool::moveVertexMultiAnchor_animate(
 // DISTANCE params are never written here.
 void PlasticTool::writeBackAngles_animate(
     double frame, const std::map<int, TPointD> &curPos,
-    const std::map<int, TPointD> &desired) {
+    const std::map<int, TPointD> &desired, bool clampToLimits) {
   const PlasticSkeleton &orig = *skeleton();
 
   auto parentDir = [&](const std::function<TPointD(int)> &posFn, int vx) {
@@ -1324,6 +1324,15 @@ void PlasticTool::writeBackAngles_animate(
     double oldDelta = vd->m_params[SkVD::ANGLE]->getValue(frame);
     while (newDelta - oldDelta > 180.0) newDelta -= 360.0;
     while (newDelta - oldDelta < -180.0) newDelta += 360.0;
+
+    // Angular limits (min/maxAngle), same clamp as the FK updateAngle path.
+    // Children hold RELATIVE deltas, so a clamped joint rotates its whole
+    // subtree rigidly: the limb stiffens at the limit instead of tearing.
+    // The unpin bake opts out — it must reproduce the planted pose exactly.
+    if (clampToLimits)
+      newDelta = tcrop(newDelta, orig.vertex(w).m_minAngle,
+                       orig.vertex(w).m_maxAngle);
+
     if (fabs(newDelta - oldDelta) < 1e-4) continue;  // unchanged joint
 
     ::setKeyframe(vd->m_params[SkVD::ANGLE], frame);
@@ -1423,14 +1432,16 @@ void PlasticTool::togglePinAtCurrentFrame() {
   }
 
   // Bake the previously planted pose into the ANGLE params (compare against
-  // the fresh, unpinned FK): the vertex stays visually where it was.
+  // the fresh, unpinned FK): the vertex stays visually where it was. NO limit
+  // clamping here — the eval-time planting ignores limits, so clamping the
+  // bake could snap the pose at unpin.
   if (pinned && !planted.empty()) {
     m_deformedSkeleton.invalidate();
     PlasticSkeleton &ds = deformedSkeleton();
     std::map<int, TPointD> cur;
     for (auto vt = ds.vertices().begin(); vt != ds.vertices().end(); ++vt)
       cur[vt.m_idx] = vt->P();
-    writeBackAngles_animate(frame, cur, planted);
+    writeBackAngles_animate(frame, cur, planted, false);
   }
 
   m_sd->getKeyframeAt(frame, undo->m_newValues);
