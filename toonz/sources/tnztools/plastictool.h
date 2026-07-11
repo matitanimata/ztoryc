@@ -419,6 +419,13 @@ protected:
   void bakePinsToFK_animate();
   void togglePinAtCurrentFrame();               //!< pin/unpin selected vertex
   void switchPinAtCurrentFrame();  //!< pin selected, release others at f+1
+
+public:
+  //! Restore the IK checkbox + pin visibility (used by the bake undo). Sets
+  //! the property with notifyListeners (widget refresh only, no re-trigger).
+  void setIkModeState(bool on);
+
+protected:
   void addContextMenuActions_animate(QMenu *menu);
 
   void draw_mesh();

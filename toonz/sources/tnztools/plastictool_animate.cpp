@@ -125,6 +125,48 @@ public:
   }
 };
 
+//------------------------------------------------------------------------
+
+// Undo for the IK-off bake (bakePinsToFK): the bake rewrites many keyframes
+// across many frames and vertices (drops PIN/PINTX/PINTY, writes ANGLE +
+// controller translation). Snapshots the full per-frame SkVD keyframe state
+// at every affected frame before and after, and restores it wholesale.
+class BakeToFKUndo final : public TUndo {
+  int m_row, m_col;
+
+public:
+  std::vector<double> m_frames;
+  std::vector<SkDKey> m_old, m_new;
+
+  BakeToFKUndo() : m_row(::row()), m_col(::column()) {}
+
+  int getSize() const override {
+    return sizeof(*this) + (int)m_frames.size() * (4 << 10);
+  }
+
+  void apply(const std::vector<SkDKey> &snap, bool ikOn) const {
+    PlasticTool::TemporaryActivation tempActivate(m_row, m_col);
+    l_suspendParamsObservation = true;
+    if (SkDP sd = l_plasticTool.deformation()) {
+      for (size_t i = 0; i < m_frames.size(); ++i) {
+        sd->deleteKeyframe(m_frames[i]);
+        sd->setKeyframe(snap[i]);
+      }
+    }
+    l_suspendParamsObservation = false;
+    // Undo brings the pins back → restore IK mode; redo re-commits → IK off
+    l_plasticTool.setIkModeState(ikOn);
+    l_plasticTool.onChange();
+  }
+
+  void undo() const override { apply(m_old, true); }
+  void redo() const override { apply(m_new, false); }
+
+  QString getHistoryString() override {
+    return QObject::tr("Plastic: Bake IK Pins to FK");
+  }
+};
+
 }  // namespace
 
 //****************************************************************************************
@@ -1432,11 +1474,26 @@ int PlasticTool::pinnedVertexAtFrame(double frame) const {
 
 //------------------------------------------------------------------------
 
+void PlasticTool::setIkModeState(bool on) {
+  // notifyListeners only refreshes the checkbox widget — it does NOT re-enter
+  // onPropertyChanged (which would re-run the bake); and even if it did, the
+  // handler is a no-op here (ik-on skips the bake, ik-off with no pins returns
+  // early), so this is safe either way.
+  m_ikDrag.setValue(on);
+  m_ikDrag.notifyListeners();
+  if (m_sd) m_sd->enablePins(on);
+  m_deformedSkeleton.invalidate();
+  invalidate();
+}
+
+//------------------------------------------------------------------------
+
 // Leaving IK mode = commit the pinned animation. Every keyframe is baked into
 // FK (angles) + controller (rigid translation) so the pose is IDENTICAL at
 // every key and nothing shifts; then all pins are dropped, freeing the rig for
 // plain FK editing. Uses storeDeformedSkeleton at explicit frames (no frame
-// handle juggling) and writeBackAngles (purely geometric). Not undoable.
+// handle juggling) and writeBackAngles (purely geometric). Undoable via a
+// full per-frame keyframe snapshot (BakeToFKUndo).
 void PlasticTool::bakePinsToFK_animate() {
   if (!m_sd) return;
   int skelId            = ::skeletonId();
@@ -1484,6 +1541,15 @@ void PlasticTool::bakePinsToFK_animate() {
                                 rvd->m_params[SkVD::TRANSY]->getValue(t));
   }
 
+  // Snapshot the full keyframe state at every affected frame for undo (BEFORE
+  // any mutation). All new keys land on bakeTimes ⊂ times, and the dropped
+  // pin keys live at frames in times too, so `times` is the complete set.
+  std::unique_ptr<BakeToFKUndo> undo(new BakeToFKUndo);
+  undo->m_frames.assign(times.begin(), times.end());
+  undo->m_old.resize(undo->m_frames.size());
+  for (size_t i = 0; i < undo->m_frames.size(); ++i)
+    m_sd->getKeyframeAt(undo->m_frames[i], undo->m_old[i]);
+
   l_suspendParamsObservation = true;
 
   // 2. Fully un-pin: drop every PIN / PINTX / PINTY key
@@ -1522,6 +1588,12 @@ void PlasticTool::bakePinsToFK_animate() {
   }
 
   l_suspendParamsObservation = false;
+
+  // Snapshot the resulting state and register the undo
+  undo->m_new.resize(undo->m_frames.size());
+  for (size_t i = 0; i < undo->m_frames.size(); ++i)
+    m_sd->getKeyframeAt(undo->m_frames[i], undo->m_new[i]);
+  TUndoManager::manager()->add(undo.release());
 
   m_deformedSkeleton.invalidate();
   onChange();
