@@ -1,3 +1,23 @@
+## [2026-07-11b] — SUPERPLASTIC: pin robusti + limiti angolari visivi + undo bake (feature/superplastic)
+
+Seconda parte della sessione (dopo il controller). Tutto su `feature/superplastic` (commit finale `965ebd3ed`, pushato). Guidato dai test/stress-test di Franco.
+
+### Fixed / Added — pin & doppio appoggio
+- **Limiti angolari applicati in modalità pin** (prima solo FK): clamp nel write-back unificato + nel CCD dell'eval (le pieghe "a cascata" ora rispettano i min/max; helper relAngleDeg).
+- **Unpin dell'ultimo pin senza shift**: la traslazione rigida del planting va nei canali TransX/TransY del controller (chiave di confinamento a f-1, mappata con la parte lineare → esatta anche sotto squash).
+- **IK off = bake completo dell'animazione pinnata** (`bakePinsToFK_animate`): itera TUTTI i keyframe con pin attivo, cattura la posa piantata via storeDeformedSkeleton a frame esplicito, elimina PIN/PINTX/PINTY, bakes forma negli ANGLE + traslazione nel controller → ogni chiave resta identica, rig FK puro e libero (risolve "spegnendo IK a metà si perde l'animazione successiva"). Confinamento del transfer alla prossima attivazione pin per le camminate a piedi alternati.
+- **Constraint del doppio appoggio**: i pin secondari non si staccano più a fine corsa — ciclo di correzione (trasla verso il residuo medio + ri-pianta) che assesta il corpo dove tutti i piedi restano a terra; soglia RELATIVA alla scala del rig + damping + più sweep CCD → niente piccoli spostamenti con 3+ pin asimmetrici (2 e 4 già ok). No-op nel caso raggiungibile (primario esatto preservato).
+- **Undo del bake IK-off** (`BakeToFKUndo`): snapshot SkDKey per-frame a tutti i frame coinvolti prima/dopo, ripristino wholesale; riporta su anche checkbox IK + visibilità pin. Il bake non è più distruttivo.
+
+### Added — limiti angolari keyframabili + gizmo visivo
+- Param SkVD **MINANGLE/MAXANGLE** = override keyframabile del limite statico del vertice (i limiti del giunto possono cambiare nel tempo); senza chiavi = statico di sempre (retrocompat). Nel function editor come canali MinAngle/MaxAngle.
+- **Gizmo nel viewer**: due maniglie draggabili (min/max) su un arco attorno al genitore + cuneo del range consentito; drag = angolo mouse vs rest; hover arancio, hit-test prima della selezione. Commit = chiave se già keyato, altrimenti statico.
+- **Toggle "Angle Bounds Gizmo"** (default OFF) per tenere pulito lo scheletro; campo toolbar **live** durante il drag; **undo** del drag (AngleLimitUndo: statico + snapshot SkVD).
+
+### Notes
+- Restano per SUPERPLASTIC: **adapter Skeleton Tool** (milestone grosso), pole vector opzionale, campi toolbar per trans/rot/shear, dedup ctrlContrastColor. Merge su master rimandato (regression pass sui file core + già fatto l'undo del bake).
+- **Kitsu**: il flag `useKitsu` è creation-only (attributo su `<project>` in `production.ztrack`). Per attivarlo su un progetto esistente: aggiungere `useKitsu="1"` al tag `<project>` ad app chiusa (workaround dato a Franco, ha funzionato). Da fare: checkbox in-app "Enable Kitsu" nella Production room.
+
 ## [2026-07-11] — SUPERPLASTIC: controller "Animate tool sopra lo scheletro" + task 62 vector fill (master)
 
 Sessione doppia: fix core su `master`, poi tutta l'evoluzione squash&stretch → controller su `feature/superplastic`.
