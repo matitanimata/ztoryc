@@ -2032,6 +2032,35 @@ void PlasticTool::reset() {
 
 //------------------------------------------------------------------------
 
+void PlasticTool::setIkPinsUiEnabled(bool on) {
+  m_ikDrag.setValue(on);
+  if (m_sd) m_sd->enablePins(on);
+  m_ikDrag.notifyListeners();
+  m_deformedSkeleton.invalidate();
+  invalidate();
+}
+
+//------------------------------------------------------------------------
+
+namespace {
+
+// Restores the IK checkbox + pin UI around the clean-release pin undos in
+// the same block, so undoing the toggle visibly brings the pins back.
+class IkReleaseToggleUndo final : public TUndo {
+public:
+  void undo() const override { l_plasticTool.setIkPinsUiEnabled(true); }
+  void redo() const override { l_plasticTool.setIkPinsUiEnabled(false); }
+
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override {
+    return QObject::tr("Plastic: Release IK Pins");
+  }
+};
+
+}  // namespace
+
+//------------------------------------------------------------------------
+
 bool PlasticTool::onPropertyChanged(std::string propertyName) {
   struct locals {
     static bool alreadyContainsVertexName(const PlasticSkeleton &skel,
@@ -2186,12 +2215,16 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
     // immediately free; earlier frames keep their pinned animation. The
     // pinsEnabled flag then only hides the pin UI when scrubbing back over
     // still-pinned frames — the evaluation planting is never gated.
+    // The whole release is ONE undo block, including the checkbox/UI state
+    // (IkReleaseToggleUndo): without it, undo restored the pin keys with the
+    // UI still off and looked like it did nothing.
     if (m_sd) {
       if (!m_ikDrag.getValue()) {
         std::vector<int> pins = pinnedVerticesAtFrame(::frame());
         if (!pins.empty()) {
           int oldSel = m_svSel.hasSingleObject() ? (int)m_svSel : -1;
           TUndoManager::manager()->beginBlock();
+          TUndoManager::manager()->add(new IkReleaseToggleUndo);
           for (int p : pins) {
             setSkeletonSelection(p);
             togglePinAtCurrentFrame();

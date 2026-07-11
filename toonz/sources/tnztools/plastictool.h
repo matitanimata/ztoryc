@@ -311,6 +311,10 @@ public:
                        const TPointD &posShift);
 
 public:
+  //! Restores the IK checkbox + pin UI state without re-triggering the
+  //! clean-release logic (used by the IK-release undo/redo)
+  void setIkPinsUiEnabled(bool on);
+
   // Actions with associated undo
   int addSkeleton_undo(const PlasticSkeletonP &skeleton);
   void addSkeleton_undo(int skelId, const PlasticSkeletonP &skeleton);
