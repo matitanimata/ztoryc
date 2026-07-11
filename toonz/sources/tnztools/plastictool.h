@@ -465,6 +465,19 @@ private:
 
   void drawAngleLimits(const SkDP &sd, int skeId, int v, double pixelSize);
 
+  // SuperPlastic multi-level: the skeletons of the columns hierarchically
+  // connected to the current one (via TStageObject parenting) — i.e. the whole
+  // articulated character spread across several drawing levels. Each entry
+  // carries the column's deformed skeleton plus the affine that maps its own
+  // draw space into the current tool's draw space, so the whole character can
+  // be drawn/picked as one.
+  struct ConnectedSkel {
+    int            columnIndex;
+    PlasticSkeleton skel;   //!< deformed, in that column's own draw space
+    TAffine        toCur;   //!< that column's draw space -> current tool space
+  };
+  std::vector<ConnectedSkel> connectedSkeletons_animate() const;
+
   // Selection methods
 
   void setMeshSelection(MeshSelection &target, const MeshSelection &newSel);

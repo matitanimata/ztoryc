@@ -108,8 +108,16 @@ TPointD XshHandleManager::getHandlePos(const TStageObjectId &id,
       def->storeDeformedSkeleton(skelId, row, skel);
 
       int v = def->vertexIndex(hookIndex, skelId);
-      return (v >= 0) ? TScale(1.0 / Stage::inch) * skel.vertex(v).P()
-                      : TPointD();
+      if (v < 0) return TPointD();
+      // SuperPlastic: the squash controller is deliberately kept out of the
+      // deformed skeleton (manipulation/pin/IK stay in pre-controller space) and
+      // applied only at render/placement time. A child column parented to a mesh
+      // vertex is a placement concern, so it must attach to the CONTROLLED vertex
+      // position — otherwise the child detaches whenever the parent mesh has an
+      // active controller (squash/scale/rotate/translate). Identity when none.
+      const TPointD vp =
+          def->getSquashControllerAffine(skelId, row) * skel.vertex(v).P();
+      return TScale(1.0 / Stage::inch) * vp;
     }
 
     --hookIndex;

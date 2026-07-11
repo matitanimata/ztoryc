@@ -9,6 +9,7 @@
 #include "toonz/tframehandle.h"
 #include "toonz/tobjecthandle.h"
 #include "toonz/txsheethandle.h"
+#include "toonz/tcolumnhandle.h"
 
 #include "plastictool.h"
 
@@ -243,6 +244,36 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
         m_limitOldMax = skel->vertex((int)m_svSel).m_maxAngle;
       }
       m_sd->getKeyframeAt(frame(), m_pressedSkDF);
+      invalidate();
+      return;
+    }
+  }
+
+  // SuperPlastic multi-level: if nothing on the current column is under the
+  // cursor, try the hierarchically connected columns. Clicking a vertex there
+  // makes that column active (and selects the vertex), so the whole articulated
+  // character is editable without hunting for the right column in the xsheet.
+  if (m_sd && m_svHigh < 0 && m_ctrlDevice == CtrlNone && m_limitDrag == 0) {
+    const double pickR = getPixelSize() * HIGHLIGHT_DISTANCE;
+    double best        = pickR;
+    int bestCol = -1, bestV = -1;
+    for (const ConnectedSkel &cs : connectedSkeletons_animate()) {
+      double dLocal;
+      int v = cs.skel.closestVertex(cs.toCur.inv() * pos, &dLocal);
+      if (v < 0) continue;
+      // Re-measure in the current draw space (toCur may scale distances).
+      double d = norm((cs.toCur * cs.skel.vertex(v).P()) - pos);
+      if (d < best) { best = d; bestCol = cs.columnIndex; bestV = v; }
+    }
+    if (bestCol >= 0) {
+      TTool::getApplication()->getCurrentColumn()->setColumnIndex(bestCol);
+      updateMatrix();  // columnIndexSwitched re-binds m_sd via onColumnSwitched
+      setSkeletonSelection(bestV);
+      if (m_svSel.hasSingleObject()) {
+        m_pressedVxsPos =
+            std::vector<TPointD>(1, deformedSkeleton().vertex(m_svSel).P());
+        m_sd->getKeyframeAt(frame(), m_pressedSkDF);
+      }
       invalidate();
       return;
     }
@@ -2135,6 +2166,76 @@ void PlasticTool::keyFunc_undo(void (PlasticTool::*keyFunc)()) {
 
 //------------------------------------------------------------------------
 
+//****************************************************************************
+//    SuperPlastic multi-level : connected-skeleton discovery
+//****************************************************************************
+
+std::vector<PlasticTool::ConnectedSkel>
+PlasticTool::connectedSkeletons_animate() const {
+  std::vector<ConnectedSkel> result;
+  if (!m_sd) return result;
+
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh) return result;
+  const int curCol = ::column();
+  const int fr     = ::frame();
+
+  // BFS over the TStageObject parenting graph (parent + children), collecting
+  // every column connected to the current one — the articulated character,
+  // however it's spread across drawing levels.
+  std::set<int> visited;
+  std::queue<int> queue;
+  std::vector<int> others;
+  visited.insert(curCol);
+  queue.push(curCol);
+  while (!queue.empty()) {
+    const int c       = queue.front();
+    queue.pop();
+    TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+    if (!obj) continue;
+    if (c != curCol) others.push_back(c);
+
+    const TStageObjectId pid = obj->getParent();
+    if (pid.isColumn() && !visited.count(pid.getIndex())) {
+      visited.insert(pid.getIndex());
+      queue.push(pid.getIndex());
+    }
+    for (TStageObject *child : obj->getChildren()) {
+      const TStageObjectId cid = child->getId();
+      if (cid.isColumn() && !visited.count(cid.getIndex())) {
+        visited.insert(cid.getIndex());
+        queue.push(cid.getIndex());
+      }
+    }
+  }
+
+  // For each connected Plastic column, grab its deformed skeleton and the affine
+  // that brings its own draw space into the current tool's draw space:
+  //   A_C = getMatrix()^-1 * getColumnMatrix(C) * controller_C
+  // (getMatrix() already = getColumnMatrix(current) * controller_current).
+  const TAffine curInv = getMatrix().inv();
+  for (int c : others) {
+    TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+    if (!obj) continue;
+    const PlasticSkeletonDeformationP &def =
+        obj->getPlasticSkeletonDeformation();
+    if (!def) continue;  // rigid (non-meshed) level — no skeleton to draw yet
+    const double sdFr = obj->paramsTime((double)fr);
+    const int skelId  = def->skeletonId(sdFr);
+
+    ConnectedSkel cs;
+    cs.columnIndex = c;
+    def->storeDeformedSkeleton(skelId, sdFr, cs.skel);
+    if (cs.skel.vertices().size() == 0) continue;
+    const TAffine ctrl = def->getSquashControllerAffine(skelId, sdFr);
+    cs.toCur           = curInv * getColumnMatrix(c, fr) * ctrl;
+    result.push_back(std::move(cs));
+  }
+  return result;
+}
+
+//------------------------------------------------------------------------
+
 void PlasticTool::draw_animate() {
   double pixelSize = getPixelSize();
 
@@ -2142,6 +2243,17 @@ void PlasticTool::draw_animate() {
 
   // Draw deformed skeleton
   if (m_sd) {
+    // SuperPlastic multi-level: draw the skeletons of the hierarchically
+    // connected columns as dimmed context, so the whole articulated character
+    // (spread across several drawing levels) is visible at once. Each is placed
+    // via its own affine into the current tool's draw space.
+    for (const ConnectedSkel &cs : connectedSkeletons_animate()) {
+      glPushMatrix();
+      tglMultMatrix(cs.toCur);
+      drawSkeleton(cs.skel, pixelSize, 90);
+      glPopMatrix();
+    }
+
     drawOnionSkinSkeletons_animate(pixelSize);
     drawSkeleton(deformedSkeleton, pixelSize);
     drawSelections(m_sd, deformedSkeleton, pixelSize);
