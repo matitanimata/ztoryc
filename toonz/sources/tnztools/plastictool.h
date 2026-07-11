@@ -394,6 +394,8 @@ protected:
   // time (e.g. the support foot in a walk cycle).
   int pinnedVertexAtFrame(double frame) const;  //!< first pin, -1 if none
   std::vector<int> pinnedVerticesAtFrame(double frame) const;  //!< all pins
+  //! Smallest frame > `frame` where any vertex's pin turns ON, or -1 if none
+  double nextPinActivationAfter_animate(double frame) const;
   void togglePinAtCurrentFrame();               //!< pin/unpin selected vertex
   void switchPinAtCurrentFrame();  //!< pin selected, release others at f+1
   void addContextMenuActions_animate(QMenu *menu);

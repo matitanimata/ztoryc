@@ -1349,6 +1349,29 @@ int PlasticTool::pinnedVertexAtFrame(double frame) const {
 
 //------------------------------------------------------------------------
 
+double PlasticTool::nextPinActivationAfter_animate(double frame) const {
+  if (!m_sd) return -1.0;
+  PlasticSkeleton *skel = skeleton().getPointer();
+  if (!skel) return -1.0;
+  int skelId  = ::skeletonId();
+  double best = -1.0;
+  for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
+       ++vt) {
+    SkVD *vd = m_sd->vertexDeformation(skelId, vt.m_idx);
+    if (!vd || !vd->m_params[SkVD::PIN]) continue;
+    const TDoubleParamP &pin = vd->m_params[SkVD::PIN];
+    for (int k = 0; k < pin->getKeyframeCount(); ++k) {
+      const TDoubleKeyframe &kf = pin->getKeyframe(k);
+      if (kf.m_frame > frame && kf.m_value >= 0.5 &&
+          (best < 0.0 || kf.m_frame < best))
+        best = kf.m_frame;
+    }
+  }
+  return best;
+}
+
+//------------------------------------------------------------------------
+
 std::vector<int> PlasticTool::pinnedVerticesAtFrame(double frame) const {
   std::vector<int> pins;
   if (!m_sd) return pins;
@@ -1467,12 +1490,25 @@ void PlasticTool::togglePinAtCurrentFrame() {
             m_sd->getSquashControllerAffine(::skeletonId(), frame);
         TPointD d(ctrl.a11 * t.x + ctrl.a12 * t.y,
                   ctrl.a21 * t.x + ctrl.a22 * t.y);
+        // Confine the transfer to the un-pinned gap: it holds until the NEXT
+        // pin activation, where planting takes over and the controller must
+        // be back to its pre-transfer value (otherwise the advancement would
+        // double up onto the following pinned range — a walk with alternating
+        // feet loses its subsequent animation). No later activation → the
+        // advancement persists forward (the character stays where it walked).
+        double nextActive = nextPinActivationAfter_animate(frame);
         for (int p : {(int)SkVD::TRANSX, (int)SkVD::TRANSY}) {
           TDoubleParamP par = rvd->m_params[p];
           double add        = (p == SkVD::TRANSX) ? d.x : d.y;
+          double closeVal   = (nextActive > 0.0) ? par->getValue(nextActive)
+                                                 : 0.0;
           if (frame > 1.0) ::setKeyframe(par, frame - 1.0);
           ::setKeyframe(par, frame);
           par->setValue(frame, par->getValue(frame) + add);
+          if (nextActive > 0.0) {
+            ::setKeyframe(par, nextActive);
+            par->setValue(nextActive, closeVal);
+          }
         }
       }
     }
