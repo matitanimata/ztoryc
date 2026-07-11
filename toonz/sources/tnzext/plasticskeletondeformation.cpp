@@ -951,6 +951,31 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
       }
     }
 
+    // Direction (radians) of the bone arriving at v from its parent, walking
+    // up degenerate bones; horizontal axis at the root (like buildAngle).
+    static double boneDir(const PlasticSkeleton &skel, int v) {
+      int q = v, p = skel.vertex(v).parent();
+      for (; p >= 0; q = p, p = skel.vertex(p).parent()) {
+        TPointD d = skel.vertex(q).P() - skel.vertex(p).P();
+        if (norm2(d) > 1e-8) return atan2(d.y, d.x);
+      }
+      return 0.0;
+    }
+
+    // Current ANGLE-equivalent delta (degrees) of joint v, measured
+    // geometrically against the original rest pose — the same quantity the
+    // min/maxAngle limits constrain in the FK paths.
+    static double relAngleDeg(const PlasticSkeleton &def,
+                              const PlasticSkeleton &orig, int v) {
+      int vp      = def.vertex(v).parent();
+      double now  = boneDir(def, v) - boneDir(def, vp);
+      double rest = boneDir(orig, v) - boneDir(orig, vp);
+      double rel  = now - rest;
+      while (rel > M_PI) rel -= 2.0 * M_PI;
+      while (rel < -M_PI) rel += 2.0 * M_PI;
+      return rel * M_180_PI;
+    }
+
     // First frame of the pin's current ON run (Constant keys): seniority
     // decides which pin owns the translation, so toggling a second pin on
     // never re-targets the first one (that would jump the whole pose).
@@ -1046,6 +1071,22 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
         TPointD tgt = target - pivot;
         if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
         double ang = atan2(cross(cur, tgt), cur * tgt);
+
+        // Angular limits: this rotation changes exactly the ORIGINAL relative
+        // angle of joint path[j+1] (the path follows the original parenting),
+        // so clamp it within the joint's min/max. A stiff limb stops at its
+        // limit instead of hyper-extending even when it's the pin PLANTING
+        // that bends it (the classic "grab the shoulder, the pinned elbow
+        // folds backwards" case); the pin may then simply not reach its
+        // target on this limb.
+        const PlasticSkeletonVertex &jvx = origSkel->vertex(path[j + 1]);
+        if (jvx.m_minAngle > -1e9 || jvx.m_maxAngle < 1e9) {
+          double curRel = locals::relAngleDeg(skeleton, *origSkel, path[j + 1]);
+          double lo     = (jvx.m_minAngle - curRel) * (M_PI / 180.0);
+          double hi     = (jvx.m_maxAngle - curRel) * (M_PI / 180.0);
+          ang           = std::min(std::max(ang, lo), hi);
+        }
+
         double c = cos(ang), s = sin(ang);
         std::vector<int> sub;
         locals::collectSubtree(skeleton, path[j + 1], sub);
