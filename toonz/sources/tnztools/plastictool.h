@@ -174,6 +174,10 @@ private:
   };
   int m_ctrlDevice    = CtrlNone;  //!< Handle being dragged
   int m_ctrlHighlight = CtrlNone;  //!< Handle under the mouse
+
+  // Angle-limit gizmo: drag the min/max joint bounds directly in the viewer
+  int m_limitDrag = 0;  //!< 0 none, 1 min bound, 2 max bound (being dragged)
+  int m_limitHi   = 0;  //!< hovered bound (same codes)
   TPointD m_scaleDragCenter;       //!< Controller pivot position at press
   double m_scaleOldX = 1.0,        //!< Controller values at press time
       m_scaleOldY = 1.0, m_ctrlOldRot = 0.0, m_ctrlOldTX = 0.0,
@@ -384,6 +388,14 @@ protected:
   void pivotDrag_animate(const TPointD &pos);
   int controllerHitTest_animate(const TPointD &pos);  //!< SquashCtrlDevice
   void drawController_animate(double pixelSize);
+
+  // Angle-limit gizmo helpers
+  bool limitDisplay_animate(int v, TPointD &parentPosDef, double &branchAngleRad,
+                            double &defaultAngleDeg, double &radius,
+                            double &minDisp, double &maxDisp);
+  int limitHitTest_animate(const TPointD &pos);  //!< 0 none / 1 min / 2 max
+  void limitDrag_animate(const TPointD &pos);
+  void drawAngleLimitGizmo_animate(double pixelSize);
   SkVD *rootVd_animate(int *rootIdx = 0);  //!< ROOT vertex's deformation
   bool squashPivot_animate(TPointD &C);    //!< controller pivot (local coords)
 

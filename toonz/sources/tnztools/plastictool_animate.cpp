@@ -100,6 +100,10 @@ void PlasticTool::mouseMove_animate(const TPointD &pos, const TMouseEvent &me) {
     m_ctrlHighlight = controllerHitTest_animate(pos);
     if (m_ctrlHighlight != CtrlNone) m_svHigh = -1;
 
+    // Angle-limit bound hover (shown for the selected joint)
+    m_limitHi = (m_ctrlHighlight == CtrlNone) ? limitHitTest_animate(pos) : 0;
+    if (m_limitHi != 0) m_svHigh = -1;
+
     invalidate();
   }
 }
@@ -137,6 +141,17 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
     }
   }
 
+  // Angle-limit bound handle, hit-tested before selection changes: grab it to
+  // drag the joint's min/max bound without disturbing the vertex selection.
+  if (m_sd && m_svSel.hasSingleObject()) {
+    int lb = limitHitTest_animate(pos);
+    if (lb != 0) {
+      m_limitDrag = lb;
+      invalidate();
+      return;
+    }
+  }
+
   setSkeletonSelection(m_svHigh);
 
   if (m_svSel.hasSingleObject()) {
@@ -158,6 +173,10 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
 
   if (m_ctrlDevice != CtrlNone) {
     controllerDrag_animate(pos, me);
+    return;
+  }
+  if (m_limitDrag != 0) {
+    limitDrag_animate(pos);
     return;
   }
 
@@ -1458,6 +1477,172 @@ void PlasticTool::bakePinsToFK_animate() {
 
 //------------------------------------------------------------------------
 
+// Geometry + display values for the angle-limit gizmo of vertex v: the
+// deformed parent position, the deformed parent-bone direction (branch), the
+// rest angle offset, a handle radius, and the min/max limit values to show
+// (effective = keyed override or static; unset limits fall back to a spread
+// around the joint's current bend so the handles are always grabbable).
+bool PlasticTool::limitDisplay_animate(int v, TPointD &pp, double &branch,
+                                       double &defAng, double &radius,
+                                       double &minDisp, double &maxDisp) {
+  if (!m_sd || v < 0) return false;
+  PlasticSkeletonP skelP = skeleton();  // rest
+  if (!skelP) return false;
+  const PlasticSkeleton &skel    = *skelP;
+  const PlasticSkeleton &defSkel = deformedSkeleton();
+  const PlasticSkeletonVertex &vx = skel.vertex(v);
+  int vParent = vx.parent();
+  if (vParent < 0) return false;
+
+  const PlasticSkeletonVertex &vxParent = skel.vertex(vParent);
+  int vGrand = vxParent.parent();
+  TPointD dirFromGrand(1, 0), dirFromDefGrand(1, 0);
+  if (vGrand >= 0) {
+    dirFromGrand    = vxParent.P() - skel.vertex(vGrand).P();
+    dirFromDefGrand = defSkel.vertex(vParent).P() - defSkel.vertex(vGrand).P();
+  }
+  TPointD dirFromParent = vx.P() - vxParent.P();
+  defAng = atan2(cross(dirFromGrand, dirFromParent),
+                 dirFromGrand * dirFromParent) *
+           M_180_PI;
+  branch = atan2(dirFromDefGrand.y, dirFromDefGrand.x);
+  pp     = defSkel.vertex(vParent).P();
+
+  double bone = norm(defSkel.vertex(v).P() - pp);
+  radius      = std::max(bone * 0.55, 36.0 * getPixelSize());
+
+  SkVD *vd = m_sd->vertexDeformation(::skeletonId(), v);
+  double curDelta =
+      (vd && vd->m_params[SkVD::ANGLE]) ? vd->m_params[SkVD::ANGLE]->getValue(::frame()) : 0.0;
+  auto eff = [&](int p, double stat) {
+    return (vd && vd->m_params[p] && vd->m_params[p]->getKeyframeCount() > 0)
+               ? vd->m_params[p]->getValue(::frame())
+               : stat;
+  };
+  double rawMin = skel.vertex(v).m_minAngle;
+  double rawMax = skel.vertex(v).m_maxAngle;
+  double minL   = eff(SkVD::MINANGLE, rawMin);
+  double maxL   = eff(SkVD::MAXANGLE, rawMax);
+  minDisp = (minL > -1e9) ? minL : curDelta - 60.0;
+  maxDisp = (maxL < 1e9) ? maxL : curDelta + 60.0;
+  return true;
+}
+
+//------------------------------------------------------------------------
+
+int PlasticTool::limitHitTest_animate(const TPointD &pos) {
+  if (!m_svSel.hasSingleObject()) return 0;
+  TPointD pp;
+  double branch, defAng, r, minD, maxD;
+  if (!limitDisplay_animate((int)m_svSel, pp, branch, defAng, r, minD, maxD))
+    return 0;
+  const double d2r = M_PI / 180.0;
+  auto H = [&](double L) {
+    double a = branch + (L + defAng) * d2r;
+    return pp + r * TPointD(cos(a), sin(a));
+  };
+  double u = getPixelSize();
+  if (norm(pos - H(minD)) < 9.0 * u) return 1;
+  if (norm(pos - H(maxD)) < 9.0 * u) return 2;
+  return 0;
+}
+
+//------------------------------------------------------------------------
+
+void PlasticTool::limitDrag_animate(const TPointD &pos) {
+  if (!m_sd || m_limitDrag == 0 || !m_svSel.hasSingleObject()) return;
+  int v = (int)m_svSel;
+  TPointD pp;
+  double branch, defAng, r, minD, maxD;
+  if (!limitDisplay_animate(v, pp, branch, defAng, r, minD, maxD)) return;
+
+  double dir = atan2(pos.y - pp.y, pos.x - pp.x);
+  double L   = (dir - branch) * M_180_PI - defAng;
+  while (L > 180.0) L -= 360.0;
+  while (L < -180.0) L += 360.0;
+
+  int skelId = ::skeletonId();
+  SkVD *vd   = m_sd->vertexDeformation(skelId, v);
+  int p      = (m_limitDrag == 1) ? SkVD::MINANGLE : SkVD::MAXANGLE;
+  bool keyed =
+      vd && vd->m_params[p] && vd->m_params[p]->getKeyframeCount() > 0;
+
+  if (keyed) {
+    // Already animated → set a key at the current frame
+    ::setKeyframe(vd->m_params[p], ::frame());
+    vd->m_params[p]->setValue(::frame(), L);
+  } else {
+    // Constant limit → the static vertex value (rest + deformed), like the
+    // toolbar field
+    if (m_limitDrag == 1) {
+      m_sd->skeleton(skelId)->vertex(v).m_minAngle = L;
+      deformedSkeleton().vertex(v).m_minAngle      = L;
+    } else {
+      m_sd->skeleton(skelId)->vertex(v).m_maxAngle = L;
+      deformedSkeleton().vertex(v).m_maxAngle      = L;
+    }
+  }
+
+  m_deformedSkeleton.invalidate();
+  invalidate();
+}
+
+//------------------------------------------------------------------------
+
+void PlasticTool::drawAngleLimitGizmo_animate(double u) {
+  if (!m_svSel.hasSingleObject()) return;
+  TPointD pp;
+  double branch, defAng, r, minD, maxD;
+  if (!limitDisplay_animate((int)m_svSel, pp, branch, defAng, r, minD, maxD))
+    return;
+
+  const double d2r = M_PI / 180.0;
+  auto dirOf       = [&](double L) { return branch + (L + defAng) * d2r; };
+  auto H           = [&](double L) {
+    double a = dirOf(L);
+    return pp + r * TPointD(cos(a), sin(a));
+  };
+
+  glLineWidth(1.5f * m_viewer->getDevPixRatio());
+
+  // Faint filled wedge of the allowed range
+  glColor4ub(60, 130, 255, 40);
+  glBegin(GL_TRIANGLE_FAN);
+  glVertex2d(pp.x, pp.y);
+  int steps = 32;
+  for (int i = 0; i <= steps; ++i) {
+    double L = minD + (maxD - minD) * (i / (double)steps);
+    double a = dirOf(L);
+    glVertex2d(pp.x + r * cos(a), pp.y + r * sin(a));
+  }
+  glEnd();
+
+  // The two bound handles + their radial lines
+  for (int b = 1; b <= 2; ++b) {
+    double L    = (b == 1) ? minD : maxD;
+    TPointD h   = H(L);
+    bool active = (m_limitDrag == b) || (m_limitDrag == 0 && m_limitHi == b);
+    if (active)
+      glColor4ub(255, 160, 0, 255);
+    else
+      glColor4ub(60, 130, 255, 220);
+    glBegin(GL_LINES);
+    glVertex2d(pp.x, pp.y);
+    glVertex2d(h.x, h.y);
+    glEnd();
+    double hr = 4.0 * u;
+    glBegin(GL_QUADS);
+    glVertex2d(h.x - hr, h.y - hr);
+    glVertex2d(h.x + hr, h.y - hr);
+    glVertex2d(h.x + hr, h.y + hr);
+    glVertex2d(h.x - hr, h.y + hr);
+    glEnd();
+  }
+  glLineWidth(1.0f);
+}
+
+//------------------------------------------------------------------------
+
 double PlasticTool::nextPinActivationAfter_animate(double frame) const {
   if (!m_sd) return -1.0;
   PlasticSkeleton *skel = skeleton().getPointer();
@@ -1637,6 +1822,16 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
                                        const TMouseEvent &me) {
   // Track mouse position
   m_pos = pos;
+
+  // End of an angle-limit bound drag: the value was written live during the
+  // drag (no undo, like the toolbar field). The toolbar text field refreshes
+  // on the next selection change.
+  if (m_limitDrag != 0) {
+    m_limitDrag = 0;
+    TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+    invalidate();
+    return;
+  }
 
   // End of a controller-gizmo drag: own undo path, independent of the vertex
   // selection; the global-key logic is skipped on purpose (the controller is
@@ -1837,6 +2032,10 @@ void PlasticTool::draw_animate() {
     // skeleton (pivot / move / rotate / scale / shear), with the dynamic
     // background-contrast colors of the Ztoryc Animate tool.
     drawController_animate(pixelSize);
+
+    // Angle-limit gizmo: draggable min/max bound handles for the selected
+    // joint, with the allowed-range wedge.
+    drawAngleLimitGizmo_animate(pixelSize);
   }
 
   drawHighlights(m_sd, &deformedSkeleton, pixelSize);
