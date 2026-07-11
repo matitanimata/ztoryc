@@ -1059,8 +1059,8 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
           break;
         }
 
-      const int SWEEPS  = 10;
-      const double tol2 = 1e-6;
+      const int SWEEPS  = 24;
+      const double tol2 = 1e-9;
       for (int sweep = 0; sweep < SWEEPS; ++sweep) {
         if (norm2(target - skeleton.vertex(pinV).P()) < tol2) break;
         // Nearest-to-pin pivot first: classic CCD sweep order. The anchor
@@ -1110,14 +1110,30 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
 
   plantSecondaries();
 
+  // Reachability threshold RELATIVE to the rig scale (bbox diagonal): a fixed
+  // epsilon fired spuriously on some rigs, nudging the exact primary pin and
+  // leaving small shifts (seen with 3 asymmetric pins). Below this, all feet
+  // count as planted and the correction is skipped entirely.
+  double diag2 = 0.0;
+  {
+    TPointD lo = verts.begin()->P(), hi = lo;
+    for (auto st = verts.begin(); st != verts.end(); ++st) {
+      const TPointD &P = skeleton.vertex(st.m_idx).P();
+      lo.x = std::min(lo.x, P.x), lo.y = std::min(lo.y, P.y);
+      hi.x = std::max(hi.x, P.x), hi.y = std::max(hi.y, P.y);
+    }
+    diag2 = norm2(hi - lo);
+  }
+  const double reachTol2 = std::max(1e-8, diag2 * 1e-6);  // (~0.1% of diagonal)²
+
   // Two-foot hard constraint: a secondary pin dragged past the reach of its
   // limb must NOT lift off the ground. Pull the whole skeleton toward the
   // average pin residual and re-plant, a few passes: the body settles at the
   // feasible middle where every foot stays ~planted and the motion is
   // naturally limited (the support resists), instead of one foot detaching.
-  // No-op when all pins already reach (residual ~0) → the exact primary
-  // planting of the common case is preserved untouched.
-  for (int pass = 0; pass < 6; ++pass) {
+  // Damped, so it converges without over-shooting the primary. No-op when all
+  // pins reach (common case) → the exact primary planting is preserved.
+  for (int pass = 0; pass < 10; ++pass) {
     TPointD resid(0.0, 0.0);
     double maxr2 = 0.0;
     for (const ActivePin &pin : pins) {
@@ -1125,9 +1141,9 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
       resid     = resid + r;
       maxr2     = std::max(maxr2, norm2(r));
     }
-    if (maxr2 < 1e-4) break;  // every foot essentially planted
-    resid = resid * (1.0 / (double)pins.size());
-    if (norm2(resid) < 1e-9) break;  // already balanced; can't improve
+    if (maxr2 < reachTol2) break;  // every foot essentially planted
+    resid = resid * (0.5 / (double)pins.size());  // damped average
+    if (norm2(resid) < reachTol2 * 0.01) break;   // balanced; can't improve
     for (auto st = verts.begin(); st != verts.end(); ++st)
       skeleton.vertex(st.m_idx).P() += resid;
     plantSecondaries();  // re-bend the secondary limbs from the new body pos
