@@ -478,6 +478,18 @@ private:
   };
   std::vector<ConnectedSkel> connectedSkeletons_animate() const;
 
+  // One cross-level joint: the child column's root vertex is attached (via the
+  // column parent handle "H<n>") to vertex `parentVertex` of the parent column.
+  // This is the extra edge that stitches the per-level skeletons into one graph
+  // for cross-level IK. Positions resolved in the current tool's draw space.
+  struct CrossLevelLink {
+    int     childColumn, childRootVertex;
+    int     parentColumn, parentVertex;
+    TPointD childPos, parentPos;  // in current tool draw space
+  };
+  std::vector<CrossLevelLink> crossLevelLinks_animate();
+  void drawCrossLevelLinks_animate(double pixelSize);
+
   // Selection methods
 
   void setMeshSelection(MeshSelection &target, const MeshSelection &newSel);

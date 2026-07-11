@@ -2236,6 +2236,109 @@ PlasticTool::connectedSkeletons_animate() const {
 
 //------------------------------------------------------------------------
 
+std::vector<PlasticTool::CrossLevelLink>
+PlasticTool::crossLevelLinks_animate() {
+  std::vector<CrossLevelLink> links;
+  if (!m_sd) return links;
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh) return links;
+  const int fr = ::frame();
+
+  // All character columns (connected + the current one, which draws at identity).
+  std::vector<ConnectedSkel> cols = connectedSkeletons_animate();
+  {
+    ConnectedSkel cur;
+    cur.columnIndex = ::column();
+    cur.skel        = deformedSkeleton();  // copy of the live deformed skeleton
+    cur.toCur       = TAffine();
+    cols.push_back(std::move(cur));
+  }
+  auto findCol = [&](int c) -> const ConnectedSkel * {
+    for (const ConnectedSkel &cs : cols)
+      if (cs.columnIndex == c) return &cs;
+    return nullptr;
+  };
+  auto rootOf = [](const PlasticSkeleton &s) -> int {
+    const tcg::list<PlasticSkeleton::vertex_type> &vs = s.vertices();
+    for (auto vt = vs.begin(); vt != vs.end(); ++vt)
+      if (vt->parent() < 0) return (int)vt.m_idx;
+    return -1;
+  };
+
+  for (const ConnectedSkel &child : cols) {
+    TStageObject *obj =
+        xsh->getStageObject(TStageObjectId::ColumnId(child.columnIndex));
+    if (!obj) continue;
+    const TStageObjectId pid = obj->getParent();
+    if (!pid.isColumn()) continue;
+    const ConnectedSkel *parent = findCol(pid.getIndex());
+    if (!parent) continue;  // parent isn't part of the drawn character
+
+    // The parent handle "H<n>" names vertex n of the parent mesh.
+    const std::string &h = obj->getParentHandle();
+    if (h.size() < 2 || h[0] != 'H') continue;
+    const int hookIndex = atoi(h.c_str() + 1);
+
+    TStageObject *pObj = xsh->getStageObject(pid);
+    const PlasticSkeletonDeformationP &pDef =
+        pObj->getPlasticSkeletonDeformation();
+    if (!pDef) continue;
+    const int pSkelId = pDef->skeletonId(pObj->paramsTime((double)fr));
+    const int pv      = pDef->vertexIndex(hookIndex, pSkelId);
+    if (pv < 0) continue;
+    const int cr = rootOf(child.skel);
+    if (cr < 0) continue;
+
+    CrossLevelLink lk;
+    lk.childColumn     = child.columnIndex;
+    lk.childRootVertex = cr;
+    lk.parentColumn    = pid.getIndex();
+    lk.parentVertex    = pv;
+    lk.childPos        = child.toCur * child.skel.vertex(cr).P();
+    lk.parentPos       = parent->toCur * parent->skel.vertex(pv).P();
+    links.push_back(lk);
+  }
+  return links;
+}
+
+//------------------------------------------------------------------------
+
+void PlasticTool::drawCrossLevelLinks_animate(double pixelSize) {
+  const std::vector<CrossLevelLink> links = crossLevelLinks_animate();
+  if (links.empty()) return;
+
+  const int devPixRatio = m_viewer->getDevPixRatio();
+
+  // Connecting segment (child root -> parent attachment vertex).
+  glColor4ub(0, 220, 255, 255);
+  glLineWidth(3.0f * devPixRatio);
+  glEnable(GL_LINE_STIPPLE);
+  glLineStipple(2, 0x0F0F);
+  glBegin(GL_LINES);
+  for (const CrossLevelLink &lk : links) {
+    glVertex2d(lk.childPos.x, lk.childPos.y);
+    glVertex2d(lk.parentPos.x, lk.parentPos.y);
+  }
+  glEnd();
+  glDisable(GL_LINE_STIPPLE);
+
+  // A big cyan cross at the parent attachment vertex — unmistakable, and still
+  // visible when the child root sits exactly on it (a well-glued connection).
+  const double r = 12.0 * pixelSize;
+  glLineWidth(2.5f * devPixRatio);
+  glBegin(GL_LINES);
+  for (const CrossLevelLink &lk : links) {
+    glVertex2d(lk.parentPos.x - r, lk.parentPos.y);
+    glVertex2d(lk.parentPos.x + r, lk.parentPos.y);
+    glVertex2d(lk.parentPos.x, lk.parentPos.y - r);
+    glVertex2d(lk.parentPos.x, lk.parentPos.y + r);
+  }
+  glEnd();
+  glLineWidth(1.0f);
+}
+
+//------------------------------------------------------------------------
+
 void PlasticTool::draw_animate() {
   double pixelSize = getPixelSize();
 
@@ -2256,6 +2359,11 @@ void PlasticTool::draw_animate() {
 
     drawOnionSkinSkeletons_animate(pixelSize);
     drawSkeleton(deformedSkeleton, pixelSize);
+
+    // SuperPlastic multi-level: the cross-level joints (child root ↔ parent
+    // attachment vertex) that stitch the per-level skeletons into one graph.
+    // Drawn ON TOP of the skeletons so the thick bone edges don't cover it.
+    drawCrossLevelLinks_animate(pixelSize);
     drawSelections(m_sd, deformedSkeleton, pixelSize);
     drawAngleLimits(m_sd, m_skelId, m_svSel, pixelSize);
 
