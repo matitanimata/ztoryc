@@ -112,6 +112,7 @@ ZtoryModel::ZtoryModel() : m_fps(24) {
   // PROD and SEASON tokens — can be overridden per-project in Project tab.
   m_namingPattern = "{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
   seedDefaultTechniques();
+  seedDefaultAssetTypes();
   // Room-independent shot auto-WIP (the StoryboardPanel version only runs when a
   // Board panel is in the current room).
   if (TApp::instance() && TApp::instance()->getCurrentScene())
@@ -209,6 +210,48 @@ const Technique *ZtoryModel::findTechnique(const QString &name) const {
   for (const auto &t : m_techniques)
     if (t.name.compare(name, Qt::CaseInsensitive) == 0) return &t;
   return nullptr;
+}
+
+//-----------------------------------------------------------------------------
+// Asset types (custom, per-type task pipeline)
+
+void ZtoryModel::seedDefaultAssetTypes() {
+  if (!m_assetTypes.empty()) return;
+  // Seed one type per canonical name, each with the canonical asset task order
+  // as its (editable) starting pipeline.
+  for (const QString &type : canonicalAssetTypes())
+    m_assetTypes.push_back(AssetType{type, canonicalAssetTaskOrder()});
+}
+
+const AssetType *ZtoryModel::findAssetType(const QString &name) const {
+  for (const auto &t : m_assetTypes)
+    if (t.name.compare(name, Qt::CaseInsensitive) == 0) return &t;
+  return nullptr;
+}
+
+QStringList ZtoryModel::assetTaskTypesForType(const QString &type) const {
+  const AssetType *t = findAssetType(type);
+  // Unknown/empty type → canonical order, so a legacy or freshly-typed asset
+  // still shows its tasks instead of an empty row.
+  return (t && !t->taskTypes.isEmpty()) ? t->taskTypes : canonicalAssetTaskOrder();
+}
+
+QStringList ZtoryModel::assetTaskColumns() const {
+  // Which task types are in play = union across the types the assets actually
+  // use. Ordered by the asset-type pipelines (the sequence set in the editor),
+  // not a fixed list — reordering a type's tasks reflects in the asset table.
+  std::set<QString> used;
+  for (const Asset &as : m_assets)
+    for (const QString &tt : assetTaskTypesForType(as.type)) used.insert(tt);
+  QStringList cols;
+  for (const AssetType &t : m_assetTypes)
+    for (const QString &tt : t.taskTypes)
+      if (used.count(tt)) { cols << tt; used.erase(tt); }
+  // Fallbacks: canonical order, then anything still left (custom/legacy tasks).
+  for (const QString &tt : canonicalAssetTaskOrder())
+    if (used.count(tt)) { cols << tt; used.erase(tt); }
+  for (const QString &tt : used) cols << tt;
+  return cols;
 }
 
 QString ZtoryModel::techniqueForShot(int shotIdx) const {
@@ -322,6 +365,7 @@ void ZtoryModel::resetProjectLevelDefaults() {
   m_team.clear();
   m_assets.clear();
   m_techniques.clear();
+  m_assetTypes.clear();
   m_projectShots.clear();
   m_storyboardFiles.clear();
   // Kitsu binding + opt-in flag are per-project too: clear them so a new project
@@ -335,6 +379,7 @@ void ZtoryModel::resetProjectLevelDefaults() {
   m_ratio.clear();
   m_resolution.clear();
   seedDefaultTechniques();  // re-seed presets + defaultTechnique = "Tradigital"
+  seedDefaultAssetTypes();
 }
 
 // ─── Project DB (production.ztrack) — B3 pilot: team roster ───────────────────
@@ -480,6 +525,15 @@ void ZtoryModel::saveProjectDb() {
   }
   xml.writeEndElement();  // techniques
 
+  xml.writeStartElement("assetTypes");
+  for (const AssetType &t : m_assetTypes) {
+    xml.writeStartElement("assetType");
+    xml.writeAttribute("name",  t.name);
+    xml.writeAttribute("tasks", t.taskTypes.join("|"));
+    xml.writeEndElement();
+  }
+  xml.writeEndElement();  // assetTypes
+
   xml.writeStartElement("assets");
   for (const Asset &as : m_assets) {
     xml.writeStartElement("asset");
@@ -571,6 +625,7 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
 
   QStringList team;
   std::vector<Technique> techs;
+  std::vector<AssetType> atypes;
   std::vector<Asset> assets;
   std::vector<ProjectShot> pshots;
   QVector<QString> sboards;
@@ -606,6 +661,11 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
       t.name      = xml.attributes().value("name").toString();
       t.taskTypes = xml.attributes().value("tasks").toString().split('|', Qt::SkipEmptyParts);
       if (!t.name.isEmpty()) techs.push_back(t);
+    } else if (xml.name() == QLatin1String("assetType")) {
+      AssetType t;
+      t.name      = xml.attributes().value("name").toString();
+      t.taskTypes = xml.attributes().value("tasks").toString().split('|', Qt::SkipEmptyParts);
+      if (!t.name.isEmpty()) atypes.push_back(t);
     } else if (xml.name() == QLatin1String("asset")) {
       Asset as;
       auto a   = xml.attributes();
@@ -676,6 +736,10 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
   // Kitsu + receive preview uploads). Persisted on the next project save.
   for (Technique &t : m_techniques)
     if (!t.taskTypes.contains("Storyboard")) t.taskTypes.prepend("Storyboard");
+  // Asset types: adopt the file's list; a legacy project (no <assetTypes> block)
+  // re-seeds the canonical defaults so the taxonomy is never empty.
+  m_assetTypes = atypes;
+  seedDefaultAssetTypes();
   m_assets    = assets;
   m_projectShots   = pshots;
   m_storyboardFiles = sboards;
@@ -961,8 +1025,7 @@ const QStringList &ZtoryModel::canonicalTaskOrder() {
 }
 
 QStringList ZtoryModel::spreadsheetTaskColumns() const {
-  // Collect every task type used by any shot's technique, then order them by
-  // the canonical sequence (unknown/custom types appended at the end).
+  // Collect every task type used by any shot's technique.
   std::set<QString> used;
   for (int si = 0; si < (int)m_shots.size(); si++)
     for (const QString &tt : taskTypesForShot(si)) used.insert(tt);
@@ -971,10 +1034,19 @@ QStringList ZtoryModel::spreadsheetTaskColumns() const {
   // scene is current) — without this the task columns vanish.
   for (const ProjectShot &ps : m_projectShots)
     for (const QString &tt : taskTypesForProjectShot(ps)) used.insert(tt);
+  // Order the columns by the WORKFLOWS' own pipeline order — the sequence the
+  // user set in the Workflows tab — NOT a fixed canonical list. Reordering a
+  // workflow's tasks must reflect immediately in the shot matrix. Walk each
+  // technique in order and append its task types as first seen.
   QStringList cols;
+  for (const Technique &t : m_techniques)
+    for (const QString &tt : t.taskTypes)
+      if (used.count(tt)) { cols << tt; used.erase(tt); }
+  // Fallbacks for any used type not owned by a technique: canonical order
+  // first, then whatever is left — keeps custom/legacy types visible.
   for (const QString &tt : canonicalTaskOrder())
     if (used.count(tt)) { cols << tt; used.erase(tt); }
-  for (const QString &tt : used) cols << tt;  // any custom types not in canon
+  for (const QString &tt : used) cols << tt;
   return cols;
 }
 

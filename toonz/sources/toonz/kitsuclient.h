@@ -95,6 +95,16 @@ struct KitsuTaskPush {
   TaskStatus status = TaskStatus::Todo;
 };
 
+// One asset-task whose status we push up to Kitsu. The asset is resolved by
+// type+name (as pushed by pushAssets); taskType must match a Kitsu task-type
+// with for_entity = Asset. Mirrors KitsuTaskPush for the asset entity.
+struct KitsuAssetTaskPush {
+  QString    assetType;
+  QString    assetName;
+  QString    taskType;
+  TaskStatus status = TaskStatus::Todo;
+};
+
 // One shot-task status pulled DOWN from Kitsu (review sync). taskType is the
 // Kitsu task-type name; the caller matches it onto its Ztoryc task by
 // KitsuClient::normalizeTaskType().
@@ -192,6 +202,16 @@ public:
   void pushAssets(const QString &projectId, const QVector<KitsuAsset> &assets);
   void pullAssets(const QString &projectId);
 
+  // Push asset TASK statuses (mirror of pushTasks for the asset entity): ensure
+  // each task exists on its asset and set its status. Chained after pushAssets so
+  // the asset entities already exist. -> assetTasksPushed().
+  void pushAssetTasks(const QString &projectId,
+                      const QVector<KitsuAssetTaskPush> &tasks);
+
+  // Build the asset-task push list from the model: each asset × the ordered
+  // task types of its (custom) asset type, with the current status.
+  static QVector<KitsuAssetTaskPush> buildAssetTasksFromModel();
+
   // Build the asset push list from the project's assets (ZtoryModel::assets()).
   static QVector<KitsuAsset> buildAssetsFromModel();
 
@@ -244,6 +264,7 @@ signals:
   void shotIdsResolved(const QHash<QString, QString> &byKey);
   void shotsPushed(bool ok, int created, int updated, const QString &message);
   void tasksPushed(bool ok, int statusesSet, const QString &message);
+  void assetTasksPushed(bool ok, int statusesSet, const QString &message);
   void statusesPulled(bool ok, const QVector<KitsuPullEntry> &entries,
                       const QString &message);
   // Resolved Kitsu asset ids per "type\nname" key — lets the caller store them so
@@ -351,6 +372,26 @@ private:
   int m_asIndex   = 0;
   int m_asCreated = 0;
   int m_asUpdated = 0;
+
+  // Asset-task push pipeline (mirror of the shot task pipeline for assets).
+  void atLoadTaskTypes();    // GET /api/data/task-types (for_entity = Asset)
+  void atCreateNext();       // create-tasks per asset task-type
+  void atLoadAssetTypes();   // GET /api/data/asset-types (name -> id)
+  void atLoadAssets();       // GET project assets ("typeId/name" -> asset id)
+  void atLoadTasks();        // GET project tasks ("assetId/ttId" -> task id)
+  void atApplyNext();        // set each task status via a comment
+  void atFail(const QString &message);
+
+  QString m_atProjectId;
+  QVector<KitsuAssetTaskPush> m_atQueue;
+  QHash<QString, QString> m_atTtIdByName;       // Asset task-type name(lower) -> id
+  QHash<QString, QString> m_atAssetTypeIdByName;// asset-type name(lower) -> id
+  QHash<QString, QString> m_atAssetIds;         // "typeId/name(lower)" -> asset id
+  QHash<QString, QString> m_atTaskIdByKey;      // "assetId/ttId" -> task id
+  QVector<QString>        m_atTtCreateQueue;    // task-type ids to create-tasks for
+  int m_atCreateIdx    = 0;
+  int m_atApplyIdx     = 0;
+  int m_atStatusesSet  = 0;
 
   // --- Preview upload (Phase 4) — sequential async, 3 steps per entry ----
   // Resolve which base URL the upload uses (local if reachable, else primary),

@@ -177,11 +177,26 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
   const int oldH       = m_ras ? m_ras->getLy() : 0;
   if (oldH <= 0 || oldBoxH <= 0.0 || !m_ras) return;
 
+  const double newBoxH = m_boxW / aspect;
+  const int newH       = qMax(1, (int)(m_rows * newBoxH));
+  // Compare the resulting PIXEL layout, not the float aspect. On reopen,
+  // persistLoad reconstructs m_boxAspect from the saved PNG's integer height, so
+  // it drifts from the true camera aspect by sub-pixel rounding (harmless on a
+  // clean 16:9, but ~0.0015 on e.g. a 1.85:1 camera — above the 1e-4 guard).
+  // That drift used to trigger a spurious reanchor that sliced every cross-box
+  // drawing into its own box and left ghost seams in the empty panels. When the
+  // new layout has the SAME raster height, nothing really changed: just adopt
+  // the exact aspect and skip the destructive reflow.
+  if (newH == oldH) {
+    m_boxAspect = aspect;  // correct the drift so the fast-path guard sticks
+    return;
+  }
+
   // Snapshot the pre-reshape canvas (raster + its aspect) so Cmd-Z reverts the
   // camera-format reflow cleanly instead of leaving a stale grid.
   pushUndo();
   m_boxAspect = aspect;
-  m_boxH      = m_boxW / aspect;
+  m_boxH      = newBoxH;
   m_ras       = reanchorRaster(m_ras, oldBoxH, m_boxH);
   update();
 }
@@ -889,21 +904,38 @@ void ZtoryThumbnailCanvas::mouseReleaseEvent(QMouseEvent *e) {
   }
 }
 
-bool ZtoryThumbnailCanvas::handleTransformKey(QKeyEvent *e) {
+// Would this key be consumed by the Transform tool? Kept separate from
+// handleTransformKey so eventFilter can claim it on ShortcutOverride (see below)
+// WITHOUT executing the action — otherwise a global shortcut like Delete (clear
+// cells) swallows the key before it ever reaches us as a KeyPress.
+bool ZtoryThumbnailCanvas::wantsTransformKey(QKeyEvent *e) const {
   if (!m_xformMode) return false;
   // On macOS Qt maps Cmd → ControlModifier (Cmd-C/V here, Ctrl-C/V elsewhere).
   const bool cmd = e->modifiers() & Qt::ControlModifier;
+  if (cmd && e->key() == Qt::Key_C) return hasFloat();
+  if (cmd && e->key() == Qt::Key_V) return !m_clip.isNull();
+  if (!hasFloat()) return false;
+  switch (e->key()) {
+  case Qt::Key_Escape:
+  case Qt::Key_Return:
+  case Qt::Key_Enter:
+  case Qt::Key_Delete:
+  case Qt::Key_Backspace: return true;
+  }
+  return false;
+}
+
+bool ZtoryThumbnailCanvas::handleTransformKey(QKeyEvent *e) {
+  if (!wantsTransformKey(e)) return false;
+  const bool cmd = e->modifiers() & Qt::ControlModifier;
   if (cmd && e->key() == Qt::Key_C) {
-    if (!hasFloat()) return false;
     copyFloat();
     return true;
   }
   if (cmd && e->key() == Qt::Key_V) {
-    if (m_clip.isNull()) return false;
     pasteFloat();
     return true;
   }
-  if (!hasFloat()) return false;
   switch (e->key()) {
   case Qt::Key_Escape: cancelFloat(); return true;
   case Qt::Key_Return:
@@ -924,14 +956,31 @@ bool ZtoryThumbnailCanvas::eventFilter(QObject *obj, QEvent *ev) {
   // Catch our shortcuts regardless of which widget in our window has focus (a
   // toolbar button often steals it). Guarded to our active window and to keys we
   // actually consume, so normal typing / the app's own undo elsewhere is safe.
-  if (ev->type() == QEvent::KeyPress && isVisible() && window() &&
-      window()->isActiveWindow()) {
+  const bool isKey = ev->type() == QEvent::KeyPress ||
+                     ev->type() == QEvent::ShortcutOverride;
+  if (isKey && isVisible() && window() && window()->isActiveWindow()) {
     auto *ke = static_cast<QKeyEvent *>(ev);
     // Undo only when this canvas is the focus of attention (focused, hovered or
     // in a selection tool) AND we have history — else let the app handle Cmd-Z.
-    if ((hasFocus() || underMouse() || m_xformMode || m_selectMode) &&
-        handleUndoKey(ke))
-      return true;
+    const bool undoish =
+        hasFocus() || underMouse() || m_xformMode || m_selectMode;
+    const bool wantsUndo = undoish && (ke->modifiers() & Qt::ControlModifier) &&
+                           ke->key() == Qt::Key_Z &&
+                           ((ke->modifiers() & Qt::ShiftModifier)
+                                ? !m_redo.empty()
+                                : !m_undo.empty());
+    // ShortcutOverride fires BEFORE a matching global QAction (e.g. Delete =
+    // clear cells) would eat the key. Accepting it makes Qt re-deliver the key
+    // as an ordinary KeyPress that the branches below then handle — without it,
+    // Del/Backspace never reach the Transform tool at all.
+    if (ev->type() == QEvent::ShortcutOverride) {
+      if (wantsUndo || wantsTransformKey(ke)) {
+        ke->accept();
+        return true;
+      }
+      return QWidget::eventFilter(obj, ev);
+    }
+    if (undoish && handleUndoKey(ke)) return true;
     if (m_xformMode && handleTransformKey(ke)) return true;
   }
   return QWidget::eventFilter(obj, ev);
@@ -1168,6 +1217,11 @@ void ZtoryThumbnailCanvas::cancelFloat() {
     m_ras = rasterFromQImage(canvasImg, true, true);
     schedulePersistSave();
   }
+  // Cancel fully reverts to the pre-lift canvas (a move restored its source, a
+  // copy/paste never touched it), so the snapshot pushed when the float was
+  // created now matches the current state exactly. Drop it so Esc leaves no
+  // dangling undo step that would make the next Cmd+Z a silent no-op.
+  if (!m_undo.empty()) m_undo.pop_back();
   m_floatImg  = QImage();
   m_floatDrag = -1;
   update();
@@ -1175,6 +1229,10 @@ void ZtoryThumbnailCanvas::cancelFloat() {
 
 void ZtoryThumbnailCanvas::deleteFloat() {
   if (!hasFloat()) return;
+  // Snapshot the canvas AND the float we're about to drop, so Cmd+Z brings the
+  // deleted selection back (the user expects Del to be undoable). makeMetaSnapshot
+  // captures the still-live float; pushUndo clones the raster alongside it.
+  pushUndo();
   m_floatImg  = QImage();  // source already cleared on lift (for a move)
   m_floatDrag = -1;
   update();
@@ -1193,6 +1251,13 @@ ZtoryThumbnailCanvas::Snapshot ZtoryThumbnailCanvas::makeMetaSnapshot() const {
   s.rows      = m_rows;
   s.merges    = m_merges;
   s.boxAspect = m_boxAspect;
+  // Carry the live floating selection so undo/redo can restore it (see Snapshot).
+  s.floatImg      = m_floatImg;
+  s.floatCenter   = m_floatCenter;
+  s.floatScale    = m_floatScale;
+  s.floatAngle    = m_floatAngle;
+  s.floatWasMove  = m_floatWasMove;
+  s.floatSrcRect  = m_floatSrcRect;
   return s;
 }
 
@@ -1298,7 +1363,15 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
     m_boxAspect = s.boxAspect;
     m_boxH      = m_boxW / s.boxAspect;
   }
-  m_floatImg = QImage();  // any floating selection is dropped on undo/redo
+  // Restore whatever floating selection was captured with this snapshot (a null
+  // image simply clears the float) — this is what makes an undone Del re-float
+  // the drawing, and a redone one drop it again.
+  m_floatImg     = s.floatImg;
+  m_floatCenter  = s.floatCenter;
+  m_floatScale   = s.floatScale;
+  m_floatAngle   = s.floatAngle;
+  m_floatWasMove = s.floatWasMove;
+  m_floatSrcRect = s.floatSrcRect;
   m_floatDrag = -1;
   clearSelection();
   schedulePersistSave();

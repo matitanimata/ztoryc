@@ -186,6 +186,7 @@ private:
   // --- Transform tool internals --------------------------------------------
   void liftFloat(const QRectF &worldRect, bool copy);  // marquee → floating buf
   void liftFloatLasso(const QVector<QPointF> &worldPath, bool copy);
+  bool wantsTransformKey(QKeyEvent *e) const;  // would consume, no side effects
   bool handleTransformKey(QKeyEvent *e);  // → true if the key was consumed
 
   // --- Undo / redo ----------------------------------------------------------
@@ -205,6 +206,15 @@ private:
     double boxAspect;  // camera aspect the raster was laid out at — restored
                        // together with it so undoing across a camera-format
                        // change never squishes the drawings into a stale grid
+    // Floating Transform selection captured with this snapshot (null image = no
+    // float). Lets undo restore a deleted or replaced float — not just the
+    // raster — so Cmd+Z after Del re-floats the lifted/pasted drawing.
+    QImage floatImg;
+    QPointF floatCenter;
+    double floatScale = 1.0;
+    double floatAngle = 0.0;
+    bool floatWasMove = false;
+    QRect floatSrcRect;
   };
   void pushUndo();   // snapshot current state before a mutating edit
   void undo();

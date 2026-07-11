@@ -1,3 +1,31 @@
+## [2026-07-11c] — Thumbnail room, Production Tracker, Edit Cels/Keys, Kitsu asset-task push
+
+Sessione lunga guidata dai test in parallelo di Franco. Tutto su `master`, non ancora sotto SUPERPLASTIC.
+
+### Fixed — Thumbnail room (`ztorythumbnailcanvas.cpp/.h`)
+- **Panel "affettati/compressi" al reopen**: il reopen ricostruiva `m_boxAspect` dall'altezza intera del PNG salvato → drift sub-pixel su camere non-16:9 (>1e-4) → `onSceneChanged` lanciava un reflow spurio che ritagliava i disegni cross-box e lasciava ghost-seam. Fix: `onSceneChanged` confronta l'**altezza raster in pixel interi** invece dell'aspect float; stesso layout → nessun reflow. Bug invisibile su 16:9 (per questo non si replicava su Mac).
+- **Tasto Canc in Transform**: l'eventFilter intercettava solo KeyPress, ma Canc è una scorciatoia globale (cancella celle) → mai consegnato. Ora gestisce anche `ShortcutOverride` (predicato `wantsTransformKey`), reclamando Del/Backspace/Invio/Esc/Cmd+C/V prima che la QAction globale li mangi.
+- **Undo del float**: lo stato del float (immagine + trasform + srcRect + wasMove) entra ora nello `Snapshot`; `deleteFloat` registra uno snapshot col float invece di scartarlo → Cmd+Z dopo Canc/incolla **fa riapparire** il disegno flottante. `cancel`/`delete` non lasciano più snapshot fantasma.
+
+### Fixed — Crash handler Windows (`crashhandler.cpp`) — candidato PR upstream
+- Le eccezioni C++ non catturate (TException & co.) e gli abort CRT morivano **senza** log (il VEH cattura solo structured exceptions). Aggiunti `std::set_terminate` (cross-platform, cattura anche il **messaggio** dell'eccezione via `TException::getMessage()`/`what()`) + `_set_invalid_parameter_handler`/`_set_purecall_handler` su Windows. Ora il tester ottiene `Crash-*.log` + `.dmp` anche in quei casi.
+
+### Added — Production Tracker
+- **Tipi asset custom + pipeline task per-tipo** (Kitsu-aligned): nuova struct `AssetType{name,taskTypes}`, persistita in `production.ztrack` (`<assetTypes>`), seedata dai canonici, tab **"Asset Types"** (editor a due pannelli come i Workflow). Tabella Assets: colonne = unione dei task dei tipi usati, celle attive solo per la pipeline del tipo dell'asset. Picker tipo usa i custom. (`ztorymodel.h/.cpp`, `ztoryproductionpanel.h/.cpp`)
+- **Ordine task workflow → schermata shot**: `spreadsheetTaskColumns()` ordina per la pipeline del workflow, non più per l'ordine canonico → riordinare i task nel workflow si riflette subito negli shot.
+
+### Added / Fixed — Edit Cels/Keys + export
+- Menu celle "Edit Cell Numbers" → **"Edit Cels/Keys"**; aggiunto lo stesso submenu (Reverse/Swing/Rollup/Rolldown/TimeStretch) nel menu contestuale delle **chiavi** — operano sulle chiavi via le versioni key-only già cablate in `TKeyframeSelection::enableCommands`. (`xshcellviewer.cpp`)
+- **Render Settings dall'export animatic**: popup dedicato **senza** bottoni Render/Save-and-Render (`OutputSettingsPopup::setRenderButtonsVisible`), parented al dialog export con `Qt::Window` così chiuderlo non termina l'export. Fix crash `EXC_BAD_ACCESS`: il lambda del bottone catturava un `QPointer` locale block-scoped che dangling-ava durante `loop.exec()` → ora il popup si trova via `findChild` su `dlg`. (`outputsettingspopup.h/.cpp`, `storyboardpanel.cpp`)
+
+### Added — Kitsu: push asset-task + status
+- `pushAssetTasks` (gemello di `pushTasks` per `for_entity=Asset`) + `buildAssetTasksFromModel` (asset × pipeline del suo tipo, con status), concatenato dopo `assetsPushed` come per gli shot. (`kitsuclient.h/.cpp`, `ztoryproductionpanel.cpp`)
+
+### Notes / TODO
+- **Kitsu ancora da fare** (rimandato dopo validazione del push contro istanza locale): **team/assignee sync bidirezionale** (pull persone → roster, push assignee sui task; il client non ha nulla per persone/assignee) e **pull asset-status** (gemello di `pullStatuses`).
+- Rinominare un tipo asset non migra gli asset esistenti (parità con la rinomina workflow).
+- Crash "cambio workflow storyboard→cutout" segnalato una volta, non riproducibile poi (nessun listener su `workflowChanged`).
+
 ## [2026-07-11b] — SUPERPLASTIC: pin robusti + limiti angolari visivi + undo bake (feature/superplastic)
 
 Seconda parte della sessione (dopo il controller). Tutto su `feature/superplastic` (commit finale `965ebd3ed`, pushato). Guidato dai test/stress-test di Franco.

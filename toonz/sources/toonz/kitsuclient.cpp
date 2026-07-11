@@ -793,6 +793,25 @@ QVector<KitsuAsset> KitsuClient::buildAssetsFromModel() {
   return out;
 }
 
+QVector<KitsuAssetTaskPush> KitsuClient::buildAssetTasksFromModel() {
+  QVector<KitsuAssetTaskPush> out;
+  ZtoryModel *m = ZtoryModel::instance();
+  for (const Asset &a : m->assets()) {
+    if (a.name.trimmed().isEmpty()) continue;
+    // Push every task in this asset TYPE's (custom) pipeline, with its status
+    // (defaults to TODO when the asset has no explicit state for it yet).
+    for (const QString &tt : m->assetTaskTypesForType(a.type)) {
+      KitsuAssetTaskPush p;
+      p.assetType = a.type;
+      p.assetName = a.name.trimmed();
+      p.taskType  = tt;
+      p.status    = a.tasks.value(tt).status;
+      out.push_back(p);
+    }
+  }
+  return out;
+}
+
 void KitsuClient::asPushFail(const QString &message) {
   emit assetsPushed(false, m_asCreated, m_asUpdated, message);
 }
@@ -893,6 +912,169 @@ void KitsuClient::asPushProcessNext() {
                     tr("Assets synced — %1 created, %2 already in Kitsu.")
                         .arg(m_asCreated)
                         .arg(m_asUpdated));
+}
+
+//----------------------------------------------------------------------------
+// Push asset TASK statuses (mirror of the shot task pipeline, for_entity=Asset)
+//----------------------------------------------------------------------------
+
+void KitsuClient::atFail(const QString &message) {
+  emit assetTasksPushed(false, m_atStatusesSet, message);
+}
+
+void KitsuClient::pushAssetTasks(const QString &projectId,
+                                 const QVector<KitsuAssetTaskPush> &tasks) {
+  if (!isLoggedIn()) { emit assetTasksPushed(false, 0, tr("Not logged in.")); return; }
+  if (projectId.isEmpty() || tasks.isEmpty()) {
+    emit assetTasksPushed(true, 0, tr("No asset task statuses to push."));
+    return;
+  }
+  m_atProjectId = projectId;
+  m_atQueue     = tasks;
+  m_atTtIdByName.clear();
+  m_atAssetTypeIdByName.clear();
+  m_atAssetIds.clear();
+  m_atTaskIdByKey.clear();
+  m_atTtCreateQueue.clear();
+  m_atCreateIdx = m_atApplyIdx = m_atStatusesSet = 0;
+
+  // Reverse status map (same six pipeline statuses as the shot push).
+  m_statusIdByZ.clear();
+  for (const KitsuTaskStatus &st : m_taskStatuses) {
+    const QString sn = st.shortName.toLower();
+    if (sn == "todo" || sn == "ready" || sn == "wip" || sn == "wfa" ||
+        sn == "retake" || sn == "done")
+      m_statusIdByZ.insert(static_cast<int>(mapStatus(st)), st.id);
+  }
+  atLoadTaskTypes();
+}
+
+void KitsuClient::atLoadTaskTypes() {
+  emit shotsPushProgress(tr("Loading asset task types…"));
+  QNetworkReply *r = m_nam->get(authGet("/api/data/task-types"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      if (o.value("for_entity").toString() == "Asset")
+        m_atTtIdByName.insert(o.value("name").toString().toLower(),
+                              o.value("id").toString());
+    }
+    // Distinct asset task-type ids used by the queue and known to Kitsu.
+    for (const KitsuAssetTaskPush &t : m_atQueue) {
+      const QString id = m_atTtIdByName.value(normalizeTaskType(t.taskType));
+      if (!id.isEmpty() && !m_atTtCreateQueue.contains(id))
+        m_atTtCreateQueue.push_back(id);
+    }
+    atCreateNext();
+  });
+}
+
+void KitsuClient::atCreateNext() {
+  if (m_atCreateIdx >= m_atTtCreateQueue.size()) { atLoadAssetTypes(); return; }
+  const QString ttId = m_atTtCreateQueue[m_atCreateIdx];
+  emit shotsPushProgress(tr("Creating asset tasks (%1/%2)…")
+                             .arg(m_atCreateIdx + 1)
+                             .arg(m_atTtCreateQueue.size()));
+  QNetworkReply *r = authPost("/api/actions/projects/" + m_atProjectId +
+                                  "/task-types/" + ttId + "/assets/create-tasks",
+                              "{}");
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+    ++m_atCreateIdx;
+    atCreateNext();
+  });
+}
+
+void KitsuClient::atLoadAssetTypes() {
+  QNetworkReply *r = m_nam->get(authGet("/api/data/asset-types"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_atAssetTypeIdByName.insert(o.value("name").toString().toLower(),
+                                   o.value("id").toString());
+    }
+    atLoadAssets();
+  });
+}
+
+void KitsuClient::atLoadAssets() {
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_atProjectId + "/assets"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_atAssetIds.insert(o.value("entity_type_id").toString() + "/" +
+                              o.value("name").toString().toLower(),
+                          o.value("id").toString());
+    }
+    atLoadTasks();
+  });
+}
+
+void KitsuClient::atLoadTasks() {
+  emit shotsPushProgress(tr("Reading existing asset tasks…"));
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_atProjectId + "/tasks"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_atTaskIdByKey.insert(o.value("entity_id").toString() + "/" +
+                                 o.value("task_type_id").toString(),
+                             o.value("id").toString());
+    }
+    atApplyNext();
+  });
+}
+
+void KitsuClient::atApplyNext() {
+  while (m_atApplyIdx < m_atQueue.size()) {
+    const KitsuAssetTaskPush t = m_atQueue[m_atApplyIdx];
+    const QString ttId      = m_atTtIdByName.value(normalizeTaskType(t.taskType));
+    const QString typeId    = m_atAssetTypeIdByName.value(t.assetType.toLower());
+    const QString assetId   = m_atAssetIds.value(typeId + "/" + t.assetName.toLower());
+    const QString taskId    = m_atTaskIdByKey.value(assetId + "/" + ttId);
+    const QString statusId  = statusIdFor(t.status);
+    // Skip anything we couldn't resolve (unknown task-type, asset or status).
+    if (ttId.isEmpty() || assetId.isEmpty() || taskId.isEmpty() ||
+        statusId.isEmpty()) {
+      ++m_atApplyIdx;
+      continue;
+    }
+    emit shotsPushProgress(tr("Setting asset task status (%1/%2)…")
+                               .arg(m_atApplyIdx + 1)
+                               .arg(m_atQueue.size()));
+    QJsonObject body;
+    body["task_status_id"] = statusId;
+    body["comment"]        = "Status synced from Ztoryc";
+    QNetworkReply *r = authPost("/api/actions/tasks/" + taskId + "/comment",
+                                QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(r, &QNetworkReply::finished, this, [this, r]() {
+      r->deleteLater();
+      const QByteArray b = r->readAll();
+      if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+      ++m_atStatusesSet;
+      ++m_atApplyIdx;
+      atApplyNext();
+    });
+    return;  // resume in the reply callback
+  }
+  emit assetTasksPushed(
+      true, m_atStatusesSet,
+      tr("Done — %1 asset task statuses set in Kitsu.").arg(m_atStatusesSet));
 }
 
 void KitsuClient::asPullFail(const QString &message) {

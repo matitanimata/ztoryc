@@ -15,7 +15,9 @@
 #include "tundo.h"
 
 #include <QUuid>
+#include <QPointer>
 #include "tapp.h"
+#include "outputsettingspopup.h"
 #include "tenv.h"
 #include "toonz/toonzscene.h"
 #include "toonz/stage.h"
@@ -6394,8 +6396,32 @@ void StoryboardPanel::onExportAnimatic() {
     auto *rsBtn = new QPushButton(tr("Render Settings…"), &dlg);
     rsBtn->setToolTip(tr("Set the output format, codec, fps and resolution "
                          "before exporting"));
-    connect(rsBtn, &QPushButton::clicked, &dlg, []() {
-      CommandManager::instance()->execute(MI_OutputSettings);
+    // A dedicated, settings-only Output Settings popup: this export dialog is
+    // what actually launches the render, so hide the popup's Render / Save and
+    // Render buttons to avoid two confusing ways to start one. Kept separate from
+    // the menu's shared singleton (MI_OutputSettings) so hiding the buttons never
+    // leaks into the normal Output Settings window.
+    //
+    // Parented to THIS dialog with the Window flag: it's still a separate window
+    // (a QFrame needs Qt::Window to float when it has a parent), but owned by the
+    // export dialog — so CLOSING it doesn't tear down the export dialog (a
+    // parentless popup closing inside the dialog's local event loop was ending
+    // that loop), and it dies together with the dialog (no leak, no static).
+    // Capture only &dlg (a function-scope local that stays alive for the whole
+    // loop.exec() below). The popup is looked up as a child of dlg rather than
+    // held in a captured local — a captured QPointer would live only inside this
+    // inner block and dangle by the time the click fires during loop.exec().
+    connect(rsBtn, &QPushButton::clicked, &dlg, [&dlg]() {
+      OutputSettingsPopup *rsPopup = dlg.findChild<OutputSettingsPopup *>();
+      if (!rsPopup) {
+        rsPopup = new OutputSettingsPopup(&dlg);
+        rsPopup->setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint);
+        rsPopup->setWindowTitle(tr("Render Settings"));
+        rsPopup->setRenderButtonsVisible(false);
+      }
+      rsPopup->show();
+      rsPopup->raise();
+      rsPopup->activateWindow();
     });
     fmtRow->addWidget(rsBtn);
     mainLay->addLayout(fmtRow);

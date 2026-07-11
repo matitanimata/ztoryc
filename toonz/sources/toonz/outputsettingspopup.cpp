@@ -253,6 +253,9 @@ OutputSettingsPopup::OutputSettingsPopup(QWidget *parent, bool isPreview)
   QPushButton *saveAndRenderButton = new QPushButton(tr("Save and Render"), this);
   saveAndRenderButton->setIcon(createQIcon("render"));
   saveAndRenderButton->setIconSize(QSize(20, 20));
+  // Remember these so a settings-only host can hide them (see header).
+  m_renderButton        = renderButton;
+  m_saveAndRenderButton = saveAndRenderButton;
 
   m_topLayout->setContentsMargins(5, 5, 5, 5);
   {
@@ -1214,6 +1217,13 @@ void OutputSettingsPopup::onApplyShrinkChecked(int state) {
 
 void OutputSettingsPopup::onSubcameraChecked(int state) {
   getProperties()->setSubcameraPreview(state == Qt::Checked);
+}
+
+//-----------------------------------------------------------------------------
+
+void OutputSettingsPopup::setRenderButtonsVisible(bool on) {
+  if (m_renderButton) m_renderButton->setVisible(on);
+  if (m_saveAndRenderButton) m_saveAndRenderButton->setVisible(on);
 }
 
 //-----------------------------------------------------------------------------

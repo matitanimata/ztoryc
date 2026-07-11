@@ -4990,7 +4990,7 @@ void CellArea::createCellMenu(QMenu &menu, bool isCellSelected, TXshCell cell,
       menu.addMenu(eachSubMenu);
 
       if (!soundTextCellsSelected) {
-        QMenu *editCellNumbersMenu = new QMenu(tr("Edit Cell Numbers"), this);
+        QMenu *editCellNumbersMenu = new QMenu(tr("Edit Cels/Keys"), this);
         {
           editCellNumbersMenu->addAction(cmdManager->getAction(MI_Reverse));
           editCellNumbersMenu->addAction(cmdManager->getAction(MI_Swing));
@@ -5343,6 +5343,21 @@ void CellArea::createKeyMenu(QMenu &menu) {
   menu.addSeparator();
   menu.addAction(cmdManager->getAction(MI_ShiftKeyframesDown));
   menu.addAction(cmdManager->getAction(MI_ShiftKeyframesUp));
+
+  // Same "Edit Cels/Keys" timing ops offered on cells — here they run on the
+  // KEYS (TKeyframeSelection::enableCommands wires MI_Reverse/Swing/Rollup/
+  // Rolldown/TimeStretch to the key-only versions), so a right-click on a
+  // keyframe selection can reverse/swing/stretch it directly.
+  QMenu *editCelsKeysMenu = new QMenu(tr("Edit Cels/Keys"), this);
+  {
+    editCelsKeysMenu->addAction(cmdManager->getAction(MI_Reverse));
+    editCelsKeysMenu->addAction(cmdManager->getAction(MI_Swing));
+    editCelsKeysMenu->addAction(cmdManager->getAction(MI_Rollup));
+    editCelsKeysMenu->addAction(cmdManager->getAction(MI_Rolldown));
+    editCelsKeysMenu->addAction(cmdManager->getAction(MI_TimeStretch));
+  }
+  menu.addMenu(editCelsKeysMenu);
+
   menu.addSeparator();
   menu.addAction(cmdManager->getAction(MI_OpenFunctionEditor));
 }

@@ -372,6 +372,7 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   m_tabs->addTab(buildTeamTab(),      QObject::tr("Team"));
   m_tabs->addTab(buildAssetsTab(),    QObject::tr("Assets"));
   m_tabs->addTab(buildWorkflowsTab(), QObject::tr("Workflows"));
+  m_tabs->addTab(buildAssetTypesTab(), QObject::tr("Asset Types"));
 
   // Exit bar — only meaningful when the tracker IS the standalone Production
   // room (no File menu there). A button reopens the Startup screen so the user
@@ -507,6 +508,22 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
     if (dirty) mm->saveProjectDb();
   });
   connect(kc, &KitsuClient::assetsPushed, this, [this](bool ok, int, int, const QString &msg) {
+    // Chain the asset task/status push after the entities exist (same pattern as
+    // shots: shotsPushed → pushTasks).
+    if (ok && !m_kitsuPendingAssetTasks.isEmpty()) {
+      if (m_kitsuSyncLabel) m_kitsuSyncLabel->setText(msg + tr("  Pushing asset task statuses…"));
+      KitsuClient::instance()->pushAssetTasks(ZtoryModel::instance()->kitsuProjectId(),
+                                              m_kitsuPendingAssetTasks);
+      m_kitsuPendingAssetTasks.clear();
+      return;
+    }
+    if (m_kitsuSyncLabel) {
+      m_kitsuSyncLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
+      m_kitsuSyncLabel->setText(msg);
+    }
+    updateKitsuButtons();
+  });
+  connect(kc, &KitsuClient::assetTasksPushed, this, [this](bool ok, int, const QString &msg) {
     if (m_kitsuSyncLabel) {
       m_kitsuSyncLabel->setStyleSheet(ok ? "color:#22D160;" : "color:#FF3860;");
       m_kitsuSyncLabel->setText(msg);
@@ -563,6 +580,7 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   reloadProjectTab();
   rebuildAssets();
   reloadWorkflowsTab();
+  reloadAssetTypesTab();
 }
 
 //-----------------------------------------------------------------------------
@@ -611,6 +629,7 @@ void ZtoryProductionPanel::onModelChanged() {
   reloadProjectTab();
   rebuildAssets();
   reloadWorkflowsTab();
+  reloadAssetTypesTab();
 }
 
 //-----------------------------------------------------------------------------
@@ -1278,6 +1297,9 @@ void ZtoryProductionPanel::onKitsuPushAssets() {
     m_kitsuSyncLabel->setText(tr("No assets to push."));
     return;
   }
+  // Queue the per-asset task statuses (from each asset type's pipeline); pushed
+  // right after the entities exist via the assetsPushed → pushAssetTasks chain.
+  m_kitsuPendingAssetTasks = KitsuClient::buildAssetTasksFromModel();
   m_kitsuSyncLabel->setStyleSheet(QString());
   m_kitsuSyncLabel->setText(tr("Pushing %1 assets…").arg(assets.size()));
   KitsuClient::instance()->pushAssets(m->kitsuProjectId(), assets);
@@ -1355,7 +1377,9 @@ QWidget *ZtoryProductionPanel::buildAssetsTab() {
 void ZtoryProductionPanel::rebuildAssets() {
   if (!m_assetTable) return;
   ZtoryModel *m   = ZtoryModel::instance();
-  m_assetTaskCols = ZtoryModel::canonicalAssetTaskOrder();
+  // Union of task types across the asset types in use, in per-type pipeline
+  // order — reordering/renaming a type's tasks reflects here immediately.
+  m_assetTaskCols = m->assetTaskColumns();
   m_assetLoading  = true;
   m_assetTable->clear();
   const int kFixed = 2;  // Type, Name
@@ -1375,10 +1399,19 @@ void ZtoryProductionPanel::rebuildAssets() {
     auto *nameItem = new QTableWidgetItem(as.name);
     nameItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsEditable);
     m_assetTable->setItem(i, 1, nameItem);
+    // Only the task types in THIS asset's type pipeline are editable cells; the
+    // rest (columns belonging to other types) are blanked and disabled.
+    const QStringList typeTasks = m->assetTaskTypesForType(as.type);
     for (int c = 0; c < m_assetTaskCols.size(); c++) {
-      const TaskState ts = as.tasks.value(m_assetTaskCols[c]);
       auto *it = new QTableWidgetItem();
       it->setTextAlignment(Qt::AlignCenter);
+      if (!typeTasks.contains(m_assetTaskCols[c])) {
+        it->setFlags(Qt::NoItemFlags);  // not part of this type's pipeline
+        it->setBackground(QColor(0, 0, 0, 40));
+        m_assetTable->setItem(i, kFixed + c, it);
+        continue;
+      }
+      const TaskState ts = as.tasks.value(m_assetTaskCols[c]);
       it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
       QString text = ZtoryModel::taskStatusLabel(ts.status);
       if (!ts.assignees.isEmpty()) text += "\n" + ts.assignees.join(", ");
@@ -1410,7 +1443,7 @@ void ZtoryProductionPanel::onAssetCellClicked(int row, int col) {
   if (row < 0 || row >= m->assetCount()) return;
   if (col == 0) {  // Type picker
     QMenu menu(this);
-    for (const QString &t : ZtoryModel::canonicalAssetTypes()) menu.addAction(t);
+    for (const AssetType &t : m->assetTypes()) menu.addAction(t.name);
     QAction *ch = menu.exec(QCursor::pos());
     if (!ch) return;
     m->assets()[row].type = ch->text();
@@ -1665,6 +1698,159 @@ void ZtoryProductionPanel::applyTaskTypesToTechnique() {
   techs[row].taskTypes = tt;
   ZtoryModel::instance()->saveProjectDb();
   emit ZtoryModel::instance()->taskStatusChanged();  // shot matrix columns refresh
+}
+
+//-----------------------------------------------------------------------------
+// Asset Types tab — same two-pane editor as Workflows, but for the custom asset
+// types and their per-type task pipelines (Kitsu-aligned).
+
+QWidget *ZtoryProductionPanel::buildAssetTypesTab() {
+  QWidget *w = new QWidget(this);
+  auto *root = new QHBoxLayout(w);
+
+  // Left: asset types.
+  auto *leftCol = new QVBoxLayout();
+  leftCol->addWidget(
+      new QLabel(QObject::tr("Asset types (double-click to rename):"), w));
+  m_assetTypeList = new QListWidget(w);
+  leftCol->addWidget(m_assetTypeList);
+  auto *lb   = new QHBoxLayout();
+  auto *addT = new QPushButton(QObject::tr("+ Type"), w);
+  auto *remT = new QPushButton(QObject::tr("− Type"), w);
+  lb->addWidget(addT);
+  lb->addWidget(remT);
+  lb->addStretch();
+  leftCol->addLayout(lb);
+  root->addLayout(leftCol, 1);
+
+  // Right: task pipeline of the selected asset type.
+  auto *rightCol = new QVBoxLayout();
+  rightCol->addWidget(
+      new QLabel(QObject::tr("Task types (double-click to rename):"), w));
+  m_assetTaskTypeList = new QListWidget(w);
+  m_assetTaskTypeList->setDragDropMode(QAbstractItemView::InternalMove);
+  m_assetTaskTypeList->setDefaultDropAction(Qt::MoveAction);
+  rightCol->addWidget(m_assetTaskTypeList);
+  auto *rb     = new QHBoxLayout();
+  auto *addTT  = new QPushButton(QObject::tr("+ Task"), w);
+  auto *remTT  = new QPushButton(QObject::tr("− Task"), w);
+  auto *upTT   = new QToolButton(w);
+  auto *downTT = new QToolButton(w);
+  upTT->setArrowType(Qt::UpArrow);
+  downTT->setArrowType(Qt::DownArrow);
+  upTT->setToolTip(QObject::tr("Move task earlier in the pipeline"));
+  downTT->setToolTip(QObject::tr("Move task later in the pipeline"));
+  upTT->setFixedWidth(32);
+  downTT->setFixedWidth(32);
+  rb->addWidget(addTT);
+  rb->addWidget(remTT);
+  rb->addStretch();
+  rb->addWidget(upTT);
+  rb->addWidget(downTT);
+  rightCol->addLayout(rb);
+  root->addLayout(rightCol, 2);
+
+  connect(m_assetTypeList, &QListWidget::currentRowChanged, this,
+          [this](int) { reloadAssetTaskTypeList(); });
+  connect(m_assetTypeList, &QListWidget::itemChanged, this,
+          [this](QListWidgetItem *it) {
+            if (m_atLoading) return;
+            int row     = m_assetTypeList->row(it);
+            auto &types = ZtoryModel::instance()->assetTypes();
+            if (row >= 0 && row < (int)types.size()) {
+              types[row].name = it->text().trimmed();
+              ZtoryModel::instance()->saveProjectDb();
+              emit ZtoryModel::instance()->assetsChanged();  // type picker + table
+            }
+          });
+  connect(addT, &QPushButton::clicked, this, [this] {
+    ZtoryModel::instance()->assetTypes().push_back(
+        AssetType{QObject::tr("New type"),
+                  ZtoryModel::canonicalAssetTaskOrder()});
+    ZtoryModel::instance()->saveProjectDb();
+    reloadAssetTypesTab();
+    m_assetTypeList->setCurrentRow(m_assetTypeList->count() - 1);
+  });
+  connect(remT, &QPushButton::clicked, this, [this] {
+    int row     = m_assetTypeList->currentRow();
+    auto &types = ZtoryModel::instance()->assetTypes();
+    if (row < 0 || row >= (int)types.size()) return;
+    types.erase(types.begin() + row);
+    ZtoryModel::instance()->saveProjectDb();
+    reloadAssetTypesTab();
+    emit ZtoryModel::instance()->assetsChanged();
+  });
+  connect(addTT, &QPushButton::clicked, this, [this] {
+    if (m_assetTypeList->currentRow() < 0) return;
+    auto *it = new QListWidgetItem(QObject::tr("newtask"), m_assetTaskTypeList);
+    it->setFlags(it->flags() | Qt::ItemIsEditable);
+    m_assetTaskTypeList->setCurrentItem(it);
+    m_assetTaskTypeList->editItem(it);
+  });
+  connect(remTT, &QPushButton::clicked, this, [this] {
+    delete m_assetTaskTypeList->currentItem();
+    applyAssetTaskTypesToType();
+  });
+  auto moveCurrentTask = [this](int delta) {
+    int row = m_assetTaskTypeList->currentRow();
+    int dst = row + delta;
+    if (row < 0 || dst < 0 || dst >= m_assetTaskTypeList->count()) return;
+    QListWidgetItem *it = m_assetTaskTypeList->takeItem(row);
+    m_assetTaskTypeList->insertItem(dst, it);
+    m_assetTaskTypeList->setCurrentRow(dst);
+    applyAssetTaskTypesToType();
+  };
+  connect(upTT,   &QPushButton::clicked, this, [moveCurrentTask] { moveCurrentTask(-1); });
+  connect(downTT, &QPushButton::clicked, this, [moveCurrentTask] { moveCurrentTask(+1); });
+  connect(m_assetTaskTypeList, &QListWidget::itemChanged, this,
+          [this](QListWidgetItem *) { applyAssetTaskTypesToType(); });
+  connect(m_assetTaskTypeList->model(), &QAbstractItemModel::rowsMoved, this,
+          [this] { applyAssetTaskTypesToType(); });
+  return w;
+}
+
+void ZtoryProductionPanel::reloadAssetTypesTab() {
+  if (!m_assetTypeList) return;
+  m_atLoading = true;
+  m_assetTypeList->clear();
+  for (const AssetType &t : ZtoryModel::instance()->assetTypes()) {
+    auto *it = new QListWidgetItem(t.name, m_assetTypeList);
+    it->setFlags(it->flags() | Qt::ItemIsEditable);
+  }
+  m_atLoading = false;
+  if (m_assetTypeList->count() > 0)
+    m_assetTypeList->setCurrentRow(0);
+  else
+    reloadAssetTaskTypeList();
+}
+
+void ZtoryProductionPanel::reloadAssetTaskTypeList() {
+  if (!m_assetTaskTypeList) return;
+  m_atLoading = true;
+  m_assetTaskTypeList->clear();
+  int row            = m_assetTypeList ? m_assetTypeList->currentRow() : -1;
+  const auto &types  = ZtoryModel::instance()->assetTypes();
+  if (row >= 0 && row < (int)types.size())
+    for (const QString &tt : types[row].taskTypes) {
+      auto *it = new QListWidgetItem(tt, m_assetTaskTypeList);
+      it->setFlags(it->flags() | Qt::ItemIsEditable);
+    }
+  m_atLoading = false;
+}
+
+void ZtoryProductionPanel::applyAssetTaskTypesToType() {
+  if (m_atLoading || !m_assetTaskTypeList || !m_assetTypeList) return;
+  int row     = m_assetTypeList->currentRow();
+  auto &types = ZtoryModel::instance()->assetTypes();
+  if (row < 0 || row >= (int)types.size()) return;
+  QStringList tt;
+  for (int i = 0; i < m_assetTaskTypeList->count(); i++) {
+    QString s = m_assetTaskTypeList->item(i)->text().trimmed();
+    if (!s.isEmpty()) tt << s;
+  }
+  types[row].taskTypes = tt;
+  ZtoryModel::instance()->saveProjectDb();
+  emit ZtoryModel::instance()->assetsChanged();  // asset table columns refresh
 }
 
 //-----------------------------------------------------------------------------

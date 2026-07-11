@@ -16,6 +16,7 @@ class QComboBox;
 class QScrollArea;
 class QListWidgetItem;
 class QButtonGroup;
+class QPushButton;
 
 namespace DVGui {
 class FileField;
@@ -53,6 +54,12 @@ class OutputSettingsPopup : public QFrame, public SaveLoadQSettings {
   Q_OBJECT
 
   QVBoxLayout *m_topLayout;
+  // Render / Save and Render buttons (non-preview mode). Kept as members so a
+  // settings-only host (e.g. the animatic export dialog, which launches its own
+  // render) can hide them via setRenderButtonsVisible() to avoid two confusing
+  // ways to start a render.
+  QPushButton *m_renderButton        = nullptr;
+  QPushButton *m_saveAndRenderButton = nullptr;
 
   DVGui::FileField *m_saveInFileFld;
   DVGui::LineEdit *m_fileNameFld;
@@ -116,6 +123,9 @@ class OutputSettingsPopup : public QFrame, public SaveLoadQSettings {
 public:
   OutputSettingsPopup(QWidget *parent = 0, bool isPreview = false);
   ~OutputSettingsPopup() {}
+
+  // Show/hide the Render and Save-and-Render buttons (no-op in preview mode).
+  void setRenderButtonsVisible(bool on);
 
   // SaveLoadQSettings
   virtual void save(QSettings &settings,
