@@ -396,6 +396,9 @@ protected:
   std::vector<int> pinnedVerticesAtFrame(double frame) const;  //!< all pins
   //! Smallest frame > `frame` where any vertex's pin turns ON, or -1 if none
   double nextPinActivationAfter_animate(double frame) const;
+  //! Leaving IK mode: bake the whole pinned animation into FK + controller so
+  //! every keyframe stays exactly in place, then drop the pins (not undoable)
+  void bakePinsToFK_animate();
   void togglePinAtCurrentFrame();               //!< pin/unpin selected vertex
   void switchPinAtCurrentFrame();  //!< pin selected, release others at f+1
   void addContextMenuActions_animate(QMenu *menu);

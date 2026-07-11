@@ -2209,30 +2209,13 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
                                      // function recursively
     }
   } else if (propertyName == "inverseKinematics") {
-    // Leaving IK mode = CLEAN RELEASE (decided with Franco): every active pin
-    // is un-pinned at the CURRENT frame with the full bake (angles + rigid
-    // translation into the controller), so the pose does not move and FK is
-    // immediately free; earlier frames keep their pinned animation. The
-    // pinsEnabled flag then only hides the pin UI when scrubbing back over
-    // still-pinned frames — the evaluation planting is never gated.
-    // The whole release is ONE undo block, including the checkbox/UI state
-    // (IkReleaseToggleUndo): without it, undo restored the pin keys with the
-    // UI still off and looked like it did nothing.
+    // Leaving IK mode = COMMIT the pinned animation: bake every keyframe into
+    // FK (angles) + controller (rigid translation) so the pose stays IDENTICAL
+    // at every key and nothing shifts, then drop the pins → free FK editing,
+    // no character left glued. Not undoable (agreed with Franco). Re-enter IK
+    // and re-pin from scratch when needed.
     if (m_sd) {
-      if (!m_ikDrag.getValue()) {
-        std::vector<int> pins = pinnedVerticesAtFrame(::frame());
-        if (!pins.empty()) {
-          int oldSel = m_svSel.hasSingleObject() ? (int)m_svSel : -1;
-          TUndoManager::manager()->beginBlock();
-          TUndoManager::manager()->add(new IkReleaseToggleUndo);
-          for (int p : pins) {
-            setSkeletonSelection(p);
-            togglePinAtCurrentFrame();
-          }
-          TUndoManager::manager()->endBlock();
-          setSkeletonSelection(oldSel);
-        }
-      }
+      if (!m_ikDrag.getValue()) bakePinsToFK_animate();
       m_sd->enablePins(m_ikDrag.getValue());
       m_deformedSkeleton.invalidate();
       invalidate();

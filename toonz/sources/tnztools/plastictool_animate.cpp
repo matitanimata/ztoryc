@@ -1349,6 +1349,105 @@ int PlasticTool::pinnedVertexAtFrame(double frame) const {
 
 //------------------------------------------------------------------------
 
+// Leaving IK mode = commit the pinned animation. Every keyframe is baked into
+// FK (angles) + controller (rigid translation) so the pose is IDENTICAL at
+// every key and nothing shifts; then all pins are dropped, freeing the rig for
+// plain FK editing. Uses storeDeformedSkeleton at explicit frames (no frame
+// handle juggling) and writeBackAngles (purely geometric). Not undoable.
+void PlasticTool::bakePinsToFK_animate() {
+  if (!m_sd) return;
+  int skelId            = ::skeletonId();
+  PlasticSkeletonP skel = m_sd->skeleton(skelId);
+  if (!skel) return;
+
+  int rootIdx = -1;
+  SkVD *rvd   = rootVd_animate(&rootIdx);
+
+  // All keyframe times in the animation + whether any pin exists at all
+  std::set<double> times;
+  bool anyPin = false;
+  for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
+       ++vt) {
+    SkVD *vd = m_sd->vertexDeformation(skelId, vt.m_idx);
+    if (!vd) continue;
+    for (int p = 0; p < SkVD::PARAMS_COUNT; ++p)
+      if (vd->m_params[p]) vd->m_params[p]->getKeyframes(times);
+    if (vd->m_params[SkVD::PIN] &&
+        vd->m_params[SkVD::PIN]->getKeyframeCount() > 0)
+      anyPin = true;
+  }
+  if (!anyPin) return;
+
+  // Keyframe times where at least one pin is actually planting
+  std::vector<double> bakeTimes;
+  for (double t : times)
+    if (!pinnedVerticesAtFrame(t).empty()) bakeTimes.push_back(t);
+  if (bakeTimes.empty()) return;
+  std::sort(bakeTimes.begin(), bakeTimes.end());
+
+  // 1. Capture the planted pose + current controller translation at each bake
+  //    time, while the pins are still active
+  std::map<double, std::map<int, TPointD>> plantedByT;
+  std::map<double, TPointD> origTransByT;
+  for (double t : bakeTimes) {
+    PlasticSkeleton ds;
+    m_sd->storeDeformedSkeleton(skelId, t, ds);
+    std::map<int, TPointD> pose;
+    for (auto vt = ds.vertices().begin(); vt != ds.vertices().end(); ++vt)
+      pose[vt.m_idx] = vt->P();
+    plantedByT[t] = pose;
+    if (rvd && rvd->m_params[SkVD::TRANSX] && rvd->m_params[SkVD::TRANSY])
+      origTransByT[t] = TPointD(rvd->m_params[SkVD::TRANSX]->getValue(t),
+                                rvd->m_params[SkVD::TRANSY]->getValue(t));
+  }
+
+  l_suspendParamsObservation = true;
+
+  // 2. Fully un-pin: drop every PIN / PINTX / PINTY key
+  for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
+       ++vt) {
+    SkVD *vd = m_sd->vertexDeformation(skelId, vt.m_idx);
+    if (!vd) continue;
+    for (int p : {(int)SkVD::PIN, (int)SkVD::PINTX, (int)SkVD::PINTY})
+      if (vd->m_params[p]) vd->m_params[p]->clearKeyframes();
+  }
+
+  // 3. Bake the captured pose SHAPE into the ANGLE params at each bake time
+  for (double t : bakeTimes)
+    writeBackAngles_animate(t, plantedByT[t], plantedByT[t], false);
+
+  // 4. Bake the rigid translation the planting added into the controller's
+  //    TransX/TransY (mapped through the controller's linear part → exact
+  //    even under an active squash/rotation)
+  if (rvd && rootIdx >= 0 && rvd->m_params[SkVD::TRANSX] &&
+      rvd->m_params[SkVD::TRANSY]) {
+    for (double t : bakeTimes) {
+      PlasticSkeleton fk;
+      m_sd->storeDeformedSkeleton(skelId, t, fk);  // unpinned + angle-baked
+      TPointD delta = plantedByT[t][rootIdx] - fk.vertex(rootIdx).P();
+      if (norm2(delta) < 1e-12) continue;
+      TAffine ctrl = m_sd->getSquashControllerAffine(skelId, t);
+      TPointD d(ctrl.a11 * delta.x + ctrl.a12 * delta.y,
+                ctrl.a21 * delta.x + ctrl.a22 * delta.y);
+      TPointD base =
+          origTransByT.count(t) ? origTransByT[t] : TPointD();
+      ::setKeyframe(rvd->m_params[SkVD::TRANSX], t);
+      rvd->m_params[SkVD::TRANSX]->setValue(t, base.x + d.x);
+      ::setKeyframe(rvd->m_params[SkVD::TRANSY], t);
+      rvd->m_params[SkVD::TRANSY]->setValue(t, base.y + d.y);
+    }
+  }
+
+  l_suspendParamsObservation = false;
+
+  m_deformedSkeleton.invalidate();
+  onChange();
+  invalidate();
+  TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+}
+
+//------------------------------------------------------------------------
+
 double PlasticTool::nextPinActivationAfter_animate(double frame) const {
   if (!m_sd) return -1.0;
   PlasticSkeleton *skel = skeleton().getPointer();
