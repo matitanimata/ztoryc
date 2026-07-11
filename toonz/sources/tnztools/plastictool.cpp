@@ -2180,11 +2180,26 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
                                      // function recursively
     }
   } else if (propertyName == "inverseKinematics") {
-    // Leaving IK mode puts the pins to sleep — hidden and not planted at
-    // evaluation, keys untouched; re-entering brings them back as they were.
-    // The flag lives on the deformation (scene data), so viewer and render
-    // stay coherent.
+    // Leaving IK mode = CLEAN RELEASE (decided with Franco): every active pin
+    // is un-pinned at the CURRENT frame with the full bake (angles + rigid
+    // translation into the controller), so the pose does not move and FK is
+    // immediately free; earlier frames keep their pinned animation. The
+    // pinsEnabled flag then only hides the pin UI when scrubbing back over
+    // still-pinned frames — the evaluation planting is never gated.
     if (m_sd) {
+      if (!m_ikDrag.getValue()) {
+        std::vector<int> pins = pinnedVerticesAtFrame(::frame());
+        if (!pins.empty()) {
+          int oldSel = m_svSel.hasSingleObject() ? (int)m_svSel : -1;
+          TUndoManager::manager()->beginBlock();
+          for (int p : pins) {
+            setSkeletonSelection(p);
+            togglePinAtCurrentFrame();
+          }
+          TUndoManager::manager()->endBlock();
+          setSkeletonSelection(oldSel);
+        }
+      }
       m_sd->enablePins(m_ikDrag.getValue());
       m_deformedSkeleton.invalidate();
       invalidate();

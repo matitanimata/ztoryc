@@ -331,10 +331,11 @@ public:
   //! neutral. The skeleton evaluation itself is never affected.
   TAffine getSquashControllerAffine(int skeletonId, double frame) const;
 
-  //! SuperPlastic: whether the IK pin constraints are applied at evaluation.
-  //! Scene data (serialized; default enabled): leaving the tool's IK mode
-  //! puts the pins to sleep — hidden and not planted — WITHOUT touching
-  //! their keys, so re-enabling brings them back exactly as they were.
+  //! SuperPlastic: whether the pin UI (diamonds, pin-aware manipulation) is
+  //! active in the tool. Scene data (serialized; default enabled). NOTE: the
+  //! evaluation planting is NEVER gated by this — leaving IK mode releases
+  //! the active pins with a full bake instead (tool side), so the authored
+  //! animation and the render never change under a UI toggle.
   void enablePins(bool on);
   bool pinsEnabled() const;
 
