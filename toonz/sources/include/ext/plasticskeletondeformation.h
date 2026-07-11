@@ -83,6 +83,11 @@ public:
     ROT,        //!< Controller rotation (degrees) about the pivot.
     SHEARX,     //!< Controller shear about the pivot.
     SHEARY,
+    MINANGLE,   //!< Keyframeable OVERRIDE of the vertex's static min/max angle
+    MAXANGLE,   //!< limit: active only where it has keys (so joint limits can
+                //!< change during the animation), otherwise the static
+                //!< PlasticSkeletonVertex limit is used. Default 0, unused
+                //!< until keyed → old scenes and un-keyed joints unaffected.
     PARAMS_COUNT
   };
 

@@ -39,13 +39,15 @@ DEFINE_CLASS_CODE(PlasticSkeletonDeformation, 121)
 namespace {
 
 static const char *parNames[SkVD::PARAMS_COUNT] = {
-    "Angle",  "Distance", "SO",     "Pin",    "PinTX",
-    "PinTY",  "ScaleX",   "ScaleY", "PivotX", "PivotY",
-    "TransX", "TransY",   "Rotation", "ShearX", "ShearY"};
+    "Angle",  "Distance", "SO",     "Pin",      "PinTX",
+    "PinTY",  "ScaleX",   "ScaleY", "PivotX",   "PivotY",
+    "TransX", "TransY",   "Rotation", "ShearX", "ShearY",
+    "MinAngle", "MaxAngle"};
 static const char *parMeasures[SkVD::PARAMS_COUNT] = {
     "angle",    "fxLength", "",         "",         "fxLength",
     "fxLength", "scale",    "scale",    "fxLength", "fxLength",
-    "fxLength", "fxLength", "angle",    "shear",    "shear"};
+    "fxLength", "fxLength", "angle",    "shear",    "shear",
+    "angle",    "angle"};
 
 //------------------------------------------------------------------
 
@@ -68,6 +70,25 @@ double buildAngle(const PlasticSkeleton &skeleton, int v) {
   }
 
   return tcg::point_ops::angle(dir, vx.P() - vxParent.P()) * M_180_PI;
+}
+
+//------------------------------------------------------------------
+
+// Effective angular limits at a frame: a keyed MINANGLE/MAXANGLE param
+// overrides the vertex's static limit (so joint limits can change over time);
+// with no keys the static PlasticSkeletonVertex limit is used (backward
+// compatible — old scenes and un-keyed joints behave exactly as before).
+void effAngleLimits(const SkVD *vd, const PlasticSkeletonVertex &vx,
+                    double frame, double &lo, double &hi) {
+  lo = vx.m_minAngle;
+  hi = vx.m_maxAngle;
+  if (!vd) return;
+  if (vd->m_params[SkVD::MINANGLE] &&
+      vd->m_params[SkVD::MINANGLE]->getKeyframeCount() > 0)
+    lo = vd->m_params[SkVD::MINANGLE]->getValue(frame);
+  if (vd->m_params[SkVD::MAXANGLE] &&
+      vd->m_params[SkVD::MAXANGLE]->getKeyframeCount() > 0)
+    hi = vd->m_params[SkVD::MAXANGLE]->getValue(frame);
 }
 
 }  // namespace
@@ -1084,11 +1105,18 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
           // pinned elbow folds backwards" case); the pin may then simply not
           // reach its target on this limb.
           const PlasticSkeletonVertex &jvx = origSkel->vertex(path[j + 1]);
-          if (jvx.m_minAngle > -1e9 || jvx.m_maxAngle < 1e9) {
+          const SkVD *jvd = 0;
+          {
+            auto jt = m_imp->m_vds.find(jvx.name());
+            if (jt != m_imp->m_vds.end()) jvd = &jt->m_vd;
+          }
+          double jLo, jHi;
+          effAngleLimits(jvd, jvx, frame, jLo, jHi);
+          if (jLo > -1e9 || jHi < 1e9) {
             double curRel =
                 locals::relAngleDeg(skeleton, *origSkel, path[j + 1]);
-            double lo = (jvx.m_minAngle - curRel) * (M_PI / 180.0);
-            double hi = (jvx.m_maxAngle - curRel) * (M_PI / 180.0);
+            double lo = (jLo - curRel) * (M_PI / 180.0);
+            double hi = (jHi - curRel) * (M_PI / 180.0);
             ang       = std::min(std::max(ang, lo), hi);
           }
 
@@ -1240,13 +1268,16 @@ void PlasticSkeletonDeformation::updatePosition(
   // - this is still ok and spares
   // access to v's grandParent...
 
+  double loLim, hiLim;
+  effAngleLimits(&vd, vx, frame, loLim, hiLim);
+
   double aDelta = tcg::point_ops::angle(vPos - vParentPos, pos - vParentPos) *
                   M_180_PI,
          dDelta = tcg::point_ops::dist(vParentPos, pos) -
                   tcg::point_ops::dist(vParentPos, vPos),
 
-         a = tcrop(vd.m_params[SkVD::ANGLE]->getValue(frame) + aDelta,
-                   vx.m_minAngle, vx.m_maxAngle),
+         a = tcrop(vd.m_params[SkVD::ANGLE]->getValue(frame) + aDelta, loLim,
+                   hiLim),
          d = vd.m_params[SkVD::DISTANCE]->getValue(frame) + dDelta;
 
   vd.m_params[SkVD::ANGLE]->setValue(frame, a);
@@ -1270,10 +1301,13 @@ void PlasticSkeletonDeformation::updateAngle(
 
   SkVD &vd = m_imp->m_vds.find(vx.name())->m_vd;
 
+  double loLim, hiLim;
+  effAngleLimits(&vd, vx, frame, loLim, hiLim);
+
   double aDelta = tcg::point_ops::angle(vx.P() - vParentPos, pos - vParentPos) *
                   M_180_PI,
-         a = tcrop(vd.m_params[SkVD::ANGLE]->getValue(frame) + aDelta,
-                   vx.m_minAngle, vx.m_maxAngle);
+         a = tcrop(vd.m_params[SkVD::ANGLE]->getValue(frame) + aDelta, loLim,
+                   hiLim);
 
   vd.m_params[SkVD::ANGLE]->setValue(frame, a);
 

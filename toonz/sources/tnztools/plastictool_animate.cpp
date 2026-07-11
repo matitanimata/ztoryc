@@ -1329,9 +1329,19 @@ void PlasticTool::writeBackAngles_animate(
     // Children hold RELATIVE deltas, so a clamped joint rotates its whole
     // subtree rigidly: the limb stiffens at the limit instead of tearing.
     // The unpin bake opts out — it must reproduce the planted pose exactly.
-    if (clampToLimits)
-      newDelta = tcrop(newDelta, orig.vertex(w).m_minAngle,
-                       orig.vertex(w).m_maxAngle);
+    if (clampToLimits) {
+      // Keyed MINANGLE/MAXANGLE override the vertex's static limit (limits can
+      // change over time); no keys → the static limit.
+      double loLim = orig.vertex(w).m_minAngle;
+      double hiLim = orig.vertex(w).m_maxAngle;
+      if (vd->m_params[SkVD::MINANGLE] &&
+          vd->m_params[SkVD::MINANGLE]->getKeyframeCount() > 0)
+        loLim = vd->m_params[SkVD::MINANGLE]->getValue(frame);
+      if (vd->m_params[SkVD::MAXANGLE] &&
+          vd->m_params[SkVD::MAXANGLE]->getKeyframeCount() > 0)
+        hiLim = vd->m_params[SkVD::MAXANGLE]->getValue(frame);
+      newDelta = tcrop(newDelta, loLim, hiLim);
+    }
 
     if (fabs(newDelta - oldDelta) < 1e-4) continue;  // unchanged joint
 

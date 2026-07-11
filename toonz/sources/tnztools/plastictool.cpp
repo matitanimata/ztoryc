@@ -186,8 +186,11 @@ void setKeyframe(const PlasticSkeletonDeformationP &sd, double frame) {
     for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
          ++vt)
       if (vt->parent() < 0) {
+        // Only the controller channels (SCALE..SHEAR); MINANGLE/MAXANGLE are
+        // per-joint limits, not part of the pose → a global key must not key
+        // them.
         if (SkVD *vd = sd->vertexDeformation(::skeletonId(), (int)vt.m_idx))
-          for (int p = SkVD::SCALEX; p < SkVD::PARAMS_COUNT; ++p)
+          for (int p = SkVD::SCALEX; p <= SkVD::SHEARY; ++p)
             if (vd->m_params[p]) setKeyframe(vd->m_params[p], frame);
         break;
       }
