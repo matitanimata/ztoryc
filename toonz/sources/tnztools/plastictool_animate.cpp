@@ -1381,6 +1381,10 @@ void PlasticTool::togglePinAtCurrentFrame() {
   m_sd->getKeyframeAt(frame, undo->m_oldValues);
 
   bool pinned = vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5;
+  // Un-pinning the LAST active pin also drops the rigid translation that was
+  // planting the pose (not representable in ANGLE params): captured before
+  // writing the PIN=0 key, transferred to the controller below.
+  bool wasLastPin = pinned && pinnedVerticesAtFrame(frame).size() == 1;
 
   // Capture the planting target BEFORE flagging the pin: read where the vertex
   // is right now (still unpinned at this frame), from a fresh evaluation. If we
@@ -1442,6 +1446,36 @@ void PlasticTool::togglePinAtCurrentFrame() {
     for (auto vt = ds.vertices().begin(); vt != ds.vertices().end(); ++vt)
       cur[vt.m_idx] = vt->P();
     writeBackAngles_animate(frame, cur, planted, false);
+  }
+
+  // Last pin released: the planted pose's rigid translation vanished with it
+  // (angles are translation-invariant), which used to shift the whole
+  // character. Transfer it to the controller's TransX/TransY — keyed with a
+  // confinement key one frame earlier so the still-pinned frames before this
+  // one are untouched — mapped through the controller's linear part so the
+  // DISPLAYED pose stays identical even under an active squash/rotation.
+  if (pinned && wasLastPin && !planted.empty()) {
+    m_deformedSkeleton.invalidate();
+    PlasticSkeleton &ds = deformedSkeleton();  // fresh: un-pinned, angle-baked
+    auto pt             = planted.find(v);
+    SkVD *rvd           = rootVd_animate();
+    if (pt != planted.end() && rvd) {
+      TPointD t = pt->second - ds.vertex(v).P();
+      if (norm2(t) > 1e-12 && rvd->m_params[SkVD::TRANSX] &&
+          rvd->m_params[SkVD::TRANSY]) {
+        const TAffine ctrl =
+            m_sd->getSquashControllerAffine(::skeletonId(), frame);
+        TPointD d(ctrl.a11 * t.x + ctrl.a12 * t.y,
+                  ctrl.a21 * t.x + ctrl.a22 * t.y);
+        for (int p : {(int)SkVD::TRANSX, (int)SkVD::TRANSY}) {
+          TDoubleParamP par = rvd->m_params[p];
+          double add        = (p == SkVD::TRANSX) ? d.x : d.y;
+          if (frame > 1.0) ::setKeyframe(par, frame - 1.0);
+          ::setKeyframe(par, frame);
+          par->setValue(frame, par->getValue(frame) + add);
+        }
+      }
+    }
   }
 
   m_sd->getKeyframeAt(frame, undo->m_newValues);
