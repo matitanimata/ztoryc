@@ -1,3 +1,89 @@
+## [2026-07-11] — SUPERPLASTIC: controller "Animate tool sopra lo scheletro" + task 62 vector fill (master)
+
+Sessione doppia: fix core su `master`, poi tutta l'evoluzione squash&stretch → controller su `feature/superplastic`.
+
+### Fixed — master (task 62, candidato PR upstream, commit `021d6886d`)
+- **Vector fill che si "ripara" solo ricaricando la scena**: nuovo `TVectorImage::forceRegionsRecompute()`
+  (stesso rebuild del load, colori preservati) chiamato dal FillTool su attivazione e cambio frame
+  (guardia isPlaying). **Maximum Gap che si resettava al cambio frame**: `m_lastUserGapValue` propaga
+  l'ultimo valore utente alle immagini ancora a tolerance default. Verificato Franco: gap OK, fill in osservazione.
+
+### Added — feature/superplastic: controller completo (commit finale `c7de1b20f`)
+- **Architettura (design Franco, 3 iterazioni)**: lo squash&stretch NON entra mai nella catena dello
+  scheletro. È un'affine controller T(trans)·T(C)·Rot·Shear·Scale·T(−C) composta SOPRA il risultato
+  deformato (`getSquashControllerAffine`), iniettata nei 3 siti di draw/render (stagevisitor ×2 +
+  plasticdeformerfx) e nella matrice del tool (`updateMatrix` override) → manipolazione, pin e IK
+  lavorano in spazio pre-controller PER COSTRUZIONE (spariti i feedback loop che "esplodevano" la posa).
+- **Pivot keyframabile che segue il personaggio**: offset PIVOTX/PIVOTY dalla root DEFORMATA (default 0).
+- **Param**: SCALEX/SCALEY (fattori, 100%=neutro, measure "scale"), TRANSX/TRANSY, ROT, SHEARX/SHEARY —
+  tutti sul vd della root, serializzazione tag-based retrocompatibile, esclusi dal Set Key (p<PIN).
+- **Gizmo "modalità all"**: doppio ESAGONO al pivot (drag=sposta pivot, snap ai vertici) + raggi
+  TRATTEGGIATI (identità visiva vs Animate tool di colonna, mockup approvato); disco=rotate,
+  quadrati=scala uniforme/libera, parallelogramma=shear, rombo=move. Matematica replicata dai
+  Drag*Tool di edittool (Shift/Alt/combo Maintain con Mass=1/v). **Colori dinamici** come l'Animate
+  tool Ztoryc (sample framebuffer + contrasto complementare, highlight per-maniglia) + hint in hover
+  (gotcha: testo GLUT da scalare ×devPixRatio o su retina è invisibile).
+- **Global key** chiava anche i param del controller (PIN* sempre esclusi).
+- **Pin dormienti**: IK off → diamanti nascosti, manipolazione pin-aware spenta, bottone Pin
+  disabilitato; IK on → tornano identici (chiavi intatte). Il PLANTING all'eval NON è gated (il primo
+  tentativo spostava la posa al toggle): flag `pinsEnabled` sulla deformazione (tag `PinsDisabled`),
+  checkbox sincronizzata allo switch colonna se il rig ha chiavi PIN.
+
+### Notes
+- Trade-off accettato: i pin secondari non "tengono" sotto squash (niente stretch braccio-barra);
+  pivot snappato sul pin d'appoggio copre il caso principale. `ctrlContrastColor` duplicata da
+  edittool → da condividere prima di eventuale PR. Restano: cursori per-maniglia, campi toolbar
+  trans/rot/shear, taratura stiffness, limiti angolari in pin mode, adapter Skeleton.
+- Task 62: voce PR candidates aggiunta in AGENTS.md; nota implementazione in SUPERPLASTIC.md.
+
+## [2026-07-10] — SUPERPLASTIC: multi-pin completo (eval 2-target, manipolazione simmetrica, cambio appoggio)
+
+Branch `feature/superplastic` (Ztoryc-SP). Sessione interamente guidata dai test di Franco.
+
+### Fixed — falsa regressione "root non draggabile"
+- NESSUNA regressione nel codice: `Ztoryc-SP.app` era la build PRE-revert del 07-07 (rename
+  mancato dopo l'ultima build) + scene di test inquinate da chiavi PIN della build rotta.
+  Controprova su scena nuova = ok. Morale: rename dopo OGNI build; bonifica scene = unpin di
+  tutti i diamanti e re-pin.
+
+### Added — eval multi-pin (`storeDeformedSkeleton`)
+- Pin PRIMARIO = il più anziano (attivazione, non indice) → traslazione rigida (root libera,
+  nessun salto di posa quando si aggiunge il 2° pin); pin successivi → CCD confinato sotto la
+  divergenza dalle catene già piantate. Robusto ai residui (pin senza target saltati).
+
+### Added — manipolazione multi-pin (plastictool_animate)
+- Re-root sul pin PIÙ VICINO al vertice trascinato; gli altri pin vengono ri-piantati DENTRO
+  il drag (CCD sul solo loro arto) → tool e eval non si combattono più (fine dei vertici che
+  "scappano" vicino ai pin).
+- Pin DURI: θ-bisezione nel posing locale (il drag si irrigidisce a fondo corsa invece di
+  strappare un pin); target del mouse clampato alla portata nel solve simmetrico.
+- Vertice TRA i pin (sottoalbero spanning) → FABRIK multi-ancora: entrambe le catene si
+  piegano (barra: entrambe le spalle salgono). Stiffness per profondità ELASTICA verso la posa
+  di riposo (clavicole rigide che TORNANO, gomiti assorbono per primi — niente cricchetto);
+  lunghezze ossa ripristinate post-solve + re-nail di ogni pin sul ramo esclusivo (la media
+  FABRIK alle giunzioni violava le lunghezze → pin che si staccavano). Pivot extra = ultimo
+  vertice condiviso, ruotando solo il ramo del pin (la clavicola cede se serve al planting).
+- Mount del vertice trascinato (tratto v→top) esente da stiffness → clavicole e anche
+  manipolabili direttamente senza resistenza.
+- Ancore ai target assoluti PINTX/PINTY (niente deriva accumulata nei drag lunghi).
+- Bake della posa piantata all'UNPIN → il vertice non scatta più al toggle-off. Caveat: unpin
+  dell'ULTIMO pin può mostrare shift globale (traslazione non rappresentabile negli angoli) —
+  si ricollega alla task squash/pivot.
+- **"Switch Support Pin Here"** (context menu, cambio appoggio one-click): pinna il vertice
+  selezionato al frame corrente e rilascia gli altri pin a f+1 (double support su una sola
+  chiave), tutto in un unico undo. La chiave PIN=0 a f+1 è by-design.
+- Pin selezionato = diamante ciano PIENO (feedback visivo).
+
+### Fixed — CRASH switch colonna (candidato PR upstream)
+- `PlasticTool::onSelectionChanged()` dereferenziava `m_sd->skeleton(skelId)->vertex(m_svSel)`
+  senza guardie: su switch colonna skeleton può essere null e la selezione un indice stale →
+  SIGSEGV (repro: click su altra colonna con tool attivo). Fix: guardia + drop della selezione
+  stale. Codice STOCK Tahoma2D → candidato hardening upstream.
+
+### Aperti (prossima sessione)
+- Taratura fine pesi stiffness (0.8/0.5/0.2 per profondità) se serve.
+- Limiti angolari in modalità pin; pole vector; adapter Skeleton Tool; task squash/pivot.
+
 ## [2026-07-07c] — SUPERPLASTIC: timing pin corretto (fix "shift al 2° passo")
 
 Branch `feature/superplastic` (Ztoryc-SP, master intatto). Commit `ed8daf47e`. ✅ Franco "meraviglioso".
