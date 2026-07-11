@@ -77,6 +77,54 @@ public:
   QString getHistoryString() override { return "Plastic (animate): Animate Vertex"; }
 };
 
+//------------------------------------------------------------------------
+
+// Undo for an angle-limit gizmo drag. Covers both cases uniformly: the static
+// per-vertex bounds AND the SkVD keyframe snapshot (which carries a keyed
+// MINANGLE/MAXANGLE when the bound is animated).
+class AngleLimitUndo final : public TUndo {
+  int m_row, m_col, m_v;
+
+public:
+  double m_oldMin, m_oldMax, m_newMin, m_newMax;
+  SkDKey m_oldValues, m_newValues;
+
+  AngleLimitUndo(int v)
+      : m_row(::row())
+      , m_col(::column())
+      , m_v(v)
+      , m_oldMin(0)
+      , m_oldMax(0)
+      , m_newMin(0)
+      , m_newMax(0) {}
+
+  int getSize() const override { return sizeof(*this) + (20 << 10); }
+
+  void apply(double sMin, double sMax, const SkDKey &vals) const {
+    PlasticTool::TemporaryActivation tempActivate(m_row, m_col);
+    if (m_v >= 0) l_plasticTool.setSkeletonSelection(m_v);
+
+    l_suspendParamsObservation = true;
+    if (SkDP sd = l_plasticTool.deformation()) {
+      if (PlasticSkeletonP skel = sd->skeleton(::skeletonId())) {
+        skel->vertex(m_v).m_minAngle = sMin;
+        skel->vertex(m_v).m_maxAngle = sMax;
+      }
+      sd->deleteKeyframe(m_row - 1);
+      sd->setKeyframe(vals);
+    }
+    l_suspendParamsObservation = false;
+    l_plasticTool.onChange();
+  }
+
+  void undo() const override { apply(m_oldMin, m_oldMax, m_oldValues); }
+  void redo() const override { apply(m_newMin, m_newMax, m_newValues); }
+
+  QString getHistoryString() override {
+    return QObject::tr("Plastic: Angle Bounds");
+  }
+};
+
 }  // namespace
 
 //****************************************************************************************
@@ -147,6 +195,12 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
     int lb = limitHitTest_animate(pos);
     if (lb != 0) {
       m_limitDrag = lb;
+      // Snapshot for the undo (static bounds + SkVD keyframe)
+      if (PlasticSkeletonP skel = skeleton()) {
+        m_limitOldMin = skel->vertex((int)m_svSel).m_minAngle;
+        m_limitOldMax = skel->vertex((int)m_svSel).m_maxAngle;
+      }
+      m_sd->getKeyframeAt(frame(), m_pressedSkDF);
       invalidate();
       return;
     }
@@ -1531,6 +1585,7 @@ bool PlasticTool::limitDisplay_animate(int v, TPointD &pp, double &branch,
 //------------------------------------------------------------------------
 
 int PlasticTool::limitHitTest_animate(const TPointD &pos) {
+  if (!m_showAngleLimits.getValue()) return 0;
   if (!m_svSel.hasSingleObject()) return 0;
   TPointD pp;
   double branch, defAng, r, minD, maxD;
@@ -1583,6 +1638,12 @@ void PlasticTool::limitDrag_animate(const TPointD &pos) {
     }
   }
 
+  // Live-update the toolbar Angle Bounds field (notifyListeners refreshes the
+  // widget only, it does not re-enter onPropertyChanged)
+  TStringProperty &field = (m_limitDrag == 1) ? m_minAngle : m_maxAngle;
+  field.setValue(QString::number(L, 'f', 1).toStdWString());
+  field.notifyListeners();
+
   m_deformedSkeleton.invalidate();
   invalidate();
 }
@@ -1590,6 +1651,7 @@ void PlasticTool::limitDrag_animate(const TPointD &pos) {
 //------------------------------------------------------------------------
 
 void PlasticTool::drawAngleLimitGizmo_animate(double u) {
+  if (!m_showAngleLimits.getValue()) return;
   if (!m_svSel.hasSingleObject()) return;
   TPointD pp;
   double branch, defAng, r, minD, maxD;
@@ -1828,6 +1890,19 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
   // on the next selection change.
   if (m_limitDrag != 0) {
     m_limitDrag = 0;
+    if (m_sd && m_svSel.hasSingleObject()) {
+      int v             = (int)m_svSel;
+      AngleLimitUndo *u = new AngleLimitUndo(v);
+      u->m_oldMin       = m_limitOldMin;
+      u->m_oldMax       = m_limitOldMax;
+      u->m_oldValues    = m_pressedSkDF;
+      if (PlasticSkeletonP skel = skeleton()) {
+        u->m_newMin = skel->vertex(v).m_minAngle;
+        u->m_newMax = skel->vertex(v).m_maxAngle;
+      }
+      m_sd->getKeyframeAt(frame(), u->m_newValues);
+      TUndoManager::manager()->add(u);
+    }
     TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
     invalidate();
     return;

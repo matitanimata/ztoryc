@@ -132,6 +132,10 @@ private:
                                     //!< Animate tool: None / Aspect Ratio /
                                     //!< Mass (V = 1/H, area preserved)
 
+  TBoolProperty m_showAngleLimits;  //!< Show the draggable angle-limit gizmo
+                                    //!< (off by default to keep the skeleton
+                                    //!< clean)
+
   TStringProperty m_minAngle,
       m_maxAngle;  //!< Minimum and maximum angle values allowed
 
@@ -178,6 +182,8 @@ private:
   // Angle-limit gizmo: drag the min/max joint bounds directly in the viewer
   int m_limitDrag = 0;  //!< 0 none, 1 min bound, 2 max bound (being dragged)
   int m_limitHi   = 0;  //!< hovered bound (same codes)
+  double m_limitOldMin = 0.0,  //!< static bounds at drag start (for the undo)
+      m_limitOldMax    = 0.0;
   TPointD m_scaleDragCenter;       //!< Controller pivot position at press
   double m_scaleOldX = 1.0,        //!< Controller values at press time
       m_scaleOldY = 1.0, m_ctrlOldRot = 0.0, m_ctrlOldTX = 0.0,
