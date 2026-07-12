@@ -276,6 +276,7 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
       if (d < best) { best = d; bestCol = cs.columnIndex; bestV = v; }
     }
     if (bestCol >= 0) {
+      redirectChildRootToParent_animate(bestCol, bestV);
       TTool::getApplication()->getCurrentColumn()->setColumnIndex(bestCol);
       updateMatrix();  // columnIndexSwitched re-binds m_sd via onColumnSwitched
       setSkeletonSelection(bestV);
@@ -289,7 +290,17 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
     }
   }
 
-  setSkeletonSelection(m_svHigh);
+  // If the highlighted vertex is this column's stitched root, grab the coincident
+  // draggable parent vertex instead (switching to the parent column).
+  int selCol = ::column(), selV = m_svHigh;
+  redirectChildRootToParent_animate(selCol, selV);
+  if (m_svHigh >= 0 && selCol != ::column()) {
+    TTool::getApplication()->getCurrentColumn()->setColumnIndex(selCol);
+    updateMatrix();
+    setSkeletonSelection(selV);
+  } else {
+    setSkeletonSelection(m_svHigh);
+  }
 
   if (m_svSel.hasSingleObject()) {
     // Store original vertex position and keyframe values
@@ -2558,6 +2569,21 @@ PlasticTool::buildUnifiedGraph_animate(double frame) {
     }
 
   return g;
+}
+
+//------------------------------------------------------------------------
+
+// A child column's root sits ON its parent's attachment vertex (they are glued
+// by the cross-link). The root is NOT draggable (roots have no ANGLE), so a
+// click there should grab the coincident PARENT vertex, which is. Redirect the
+// pick in place; no-op when (col,v) is not such a stitched root.
+void PlasticTool::redirectChildRootToParent_animate(int &col, int &v) {
+  for (const CrossLevelLink &lk : crossLevelLinks_animate())
+    if (lk.childColumn == col && lk.childRootVertex == v) {
+      col = lk.parentColumn;
+      v   = lk.parentVertex;
+      return;
+    }
 }
 
 //------------------------------------------------------------------------

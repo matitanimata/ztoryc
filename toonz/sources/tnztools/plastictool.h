@@ -557,6 +557,9 @@ private:
   //! ordinary chain joints). Returns false (no-op) when it doesn't apply —
   //! single column, pins present, dragging the root — so the caller falls back.
   bool crossLevelFK_animate(double frame, int vDragged, const TPointD &mousePos);
+  //! Redirect a pick on a child column's (non-draggable) root to the coincident
+  //! parent attachment vertex, which is draggable. In-place; no-op otherwise.
+  void redirectChildRootToParent_animate(int &col, int &v);
 
   //! Mirror a child-column pin onto the parent's attachment vertex, so the
   //! single-level primary-pin machinery plants the whole rig (free root). `on`
