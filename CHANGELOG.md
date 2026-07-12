@@ -1,3 +1,41 @@
+## [2026-07-12b] — SUPERPLASTIC: cross-level IK (saga) → attachment-pin checkpoint + modello unificato
+
+Sessione lunga interamente su `feature/superplastic`, guidata dai test dal vivo di Franco su un rig
+multi-colonna (corpo + mano/treccia parentate via handle `H<n>`). Obiettivo: posare il corpo con un
+**pin end-effector** (es. la mano) che resta fermo nello spazio. Molte iterazioni, ognuna ha chiarito
+il modello.
+
+### Percorso (per memoria; dettaglio in project_superplastic_worktree.md)
+- **v1/v2 re-root + PINTX live** → esplodeva: feedback dell'ancoraggio + matrice colonna stale
+  (`getPlacement`/`computeLocalPlacement` cachano per-frame; serve `invalidate()`). Finding:
+  la colonna figlia eredita dal bend del genitore **solo la traslazione** dell'handle, non la
+  rotazione (tstageobject.cpp:1532 + xshhandlemanager.cpp).
+- **v3 CCD reach** (piega il braccio per tenere la mano) → “spalla quasi ferma”, ma gomito/polso/pin
+  su altra parte incompleti.
+- **v4 re-root sul grafo unificato** → “root inchiodata”: il re-root appende il corpo al pin, il
+  vertice trascinato è vincolato a un arco → poco controllabile. Diagnosi con log su file + marker
+  magenta a schermo: nessun mismatch di spazio (solver=eval), era la reach del CCD.
+- **Chiave (storeDeformedSkeleton:946)**: il single-level tiene il pin primario **traslando
+  rigidamente l’intero scheletro** sul target PINTX/PINTY a eval-time → **root libera**, non piega
+  niente. Continuavo a piegare (CCD) → sbagliato.
+
+### Fatto e committato (checkpoint `af2fc6049`)
+- **Attachment-pin mirroring**: un pin su una colonna figlia viene specchiato sul **vertice-aggancio
+  del genitore**, passando dalla stessa `togglePinAtCurrentFrame` (quindi bake della posa + transfer
+  della traslazione al controller all’unpin = **niente scatto**, e **ricorsione su per la
+  gerarchia**). Il posing del corpo diventa **puro single-level** col pin-polso → root libera, pin
+  esatto, controllabile. **Regge benissimo a 2 colonne** (foglia+radice). Undo unico (block).
+- Limite: catene **3+ colonne** → le colonne intermedie si sovra-vincolano (entrambe le estremità
+  pinnate) → “root avambraccio bloccata”.
+
+### Modello DEFINITIVO per il prossimo giro (definito da Franco)
+Nel cross-level **le root di colonna si annullano e diventano vertici normali** che linkano un
+livello all’altro (vale per **FK e IK**). Uno **scheletro unico**, una sola root effettiva, l’IK
+single-level gira su quello (pin primario = traslazione rigida dell’intero rig → root libera,
+single-joint, multi-pin), write-back ANGLE per colonna (l’angolo del primo giunto della figlia
+assorbe la rotazione ereditata → nessuna modifica all’eval). Sostituirà attachment-pin e il vecchio
+path FK per personaggi multi-colonna. È il rework grosso, rimandato a sessione fresca per budget.
+
 ## [2026-07-12] — Kitsu “chiuso” (master) + Plastic multi-livello: vista/selezione unificata (feature/superplastic)
 
 Sessione doppia guidata dai test di Franco. Kitsu completato su `master`; nuovo filone
