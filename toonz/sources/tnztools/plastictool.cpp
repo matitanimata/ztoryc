@@ -161,9 +161,11 @@ void setKeyframe(SkVD *vd, double frame) {
   // type (by user preference, which is TnzLib stuff), etc...
 
   // Traverse vd's parameters. In case they don't have a keyframe at current
-  // frame, add one.
-  for (int p = 0; p < SkVD::PARAMS_COUNT; ++p)
-    setKeyframe(vd->m_params[p], frame);
+  // frame, add one. PIN/PINTX/PINTY excluded: the anchor is toggled explicitly
+  // (with its own Constant keys). A global Set Key must NOT re-key them — it
+  // would capture the CURRENT constant-extrapolated target and propagate a stale
+  // pin position onto later frames.
+  for (int p = 0; p < SkVD::PIN; ++p) setKeyframe(vd->m_params[p], frame);
 }
 
 //------------------------------------------------------------------------
@@ -175,6 +177,24 @@ void setKeyframe(const PlasticSkeletonDeformationP &sd, double frame) {
   sd->vertexDeformations(vdt, vdEnd);
 
   for (; vdt != vdEnd; ++vdt) setKeyframe((*vdt).second, frame);
+
+  // The SuperPlastic controller params (scale/pivot/position/rotation/shear,
+  // stored on the ROOT vertex's deformation) are part of the pose: a global
+  // key locks them too. The pin anchor params (PIN/PINTX/PINTY) stay excluded
+  // — see the note above.
+  if (PlasticSkeletonP skel = sd->skeleton(::skeletonId())) {
+    for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
+         ++vt)
+      if (vt->parent() < 0) {
+        // Only the controller channels (SCALE..SHEAR); MINANGLE/MAXANGLE are
+        // per-joint limits, not part of the pose → a global key must not key
+        // them.
+        if (SkVD *vd = sd->vertexDeformation(::skeletonId(), (int)vt.m_idx))
+          for (int p = SkVD::SCALEX; p <= SkVD::SHEARY; ++p)
+            if (vd->m_params[p]) setKeyframe(vd->m_params[p], frame);
+        break;
+      }
+  }
 }
 
 //------------------------------------------------------------------------
@@ -502,6 +522,24 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   ClickableLabel *soLabel = new ClickableLabel(tr("SO"));
   soLabel->setFixedHeight(20);
 
+  // SuperPlastic squash & stretch, in percent like the Animate tool's scale
+  // (100 = neutral). Anchored at the selected vertex, keyframeable.
+  m_scaleXField = new ToolOptionParamRelayField(&l_plasticTool,
+                                                &l_plasticTool.m_scaleXRelay);
+  m_scaleXField->setGlobalKey(&l_plasticTool.m_globalKey,
+                              &l_plasticTool.m_relayGroup);
+
+  ClickableLabel *scaleXLabel = new ClickableLabel(tr("Scale H"));
+  scaleXLabel->setFixedHeight(20);
+
+  m_scaleYField = new ToolOptionParamRelayField(&l_plasticTool,
+                                                &l_plasticTool.m_scaleYRelay);
+  m_scaleYField->setGlobalKey(&l_plasticTool.m_globalKey,
+                              &l_plasticTool.m_relayGroup);
+
+  ClickableLabel *scaleYLabel = new ClickableLabel(tr("Scale V"));
+  scaleYLabel->setFixedHeight(20);
+
   m_noKeyIcon      = createQIcon("key_off");
   m_partialKeyIcon = createQIcon("key_partial");
   m_fullKeyIcon    = createQIcon("key_on");
@@ -531,13 +569,26 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   m_setRestKeyButton->setToolTip(tr("Set Rest Key"));
   m_setRestKeyButton->setIcon(createQIcon("rest_key"));
 
+  // SuperPlastic: pin/unpin the selected vertex as IK anchor at current frame
+  m_pinButton = new QPushButton(tr("Pin"), this);
+  m_pinButton->setFixedSize(QSize(34, 20));
+  m_pinButton->setCheckable(true);
+  m_pinButton->setToolTip(
+      tr("Pin the selected vertex as IK anchor (keyframeable)"));
+
   QHBoxLayout *animateLayout = animateOptionsBox->hLayout();
+  // Inserted first so they end up rightmost (everything is inserted at 0)
+  animateLayout->insertWidget(0, m_scaleYField);
+  animateLayout->insertWidget(0, scaleYLabel);
+  animateLayout->insertWidget(0, m_scaleXField);
+  animateLayout->insertWidget(0, scaleXLabel);
   animateLayout->insertWidget(0, m_soField);
   animateLayout->insertWidget(0, soLabel);
   animateLayout->insertWidget(0, m_angleField);
   animateLayout->insertWidget(0, angleLabel);
   animateLayout->insertWidget(0, m_distanceField);
   animateLayout->insertWidget(0, distanceLabel);
+  animateLayout->insertWidget(0, m_pinButton);
   animateLayout->insertWidget(0, m_setRestKeyButton);
   animateLayout->insertWidget(0, m_setKeyButton);
   animateLayout->insertWidget(0, m_interpolationCombo);
@@ -561,10 +612,26 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
                        SLOT(receiveMouseMove(QMouseEvent *)));
   ret = ret && connect(soLabel, SIGNAL(onMouseRelease(QMouseEvent *)),
                        m_soField, SLOT(receiveMouseRelease(QMouseEvent *)));
+  ret = ret && connect(scaleXLabel, SIGNAL(onMousePress(QMouseEvent *)),
+                       m_scaleXField, SLOT(receiveMousePress(QMouseEvent *)));
+  ret = ret && connect(scaleXLabel, SIGNAL(onMouseMove(QMouseEvent *)),
+                       m_scaleXField, SLOT(receiveMouseMove(QMouseEvent *)));
+  ret =
+      ret && connect(scaleXLabel, SIGNAL(onMouseRelease(QMouseEvent *)),
+                     m_scaleXField, SLOT(receiveMouseRelease(QMouseEvent *)));
+  ret = ret && connect(scaleYLabel, SIGNAL(onMousePress(QMouseEvent *)),
+                       m_scaleYField, SLOT(receiveMousePress(QMouseEvent *)));
+  ret = ret && connect(scaleYLabel, SIGNAL(onMouseMove(QMouseEvent *)),
+                       m_scaleYField, SLOT(receiveMouseMove(QMouseEvent *)));
+  ret =
+      ret && connect(scaleYLabel, SIGNAL(onMouseRelease(QMouseEvent *)),
+                     m_scaleYField, SLOT(receiveMouseRelease(QMouseEvent *)));
 
   ret = ret && connect(m_setKeyButton, SIGNAL(clicked()), SLOT(onSetKey()));
 
   ret = ret && connect(m_setRestKeyButton, SIGNAL(clicked()), SLOT(onSetRestKey()));
+
+  ret = ret && connect(m_pinButton, SIGNAL(clicked()), SLOT(onPinButton()));
 
   ret = ret && connect(m_interpolationCombo, SIGNAL(activated(int)), this,
                        SLOT(onInterpolationComboActivated(int)));
@@ -675,6 +742,13 @@ void PlasticToolOptionsBox::updateControls() {
 
   m_setKeyButton->setEnabled(enableWidget);
   m_setRestKeyButton->setEnabled(enableWidget);
+
+  // Reflect the current vertex's IK anchor state on the Pin button — pins
+  // can only be placed while IK mode is on (they are asleep otherwise).
+  m_pinButton->setEnabled(enableWidget && l_plasticTool.m_ikDrag.getValue());
+  bool isPinned =
+      vd && vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5;
+  m_pinButton->setChecked(isPinned);
 
   bool enableInterpolation =
       enableWidget && canSetInterpolation(frame, stageObj);
@@ -878,6 +952,13 @@ void PlasticToolOptionsBox::onSetRestKey() {
 
 //-----------------------------------------------------------------------------
 
+void PlasticToolOptionsBox::onPinButton() {
+  l_plasticTool.togglePinAtCurrentFrame();
+  updateControls();
+}
+
+//-----------------------------------------------------------------------------
+
 void PlasticToolOptionsBox::onInterpolationComboActivated(int index) {
   Preferences::instance()->setValue(keyframeType,
                                     m_interpolationCombo->itemData(index));
@@ -919,11 +1000,17 @@ PlasticTool::PlasticTool()
     , m_rigidValue("rigidValue")
     , m_globalKey("globalKeyframe", true)
     , m_keepDistance("keepDistance", true)
+    , m_ikDrag("inverseKinematics", false)
+    , m_scaleConstraint("scaleConstraint")
+    , m_showAngleLimits("showAngleLimits", false)
+    , m_showController("showController", true)
     , m_minAngle("minAngle", L"")
     , m_maxAngle("maxAngle", L"")
     , m_distanceRelay("distanceRelay")
     , m_angleRelay("angleRelay")
     , m_soRelay("soRelay")
+    , m_scaleXRelay("scaleXRelay")
+    , m_scaleYRelay("scaleYRelay")
     , m_skelIdRelay("skelIdRelay")
     , m_pressedPos(TConsts::napd)
     , m_dragged(false)
@@ -955,12 +1042,21 @@ PlasticTool::PlasticTool()
 
   m_propGroup[ANIMATE_IDX].bind(m_globalKey);
   m_propGroup[ANIMATE_IDX].bind(m_keepDistance);
+  m_propGroup[ANIMATE_IDX].bind(m_ikDrag);
+  m_scaleConstraint.addValue(L"None");
+  m_scaleConstraint.addValue(L"Aspect Ratio");
+  m_scaleConstraint.addValue(L"Mass");
+  m_propGroup[ANIMATE_IDX].bind(m_scaleConstraint);
+  m_propGroup[ANIMATE_IDX].bind(m_showAngleLimits);
+  m_propGroup[ANIMATE_IDX].bind(m_showController);
   m_propGroup[ANIMATE_IDX].bind(m_minAngle);
   m_propGroup[ANIMATE_IDX].bind(m_maxAngle);
 
   m_relayGroup.bind(m_distanceRelay);
   m_relayGroup.bind(m_angleRelay);
   m_relayGroup.bind(m_soRelay);
+  m_relayGroup.bind(m_scaleXRelay);
+  m_relayGroup.bind(m_scaleYRelay);
 
   m_mode.setId("SkeletonMode");
   m_vertexName.setId("VertexName");
@@ -970,11 +1066,17 @@ PlasticTool::PlasticTool()
   m_rigidValue.setId("RigidValue");
   m_globalKey.setId("GlobalKey");
   m_keepDistance.setId("KeepDistance");
+  m_ikDrag.setId("PlasticInverseKinematics");
+  m_scaleConstraint.setId("PlasticScaleConstraint");
+  m_showAngleLimits.setId("PlasticShowAngleLimits");
+  m_showController.setId("PlasticShowController");
   m_minAngle.setId("MinAngle");
   m_maxAngle.setId("MaxAngle");
   m_distanceRelay.setId("DistanceRelay");
   m_angleRelay.setId("AngleRelay");
   m_soRelay.setId("SoRelay");
+  m_scaleXRelay.setId("ScaleXRelay");
+  m_scaleYRelay.setId("ScaleYRelay");
   m_skelIdRelay.setId("SkelIdRelay");
 
   // Attach to selections
@@ -1028,6 +1130,13 @@ void PlasticTool::updateTranslation() {
 
   m_globalKey.setQStringName(tr("Global Key"));
   m_keepDistance.setQStringName(tr("Keep Distance"));
+  m_ikDrag.setQStringName(tr("Inverse Kinematics"));
+  m_showAngleLimits.setQStringName(tr("Angle Bounds Gizmo"));
+  m_showController.setQStringName(tr("Controller Gizmo"));
+  m_scaleConstraint.setQStringName(tr("Maintain:"));
+  m_scaleConstraint.setItemUIName(L"None", tr("None"));
+  m_scaleConstraint.setItemUIName(L"Aspect Ratio", tr("A/R"));
+  m_scaleConstraint.setItemUIName(L"Mass", tr("Mass"));
   m_minAngle.setQStringName(tr("Angle Bounds"));
   m_maxAngle.setQStringName("");
 }
@@ -1109,6 +1218,23 @@ void PlasticTool::storeDeformation() {
     }
 
     m_skelIdRelay.notifyListeners();
+
+    // Keep the IK checkbox in sync with the deformation's pin state (scene
+    // data) — but only when the rig actually uses pins, so fresh rigs don't
+    // flip the checkbox on their own.
+    if (m_sd) {
+      bool hasPinKeys = false;
+      SkD::vd_iterator vdt, vdEnd;
+      m_sd->vertexDeformations(vdt, vdEnd);
+      for (; vdt != vdEnd && !hasPinKeys; ++vdt)
+        hasPinKeys =
+            (*vdt).second->m_params[SkVD::PIN] &&
+            (*vdt).second->m_params[SkVD::PIN]->getKeyframeCount() > 0;
+      if (hasPinKeys && m_ikDrag.getValue() != m_sd->pinsEnabled()) {
+        m_ikDrag.setValue(m_sd->pinsEnabled());
+        m_ikDrag.notifyListeners();
+      }
+    }
   }
 
   storeSkeletonId();
@@ -1142,9 +1268,27 @@ void PlasticTool::updateDeformedSkeleton(PlasticSkeleton &deformedSkeleton) {
 
 //------------------------------------------------------------------------
 
+void PlasticTool::updateMatrix() {
+  TTool::updateMatrix();
+
+  // SuperPlastic squash & stretch: the controller affine (an Animate tool ON
+  // TOP of the skeleton, pivot following the deformed root) is composed into
+  // the tool matrix, so overlay and mouse coordinates stay coherent with the
+  // deformed image while every manipulation keeps happening in
+  // pre-controller space. Animation mode only: the other modes display the
+  // original, undeformed column.
+  if (m_sd && m_mode.getIndex() == ANIMATE_IDX)
+    setMatrix(getMatrix() *
+              m_sd->getSquashControllerAffine(::skeletonId(), ::sdFrame()));
+}
+
+//------------------------------------------------------------------------
+
 void PlasticTool::onFrameSwitched() {
   storeSkeletonId();
   storeMeshImage();
+
+  updateMatrix();  // the controller affine is frame-dependent
 
   switch (m_mode.getIndex()) {
   case ANIMATE_IDX:
@@ -1157,11 +1301,15 @@ void PlasticTool::onFrameSwitched() {
   m_distanceRelay.frame() = frame;
   m_angleRelay.frame()    = frame;
   m_soRelay.frame()       = frame;
+  m_scaleXRelay.frame()   = frame;
+  m_scaleYRelay.frame()   = frame;
   m_skelIdRelay.frame()   = frame;
 
   m_distanceRelay.notifyListeners();
   m_angleRelay.notifyListeners();
   m_soRelay.notifyListeners();
+  m_scaleXRelay.notifyListeners();
+  m_scaleYRelay.notifyListeners();
   m_skelIdRelay.notifyListeners();
 }
 
@@ -1354,11 +1502,31 @@ void PlasticTool::onLeave() {
 
 void PlasticTool::onSelectionChanged() {
   SkVD *vd = 0;
+
+  // Hardening: on column/xsheet switches this runs while m_sd already points
+  // to the NEW column's deformation — which may not carry the current skelId
+  // (null skeleton), and m_svSel may be a stale index from the previous
+  // skeleton (vertices are a tcg::list with holes). Dereferencing blindly
+  // crashed (SIGSEGV clicking another column with the tool active). A stale
+  // selection is dropped so the rest of the tool can't trip on it either.
+  PlasticSkeletonP selSkel;
+  bool selValid = false;
   if (m_sd && m_svSel.hasSingleObject()) {
+    selSkel = m_sd->skeleton(::skeletonId());
+    if (selSkel)
+      for (auto vt = selSkel->vertices().begin();
+           vt != selSkel->vertices().end(); ++vt)
+        if ((int)vt.m_idx == (int)m_svSel) {
+          selValid = true;
+          break;
+        }
+    if (!selValid) m_svSel.selectNone();
+  }
+
+  if (selValid) {
     int skelId = ::skeletonId();
 
-    const PlasticSkeleton::vertex_type &vx =
-        m_sd->skeleton(skelId)->vertex(m_svSel);
+    const PlasticSkeleton::vertex_type &vx = selSkel->vertex(m_svSel);
 
     m_vertexName.setValue(vx.name().toStdWString());
     m_interpolate.setValue(vx.m_interpolate);
@@ -1390,6 +1558,15 @@ void PlasticTool::onSelectionChanged() {
     m_angleRelay.setParam(TDoubleParamP());
   }
 
+  // Squash & stretch relays: always bound to the ROOT vertex's deformation,
+  // the home of the controller params (the pivot is a separate keyframeable
+  // offset, moved with Ctrl+drag on its crosshair in the viewer).
+  SkVD *rootVd = rootVd_animate();
+  m_scaleXRelay.setParam(rootVd ? rootVd->m_params[SkVD::SCALEX]
+                                : TDoubleParamP());
+  m_scaleYRelay.setParam(rootVd ? rootVd->m_params[SkVD::SCALEY]
+                                : TDoubleParamP());
+
   m_vertexName.notifyListeners();
   m_interpolate.notifyListeners();
   m_minAngle.notifyListeners();
@@ -1398,6 +1575,8 @@ void PlasticTool::onSelectionChanged() {
   m_distanceRelay.notifyListeners();
   m_angleRelay.notifyListeners();
   m_soRelay.notifyListeners();
+  m_scaleXRelay.notifyListeners();
+  m_scaleYRelay.notifyListeners();
 }
 
 //------------------------------------------------------------------------
@@ -1639,7 +1818,7 @@ void PlasticTool::setRestKey() {
   SkVD *vd     = m_sd->vertexDeformation(::skeletonId(), m_svSel);
   double frame = ::frame();
 
-  for (int p = 0; p != SkVD::PARAMS_COUNT; ++p)
+  for (int p = 0; p != SkVD::PIN; ++p)  // PIN anchor untouched by Set Rest Key
     vd->m_params[p]->setValue(frame, vd->m_params[p]->getDefaultValue());
 }
 
@@ -1654,7 +1833,7 @@ void PlasticTool::setGlobalRestKey() {
   for (; vdt != vdEnd; ++vdt) {
     SkVD *vd = (*vdt).second;
 
-    for (int p = 0; p != SkVD::PARAMS_COUNT; ++p)
+    for (int p = 0; p != SkVD::PIN; ++p)  // PIN anchor untouched by Set Rest Key
       vd->m_params[p]->setValue(frame, vd->m_params[p]->getDefaultValue());
   }
 }
@@ -1864,6 +2043,35 @@ void PlasticTool::reset() {
 
 //------------------------------------------------------------------------
 
+void PlasticTool::setIkPinsUiEnabled(bool on) {
+  m_ikDrag.setValue(on);
+  if (m_sd) m_sd->enablePins(on);
+  m_ikDrag.notifyListeners();
+  m_deformedSkeleton.invalidate();
+  invalidate();
+}
+
+//------------------------------------------------------------------------
+
+namespace {
+
+// Restores the IK checkbox + pin UI around the clean-release pin undos in
+// the same block, so undoing the toggle visibly brings the pins back.
+class IkReleaseToggleUndo final : public TUndo {
+public:
+  void undo() const override { l_plasticTool.setIkPinsUiEnabled(true); }
+  void redo() const override { l_plasticTool.setIkPinsUiEnabled(false); }
+
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override {
+    return QObject::tr("Plastic: Release IK Pins");
+  }
+};
+
+}  // namespace
+
+//------------------------------------------------------------------------
+
 bool PlasticTool::onPropertyChanged(std::string propertyName) {
   struct locals {
     static bool alreadyContainsVertexName(const PlasticSkeleton &skel,
@@ -1939,6 +2147,28 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
         m_vertexName.notifyListeners();
       }
     }
+  } else if (propertyName == "scaleXRelay" || propertyName == "scaleYRelay") {
+    // Squash & stretch constraint (like the Animate tool's "Maintain"):
+    // editing one axis drives the other — same value for Aspect Ratio,
+    // reciprocal for Mass (area preserved).
+    int constraint = m_scaleConstraint.getIndex();  // 0 none, 1 aspect, 2 mass
+    if (constraint != 0) {
+      bool fromX = (propertyName == "scaleXRelay");
+      TDoubleParamRelayProperty &src = fromX ? m_scaleXRelay : m_scaleYRelay;
+      TDoubleParamRelayProperty &dst = fromX ? m_scaleYRelay : m_scaleXRelay;
+      if (src.getParam() && dst.getParam()) {
+        double v = src.getValue();
+        double w =
+            (constraint == 1) ? v : (fabs(v) > 1e-4 ? 1.0 / v : 1.0);
+        if (fabs(dst.getValue() - w) > 1e-9) {
+          dst.setValue(w);
+          dst.notifyListeners();
+        }
+      }
+    }
+    updateMatrix();  // the controller affine depends on the scale values
+    m_deformedSkeleton.invalidate();
+    invalidate();
   } else if (propertyName == "interpolate") {
     if (m_sd && m_svSel >= 0) {
       // Set interpolation property to the associated skeleton vertex
@@ -1989,6 +2219,23 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
       m_maxAngle.notifyListeners();  // NOTE: This should NOT invoke this
                                      // function recursively
     }
+  } else if (propertyName == "inverseKinematics") {
+    // Leaving IK mode = COMMIT the pinned animation: bake every keyframe into
+    // FK (angles) + controller (rigid translation) so the pose stays IDENTICAL
+    // at every key and nothing shifts, then drop the pins → free FK editing,
+    // no character left glued. Not undoable (agreed with Franco). Re-enter IK
+    // and re-pin from scratch when needed.
+    if (m_sd) {
+      if (!m_ikDrag.getValue()) bakePinsToFK_animate();
+      m_sd->enablePins(m_ikDrag.getValue());
+      m_deformedSkeleton.invalidate();
+      invalidate();
+    }
+    if (m_mode.getIndex() == ANIMATE_IDX) m_ikDrag.notifyListeners();
+  } else if (propertyName == "showAngleLimits") {
+    if (m_mode.getIndex() == ANIMATE_IDX) m_showAngleLimits.notifyListeners();
+    if (m_mode.getIndex() == ANIMATE_IDX) m_showController.notifyListeners();
+    invalidate();  // show/hide the angle-limit gizmo
   } else if (propertyName == "globalKeyframe") {
     if (m_mode.getIndex() == ANIMATE_IDX) m_globalKey.notifyListeners();
   } else if (propertyName == "keepDistance") {

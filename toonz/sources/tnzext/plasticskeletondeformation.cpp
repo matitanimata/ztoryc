@@ -18,6 +18,8 @@
 #include <memory>
 #include <set>
 #include <map>
+#include <vector>
+#include <algorithm>
 
 // Boost includes
 #include <boost/iterator/transform_iterator.hpp>
@@ -36,8 +38,16 @@ DEFINE_CLASS_CODE(PlasticSkeletonDeformation, 121)
 
 namespace {
 
-static const char *parNames[SkVD::PARAMS_COUNT] = {"Angle", "Distance", "SO"};
-static const char *parMeasures[SkVD::PARAMS_COUNT] = {"angle", "fxLength", ""};
+static const char *parNames[SkVD::PARAMS_COUNT] = {
+    "Angle",  "Distance", "SO",     "Pin",      "PinTX",
+    "PinTY",  "ScaleX",   "ScaleY", "PivotX",   "PivotY",
+    "TransX", "TransY",   "Rotation", "ShearX", "ShearY",
+    "MinAngle", "MaxAngle"};
+static const char *parMeasures[SkVD::PARAMS_COUNT] = {
+    "angle",    "fxLength", "",         "",         "fxLength",
+    "fxLength", "scale",    "scale",    "fxLength", "fxLength",
+    "fxLength", "fxLength", "angle",    "shear",    "shear",
+    "angle",    "angle"};
 
 //------------------------------------------------------------------
 
@@ -62,6 +72,25 @@ double buildAngle(const PlasticSkeleton &skeleton, int v) {
   return tcg::point_ops::angle(dir, vx.P() - vxParent.P()) * M_180_PI;
 }
 
+//------------------------------------------------------------------
+
+// Effective angular limits at a frame: a keyed MINANGLE/MAXANGLE param
+// overrides the vertex's static limit (so joint limits can change over time);
+// with no keys the static PlasticSkeletonVertex limit is used (backward
+// compatible — old scenes and un-keyed joints behave exactly as before).
+void effAngleLimits(const SkVD *vd, const PlasticSkeletonVertex &vx,
+                    double frame, double &lo, double &hi) {
+  lo = vx.m_minAngle;
+  hi = vx.m_maxAngle;
+  if (!vd) return;
+  if (vd->m_params[SkVD::MINANGLE] &&
+      vd->m_params[SkVD::MINANGLE]->getKeyframeCount() > 0)
+    lo = vd->m_params[SkVD::MINANGLE]->getValue(frame);
+  if (vd->m_params[SkVD::MAXANGLE] &&
+      vd->m_params[SkVD::MAXANGLE]->getKeyframeCount() > 0)
+    hi = vd->m_params[SkVD::MAXANGLE]->getValue(frame);
+}
+
 }  // namespace
 
 //**************************************************************************************
@@ -79,7 +108,11 @@ SkVD::Keyframe SkVD::getKeyframe(double frame) const {
 //------------------------------------------------------------------
 
 void SkVD::setKeyframe(double frame) {
-  for (int p = 0; p < PARAMS_COUNT; ++p)
+  // Only the transform params (ANGLE/DISTANCE/SO) — PIN is an IK anchor toggle
+  // and must NOT get a spurious keyframe from a plain Set Key. NOTE: the tool's
+  // Set Key does NOT go through here (it uses a TnzLib KeyframeSetter helper in
+  // plastictool.cpp); the pin-locking on global key lives there.
+  for (int p = 0; p < PIN; ++p)
     m_params[p]->setKeyframe(m_params[p]->getKeyframeAt(frame));
 }
 
@@ -129,7 +162,9 @@ bool SkVD::isKeyframe(double frame) const {
 //------------------------------------------------------------------
 
 bool SkVD::isFullKeyframe(double frame) const {
-  for (int p = 0; p < PARAMS_COUNT; ++p)
+  // PIN excluded: it's an independent IK anchor toggle, not part of the
+  // vertex transform, so it must not affect the full/partial key indicator.
+  for (int p = 0; p < PIN; ++p)
     if (!m_params[p]->isKeyframe(frame)) return false;
 
   return true;
@@ -144,8 +179,16 @@ void SkVD::deleteKeyframe(double frame) {
 //------------------------------------------------------------------
 
 void SkVD::saveData(TOStream &os) {
-  for (int p = 0; p < PARAMS_COUNT; ++p)
-    if (!m_params[p]->isDefault()) os.child(::parNames[p]) << *m_params[p];
+  for (int p = 0; p < PARAMS_COUNT; ++p) {
+    // SCALEX/SCALEY are scale FACTORS with default 1.0 (100%), but
+    // TDoubleParam::isDefault() only recognizes zero-defaults: check them
+    // explicitly so untouched scales are still not serialized.
+    bool isDef = (p == SCALEX || p == SCALEY)
+                     ? (m_params[p]->getKeyframeCount() == 0 &&
+                        m_params[p]->getDefaultValue() == 1.0)
+                     : m_params[p]->isDefault();
+    if (!isDef) os.child(::parNames[p]) << *m_params[p];
+  }
 }
 
 //------------------------------------------------------------------
@@ -178,6 +221,10 @@ public:
   SkVDSet m_vds;            //!< Container of vertex deformations
 
   TDoubleParamP m_skelIdsParam;  //!< Curve of skeleton ids by xsheet frame
+
+  bool m_pinsEnabled = true;  //!< SuperPlastic: whether the IK pin
+                              //!< constraints are applied at evaluation
+                              //!< (scene data, keys untouched when off)
 
   std::set<TParamObserver *>
       m_observers;  //!< Set of the deformation's observers
@@ -467,6 +514,8 @@ void PlasticSkeletonDeformation::Imp::touchParams(SkVD &vd) {
     param->setName(parNames[p]);
     param->setMeasureName(parMeasures[p]);
     param->setGrammar(m_grammar);
+    // Scale factors are neutral at 1.0 (100%), not 0
+    if (p == SkVD::SCALEX || p == SkVD::SCALEY) param->setDefaultValue(1.0);
 
     vd.m_params[p] = param;
 
@@ -881,6 +930,325 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   if (!skeleton.vertices().empty())
     m_imp->updateBranchPositions(*origSkel, skeleton, frame,
                                  skeleton.vertices().begin().m_idx);
+
+  // NOTE: the SuperPlastic squash & stretch (SCALEX/SCALEY) is NOT applied
+  // here — it is a controller ON TOP of the skeleton (an affine composed into
+  // the drawing/render transforms, see getSquashControllerAffine): keeping it
+  // out of the skeleton evaluation means pins, IK and pose manipulation never
+  // interact with the scale.
+
+  // NOTE: the planting below is NOT gated by pinsEnabled — the flag only
+  // puts the pins to sleep in the TOOL UI (no diamonds, no pin manipulation).
+  // Removing the planting from the evaluation would shift the whole pose the
+  // moment IK mode is toggled, and viewer/render would diverge from the
+  // animation as authored.
+
+  // SuperPlastic pin constraints (per-frame). The OLDEST active pin is planted
+  // by rigidly translating the whole skeleton onto its target (PINTX,PINTY):
+  // the root stays free and the animator's pose is untouched. Any FURTHER pin
+  // (double support in a walk) is planted by bending ONLY its own limb — CCD
+  // confined strictly below the point where its chain diverges from the ones
+  // already planted, so the first foot never moves. Enforced at EVERY frame,
+  // not just on keyframes, so pins hold through the in-betweens.
+  struct locals {
+    // Root-first chain of vertex indices from the skeleton root down to v.
+    static std::vector<int> pathFromRoot(const PlasticSkeleton &skel, int v) {
+      std::vector<int> path;
+      for (int p = v; p >= 0; p = skel.vertex(p).parent()) path.push_back(p);
+      std::reverse(path.begin(), path.end());
+      return path;
+    }
+
+    // v's subtree (v included), descending child edges only.
+    static void collectSubtree(PlasticSkeleton &skel, int v,
+                               std::vector<int> &out) {
+      out.push_back(v);
+      PlasticSkeletonVertex &vx = skel.vertex(v);
+      PlasticSkeleton::vertex_type::edges_iterator et, eEnd(vx.edgesEnd());
+      for (et = vx.edgesBegin(); et != eEnd; ++et) {
+        int vChild = skel.edge(*et).vertex(1);
+        if (vChild == v) continue;
+        collectSubtree(skel, vChild, out);
+      }
+    }
+
+    // Direction (radians) of the bone arriving at v from its parent, walking
+    // up degenerate bones; horizontal axis at the root (like buildAngle).
+    static double boneDir(const PlasticSkeleton &skel, int v) {
+      int q = v, p = skel.vertex(v).parent();
+      for (; p >= 0; q = p, p = skel.vertex(p).parent()) {
+        TPointD d = skel.vertex(q).P() - skel.vertex(p).P();
+        if (norm2(d) > 1e-8) return atan2(d.y, d.x);
+      }
+      return 0.0;
+    }
+
+    // Current ANGLE-equivalent delta (degrees) of joint v, measured
+    // geometrically against the original rest pose — the same quantity the
+    // min/maxAngle limits constrain in the FK paths.
+    static double relAngleDeg(const PlasticSkeleton &def,
+                              const PlasticSkeleton &orig, int v) {
+      int vp      = def.vertex(v).parent();
+      double now  = boneDir(def, v) - boneDir(def, vp);
+      double rest = boneDir(orig, v) - boneDir(orig, vp);
+      double rel  = now - rest;
+      while (rel > M_PI) rel -= 2.0 * M_PI;
+      while (rel < -M_PI) rel += 2.0 * M_PI;
+      return rel * M_180_PI;
+    }
+
+    // First frame of the pin's current ON run (Constant keys): seniority
+    // decides which pin owns the translation, so toggling a second pin on
+    // never re-targets the first one (that would jump the whole pose).
+    static double activationFrame(const TDoubleParam &pin, double frame) {
+      double on = frame;
+      for (int k = pin.getKeyframeCount() - 1; k >= 0; --k) {
+        const TDoubleKeyframe &kf = pin.getKeyframe(k);
+        if (kf.m_frame > frame) continue;
+        if (kf.m_value < 0.5) break;
+        on = kf.m_frame;
+      }
+      return on;
+    }
+  };  // locals
+
+  struct ActivePin {
+    int idx;
+    TPointD target;
+    double since;
+  };
+  std::vector<ActivePin> pins;
+
+  const tcg::list<PlasticSkeleton::vertex_type> &verts = skeleton.vertices();
+  for (auto vt = verts.begin(); vt != verts.end(); ++vt) {
+    auto it = m_imp->m_vds.find(vt->name());
+    if (it == m_imp->m_vds.end()) continue;
+    const SkVD &vd = it->m_vd;
+    if (!vd.m_params[SkVD::PIN] || !vd.m_params[SkVD::PINTX] ||
+        !vd.m_params[SkVD::PINTY])
+      continue;
+    if (vd.m_params[SkVD::PIN]->getValue(frame) < 0.5) continue;
+    // Skip pins that never got a target (avoid snapping to the origin) —
+    // also shields against stale PIN flags left over in older scenes.
+    if (vd.m_params[SkVD::PINTX]->isDefault() &&
+        vd.m_params[SkVD::PINTY]->isDefault())
+      continue;
+    TPointD target(vd.m_params[SkVD::PINTX]->getValue(frame),
+                   vd.m_params[SkVD::PINTY]->getValue(frame));
+    pins.push_back(
+        {(int)vt.m_idx, target,
+         locals::activationFrame(*vd.m_params[SkVD::PIN], frame)});
+  }
+  if (pins.empty()) return;
+
+  std::stable_sort(pins.begin(), pins.end(),
+                   [](const ActivePin &a, const ActivePin &b) {
+                     return a.since < b.since;
+                   });
+
+  // Primary (oldest) pin: rigid whole-skeleton translation.
+  TPointD shift = pins[0].target - skeleton.vertex(pins[0].idx).P();
+  if (norm2(shift) > 1e-12)
+    for (auto st = verts.begin(); st != verts.end(); ++st)
+      skeleton.vertex(st.m_idx).P() += shift;
+
+  if (pins.size() == 1) return;
+
+  // Plant every secondary pin: CCD on its own limb, below the point where it
+  // diverges from the already-planted chains. Re-runnable — the primary chain
+  // is the fixed seed each pass (used by the two-foot correction below).
+  auto plantSecondaries = [&]() {
+    // Vertices already committed to a planted chain: CCD below must not touch.
+    std::set<int> planted;
+    {
+      std::vector<int> p0 = locals::pathFromRoot(skeleton, pins[0].idx);
+      planted.insert(p0.begin(), p0.end());
+    }
+
+    for (size_t i = 1; i < pins.size(); ++i) {
+      const int pinV        = pins[i].idx;
+      const TPointD &target = pins[i].target;
+      std::vector<int> path = locals::pathFromRoot(skeleton, pinV);
+
+      // Anchor = deepest vertex of this chain already planted (at worst the
+      // root). CCD pivots live strictly below it: rotating their subtrees can
+      // never move a previously planted pin (disjoint by construction).
+      int aIdx = 0;
+      for (int j = (int)path.size() - 1; j >= 0; --j)
+        if (planted.count(path[j])) {
+          aIdx = j;
+          break;
+        }
+
+      const int SWEEPS  = 24;
+      const double tol2 = 1e-9;
+      for (int sweep = 0; sweep < SWEEPS; ++sweep) {
+        if (norm2(target - skeleton.vertex(pinV).P()) < tol2) break;
+        // Nearest-to-pin pivot first: classic CCD sweep order. The anchor
+        // itself (j == aIdx) is a valid LAST pivot: rotating only path[j+1]'s
+        // subtree about it bends this limb's attachment bone too — without it,
+        // a pose that puts the divergence point out of the limb's reach would
+        // tear the pin off with no joint able to compensate. Rotating just
+        // that subtree can never move the previously planted chains.
+        for (int j = (int)path.size() - 2; j >= aIdx; --j) {
+          const TPointD pivot = skeleton.vertex(path[j]).P();
+          TPointD cur = skeleton.vertex(pinV).P() - pivot;
+          TPointD tgt = target - pivot;
+          if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
+          double ang = atan2(cross(cur, tgt), cur * tgt);
+
+          // Angular limits: this rotation changes exactly the ORIGINAL
+          // relative angle of joint path[j+1] (the path follows the original
+          // parenting), so clamp it within the joint's min/max. A stiff limb
+          // stops at its limit instead of hyper-extending even when it's the
+          // pin PLANTING that bends it (the classic "grab the shoulder, the
+          // pinned elbow folds backwards" case); the pin may then simply not
+          // reach its target on this limb.
+          const PlasticSkeletonVertex &jvx = origSkel->vertex(path[j + 1]);
+          const SkVD *jvd = 0;
+          {
+            auto jt = m_imp->m_vds.find(jvx.name());
+            if (jt != m_imp->m_vds.end()) jvd = &jt->m_vd;
+          }
+          double jLo, jHi;
+          effAngleLimits(jvd, jvx, frame, jLo, jHi);
+          if (jLo > -1e9 || jHi < 1e9) {
+            double curRel =
+                locals::relAngleDeg(skeleton, *origSkel, path[j + 1]);
+            double lo = (jLo - curRel) * (M_PI / 180.0);
+            double hi = (jHi - curRel) * (M_PI / 180.0);
+            ang       = std::min(std::max(ang, lo), hi);
+          }
+
+          double c = cos(ang), s = sin(ang);
+          std::vector<int> sub;
+          locals::collectSubtree(skeleton, path[j + 1], sub);
+          for (int v : sub) {
+            TPointD &P = skeleton.vertex(v).P();
+            TPointD d  = P - pivot;
+            P = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+          }
+        }
+      }
+
+      // This chain is now planted too: later pins must bend below it.
+      planted.insert(path.begin(), path.end());
+    }
+  };  // plantSecondaries
+
+  plantSecondaries();
+
+  // Reachability threshold RELATIVE to the rig scale (bbox diagonal): a fixed
+  // epsilon fired spuriously on some rigs, nudging the exact primary pin and
+  // leaving small shifts (seen with 3 asymmetric pins). Below this, all feet
+  // count as planted and the correction is skipped entirely.
+  double diag2 = 0.0;
+  {
+    TPointD lo = verts.begin()->P(), hi = lo;
+    for (auto st = verts.begin(); st != verts.end(); ++st) {
+      const TPointD &P = skeleton.vertex(st.m_idx).P();
+      lo.x = std::min(lo.x, P.x), lo.y = std::min(lo.y, P.y);
+      hi.x = std::max(hi.x, P.x), hi.y = std::max(hi.y, P.y);
+    }
+    diag2 = norm2(hi - lo);
+  }
+  const double reachTol2 = std::max(1e-8, diag2 * 1e-6);  // (~0.1% of diagonal)²
+
+  // Two-foot hard constraint: a secondary pin dragged past the reach of its
+  // limb must NOT lift off the ground. Pull the whole skeleton toward the
+  // average pin residual and re-plant, a few passes: the body settles at the
+  // feasible middle where every foot stays ~planted and the motion is
+  // naturally limited (the support resists), instead of one foot detaching.
+  // Damped, so it converges without over-shooting the primary. No-op when all
+  // pins reach (common case) → the exact primary planting is preserved.
+  for (int pass = 0; pass < 10; ++pass) {
+    TPointD resid(0.0, 0.0);
+    double maxr2 = 0.0;
+    for (const ActivePin &pin : pins) {
+      TPointD r = pin.target - skeleton.vertex(pin.idx).P();
+      resid     = resid + r;
+      maxr2     = std::max(maxr2, norm2(r));
+    }
+    if (maxr2 < reachTol2) break;  // every foot essentially planted
+    resid = resid * (0.5 / (double)pins.size());  // damped average
+    if (norm2(resid) < reachTol2 * 0.01) break;   // balanced; can't improve
+    for (auto st = verts.begin(); st != verts.end(); ++st)
+      skeleton.vertex(st.m_idx).P() += resid;
+    plantSecondaries();  // re-bend the secondary limbs from the new body pos
+  }
+}
+
+//------------------------------------------------------------------
+
+TAffine PlasticSkeletonDeformation::getSquashControllerAffine(
+    int skelId, double frame) const {
+  const PlasticSkeletonP &skel = skeleton(skelId);
+  if (!skel || skel->empty()) return TAffine();
+
+  // The controller params live on the ROOT vertex's deformation
+  const tcg::list<PlasticSkeleton::vertex_type> &vs = skel->vertices();
+  int rootIdx = -1;
+  for (auto vt = vs.begin(); vt != vs.end(); ++vt)
+    if (vt->parent() < 0) {
+      rootIdx = (int)vt.m_idx;
+      break;
+    }
+  if (rootIdx < 0) return TAffine();
+
+  auto it = m_imp->m_vds.find(skel->vertex(rootIdx).name());
+  if (it == m_imp->m_vds.end()) return TAffine();
+  const SkVD &vd = it->m_vd;
+
+  auto val = [&vd, frame](SkVD::Params p, double def) {
+    return vd.m_params[p] ? vd.m_params[p]->getValue(frame) : def;
+  };
+
+  double sx  = val(SkVD::SCALEX, 1.0), sy = val(SkVD::SCALEY, 1.0);
+  double rot = val(SkVD::ROT, 0.0);
+  double shx = val(SkVD::SHEARX, 0.0), shy = val(SkVD::SHEARY, 0.0);
+  double tx  = val(SkVD::TRANSX, 0.0), ty = val(SkVD::TRANSY, 0.0);
+
+  if (fabs(sx - 1.0) <= 1e-9 && fabs(sy - 1.0) <= 1e-9 &&
+      fabs(rot) <= 1e-9 && fabs(shx) <= 1e-9 && fabs(shy) <= 1e-9 &&
+      fabs(tx) <= 1e-9 && fabs(ty) <= 1e-9)
+    return TAffine();
+
+  // Degenerate/negative scales would collapse or flip the mesh: clamp
+  sx = std::max(sx, 0.01);
+  sy = std::max(sy, 0.01);
+
+  // Pivot = DEFORMED root position + keyframeable offset: it follows the
+  // character (the stage-object center can't — the advancement lives in
+  // mesh-local space via the eval-time pin shifts) and can be animated
+  PlasticSkeleton deformed;
+  storeDeformedSkeleton(skelId, frame, deformed);
+  if (deformed.empty()) return TAffine();
+
+  TPointD C = deformed.vertex(rootIdx).P();
+  C.x += val(SkVD::PIVOTX, 0.0);
+  C.y += val(SkVD::PIVOTY, 0.0);
+
+  // Same composition order as the Toonz stage placement: translation, then
+  // rotation, shear and scale about the pivot
+  return TTranslation(tx, ty) * TTranslation(C) * TRotation(rot) *
+         TShear(shx, shy) * TScale(sx, sy) * TTranslation(-C);
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::enablePins(bool on) {
+  if (m_imp->m_pinsEnabled == on) return;
+  m_imp->m_pinsEnabled = on;
+
+  // The evaluation result changes: invalidate the associated deformers
+  PlasticDeformerStorage::instance()->invalidateDeformation(
+      this, PlasticDeformerStorage::NONE);
+}
+
+//------------------------------------------------------------------
+
+bool PlasticSkeletonDeformation::pinsEnabled() const {
+  return m_imp->m_pinsEnabled;
 }
 
 //------------------------------------------------------------------
@@ -900,13 +1268,16 @@ void PlasticSkeletonDeformation::updatePosition(
   // - this is still ok and spares
   // access to v's grandParent...
 
+  double loLim, hiLim;
+  effAngleLimits(&vd, vx, frame, loLim, hiLim);
+
   double aDelta = tcg::point_ops::angle(vPos - vParentPos, pos - vParentPos) *
                   M_180_PI,
          dDelta = tcg::point_ops::dist(vParentPos, pos) -
                   tcg::point_ops::dist(vParentPos, vPos),
 
-         a = tcrop(vd.m_params[SkVD::ANGLE]->getValue(frame) + aDelta,
-                   vx.m_minAngle, vx.m_maxAngle),
+         a = tcrop(vd.m_params[SkVD::ANGLE]->getValue(frame) + aDelta, loLim,
+                   hiLim),
          d = vd.m_params[SkVD::DISTANCE]->getValue(frame) + dDelta;
 
   vd.m_params[SkVD::ANGLE]->setValue(frame, a);
@@ -930,10 +1301,13 @@ void PlasticSkeletonDeformation::updateAngle(
 
   SkVD &vd = m_imp->m_vds.find(vx.name())->m_vd;
 
+  double loLim, hiLim;
+  effAngleLimits(&vd, vx, frame, loLim, hiLim);
+
   double aDelta = tcg::point_ops::angle(vx.P() - vParentPos, pos - vParentPos) *
                   M_180_PI,
-         a = tcrop(vd.m_params[SkVD::ANGLE]->getValue(frame) + aDelta,
-                   vx.m_minAngle, vx.m_maxAngle);
+         a = tcrop(vd.m_params[SkVD::ANGLE]->getValue(frame) + aDelta, loLim,
+                   hiLim);
 
   vd.m_params[SkVD::ANGLE]->setValue(frame, a);
 
@@ -1048,6 +1422,10 @@ void PlasticSkeletonDeformation::saveData(TOStream &os) {
     }
   }
   os.closeChild();
+
+  // SuperPlastic: pins put to sleep (tag only when disabled — old scenes and
+  // old readers are unaffected)
+  if (!m_imp->m_pinsEnabled) os.child("PinsDisabled") << 1;
 }
 
 //------------------------------------------------------------------
@@ -1083,6 +1461,10 @@ void PlasticSkeletonDeformation::loadData(TIStream &is) {
       }
 
       is.matchEndTag();
+    } else if (tagName == "PinsDisabled") {
+      int disabled = 0;
+      is >> disabled, is.matchEndTag();
+      m_imp->m_pinsEnabled = (disabled == 0);
     } else if (tagName == "SkelIdsParam")
       is >> *m_imp->m_skelIdsParam, is.matchEndTag();
     else if (tagName == "Skeletons") {

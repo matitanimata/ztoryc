@@ -86,6 +86,7 @@ set(HEADERS
     ../include/toonz/fxdag.h
     ../include/toonz/glrasterpainter.h
     ../include/toonz/hook.h
+    ../include/toonz/ikccd.h
     ../include/toonz/ikengine.h
     ../include/toonz/ikjacobian.h
     ../include/toonz/iknode.h
@@ -188,6 +189,7 @@ set(SOURCES
     fxdag.cpp
     glrasterpainter.cpp
     hook.cpp
+    ikccd.cpp
     ikengine.cpp
     ikjacobian.cpp
     iknode.cpp

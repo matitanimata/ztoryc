@@ -56,6 +56,38 @@ public:
     ANGLE = 0,  //!< Distance from parent vertex (delta)
     DISTANCE,   //!< Angle with parent edge (delta)
     SO,         //!< Vertex's stacking order
+    PIN,        //!< SuperPlastic IK anchor: >=0.5 means this vertex is pinned
+                //!< (kept fixed) while solving the chain at the current frame.
+                //!< Keyframeable/step-interpolated so the anchor can switch
+                //!< over time (e.g. the support foot in a walk cycle).
+    PINTX,      //!< SuperPlastic pin TARGET position (local space) for this
+    PINTY,      //!< vertex. Meaningful only where PIN>=0.5. At evaluation the
+                //!< whole skeleton is translated so the pinned vertex lands on
+                //!< (PINTX,PINTY) — a true per-frame constraint, so the pin
+                //!< stays planted on in-between frames, not just on keyframes.
+    SCALEX,     //!< SuperPlastic squash & stretch: scale FACTORS (1.0 = 100%
+    SCALEY,     //!< = neutral; custom default handling in save/touchParams
+                //!< keeps untouched scales unserialized). Stored on the ROOT
+                //!< vertex's deformation. NOT part of the skeleton evaluation:
+                //!< the scale is a CONTROLLER on top of it — an affine
+                //!< composed into the drawing/render transforms (see
+                //!< getSquashControllerAffine) — so pins, IK and pose
+                //!< manipulation never interact with it.
+    PIVOTX,     //!< Pivot of the squash & stretch controller, stored on the
+    PIVOTY,     //!< ROOT vertex's deformation as a keyframeable OFFSET from
+                //!< the DEFORMED root position: the pivot follows the
+                //!< character and can be moved/animated (default 0 = pivot on
+                //!< the root vertex).
+    TRANSX,     //!< Controller position offset (composed after the
+    TRANSY,     //!< pivot-anchored transform).
+    ROT,        //!< Controller rotation (degrees) about the pivot.
+    SHEARX,     //!< Controller shear about the pivot.
+    SHEARY,
+    MINANGLE,   //!< Keyframeable OVERRIDE of the vertex's static min/max angle
+    MAXANGLE,   //!< limit: active only where it has keys (so joint limits can
+                //!< change during the animation), otherwise the static
+                //!< PlasticSkeletonVertex limit is used. Default 0, unused
+                //!< until keyed → old scenes and un-keyed joints unaffected.
     PARAMS_COUNT
   };
 
@@ -295,6 +327,22 @@ public:
 
   void storeDeformedSkeleton(int skeletonId, double frame,
                              PlasticSkeleton &skeleton) const;
+
+  //! SuperPlastic squash & stretch controller: the affine (in skeleton/world
+  //! mesh coordinates) to be composed ON TOP of the deformed result —
+  //! T(C)·S·T(-C), where S = the root deformation's SCALEX/SCALEY factors and
+  //! C = the DEFORMED root position plus the keyframeable PIVOTX/PIVOTY
+  //! offset (so the pivot follows the character). Identity when the scale is
+  //! neutral. The skeleton evaluation itself is never affected.
+  TAffine getSquashControllerAffine(int skeletonId, double frame) const;
+
+  //! SuperPlastic: whether the pin UI (diamonds, pin-aware manipulation) is
+  //! active in the tool. Scene data (serialized; default enabled). NOTE: the
+  //! evaluation planting is NEVER gated by this — leaving IK mode releases
+  //! the active pins with a full bake instead (tool side), so the authored
+  //! animation and the render never change under a UI toggle.
+  void enablePins(bool on);
+  bool pinsEnabled() const;
 
   void updatePosition(const PlasticSkeleton &originalSkeleton,
                       PlasticSkeleton &deformedSkeleton, double frame, int v,

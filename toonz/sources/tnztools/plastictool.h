@@ -27,6 +27,8 @@
 
 // STD includes
 #include <memory>
+#include <map>
+#include <vector>
 
 // tcg includes
 #include "tcg/tcg_base.h"
@@ -122,6 +124,22 @@ private:
       m_globalKey;  //!< Whether animating a vertex will cause EVERY vertex to
   TBoolProperty
       m_keepDistance;  //!< Whether animation editing can alter vertex distances
+  TBoolProperty
+      m_ikDrag;  //!< Whether animation editing solves the whole chain with IK
+                 //!< (SuperPlastic CCD solver) instead of single-vertex FK
+
+  TEnumProperty m_scaleConstraint;  //!< Squash & stretch constraint, like the
+                                    //!< Animate tool: None / Aspect Ratio /
+                                    //!< Mass (V = 1/H, area preserved)
+
+  TBoolProperty m_showAngleLimits;  //!< Show the draggable angle-limit gizmo
+                                    //!< (off by default to keep the skeleton
+                                    //!< clean)
+
+  TBoolProperty m_showController;  //!< Show the squash/stretch controller gizmo
+                                   //!< (Animate-tool replica on the skeleton);
+                                   //!< toggle off so it doesn't get in the way
+                                   //!< of vertex manipulation
 
   TStringProperty m_minAngle,
       m_maxAngle;  //!< Minimum and maximum angle values allowed
@@ -132,6 +150,10 @@ private:
       m_distanceRelay;  //!< Relay property for vertex distance
   TDoubleParamRelayProperty m_angleRelay;  //!< Relay property for vertex angle
   TDoubleParamRelayProperty m_soRelay;     //!< Relay property for vertex so
+
+  TDoubleParamRelayProperty
+      m_scaleXRelay,  //!< SuperPlastic squash & stretch relays — bound to the
+      m_scaleYRelay;  //!< SELECTED vertex (= scale pivot), delta from 1
 
   TDoubleParamRelayProperty
       m_skelIdRelay;  //!< Relay property for m_sd's skeleton id
@@ -145,6 +167,32 @@ private:
   std::vector<TPointD>
       m_pressedVxsPos;   //!< Position of selected vertices at mouse press
   SkDKey m_pressedSkDF;  //!< Skeleton deformation keyframes at mouse press
+
+  // SuperPlastic controller gizmo: a full Animate-tool replica ON TOP of the
+  // skeleton (position/rotation/scale/shear about a keyframeable pivot that
+  // follows the deformed root), with per-handle hover highlight and dynamic
+  // contrast colors like the Ztoryc Animate tool gizmo.
+  enum SquashCtrlDevice {
+    CtrlNone = 0,
+    CtrlPivot,    //!< double circle at the pivot: moves the pivot (snaps)
+    CtrlMove,     //!< bottom handle: TRANSX/TRANSY
+    CtrlRot,      //!< top handle: ROT about the pivot
+    CtrlScale,    //!< bottom-left square: uniform scale (Mass via combo)
+    CtrlScaleXY,  //!< offset square: free per-axis scale
+    CtrlShear     //!< bottom-right parallelogram: SHEARX/SHEARY
+  };
+  int m_ctrlDevice    = CtrlNone;  //!< Handle being dragged
+  int m_ctrlHighlight = CtrlNone;  //!< Handle under the mouse
+
+  // Angle-limit gizmo: drag the min/max joint bounds directly in the viewer
+  int m_limitDrag = 0;  //!< 0 none, 1 min bound, 2 max bound (being dragged)
+  int m_limitHi   = 0;  //!< hovered bound (same codes)
+  double m_limitOldMin = 0.0,  //!< static bounds at drag start (for the undo)
+      m_limitOldMax    = 0.0;
+  TPointD m_scaleDragCenter;       //!< Controller pivot position at press
+  double m_scaleOldX = 1.0,        //!< Controller values at press time
+      m_scaleOldY = 1.0, m_ctrlOldRot = 0.0, m_ctrlOldTX = 0.0,
+         m_ctrlOldTY = 0.0, m_ctrlOldShX = 0.0, m_ctrlOldShY = 0.0;
 
   // Selection/Highlighting-related vars
 
@@ -278,6 +326,10 @@ public:
                        const TPointD &posShift);
 
 public:
+  //! Restores the IK checkbox + pin UI state without re-triggering the
+  //! clean-release logic (used by the IK-release undo/redo)
+  void setIkPinsUiEnabled(bool on);
+
   // Actions with associated undo
   int addSkeleton_undo(const PlasticSkeletonP &skeleton);
   void addSkeleton_undo(int skelId, const PlasticSkeletonP &skeleton);
@@ -333,7 +385,61 @@ protected:
   void mouseMove_animate(const TPointD &pos, const TMouseEvent &me);
   void leftButtonDown_animate(const TPointD &pos, const TMouseEvent &me);
   void leftButtonDrag_animate(const TPointD &pos, const TMouseEvent &me);
+  void moveVertexIK_animate(double frame, int v, const TPointD &pos);
+  void moveVertexMultiAnchor_animate(double frame, int v, const TPointD &pos,
+                                     const std::vector<int> &pins,
+                                     const std::map<int, TPointD> &curPos);
+  void writeBackAngles_animate(double frame,
+                               const std::map<int, TPointD> &curPos,
+                               const std::map<int, TPointD> &desired,
+                               bool clampToLimits = true);
+  // Column-agnostic core of writeBackAngles_animate: convert a rigid
+  // desired-positions snapshot (in `def`'s own local space) into that column's
+  // root-down ANGLE params. The single-column wrapper above passes the current
+  // column; the cross-level solver calls it once per touched column.
+  void writeBackAnglesFor_animate(const PlasticSkeleton &orig, const SkDP &def,
+                                  int skelId, double frame,
+                                  const std::map<int, TPointD> &curLocal,
+                                  const std::map<int, TPointD> &desiredLocal,
+                                  bool clampToLimits);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
+  void controllerDrag_animate(const TPointD &pos, const TMouseEvent &me);
+  void scaleDrag_animate(const TPointD &pos, const TMouseEvent &me);
+  void pivotDrag_animate(const TPointD &pos);
+  int controllerHitTest_animate(const TPointD &pos);  //!< SquashCtrlDevice
+  void drawController_animate(double pixelSize);
+
+  // Angle-limit gizmo helpers
+  bool limitDisplay_animate(int v, TPointD &parentPosDef, double &branchAngleRad,
+                            double &defaultAngleDeg, double &radius,
+                            double &minDisp, double &maxDisp);
+  int limitHitTest_animate(const TPointD &pos);  //!< 0 none / 1 min / 2 max
+  void limitDrag_animate(const TPointD &pos);
+  void drawAngleLimitGizmo_animate(double pixelSize);
+  SkVD *rootVd_animate(int *rootIdx = 0);  //!< ROOT vertex's deformation
+  bool squashPivot_animate(TPointD &C);    //!< controller pivot (local coords)
+
+  void updateMatrix() override;  //!< composes the squash controller affine
+
+  // SuperPlastic IK anchor (pin). The pinned vertex is kept fixed while IK
+  // solving at a given frame; the anchor is keyframeable so it can switch over
+  // time (e.g. the support foot in a walk cycle).
+  int pinnedVertexAtFrame(double frame) const;  //!< first pin, -1 if none
+  std::vector<int> pinnedVerticesAtFrame(double frame) const;  //!< all pins
+  //! Smallest frame > `frame` where any vertex's pin turns ON, or -1 if none
+  double nextPinActivationAfter_animate(double frame) const;
+  //! Leaving IK mode: bake the whole pinned animation into FK + controller so
+  //! every keyframe stays exactly in place, then drop the pins (not undoable)
+  void bakePinsToFK_animate();
+  void togglePinAtCurrentFrame();               //!< pin/unpin selected vertex
+  void switchPinAtCurrentFrame();  //!< pin selected, release others at f+1
+
+public:
+  //! Restore the IK checkbox + pin visibility (used by the bake undo). Sets
+  //! the property with notifyListeners (widget refresh only, no re-trigger).
+  void setIkModeState(bool on);
+
+protected:
   void addContextMenuActions_animate(QMenu *menu);
 
   void draw_mesh();
@@ -372,6 +478,110 @@ private:
                       double pixelSize);
 
   void drawAngleLimits(const SkDP &sd, int skeId, int v, double pixelSize);
+
+  // SuperPlastic multi-level: the skeletons of the columns hierarchically
+  // connected to the current one (via TStageObject parenting) — i.e. the whole
+  // articulated character spread across several drawing levels. Each entry
+  // carries the column's deformed skeleton plus the affine that maps its own
+  // draw space into the current tool's draw space, so the whole character can
+  // be drawn/picked as one.
+  struct ConnectedSkel {
+    int            columnIndex;
+    PlasticSkeleton skel;   //!< deformed, in that column's own draw space
+    TAffine        toCur;   //!< that column's draw space -> current tool space
+  };
+  std::vector<ConnectedSkel> connectedSkeletons_animate() const;
+
+  // One cross-level joint: the child column's root vertex is attached (via the
+  // column parent handle "H<n>") to vertex `parentVertex` of the parent column.
+  // This is the extra edge that stitches the per-level skeletons into one graph
+  // for cross-level IK. Positions resolved in the current tool's draw space.
+  struct CrossLevelLink {
+    int     childColumn, childRootVertex;
+    int     parentColumn, parentVertex;
+    TPointD childPos, parentPos;  // in current tool draw space
+  };
+  std::vector<CrossLevelLink> crossLevelLinks_animate();
+  void drawCrossLevelLinks_animate(double pixelSize);
+
+  // ---- SuperPlastic cross-level IK (pins spanning several columns) ----
+  // One column of the articulated character, resolved for a cross-level solve:
+  // its deformation, rest + deformed skeletons, and the affine that maps its
+  // own skeleton-local space into WORLD space (the common inertial frame — it
+  // already folds in the column parenting, so an ancestor's motion is absorbed
+  // there and pins can be re-planted against it per frame).
+  struct CrossCol {
+    int             columnIndex;
+    SkDP            def;
+    int             skelId;
+    double          paramFrame;  //!< frame to read/write this column's params
+    PlasticSkeleton rest;        //!< un-deformed
+    PlasticSkeleton deformed;    //!< at the current frame, local space
+    TAffine         world;       //!< skeleton-local -> world
+  };
+  //! Every connected column (current first), resolved for a cross-level solve.
+  std::vector<CrossCol> crossColumns_animate(double frame);
+  //! True when an active pin sits on a column OTHER than the current one: the
+  //! trigger that routes the drag through the cross-level solver.
+  bool hasCrossLevelPin_animate(double frame);
+  //! Drop the cached per-frame placements of every connected column (they
+  //! cache by frame time and never refresh within one frame on their own).
+  void invalidateConnectedPlacements_animate();
+  //! First move of a cross-level drag: per-column undo baselines + the world
+  //! anchor of every pin sitting on a non-current column.
+  void ensureCrossLevelBaselines_animate(double frame);
+  // Unified skeleton graph (Franco's model): all connected columns merged into
+  // ONE skeleton in a common world frame. Column roots stop being special — a
+  // child column's root is an ordinary joint whose parent is the parent column's
+  // attachment vertex (the cross-link). There is a single effective root (the
+  // root column's root). The single-level FK/IK algorithm runs on THIS, then the
+  // result is dispatched back per column via writeBackAnglesFor_animate.
+  struct UNode {  // one graph node = (columnIndex, vertexIndex)
+    int col, vtx;
+    bool operator<(const UNode &o) const {
+      return col != o.col ? col < o.col : vtx < o.vtx;
+    }
+    bool operator==(const UNode &o) const {
+      return col == o.col && vtx == o.vtx;
+    }
+  };
+  struct UnifiedGraph {
+    std::vector<UNode> nodes;
+    std::map<UNode, TPointD> world;    //!< current deformed position (world)
+    std::map<UNode, TPointD> rest;     //!< rest position (same world frame)
+    std::map<UNode, UNode> parent;     //!< unified parent; root -> {-1,-1}
+    std::map<UNode, std::vector<UNode>> children;
+    std::vector<UNode> pins;           //!< active pins across all columns
+    std::map<UNode, TPointD> pinTarget;  //!< PINTX/PINTY world target per pin
+    UNode root{-1, -1};                //!< the one effective root
+  };
+  //! Build the unified skeleton graph from the columns connected to the current
+  //! one (foundation for the unified cross-level FK/IK solver). No side effects.
+  UnifiedGraph buildUnifiedGraph_animate(double frame);
+  //! Unified FK single-joint drag on the combined graph (child columns turn as
+  //! ordinary chain joints). Returns false (no-op) when it doesn't apply —
+  //! single column, pins present, dragging the root — so the caller falls back.
+  bool crossLevelFK_animate(double frame, int vDragged, const TPointD &mousePos);
+  //! Redirect a pick on a child column's (non-draggable) root to the coincident
+  //! parent attachment vertex, which is draggable. In-place; no-op otherwise.
+  void redirectChildRootToParent_animate(int &col, int &v);
+
+  //! Mirror a child-column pin onto the parent's attachment vertex, so the
+  //! single-level primary-pin machinery plants the whole rig (free root). `on`
+  //! is the child pin's new state.
+  void setAttachmentPin_animate(bool on, double frame);
+  //! (legacy) unified multi-column solver — superseded by the attachment-pin
+  //! approach; kept for reference, no longer routed.
+  void crossLevelSolve_animate(double frame, int vDragged,
+                               const TPointD &mousePos);
+  //! Build the multi-column undo block for a finished cross-level drag.
+  void finishCrossLevelUndo_animate(double frame);
+
+  bool                   m_ikCrossDragged = false;  //!< drag spanned columns
+  std::map<int, SkDKey>  m_ikCrossOld;   //!< per-column undo baseline (col->key)
+  std::map<int, SkDP>    m_ikCrossDefs;  //!< per-column deformation (col->def)
+  std::map<std::pair<int, int>, TPointD>
+      m_ikCrossPinWorld;  //!< world plant target per pin, key (col,vertex)
 
   // Selection methods
 
@@ -426,8 +636,11 @@ private:
 
   // Animate
   ToolOptionParamRelayField *m_distanceField, *m_angleField, *m_soField;
+  ToolOptionParamRelayField *m_scaleXField,
+      *m_scaleYField;  //!< SuperPlastic squash & stretch (root-anchored)
   QComboBox *m_interpolationCombo;
   QPushButton *m_setKeyButton, *m_setRestKeyButton;
+  QPushButton *m_pinButton;  //!< SuperPlastic IK anchor toggle
   bool m_updateControls;
 
   void updateControls();
@@ -456,6 +669,7 @@ private slots:
 
   void onSetKey();
   void onSetRestKey();
+  void onPinButton();
   void onInterpolationComboActivated(int index);
   void onFrameSwitched();
   void onPlayingStatusChanged();

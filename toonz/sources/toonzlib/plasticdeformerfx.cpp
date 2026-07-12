@@ -402,8 +402,14 @@ void PlasticDeformerFx::doCompute(TTile &tile, double frame,
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
-    // Use the working transformation
+    // Use the working transformation. The SuperPlastic squash & stretch
+    // controller is an affine ON TOP of the deformed result (pivot follows
+    // the deformed root): compose it, conjugated into mesh coordinates, so
+    // the render matches the viewer.
+    const TAffine &squashCtrl =
+        sd->getSquashControllerAffine(sd->skeletonId(sdFrame), sdFrame);
     tglMultMatrix(TTranslation(-tile.m_pos) * info.m_affine *
+                  meshToWorldMeshAff * worldMeshToMeshAff * squashCtrl *
                   meshToWorldMeshAff);
 
     glEnable(GL_BLEND);
