@@ -525,6 +525,35 @@ private:
   //! First move of a cross-level drag: per-column undo baselines + the world
   //! anchor of every pin sitting on a non-current column.
   void ensureCrossLevelBaselines_animate(double frame);
+  // Unified skeleton graph (Franco's model): all connected columns merged into
+  // ONE skeleton in a common world frame. Column roots stop being special — a
+  // child column's root is an ordinary joint whose parent is the parent column's
+  // attachment vertex (the cross-link). There is a single effective root (the
+  // root column's root). The single-level FK/IK algorithm runs on THIS, then the
+  // result is dispatched back per column via writeBackAnglesFor_animate.
+  struct UNode {  // one graph node = (columnIndex, vertexIndex)
+    int col, vtx;
+    bool operator<(const UNode &o) const {
+      return col != o.col ? col < o.col : vtx < o.vtx;
+    }
+    bool operator==(const UNode &o) const {
+      return col == o.col && vtx == o.vtx;
+    }
+  };
+  struct UnifiedGraph {
+    std::vector<UNode> nodes;
+    std::map<UNode, TPointD> world;    //!< current deformed position (world)
+    std::map<UNode, TPointD> rest;     //!< rest position (same world frame)
+    std::map<UNode, UNode> parent;     //!< unified parent; root -> {-1,-1}
+    std::map<UNode, std::vector<UNode>> children;
+    std::vector<UNode> pins;           //!< active pins across all columns
+    std::map<UNode, TPointD> pinTarget;  //!< PINTX/PINTY world target per pin
+    UNode root{-1, -1};                //!< the one effective root
+  };
+  //! Build the unified skeleton graph from the columns connected to the current
+  //! one (foundation for the unified cross-level FK/IK solver). No side effects.
+  UnifiedGraph buildUnifiedGraph_animate(double frame);
+
   //! Mirror a child-column pin onto the parent's attachment vertex, so the
   //! single-level primary-pin machinery plants the whole rig (free root). `on`
   //! is the child pin's new state.

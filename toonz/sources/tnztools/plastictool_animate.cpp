@@ -2495,6 +2495,71 @@ PlasticTool::crossColumns_animate(double frame) {
 
 //------------------------------------------------------------------------
 
+PlasticTool::UnifiedGraph
+PlasticTool::buildUnifiedGraph_animate(double frame) {
+  UnifiedGraph g;
+  std::vector<CrossCol> cols = crossColumns_animate(frame);
+  if (cols.empty()) return g;
+
+  // Nodes + positions (world) + intra-column parenting.
+  for (const CrossCol &cc : cols)
+    for (auto vt = cc.deformed.vertices().begin();
+         vt != cc.deformed.vertices().end(); ++vt) {
+      UNode n{cc.columnIndex, (int)vt.m_idx};
+      g.nodes.push_back(n);
+      g.world[n] = cc.world * vt->P();
+      // Rest position in the same world frame (bone lengths for reach/IK). The
+      // rest skeleton shares the deformed topology/indices.
+      g.rest[n]   = cc.world * cc.rest.vertex(vt.m_idx).P();
+      const int p = vt->parent();
+      if (p >= 0) g.parent[n] = UNode{cc.columnIndex, p};
+    }
+
+  // Cross-links turn each child column's ROOT into an ordinary joint parented to
+  // the parent column's attachment vertex; the column with no cross-link parent
+  // holds the single effective root.
+  std::map<int, std::pair<int, int>> linkOf;
+  for (const CrossLevelLink &lk : crossLevelLinks_animate())
+    linkOf[lk.childColumn] = {lk.parentColumn, lk.parentVertex};
+  for (const CrossCol &cc : cols)
+    for (auto vt = cc.deformed.vertices().begin();
+         vt != cc.deformed.vertices().end(); ++vt) {
+      if (vt->parent() >= 0) continue;  // only column roots
+      UNode rootN{cc.columnIndex, (int)vt.m_idx};
+      auto it = linkOf.find(cc.columnIndex);
+      if (it != linkOf.end() &&
+          g.world.count(UNode{it->second.first, it->second.second}))
+        g.parent[rootN] = UNode{it->second.first, it->second.second};
+      else
+        g.root = rootN;  // no stitching parent -> the one effective root
+    }
+
+  // Children = inverse of parent.
+  for (const auto &kv : g.parent) g.children[kv.second].push_back(kv.first);
+
+  // Pins + their world targets (PINTX/PINTY when set, else current position).
+  for (const CrossCol &cc : cols)
+    for (auto vt = cc.deformed.vertices().begin();
+         vt != cc.deformed.vertices().end(); ++vt) {
+      SkVD *vd = cc.def->vertexDeformation(cc.skelId, vt.m_idx);
+      if (!vd || !vd->m_params[SkVD::PIN] ||
+          vd->m_params[SkVD::PIN]->getValue(cc.paramFrame) < 0.5)
+        continue;
+      UNode n{cc.columnIndex, (int)vt.m_idx};
+      g.pins.push_back(n);
+      TPointD tLocal = vt->P();
+      if (vd->m_params[SkVD::PINTX] && vd->m_params[SkVD::PINTY] &&
+          !vd->m_params[SkVD::PINTX]->isDefault())
+        tLocal = TPointD(vd->m_params[SkVD::PINTX]->getValue(cc.paramFrame),
+                         vd->m_params[SkVD::PINTY]->getValue(cc.paramFrame));
+      g.pinTarget[n] = cc.world * tLocal;
+    }
+
+  return g;
+}
+
+//------------------------------------------------------------------------
+
 bool PlasticTool::hasCrossLevelPin_animate(double frame) {
   // Gated by the tool's IK mode (current deformation's flag). Other columns'
   // own pinsEnabled flag isn't managed by the tool, so we read their PIN param
