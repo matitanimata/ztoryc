@@ -553,6 +553,10 @@ private:
   //! Build the unified skeleton graph from the columns connected to the current
   //! one (foundation for the unified cross-level FK/IK solver). No side effects.
   UnifiedGraph buildUnifiedGraph_animate(double frame);
+  //! Unified FK single-joint drag on the combined graph (child columns turn as
+  //! ordinary chain joints). Returns false (no-op) when it doesn't apply —
+  //! single column, pins present, dragging the root — so the caller falls back.
+  bool crossLevelFK_animate(double frame, int vDragged, const TPointD &mousePos);
 
   //! Mirror a child-column pin onto the parent's attachment vertex, so the
   //! single-level primary-pin machinery plants the whole rig (free root). `on`

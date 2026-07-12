@@ -344,10 +344,12 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
     // own — its motion belongs to the parent column).
     if (m_ikDrag.getValue() &&
         (deformedSkeleton().vertex(m_svSel).parent() >= 0 || ikPin)) {
-      // Cross-column pins are mirrored onto the parent's attachment vertex (see
-      // setAttachmentPin_animate), so a single per-column single-level solve
-      // handles everything — no separate cross-level pass.
-      moveVertexIK_animate(frame, m_svSel, pos);
+      // FK posing (no pins) on a multi-column character runs on the unified
+      // graph so child columns turn as ordinary chain joints; pinned posing
+      // falls back to the single-level path (cross-column pins are mirrored onto
+      // the parent's attachment vertex, see setAttachmentPin_animate).
+      if (!crossLevelFK_animate(frame, m_svSel, pos))
+        moveVertexIK_animate(frame, m_svSel, pos);
     } else if (m_keepDistance.getValue()) {
       ::setKeyframe(vd->m_params[SkVD::ANGLE],
                     frame);  // Set a keyframe for it. It must be done
@@ -2556,6 +2558,83 @@ PlasticTool::buildUnifiedGraph_animate(double frame) {
     }
 
   return g;
+}
+
+//------------------------------------------------------------------------
+
+// Unified FK: a single-joint rotation on the COMBINED graph, so dragging a
+// parent joint turns its child columns too (their roots are ordinary chain
+// joints here). Constant bone length, then the ANGLE write-back per column
+// reproduces it. Returns false if it can't run (single column, root, etc.) so
+// the caller falls back to the normal per-column path.
+bool PlasticTool::crossLevelFK_animate(double frame, int vDragged,
+                                       const TPointD &mousePos) {
+  UnifiedGraph g = buildUnifiedGraph_animate(frame);
+  if (g.nodes.empty()) return false;
+  if (!g.pins.empty()) return false;  // pinned posing handled by the pin path
+
+  const int curCol = ::column();
+  const UNode dragged{curCol, vDragged};
+  auto pit = g.parent.find(dragged);
+  if (pit == g.parent.end() || pit->second.col < 0) return false;  // root/leaf
+
+  // Multi-column only: single-column FK already works via the normal path.
+  bool multi = false;
+  for (const UNode &n : g.nodes)
+    if (n.col != curCol) {
+      multi = true;
+      break;
+    }
+  if (!multi) return false;
+
+  const TPointD pivot = g.world[pit->second];
+  const TPointD oldD  = g.world[dragged] - pivot;
+  const TPointD newD  = (getMatrix() * mousePos) - pivot;
+  if (norm2(oldD) < 1e-12 || norm2(newD) < 1e-12) return false;
+  const double theta = wrapPi(atan2(newD.y, newD.x) - atan2(oldD.y, oldD.x));
+
+  // Dragged node's unified subtree (children map), rotated rigidly about pivot.
+  std::set<UNode> moved;
+  std::queue<UNode> q;
+  q.push(dragged);
+  moved.insert(dragged);
+  while (!q.empty()) {
+    UNode u = q.front();
+    q.pop();
+    auto ct = g.children.find(u);
+    if (ct != g.children.end())
+      for (const UNode &w : ct->second)
+        if (!moved.count(w)) {
+          moved.insert(w);
+          q.push(w);
+        }
+  }
+
+  std::map<UNode, TPointD> desired = g.world;
+  const double c = cos(theta), s = sin(theta);
+  for (const UNode &u : moved) {
+    const TPointD d = g.world[u] - pivot;
+    desired[u] = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+  }
+
+  // Dispatch per touched column. Build the column's rest skeleton + world matrix
+  // from crossColumns (buildUnifiedGraph already used them).
+  std::set<int> touchedCols;
+  for (const UNode &u : moved) touchedCols.insert(u.col);
+  std::vector<CrossCol> cols = crossColumns_animate(frame);
+  for (const CrossCol &cc : cols) {
+    if (!touchedCols.count(cc.columnIndex)) continue;
+    const TAffine wInv = cc.world.inv();
+    std::map<int, TPointD> curLocal, desLocal;
+    for (auto vt = cc.deformed.vertices().begin();
+         vt != cc.deformed.vertices().end(); ++vt) {
+      curLocal[(int)vt.m_idx] = vt->P();
+      desLocal[(int)vt.m_idx] = wInv * desired[UNode{cc.columnIndex, (int)vt.m_idx}];
+    }
+    writeBackAnglesFor_animate(cc.rest, cc.def, cc.skelId, cc.paramFrame,
+                               curLocal, desLocal, true);
+  }
+  return true;
 }
 
 //------------------------------------------------------------------------
