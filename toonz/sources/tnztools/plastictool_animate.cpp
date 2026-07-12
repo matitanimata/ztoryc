@@ -614,7 +614,7 @@ void PlasticTool::controllerDrag_animate(const TPointD &pos,
 // around the center (the inner area is left to vertex picking: the pivot
 // usually sits on the root vertex).
 int PlasticTool::controllerHitTest_animate(const TPointD &pos) {
-  if (!m_sd) return CtrlNone;
+  if (!m_sd || !m_showController.getValue()) return CtrlNone;
   TPointD C;
   if (!squashPivot_animate(C)) return CtrlNone;
 
@@ -704,6 +704,7 @@ void ctrlDrawText(const TPointD &p, double unit, const std::string &text) {
 // contrasts with the artwork behind it; the hovered/dragged handle uses the
 // highlighted variant.
 void PlasticTool::drawController_animate(double pixelSize) {
+  if (!m_showController.getValue()) return;
   TPointD C;
   if (!squashPivot_animate(C)) return;
 

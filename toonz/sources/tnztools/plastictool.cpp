@@ -1003,6 +1003,7 @@ PlasticTool::PlasticTool()
     , m_ikDrag("inverseKinematics", false)
     , m_scaleConstraint("scaleConstraint")
     , m_showAngleLimits("showAngleLimits", false)
+    , m_showController("showController", true)
     , m_minAngle("minAngle", L"")
     , m_maxAngle("maxAngle", L"")
     , m_distanceRelay("distanceRelay")
@@ -1047,6 +1048,7 @@ PlasticTool::PlasticTool()
   m_scaleConstraint.addValue(L"Mass");
   m_propGroup[ANIMATE_IDX].bind(m_scaleConstraint);
   m_propGroup[ANIMATE_IDX].bind(m_showAngleLimits);
+  m_propGroup[ANIMATE_IDX].bind(m_showController);
   m_propGroup[ANIMATE_IDX].bind(m_minAngle);
   m_propGroup[ANIMATE_IDX].bind(m_maxAngle);
 
@@ -1067,6 +1069,7 @@ PlasticTool::PlasticTool()
   m_ikDrag.setId("PlasticInverseKinematics");
   m_scaleConstraint.setId("PlasticScaleConstraint");
   m_showAngleLimits.setId("PlasticShowAngleLimits");
+  m_showController.setId("PlasticShowController");
   m_minAngle.setId("MinAngle");
   m_maxAngle.setId("MaxAngle");
   m_distanceRelay.setId("DistanceRelay");
@@ -1129,6 +1132,7 @@ void PlasticTool::updateTranslation() {
   m_keepDistance.setQStringName(tr("Keep Distance"));
   m_ikDrag.setQStringName(tr("Inverse Kinematics"));
   m_showAngleLimits.setQStringName(tr("Angle Bounds Gizmo"));
+  m_showController.setQStringName(tr("Controller Gizmo"));
   m_scaleConstraint.setQStringName(tr("Maintain:"));
   m_scaleConstraint.setItemUIName(L"None", tr("None"));
   m_scaleConstraint.setItemUIName(L"Aspect Ratio", tr("A/R"));
@@ -2230,6 +2234,7 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
     if (m_mode.getIndex() == ANIMATE_IDX) m_ikDrag.notifyListeners();
   } else if (propertyName == "showAngleLimits") {
     if (m_mode.getIndex() == ANIMATE_IDX) m_showAngleLimits.notifyListeners();
+    if (m_mode.getIndex() == ANIMATE_IDX) m_showController.notifyListeners();
     invalidate();  // show/hide the angle-limit gizmo
   } else if (propertyName == "globalKeyframe") {
     if (m_mode.getIndex() == ANIMATE_IDX) m_globalKey.notifyListeners();

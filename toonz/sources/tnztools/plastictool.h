@@ -136,6 +136,11 @@ private:
                                     //!< (off by default to keep the skeleton
                                     //!< clean)
 
+  TBoolProperty m_showController;  //!< Show the squash/stretch controller gizmo
+                                   //!< (Animate-tool replica on the skeleton);
+                                   //!< toggle off so it doesn't get in the way
+                                   //!< of vertex manipulation
+
   TStringProperty m_minAngle,
       m_maxAngle;  //!< Minimum and maximum angle values allowed
 
