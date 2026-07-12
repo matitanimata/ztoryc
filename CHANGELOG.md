@@ -1,3 +1,42 @@
+## [2026-07-12] — Kitsu “chiuso” (master) + Plastic multi-livello: vista/selezione unificata (feature/superplastic)
+
+Sessione doppia guidata dai test di Franco. Kitsu completato su `master`; nuovo filone
+SUPERPLASTIC multi-livello su `feature/superplastic`.
+
+### Added / Fixed — Kitsu (master, `kitsuclient.cpp/.h`, `ztoryproductionpanel.cpp`, `kitsuconnectdialog.cpp`)
+- **Push status skip-unchanged** (shot + asset): il push confronta lo status target con quello
+  corrente in Kitsu (catturato dal GET tasks) e **salta gli invariati** — niente commenti/
+  notifiche ridondanti sulla activity feed. Messaggio: “N changed, M unchanged”.
+- **Pull asset task-status** — `pullAssetStatuses()` (gemello di `pullStatuses`): asset-types→
+  assets→task-types(Asset)→tasks→`assetStatusesPulled`; agganciato al bottone “Pull assets
+  from Kitsu” (prima entità, poi status, add-only con match kitsuAssetId poi type+name).
+- **Team/assignee sync** — struct `KitsuPerson`; `pullTeam()` popola il roster `m_team` dal
+  **team del progetto** (`GET projects/<id>?relations=true` — il campo `team` è m2m, senza
+  `relations=true` è assente); pull assignee (union add-only su shot+asset); **push assignee
+  add-only ristretto ai membri del team** (`PUT actions/tasks/<id>/assign`, chi è fuori team
+  viene saltato e riportato). Helper condiviso `loadRosterThen(projectId,next)` (persone +
+  team-ids). Roster tirato giù **automaticamente alla connessione** (onLink, loginFinished,
+  apertura panel).
+
+### Added — SUPERPLASTIC multi-livello (feature/superplastic, `plastictool.h/_animate.cpp`)
+- Milestone ridefinito (scartato l'adapter del vecchio Skeleton tool): **Plastic tool che gestisce
+  scheletri su più livelli connessi in gerarchia** (personaggio articolato su più drawing level).
+  Finding: “vertice→vertice” tra mesh = parenting di colonna su handle `H<n>` (risolve al vertice
+  deformato del genitore); la FK cross-livello già funziona in eval, nessun nuovo modello dati.
+- **Vista unificata** (`connectedSkeletons_animate`): BFS sul parenting, disegna gli scheletri
+  delle colonne connesse come contesto attenuato, piazzati via `A_C = getMatrix()⁻¹·getColumnMatrix(C)·ctrl_C`.
+- **Selezione cross-livello**: click su un vertice di un'altra colonna → la rende attiva + seleziona.
+
+### Fixed — SUPERPLASTIC bug latente (feature/superplastic, `toonzlib/xshhandlemanager.cpp`)
+- La gerarchia multi-livello si **sganciava** muovendo un livello con controller squash attivo:
+  `getHandlePos` risolveva l'handle-vertice del genitore in posizione **pre-controller** mentre la
+  mesh renderizzata è post-controller. Fix: applica `getSquashControllerAffine` al vertice prima
+  dello scale 1/inch. No-op sui rig senza controller (identità). Bug SP, non stock.
+
+### Notes
+- Prossimo SUPERPLASTIC: **IK/pin cross-livello** (grafo unificato in spazio comune + write-back
+  dispatchato per colonna) — rimandato a sessione fresca. Rifiniture: hover cross-colonna.
+
 ## [2026-07-11c] — Thumbnail room, Production Tracker, Edit Cels/Keys, Kitsu asset-task push
 
 Sessione lunga guidata dai test in parallelo di Franco. Tutto su `master`, non ancora sotto SUPERPLASTIC.
