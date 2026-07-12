@@ -12,6 +12,7 @@
 #include "toonz/tcolumnhandle.h"
 
 #include "plastictool.h"
+#include <cstdio>
 
 #include <algorithm>
 #include <cmath>
@@ -39,6 +40,9 @@ public:
 
 public:
   AnimateValuesUndo(int v) : m_row(::row()), m_col(::column()), m_v(v) {}
+  // Explicit coordinates: a cross-level drag touches several columns, each
+  // needing its own undo (TemporaryActivation re-activates m_col to apply it).
+  AnimateValuesUndo(int v, int row, int col) : m_row(row), m_col(col), m_v(v) {}
 
   // Again, not accurate. We should get in the details of SkDF... So, let's say
   // around 10 kB - max 10k instances in the standard undos pool.
@@ -206,6 +210,12 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
   // Track mouse position
   m_pressedPos = m_pos = pos;
 
+  // Fresh drag: drop any cross-level IK state left over from an aborted drag.
+  m_ikCrossDragged = false;
+  m_ikCrossOld.clear();
+  m_ikCrossDefs.clear();
+  m_ikCrossPinWorld.clear();
+
   // Controller gizmo, hit-tested FIRST (it must not touch the vertex
   // selection): a full Animate-tool replica whose pivot follows the deformed
   // root. All controller values at press time are the drag baselines.
@@ -328,8 +338,15 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
     // Move selected branch. NOTE: the squash & stretch controller never
     // appears here — it lives ON TOP of the skeleton (composed into the tool
     // matrix), so all manipulation runs in pre-controller space by design.
+    // Cross-level IK: a pin lives on a different column than the dragged
+    // vertex, so the solve must span the connected columns. Only for a
+    // non-root vertex (the current column's root has no ANGLE param of its
+    // own — its motion belongs to the parent column).
     if (m_ikDrag.getValue() &&
         (deformedSkeleton().vertex(m_svSel).parent() >= 0 || ikPin)) {
+      // Cross-column pins are mirrored onto the parent's attachment vertex (see
+      // setAttachmentPin_animate), so a single per-column single-level solve
+      // handles everything — no separate cross-level pass.
       moveVertexIK_animate(frame, m_svSel, pos);
     } else if (m_keepDistance.getValue()) {
       ::setKeyframe(vd->m_params[SkVD::ANGLE],
@@ -1437,7 +1454,20 @@ void PlasticTool::moveVertexMultiAnchor_animate(
 void PlasticTool::writeBackAngles_animate(
     double frame, const std::map<int, TPointD> &curPos,
     const std::map<int, TPointD> &desired, bool clampToLimits) {
-  const PlasticSkeleton &orig = *skeleton();
+  writeBackAnglesFor_animate(*skeleton(), m_sd, ::skeletonId(), frame, curPos,
+                             desired, clampToLimits);
+}
+
+//------------------------------------------------------------------------
+
+// Column-agnostic core: `orig`/`def`/`skelId` and the position snapshots all
+// belong to ONE column's own local space. Reused as-is for the current column
+// (single-level paths) and once per touched column by the cross-level solver.
+void PlasticTool::writeBackAnglesFor_animate(
+    const PlasticSkeleton &orig, const SkDP &def, int skelId, double frame,
+    const std::map<int, TPointD> &curPos,
+    const std::map<int, TPointD> &desired, bool clampToLimits) {
+  if (!def) return;
 
   auto parentDir = [&](const std::function<TPointD(int)> &posFn, int vx) {
     for (int p = vx; p >= 0;) {
@@ -1454,7 +1484,6 @@ void PlasticTool::writeBackAngles_animate(
   };
   std::function<TPointD(int)> desFn = [&](int idx) { return desired.at(idx); };
 
-  int skelId = ::skeletonId();
   for (const auto &kv : curPos) {
     int w  = kv.first;
     int op = orig.vertex(w).parent();
@@ -1465,7 +1494,7 @@ void PlasticTool::writeBackAngles_animate(
     double nAbs = (norm2(nd) > 1e-8) ? atan2(nd.y, nd.x) : 0.0;
     double newDelta = wrapPi(nAbs - parentDir(desFn, op) - rest) * M_180_PI;
 
-    SkVD *vd = m_sd->vertexDeformation(skelId, w);
+    SkVD *vd = def->vertexDeformation(skelId, w);
     if (!vd) continue;
     double oldDelta = vd->m_params[SkVD::ANGLE]->getValue(frame);
     while (newDelta - oldDelta > 180.0) newDelta -= 360.0;
@@ -1858,6 +1887,9 @@ void PlasticTool::togglePinAtCurrentFrame() {
   SkVD *vd     = m_sd->vertexDeformation(::skeletonId(), v);
   if (!vd) return;
 
+  // One block: this pin plus the mirrored parent-attachment pin undo together.
+  TUndoManager::manager()->beginBlock();
+
   // Snapshot for undo (captures the PIN param, part of the SkVD keyframe).
   AnimateValuesUndo *undo = new AnimateValuesUndo(v);
   m_sd->getKeyframeAt(frame, undo->m_oldValues);
@@ -1976,9 +2008,69 @@ void PlasticTool::togglePinAtCurrentFrame() {
   m_sd->getKeyframeAt(frame, undo->m_newValues);
   TUndoManager::manager()->add(undo);
 
+  // A pin on a child column also plants the parent's attachment vertex, so the
+  // proven single-level primary-pin machinery handles cross-column posing (rigid
+  // rig translation, free root) with no separate cross-level solver.
+  setAttachmentPin_animate(!pinned, frame);
+
+  TUndoManager::manager()->endBlock();
+
   m_deformedSkeleton.invalidate();
   invalidate();
   TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+}
+
+//------------------------------------------------------------------------
+
+// A pin on a CHILD column (a hand parented to the body's wrist) is mirrored onto
+// the parent's attachment vertex: the child follows that vertex rigidly, so
+// pinning the wrist plants the whole child in world, and single-level's
+// primary-pin translation (free root, exact per-frame plant) then handles body
+// posing. `on` = the child pin's NEW state. No-op when the current column is not
+// a stitched child. Its own undo (parent column) rides in togglePin's block.
+void PlasticTool::setAttachmentPin_animate(bool on, double frame) {
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh) return;
+  const int cur = ::column();
+
+  // The current column's stitching parent + attachment vertex, if any.
+  int pCol = -1, pV = -1;
+  for (const CrossLevelLink &lk : crossLevelLinks_animate())
+    if (lk.childColumn == cur) {
+      pCol = lk.parentColumn;
+      pV   = lk.parentVertex;
+      break;
+    }
+  if (pCol < 0) return;  // not a stitched child: top of the chain
+
+  TStageObject *pObj = xsh->getStageObject(TStageObjectId::ColumnId(pCol));
+  if (!pObj) return;
+  const PlasticSkeletonDeformationP &pDef = pObj->getPlasticSkeletonDeformation();
+  if (!pDef) return;
+  const int pSkel = pDef->skeletonId(pObj->paramsTime(frame));
+  SkVD *vd        = pDef->vertexDeformation(pSkel, pV);
+  if (!vd || !vd->m_params[SkVD::PIN]) return;
+
+  // Already in the wanted state (e.g. another finger already planted the wrist):
+  // nothing to do — and this stops the recursion from ping-ponging.
+  const bool parentPinned =
+      vd->m_params[SkVD::PIN]->getValue(pObj->paramsTime(frame)) >= 0.5;
+  if (parentPinned == on) return;
+
+  // Route the parent's pin through the SAME togglePinAtCurrentFrame: it captures
+  // the plant target, bakes the planted pose + transfers the rigid translation
+  // to the controller on release (so the character does NOT jump), and — since
+  // it calls us again — recurses up the whole hierarchy (hand -> forearm ->
+  // body). Save/restore the cell and selection around the temporary activation.
+  const int sRow = ::row(), sCol = ::column();
+  const PlasticVertexSelection sSel = m_svSel;
+  {
+    TemporaryActivation act(sRow, pCol);
+    setSkeletonSelection(pV);
+    togglePinAtCurrentFrame();
+  }
+  ::setCell(sRow, sCol);
+  setSkeletonSelection(sSel);
 }
 
 //------------------------------------------------------------------------
@@ -2032,6 +2124,19 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
 
     updateMatrix();  // refresh the controller affine composed in the matrix
     TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+    invalidate();
+    return;
+  }
+
+  // A cross-level IK drag wrote ANGLE (and pin) params on several columns:
+  // group them into one undo block, its own path independent of the single
+  // column logic below.
+  if (m_ikCrossDragged && m_dragged) {
+    finishCrossLevelUndo_animate(::frame());
+    m_dragged = false;
+    updateMatrix();
+    TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+    TTool::getApplication()->getCurrentObject()->notifyObjectIdChanged(false);
     invalidate();
     return;
   }
@@ -2335,6 +2440,391 @@ void PlasticTool::drawCrossLevelLinks_animate(double pixelSize) {
   }
   glEnd();
   glLineWidth(1.0f);
+}
+
+//------------------------------------------------------------------------
+
+std::vector<PlasticTool::CrossCol>
+PlasticTool::crossColumns_animate(double frame) {
+  std::vector<CrossCol> cols;
+  if (!m_sd) return cols;
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh) return cols;
+  const int fr = (int)frame;
+
+  // Current column first: the tool evaluates its params at the tool frame and
+  // getMatrix() already folds in its squash controller — so its world matrix
+  // is exactly getMatrix() and its deformed skeleton is the live one.
+  {
+    CrossCol cc;
+    cc.columnIndex = ::column();
+    cc.def         = m_sd;
+    cc.skelId      = ::skeletonId();
+    cc.paramFrame  = frame;
+    if (PlasticSkeletonP rs = skeleton()) cc.rest = *rs;
+    cc.deformed = deformedSkeleton();
+    cc.world    = getMatrix();
+    cols.push_back(std::move(cc));
+  }
+
+  // Every hierarchically connected column, resolved into the same world frame
+  // as connectedSkeletons_animate (world = column placement * squash affine).
+  for (const ConnectedSkel &cs : connectedSkeletons_animate()) {
+    TStageObject *obj =
+        xsh->getStageObject(TStageObjectId::ColumnId(cs.columnIndex));
+    if (!obj) continue;
+    const PlasticSkeletonDeformationP &def =
+        obj->getPlasticSkeletonDeformation();
+    if (!def) continue;
+    const double sdFr = obj->paramsTime((double)fr);
+    const int skId    = def->skeletonId(sdFr);
+
+    CrossCol cc;
+    cc.columnIndex = cs.columnIndex;
+    cc.def         = def;
+    cc.skelId      = skId;
+    cc.paramFrame  = sdFr;
+    if (PlasticSkeletonP rs = def->skeleton(skId)) cc.rest = *rs;
+    cc.deformed = cs.skel;
+    cc.world =
+        getColumnMatrix(cs.columnIndex, fr) * def->getSquashControllerAffine(skId, sdFr);
+    cols.push_back(std::move(cc));
+  }
+  return cols;
+}
+
+//------------------------------------------------------------------------
+
+bool PlasticTool::hasCrossLevelPin_animate(double frame) {
+  // Gated by the tool's IK mode (current deformation's flag). Other columns'
+  // own pinsEnabled flag isn't managed by the tool, so we read their PIN param
+  // directly — exactly as the evaluation (storeDeformedSkeleton) does.
+  if (!m_sd || !m_sd->pinsEnabled()) return false;
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh) return false;
+  const int fr = (int)frame;
+  for (const ConnectedSkel &cs : connectedSkeletons_animate()) {
+    TStageObject *obj =
+        xsh->getStageObject(TStageObjectId::ColumnId(cs.columnIndex));
+    if (!obj) continue;
+    const PlasticSkeletonDeformationP &def =
+        obj->getPlasticSkeletonDeformation();
+    if (!def) continue;
+    const double sdFr = obj->paramsTime((double)fr);
+    const int skId    = def->skeletonId(sdFr);
+    PlasticSkeletonP rs = def->skeleton(skId);
+    if (!rs) continue;
+    for (auto vt = rs->vertices().begin(); vt != rs->vertices().end(); ++vt) {
+      SkVD *vd = def->vertexDeformation(skId, vt.m_idx);
+      if (vd && vd->m_params[SkVD::PIN] &&
+          vd->m_params[SkVD::PIN]->getValue(sdFr) >= 0.5)
+        return true;
+    }
+  }
+  return false;
+}
+
+//------------------------------------------------------------------------
+
+// Drop the cached per-frame placements of every column connected to the
+// current one. getPlacement/computeLocalPlacement cache by frame time
+// (lazyData().m_time), so WITHIN one frame they never refresh on their own:
+// after skeleton angles are written, a column parented to a mesh vertex would
+// keep reading a stale attachment position without this.
+void PlasticTool::invalidateConnectedPlacements_animate() {
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh) return;
+  std::set<int> visited;
+  std::queue<int> queue;
+  visited.insert(::column());
+  queue.push(::column());
+  while (!queue.empty()) {
+    const int c = queue.front();
+    queue.pop();
+    TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+    if (!obj) continue;
+    obj->invalidate();
+    const TStageObjectId pid = obj->getParent();
+    if (pid.isColumn() && !visited.count(pid.getIndex())) {
+      visited.insert(pid.getIndex());
+      queue.push(pid.getIndex());
+    }
+    for (TStageObject *child : obj->getChildren()) {
+      const TStageObjectId cid = child->getId();
+      if (cid.isColumn() && !visited.count(cid.getIndex())) {
+        visited.insert(cid.getIndex());
+        queue.push(cid.getIndex());
+      }
+    }
+  }
+}
+
+//------------------------------------------------------------------------
+
+// First move of a cross-level drag: per-column undo baselines, plus the WORLD
+// anchor of every pin sitting on a column other than the current one. Captured
+// from the PRE-drag pose, the anchors are the stable targets the CCD pass
+// chases for the whole drag -- chasing the pins' live evaluated positions
+// instead (which move with their column) was the earlier feedback loop.
+void PlasticTool::ensureCrossLevelBaselines_animate(double frame) {
+  if (m_ikCrossDragged) return;
+
+  invalidateConnectedPlacements_animate();
+  m_deformedSkeleton.invalidate();
+  std::vector<CrossCol> cols = crossColumns_animate(frame);
+  const int curCol           = ::column();
+
+  for (const CrossCol &cc : cols) {
+    SkDKey base;
+    cc.def->getKeyframeAt(cc.paramFrame, base);
+    m_ikCrossOld[cc.columnIndex]  = base;
+    m_ikCrossDefs[cc.columnIndex] = cc.def;
+
+    if (cc.columnIndex == curCol) continue;  // local pins: single-level machinery
+    for (auto vt = cc.deformed.vertices().begin();
+         vt != cc.deformed.vertices().end(); ++vt) {
+      SkVD *vd = cc.def->vertexDeformation(cc.skelId, vt.m_idx);
+      if (vd && vd->m_params[SkVD::PIN] &&
+          vd->m_params[SkVD::PIN]->getValue(cc.paramFrame) >= 0.5)
+        m_ikCrossPinWorld[{cc.columnIndex, (int)vt.m_idx}] = cc.world * vt->P();
+    }
+  }
+  m_ikCrossDragged = true;
+}
+
+//------------------------------------------------------------------------
+
+// End-effector pass (cross-level pins), run AFTER the normal local
+// manipulation of each move. The pose the user is authoring stays untouched;
+// for every pin living on ANOTHER column (a pinned hand column, say) the chain
+// of ancestor joints between the drag and that column's attachment is bent
+// with CCD so the attachment carries the pinned column back onto its captured
+// world anchor.
+//
+// The rig fact this leans on (tstageobject.cpp:1532): a column parented to a
+// mesh vertex inherits TRANSLATION only -- the pinned column rigidly follows
+// its attachment vertex, never rotating with it. So (pin - attachment) is a
+// constant world offset for the whole drag, holding the pin at W is exactly
+// holding the attachment at W - offset, and the pinned column's own params are
+// never touched. A rotation at a pivot propagates to the columns hanging below
+// it as a pure translation; likewise the eval plant of the pinned column works
+// in LOCAL space only (forcing the world anchor into PINTX/PINTY would shear
+// the hand off its wrist), so the world constraint lives entirely here.
+// Cross-level IK reach. The body is posed FREELY by moveVertexIK (the current
+// column carries no pin, so it runs the normal root-free single-joint drag);
+// this pass then bends the ancestor joint chain of every pin that lives on
+// another column so those pins return to the world anchors captured at drag
+// start. Keeping a pinned hand still while the body moves REQUIRES the arm to
+// bend (the wrist is rigidly part of the body) -- re-rooting instead nails the
+// body to the pin, which is not what an end-effector pin should feel like.
+void PlasticTool::crossLevelSolve_animate(double frame, int vDragged,
+                                          const TPointD &mousePos) {
+  typedef std::pair<int, int> Node;
+  (void)mousePos;
+  if (m_ikCrossPinWorld.empty()) return;
+
+  invalidateConnectedPlacements_animate();
+  m_deformedSkeleton.invalidate();
+  std::vector<CrossCol> cols = crossColumns_animate(frame);
+  if (cols.empty()) return;
+  auto findCol = [&cols](int col) -> CrossCol * {
+    for (CrossCol &cc : cols)
+      if (cc.columnIndex == col) return &cc;
+    return nullptr;
+  };
+  const int curCol = ::column();
+
+  // World node positions + per-column children (original intra-column parenting).
+  std::map<Node, TPointD> nodePos;
+  std::map<int, std::map<int, std::vector<int>>> childrenOf;
+  for (const CrossCol &cc : cols)
+    for (auto vt = cc.deformed.vertices().begin();
+         vt != cc.deformed.vertices().end(); ++vt) {
+      nodePos[{cc.columnIndex, (int)vt.m_idx}] = cc.world * vt->P();
+      const int p = vt->parent();
+      if (p >= 0) childrenOf[cc.columnIndex][p].push_back((int)vt.m_idx);
+    }
+
+  // Column-stitching topology.
+  std::map<int, std::pair<int, int>> linkOf;              // childCol->(pCol,pV)
+  std::map<int, std::vector<std::pair<int, int>>> linksUnder;  // pCol->[(cCol,pV)]
+  for (const CrossLevelLink &lk : crossLevelLinks_animate()) {
+    linkOf[lk.childColumn] = {lk.parentColumn, lk.parentVertex};
+    linksUnder[lk.parentColumn].push_back({lk.childColumn, lk.parentVertex});
+  }
+
+  std::map<int, TPointD> colOffset;  // accumulated rigid translation per column
+  std::set<int> touched;
+
+  std::function<void(int, const TPointD &)> translateColumn;
+  translateColumn = [&](int col, const TPointD &d) {
+    CrossCol *cc = findCol(col);
+    if (!cc) return;
+    for (auto vt = cc->deformed.vertices().begin();
+         vt != cc->deformed.vertices().end(); ++vt)
+      nodePos[{col, (int)vt.m_idx}] += d;
+    colOffset[col] += d;
+    auto lu = linksUnder.find(col);
+    if (lu != linksUnder.end())
+      for (const auto &l : lu->second) translateColumn(l.first, d);
+  };
+
+  // Rotate childV's intra-column subtree about a pivot; child columns hanging
+  // off any rotated vertex follow by pure translation.
+  auto rotateSubtree = [&](const Node &pivotN, int childV, double theta) {
+    const int X     = pivotN.first;
+    const TPointD C = nodePos[pivotN];
+    const double co = cos(theta), si = sin(theta);
+    std::vector<int> stack(1, childV), sub;
+    while (!stack.empty()) {
+      const int u = stack.back();
+      stack.pop_back();
+      sub.push_back(u);
+      for (int w : childrenOf[X][u]) stack.push_back(w);
+    }
+    std::set<int> rot(sub.begin(), sub.end());
+    std::map<int, TPointD> attachOld;
+    auto lu = linksUnder.find(X);
+    if (lu != linksUnder.end())
+      for (const auto &l : lu->second)
+        if (rot.count(l.second)) attachOld[l.second] = nodePos[{X, l.second}];
+    for (int u : sub) {
+      TPointD &P      = nodePos[{X, u}];
+      const TPointD d = P - C;
+      P = C + TPointD(co * d.x - si * d.y, si * d.x + co * d.y);
+    }
+    touched.insert(X);
+    if (lu != linksUnder.end())
+      for (const auto &l : lu->second)
+        if (rot.count(l.second))
+          translateColumn(l.first, nodePos[{X, l.second}] - attachOld[l.second]);
+  };
+
+  // Node parent: intra-column skeleton parent; a column root climbs into its
+  // parent column at the attachment vertex.
+  auto parentOfNode = [&](const Node &n, Node &out) -> bool {
+    CrossCol *cc = findCol(n.first);
+    if (!cc) return false;
+    const int p = cc->deformed.vertex(n.second).parent();
+    if (p >= 0) {
+      out = {n.first, p};
+      return true;
+    }
+    auto it = linkOf.find(n.first);
+    if (it == linkOf.end() || !findCol(it->second.first)) return false;
+    out = {it->second.first, it->second.second};
+    return true;
+  };
+
+  const Node draggedNode{curCol, vDragged};
+  const double tol2 = 0.25 * getPixelSize() * getPixelSize();
+
+  for (const auto &pw : m_ikCrossPinWorld) {
+    const Node pinNode{pw.first.first, pw.first.second};
+    const TPointD W = pw.second;
+    if (!nodePos.count(pinNode)) continue;
+    auto lit = linkOf.find(pinNode.first);
+    if (lit == linkOf.end()) continue;  // pinned column is the hierarchy root
+    const Node aNode{lit->second.first, lit->second.second};
+    if (!nodePos.count(aNode)) continue;
+
+    // Attachment chain upward.
+    std::vector<Node> chain(1, aNode);
+    {
+      std::set<Node> seen{pinNode, aNode};
+      Node cur = aNode, up;
+      while ((int)chain.size() < 256 && parentOfNode(cur, up)) {
+        if (seen.count(up)) break;
+        chain.push_back(up);
+        seen.insert(up);
+        cur = up;
+      }
+    }
+
+    // Pivots: every joint from the attachment up to (not incl) the chain root,
+    // skipping the user's dragged joint (its pose is what they author). The
+    // chain root stays the fixed IK base.
+    std::vector<int> pivots;
+    for (int i = 1; i + 1 < (int)chain.size(); ++i) {
+      if (chain[i] == draggedNode) continue;
+      if (chain[i].first == chain[i - 1].first) pivots.push_back(i);
+    }
+    if (pivots.empty()) continue;
+
+    std::map<int, int> entryOfCol;
+    for (int i = 0; i < (int)chain.size(); ++i)
+      if (!entryOfCol.count(chain[i].first)) entryOfCol[chain[i].first] = i;
+
+    const int SWEEPS = 24;
+    for (int sweep = 0; sweep < SWEEPS; ++sweep) {
+      if (norm2(W - nodePos[pinNode]) < tol2) break;
+      for (int pi = (int)pivots.size() - 1; pi >= 0; --pi) {
+        const int i        = pivots[pi];
+        const Node &pivotN = chain[i];
+        const Node &childN = chain[i - 1];
+        // Steer the whole pin toward W by rotating this pivot: use the pin as
+        // the effector directly (it translates rigidly with the pivot's turn).
+        const TPointD C   = nodePos[pivotN];
+        const TPointD cur = nodePos[pinNode] - C;
+        const TPointD tgt = W - C;
+        if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
+        double th = atan2(cross(cur, tgt), cur * tgt);
+        if (fabs(th) < 1e-7) continue;
+        rotateSubtree(pivotN, childN.second, th);
+      }
+    }
+  }
+
+  for (int colIdx : touched) {
+    CrossCol *cc = findCol(colIdx);
+    if (!cc) continue;
+    const TPointD off  = colOffset.count(colIdx) ? colOffset[colIdx] : TPointD();
+    const TAffine wInv = cc->world.inv();
+    std::map<int, TPointD> curLocal, desLocal;
+    for (auto vt = cc->deformed.vertices().begin();
+         vt != cc->deformed.vertices().end(); ++vt) {
+      curLocal[(int)vt.m_idx] = vt->P();
+      desLocal[(int)vt.m_idx] =
+          wInv * (nodePos[{colIdx, (int)vt.m_idx}] - off);
+    }
+    writeBackAnglesFor_animate(cc->rest, cc->def, cc->skelId, cc->paramFrame,
+                               curLocal, desLocal, true);
+  }
+}
+
+//------------------------------------------------------------------------
+
+void PlasticTool::finishCrossLevelUndo_animate(double frame) {
+  if (!m_ikCrossDragged) return;
+  const int row = ::row();
+
+  TUndoManager *um = TUndoManager::manager();
+  um->beginBlock();
+  for (auto &kv : m_ikCrossDefs) {
+    const int col = kv.first;
+    const SkDP &def = kv.second;
+    if (!def) continue;
+    // paramFrame: current column at the tool frame, others at their params time.
+    double pf = frame;
+    if (col != ::column()) {
+      TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+      if (TStageObject *obj =
+              xsh ? xsh->getStageObject(TStageObjectId::ColumnId(col)) : 0)
+        pf = obj->paramsTime(frame);
+    }
+    AnimateValuesUndo *undo = new AnimateValuesUndo(
+        col == ::column() && m_svSel.hasSingleObject() ? (int)m_svSel : -1, row,
+        col);
+    undo->m_oldValues = m_ikCrossOld[col];
+    def->getKeyframeAt(pf, undo->m_newValues);
+    um->add(undo);
+  }
+  um->endBlock();
+
+  m_ikCrossDragged = false;
+  m_ikCrossOld.clear();
+  m_ikCrossDefs.clear();
+  m_ikCrossPinWorld.clear();
 }
 
 //------------------------------------------------------------------------

@@ -388,6 +388,15 @@ protected:
                                const std::map<int, TPointD> &curPos,
                                const std::map<int, TPointD> &desired,
                                bool clampToLimits = true);
+  // Column-agnostic core of writeBackAngles_animate: convert a rigid
+  // desired-positions snapshot (in `def`'s own local space) into that column's
+  // root-down ANGLE params. The single-column wrapper above passes the current
+  // column; the cross-level solver calls it once per touched column.
+  void writeBackAnglesFor_animate(const PlasticSkeleton &orig, const SkDP &def,
+                                  int skelId, double frame,
+                                  const std::map<int, TPointD> &curLocal,
+                                  const std::map<int, TPointD> &desiredLocal,
+                                  bool clampToLimits);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
   void controllerDrag_animate(const TPointD &pos, const TMouseEvent &me);
   void scaleDrag_animate(const TPointD &pos, const TMouseEvent &me);
@@ -489,6 +498,49 @@ private:
   };
   std::vector<CrossLevelLink> crossLevelLinks_animate();
   void drawCrossLevelLinks_animate(double pixelSize);
+
+  // ---- SuperPlastic cross-level IK (pins spanning several columns) ----
+  // One column of the articulated character, resolved for a cross-level solve:
+  // its deformation, rest + deformed skeletons, and the affine that maps its
+  // own skeleton-local space into WORLD space (the common inertial frame — it
+  // already folds in the column parenting, so an ancestor's motion is absorbed
+  // there and pins can be re-planted against it per frame).
+  struct CrossCol {
+    int             columnIndex;
+    SkDP            def;
+    int             skelId;
+    double          paramFrame;  //!< frame to read/write this column's params
+    PlasticSkeleton rest;        //!< un-deformed
+    PlasticSkeleton deformed;    //!< at the current frame, local space
+    TAffine         world;       //!< skeleton-local -> world
+  };
+  //! Every connected column (current first), resolved for a cross-level solve.
+  std::vector<CrossCol> crossColumns_animate(double frame);
+  //! True when an active pin sits on a column OTHER than the current one: the
+  //! trigger that routes the drag through the cross-level solver.
+  bool hasCrossLevelPin_animate(double frame);
+  //! Drop the cached per-frame placements of every connected column (they
+  //! cache by frame time and never refresh within one frame on their own).
+  void invalidateConnectedPlacements_animate();
+  //! First move of a cross-level drag: per-column undo baselines + the world
+  //! anchor of every pin sitting on a non-current column.
+  void ensureCrossLevelBaselines_animate(double frame);
+  //! Mirror a child-column pin onto the parent's attachment vertex, so the
+  //! single-level primary-pin machinery plants the whole rig (free root). `on`
+  //! is the child pin's new state.
+  void setAttachmentPin_animate(bool on, double frame);
+  //! (legacy) unified multi-column solver — superseded by the attachment-pin
+  //! approach; kept for reference, no longer routed.
+  void crossLevelSolve_animate(double frame, int vDragged,
+                               const TPointD &mousePos);
+  //! Build the multi-column undo block for a finished cross-level drag.
+  void finishCrossLevelUndo_animate(double frame);
+
+  bool                   m_ikCrossDragged = false;  //!< drag spanned columns
+  std::map<int, SkDKey>  m_ikCrossOld;   //!< per-column undo baseline (col->key)
+  std::map<int, SkDP>    m_ikCrossDefs;  //!< per-column deformation (col->def)
+  std::map<std::pair<int, int>, TPointD>
+      m_ikCrossPinWorld;  //!< world plant target per pin, key (col,vertex)
 
   // Selection methods
 
