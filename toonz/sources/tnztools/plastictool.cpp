@@ -570,8 +570,10 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   m_setRestKeyButton->setIcon(createQIcon("rest_key"));
 
   // SuperPlastic: pin/unpin the selected vertex as IK anchor at current frame
-  m_pinButton = new QPushButton(tr("Pin"), this);
-  m_pinButton->setFixedSize(QSize(34, 20));
+  m_pinButton = new QPushButton(this);
+  m_pinButton->setIcon(createQIcon("ztoryc_pin"));
+  m_pinButton->setIconSize(QSize(16, 16));
+  m_pinButton->setFixedSize(QSize(28, 20));
   m_pinButton->setCheckable(true);
   m_pinButton->setToolTip(
       tr("Pin the selected vertex as IK anchor (keyframeable)"));
@@ -1130,7 +1132,7 @@ void PlasticTool::updateTranslation() {
 
   m_globalKey.setQStringName(tr("Global Key"));
   m_keepDistance.setQStringName(tr("Keep Distance"));
-  m_ikDrag.setQStringName(tr("Inverse Kinematics"));
+  m_ikDrag.setQStringName(tr("IK"));
   m_showAngleLimits.setQStringName(tr("Angle Bounds Gizmo"));
   m_showController.setQStringName(tr("Controller Gizmo"));
   m_scaleConstraint.setQStringName(tr("Maintain:"));
