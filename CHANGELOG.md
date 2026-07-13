@@ -1,3 +1,38 @@
+## [2026-07-13] — v0.9.0 rilasciata (rigging IK) + fix drag colonna figlia + rifiniture UI
+
+Merge di `feature/superplastic` su master e **release pubblica v0.9.0** (macOS + Windows), note
+bilingui. Il branch resta vivo per continuare il rigging.
+
+### Rilasciato in v0.9.0
+- **Rigging/IK SUPERPLASTIC**: IK single-level (pin/foot-plant per-frame, limiti angolari, bake in
+  FK), scheletri cross-level (vista+selezione unificata, posing cross-colonna via attachment-pin,
+  FK unificata sul grafo combinato, pick redirect su root-figlia coincidente), **toggle gizmo
+  controller**.
+- Incluso anche: Kitsu (skip-unchanged/pull asset-status/team sync), Production Tracker asset types,
+  Edit Cels/Keys, vector fill fix, **crash handler Windows** (`set_terminate` → `Crash-*.log`+`.dmp`
+  simbolicati coi PDB già inclusi nel build RelWithDebInfo).
+
+### Fix (post-v0.9.0, su master → nella release)
+- **Drag colonna figlia**: lo scheletro non si disallinea più dalla mesh durante il drag (refresh
+  xsheet in tempo reale quando la colonna corrente ha un genitore-colonna). Prima si correggeva solo
+  al rilascio.
+
+### Rifiniture UI (branch, non ancora rilasciate)
+- Bottone **Pin** con **icona** (icon-only, da `design/pin.svg` ripulito); "Inverse Kinematics" → **"IK"**.
+- RIMANDATO (ristrutturazione layout): IK a sinistra del Pin, Maintain dopo Scale V, Controller Gizmo
+  prima di Scale H.
+
+### Tester Windows (crash)
+- Il tester era su 0.8 (senza crash handler). v0.9.0 lo include + PDB → al prossimo crash otterrà un
+  `Crash-*.log` simbolicato. Nessuna build speciale necessaria.
+
+### Note / prossimi passi
+- **Compatibilità export OT/Tahoma** dei nuovi param Plastic: verifica RIMANDATA a rigging finito
+  (formato ancora in evoluzione). Atteso: file si apre (tag-based skip), posa diversa se IK/controller
+  live → bake IK prima di esportare; controller squash&stretch non bakabile.
+- **Prossimo**: path B — IK cross-colonna per-frame nel Plastic (ispirato a `computeIkRootOffset` dello
+  Skeleton nativo). Prima documentarsi su Harmony/Moho.
+
 ## [2026-07-12b] — SUPERPLASTIC: cross-level IK (saga) → attachment-pin checkpoint + modello unificato
 
 Sessione lunga interamente su `feature/superplastic`, guidata dai test dal vivo di Franco su un rig
