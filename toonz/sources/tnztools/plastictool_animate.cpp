@@ -384,6 +384,18 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
     // it's better to call the following directly
     m_deformedSkeleton.invalidate();
     invalidate();
+
+    // A child column (following its parent via a hook) needs a full xsheet
+    // refresh DURING the drag: otherwise its mesh/placement is re-evaluated
+    // only on release, so the skeleton overlay drifts from the mesh mid-drag
+    // and snaps back at the end. Guarded so plain single columns stay light.
+    if (TXsheet *xsh =
+            TTool::getApplication()->getCurrentXsheet()->getXsheet()) {
+      TStageObject *obj =
+          xsh->getStageObject(TStageObjectId::ColumnId(::column()));
+      if (obj && obj->getParent().isColumn())
+        TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+    }
   }
 }
 
