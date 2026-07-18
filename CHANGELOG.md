@@ -1,3 +1,68 @@
+## [2026-07-18] — IK cross-colonna: il pin regge (STEP A+B) + rifiniture controller
+
+Sessione lunga tutta su `feature/superplastic`. Obiettivo: far reggere il **foot-planting su rig
+multi-colonna** (corpo+testa+una gamba su una colonna, braccia e gamba dietro su colonne figlie
+parentate via handle). Due milestone raggiunte e verificate da Franco.
+
+### Diagnosi — perché l'attachment-pin mirror falliva
+Il mirror specchiava il pin del tallone sull'anca del genitore → **sovra-vincolo** della catena 3+
+(anca inchiodata + tallone inchiodato, solo il tratto in mezzo libero). Muovendo il ginocchio il pin
+cedeva, muovendo il busto pivotava sull'anca invece che sul tallone. È il limite previsto nel design.
+Causa di fondo: il tallone è piantato nello spazio **locale** della gamba, agganciato rigidamente
+all'anca → la figlia non può traslare contro il genitore → il tallone non resta in world se il corpo
+si muove, a meno che la gamba **si pieghi** (IK vera).
+
+### ✅ STEP A — solver IK sul grafo unificato (commit `ed2abbfdd`)
+`crossLevelIK_animate`: re-root del grafo unificato **al pin**, rotazione single-joint del
+sotto-albero trascinato, write-back ANGLE per colonna + **ROOTX/ROOTY sulla sola colonna radice**
+(traslazione free-root). Nuovi param SkVD `ROOTX/ROOTY` applicati in `updateBranchPositions`, gated
+da un flag così single-level e FK cross-livello restano invariati. `togglePin` su colonna figlia
+setta **solo** il flag PIN (niente PINTX locale, niente mirror). Gestito il nodo "incollato"
+(anca ≡ root gamba, osso lunghezza-0) e resa trascinabile la root del corpo quando il pin è su una
+figlia. Verificato: punta, ginocchio, anca e busto reggono tutti il tallone.
+
+### ✅ STEP B — hold sugli intercalati (commit `5d2671842`)
+Il drift tra le chiavi è **inerente** all'interpolazione degli angoli: nessun keyframing lo risolve.
+Fix per-frame a livello **stage-placement** (viewer e render condividono `getPlacement` → coerenti
+per costruzione): nuovi param `PINWX/PINWY` = target del pin in spazio scena, e
+`TStageObject::computePlasticPinCorrection` che pre-trasla il personaggio perché il vertice pinnato
+torni sul target ad ogni frame. Catena composta a mano → nessuna ricorsione su `getPlacement`.
+A differenza del `computeIkRootOffset` nativo **non c'è foot-chaining**: ogni attivazione ri-cattura
+il target assoluto, quindi le correzioni non si accumulano.
+
+### Rifiniture controller (commit WIP `221693bdb`)
+- **Overlay che segue durante il drag**: `updateMatrix()` anche in move/scale (prima lo scheletro
+  restava indietro e scattava al rilascio).
+- **Fix feedback di coordinate**: i delta si calcolano nella matrice congelata al press
+  (`m_ctrlPressMatrix`) — la matrice viva si muove coi valori scritti e faceva rimbalzare (padre) o
+  vibrare (figlio) la maniglia.
+- **Sway dei livelli figli**: la maniglia Move su una colonna figlia agganciata scrive ora l'**X/Y di
+  colonna** (stesso canale dell'Animate tool) invece del TRANS del controller → mesh + scheletro +
+  nipoti si spostano insieme restando agganciati. Hint contestuali sulle maniglie.
+- **Provvisorio, non convince ancora**: col pin attivo il Move sul padre è lockato e Cmd+drag sposta
+  tutto coi target al seguito. Manca l'undo dello spostamento dei target.
+
+### 🔴 Regressione nota — da risolvere in STEP C
+Con un pin sulla colonna **radice** (plant dentro lo scheletro) e uno su una **figlia** (hold a
+livello placement), lo **switch d'appoggio della camminata** fa spostare il piede precedente: l'unpin
+trasferisce il plant al TRANS del controller, questo muove l'aggancio della figlia, e la correzione
+di placement contro-trasla tutto il personaggio. **I due meccanismi di planting si combattono.**
+Workaround per lavorare: niente pin sulle colonne figlie → comportamento identico a v0.9.
+
+### STEP C (prossima sessione, pezzo architetturale)
+Unificare il planting in **un solo passaggio per-frame** che veda entrambi i tipi di pin. Ne
+discendono anche: multi-pin cross-colonna (oggi regge un solo pin — la correzione è una traslazione
+pura e può soddisfare un punto solo), la regressione dello switch, e il buco dell'undo.
+
+### Note
+- Squash & stretch con IK: sui pin **cross-colonna** il piede resta piantato (la correzione legge la
+  posizione col controller già applicato). Sui pin **single-level** invece lo squash sposta il pin —
+  rimedio attuale: mettere il pivot del controller sul vertice pinnato (snap ai vertici).
+- Il worktree `feature/superplastic` è ancora a **0.8.1** (il bump a 0.9.0 è solo su master):
+  cosmetico, il merge lo riallinea.
+- ⚠️ `build_and_deploy.sh` ha `DEFAULT_WS` hardcoded al workspace master: per il worktree serve
+  **sempre** `ZTORYC_WORKSPACE=.../tahoma2d-superplastic`, altrimenti compila e riapre il master.
+
 ## [2026-07-13] — v0.9.0 rilasciata (rigging IK) + fix drag colonna figlia + rifiniture UI
 
 Merge di `feature/superplastic` su master e **release pubblica v0.9.0** (macOS + Windows), note
