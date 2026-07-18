@@ -1470,6 +1470,127 @@ TAffine TStageObject::computeIkRootOffset(int t) {
 }
 
 //-----------------------------------------------------------------------------
+
+// SuperPlastic cross-column pin hold. A pin on a stitched CHILD column (a heel
+// on a leg parented to the body via a hook) cannot be planted by the child's
+// own in-skeleton PINTX plant: the child's local space is glued to the parent,
+// so no local translation can hold a WORLD spot while the parent moves. The
+// tool's unified IK solve makes the pose exact AT keyframes; between them the
+// interpolated angles let the heel drift. This is the per-frame fix, at the
+// stage-placement level (shared by viewer and render, so they can't diverge):
+// pre-translate the whole character so the pinned vertex lands back on its
+// captured scene target (PINWX/PINWY) — the cross-column analogue of the
+// single-level per-frame plant, and the same idea as the native skeleton's
+// computeIkRootOffset above, minus its foot-chaining (targets are re-captured
+// absolute at every pin activation, so corrections never accumulate).
+//
+// Recursion/feedback safety: the descendant chain is composed MANUALLY
+// (parentP * baseLocal * childLocals * heel) — this object's own getPlacement
+// is never invoked, and child computeLocalPlacement calls only reach the
+// parent's skeleton eval (getHandlePos), never a placement of this object.
+TAffine TStageObject::computePlasticPinCorrection(double t,
+                                                  const TAffine &baseLocal) {
+  struct locals {
+    // First frame of the pin's current ON run (Constant keys) — seniority
+    // picks the primary pin, exactly as storeDeformedSkeleton does.
+    static double activationFrame(const TDoubleParam &pin, double frame) {
+      double on = frame;
+      for (int k = pin.getKeyframeCount() - 1; k >= 0; --k) {
+        const TDoubleKeyframe &kf = pin.getKeyframe(k);
+        if (kf.m_frame > frame) continue;
+        if (kf.m_value < 0.5) break;
+        on = kf.m_frame;
+      }
+      return on;
+    }
+  };
+
+  // Top-of-chain columns with column children only.
+  if (m_children.empty() || !m_id.isColumn()) return TAffine();
+  if (m_parent && m_parent->getId().isColumn()) return TAffine();
+
+  // Oldest active cross-column pin among the descendant columns.
+  bool found       = false;
+  double bestSince = 0.0;
+  TPointD bestTarget, bestHeel;
+
+  const TAffine parentP = m_parent ? m_parent->getPlacement(t) : TAffine();
+
+  // DFS down the column children, carrying the accumulated affine that maps
+  // each descendant's local frame into THIS object's local frame.
+  std::vector<std::pair<TStageObject *, TAffine>> stack;
+  for (TStageObject *ch : m_children)
+    if (ch->getId().isColumn())
+      stack.push_back({ch, ch->computeLocalPlacement(t)});
+
+  while (!stack.empty()) {
+    TStageObject *obj = stack.back().first;
+    const TAffine acc = stack.back().second;
+    stack.pop_back();
+
+    for (TStageObject *ch : obj->m_children)
+      if (ch->getId().isColumn())
+        stack.push_back({ch, acc * ch->computeLocalPlacement(t)});
+
+    const PlasticSkeletonDeformationP &def = obj->getPlasticSkeletonDeformation();
+    if (!def) continue;
+
+    const double sdFr = obj->paramsTime(t);
+    const int skelId  = def->skeletonId(sdFr);
+
+    // Any active pin with a scene target on this column?
+    PlasticSkeleton skel;
+    bool skelStored = false;
+    SkD::vd_iterator vdt, vdEnd;
+    def->vertexDeformations(vdt, vdEnd);
+    for (; vdt != vdEnd; ++vdt) {
+      SkVD *vd = (*vdt).second;
+      if (!vd->m_params[SkVD::PIN] || !vd->m_params[SkVD::PINWX] ||
+          !vd->m_params[SkVD::PINWY])
+        continue;
+      if (vd->m_params[SkVD::PIN]->getValue(sdFr) < 0.5) continue;
+      // Only pins captured as cross-column (PINW keyed): body-column pins keep
+      // the in-skeleton plant and must not reach the stage level.
+      if (vd->m_params[SkVD::PINWX]->getKeyframeCount() == 0 &&
+          vd->m_params[SkVD::PINWY]->getKeyframeCount() == 0)
+        continue;
+
+      const int v =
+          def->vertexIndex(def->hookNumber(*(*vdt).first), skelId);
+      if (v < 0) continue;
+
+      const double since =
+          locals::activationFrame(*vd->m_params[SkVD::PIN], sdFr);
+      if (found && since >= bestSince) continue;
+
+      if (!skelStored) {
+        def->storeDeformedSkeleton(skelId, sdFr, skel);
+        skelStored = true;
+      }
+      if (v >= (int)skel.vertices().size()) continue;
+
+      // Heel in scene space, composed without touching this object's
+      // placement: parentP * baseLocal * (child-chain) * controlled vertex.
+      const TPointD vp =
+          def->getSquashControllerAffine(skelId, sdFr) * skel.vertex(v).P();
+      found      = true;
+      bestSince  = since;
+      bestHeel   = parentP * baseLocal * acc * vp;
+      bestTarget = TPointD(vd->m_params[SkVD::PINWX]->getValue(sdFr),
+                           vd->m_params[SkVD::PINWY]->getValue(sdFr));
+    }
+  }
+
+  if (!found) return TAffine();
+  const TPointD d = bestTarget - bestHeel;
+  if (fabs(d.x) < 1e-6 && fabs(d.y) < 1e-6) return TAffine();
+
+  // The correction is a SCENE-space translation; bring it into this object's
+  // local placement space so the caller can simply prepend it to baseLocal.
+  return parentP.inv() * TTranslation(d) * parentP;
+}
+
+//-----------------------------------------------------------------------------
 /*
 inline double getPosPathAtCP(const TStroke* path, int cpIndex)
 {
@@ -1534,6 +1655,16 @@ TAffine TStageObject::computeLocalPlacement(double frame) {
 
     m_localPlacement = TTranslation(pos) * makeRotation(ang) * shear *
                        TScale(sx, sy) * TTranslation(-center);
+
+    // SuperPlastic cross-column pin hold: pre-translate the top column of a
+    // plastic character so a pinned descendant vertex (heel on a child leg)
+    // stays planted on its scene target at EVERY frame, in-betweens included.
+    // Cheap gate first — the vast majority of objects have no column children.
+    if (!m_children.empty() && m_id.isColumn() &&
+        !(m_parent && m_parent->getId().isColumn())) {
+      const TAffine corr = computePlasticPinCorrection(frame, m_localPlacement);
+      m_localPlacement   = corr * m_localPlacement;
+    }
   }
 
   return m_localPlacement;

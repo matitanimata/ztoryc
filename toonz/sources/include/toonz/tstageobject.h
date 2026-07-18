@@ -570,6 +570,15 @@ private:
   int m_ikflag;
   // ----
 
+  // SuperPlastic cross-column pin hold (per-frame). For the TOP column of a
+  // column-parenting chain (a plastic character split across columns), returns
+  // the pre-translation — expressed in this object's local placement space —
+  // that lands the oldest pinned descendant vertex on its PINWX/PINWY scene
+  // target. Identity when not applicable (no column children, no active
+  // cross-column pin, or this column is itself a stitched child). baseLocal is
+  // this object's uncorrected local placement, already computed by the caller.
+  TAffine computePlasticPinCorrection(double t, const TAffine &baseLocal);
+
   double m_noScaleZ;
 
   std::string m_name;

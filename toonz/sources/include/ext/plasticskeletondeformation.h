@@ -65,6 +65,15 @@ public:
                 //!< whole skeleton is translated so the pinned vertex lands on
                 //!< (PINTX,PINTY) — a true per-frame constraint, so the pin
                 //!< stays planted on in-between frames, not just on keyframes.
+    PINWX,      //!< SuperPlastic cross-column pin target, in SCENE (stage
+    PINWY,      //!< placement) space. Set only for pins on a stitched CHILD
+                //!< column (whose local PINTX plant cannot hold a world spot —
+                //!< the column is glued to its parent). Read by the STAGE-level
+                //!< per-frame correction (TStageObject::computeLocalPlacement of
+                //!< the chain's top column), which pre-translates the whole
+                //!< character so this vertex lands on (PINWX,PINWY) — the
+                //!< cross-column analogue of the PINTX plant, making the pin
+                //!< hold on in-between frames. Ignored by storeDeformedSkeleton.
     ROOTX,      //!< SuperPlastic: keyframeable offset of the skeleton ROOT from
     ROOTY,      //!< its rest position (stored on the root vertex's own
                 //!< deformation; default 0 = root stays at rest, old scenes

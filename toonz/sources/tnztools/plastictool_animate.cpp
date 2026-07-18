@@ -1683,12 +1683,13 @@ void PlasticTool::bakePinsToFK_animate() {
 
   l_suspendParamsObservation = true;
 
-  // 2. Fully un-pin: drop every PIN / PINTX / PINTY key
+  // 2. Fully un-pin: drop every PIN / PINTX / PINTY / PINWX / PINWY key
   for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
        ++vt) {
     SkVD *vd = m_sd->vertexDeformation(skelId, vt.m_idx);
     if (!vd) continue;
-    for (int p : {(int)SkVD::PIN, (int)SkVD::PINTX, (int)SkVD::PINTY})
+    for (int p : {(int)SkVD::PIN, (int)SkVD::PINTX, (int)SkVD::PINTY,
+                  (int)SkVD::PINWX, (int)SkVD::PINWY})
       if (vd->m_params[p]) vd->m_params[p]->clearKeyframes();
   }
 
@@ -1981,6 +1982,34 @@ void PlasticTool::togglePinAtCurrentFrame() {
     m_sd->getKeyframeAt(frame, undo->m_oldValues);
 
     bool pinned = vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5;
+
+    // Capture the pin's SCENE-space target BEFORE flagging the pin: the
+    // placement chain is still free of this pin's stage-level correction, so
+    // this is the vertex's current visual spot. The per-frame hold
+    // (TStageObject::computePlasticPinCorrection on the chain's top column)
+    // re-plants the vertex here on every frame, in-betweens included — the
+    // cross-column analogue of the single-level PINTX plant.
+    bool captureW = !pinned && vd->m_params[SkVD::PINWX] &&
+                    vd->m_params[SkVD::PINWY];
+    if (captureW) {
+      TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+      TStageObject *childObj =
+          xsh ? xsh->getStageObject(TStageObjectId::ColumnId(::column()))
+              : nullptr;
+      if (childObj) {
+        m_deformedSkeleton.invalidate();
+        const TPointD vp =
+            m_sd->getSquashControllerAffine(::skeletonId(), frame) *
+            deformedSkeleton().vertex(v).P();
+        const TPointD W = childObj->getPlacement(frame) * vp;
+        for (int c : {(int)SkVD::PINWX, (int)SkVD::PINWY}) {
+          TDoubleKeyframe tk(frame, c == SkVD::PINWX ? W.x : W.y);
+          tk.m_type = tk.m_prevType = TDoubleKeyframe::Constant;
+          vd->m_params[c]->setKeyframe(tk);
+        }
+      }
+    }
+
     if (!pinned && frame > 1.0 &&
         vd->m_params[SkVD::PIN]->getKeyframeCount() == 0) {
       TDoubleKeyframe base(1.0, 0.0);
@@ -1990,6 +2019,13 @@ void PlasticTool::togglePinAtCurrentFrame() {
     TDoubleKeyframe kf(frame, pinned ? 0.0 : 1.0);
     kf.m_type = kf.m_prevType = TDoubleKeyframe::Constant;
     vd->m_params[SkVD::PIN]->setKeyframe(kf);
+
+    // Un-pinning: the stage-level correction vanishes with the PIN flag and the
+    // pose would snap by the residual in-between drift. At the frame being
+    // unpinned the drift is what it is — bake it into the character's pose by
+    // NOT correcting here; keyframes stay exact (the tool keeps them planted),
+    // so the snap is bounded by the current in-between error. Refinement (bake
+    // the residual into ROOTX/ROOTY of the top column) deferred.
 
     m_sd->getKeyframeAt(frame, undo->m_newValues);
     TUndoManager::manager()->add(undo);

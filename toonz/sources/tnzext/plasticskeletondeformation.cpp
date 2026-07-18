@@ -40,14 +40,16 @@ namespace {
 
 static const char *parNames[SkVD::PARAMS_COUNT] = {
     "Angle",  "Distance", "SO",     "Pin",      "PinTX",
-    "PinTY",  "RootX",    "RootY",  "ScaleX",   "ScaleY",
-    "PivotX", "PivotY",   "TransX", "TransY",   "Rotation",
-    "ShearX", "ShearY",   "MinAngle", "MaxAngle"};
+    "PinTY",  "PinWX",    "PinWY",  "RootX",    "RootY",
+    "ScaleX", "ScaleY",   "PivotX", "PivotY",   "TransX",
+    "TransY", "Rotation", "ShearX", "ShearY",   "MinAngle",
+    "MaxAngle"};
 static const char *parMeasures[SkVD::PARAMS_COUNT] = {
     "angle",    "fxLength", "",         "",         "fxLength",
-    "fxLength", "fxLength", "fxLength", "scale",    "scale",
-    "fxLength", "fxLength", "fxLength", "fxLength", "angle",
-    "shear",    "shear",    "angle",    "angle"};
+    "fxLength", "fxLength", "fxLength", "fxLength", "fxLength",
+    "scale",    "scale",    "fxLength", "fxLength", "fxLength",
+    "fxLength", "angle",    "shear",    "shear",    "angle",
+    "angle"};
 
 //------------------------------------------------------------------
 
