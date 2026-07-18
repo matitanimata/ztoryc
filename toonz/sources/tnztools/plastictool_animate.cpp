@@ -10,6 +10,7 @@
 #include "toonz/tobjecthandle.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/tcolumnhandle.h"
+#include "toonz/stage.h"  // Stage::inch (column X/Y are in inches)
 
 #include "plastictool.h"
 #include <cstdio>
@@ -228,6 +229,7 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
         return vd->m_params[p] ? vd->m_params[p]->getValue(::frame()) : def;
       };
       m_ctrlDevice      = device;
+      m_ctrlPressMatrix = getMatrix();
       m_scaleDragCenter = gizmoC;
       m_scaleOldX       = oldVal(SkVD::SCALEX, 1.0);
       m_scaleOldY       = oldVal(SkVD::SCALEY, 1.0);
@@ -236,6 +238,61 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
       m_ctrlOldTY       = oldVal(SkVD::TRANSY, 0.0);
       m_ctrlOldShX      = oldVal(SkVD::SHEARX, 0.0);
       m_ctrlOldShY      = oldVal(SkVD::SHEARY, 0.0);
+
+      // Move handle on a stitched child column steers the COLUMN's X/Y (see
+      // m_ctrlChildColumn): snapshot those too.
+      m_ctrlChildColumn = false;
+      m_ctrlOldColX = m_ctrlOldColY = 0.0;
+      {
+        const int cur = ::column();
+        for (const CrossLevelLink &lk : crossLevelLinks_animate())
+          if (lk.childColumn == cur) {
+            m_ctrlChildColumn = true;
+            break;
+          }
+        if (m_ctrlChildColumn) {
+          TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+          TStageObject *obj =
+              xsh ? xsh->getStageObject(TStageObjectId::ColumnId(cur)) : nullptr;
+          if (obj) {
+            m_ctrlOldColX = obj->getParam(TStageObject::T_X, ::frame());
+            m_ctrlOldColY = obj->getParam(TStageObject::T_Y, ::frame());
+          } else
+            m_ctrlChildColumn = false;
+        }
+      }
+
+      // Snapshot the active cross-column pin targets (PINW): Move on the top
+      // column is LOCKED while a pin is planted (the foot wins), and Ctrl+drag
+      // moves everything with the pins traveling along — the snapshot is the
+      // baseline for that shift.
+      m_ctrlPinWSnapshot.clear();
+      if (!m_ctrlChildColumn) {
+        for (const CrossCol &cc : crossColumns_animate(::frame())) {
+          if (!cc.def) continue;
+          SkD::vd_iterator vdt, vdEnd;
+          cc.def->vertexDeformations(vdt, vdEnd);
+          for (; vdt != vdEnd; ++vdt) {
+            SkVD *pvd = (*vdt).second;
+            if (!pvd->m_params[SkVD::PIN] || !pvd->m_params[SkVD::PINWX] ||
+                !pvd->m_params[SkVD::PINWY])
+              continue;
+            if (pvd->m_params[SkVD::PIN]->getValue(cc.paramFrame) < 0.5)
+              continue;
+            if (pvd->m_params[SkVD::PINWX]->getKeyframeCount() == 0 &&
+                pvd->m_params[SkVD::PINWY]->getKeyframeCount() == 0)
+              continue;
+            CtrlPinW e;
+            e.px       = pvd->m_params[SkVD::PINWX];
+            e.py       = pvd->m_params[SkVD::PINWY];
+            e.oldW     = TPointD(e.px->getValue(cc.paramFrame),
+                                 e.py->getValue(cc.paramFrame));
+            e.keyFrame = cc.paramFrame;
+            m_ctrlPinWSnapshot.push_back(e);
+          }
+        }
+      }
+
       m_sd->getKeyframeAt(frame(), m_pressedSkDF);  // undo baseline
       invalidate();
       return;
@@ -522,6 +579,8 @@ void PlasticTool::scaleDrag_animate(const TPointD &pos, const TMouseEvent &me) {
   m_scaleYRelay.notifyListeners();
 
   m_deformedSkeleton.invalidate();
+  updateMatrix();  // keep the overlay on the mesh during the drag (see
+                   // controllerDrag_animate)
   invalidate();
 }
 
@@ -565,8 +624,13 @@ void PlasticTool::pivotDrag_animate(const TPointD &pos) {
 // scale in their dedicated handlers. Math replicated from the Animate tool's
 // DragPositionTool / DragRotationTool / DragShearTool (Shift = axis lock,
 // Alt = precise 1/10).
-void PlasticTool::controllerDrag_animate(const TPointD &pos,
+void PlasticTool::controllerDrag_animate(const TPointD &rawPos,
                                          const TMouseEvent &me) {
+  // Re-project the mouse into the frozen press-time tool space: the live
+  // matrix moves with the values being written (see m_ctrlPressMatrix), and a
+  // delta computed in a self-moving space cancels itself.
+  const TPointD pos = m_ctrlPressMatrix.inv() * (getMatrix() * rawPos);
+
   switch (m_ctrlDevice) {
   case CtrlPivot:
     pivotDrag_animate(pos);
@@ -599,6 +663,84 @@ void PlasticTool::controllerDrag_animate(const TPointD &pos,
         d.x = 0.0;
     }
     if (me.isAltPressed()) d = 0.1 * d;
+
+    // Stitched child column: drive the COLUMN's own X/Y so the whole child
+    // (mesh + skeleton + its own children) slides on its attachment, instead of
+    // the controller sliding the drawing alone. Convert the tool-space drag into
+    // the parent's space, in inches: world = M_linear * d, and column X/Y feed
+    // computeLocalPlacement through the parent placement, scaled by Stage::inch.
+    if (m_ctrlChildColumn) {
+      TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+      TStageObject *obj =
+          xsh ? xsh->getStageObject(TStageObjectId::ColumnId(::column()))
+              : nullptr;
+      if (obj) {
+        // d lives in press-time tool space → its world image goes through the
+        // press-time matrix too (the live one already moved with the drag).
+        const TAffine &M = m_ctrlPressMatrix;
+        const TPointD w(M.a11 * d.x + M.a12 * d.y, M.a21 * d.x + M.a22 * d.y);
+        TStageObject *par =
+            obj->getParent().isColumn()
+                ? xsh->getStageObject(obj->getParent())
+                : nullptr;
+        TPointD local = w;
+        if (par) {
+          const TAffine pInv = par->getPlacement(frame).inv();
+          local = TPointD(pInv.a11 * w.x + pInv.a12 * w.y,
+                          pInv.a21 * w.x + pInv.a22 * w.y);
+        }
+        local = local * (1.0 / Stage::inch);
+
+        l_suspendParamsObservation = true;
+        for (int ch : {(int)TStageObject::T_X, (int)TStageObject::T_Y}) {
+          TDoubleParam *p = obj->getParam((TStageObject::Channel)ch);
+          if (!p) continue;
+          TDoubleParamP pp(p);
+          ::setKeyframe(pp, frame);
+          p->setValue(frame, (ch == TStageObject::T_X)
+                                 ? m_ctrlOldColX + local.x
+                                 : m_ctrlOldColY + local.y);
+        }
+        l_suspendParamsObservation = false;
+
+        TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+        updateMatrix();
+        invalidate();
+        return;
+      }
+    }
+
+    // Active cross-column pins: a rigid whole-character translation contradicts
+    // a world-planted foot, and the stage-level hold would cancel it outright —
+    // so plain Move is LOCKED (the foot wins). Cmd/Ctrl+drag moves everything
+    // WITH the pins traveling along (single-level precedent: the in-skeleton
+    // plant rides the controller): reposition a whole walk cycle and the
+    // character keeps walking forward. ONLY the pin targets are written — the
+    // controller TRANS would be canceled by the hold anyway and would just
+    // pollute the channel for the later unpin/bake. Keys glide IN (Linear
+    // prevType, so repositioning at two frames interpolates instead of
+    // snapping) and hold OUT (Constant type: the foot stays planted after).
+    // NOTE: the PINW shift on the child columns is not covered by the gizmo
+    // undo (current column only) — accepted for now.
+    if (!m_ctrlPinWSnapshot.empty()) {
+      if (!me.isCtrlPressed()) return;  // locked (hover hint explains)
+      const TAffine &M = m_ctrlPressMatrix;
+      const TPointD dW(M.a11 * d.x + M.a12 * d.y, M.a21 * d.x + M.a22 * d.y);
+      for (const CtrlPinW &e : m_ctrlPinWSnapshot) {
+        TDoubleKeyframe kx(e.keyFrame, e.oldW.x + dW.x);
+        kx.m_type     = TDoubleKeyframe::Constant;
+        kx.m_prevType = TDoubleKeyframe::Linear;
+        e.px->setKeyframe(kx);
+        TDoubleKeyframe ky(e.keyFrame, e.oldW.y + dW.y);
+        ky.m_type     = TDoubleKeyframe::Constant;
+        ky.m_prevType = TDoubleKeyframe::Linear;
+        e.py->setKeyframe(ky);
+      }
+      TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+      invalidate();
+      return;
+    }
+
     pA = SkVD::TRANSX, vA = m_ctrlOldTX + d.x;
     pB = SkVD::TRANSY, vB = m_ctrlOldTY + d.y;
   } else if (m_ctrlDevice == CtrlRot) {
@@ -634,6 +776,11 @@ void PlasticTool::controllerDrag_animate(const TPointD &pos,
   }
   l_suspendParamsObservation = false;
 
+  // The controller affine is composed into the TOOL matrix (updateMatrix
+  // override), and the skeleton overlay is drawn in that space: without this
+  // refresh the overlay keeps the pre-drag matrix and visually lags behind the
+  // mesh for the whole drag, snapping into place only on release.
+  updateMatrix();
   invalidate();
 }
 
@@ -865,9 +1012,48 @@ void PlasticTool::drawController_animate(double pixelSize) {
     case CtrlShear:
       ctrlDrawText(shearP + u * TPointD(0, -10), tu, "Shear");
       break;
-    case CtrlMove:
-      ctrlDrawText(moveP + u * TPointD(0, -12), tu, "Move");
+    case CtrlMove: {
+      // Context-aware hint: a stitched child slides on its attachment; the top
+      // column with a planted cross-column pin is locked unless Ctrl is held
+      // (then everything moves and the pins travel along).
+      std::string txt = "Move";
+      const int cur   = ::column();
+      bool child      = false;
+      for (const CrossLevelLink &lk : crossLevelLinks_animate())
+        if (lk.childColumn == cur) {
+          child = true;
+          break;
+        }
+      if (child)
+        txt = "Move (slides on the attachment)";
+      else {
+        bool pinnedW = false;
+        for (const CrossCol &cc : crossColumns_animate(::frame())) {
+          if (!cc.def) continue;
+          SkD::vd_iterator vdt, vdEnd;
+          cc.def->vertexDeformations(vdt, vdEnd);
+          for (; vdt != vdEnd && !pinnedW; ++vdt) {
+            SkVD *pvd = (*vdt).second;
+            pinnedW =
+                pvd->m_params[SkVD::PIN] && pvd->m_params[SkVD::PINWX] &&
+                pvd->m_params[SkVD::PINWY] &&
+                pvd->m_params[SkVD::PIN]->getValue(cc.paramFrame) >= 0.5 &&
+                (pvd->m_params[SkVD::PINWX]->getKeyframeCount() > 0 ||
+                 pvd->m_params[SkVD::PINWY]->getKeyframeCount() > 0);
+          }
+          if (pinnedW) break;
+        }
+        // Qt maps the platform's primary modifier to "Ctrl": that's Cmd on
+        // macOS — the hint must name the key the user actually presses.
+#ifdef MACOSX
+        if (pinnedW) txt = "Pinned - Cmd-drag to move all, pins follow";
+#else
+        if (pinnedW) txt = "Pinned - Ctrl-drag to move all, pins follow";
+#endif
+      }
+      ctrlDrawText(moveP + u * TPointD(0, -12), tu, txt);
       break;
+    }
     }
   }
 

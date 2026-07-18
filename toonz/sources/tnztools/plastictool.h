@@ -193,6 +193,34 @@ private:
   double m_scaleOldX = 1.0,        //!< Controller values at press time
       m_scaleOldY = 1.0, m_ctrlOldRot = 0.0, m_ctrlOldTX = 0.0,
          m_ctrlOldTY = 0.0, m_ctrlOldShX = 0.0, m_ctrlOldShY = 0.0;
+  // Move handle on a STITCHED CHILD column: the drag steers the column's own
+  // X/Y (inches, the same channel the Animate tool writes) instead of the
+  // controller's TRANSX/TRANSY. The controller is a render-time affine over the
+  // mesh only — it would slide the drawing off its attachment while skeleton,
+  // placement and any grand-children stayed behind. Column X/Y is summed on top
+  // of the parent's handle position in computeLocalPlacement, so the whole child
+  // moves coherently: exactly the shoulder/hip sway of a walk.
+  bool m_ctrlChildColumn = false;  //!< current column is a stitched child
+  double m_ctrlOldColX = 0.0, m_ctrlOldColY = 0.0;  //!< its X/Y at press
+  // Controller Move on the TOP column: active cross-column pins must travel
+  // with the whole-character translation (single-level precedent: the
+  // in-skeleton plant rides the controller). Without this the stage-level hold
+  // (PINW re-plant) would cancel the move outright. Snapshot of each active
+  // descendant pin's PINW params + value at press; the drag re-keys them
+  // shifted by the world delta.
+  struct CtrlPinW {
+    TDoubleParamP px, py;
+    TPointD oldW;
+    double keyFrame;
+  };
+  std::vector<CtrlPinW> m_ctrlPinWSnapshot;
+  // Tool matrix at press time. The controller affine is composed into the live
+  // tool matrix (updateMatrix during the drag keeps the overlay glued), so
+  // mouse positions arrive in a space that MOVES with the very values being
+  // written — using them raw makes the delta cancel itself (handle bouncing
+  // back / vibrating). Every controller drag therefore re-projects the mouse
+  // into this frozen press-time space before computing deltas.
+  TAffine m_ctrlPressMatrix;
 
   // Selection/Highlighting-related vars
 
