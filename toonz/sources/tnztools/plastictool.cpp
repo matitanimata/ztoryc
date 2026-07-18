@@ -186,12 +186,19 @@ void setKeyframe(const PlasticSkeletonDeformationP &sd, double frame) {
     for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
          ++vt)
       if (vt->parent() < 0) {
-        // Only the controller channels (SCALE..SHEAR); MINANGLE/MAXANGLE are
-        // per-joint limits, not part of the pose → a global key must not key
-        // them.
-        if (SkVD *vd = sd->vertexDeformation(::skeletonId(), (int)vt.m_idx))
+        if (SkVD *vd = sd->vertexDeformation(::skeletonId(), (int)vt.m_idx)) {
+          // ROOTX/ROOTY: the root's own pose offset (see plasticskeleton-
+          // deformation.h) — genuinely part of the shape, unlike the
+          // controller channels below, but stored outside the ordinary
+          // ANGLE/DISTANCE/SO loop above since it only exists on the root.
+          for (int p : {(int)SkVD::ROOTX, (int)SkVD::ROOTY})
+            if (vd->m_params[p]) setKeyframe(vd->m_params[p], frame);
+          // Only the controller channels (SCALE..SHEAR); MINANGLE/MAXANGLE
+          // are per-joint limits, not part of the pose → a global key must
+          // not key them.
           for (int p = SkVD::SCALEX; p <= SkVD::SHEARY; ++p)
             if (vd->m_params[p]) setKeyframe(vd->m_params[p], frame);
+        }
         break;
       }
   }
@@ -594,6 +601,36 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   animateLayout->insertWidget(0, m_setRestKeyButton);
   animateLayout->insertWidget(0, m_setKeyButton);
   animateLayout->insertWidget(0, m_interpolationCombo);
+
+  // SuperPlastic: the IK toggle, the Controller-gizmo toggle and the Maintain
+  // combo are auto-generated from the property group, so they end up in the
+  // rightmost (auto) block. Pull them out and cluster each next to the widget it
+  // logically belongs with: IK left of the Pin, Controller left of Scale H,
+  // Maintain right of Scale V.
+  if (auto *ikCtl = dynamic_cast<ToolOptionCheckbox *>(
+          animateOptionsBox->control("inverseKinematics"))) {
+    animateLayout->removeWidget(ikCtl);
+    animateLayout->insertWidget(animateLayout->indexOf(m_pinButton), ikCtl);
+  }
+  if (auto *ctrlCtl = dynamic_cast<ToolOptionCheckbox *>(
+          animateOptionsBox->control("showController"))) {
+    animateLayout->removeWidget(ctrlCtl);
+    animateLayout->insertWidget(animateLayout->indexOf(scaleXLabel), ctrlCtl);
+  }
+  if (auto *maintainCtl = dynamic_cast<ToolOptionCombo *>(
+          animateOptionsBox->control("scaleConstraint"))) {
+    // The combo carries a separate "Maintain:" QLabel immediately to its left;
+    // move both so the label doesn't stay stranded in the old block.
+    int comboIdx    = animateLayout->indexOf(maintainCtl);
+    QLayoutItem *li = comboIdx > 0 ? animateLayout->itemAt(comboIdx - 1) : nullptr;
+    QWidget *maintainLabel =
+        (li && qobject_cast<QLabel *>(li->widget())) ? li->widget() : nullptr;
+    animateLayout->removeWidget(maintainCtl);
+    if (maintainLabel) animateLayout->removeWidget(maintainLabel);
+    int insAt = animateLayout->indexOf(m_scaleYField) + 1;
+    animateLayout->insertWidget(insAt, maintainCtl);
+    if (maintainLabel) animateLayout->insertWidget(insAt, maintainLabel);
+  }
 
   ret = ret && connect(distanceLabel, SIGNAL(onMousePress(QMouseEvent *)),
                        m_distanceField, SLOT(receiveMousePress(QMouseEvent *)));

@@ -334,9 +334,14 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
   // But under IK with an active pin the pin is the temporary root, so the native
   // root becomes an ordinary manipulable vertex: its rotation about its pin-ward
   // neighbour is stored in that neighbour's ANGLE and preserves bone lengths.
+  // The pin may be on THIS column (single-level) OR on a connected child column
+  // (cross-level): in the latter case the unified solver re-roots at that pin, so
+  // this column's root must be draggable too — otherwise the body root stays
+  // locked while a foot is pinned on a child leg.
   bool isRoot = m_svSel.hasSingleObject() &&
                 deformedSkeleton().vertex(m_svSel).parent() < 0;
-  bool ikPin  = m_ikDrag.getValue() && pinnedVertexAtFrame(frame) >= 0;
+  bool ikPin  = m_ikDrag.getValue() && (pinnedVertexAtFrame(frame) >= 0 ||
+                                       hasCrossLevelPin_animate(frame));
 
   if (m_sd && m_svSel.hasSingleObject() && (!isRoot || ikPin)) {
     l_suspendParamsObservation = true;  // Automatic params notification happen
@@ -355,11 +360,12 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
     // own — its motion belongs to the parent column).
     if (m_ikDrag.getValue() &&
         (deformedSkeleton().vertex(m_svSel).parent() >= 0 || ikPin)) {
-      // FK posing (no pins) on a multi-column character runs on the unified
-      // graph so child columns turn as ordinary chain joints; pinned posing
-      // falls back to the single-level path (cross-column pins are mirrored onto
-      // the parent's attachment vertex, see setAttachmentPin_animate).
-      if (!crossLevelFK_animate(frame, m_svSel, pos))
+      // Cross-column pin (a foot on a child leg) → unified IK on the combined
+      // graph (STEP A): re-root at the pin so the foot holds while the body
+      // articulates. If it doesn't apply, FK posing (no pins) also runs on the
+      // unified graph; otherwise fall back to the single-level pin path.
+      if (!crossLevelIK_animate(frame, m_svSel, pos) &&
+          !crossLevelFK_animate(frame, m_svSel, pos))
         moveVertexIK_animate(frame, m_svSel, pos);
     } else if (m_keepDistance.getValue()) {
       ::setKeyframe(vd->m_params[SkVD::ANGLE],
@@ -389,11 +395,24 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
     // refresh DURING the drag: otherwise its mesh/placement is re-evaluated
     // only on release, so the skeleton overlay drifts from the mesh mid-drag
     // and snaps back at the end. Guarded so plain single columns stay light.
+    // Symmetric case: dragging a PARENT with column children needs the same
+    // refresh — a child's attachment point (getHandlePos, which reads the
+    // parent's OWN pin-planted deformed skeleton) and getColumnMatrix cache
+    // (TStageObject::lazyData().m_time, same-frame) otherwise stay stale
+    // through the drag, so a pinned child (e.g. a foot) drifts along with the
+    // parent instead of holding, until the next full invalidate on release.
     if (TXsheet *xsh =
             TTool::getApplication()->getCurrentXsheet()->getXsheet()) {
       TStageObject *obj =
           xsh->getStageObject(TStageObjectId::ColumnId(::column()));
-      if (obj && obj->getParent().isColumn())
+      bool hasColumnChild = false;
+      if (obj)
+        for (TStageObject *child : obj->getChildren())
+          if (child->getId().isColumn()) {
+            hasColumnChild = true;
+            break;
+          }
+      if (obj && (obj->getParent().isColumn() || hasColumnChild))
         TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
     }
   }
@@ -1480,6 +1499,8 @@ void PlasticTool::moveVertexMultiAnchor_animate(
 void PlasticTool::writeBackAngles_animate(
     double frame, const std::map<int, TPointD> &curPos,
     const std::map<int, TPointD> &desired, bool clampToLimits) {
+  // Single-level: the free root is handled by the eval-time PINTX/PINTY plant,
+  // NOT by a root offset — so writeRootOffset stays false (default).
   writeBackAnglesFor_animate(*skeleton(), m_sd, ::skeletonId(), frame, curPos,
                              desired, clampToLimits);
 }
@@ -1492,7 +1513,8 @@ void PlasticTool::writeBackAngles_animate(
 void PlasticTool::writeBackAnglesFor_animate(
     const PlasticSkeleton &orig, const SkDP &def, int skelId, double frame,
     const std::map<int, TPointD> &curPos,
-    const std::map<int, TPointD> &desired, bool clampToLimits) {
+    const std::map<int, TPointD> &desired, bool clampToLimits,
+    bool writeRootOffset) {
   if (!def) return;
 
   auto parentDir = [&](const std::function<TPointD(int)> &posFn, int vx) {
@@ -1513,7 +1535,30 @@ void PlasticTool::writeBackAnglesFor_animate(
   for (const auto &kv : curPos) {
     int w  = kv.first;
     int op = orig.vertex(w).parent();
-    if (op < 0) continue;  // skeleton root has no ANGLE param
+    if (op < 0) {
+      // The root has no ANGLE. Only the unified IK solver asks to record its
+      // motion (writeRootOffset), and only for the ONE effective root column —
+      // whose ROOTX/ROOTY carries the free-root translation that keeps the
+      // pinned foot planted while the body moves. Every other caller skips the
+      // root (single-level relies on the eval PINTX plant; child columns follow
+      // their parent's attachment vertex, so their root must NOT be offset).
+      if (!writeRootOffset) continue;
+      // ROOTX/ROOTY = offset from rest; updateBranchPositions applies it before
+      // FK descends into children.
+      SkVD *rvd = def->vertexDeformation(skelId, w);
+      if (rvd && rvd->m_params[SkVD::ROOTX] && rvd->m_params[SkVD::ROOTY]) {
+        TPointD newOff = desired.at(w) - orig.vertex(w).P();
+        double oldX    = rvd->m_params[SkVD::ROOTX]->getValue(frame);
+        double oldY    = rvd->m_params[SkVD::ROOTY]->getValue(frame);
+        if (fabs(newOff.x - oldX) > 1e-4 || fabs(newOff.y - oldY) > 1e-4) {
+          ::setKeyframe(rvd->m_params[SkVD::ROOTX], frame);
+          ::setKeyframe(rvd->m_params[SkVD::ROOTY], frame);
+          rvd->m_params[SkVD::ROOTX]->setValue(frame, newOff.x);
+          rvd->m_params[SkVD::ROOTY]->setValue(frame, newOff.y);
+        }
+      }
+      continue;
+    }
     TPointD od  = orig.vertex(w).P() - orig.vertex(op).P();
     double rest = wrapPi(atan2(od.y, od.x) - parentDir(origFn, op));
     TPointD nd  = desired.at(w) - desired.at(op);
@@ -1912,6 +1957,49 @@ void PlasticTool::togglePinAtCurrentFrame() {
   int v        = m_svSel;
   SkVD *vd     = m_sd->vertexDeformation(::skeletonId(), v);
   if (!vd) return;
+
+  // Is the current column a stitched CHILD (a leg/arm parented to the body via a
+  // hook)? Then its pin is a cross-column concern handled by the unified IK
+  // solver (crossLevelIK_animate). We deliberately DON'T capture a PINTX/PINTY
+  // target and DON'T mirror onto the parent: the per-column eval plant lives in
+  // the child's own local space (anchored to the parent), so it can't hold the
+  // foot in world and would only fight the unified solve. Just toggle the PIN
+  // flag (with the frame-1 confinement anchor) so the diamond/UI and the graph
+  // builder see the pin; the pose is carried by the ANGLE/ROOTX-ROOTY write-back.
+  bool isChildColumn = false;
+  {
+    const int cur = ::column();
+    for (const CrossLevelLink &lk : crossLevelLinks_animate())
+      if (lk.childColumn == cur) {
+        isChildColumn = true;
+        break;
+      }
+  }
+  if (isChildColumn) {
+    TUndoManager::manager()->beginBlock();
+    AnimateValuesUndo *undo = new AnimateValuesUndo(v);
+    m_sd->getKeyframeAt(frame, undo->m_oldValues);
+
+    bool pinned = vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5;
+    if (!pinned && frame > 1.0 &&
+        vd->m_params[SkVD::PIN]->getKeyframeCount() == 0) {
+      TDoubleKeyframe base(1.0, 0.0);
+      base.m_type = base.m_prevType = TDoubleKeyframe::Constant;
+      vd->m_params[SkVD::PIN]->setKeyframe(base);
+    }
+    TDoubleKeyframe kf(frame, pinned ? 0.0 : 1.0);
+    kf.m_type = kf.m_prevType = TDoubleKeyframe::Constant;
+    vd->m_params[SkVD::PIN]->setKeyframe(kf);
+
+    m_sd->getKeyframeAt(frame, undo->m_newValues);
+    TUndoManager::manager()->add(undo);
+    TUndoManager::manager()->endBlock();
+
+    m_deformedSkeleton.invalidate();
+    invalidate();
+    TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+    return;
+  }
 
   // One block: this pin plus the mirrored parent-attachment pin undo together.
   TUndoManager::manager()->beginBlock();
@@ -2672,6 +2760,179 @@ bool PlasticTool::crossLevelFK_animate(double frame, int vDragged,
     }
     writeBackAnglesFor_animate(cc.rest, cc.def, cc.skelId, cc.paramFrame,
                                curLocal, desLocal, true);
+  }
+  return true;
+}
+
+//------------------------------------------------------------------------
+
+// STEP A — unified IK pin drag. When a pin sits on a CHILD column (a foot on a
+// leg parented to the body), the whole articulated character is treated as ONE
+// skeleton: re-root the unified graph at that pin, rotate the dragged vertex's
+// re-rooted subtree about its new parent (single joint, constant bone lengths),
+// and dispatch the result back per column as ANGLE deltas — plus ROOTX/ROOTY on
+// the ONE effective root column, which carries the free-root translation. The
+// pinned foot stays put (it is the re-root base) while the body articulates.
+// Returns false (caller falls back to FK / single-level) when there is no
+// cross-column pin, it's a single column, or the dragged vertex is the pin.
+bool PlasticTool::crossLevelIK_animate(double frame, int vDragged,
+                                       const TPointD &mousePos) {
+  UnifiedGraph g = buildUnifiedGraph_animate(frame);
+  if (g.nodes.empty() || g.pins.empty() || g.root.col < 0) return false;
+
+  // Only engage for a pin on a CHILD column (col != root). Pins on the root
+  // column keep the proven single-level path (its free root is handled by the
+  // eval PINTX plant, which works for a top-level column).
+  bool crossPin = false;
+  for (const UNode &p : g.pins)
+    if (p.col != g.root.col) {
+      crossPin = true;
+      break;
+    }
+  if (!crossPin) return false;
+
+  // Multi-column only.
+  const int curCol = ::column();
+  bool multi = false;
+  for (const UNode &n : g.nodes)
+    if (n.col != curCol) {
+      multi = true;
+      break;
+    }
+  if (!multi) return false;
+
+  const UNode dragged{curCol, vDragged};
+  if (!g.world.count(dragged)) return false;
+  for (const UNode &p : g.pins)
+    if (p == dragged) return false;  // dragging the pin itself
+
+  // Undirected adjacency over the unified parent map.
+  std::map<UNode, std::vector<UNode>> adj;
+  for (const auto &kv : g.parent) {
+    adj[kv.first].push_back(kv.second);
+    adj[kv.second].push_back(kv.first);
+  }
+
+  // Nearest pin to the dragged node (BFS): posing near a planted foot behaves
+  // the same whichever foot was pinned first.
+  UNode pin{-1, -1};
+  {
+    std::set<UNode> pinSet(g.pins.begin(), g.pins.end());
+    std::set<UNode> vis;
+    std::queue<UNode> q;
+    q.push(dragged);
+    vis.insert(dragged);
+    while (!q.empty()) {
+      UNode u = q.front();
+      q.pop();
+      if (pinSet.count(u)) {
+        pin = u;
+        break;
+      }
+      for (const UNode &w : adj[u])
+        if (!vis.count(w)) {
+          vis.insert(w);
+          q.push(w);
+        }
+    }
+    if (pin.col < 0) return false;  // no pin reachable
+  }
+
+  // Re-root the unified tree at the pin: it becomes the fixed base, so the
+  // pinned foot stays put for free (no explicit primary translation needed).
+  std::map<UNode, UNode> reParent;
+  {
+    std::set<UNode> vis;
+    std::queue<UNode> q;
+    q.push(pin);
+    vis.insert(pin);
+    reParent[pin] = UNode{-1, -1};
+    while (!q.empty()) {
+      UNode u = q.front();
+      q.pop();
+      for (const UNode &w : adj[u])
+        if (!vis.count(w)) {
+          vis.insert(w);
+          reParent[w] = u;
+          q.push(w);
+        }
+    }
+    if (!vis.count(dragged)) return false;  // disconnected
+  }
+
+  UNode rp = reParent[dragged];
+  if (rp.col < 0) return false;  // dragged is the pin (guarded above, defensive)
+
+  // Glued cross-link: a child column's root sits EXACTLY on its parent's
+  // attachment vertex (the hip), a zero-length bone. If the dragged node
+  // coincides with its re-rooted parent, rotating about it is undefined — walk
+  // up to the first ancestor at a real distance (the next real joint toward the
+  // pin, e.g. the knee) and use THAT as the pivot. The skipped coincident nodes
+  // are the glued partners: they must rotate together with the dragged node so
+  // the joint stays stitched, so collect them to seed the moved set.
+  std::vector<UNode> gluedExtra;
+  while (rp.col >= 0 && norm2(g.world[dragged] - g.world[rp]) < 1e-8) {
+    gluedExtra.push_back(rp);
+    rp = reParent.count(rp) ? reParent[rp] : UNode{-1, -1};
+  }
+  if (rp.col < 0) return false;  // no non-coincident pivot found
+
+  const TPointD pivot = g.world[rp];
+  const TPointD oldD  = g.world[dragged] - pivot;
+  const TPointD newD  = (getMatrix() * mousePos) - pivot;
+  if (norm2(oldD) < 1e-12 || norm2(newD) < 1e-12) return false;
+  const double theta = wrapPi(atan2(newD.y, newD.x) - atan2(oldD.y, oldD.x));
+
+  // Dragged node's re-rooted subtree (+ its glued partners), rotated rigidly
+  // about the pivot (constant bone lengths → a valid FK configuration the
+  // per-column write-back can reproduce). Single joint: only this set moves; the
+  // pin side stays put.
+  std::set<UNode> moved;
+  {
+    std::queue<UNode> q;
+    q.push(dragged);
+    moved.insert(dragged);
+    for (const UNode &e : gluedExtra) {
+      if (moved.insert(e).second) q.push(e);
+    }
+    while (!q.empty()) {
+      UNode u = q.front();
+      q.pop();
+      for (const UNode &w : adj[u])
+        if (reParent.count(w) && reParent[w] == u && !moved.count(w)) {
+          moved.insert(w);
+          q.push(w);
+        }
+    }
+  }
+
+  std::map<UNode, TPointD> desired = g.world;
+  const double c = cos(theta), s = sin(theta);
+  for (const UNode &u : moved) {
+    const TPointD d = g.world[u] - pivot;
+    desired[u] = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+  }
+
+  // Dispatch per touched column: ANGLE deltas everywhere, plus ROOTX/ROOTY on
+  // the one effective root column (its free-root translation). Always visit the
+  // root column so its offset is refreshed even if only its root node moved.
+  std::set<int> touchedCols;
+  for (const UNode &u : moved) touchedCols.insert(u.col);
+  touchedCols.insert(g.root.col);
+  std::vector<CrossCol> cols = crossColumns_animate(frame);
+  for (const CrossCol &cc : cols) {
+    if (!touchedCols.count(cc.columnIndex)) continue;
+    const TAffine wInv = cc.world.inv();
+    std::map<int, TPointD> curLocal, desLocal;
+    for (auto vt = cc.deformed.vertices().begin();
+         vt != cc.deformed.vertices().end(); ++vt) {
+      curLocal[(int)vt.m_idx] = vt->P();
+      desLocal[(int)vt.m_idx] =
+          wInv * desired[UNode{cc.columnIndex, (int)vt.m_idx}];
+    }
+    writeBackAnglesFor_animate(cc.rest, cc.def, cc.skelId, cc.paramFrame,
+                               curLocal, desLocal, true,
+                               /*writeRootOffset=*/cc.columnIndex == g.root.col);
   }
   return true;
 }

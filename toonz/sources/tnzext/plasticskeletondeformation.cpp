@@ -40,14 +40,14 @@ namespace {
 
 static const char *parNames[SkVD::PARAMS_COUNT] = {
     "Angle",  "Distance", "SO",     "Pin",      "PinTX",
-    "PinTY",  "ScaleX",   "ScaleY", "PivotX",   "PivotY",
-    "TransX", "TransY",   "Rotation", "ShearX", "ShearY",
-    "MinAngle", "MaxAngle"};
+    "PinTY",  "RootX",    "RootY",  "ScaleX",   "ScaleY",
+    "PivotX", "PivotY",   "TransX", "TransY",   "Rotation",
+    "ShearX", "ShearY",   "MinAngle", "MaxAngle"};
 static const char *parMeasures[SkVD::PARAMS_COUNT] = {
     "angle",    "fxLength", "",         "",         "fxLength",
-    "fxLength", "scale",    "scale",    "fxLength", "fxLength",
-    "fxLength", "fxLength", "angle",    "shear",    "shear",
-    "angle",    "angle"};
+    "fxLength", "fxLength", "fxLength", "scale",    "scale",
+    "fxLength", "fxLength", "fxLength", "fxLength", "angle",
+    "shear",    "shear",    "angle",    "angle"};
 
 //------------------------------------------------------------------
 
@@ -585,6 +585,22 @@ void PlasticSkeletonDeformation::Imp::updateBranchPositions(
 
     dvx.P() = deformedSkeleton.vertex(vParent).P() +
               (d + dDelta) * (TRotation(a + aDelta) * dDir);
+  } else {
+    // Root: no ANGLE/DISTANCE of its own, but ROOTX/ROOTY (written by the
+    // tool's pin-aware write-back when a re-root/pivot solve sweeps the root
+    // along as a rigid passenger — see writeBackAnglesFor_animate) gives it a
+    // keyframeable offset from rest. Applied here, before children recurse,
+    // so it propagates like any other joint's motion; the per-frame pin
+    // re-plant in storeDeformedSkeleton still runs on top of this, so an
+    // active pin keeps holding exactly regardless of this offset.
+    auto vdIt = m_vds.find(dvx.name());
+    if (vdIt != m_vds.end()) {
+      const SkVD &vd = vdIt->m_vd;
+      if (vd.m_params[SkVD::ROOTX] && vd.m_params[SkVD::ROOTY])
+        dvx.P() = originalSkeleton.vertex(v).P() +
+                  TPointD(vd.m_params[SkVD::ROOTX]->getValue(frame),
+                          vd.m_params[SkVD::ROOTY]->getValue(frame));
+    }
   }
 
   // Finally, update children positions

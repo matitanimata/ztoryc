@@ -65,6 +65,17 @@ public:
                 //!< whole skeleton is translated so the pinned vertex lands on
                 //!< (PINTX,PINTY) — a true per-frame constraint, so the pin
                 //!< stays planted on in-between frames, not just on keyframes.
+    ROOTX,      //!< SuperPlastic: keyframeable offset of the skeleton ROOT from
+    ROOTY,      //!< its rest position (stored on the root vertex's own
+                //!< deformation; default 0 = root stays at rest, old scenes
+                //!< unaffected). The root has no ANGLE/DISTANCE of its own, so
+                //!< without this a pin-driven rotation of the near-pin segment
+                //!< that sweeps the root along as a rigid passenger (e.g.
+                //!< dragging a joint with the root one bone further, pivoting
+                //!< around a pin beyond it) has nowhere to record the root's
+                //!< new position — the drag becomes a silent no-op. Applied in
+                //!< updateBranchPositions BEFORE the per-frame PINTX/PINTY
+                //!< plant, so the pin still holds exactly regardless.
     SCALEX,     //!< SuperPlastic squash & stretch: scale FACTORS (1.0 = 100%
     SCALEY,     //!< = neutral; custom default handling in save/touchParams
                 //!< keeps untouched scales unserialized). Stored on the ROOT

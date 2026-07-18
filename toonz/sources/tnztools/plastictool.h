@@ -397,11 +397,16 @@ protected:
   // desired-positions snapshot (in `def`'s own local space) into that column's
   // root-down ANGLE params. The single-column wrapper above passes the current
   // column; the cross-level solver calls it once per touched column.
+  // writeRootOffset: when true, the skeleton root's new position is recorded as
+  // its ROOTX/ROOTY offset (used only by the unified IK solver, for the one
+  // effective root column that carries the free-root translation). Default false
+  // keeps every other caller — single-level and cross-level FK — unchanged: the
+  // root has no representable motion there and is simply skipped.
   void writeBackAnglesFor_animate(const PlasticSkeleton &orig, const SkDP &def,
                                   int skelId, double frame,
                                   const std::map<int, TPointD> &curLocal,
                                   const std::map<int, TPointD> &desiredLocal,
-                                  bool clampToLimits);
+                                  bool clampToLimits, bool writeRootOffset = false);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
   void controllerDrag_animate(const TPointD &pos, const TMouseEvent &me);
   void scaleDrag_animate(const TPointD &pos, const TMouseEvent &me);
@@ -562,6 +567,13 @@ private:
   //! ordinary chain joints). Returns false (no-op) when it doesn't apply —
   //! single column, pins present, dragging the root — so the caller falls back.
   bool crossLevelFK_animate(double frame, int vDragged, const TPointD &mousePos);
+  //! Unified IK pin drag on the combined graph (STEP A): when a pin lives on a
+  //! CHILD column, re-root the whole cross-column graph at that pin and pose the
+  //! dragged vertex about it, so the pinned foot stays put while the body
+  //! articulates — the free-root translation lands on the one root column's
+  //! ROOTX/ROOTY. Returns false (caller falls back) when there is no cross-column
+  //! pin, it's single-column, or the dragged vertex is the pin itself.
+  bool crossLevelIK_animate(double frame, int vDragged, const TPointD &mousePos);
   //! Redirect a pick on a child column's (non-draggable) root to the coincident
   //! parent attachment vertex, which is draggable. In-place; no-op otherwise.
   void redirectChildRootToParent_animate(int &col, int &v);
