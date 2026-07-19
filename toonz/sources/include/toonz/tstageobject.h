@@ -363,16 +363,6 @@ with the frame.
   //! Exact inverse of setPlasticPoseKeyframe: drops the plastic POSE keys at
   //! \p frame, leaving pins and joint-limit overrides untouched.
   void removePlasticPoseKeyframe(double frame);
-
-  //! SuperPlastic: while a cross-level drag is in progress, the character
-  //! solve plants the PRIMARY pin only (rigid translation — shape-invariant,
-  //! so the tool's angle write-back cannot capture it). Secondary CCD and
-  //! balancing resume on release. This severs the feedback loop where the tool
-  //! fitted angles to the SOLVED (bent) shapes and the evaluation re-bent on
-  //! top, compounding per mouse move — crumpling without joint limits,
-  //! vibrating against them. Set/cleared by the plastic tool.
-  static void enablePlasticDragMode(bool on);
-  static bool isPlasticDragMode();
   void removeKeyframeWithoutUndo(int frame);
 
   /*!

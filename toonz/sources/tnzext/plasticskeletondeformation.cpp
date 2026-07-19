@@ -1017,7 +1017,7 @@ void PlasticPinSolver::plant(const std::vector<Joint> &joints,
                              const std::vector<Pin> &pinsIn,
                              std::vector<TPointD> &pos,
                              const std::vector<int> &preplanted,
-                             double maxStepDegrees, bool primaryOnly) {
+                             double maxStepDegrees) {
   if (joints.empty() || pos.size() != joints.size() || pinsIn.empty()) return;
 
   const double maxStepRad =
@@ -1046,9 +1046,6 @@ void PlasticPinSolver::plant(const std::vector<Joint> &joints,
 
     if (pins.size() == 1) return;
   }
-
-  // Drag in progress: the translation above is all we do (see the header).
-  if (primaryOnly) return;
 
   // Plant every secondary pin: CCD on its own limb, below the point where it
   // diverges from the already-planted chains. Re-runnable — the planted chains
