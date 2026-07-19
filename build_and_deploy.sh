@@ -164,4 +164,12 @@ echo "✓ Fatto."
 if ! pgrep -x Ztoryc > /dev/null 2>&1; then
   echo "→ Apertura app..."
   open "$APP"
+else
+  # Un'istanza avviata PRIMA di questo deploy esegue il binario VECCHIO: ogni
+  # test fatto lì sopra è invalido. È già successo tre volte in una sessione
+  # (2026-07-19), una delle quali ha quasi fatto scartare un fix corretto.
+  echo ""
+  echo "⚠️⚠️⚠️  ISTANZA GIÀ APERTA — STA ESEGUENDO IL BINARIO VECCHIO  ⚠️⚠️⚠️"
+  echo "    Chiudila e riaprila PRIMA di testare, o il test non vale niente."
+  echo ""
 fi

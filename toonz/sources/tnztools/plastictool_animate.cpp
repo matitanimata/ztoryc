@@ -2531,49 +2531,95 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
 
 //------------------------------------------------------------------------
 
-// One action = one support switch (walk cycle): pin the selected vertex at
-// the CURRENT frame and release every other active pin ONE FRAME LATER — the
-// double support lives on exactly this key, with no second manual unpin. The
-// release goes through togglePinAtCurrentFrame at f+1, so it inherits the
-// planted-pose bake and the undo handling; everything is grouped in a single
-// undo block.
+// One action = one support switch (walk cycle): at the CURRENT frame, pin the
+// selected vertex and release every other active pin of the character. Same
+// frame, deliberately — swapping the support on one key is what the animation
+// wants, and it is what keeps this simple: no frame handle to move, every undo
+// on the same row, one key per pin channel.
+//
+// It used to pin here and release ONE FRAME LATER, to leave a double-support
+// key behind. That gave a messier curve, and because the frame handle moved
+// inside the undo block the undo did not come back cleanly. Identical for
+// single-level and stitched rigs — the behaviour must not fork on rig shape.
 void PlasticTool::switchPinAtCurrentFrame() {
   if (!m_sd || !m_svSel.hasSingleObject()) return;
-  double frame = ::frame();
-  int v        = m_svSel;
+  const double frame = ::frame();
+  const int v        = m_svSel;
 
   std::vector<int> pins = pinnedVerticesAtFrame(frame);
-  bool vPinned = std::find(pins.begin(), pins.end(), v) != pins.end();
+  const bool vPinned = std::find(pins.begin(), pins.end(), v) != pins.end();
 
   TUndoManager::manager()->beginBlock();
 
+  // New support first: its scene target is captured while the PREVIOUS pin is
+  // still planting the character, i.e. at the foot's true visual spot.
   if (!vPinned) togglePinAtCurrentFrame();
 
-  TFrameHandle *fh = TTool::getApplication()->getCurrentFrame();
-  int row0         = fh->getFrame();
-  fh->setFrame(row0 + 1);
+  // Release the others on this column, through the proven path.
   for (int p : pins) {
     if (p == v) continue;
     SkVD *vd = m_sd->vertexDeformation(::skeletonId(), p);
     if (!vd || !vd->m_params[SkVD::PIN]) continue;
-    if (vd->m_params[SkVD::PIN]->getValue(::frame()) < 0.5) continue;
+    if (vd->m_params[SkVD::PIN]->getValue(frame) < 0.5) continue;
     setSkeletonSelection(p);
     togglePinAtCurrentFrame();
   }
-
-  // TODO (C.2): the previous support foot often lives on ANOTHER column of the
-  // character, and pinnedVerticesAtFrame only ever sees the CURRENT one, so its
-  // release key is never written there — the known "switch doesn't key the
-  // parent column" defect. A first attempt drove the other columns through
-  // TemporaryActivation + togglePinAtCurrentFrame: it made things WORSE (no
-  // keys created at all, the previous foot un-pinned instead of released, and
-  // the tool's selection left stranded on an unrelated column). Reverted.
-  // Whatever replaces it must not move the current column/selection under the
-  // undo block — dispatch per column with explicit coordinates instead, the way
-  // crossLevelIK_animate writes back via writeBackAnglesFor_animate.
-
-  fh->setFrame(row0);
   setSkeletonSelection(v);
+
+  // The previous support foot usually lives on ANOTHER column of the character
+  // (the body, or the other leg), and pinnedVerticesAtFrame only ever sees the
+  // CURRENT one — so its release key was never written and the old foot stayed
+  // planted, which is why a walk cycle would not switch support.
+  //
+  // Write straight into the other column's deformation, with explicit (row,
+  // column) coordinates for the undo. Deliberately NOT by activating those
+  // columns: a first attempt drove them through TemporaryActivation +
+  // togglePinAtCurrentFrame and made things worse — no keys at all, the previous
+  // foot un-pinned instead of released, and the selection stranded on an
+  // unrelated column. Moving the current column or selection under an undo block
+  // is the thing to avoid.
+  {
+    TXsheet *xsh   = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+    const int col0 = ::column();
+    for (int c : characterColumns()) {
+      if (c == col0 || !xsh) continue;
+      TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+      if (!obj) continue;
+      const PlasticSkeletonDeformationP &sd =
+          obj->getPlasticSkeletonDeformation();
+      if (!sd) continue;
+
+      // RAW frame, not paramsTime(): togglePinAtCurrentFrame keys the pins at
+      // the raw frame, so the release has to live in the same domain. Going
+      // through paramsTime here wrote the release at a different time than the
+      // one the pin was switched on at, and the pin appeared to vanish from the
+      // frames BEFORE the switch.
+      const double sdFr     = frame;
+      const int skelId      = sd->skeletonId(sdFr);
+      PlasticSkeletonP skel = sd->skeleton(skelId);
+      if (!skel) continue;
+
+      for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
+           ++vt) {
+        SkVD *vd = sd->vertexDeformation(skelId, vt.m_idx);
+        if (!vd || !vd->m_params[SkVD::PIN]) continue;
+        if (vd->m_params[SkVD::PIN]->getValue(sdFr) < 0.5) continue;
+
+        // ROW, not frame: ::row() is frame()+1, and the undo undoes the shift
+        // with deleteKeyframe(m_row - 1).
+        AnimateValuesUndo *undo =
+            new AnimateValuesUndo((int)vt.m_idx, ::row(), c);
+        sd->getKeyframeAt(sdFr, undo->m_oldValues);
+
+        TDoubleKeyframe kf(sdFr, 0.0);
+        kf.m_type = kf.m_prevType = TDoubleKeyframe::Constant;
+        vd->m_params[SkVD::PIN]->setKeyframe(kf);
+
+        sd->getKeyframeAt(sdFr, undo->m_newValues);
+        TUndoManager::manager()->add(undo);
+      }
+    }
+  }
 
   TUndoManager::manager()->endBlock();
 
