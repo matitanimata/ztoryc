@@ -359,6 +359,10 @@ with the frame.
   //! joint-limit overrides are deliberately excluded — see the definition.
   //! No-op when the object carries no plastic deformation.
   void setPlasticPoseKeyframe(double frame);
+
+  //! Exact inverse of setPlasticPoseKeyframe: drops the plastic POSE keys at
+  //! \p frame, leaving pins and joint-limit overrides untouched.
+  void removePlasticPoseKeyframe(double frame);
   void removeKeyframeWithoutUndo(int frame);
 
   /*!

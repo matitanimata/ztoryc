@@ -3588,14 +3588,19 @@ void CellArea::drawKeyframe(QPainter &p, const QRect toBeUpdated) {
         // from a plain column-transform key — it freezes the whole rigged
         // character. Mark it with the logo gold so blocking is readable at a
         // glance. Selection colour still wins (it is transient feedback).
-        // paramsTime(), not the raw row: plastic params are sampled in the
-        // stage object's param time, which diverges from the xsheet row under
-        // repeat/cycling — comparing against the row put the gold on the wrong
-        // frames there.
-        if (const PlasticSkeletonDeformationP &psd =
-                pegbar->getPlasticSkeletonDeformation())
-          if (psd->isKeyframe(pegbar->paramsTime(row)))
-            color = ZtoryTheme::gold();
+        // Two subtleties:
+        //  * FULL stage key required. Gold on any stage key made a partial key
+        //    (say, X/Y from an Animate drag) that merely COINCIDED with plastic
+        //    keys read as "global" — while the keyframe navigator correctly
+        //    called it partial. Gold now means: whole transform + whole pose.
+        //  * paramsTime(), not the raw row: plastic params are sampled in the
+        //    stage object's param time, which diverges from the xsheet row
+        //    under cycling.
+        if (pegbar->isFullKeyframe(row))
+          if (const PlasticSkeletonDeformationP &psd =
+                  pegbar->getPlasticSkeletonDeformation())
+            if (psd->isKeyframe(pegbar->paramsTime(row)))
+              color = ZtoryTheme::gold();
         if (m_viewer->getKeyframeSelection() &&
             m_viewer->getKeyframeSelection()->isSelected(row, col))
           color = QColor(85, 157, 255);

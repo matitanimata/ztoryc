@@ -1077,22 +1077,56 @@ for(int p=0; p<SkVD::PARAMS_COUNT; ++p)
 //     every joint limit at its current value.
 // Only genuine pose channels below: skeleton pose, free-root offset, and the
 // squash & stretch controller.
+namespace {
+// The POSE parameters, and only those — the explicit list both key and unkey
+// share. See the comment above setPlasticPoseKeyframe for why pins and
+// joint-limit overrides must never appear here.
+static const int l_plasticPoseParams[] = {
+    SkVD::ANGLE,  SkVD::DISTANCE, SkVD::SO,     SkVD::ROOTX,  SkVD::ROOTY,
+    SkVD::SCALEX, SkVD::SCALEY,   SkVD::PIVOTX, SkVD::PIVOTY, SkVD::TRANSX,
+    SkVD::TRANSY, SkVD::ROT,      SkVD::SHEARX, SkVD::SHEARY};
+}
+
 void TStageObject::setPlasticPoseKeyframe(double frame) {
   const PlasticSkeletonDeformationP &sd = getPlasticSkeletonDeformation();
   if (!sd) return;
 
-  static const int poseParams[] = {
-      SkVD::ANGLE,  SkVD::DISTANCE, SkVD::SO,     SkVD::ROOTX,  SkVD::ROOTY,
-      SkVD::SCALEX, SkVD::SCALEY,   SkVD::PIVOTX, SkVD::PIVOTY, SkVD::TRANSX,
-      SkVD::TRANSY, SkVD::ROT,      SkVD::SHEARX, SkVD::SHEARY};
+  // Param-time domain, like every other plastic key (pins included): identity
+  // except past the last stage key with Cycle on, where a raw-frame key would
+  // land at a time no evaluation ever samples.
+  frame = paramsTime(frame);
 
   PlasticSkeletonDeformation::vd_iterator vdt, vdEnd;
   sd->vertexDeformations(vdt, vdEnd);
   for (; vdt != vdEnd; ++vdt) {
     SkVD *vd = (*vdt).second;
     if (!vd) continue;
-    for (int p : poseParams)
+    for (int p : l_plasticPoseParams)
       if (vd->m_params[p]) setkey(vd->m_params[p], (int)frame);
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+// Drops the plastic POSE keys at `frame` — the exact inverse of
+// setPlasticPoseKeyframe, over the same explicit param list. Used by the
+// Set Key toggle (removing a "full" key must also drop the pose it captured)
+// and by its undo. Pins and joint-limit overrides are untouched: deleting
+// those would cut pin ranges / re-enable disabled limits as a side effect of
+// an unrelated key operation.
+void TStageObject::removePlasticPoseKeyframe(double frame) {
+  const PlasticSkeletonDeformationP &sd = getPlasticSkeletonDeformation();
+  if (!sd) return;
+
+  frame = paramsTime(frame);
+
+  PlasticSkeletonDeformation::vd_iterator vdt, vdEnd;
+  sd->vertexDeformations(vdt, vdEnd);
+  for (; vdt != vdEnd; ++vdt) {
+    SkVD *vd = (*vdt).second;
+    if (!vd) continue;
+    for (int p : l_plasticPoseParams)
+      if (vd->m_params[p]) vd->m_params[p]->deleteKeyframe((int)frame);
   }
 }
 
