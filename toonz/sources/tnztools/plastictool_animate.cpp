@@ -2133,6 +2133,10 @@ double PlasticTool::nextPinActivationAfter_animate(double frame) const {
 std::vector<int> PlasticTool::pinnedVerticesAtFrame(double frame) const {
   std::vector<int> pins;
   if (!m_sd) return pins;
+  // Pins are keyed in the column's param domain (see togglePinAtCurrentFrame),
+  // so read them there. paramsTime is idempotent: callers may pass either the
+  // raw xsheet frame or an already-converted one.
+  frame = ::stageObject()->paramsTime(frame);
   // Pins asleep (IK mode off): single gating point — no diamonds drawn, no
   // pin-aware manipulation. Keys AND evaluation planting stay untouched, so
   // toggling IK never moves the pose.
@@ -2152,7 +2156,13 @@ std::vector<int> PlasticTool::pinnedVerticesAtFrame(double frame) const {
 
 void PlasticTool::togglePinAtCurrentFrame() {
   if (!m_sd || !m_svSel.hasSingleObject()) return;
-  double frame = ::frame();
+  // Pins are read by the evaluation at paramsTime (identity, except past the
+  // last stage key with Cycle on), so their keys must be WRITTEN there too — a
+  // pin keyed at the raw frame past the cycle point would never be read back.
+  // The raw frame survives only for placement evaluation, which takes xsheet
+  // time (paramsTime is applied internally, per object).
+  const double rawFrame = ::frame();
+  double frame          = ::sdFrame();
   int v        = m_svSel;
   SkVD *vd     = m_sd->vertexDeformation(::skeletonId(), v);
   if (!vd) return;
@@ -2187,7 +2197,10 @@ void PlasticTool::togglePinAtCurrentFrame() {
   }
   if (isStitchedCharacter) {
     TUndoManager::manager()->beginBlock();
-    AnimateValuesUndo *undo = new AnimateValuesUndo(v);
+    // Explicit row = the PARAM frame + 1: the undo deletes at m_row - 1, and
+    // the keys just written live in the param domain, not at the raw frame.
+    AnimateValuesUndo *undo =
+        new AnimateValuesUndo(v, (int)frame + 1, ::column());
     m_sd->getKeyframeAt(frame, undo->m_oldValues);
 
     bool pinned = vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5;
@@ -2210,7 +2223,7 @@ void PlasticTool::togglePinAtCurrentFrame() {
         const TPointD vp =
             m_sd->getSquashControllerAffine(::skeletonId(), frame) *
             deformedSkeleton().vertex(v).P();
-        const TPointD W = childObj->getPlacement(frame) * vp;
+        const TPointD W = childObj->getPlacement(rawFrame) * vp;
         for (int c : {(int)SkVD::PINWX, (int)SkVD::PINWY}) {
           TDoubleKeyframe tk(frame, c == SkVD::PINWX ? W.x : W.y);
           tk.m_type = tk.m_prevType = TDoubleKeyframe::Constant;
@@ -2250,7 +2263,9 @@ void PlasticTool::togglePinAtCurrentFrame() {
   TUndoManager::manager()->beginBlock();
 
   // Snapshot for undo (captures the PIN param, part of the SkVD keyframe).
-  AnimateValuesUndo *undo = new AnimateValuesUndo(v);
+  // Explicit row: param frame + 1, same reasoning as the stitched branch above.
+  AnimateValuesUndo *undo =
+      new AnimateValuesUndo(v, (int)frame + 1, ::column());
   m_sd->getKeyframeAt(frame, undo->m_oldValues);
 
   bool pinned = vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5;
@@ -2370,7 +2385,9 @@ void PlasticTool::togglePinAtCurrentFrame() {
   // A pin on a child column also plants the parent's attachment vertex, so the
   // proven single-level primary-pin machinery handles cross-column posing (rigid
   // rig translation, free root) with no separate cross-level solver.
-  setAttachmentPin_animate(!pinned, frame);
+  // RAW frame: setAttachmentPin converts through the PARENT's own paramsTime
+  // (each column wraps its cycle independently).
+  setAttachmentPin_animate(!pinned, rawFrame);
 
   TUndoManager::manager()->endBlock();
 
@@ -2543,8 +2560,12 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
 // single-level and stitched rigs — the behaviour must not fork on rig shape.
 void PlasticTool::switchPinAtCurrentFrame() {
   if (!m_sd || !m_svSel.hasSingleObject()) return;
-  const double frame = ::frame();
-  const int v        = m_svSel;
+  // Param domain for everything touching SkVD params (see
+  // togglePinAtCurrentFrame); the raw frame survives for the other columns,
+  // which each wrap their cycle independently.
+  const double rawFrame = ::frame();
+  const double frame    = ::sdFrame();
+  const int v           = m_svSel;
 
   std::vector<int> pins = pinnedVerticesAtFrame(frame);
   const bool vPinned = std::find(pins.begin(), pins.end(), v) != pins.end();
@@ -2589,12 +2610,12 @@ void PlasticTool::switchPinAtCurrentFrame() {
           obj->getPlasticSkeletonDeformation();
       if (!sd) continue;
 
-      // RAW frame, not paramsTime(): togglePinAtCurrentFrame keys the pins at
-      // the raw frame, so the release has to live in the same domain. Going
-      // through paramsTime here wrote the release at a different time than the
-      // one the pin was switched on at, and the pin appeared to vanish from the
-      // frames BEFORE the switch.
-      const double sdFr     = frame;
+      // This column's OWN param time, from the raw xsheet frame: each column
+      // wraps its cycle independently. Now that togglePinAtCurrentFrame also
+      // keys pins in the param domain, writes and reads finally agree on every
+      // column. (An earlier "fix" used the raw frame here to match togglePin's
+      // then-raw writes — same domain, aligned at the wrong end.)
+      const double sdFr     = obj->paramsTime(rawFrame);
       const int skelId      = sd->skeletonId(sdFr);
       PlasticSkeletonP skel = sd->skeleton(skelId);
       if (!skel) continue;
@@ -2605,10 +2626,10 @@ void PlasticTool::switchPinAtCurrentFrame() {
         if (!vd || !vd->m_params[SkVD::PIN]) continue;
         if (vd->m_params[SkVD::PIN]->getValue(sdFr) < 0.5) continue;
 
-        // ROW, not frame: ::row() is frame()+1, and the undo undoes the shift
-        // with deleteKeyframe(m_row - 1).
+        // ROW = the frame the key is WRITTEN at + 1: the undo deletes at
+        // m_row - 1, so it must point at sdFr, this column's param time.
         AnimateValuesUndo *undo =
-            new AnimateValuesUndo((int)vt.m_idx, ::row(), c);
+            new AnimateValuesUndo((int)vt.m_idx, (int)sdFr + 1, c);
         sd->getKeyframeAt(sdFr, undo->m_oldValues);
 
         TDoubleKeyframe kf(sdFr, 0.0);
@@ -2877,7 +2898,10 @@ PlasticTool::crossColumns_animate(double frame) {
     cc.columnIndex = ::column();
     cc.def         = m_sd;
     cc.skelId      = ::skeletonId();
-    cc.paramFrame  = frame;
+    // Param-time, like the connected columns below get: paramFrame is used to
+    // READ and WRITE SkVD params, and those live in the column's own param
+    // domain (identity, except past the last stage key with Cycle on).
+    cc.paramFrame  = ::stageObject()->paramsTime(frame);
     if (PlasticSkeletonP rs = skeleton()) cc.rest = *rs;
     cc.deformed = deformedSkeleton();
     cc.world    = getMatrix();
