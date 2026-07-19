@@ -1767,7 +1767,15 @@ void TStageObject::solvePlasticCharacter(double t, const TAffine &baseLocal) {
 
   // The character is now one joint tree in one space: the single-level solver
   // applies verbatim, balancing pass and all.
-  PlasticPinSolver::plant(joints, pins, pos);
+  // Damped CCD on the unified tree only: its chains cross column boundaries
+  // (2-3x longer than a single skeleton's) and the stitch bonds are synthetic,
+  // with no authored limits — plain CCD whips them and nearby targets find
+  // wildly different poses, which reads as a nervous, weak multi-pin hold.
+  // 15°/sweep spreads the bend along the chain while keeping full reach
+  // (24 sweeps accumulate up to 360° per joint). The single-column path calls
+  // plant() without damping and is untouched.
+  PlasticPinSolver::plant(joints, pins, pos, std::vector<int>(),
+                          /*maxStepDegrees=*/15.0);
 
   // Hand each column its share of the answer, top-down. A column's mapping back
   // to local space runs through its parent's attachment vertex, so the parent

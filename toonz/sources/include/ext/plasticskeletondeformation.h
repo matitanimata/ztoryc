@@ -80,9 +80,20 @@ struct Pin {
 //! non-empty the rigid translation is skipped (someone else owns it), those
 //! chains seed the "do not touch" set, and every pin bends its own limb. Keep it
 //! empty to get the self-contained behaviour described above.
+//!
+//! \p maxStepDegrees > 0 enables DAMPED CCD: each joint's rotation is clamped
+//! to that many degrees per sweep. Reachability is preserved (sweeps
+//! accumulate), but the bend spreads along the chain instead of whipping the
+//! pivot nearest to the pin, and the solution varies continuously with the
+//! target. Meant for the UNIFIED multi-column tree, whose chains are 2-3x
+//! longer than a single skeleton's and whose stitch bonds are synthetic
+//! (no authored limits): plain CCD finds wildly different configurations for
+//! nearby targets there. 0 (the default) = classic behaviour, and the proven
+//! single-column path stays bit-identical.
 DVAPI void plant(const std::vector<Joint> &joints, const std::vector<Pin> &pins,
                  std::vector<TPointD> &pos,
-                 const std::vector<int> &preplanted = std::vector<int>());
+                 const std::vector<int> &preplanted = std::vector<int>(),
+                 double maxStepDegrees               = 0.0);
 
 }  // namespace PlasticPinSolver
 

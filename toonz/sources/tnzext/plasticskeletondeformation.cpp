@@ -1016,8 +1016,12 @@ double solverRelAngleDeg(const std::vector<PlasticPinSolver::Joint> &joints,
 void PlasticPinSolver::plant(const std::vector<Joint> &joints,
                              const std::vector<Pin> &pinsIn,
                              std::vector<TPointD> &pos,
-                             const std::vector<int> &preplanted) {
+                             const std::vector<int> &preplanted,
+                             double maxStepDegrees) {
   if (joints.empty() || pos.size() != joints.size() || pinsIn.empty()) return;
+
+  const double maxStepRad =
+      (maxStepDegrees > 0.0) ? maxStepDegrees * (M_PI / 180.0) : 0.0;
 
   const int n = (int)joints.size();
 
@@ -1101,6 +1105,11 @@ void PlasticPinSolver::plant(const std::vector<Joint> &joints,
             double hi = (jvx.maxAngle - curRel) * (M_PI / 180.0);
             ang       = std::min(std::max(ang, lo), hi);
           }
+
+          // Damped CCD (see the header): spread the bend along the chain
+          // instead of letting the nearest pivot whip toward the target.
+          if (maxStepRad > 0.0)
+            ang = std::min(std::max(ang, -maxStepRad), maxStepRad);
 
           double c = cos(ang), s = sin(ang);
           std::vector<int> sub;
