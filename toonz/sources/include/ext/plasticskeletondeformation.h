@@ -90,10 +90,14 @@ struct Pin {
 //! (no authored limits): plain CCD finds wildly different configurations for
 //! nearby targets there. 0 (the default) = classic behaviour, and the proven
 //! single-column path stays bit-identical.
+//! \p primaryOnly stops after the primary's rigid translation: no secondary
+//! CCD, no balancing. Used while a drag is in progress — the translation is
+//! shape-invariant, so the tool's angle write-back cannot capture it and feed
+//! it back (see TStageObject::enablePlasticDragMode).
 DVAPI void plant(const std::vector<Joint> &joints, const std::vector<Pin> &pins,
                  std::vector<TPointD> &pos,
                  const std::vector<int> &preplanted = std::vector<int>(),
-                 double maxStepDegrees               = 0.0);
+                 double maxStepDegrees = 0.0, bool primaryOnly = false);
 
 }  // namespace PlasticPinSolver
 

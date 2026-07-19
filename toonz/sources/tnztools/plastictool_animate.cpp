@@ -216,6 +216,9 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
   m_ikCrossOld.clear();
   m_ikCrossDefs.clear();
   m_ikCrossPinWorld.clear();
+  // Safety: an aborted drag (focus loss, tool switch) must not leave the
+  // evaluation stuck in primary-only planting.
+  TStageObject::enablePlasticDragMode(false);
 
   // Controller gizmo, hit-tested FIRST (it must not touch the vertex
   // selection): a full Animate-tool replica whose pivot follows the deformed
@@ -3361,6 +3364,9 @@ void PlasticTool::ensureCrossLevelBaselines_animate(double frame) {
     }
   }
   m_ikCrossDragged = true;
+  // Sever the drag feedback loop: the evaluation plants the primary only while
+  // the drag lasts (see TStageObject::enablePlasticDragMode).
+  TStageObject::enablePlasticDragMode(true);
 }
 
 //------------------------------------------------------------------------
@@ -3596,6 +3602,12 @@ void PlasticTool::finishCrossLevelUndo_animate(double frame) {
   m_ikCrossOld.clear();
   m_ikCrossDefs.clear();
   m_ikCrossPinWorld.clear();
+
+  // Drag over: full planting (secondary CCD + balancing) resumes — the
+  // secondaries settle onto their targets on release.
+  TStageObject::enablePlasticDragMode(false);
+  m_deformedSkeleton.invalidate();
+  invalidate();
 }
 
 //------------------------------------------------------------------------

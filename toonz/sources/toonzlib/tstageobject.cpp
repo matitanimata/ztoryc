@@ -1579,6 +1579,17 @@ TAffine TStageObject::computeIkRootOffset(int t) {
 // place the single-level rig keeps it. This function returns nothing to prepend
 // to a placement, and that is the point: there is no longer a second mechanism
 // that could disagree with the first.
+namespace {
+// See enablePlasticDragMode in the header. Main-thread only, like the whole
+// plastic drag path.
+static bool l_plasticDragMode = false;
+}
+
+void TStageObject::enablePlasticDragMode(bool on) { l_plasticDragMode = on; }
+bool TStageObject::isPlasticDragMode() { return l_plasticDragMode; }
+
+//-----------------------------------------------------------------------------
+
 void TStageObject::solvePlasticCharacter(double t, const TAffine &baseLocal) {
   // Re-entrancy: composing the child placements below asks the columns for
   // their skeletons, and that must not kick off another solve.
@@ -1775,7 +1786,8 @@ void TStageObject::solvePlasticCharacter(double t, const TAffine &baseLocal) {
   // (24 sweeps accumulate up to 360° per joint). The single-column path calls
   // plant() without damping and is untouched.
   PlasticPinSolver::plant(joints, pins, pos, std::vector<int>(),
-                          /*maxStepDegrees=*/15.0);
+                          /*maxStepDegrees=*/15.0,
+                          /*primaryOnly=*/l_plasticDragMode);
 
   // Hand each column its share of the answer, top-down. A column's mapping back
   // to local space runs through its parent's attachment vertex, so the parent
