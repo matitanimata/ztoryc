@@ -25,12 +25,19 @@ else
 fi
 
 # Bundle prodotto da Ninja: toonz/Ztoryc.app (root layout) o toonz/build/toonz/Ztoryc.app (legacy).
-if [[ -d "$WORKSPACE/toonz/Ztoryc.app" ]]; then
+# I worktree di feature usano un bundle rinominato (es. Ztoryc-SP.app per
+# feature/superplastic) per non confonderlo con la build master: se c'e', ha la
+# precedenza. Senza questo il deploy scriveva su Ztoryc.app mentre si lanciava
+# Ztoryc-SP.app, cioe' si testava un binario vecchio senza accorgersene.
+if [[ -d "$WORKSPACE/toonz/Ztoryc-SP.app" ]]; then
+  APP="$WORKSPACE/toonz/Ztoryc-SP.app"
+elif [[ -d "$WORKSPACE/toonz/Ztoryc.app" ]]; then
   APP="$WORKSPACE/toonz/Ztoryc.app"
 else
   APP="$BUILD/toonz/Ztoryc.app"
 fi
 MACOS="$APP/Contents/MacOS"
+echo "→ Bundle di destinazione: $APP"
 
 if [ -n "$1" ]; then
   echo "→ Touch $1..."

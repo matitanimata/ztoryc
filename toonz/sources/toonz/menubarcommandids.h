@@ -587,5 +587,6 @@
 
 // Toggle: i keyframe seguono le celle (insert/remove/extend + selezione/drag)
 #define MI_ToggleKeyframesFollowExposure "MI_ToggleKeyframesFollowExposure"
+#define MI_ToggleGlobalKeyIncludesPlastic "MI_ToggleGlobalKeyIncludesPlastic"
 
 #endif

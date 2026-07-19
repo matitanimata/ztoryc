@@ -1038,6 +1038,9 @@ void TStageObject::setKeyframeWithoutUndo(int frame) {
   invalidate();
 
   // Plastic keys are currently not *created* by xsheet commands.
+  // (SuperPlastic: the Global Key path opts in explicitly, via
+  // setPlasticPoseKeyframe below — NOT the wholesale loop commented out here,
+  // which would be actively harmful. See that function for why.)
 
   /*if(m_skeletonDeformation)
 {
@@ -1055,6 +1058,42 @@ for(int p=0; p<SkVD::PARAMS_COUNT; ++p)
   setkey(vd->m_params[p], frame);
 }
 }*/
+}
+
+//-----------------------------------------------------------------------------
+
+// SuperPlastic: key the POSE parameters of every vertex deformation at `frame`,
+// so a Global Key on a rigged column freezes the whole pose and not just the
+// column transform (blocking with Constant interpolation needs the plastic pose
+// pinned down too).
+//
+// Deliberately NOT every SkVD param — that is the wholesale loop commented out
+// in setKeyframeWithoutUndo above, and it would break the rig. Two families use
+// the PRESENCE of keys as a semantic switch rather than as data:
+//   * PIN / PINTX / PINTY / PINWX / PINWY — a keyed PINW means "this pin's
+//     planting belongs to the stage level", so keying them everywhere would
+//     re-route the planting authority of every column at once;
+//   * MINANGLE / MAXANGLE — active only where keyed, so keying them would freeze
+//     every joint limit at its current value.
+// Only genuine pose channels below: skeleton pose, free-root offset, and the
+// squash & stretch controller.
+void TStageObject::setPlasticPoseKeyframe(double frame) {
+  const PlasticSkeletonDeformationP &sd = getPlasticSkeletonDeformation();
+  if (!sd) return;
+
+  static const int poseParams[] = {
+      SkVD::ANGLE,  SkVD::DISTANCE, SkVD::SO,     SkVD::ROOTX,  SkVD::ROOTY,
+      SkVD::SCALEX, SkVD::SCALEY,   SkVD::PIVOTX, SkVD::PIVOTY, SkVD::TRANSX,
+      SkVD::TRANSY, SkVD::ROT,      SkVD::SHEARX, SkVD::SHEARY};
+
+  PlasticSkeletonDeformation::vd_iterator vdt, vdEnd;
+  sd->vertexDeformations(vdt, vdEnd);
+  for (; vdt != vdEnd; ++vdt) {
+    SkVD *vd = (*vdt).second;
+    if (!vd) continue;
+    for (int p : poseParams)
+      if (vd->m_params[p]) setkey(vd->m_params[p], (int)frame);
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -1516,12 +1555,17 @@ TAffine TStageObject::computePlasticPinCorrection(double t,
 
   const TAffine parentP = m_parent ? m_parent->getPlacement(t) : TAffine();
 
-  // DFS down the column children, carrying the accumulated affine that maps
-  // each descendant's local frame into THIS object's local frame.
+  // DFS over the character's columns — THIS one included, seeded at identity
+  // (parentP * baseLocal already maps this object's local frame to the scene).
+  // The top column carries pins too: since C.1 a stitched character gives every
+  // pin a scene target, so the body's own foot is planted here, by the same
+  // single authority as the legs'. Omitting it would leave those pins with no
+  // planter at all — their in-skeleton plant is switched off by the very fact
+  // that they carry a scene target.
+  // Each stack entry holds the affine mapping that column's local frame into
+  // THIS object's local frame.
   std::vector<std::pair<TStageObject *, TAffine>> stack;
-  for (TStageObject *ch : m_children)
-    if (ch->getId().isColumn())
-      stack.push_back({ch, ch->computeLocalPlacement(t)});
+  stack.push_back({this, TAffine()});
 
   while (!stack.empty()) {
     TStageObject *obj = stack.back().first;

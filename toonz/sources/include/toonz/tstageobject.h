@@ -353,6 +353,12 @@ with the frame.
 
   void setKeyframeWithoutUndo(int frame, const Keyframe &);
   void setKeyframeWithoutUndo(int frame);
+
+  //! SuperPlastic: key the plastic POSE parameters (skeleton pose, free-root
+  //! offset, squash & stretch controller) of every vertex deformation. Pins and
+  //! joint-limit overrides are deliberately excluded — see the definition.
+  //! No-op when the object carries no plastic deformation.
+  void setPlasticPoseKeyframe(double frame);
   void removeKeyframeWithoutUndo(int frame);
 
   /*!

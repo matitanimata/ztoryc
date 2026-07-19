@@ -400,6 +400,18 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
   bool ikPin  = m_ikDrag.getValue() && (pinnedVertexAtFrame(frame) >= 0 ||
                                        hasCrossLevelPin_animate(frame));
 
+  // Dragging a PINNED vertex must do nothing — the pin is precisely the
+  // statement that this vertex stays put. The cross-level solver declines the
+  // drag (the pin is its fixed re-root base) and the FK fallback below would
+  // then happily move it off its target, silently breaking the plant with no
+  // visible cause.
+  if (m_ikDrag.getValue() && m_sd && m_svSel.hasSingleObject()) {
+    SkVD *pvd = m_sd->vertexDeformation(::skeletonId(), m_svSel);
+    if (pvd && pvd->m_params[SkVD::PIN] &&
+        pvd->m_params[SkVD::PIN]->getValue(frame) >= 0.5)
+      return;
+  }
+
   if (m_sd && m_svSel.hasSingleObject() && (!isRoot || ikPin)) {
     l_suspendParamsObservation = true;  // Automatic params notification happen
     // twice (1 x param) - dealing with it manually
@@ -1798,7 +1810,7 @@ void PlasticTool::setIkModeState(bool on) {
   // early), so this is safe either way.
   m_ikDrag.setValue(on);
   m_ikDrag.notifyListeners();
-  if (m_sd) m_sd->enablePins(on);
+  enablePinsOnCharacter(on);
   m_deformedSkeleton.invalidate();
   invalidate();
 }
@@ -2145,24 +2157,35 @@ void PlasticTool::togglePinAtCurrentFrame() {
   SkVD *vd     = m_sd->vertexDeformation(::skeletonId(), v);
   if (!vd) return;
 
-  // Is the current column a stitched CHILD (a leg/arm parented to the body via a
-  // hook)? Then its pin is a cross-column concern handled by the unified IK
-  // solver (crossLevelIK_animate). We deliberately DON'T capture a PINTX/PINTY
-  // target and DON'T mirror onto the parent: the per-column eval plant lives in
-  // the child's own local space (anchored to the parent), so it can't hold the
-  // foot in world and would only fight the unified solve. Just toggle the PIN
-  // flag (with the frame-1 confinement anchor) so the diamond/UI and the graph
-  // builder see the pin; the pose is carried by the ANGLE/ROOTX-ROOTY write-back.
-  bool isChildColumn = false;
+  // Does the current column belong to a STITCHED CHARACTER (several columns
+  // hooked together — a body with legs/arms parented via handles)? Then its pins
+  // are a character-level concern: they get a SCENE-space target (PINWX/PINWY)
+  // and are planted once, at the stage level, by
+  // TStageObject::computePlasticPinCorrection.
+  //
+  // The test is deliberately on the CHARACTER, not on the column's role. Gating
+  // on "is a child column" gave the two pin kinds two different owners — a pin
+  // on the root column planted itself in-skeleton (PINTX) while a pin on a child
+  // planted at stage level — and in a walk cycle both were active at once, each
+  // translating the character independently: on every support switch the plant
+  // transferred, moved the child's attachment, and the stage correction
+  // counter-translated the whole character, dragging the previously planted foot
+  // along. One character, one planting authority.
+  //
+  // We still DON'T capture PINTX/PINTY and DON'T mirror onto the parent: the
+  // per-column eval plant lives in a space glued to the parent, so it cannot
+  // hold a WORLD spot, and the mirror over-constrained the chain (heel and hip
+  // both nailed). The pose is carried by the ANGLE/ROOTX-ROOTY write-back.
+  bool isStitchedCharacter = false;
   {
     const int cur = ::column();
     for (const CrossLevelLink &lk : crossLevelLinks_animate())
-      if (lk.childColumn == cur) {
-        isChildColumn = true;
+      if (lk.childColumn == cur || lk.parentColumn == cur) {
+        isStitchedCharacter = true;
         break;
       }
   }
-  if (isChildColumn) {
+  if (isStitchedCharacter) {
     TUndoManager::manager()->beginBlock();
     AnimateValuesUndo *undo = new AnimateValuesUndo(v);
     m_sd->getKeyframeAt(frame, undo->m_oldValues);
@@ -2537,6 +2560,18 @@ void PlasticTool::switchPinAtCurrentFrame() {
     setSkeletonSelection(p);
     togglePinAtCurrentFrame();
   }
+
+  // TODO (C.2): the previous support foot often lives on ANOTHER column of the
+  // character, and pinnedVerticesAtFrame only ever sees the CURRENT one, so its
+  // release key is never written there — the known "switch doesn't key the
+  // parent column" defect. A first attempt drove the other columns through
+  // TemporaryActivation + togglePinAtCurrentFrame: it made things WORSE (no
+  // keys created at all, the previous foot un-pinned instead of released, and
+  // the tool's selection left stranded on an unrelated column). Reverted.
+  // Whatever replaces it must not move the current column/selection under the
+  // undo block — dispatch per column with explicit coordinates instead, the way
+  // crossLevelIK_animate writes back via writeBackAnglesFor_animate.
+
   fh->setFrame(row0);
   setSkeletonSelection(v);
 

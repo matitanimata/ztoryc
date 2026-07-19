@@ -358,6 +358,19 @@ public:
   //! clean-release logic (used by the IK-release undo/redo)
   void setIkPinsUiEnabled(bool on);
 
+  //! Column indices of the stitched character the current column belongs to
+  //! (itself included), restricted to those carrying a plastic deformation.
+  //! Column parenting only — no skeleton evaluation, so it is safe/cheap
+  //! outside animate mode.
+  std::vector<int> characterColumns() const;
+
+  //! characterColumns(), resolved to their plastic deformations.
+  std::vector<PlasticSkeletonDeformationP> characterDeformations() const;
+
+  //! Enable/disable IK pins on the WHOLE character: the flag is a property of
+  //! the character, not of one column (see the definition for why).
+  void enablePinsOnCharacter(bool on);
+
   // Actions with associated undo
   int addSkeleton_undo(const PlasticSkeletonP &skeleton);
   void addSkeleton_undo(int skelId, const PlasticSkeletonP &skeleton);

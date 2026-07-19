@@ -10,6 +10,8 @@
 #include "toonz/tframehandle.h"
 #include "toonz/doubleparamcmd.h"
 #include "toonz/tstageobjecttree.h"
+#include "toonz/preferences.h"
+#include "toonz/preferencesitemids.h"
 
 #include "toonz/stageobjectutil.h"
 
@@ -154,6 +156,15 @@ void TStageObjectValues::setGlobalKeyframe() {
   TXsheet *xsh              = m_xsheetHandle->getXsheet();
   TStageObject *stageObject = xsh->getStageObject(m_objectId);
   stageObject->setKeyframeWithoutUndo(m_frame);
+
+  // Ztoryc: on a rigged column the column transform is only half the pose —
+  // without this the plastic deformation stays free and a "global" key silently
+  // fails to hold the character. Note this runs even when setKeyframeWithoutUndo
+  // returned early on isFullKeyframe(): the stage channels being already keyed
+  // says nothing about the plastic ones.
+  if (Preferences::instance()->getBoolValue(GlobalKeyIncludesPlastic))
+    stageObject->setPlasticPoseKeyframe(m_frame);
+
   m_xsheetHandle->notifyXsheetChanged();
 }
 

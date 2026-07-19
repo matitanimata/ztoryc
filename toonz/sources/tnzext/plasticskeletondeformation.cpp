@@ -1037,6 +1037,15 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   };
   std::vector<ActivePin> pins;
 
+  // Pins whose planting authority is the STAGE level, not this skeleton. A pin
+  // carrying a scene-space target (PINWX/PINWY keyed) belongs to a multi-column
+  // character: TStageObject::computePlasticPinCorrection holds it by translating
+  // the WHOLE character, so translating this skeleton too would be a second,
+  // competing plant — the two would fight on every support switch of a walk
+  // (root-column foot dragged along when a child-column foot takes over).
+  // Rigid translation has exactly ONE owner; local CCD bending stays here.
+  std::vector<int> stagePinned;
+
   const tcg::list<PlasticSkeleton::vertex_type> &verts = skeleton.vertices();
   for (auto vt = verts.begin(); vt != verts.end(); ++vt) {
     auto it = m_imp->m_vds.find(vt->name());
@@ -1046,6 +1055,16 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
         !vd.m_params[SkVD::PINTY])
       continue;
     if (vd.m_params[SkVD::PIN]->getValue(frame) < 0.5) continue;
+
+    // Stage-owned: its target lives in scene space and is meaningless here.
+    // Recorded only so the CCD below treats it as already planted.
+    if (vd.m_params[SkVD::PINWX] && vd.m_params[SkVD::PINWY] &&
+        (vd.m_params[SkVD::PINWX]->getKeyframeCount() > 0 ||
+         vd.m_params[SkVD::PINWY]->getKeyframeCount() > 0)) {
+      stagePinned.push_back((int)vt.m_idx);
+      continue;
+    }
+
     // Skip pins that never got a target (avoid snapping to the origin) —
     // also shields against stale PIN flags left over in older scenes.
     if (vd.m_params[SkVD::PINTX]->isDefault() &&
@@ -1064,13 +1083,21 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
                      return a.since < b.since;
                    });
 
-  // Primary (oldest) pin: rigid whole-skeleton translation.
-  TPointD shift = pins[0].target - skeleton.vertex(pins[0].idx).P();
-  if (norm2(shift) > 1e-12)
-    for (auto st = verts.begin(); st != verts.end(); ++st)
-      skeleton.vertex(st.m_idx).P() += shift;
+  // Does the stage own this character's rigid translation? Then every local pin
+  // is a SECONDARY: it plants by bending its own limb, seeded by the stage-held
+  // chains. Otherwise (single-column character — the proven path, unchanged) the
+  // oldest local pin owns the rigid whole-skeleton translation.
+  const bool stageOwnsTranslation = !stagePinned.empty();
 
-  if (pins.size() == 1) return;
+  if (!stageOwnsTranslation) {
+    // Primary (oldest) pin: rigid whole-skeleton translation.
+    TPointD shift = pins[0].target - skeleton.vertex(pins[0].idx).P();
+    if (norm2(shift) > 1e-12)
+      for (auto st = verts.begin(); st != verts.end(); ++st)
+        skeleton.vertex(st.m_idx).P() += shift;
+
+    if (pins.size() == 1) return;
+  }
 
   // Plant every secondary pin: CCD on its own limb, below the point where it
   // diverges from the already-planted chains. Re-runnable — the primary chain
@@ -1078,12 +1105,20 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   auto plantSecondaries = [&]() {
     // Vertices already committed to a planted chain: CCD below must not touch.
     std::set<int> planted;
-    {
+    if (stageOwnsTranslation) {
+      // Seed with the stage-held chains: they are already on their scene
+      // targets (the character translation put them there) and must not move.
+      // With no local primary, every local pin below bends its own limb.
+      for (int sv : stagePinned) {
+        std::vector<int> ps = locals::pathFromRoot(skeleton, sv);
+        planted.insert(ps.begin(), ps.end());
+      }
+    } else {
       std::vector<int> p0 = locals::pathFromRoot(skeleton, pins[0].idx);
       planted.insert(p0.begin(), p0.end());
     }
 
-    for (size_t i = 1; i < pins.size(); ++i) {
+    for (size_t i = stageOwnsTranslation ? 0 : 1; i < pins.size(); ++i) {
       const int pinV        = pins[i].idx;
       const TPointD &target = pins[i].target;
       std::vector<int> path = locals::pathFromRoot(skeleton, pinV);
@@ -1155,6 +1190,12 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   };  // plantSecondaries
 
   plantSecondaries();
+
+  // The balancing pass below translates the whole skeleton, so it runs only
+  // when this skeleton owns the translation. Under stage ownership the
+  // equivalent balancing belongs to the character-level pass (STEP C.2): doing
+  // it here would re-introduce the second, competing plant C.1 just removed.
+  if (stageOwnsTranslation) return;
 
   // Reachability threshold RELATIVE to the rig scale (bbox diagonal): a fixed
   // epsilon fired spuriously on some rigs, nudging the exact primary pin and

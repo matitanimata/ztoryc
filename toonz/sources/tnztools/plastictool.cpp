@@ -2082,9 +2082,85 @@ void PlasticTool::reset() {
 
 //------------------------------------------------------------------------
 
+// SuperPlastic: the plastic deformations of every column of the stitched
+// character the current column belongs to (itself included). Walks the column
+// parenting only — no skeleton evaluation — so it is cheap and usable outside
+// animate mode.
+std::vector<int> PlasticTool::characterColumns() const {
+  std::vector<int> out;
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh) return out;
+
+  // Climb to the character's top column.
+  TStageObjectId topId = TStageObjectId::ColumnId(::column());
+  for (int guard = 0; guard < 1000; ++guard) {
+    TStageObject *obj = xsh->getStageObject(topId);
+    if (!obj) break;
+    const TStageObjectId pid = obj->getParent();
+    if (!pid.isColumn()) break;
+    topId = pid;
+  }
+
+  // Every column that reaches that top through column parenting.
+  for (int c = 0; c < xsh->getColumnCount(); ++c) {
+    TStageObjectId walk = TStageObjectId::ColumnId(c);
+    bool inCharacter    = false;
+    for (int guard = 0; guard < 1000; ++guard) {
+      if (walk == topId) {
+        inCharacter = true;
+        break;
+      }
+      TStageObject *obj = xsh->getStageObject(walk);
+      if (!obj) break;
+      const TStageObjectId pid = obj->getParent();
+      if (!pid.isColumn()) break;
+      walk = pid;
+    }
+    if (!inCharacter) continue;
+
+    TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+    if (!obj) continue;
+    if (obj->getPlasticSkeletonDeformation()) out.push_back(c);
+  }
+  return out;
+}
+
+//------------------------------------------------------------------------
+
+std::vector<PlasticSkeletonDeformationP> PlasticTool::characterDeformations()
+    const {
+  std::vector<PlasticSkeletonDeformationP> out;
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh) return out;
+
+  for (int c : characterColumns()) {
+    TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+    if (!obj) continue;
+    if (const PlasticSkeletonDeformationP &sd =
+            obj->getPlasticSkeletonDeformation())
+      out.push_back(sd);
+  }
+  return out;
+}
+
+//------------------------------------------------------------------------
+
+// IK/pin mode is a property of the CHARACTER, not of one column: the solver
+// works on the unified graph spanning all the stitched columns, so enabling it
+// on the leg while the body stays in FK left the body root locked (nothing can
+// write its free-root translation) and pins appeared to do nothing at all.
+// Propagate the flag to every column of the character.
+void PlasticTool::enablePinsOnCharacter(bool on) {
+  if (m_sd) m_sd->enablePins(on);
+  for (const PlasticSkeletonDeformationP &sd : characterDeformations())
+    sd->enablePins(on);
+}
+
+//------------------------------------------------------------------------
+
 void PlasticTool::setIkPinsUiEnabled(bool on) {
   m_ikDrag.setValue(on);
-  if (m_sd) m_sd->enablePins(on);
+  enablePinsOnCharacter(on);
   m_ikDrag.notifyListeners();
   m_deformedSkeleton.invalidate();
   invalidate();
@@ -2266,7 +2342,7 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
     // and re-pin from scratch when needed.
     if (m_sd) {
       if (!m_ikDrag.getValue()) bakePinsToFK_animate();
-      m_sd->enablePins(m_ikDrag.getValue());
+      enablePinsOnCharacter(m_ikDrag.getValue());
       m_deformedSkeleton.invalidate();
       invalidate();
     }
