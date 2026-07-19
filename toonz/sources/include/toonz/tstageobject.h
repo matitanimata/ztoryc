@@ -576,14 +576,15 @@ private:
   int m_ikflag;
   // ----
 
-  // SuperPlastic cross-column pin hold (per-frame). For the TOP column of a
-  // column-parenting chain (a plastic character split across columns), returns
-  // the pre-translation — expressed in this object's local placement space —
-  // that lands the oldest pinned descendant vertex on its PINWX/PINWY scene
-  // target. Identity when not applicable (no column children, no active
-  // cross-column pin, or this column is itself a stitched child). baseLocal is
-  // this object's uncorrected local placement, already computed by the caller.
-  TAffine computePlasticPinCorrection(double t, const TAffine &baseLocal);
+  // SuperPlastic: solve the whole stitched plastic character at once (per
+  // frame). Called on the TOP column of a column-parenting chain. Poses every
+  // column, stitches them into ONE joint tree in scene space — each child
+  // column's root bonded to its attachment vertex on the parent — and runs the
+  // ordinary single-level pin solver on it, then hands each column its solved
+  // skeleton. Returns nothing: the plant lives in the skeletons, exactly like a
+  // rig drawn on a single level, so no second mechanism can contradict it.
+  // baseLocal is this object's local placement, already computed by the caller.
+  void solvePlasticCharacter(double t, const TAffine &baseLocal);
 
   double m_noScaleZ;
 

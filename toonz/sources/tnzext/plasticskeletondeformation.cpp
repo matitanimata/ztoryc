@@ -234,6 +234,12 @@ public:
   std::map<int, TPointD> m_secondaryTargets;
   double m_secondaryFrame = -1.0e30;
 
+  // STEP C.2b: result of the character-level solve for this column. Transient.
+  PlasticSkeleton m_solvedSkeleton;
+  double m_solvedFrame = -1.0e30;
+  int m_solvedSkelId   = -1;
+  bool m_hasSolved     = false;
+
   std::set<TParamObserver *>
       m_observers;  //!< Set of the deformation's observers
 
@@ -534,6 +540,17 @@ void PlasticSkeletonDeformation::Imp::touchParams(SkVD &vd) {
 //------------------------------------------------------------------
 
 void PlasticSkeletonDeformation::Imp::onChange(const TParamChange &change) {
+  // A character-level solve result describes the pose as it was BEFORE this
+  // change, so it is now wrong and must not be served again. Without this the
+  // cached answer outlived its inputs: dragging a limb wrote its ANGLEs and then
+  // read back the stale solved skeleton, and the limb simply would not move.
+  // Note the cache cannot be validated against the params (it is a whole
+  // character's worth of them, on several columns) — dropping it on any change
+  // and letting the next placement re-solve is both cheaper and safer.
+  m_hasSolved    = false;
+  m_solvedFrame  = -1.0e30;
+  m_solvedSkelId = -1;
+
   // Since the deformation was changed, any associated deformer
   // must be invalidated (at the animation-deform level only)
   PlasticDeformerStorage::instance()->invalidateDeformation(
@@ -944,8 +961,269 @@ void PlasticSkeletonDeformation::deleteKeyframe(double frame) {
 
 //------------------------------------------------------------------
 
+//**************************************************************************************
+//    PlasticPinSolver  implementation
+//**************************************************************************************
+
+namespace {
+
+// Root-first chain of joint indices from the root down to j.
+std::vector<int> solverPathFromRoot(
+    const std::vector<PlasticPinSolver::Joint> &joints, int j) {
+  std::vector<int> path;
+  for (int p = j; p >= 0; p = joints[p].parent) path.push_back(p);
+  std::reverse(path.begin(), path.end());
+  return path;
+}
+
+// j's subtree, j included.
+void solverCollectSubtree(const std::vector<std::vector<int>> &children, int j,
+                          std::vector<int> &out) {
+  out.push_back(j);
+  for (int c : children[j]) solverCollectSubtree(children, c, out);
+}
+
+// Direction (radians) of the bone arriving at j from its parent, walking up
+// degenerate bones; horizontal axis at the root.
+double solverBoneDir(const std::vector<PlasticPinSolver::Joint> &joints,
+                     const std::vector<TPointD> &pos, int j) {
+  int q = j, p = joints[j].parent;
+  for (; p >= 0; q = p, p = joints[p].parent) {
+    TPointD d = pos[q] - pos[p];
+    if (norm2(d) > 1e-8) return atan2(d.y, d.x);
+  }
+  return 0.0;
+}
+
+// Current ANGLE-equivalent delta (degrees) of joint j, measured geometrically
+// against the rest pose — the quantity the min/max limits constrain.
+double solverRelAngleDeg(const std::vector<PlasticPinSolver::Joint> &joints,
+                         const std::vector<TPointD> &pos,
+                         const std::vector<TPointD> &rest, int j) {
+  const int jp = joints[j].parent;
+  if (jp < 0) return 0.0;
+  double now  = solverBoneDir(joints, pos, j) - solverBoneDir(joints, pos, jp);
+  double base = solverBoneDir(joints, rest, j) -
+                solverBoneDir(joints, rest, jp);
+  double rel = now - base;
+  while (rel > M_PI) rel -= 2.0 * M_PI;
+  while (rel < -M_PI) rel += 2.0 * M_PI;
+  return rel * M_180_PI;
+}
+
+}  // namespace
+
+void PlasticPinSolver::plant(const std::vector<Joint> &joints,
+                             const std::vector<Pin> &pinsIn,
+                             std::vector<TPointD> &pos,
+                             const std::vector<int> &preplanted) {
+  if (joints.empty() || pos.size() != joints.size() || pinsIn.empty()) return;
+
+  const int n = (int)joints.size();
+
+  std::vector<std::vector<int>> children(n);
+  for (int j = 0; j < n; ++j)
+    if (joints[j].parent >= 0) children[joints[j].parent].push_back(j);
+
+  std::vector<TPointD> rest(n);
+  for (int j = 0; j < n; ++j) rest[j] = joints[j].rest;
+
+  std::vector<Pin> pins = pinsIn;
+  std::stable_sort(pins.begin(), pins.end(),
+                   [](const Pin &a, const Pin &b) { return a.since < b.since; });
+
+  const bool externallyOwned = !preplanted.empty();
+
+  if (!externallyOwned) {
+    // Primary (oldest) pin: rigid whole-structure translation.
+    TPointD shift = pins[0].target - pos[pins[0].joint];
+    if (norm2(shift) > 1e-12)
+      for (int j = 0; j < n; ++j) pos[j] += shift;
+
+    if (pins.size() == 1) return;
+  }
+
+  // Plant every secondary pin: CCD on its own limb, below the point where it
+  // diverges from the already-planted chains. Re-runnable — the planted chains
+  // are the fixed seed each pass (used by the balancing below).
+  auto plantSecondaries = [&]() {
+    std::set<int> planted;
+    if (externallyOwned) {
+      for (int sj : preplanted) {
+        std::vector<int> ps = solverPathFromRoot(joints, sj);
+        planted.insert(ps.begin(), ps.end());
+      }
+    } else {
+      std::vector<int> p0 = solverPathFromRoot(joints, pins[0].joint);
+      planted.insert(p0.begin(), p0.end());
+    }
+
+    for (size_t i = externallyOwned ? 0 : 1; i < pins.size(); ++i) {
+      const int pinJ        = pins[i].joint;
+      const TPointD &target = pins[i].target;
+      std::vector<int> path = solverPathFromRoot(joints, pinJ);
+
+      // Anchor = deepest joint of this chain already planted (at worst the
+      // root). CCD pivots live strictly below it: rotating their subtrees can
+      // never move a previously planted pin (disjoint by construction).
+      int aIdx = 0;
+      for (int k = (int)path.size() - 1; k >= 0; --k)
+        if (planted.count(path[k])) {
+          aIdx = k;
+          break;
+        }
+
+      const int SWEEPS  = 24;
+      const double tol2 = 1e-9;
+      for (int sweep = 0; sweep < SWEEPS; ++sweep) {
+        if (norm2(target - pos[pinJ]) < tol2) break;
+        // Nearest-to-pin pivot first: classic CCD sweep order. The anchor itself
+        // (k == aIdx) is a valid LAST pivot: rotating only path[k+1]'s subtree
+        // about it bends this limb's attachment bone too — without it, a pose
+        // that puts the divergence point out of the limb's reach would tear the
+        // pin off with no joint able to compensate.
+        for (int k = (int)path.size() - 2; k >= aIdx; --k) {
+          const TPointD pivot = pos[path[k]];
+          TPointD cur         = pos[pinJ] - pivot;
+          TPointD tgt         = target - pivot;
+          if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
+          double ang = atan2(cross(cur, tgt), cur * tgt);
+
+          // This rotation changes exactly the relative angle of joint path[k+1],
+          // so clamp it within that joint's limits: a stiff limb stops at its
+          // bound instead of hyper-extending, even when it is the pin PLANTING
+          // that bends it. The pin may then simply not reach on this limb.
+          const Joint &jvx = joints[path[k + 1]];
+          if (jvx.minAngle > -1e9 || jvx.maxAngle < 1e9) {
+            double curRel =
+                solverRelAngleDeg(joints, pos, rest, path[k + 1]);
+            double lo = (jvx.minAngle - curRel) * (M_PI / 180.0);
+            double hi = (jvx.maxAngle - curRel) * (M_PI / 180.0);
+            ang       = std::min(std::max(ang, lo), hi);
+          }
+
+          double c = cos(ang), s = sin(ang);
+          std::vector<int> sub;
+          solverCollectSubtree(children, path[k + 1], sub);
+          for (int v : sub) {
+            TPointD d = pos[v] - pivot;
+            pos[v] = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+          }
+        }
+      }
+
+      planted.insert(path.begin(), path.end());
+    }
+  };
+
+  plantSecondaries();
+
+  // Under external ownership the balancing below would translate the structure
+  // and thus fight whoever owns that translation.
+  if (externallyOwned) return;
+
+  // Reachability threshold RELATIVE to the rig scale (bbox diagonal): a fixed
+  // epsilon fired spuriously on some rigs, nudging the exact primary pin and
+  // leaving small shifts. Below this, all pins count as planted.
+  double diag2 = 0.0;
+  {
+    TPointD lo = pos[0], hi = lo;
+    for (int j = 0; j < n; ++j) {
+      lo.x = std::min(lo.x, pos[j].x), lo.y = std::min(lo.y, pos[j].y);
+      hi.x = std::max(hi.x, pos[j].x), hi.y = std::max(hi.y, pos[j].y);
+    }
+    diag2 = norm2(hi - lo);
+  }
+  const double reachTol2 = std::max(1e-8, diag2 * 1e-6);  // (~0.1% of diag)²
+
+  // Hard constraint: a pin dragged past the reach of its limb must NOT lift off.
+  // Pull the whole structure toward the average pin residual and re-plant, a few
+  // passes: the body settles at the feasible middle where every pin stays
+  // ~planted and the motion is naturally limited (the support resists), instead
+  // of one of them detaching. Damped, so it converges without over-shooting the
+  // primary. No-op when all pins reach → the exact primary planting survives.
+  for (int pass = 0; pass < 10; ++pass) {
+    TPointD resid(0.0, 0.0);
+    double maxr2 = 0.0;
+    for (const Pin &pin : pins) {
+      TPointD r = pin.target - pos[pin.joint];
+      resid     = resid + r;
+      maxr2     = std::max(maxr2, norm2(r));
+    }
+    if (maxr2 < reachTol2) break;
+    resid = resid * (0.5 / (double)pins.size());
+    if (norm2(resid) < reachTol2 * 0.01) break;
+    for (int j = 0; j < n; ++j) pos[j] += resid;
+    plantSecondaries();
+  }
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::storePosedSkeleton(
+    int skelId, double frame, PlasticSkeleton &skeleton) const {
+  const PlasticSkeletonP &origSkel = this->skeleton(skelId);
+  skeleton                         = origSkel ? *origSkel : PlasticSkeleton();
+
+  if (!skeleton.vertices().empty())
+    m_imp->updateBranchPositions(*origSkel, skeleton, frame,
+                                 skeleton.vertices().begin().m_idx);
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::buildSolverJoints(
+    int skelId, double frame, std::vector<PlasticPinSolver::Joint> &joints,
+    std::vector<int> &vertexIds) const {
+  joints.clear();
+  vertexIds.clear();
+
+  const PlasticSkeletonP &origSkel = this->skeleton(skelId);
+  if (!origSkel) return;
+
+  const tcg::list<PlasticSkeleton::vertex_type> &verts = origSkel->vertices();
+  if (verts.empty()) return;
+
+  size_t maxIdx = 0;
+  for (auto st = verts.begin(); st != verts.end(); ++st)
+    maxIdx = std::max(maxIdx, st.m_idx);
+
+  std::vector<int> denseOf(maxIdx + 1, -1);
+  for (auto st = verts.begin(); st != verts.end(); ++st) {
+    denseOf[st.m_idx] = (int)vertexIds.size();
+    vertexIds.push_back((int)st.m_idx);
+  }
+
+  joints.resize(vertexIds.size());
+  for (size_t j = 0; j < vertexIds.size(); ++j) {
+    const int vi                    = vertexIds[j];
+    const PlasticSkeletonVertex &vx = origSkel->vertex(vi);
+    const int par                   = vx.parent();
+    joints[j].parent                = (par >= 0) ? denseOf[par] : -1;
+    joints[j].rest                  = vx.P();
+
+    const SkVD *jvd = 0;
+    {
+      auto jt = m_imp->m_vds.find(vx.name());
+      if (jt != m_imp->m_vds.end()) jvd = &jt->m_vd;
+    }
+    effAngleLimits(jvd, vx, frame, joints[j].minAngle, joints[j].maxAngle);
+  }
+}
+
+//------------------------------------------------------------------
+
 void PlasticSkeletonDeformation::storeDeformedSkeleton(
     int skelId, double frame, PlasticSkeleton &skeleton) const {
+  // A character-level solve has already planted this column as part of one
+  // unified joint tree: that answer wins outright. Planting again here is what
+  // used to give a stitched rig two solvers pulling in different directions.
+  if (m_imp->m_hasSolved && m_imp->m_solvedSkelId == skelId &&
+      m_imp->m_solvedFrame == frame) {
+    skeleton = m_imp->m_solvedSkeleton;
+    return;
+  }
+
   // Copy the un-deformed skeleton to the output one
   const PlasticSkeletonP &origSkel = this->skeleton(skelId);
   skeleton                         = origSkel ? *origSkel : PlasticSkeleton();
@@ -1103,162 +1381,54 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   }
   if (pins.empty()) return;
 
-  std::stable_sort(pins.begin(), pins.end(),
-                   [](const ActivePin &a, const ActivePin &b) {
-                     return a.since < b.since;
-                   });
-
-  // Does the stage own this character's rigid translation? Then every local pin
-  // is a SECONDARY: it plants by bending its own limb, seeded by the stage-held
-  // chains. Otherwise (single-column character — the proven path, unchanged) the
-  // oldest local pin owns the rigid whole-skeleton translation.
-  const bool stageOwnsTranslation = anyStageOwned;
-
-  if (!stageOwnsTranslation) {
-    // Primary (oldest) pin: rigid whole-skeleton translation.
-    TPointD shift = pins[0].target - skeleton.vertex(pins[0].idx).P();
-    if (norm2(shift) > 1e-12)
-      for (auto st = verts.begin(); st != verts.end(); ++st)
-        skeleton.vertex(st.m_idx).P() += shift;
-
-    if (pins.size() == 1) return;
-  }
-
-  // Plant every secondary pin: CCD on its own limb, below the point where it
-  // diverges from the already-planted chains. Re-runnable — the primary chain
-  // is the fixed seed each pass (used by the two-foot correction below).
-  auto plantSecondaries = [&]() {
-    // Vertices already committed to a planted chain: CCD below must not touch.
-    std::set<int> planted;
-    if (stageOwnsTranslation) {
-      // Seed with the stage-held chains: they are already on their scene
-      // targets (the character translation put them there) and must not move.
-      // With no local primary, every local pin below bends its own limb.
-      for (int sv : stagePinned) {
-        std::vector<int> ps = locals::pathFromRoot(skeleton, sv);
-        planted.insert(ps.begin(), ps.end());
-      }
-    } else {
-      std::vector<int> p0 = locals::pathFromRoot(skeleton, pins[0].idx);
-      planted.insert(p0.begin(), p0.end());
-    }
-
-    for (size_t i = stageOwnsTranslation ? 0 : 1; i < pins.size(); ++i) {
-      const int pinV        = pins[i].idx;
-      const TPointD &target = pins[i].target;
-      std::vector<int> path = locals::pathFromRoot(skeleton, pinV);
-
-      // Anchor = deepest vertex of this chain already planted (at worst the
-      // root). CCD pivots live strictly below it: rotating their subtrees can
-      // never move a previously planted pin (disjoint by construction).
-      int aIdx = 0;
-      for (int j = (int)path.size() - 1; j >= 0; --j)
-        if (planted.count(path[j])) {
-          aIdx = j;
-          break;
-        }
-
-      const int SWEEPS  = 24;
-      const double tol2 = 1e-9;
-      for (int sweep = 0; sweep < SWEEPS; ++sweep) {
-        if (norm2(target - skeleton.vertex(pinV).P()) < tol2) break;
-        // Nearest-to-pin pivot first: classic CCD sweep order. The anchor
-        // itself (j == aIdx) is a valid LAST pivot: rotating only path[j+1]'s
-        // subtree about it bends this limb's attachment bone too — without it,
-        // a pose that puts the divergence point out of the limb's reach would
-        // tear the pin off with no joint able to compensate. Rotating just
-        // that subtree can never move the previously planted chains.
-        for (int j = (int)path.size() - 2; j >= aIdx; --j) {
-          const TPointD pivot = skeleton.vertex(path[j]).P();
-          TPointD cur = skeleton.vertex(pinV).P() - pivot;
-          TPointD tgt = target - pivot;
-          if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
-          double ang = atan2(cross(cur, tgt), cur * tgt);
-
-          // Angular limits: this rotation changes exactly the ORIGINAL
-          // relative angle of joint path[j+1] (the path follows the original
-          // parenting), so clamp it within the joint's min/max. A stiff limb
-          // stops at its limit instead of hyper-extending even when it's the
-          // pin PLANTING that bends it (the classic "grab the shoulder, the
-          // pinned elbow folds backwards" case); the pin may then simply not
-          // reach its target on this limb.
-          const PlasticSkeletonVertex &jvx = origSkel->vertex(path[j + 1]);
-          const SkVD *jvd = 0;
-          {
-            auto jt = m_imp->m_vds.find(jvx.name());
-            if (jt != m_imp->m_vds.end()) jvd = &jt->m_vd;
-          }
-          double jLo, jHi;
-          effAngleLimits(jvd, jvx, frame, jLo, jHi);
-          if (jLo > -1e9 || jHi < 1e9) {
-            double curRel =
-                locals::relAngleDeg(skeleton, *origSkel, path[j + 1]);
-            double lo = (jLo - curRel) * (M_PI / 180.0);
-            double hi = (jHi - curRel) * (M_PI / 180.0);
-            ang       = std::min(std::max(ang, lo), hi);
-          }
-
-          double c = cos(ang), s = sin(ang);
-          std::vector<int> sub;
-          locals::collectSubtree(skeleton, path[j + 1], sub);
-          for (int v : sub) {
-            TPointD &P = skeleton.vertex(v).P();
-            TPointD d  = P - pivot;
-            P = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
-          }
-        }
-      }
-
-      // This chain is now planted too: later pins must bend below it.
-      planted.insert(path.begin(), path.end());
-    }
-  };  // plantSecondaries
-
-  plantSecondaries();
-
-  // The balancing pass below translates the whole skeleton, so it runs only
-  // when this skeleton owns the translation. Under stage ownership the
-  // equivalent balancing belongs to the character-level pass (STEP C.2): doing
-  // it here would re-introduce the second, competing plant C.1 just removed.
-  if (stageOwnsTranslation) return;
-
-  // Reachability threshold RELATIVE to the rig scale (bbox diagonal): a fixed
-  // epsilon fired spuriously on some rigs, nudging the exact primary pin and
-  // leaving small shifts (seen with 3 asymmetric pins). Below this, all feet
-  // count as planted and the correction is skipped entirely.
-  double diag2 = 0.0;
+  // Delegate to the shared solver. Same algorithm as before — it was lifted out
+  // of here verbatim — but now the multi-column character can run the identical
+  // code on a unified joint tree instead of growing a second implementation.
+  //
+  // The skeleton's vertex ids are tcg::list slots and need not be contiguous, so
+  // map them onto dense solver indices and back.
   {
-    TPointD lo = verts.begin()->P(), hi = lo;
-    for (auto st = verts.begin(); st != verts.end(); ++st) {
-      const TPointD &P = skeleton.vertex(st.m_idx).P();
-      lo.x = std::min(lo.x, P.x), lo.y = std::min(lo.y, P.y);
-      hi.x = std::max(hi.x, P.x), hi.y = std::max(hi.y, P.y);
-    }
-    diag2 = norm2(hi - lo);
-  }
-  const double reachTol2 = std::max(1e-8, diag2 * 1e-6);  // (~0.1% of diagonal)²
-
-  // Two-foot hard constraint: a secondary pin dragged past the reach of its
-  // limb must NOT lift off the ground. Pull the whole skeleton toward the
-  // average pin residual and re-plant, a few passes: the body settles at the
-  // feasible middle where every foot stays ~planted and the motion is
-  // naturally limited (the support resists), instead of one foot detaching.
-  // Damped, so it converges without over-shooting the primary. No-op when all
-  // pins reach (common case) → the exact primary planting is preserved.
-  for (int pass = 0; pass < 10; ++pass) {
-    TPointD resid(0.0, 0.0);
-    double maxr2 = 0.0;
-    for (const ActivePin &pin : pins) {
-      TPointD r = pin.target - skeleton.vertex(pin.idx).P();
-      resid     = resid + r;
-      maxr2     = std::max(maxr2, norm2(r));
-    }
-    if (maxr2 < reachTol2) break;  // every foot essentially planted
-    resid = resid * (0.5 / (double)pins.size());  // damped average
-    if (norm2(resid) < reachTol2 * 0.01) break;   // balanced; can't improve
+    size_t maxIdx = 0;
     for (auto st = verts.begin(); st != verts.end(); ++st)
-      skeleton.vertex(st.m_idx).P() += resid;
-    plantSecondaries();  // re-bend the secondary limbs from the new body pos
+      maxIdx = std::max(maxIdx, st.m_idx);
+
+    std::vector<int> denseOf(maxIdx + 1, -1);
+    std::vector<int> idxOf;
+    for (auto st = verts.begin(); st != verts.end(); ++st) {
+      denseOf[st.m_idx] = (int)idxOf.size();
+      idxOf.push_back((int)st.m_idx);
+    }
+
+    const int n = (int)idxOf.size();
+    std::vector<PlasticPinSolver::Joint> joints(n);
+    std::vector<TPointD> pos(n);
+    for (int j = 0; j < n; ++j) {
+      const int vi              = idxOf[j];
+      const PlasticSkeletonVertex &vx = skeleton.vertex(vi);
+      const int par             = vx.parent();
+      joints[j].parent          = (par >= 0) ? denseOf[par] : -1;
+      joints[j].rest            = origSkel->vertex(vi).P();
+      pos[j]                    = vx.P();
+
+      const SkVD *jvd = 0;
+      {
+        auto jt = m_imp->m_vds.find(origSkel->vertex(vi).name());
+        if (jt != m_imp->m_vds.end()) jvd = &jt->m_vd;
+      }
+      effAngleLimits(jvd, origSkel->vertex(vi), frame, joints[j].minAngle,
+                     joints[j].maxAngle);
+    }
+
+    std::vector<PlasticPinSolver::Pin> spins;
+    for (const ActivePin &ap : pins)
+      spins.push_back({denseOf[ap.idx], ap.target, ap.since});
+
+    std::vector<int> preplanted;
+    for (int sv : stagePinned) preplanted.push_back(denseOf[sv]);
+
+    PlasticPinSolver::plant(joints, spins, pos, preplanted);
+
+    for (int j = 0; j < n; ++j) skeleton.vertex(idxOf[j]).P() = pos[j];
   }
 }
 
@@ -1333,6 +1503,24 @@ void PlasticSkeletonDeformation::setSecondaryPinTargets(
 void PlasticSkeletonDeformation::clearSecondaryPinTargets() {
   m_imp->m_secondaryFrame = -1.0e30;
   m_imp->m_secondaryTargets.clear();
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::setSolvedSkeleton(
+    int skeletonId, double frame, const PlasticSkeleton &skeleton) {
+  m_imp->m_solvedSkeleton = skeleton;
+  m_imp->m_solvedFrame    = frame;
+  m_imp->m_solvedSkelId   = skeletonId;
+  m_imp->m_hasSolved      = true;
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::clearSolvedSkeleton() {
+  m_imp->m_hasSolved    = false;
+  m_imp->m_solvedFrame  = -1.0e30;
+  m_imp->m_solvedSkelId = -1;
 }
 
 //------------------------------------------------------------------

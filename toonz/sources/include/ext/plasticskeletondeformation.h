@@ -34,6 +34,58 @@
 #define DVVAR DV_IMPORT_VAR
 #endif
 
+//**************************************************************************************
+//    SuperPlastic pin solver
+//**************************************************************************************
+
+//! Plants IK pins on an articulated structure, in ONE space.
+//!
+//! Extracted verbatim from the single-column planting that used to live inside
+//! PlasticSkeletonDeformation::storeDeformedSkeleton, so the multi-column case
+//! can reuse it instead of growing a second, competing implementation — which is
+//! exactly how the cross-column planting went wrong before (two mechanisms, each
+//! translating the character, fighting on every support switch).
+//!
+//! The caller decides what "one space" means: a single column's skeleton space,
+//! or a whole stitched character mapped into the scene. Feed it the character as
+//! a single joint tree and it behaves the way a single-level rig does — which is
+//! the whole point.
+namespace PlasticPinSolver {
+
+struct Joint {
+  int parent = -1;            //!< parent joint index, -1 for the root
+  TPointD rest;               //!< rest position, same space as the positions
+  double minAngle = -1.0e10,  //!< joint limits in DEGREES, wide open when unset
+      maxAngle    = 1.0e10;
+};
+
+struct Pin {
+  int joint = -1;
+  TPointD target;      //!< where the joint must land, same space as positions
+  double since = 0.0;  //!< activation frame — seniority picks the primary
+};
+
+//! Plants \p pins by moving \p pos in place.
+//!
+//! The OLDEST pin is planted by rigidly translating the whole structure onto its
+//! target, leaving the root free and the authored pose untouched. Every further
+//! pin plants by bending ONLY its own limb (CCD confined strictly below the
+//! point where its chain diverges from the ones already planted, so an
+//! already-planted pin can never move). Finally, pins that cannot be reached at
+//! all pull the whole structure toward their damped average residual, a few
+//! passes, so the body settles where every pin stays ~planted instead of one of
+//! them detaching.
+//!
+//! \p preplanted lists joints already held by an EXTERNAL mechanism. When it is
+//! non-empty the rigid translation is skipped (someone else owns it), those
+//! chains seed the "do not touch" set, and every pin bends its own limb. Keep it
+//! empty to get the self-contained behaviour described above.
+DVAPI void plant(const std::vector<Joint> &joints, const std::vector<Pin> &pins,
+                 std::vector<TPointD> &pos,
+                 const std::vector<int> &preplanted = std::vector<int>());
+
+}  // namespace PlasticPinSolver
+
 //====================================================
 
 //    Forward declarations
@@ -359,6 +411,29 @@ public:
   void setSecondaryPinTargets(double frame,
                               const std::map<int, TPointD> &localTargets);
   void clearSecondaryPinTargets();
+
+  //! The posed skeleton WITHOUT any pin planting — storeDeformedSkeleton minus
+  //! its final plant. The multi-column solve needs the raw pose: it plants the
+  //! whole character itself, on the unified joint tree.
+  void storePosedSkeleton(int skeletonId, double frame,
+                          PlasticSkeleton &skeleton) const;
+
+  //! One solver Joint per vertex of this skeleton, in DENSE order (the tcg slot
+  //! of each is returned in \p vertexIds). Parent indices are dense and local to
+  //! this skeleton — the caller re-parents the root when stitching several
+  //! columns into one character. Rest positions and the effective angle limits
+  //! at \p frame come from here so the limit rules stay in one place.
+  void buildSolverJoints(int skeletonId, double frame,
+                         std::vector<PlasticPinSolver::Joint> &joints,
+                         std::vector<int> &vertexIds) const;
+
+  //! Result of a character-level solve for this column, in this column's own
+  //! skeleton space. While one is set for the requested (skeletonId, frame),
+  //! storeDeformedSkeleton returns it verbatim instead of planting locally:
+  //! a stitched character has ONE solver, and this is where its answer lands.
+  void setSolvedSkeleton(int skeletonId, double frame,
+                         const PlasticSkeleton &skeleton);
+  void clearSolvedSkeleton();
 
   // Interface methods using a deformed copy of the original skeleton (which is
   // owned by this class)
