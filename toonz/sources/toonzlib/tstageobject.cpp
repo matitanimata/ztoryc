@@ -1549,8 +1549,17 @@ TAffine TStageObject::computePlasticPinCorrection(double t,
   if (m_parent && m_parent->getId().isColumn()) return TAffine();
 
   // Oldest active cross-column pin among the descendant columns.
+  //
+  // Seniority alone does NOT order the pins: planting a second foot at the SAME
+  // frame as the first (exactly what a double support is) gives both the same
+  // activation frame, and the winner used to be whichever the DFS happened to
+  // reach first — an arbitrary, unstable choice over a LIFO stack. When it fell
+  // on the newer pin the older one was left with no planter and visibly let go.
+  // Break ties deterministically on (column, vertex) so the primary never
+  // changes identity behind the animator's back.
   bool found       = false;
   double bestSince = 0.0;
+  int bestCol = 0, bestVertex = 0;
   TPointD bestTarget, bestHeel;
 
   const TAffine parentP = m_parent ? m_parent->getPlacement(t) : TAffine();
@@ -1605,7 +1614,15 @@ TAffine TStageObject::computePlasticPinCorrection(double t,
 
       const double since =
           locals::activationFrame(*vd->m_params[SkVD::PIN], sdFr);
-      if (found && since >= bestSince) continue;
+      const int col = obj->getId().getIndex();
+      if (found) {
+        // (since, column, vertex), ascending — total order, no ties left.
+        if (since > bestSince) continue;
+        if (since == bestSince) {
+          if (col > bestCol) continue;
+          if (col == bestCol && v >= bestVertex) continue;
+        }
+      }
 
       if (!skelStored) {
         def->storeDeformedSkeleton(skelId, sdFr, skel);
@@ -1619,6 +1636,8 @@ TAffine TStageObject::computePlasticPinCorrection(double t,
           def->getSquashControllerAffine(skelId, sdFr) * skel.vertex(v).P();
       found      = true;
       bestSince  = since;
+      bestCol    = col;
+      bestVertex = v;
       bestHeel   = parentP * baseLocal * acc * vp;
       bestTarget = TPointD(vd->m_params[SkVD::PINWX]->getValue(sdFr),
                            vd->m_params[SkVD::PINWY]->getValue(sdFr));
