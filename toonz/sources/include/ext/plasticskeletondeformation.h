@@ -342,6 +342,24 @@ public:
   bool isFullKeyframe(double frame) const;
   void deleteKeyframe(double frame);
 
+  // SuperPlastic STEP C.2 — secondary cross-column pins.
+  //
+  // A pin carrying a SCENE target (PINW) is planted by the character-level
+  // correction, which is a pure translation and therefore satisfies exactly ONE
+  // pin. Every further pin has to plant by BENDING its own limb, and CCD needs
+  // its target in this skeleton's LOCAL space — which requires the column's
+  // local->scene affine, something this class (in tnzext) cannot and must not
+  // know about: TStageObject lives in the layer ABOVE.
+  //
+  // So the stage side pushes the data down. TStageObject::
+  // computePlasticPinCorrection already composes each column's local->scene
+  // affine while looking for the primary pin, so it maps the secondary targets
+  // into local space and hands them over here, keyed by vertex index. Purely
+  // transient: never serialized, never observed, dropped on any frame change.
+  void setSecondaryPinTargets(double frame,
+                              const std::map<int, TPointD> &localTargets);
+  void clearSecondaryPinTargets();
+
   // Interface methods using a deformed copy of the original skeleton (which is
   // owned by this class)
 

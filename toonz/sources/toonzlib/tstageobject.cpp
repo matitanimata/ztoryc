@@ -1529,6 +1529,21 @@ TAffine TStageObject::computeIkRootOffset(int t) {
 // parent's skeleton eval (getHandlePos), never a placement of this object.
 TAffine TStageObject::computePlasticPinCorrection(double t,
                                                   const TAffine &baseLocal) {
+  // STEP C.2 phase guard. Finding the primary pin means asking each column for
+  // its deformed skeleton, and those calls must see the character UNSOLVED —
+  // otherwise the secondary targets computed by a previous pass would already
+  // have bent the limbs we are measuring, and the correction would chase its own
+  // output. So: phase 1 (this flag up) = plain skeletons, pick the primary,
+  // derive the secondary targets; phase 2 (flag down, everyone else) = skeletons
+  // with the secondary limbs bent.
+  static bool l_solvingCharacter = false;
+  if (l_solvingCharacter) return TAffine();
+  l_solvingCharacter = true;
+  struct PhaseGuard {
+    bool &f;
+    ~PhaseGuard() { f = false; }
+  } phaseGuard{l_solvingCharacter};
+
   struct locals {
     // First frame of the pin's current ON run (Constant keys) — seniority
     // picks the primary pin, exactly as storeDeformedSkeleton does.
@@ -1557,10 +1572,20 @@ TAffine TStageObject::computePlasticPinCorrection(double t,
   // on the newer pin the older one was left with no planter and visibly let go.
   // Break ties deterministically on (column, vertex) so the primary never
   // changes identity behind the animator's back.
-  bool found       = false;
-  double bestSince = 0.0;
-  int bestCol = 0, bestVertex = 0;
-  TPointD bestTarget, bestHeel;
+  // Every active cross-column pin of the character, not just the winner: the
+  // primary takes the translation, all the others become CCD targets pushed
+  // back down to their own column (STEP C.2).
+  struct PinCand {
+    PlasticSkeletonDeformation *def;
+    int col, v;
+    double since, sdFr;
+    TAffine toScene;  //!< column skeleton space -> scene, correction excluded
+    TAffine ctrl;     //!< squash & stretch controller of that column
+    TPointD target;   //!< PINWX/PINWY, scene space
+    TPointD heel;     //!< where the vertex currently is, scene space
+  };
+  std::vector<PinCand> cands;
+  std::vector<PlasticSkeletonDeformation *> visitedDefs;
 
   const TAffine parentP = m_parent ? m_parent->getPlacement(t) : TAffine();
 
@@ -1590,6 +1615,7 @@ TAffine TStageObject::computePlasticPinCorrection(double t,
 
     const double sdFr = obj->paramsTime(t);
     const int skelId  = def->skeletonId(sdFr);
+    visitedDefs.push_back(def.getPointer());
 
     // Any active pin with a scene target on this column?
     PlasticSkeleton skel;
@@ -1612,40 +1638,81 @@ TAffine TStageObject::computePlasticPinCorrection(double t,
           def->vertexIndex(def->hookNumber(*(*vdt).first), skelId);
       if (v < 0) continue;
 
-      const double since =
-          locals::activationFrame(*vd->m_params[SkVD::PIN], sdFr);
-      const int col = obj->getId().getIndex();
-      if (found) {
-        // (since, column, vertex), ascending — total order, no ties left.
-        if (since > bestSince) continue;
-        if (since == bestSince) {
-          if (col > bestCol) continue;
-          if (col == bestCol && v >= bestVertex) continue;
-        }
-      }
-
       if (!skelStored) {
         def->storeDeformedSkeleton(skelId, sdFr, skel);
         skelStored = true;
       }
       if (v >= (int)skel.vertices().size()) continue;
 
-      // Heel in scene space, composed without touching this object's
-      // placement: parentP * baseLocal * (child-chain) * controlled vertex.
-      const TPointD vp =
-          def->getSquashControllerAffine(skelId, sdFr) * skel.vertex(v).P();
-      found      = true;
-      bestSince  = since;
-      bestCol    = col;
-      bestVertex = v;
-      bestHeel   = parentP * baseLocal * acc * vp;
-      bestTarget = TPointD(vd->m_params[SkVD::PINWX]->getValue(sdFr),
-                           vd->m_params[SkVD::PINWY]->getValue(sdFr));
+      PinCand c;
+      c.def     = def.getPointer();
+      c.col     = obj->getId().getIndex();
+      c.v       = v;
+      c.sdFr    = sdFr;
+      c.since   = locals::activationFrame(*vd->m_params[SkVD::PIN], sdFr);
+      c.toScene = parentP * baseLocal * acc;
+      c.ctrl    = def->getSquashControllerAffine(skelId, sdFr);
+      c.target  = TPointD(vd->m_params[SkVD::PINWX]->getValue(sdFr),
+                          vd->m_params[SkVD::PINWY]->getValue(sdFr));
+      c.heel    = c.toScene * (c.ctrl * skel.vertex(v).P());
+      cands.push_back(c);
     }
   }
 
-  if (!found) return TAffine();
-  const TPointD d = bestTarget - bestHeel;
+  // No pins: drop any secondary target left over from an earlier frame, or the
+  // columns would keep bending toward a plant that no longer exists.
+  if (cands.empty()) {
+    for (PlasticSkeletonDeformation *d : visitedDefs)
+      d->clearSecondaryPinTargets();
+    return TAffine();
+  }
+
+  // Primary = smallest (since, column, vertex). See the tie note above.
+  size_t best = 0;
+  for (size_t i = 1; i < cands.size(); ++i) {
+    const PinCand &a = cands[i], &b = cands[best];
+    if (a.since < b.since ||
+        (a.since == b.since &&
+         (a.col < b.col || (a.col == b.col && a.v < b.v))))
+      best = i;
+  }
+
+  const TPointD d = cands[best].target - cands[best].heel;
+
+  // Hand every OTHER pin down to its own column as a local CCD target. The
+  // column's final scene mapping is TTranslation(d) * toScene * ctrl, so the
+  // target lands in pre-controller skeleton space — the same space the
+  // in-skeleton PINTX plant works in.
+  //
+  // Single pass, deliberately: bending a limb moves the hooks that child columns
+  // hang from, so a child's toScene is strictly speaking stale afterwards. The
+  // primary is unaffected (CCD is confined below the already-planted chains, so
+  // d stays exact); the residual only affects secondaries on columns hanging off
+  // a bent limb. Iterating would need the whole character re-solved per pass.
+  {
+    // Keyed by the column's OWN param time (sdFr), not by the xsheet frame:
+    // that is the domain storeDeformedSkeleton is called in, and the two differ
+    // as soon as the column has repeat/cycling.
+    std::map<PlasticSkeletonDeformation *,
+             std::pair<double, std::map<int, TPointD>>>
+        byColumn;
+    for (size_t i = 0; i < cands.size(); ++i) {
+      if (i == best) continue;
+      const PinCand &c = cands[i];
+      const TAffine toSkel = (TTranslation(d) * c.toScene * c.ctrl).inv();
+      auto &entry          = byColumn[c.def];
+      entry.first          = c.sdFr;
+      entry.second[c.v]    = toSkel * c.target;
+    }
+    for (PlasticSkeletonDeformation *def : visitedDefs) {
+      auto it = byColumn.find(def);
+      if (it == byColumn.end())
+        def->clearSecondaryPinTargets();
+      else
+        def->setSecondaryPinTargets(it->second.first, it->second.second);
+    }
+  }
+
   if (fabs(d.x) < 1e-6 && fabs(d.y) < 1e-6) return TAffine();
 
   // The correction is a SCENE-space translation; bring it into this object's

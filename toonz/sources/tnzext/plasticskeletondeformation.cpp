@@ -228,6 +228,12 @@ public:
                               //!< constraints are applied at evaluation
                               //!< (scene data, keys untouched when off)
 
+  // STEP C.2: local-space targets for SECONDARY cross-column pins, pushed down
+  // by the stage-level solve (see setSecondaryPinTargets). Transient: valid only
+  // for m_secondaryFrame, never serialized.
+  std::map<int, TPointD> m_secondaryTargets;
+  double m_secondaryFrame = -1.0e30;
+
   std::set<TParamObserver *>
       m_observers;  //!< Set of the deformation's observers
 
@@ -1045,6 +1051,12 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   // (root-column foot dragged along when a child-column foot takes over).
   // Rigid translation has exactly ONE owner; local CCD bending stays here.
   std::vector<int> stagePinned;
+  // Any stage-owned pin at all, primary or secondary. The rigid translation must
+  // be suppressed even on a column that holds ONLY secondaries (its primary
+  // living on another column of the character): there stagePinned stays empty,
+  // and without this flag the oldest local pin would grab the translation and
+  // fight the character-level one all over again.
+  bool anyStageOwned = false;
 
   const tcg::list<PlasticSkeleton::vertex_type> &verts = skeleton.vertices();
   for (auto vt = verts.begin(); vt != verts.end(); ++vt) {
@@ -1057,10 +1069,23 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
     if (vd.m_params[SkVD::PIN]->getValue(frame) < 0.5) continue;
 
     // Stage-owned: its target lives in scene space and is meaningless here.
-    // Recorded only so the CCD below treats it as already planted.
     if (vd.m_params[SkVD::PINWX] && vd.m_params[SkVD::PINWY] &&
         (vd.m_params[SkVD::PINWX]->getKeyframeCount() > 0 ||
          vd.m_params[SkVD::PINWY]->getKeyframeCount() > 0)) {
+      anyStageOwned = true;
+      // STEP C.2: unless the stage-level solve handed us a LOCAL target for it,
+      // which means this is a SECONDARY pin — the character translation is
+      // already spoken for by the primary, so this one plants by bending its
+      // own limb toward the mapped target, exactly like a same-column secondary.
+      auto st = m_imp->m_secondaryTargets.find((int)vt.m_idx);
+      if (st != m_imp->m_secondaryTargets.end() &&
+          m_imp->m_secondaryFrame == frame) {
+        pins.push_back({(int)vt.m_idx, st->second,
+                        locals::activationFrame(*vd.m_params[SkVD::PIN], frame)});
+        continue;
+      }
+      // Primary (or no solve yet): held by the character translation. Recorded
+      // only so the CCD below treats its chain as already planted.
       stagePinned.push_back((int)vt.m_idx);
       continue;
     }
@@ -1087,7 +1112,7 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   // is a SECONDARY: it plants by bending its own limb, seeded by the stage-held
   // chains. Otherwise (single-column character — the proven path, unchanged) the
   // oldest local pin owns the rigid whole-skeleton translation.
-  const bool stageOwnsTranslation = !stagePinned.empty();
+  const bool stageOwnsTranslation = anyStageOwned;
 
   if (!stageOwnsTranslation) {
     // Primary (oldest) pin: rigid whole-skeleton translation.
@@ -1291,6 +1316,23 @@ TAffine PlasticSkeletonDeformation::getSquashControllerAffine(
   // rotation, shear and scale about the pivot
   return TTranslation(tx, ty) * TTranslation(C) * TRotation(rot) *
          TShear(shx, shy) * TScale(sx, sy) * TTranslation(-C);
+}
+
+//------------------------------------------------------------------
+
+// STEP C.2 — see the header for why the targets arrive from outside instead of
+// being computed here.
+void PlasticSkeletonDeformation::setSecondaryPinTargets(
+    double frame, const std::map<int, TPointD> &localTargets) {
+  m_imp->m_secondaryFrame   = frame;
+  m_imp->m_secondaryTargets = localTargets;
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::clearSecondaryPinTargets() {
+  m_imp->m_secondaryFrame = -1.0e30;
+  m_imp->m_secondaryTargets.clear();
 }
 
 //------------------------------------------------------------------
