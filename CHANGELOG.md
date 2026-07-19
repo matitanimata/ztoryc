@@ -1,3 +1,185 @@
+## [2026-07-19] — STEP C: il personaggio cucito diventa UN solo scheletro (+ global key, pin domain)
+
+> **Riepilogo**: 10 commit su `feature/superplastic`. C.1 e C.2 chiuse, solve unificato,
+> switch d'appoggio, dominio param-time dei pin, Set Key con posa plastic. Restano aperti il
+> controllo del multi-pin sotto stress (due esperimenti falliti, diagnosi ristretta) e 8
+> segnalazioni minori raccolte a fine giornata (3 con causa gia' individuata) in ANIMATIC_TASKS.md.
+
+### STEP C.1: autorita' unica del planting + IK di personaggio + global key con posa plastic
+
+Sessione su `feature/superplastic` (commit `3a035bd4a`).
+
+### ✅ STEP C.1 — un solo proprietario del planting
+L'autorita' sulla traslazione rigida che pianta un pin si sceglieva **per-pin dal ruolo della
+colonna** (`isChildColumn`): figlia -> target scena PINWX/PINWY piantato dallo stage; radice ->
+PINTX/PINTY piantato dentro `storeDeformedSkeleton`. Su un rig cucito erano attive **entrambe** e
+si contro-traslavano a ogni switch d'appoggio. Ora e' una proprieta' del **personaggio**: nel rig
+cucito tutti i pin sono stage-owned, `storeDeformedSkeleton` sopprime la propria traslazione
+rigida (e il ciclo di bilanciamento damped), e il DFS stage copre anche la colonna radice.
+Rig a colonna singola: percorso invariato.
+
+**Verificato da Franco:** la regressione dello switch non c'e' piu' e i pin reggono sugli
+intercalati.
+
+### ✅ Fix — scelta deterministica del pin primario (commit `edeac9f05`)
+Sintomo: pinnando il **secondo** piede cedeva il **primo**. Causa: il primario si sceglieva per sola
+anzianita' con `if (found && since >= bestSince) continue;`, ma due pin piantati allo **stesso
+frame** (cioe' un doppio appoggio) hanno lo stesso `activationFrame` e vinceva quello raggiunto per
+primo dal DFS — scelta arbitraria su uno stack LIFO. Se usciva il pin nuovo, il vecchio restava
+senza planter. Ora l'ordine e' la chiave totale `(since, colonna, vertice)`. Il solver a colonna
+singola gia' evitava il problema con `std::stable_sort`.
+**Verificato:** con due pin ora regge il primo e cede il secondo.
+
+### ✅ C.2 — il personaggio cucito e' UN solo scheletro (commit `7ecaf6f11`, `960b9a8d8`)
+Le colonne vengono posate, mappate in spazio scena e cucite in **un unico joint tree** (la radice
+di ogni figlia legata al vertice-hook del padre: un osso normale, non un caso speciale), poi ci
+gira sopra il **solver del livello singolo**. Quel solver e' stato prima **estratto alla lettera**
+da `storeDeformedSkeleton` in `PlasticPinSolver::plant`, col percorso a colonna singola migrato e
+verificato invariato PRIMA di costruirci sopra il multi-colonna. Un solo solver, quindi nessuna
+seconda implementazione che possa contraddire la prima.
+
+Conseguenza: il piantaggio vive **negli scheletri**, mai nella placement.
+`computePlasticPinCorrection` e' sparita, e con lei l'ultimo residuo del disegno a due meccanismi.
+Il bilanciamento damped arriva gratis, quindi un pin fuori portata non si stacca piu'.
+
+**Ciclo di vita della cache** (imparato a caro prezzo, quattro giri di correzioni):
+- il solve azzera tutti gli scheletri risolti prima di comporre, o un re-solve sullo stesso frame
+  (= ogni movimento del mouse in un drag) costruirebbe sul proprio output precedente e accumula;
+- un cambio parametro scarta lo scheletro risolto, che altrimenti sopravvive ai suoi input (un
+  braccio trascinato scriveva gli ANGLE e si vedeva restituire la risposta vecchia: si bloccava);
+- invalidare una colonna-arto deve far scadere la placement della colonna **top**, che e' cio' che
+  innesca il solve — e va fatto azzerando **direttamente** il timestamp: passare da `invalidate()`
+  ricorre sui figli, che risalgono, ciclo infinito (stack esaurito **aprendo una scena**).
+
+**Verificato:** braccia mobili, un pin solido, due pin reggono.
+**Aperto:** con due pin la posa "schizza" e il controllo e' grossolano — l'albero unificato da' al
+CCD molti piu' gradi di liberta' della catena di una singola colonna. Mitigazioni: **limiti
+angolari sui giunti** (prima leva, da mettere comunque nel rig) e smorzamento del CCD per
+profondita'.
+
+### ✅ Switch d'appoggio: un solo frame, cross-colonna, undo corretto (commit `cbb2ec4ff`)
+Lo switch fa tutto al frame CORRENTE: pianta il vertice selezionato e rilascia ogni altro pin del
+personaggio, comprese le colonne diverse da quella corrente — scritte direttamente nella loro
+deformazione con coordinate `(riga, colonna)` esplicite per l'undo, **mai** attivando quelle
+colonne (un primo tentativo via `TemporaryActivation` aveva peggiorato: nessuna chiave, piede
+precedente spinnato, selezione lasciata su una colonna estranea). Scelta di Franco e scelta giusta:
+scambiare l'appoggio su una sola chiave e' quello che vuole l'animazione, ed e' cio' che rende
+l'operazione semplice — niente frame handle spostato dentro il blocco di undo, tutti gli undo sulla
+stessa riga. Identico per rig a livello singolo e cuciti.
+
+Due bug di dominio delle coordinate risolti: il rilascio cross-colonna scriveva a
+`paramsTime(frame)` mentre `togglePinAtCurrentFrame` scrive al frame **grezzo**; e l'undo riceveva
+il FRAME dove `AnimateValuesUndo` vuole la RIGA (riga = frame+1), quindi agiva un frame prima.
+
+⚠️ **Disallineamento latente da sistemare:** i pin vengono **scritti** al frame grezzo ma **letti**
+via `paramsTime` dal solve. Invisibile finche' i due domini coincidono; su una colonna riggata con
+repeat/cycling i pin si comporterebbero male.
+
+### 🛠️ Difesa di processo: istanza gia' aperta
+Tre volte in questa sessione si e' testato un binario **vecchio** perche' l'app era rimasta aperta
+da prima del deploy — una delle quali ha quasi fatto scartare un fix corretto, e un'altra ha
+prodotto tre ipotesi diagnostiche sbagliate di fila su un bug che **non esisteva piu'**.
+`build_and_deploy.sh` ora stampa un avviso ben visibile quando trova un'istanza precedente al
+deploy. (Lo stesso script preferisce ora `Ztoryc-SP.app` quando esiste, e stampa sempre il bundle
+di destinazione.)
+
+### ✅ Pin nel dominio param-time (commit `5cf729696`) — [in autonomia, DA TESTARE]
+I pin erano SCRITTI al frame xsheet grezzo ma LETTI via `paramsTime` (valutazione, solve
+unificato e query del tool). `paramsTime` e' identita' tranne oltre l'ultima chiave stage con
+**Cycle** attivo — li' una chiave pin finiva a un tempo che nessuna lettura campiona. Ora tutte le
+scritture pin vivono nel dominio param, convertite per colonna: `togglePinAtCurrentFrame` a
+`::sdFrame()` (il frame grezzo sopravvive solo per `getPlacement`), lo switch rilascia a
+`obj->paramsTime(rawFrame)`, `crossColumns_animate` da' anche alla colonna corrente un paramFrame
+convertito, `pinnedVerticesAtFrame` converte in ingresso (idempotente), e ogni `AnimateValuesUndo`
+dei percorsi pin riceve riga esplicita = frame scritto + 1. Bit-identico senza Cycle; le scritture
+ANGLE dei drag restano alla convenzione upstream (oltre il cycle erano gia' morte).
+
+### ✅ Global key: Set Key include la posa + oro = chiave piena (commit `d08319068`) — [in autonomia, DA TESTARE]
+- **Diamante bianco su Set Key**: solo il global key dello stage era stato istruito; lo Z
+  dell'xsheet e il KeyframeNavigator passavano da `UndoSetKeyFrame`/`UndoRemoveKeyFrame` intonsi.
+  La gestione posa ora sta in QUELLE classi undo — key e unkey, dietro la preferenza, con snapshot
+  dello stato plastic alla costruzione. Il navigator instrada entrambe le branch da `undo->redo()`
+  invece di operare inline. Deliberatamente NON dentro `setKeyframeWithoutUndo`: serve decine di
+  percorsi copy/move/paste i cui undo non sanno nulla di plastic.
+- **Oro letto come parziale**: l'oro scattava su QUALSIASI chiave stage che coincidesse con chiavi
+  plastic — comprese le parziali (un drag Animate chiavizza solo X/Y). Ora richiede
+  `isFullKeyframe`: trasformazione intera + posa intera, o niente oro.
+- Nuovo `removePlasticPoseKeyframe` (inverso esatto, pin e limiti intoccati): Z-Z su colonna
+  riggata fa round-trip pulito senza chiavi plastic orfane.
+
+### ✅ Damped CCD sull'albero unificato (commit `d80cba2da`) — [in autonomia, DA TESTARE A/B]
+Il multi-pin era meno solido del single-level per una ragione strutturale: stesso solver, albero
+diverso — catene 2-3x piu' lunghe (attraversano le colonne) e giunti di cucitura sintetici senza
+limiti autorali. Il CCD classico ruota il pivot piu' vicino al pin completamente verso il target a
+ogni sweep: su quella catena, target vicini trovano configurazioni selvaggiamente diverse →
+controllo nervoso, blocco cedevole. Rimedio da manuale: `plant()` accetta `maxStepDegrees` (opt-in)
+che clampa la rotazione per giunto per sweep — la portata resta piena (24 sweep x 15° = 360° per
+giunto) ma la piega si distribuisce lungo la catena e la soluzione varia con continuita'. Il solve
+unificato usa 15°/sweep; il percorso a colonna singola resta a 0 = bit-identico. La costante e' un
+solo numero da tarare se 15 risulta troppo rigido o troppo lasco.
+
+### ❌ Esperimento fallito e revertato: plant primary-only durante il drag (`e090f8859` → revert `8d8d58367`)
+Ipotesi: la vibrazione/accartocciamento con 2 pin nasce dal tool che cattura nei parametri le
+pieghe CCD della valutazione (fit assoluto alla geometria mostrata). Esperimento: durante il drag
+la valutazione pianta solo il primario (traslazione, invisibile al write-back). **Attivazione
+verificata dal log** (secondo giro — il primo aggancio era in `ensureCrossLevelBaselines_animate`,
+che si è scoperto essere CODICE MORTO, zero chiamanti: l'esperimento non girava). Esito con
+esperimento attivo: **vibrazione identica** → diagnosi FALSIFICATA. Il loop non passa dal CCD di
+valutazione: sta nel write-back stesso (fit-assoluto ↔ traslazione del plant che rimbalzano,
+sospetto ping-pong della traslazione dentro/fuori ROOTX/Y). Il fix vero è ridisegnare il
+write-back del drag in forma DELTA param-space (come il single-level, che scrive un solo vertice)
+— sessione dedicata. Resta attivo il damped CCD (15°/sweep, `d80cba2da`).
+
+### 🐛 Scoperto: undo per-colonna del drag cross-level MAI attivo
+`ensureCrossLevelBaselines_animate` (baseline undo + flag `m_ikCrossDragged`) non ha chiamanti —
+il caller si è perso in un merge/rewrite. Conseguenza: `finishCrossLevelUndo_animate` non scatta
+mai → i drag cross-level non producono gli undo per-colonna previsti. Da ricablare nella sessione
+sul write-back (stessa area).
+
+### 🔴 Residui aperti
+**Il multi-pin regge un solo pin:** il secondo cede, come atteso. La correzione stage e' una
+**traslazione pura** (soddisfa un punto solo) e i pin stage-owned sono esclusi dalla lista locale,
+quindi `if (pins.empty()) return;` esce prima di ogni CCD e i secondari non hanno alcun planter.
+C.2 deve portare alla valutazione per-colonna il mapping scena->locale che il passaggio stage gia'
+compone (`parentP * baseLocal * acc`).
+
+⚠️ **Ostacolo noto per C.2:** `storeDeformedSkeleton` non conosce l'affine world della propria
+colonna, e calcolarlo passa dalla placement della colonna, che richiama `storeDeformedSkeleton` →
+ricorsione. Se ne esce in **due fasi**: (1) scheletri senza CCD secondario → correzione primaria →
+trasformazione di personaggio nota; (2) scheletri con CCD secondario che usa quella trasformazione.
+Delicato: tocca codice condiviso viewer/render, attenzione a ordine e staleness.
+
+### Fixed
+- **IK di personaggio** — `pinsEnabled` era per-colonna: IK sulla gamba col corpo in FK lasciava la
+  root del corpo bloccata e i pin apparentemente inerti. Nuovi helper `characterColumns()` /
+  `characterDeformations()` / `enablePinsOnCharacter()`. ✅ verificato
+- **Vertice pinnato non trascinabile** — il solver cross-level declinava il drag (il pin e' la sua
+  base di re-root) e il fallback FK lo spostava, sganciando il pin senza causa visibile. ✅ verificato
+- **`build_and_deploy.sh`** — deployava su `Ztoryc.app` mentre il bundle lanciato era
+  `Ztoryc-SP.app`: ora preferisce il bundle rinominato e **stampa la destinazione**.
+
+### Added — Global Key include la posa plastic
+Il global key dello stage chiavizza anche la posa plastic sulle colonne riggate, dietro la
+preferenza `GlobalKeyIncludesPlastic` (default ON) con toggle nel menu **Xsheet**. Lista di
+parametri **curata**: mai i pin ne' gli override dei limiti di giunto, perche' entrambe le famiglie
+usano la **presenza di chiavi come interruttore semantico** (PINW = autorita' stage,
+MIN/MAXANGLE = override attivo). E' quasi certamente il motivo per cui upstream tiene commentato il
+blocco plastic in `setKeyframeWithoutUndo`. Le chiavi con posa plastic hanno il **diamante oro**.
+
+### Da rifinire (sessione separata, richiesta di Franco)
+- "Set Key" col toggle attivo produce un diamante **bianco** invece che oro
+- selezionando un diamante oro il viewer lo legge come chiave **parziale**, a volte globale
+- lo **switch d'appoggio** non scrive ancora la chiave di rilascio sulla colonna padre: un primo
+  tentativo via `TemporaryActivation` peggiorava le cose (nessuna chiave, piede precedente
+  spinnato, selezione lasciata su una colonna estranea) ed e' stato revertato, con un TODO che
+  spiega il vincolo: non spostare colonna/selezione dentro il blocco di undo
+
+### Note di processo
+Mezza sessione persa perche' il deploy scriveva su un bundle diverso da quello lanciato. Il primo
+giro di test era valido, il secondo e il terzo no — e C.1 e' stata revertata e poi ripristinata
+sulla base di un verdetto che non la riguardava. Da qui la riga `Bundle di destinazione` nello
+script.
+
 ## [2026-07-18] — IK cross-colonna: il pin regge (STEP A+B) + rifiniture controller
 
 Sessione lunga tutta su `feature/superplastic`. Obiettivo: far reggere il **foot-planting su rig
