@@ -2631,6 +2631,12 @@ static int loadPSDResource(IoCmd::LoadResourceArguments &args,
     int r;
     for (r = 0; r < rowCount; r++)
       xsh->setCell(row0 + r, col0, TXshCell(cl, TFrameId(r + 1)));
+    // move the current column to the right, as the non-subxsheet branch above
+    // already does: col0 is a reference to args.col0, shared across the whole
+    // import batch, so leaving it here makes the next PSD of the batch land on
+    // this very column and overwrite the sub-xsheet just created.
+    col0++;
+    app->getCurrentColumn()->setColumnIndex(col0);
   }
 
   return count;
