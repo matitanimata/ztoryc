@@ -93,6 +93,10 @@ toonz/Tahoma2D.app.extras/
 # Ztoryc
 .claude/
 /toonz/Ztoryc.app/
+# Bundle rinominati dei worktree di feature (Ztoryc-SP.app e simili): senza
+# questa riga un `git add -A` da quel worktree stagia l'intero bundle, binari
+# e dylib compresi.
+/toonz/Ztoryc-*.app/
 /toonz/build/.dmgbuild-venv/
 thirdparty/superlu/SuperLU_4.1/TESTING/
 .tmp-ztoryc-test/

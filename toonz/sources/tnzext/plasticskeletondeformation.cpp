@@ -1023,6 +1023,12 @@ void PlasticPinSolver::plant(const std::vector<Joint> &joints,
   const double maxStepRad =
       (maxStepDegrees > 0.0) ? maxStepDegrees * (M_PI / 180.0) : 0.0;
 
+  // Softening length of the lever-arm damping, as a fraction of the longest
+  // lever on the limb being solved. Smaller = only the pivots really on top of
+  // the pin are held back; larger = the bend is pushed further up the limb.
+  // The single knob to turn if the multi-pin pose feels too loose or too stiff.
+  const double kLeverSoftenFrac = 0.25;
+
   const int n = (int)joints.size();
 
   std::vector<std::vector<int>> children(n);
@@ -1081,6 +1087,19 @@ void PlasticPinSolver::plant(const std::vector<Joint> &joints,
       const double tol2 = 1e-9;
       for (int sweep = 0; sweep < SWEEPS; ++sweep) {
         if (norm2(target - pos[pinJ]) < tol2) break;
+
+        // Lever-arm reference for the damping below: the longest lever any
+        // pivot on this limb has THIS sweep. Making the softening length
+        // relative to it keeps the damping scale-free — the pivot with the
+        // best leverage always gets the full step, whether the limb is a
+        // finger or a whole stitched body.
+        double maxLever = 0.0;
+        if (maxStepRad > 0.0)
+          for (int k = (int)path.size() - 2; k >= aIdx; --k)
+            maxLever =
+                std::max(maxLever, sqrt(norm2(pos[pinJ] - pos[path[k]])));
+        const double soften = kLeverSoftenFrac * maxLever;
+
         // Nearest-to-pin pivot first: classic CCD sweep order. The anchor itself
         // (k == aIdx) is a valid LAST pivot: rotating only path[k+1]'s subtree
         // about it bends this limb's attachment bone too — without it, a pose
@@ -1106,10 +1125,29 @@ void PlasticPinSolver::plant(const std::vector<Joint> &joints,
             ang       = std::min(std::max(ang, lo), hi);
           }
 
-          // Damped CCD (see the header): spread the bend along the chain
-          // instead of letting the nearest pivot whip toward the target.
-          if (maxStepRad > 0.0)
-            ang = std::min(std::max(ang, -maxStepRad), maxStepRad);
+          // Damped CCD (see the header), scaled by the LEVER ARM.
+          //
+          // A uniform clamp is not enough. The angle CCD wants here is
+          // atan2 over `cur` — the vector from this pivot to the pin — so the
+          // shorter that vector, the larger the angle for the same target
+          // displacement, up to ~180deg for a pivot sitting on the pin. Giving
+          // every pivot the same budget therefore lets the ones nearest the
+          // pin fold the limb onto itself (24 sweeps x the full step = 360deg)
+          // while the pin barely moves: the hold looks kept, the pose explodes.
+          //
+          // So the budget follows the leverage: lever/(lever + soften),
+          // renormalised so the best-placed pivot gets the whole step. Pivots
+          // close to the pin are nearly frozen, the bend migrates up the limb
+          // to the joints that can actually produce the motion, and the pose
+          // moves the way a limb does — from the shoulder, not from the wrist.
+          if (maxStepRad > 0.0) {
+            double limit = maxStepRad;
+            if (soften > 1e-12) {
+              const double lever = sqrt(norm2(cur));
+              limit *= (lever / (lever + soften)) * (1.0 + kLeverSoftenFrac);
+            }
+            ang = std::min(std::max(ang, -limit), limit);
+          }
 
           double c = cos(ang), s = sin(ang);
           std::vector<int> sub;

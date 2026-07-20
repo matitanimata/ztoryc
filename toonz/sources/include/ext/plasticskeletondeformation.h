@@ -82,8 +82,12 @@ struct Pin {
 //! empty to get the self-contained behaviour described above.
 //!
 //! \p maxStepDegrees > 0 enables DAMPED CCD: each joint's rotation is clamped
-//! to that many degrees per sweep. Reachability is preserved (sweeps
-//! accumulate), but the bend spreads along the chain instead of whipping the
+//! per sweep, by that many degrees SCALED BY ITS LEVER ARM to the pin. A pivot
+//! far from the pin (good leverage) gets the full step; one sitting on top of
+//! it is nearly frozen, because there the same target displacement demands a
+//! near-180deg rotation and a uniform clamp would still let it fold the limb
+//! onto itself over successive sweeps. Reachability is preserved (sweeps
+//! accumulate), the bend spreads along the chain instead of whipping the
 //! pivot nearest to the pin, and the solution varies continuously with the
 //! target. Meant for the UNIFIED multi-column tree, whose chains are 2-3x
 //! longer than a single skeleton's and whose stitch bonds are synthetic
