@@ -120,6 +120,16 @@ Based on Tahoma2D — BSD 2-Clause License.
 
 ---
 
+## ❤️ Support Ztoryc
+
+Ztoryc is free and open-source. If it's useful to you or your studio, please consider sponsoring its development — it funds new features, fixes and docs.
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2?logo=github)](https://github.com/sponsors/matitanimata)
+
+A heartfelt thank-you to all our sponsors — see [SUPPORTERS.md](SUPPORTERS.md).
+
+---
+
 ---
 
 # Ztoryc (Italiano)
@@ -233,3 +243,13 @@ Il progetto porta con sé il know-how di Matitanimata, uno dei più importanti s
 Contributi, feedback e idee sono benvenuti.
 
 Basato su Tahoma2D — licenza BSD 2-Clause.
+
+---
+
+## ❤️ Sostieni Ztoryc
+
+Ztoryc è gratuito e open-source. Se è utile a te o al tuo studio, valuta di sponsorizzarne lo sviluppo: finanzia nuove feature, fix e documentazione.
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2?logo=github)](https://github.com/sponsors/matitanimata)
+
+Un grazie di cuore a tutti i nostri sponsor — vedi [SUPPORTERS.md](SUPPORTERS.md).

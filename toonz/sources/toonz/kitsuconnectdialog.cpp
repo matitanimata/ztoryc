@@ -208,6 +208,10 @@ void KitsuConnectDialog::onLinkClicked() {
   m->setKitsuProject(sel.id, sel.name);
   m->saveProjectDb();
 
+  // Pull the project's team right away so the assignee picker is populated
+  // (the Production panel handles teamPulled and merges it into the roster).
+  m_client->pullTeam(sel.id);
+
   m_statusLabel->setStyleSheet("color:#22D160;");
   m_statusLabel->setText(tr("Linked to %1.").arg(sel.name));
   updateBindingButtons();  // push becomes available now that we're linked

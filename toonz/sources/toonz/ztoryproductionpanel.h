@@ -65,6 +65,7 @@ class ZtoryProductionPanel final : public TPanel {
   QSpinBox     *m_kitsuHandlesSpin  = nullptr;
   QLabel       *m_kitsuSyncLabel = nullptr;
   QVector<KitsuTaskPush> m_kitsuPendingTasks;  // pushed right after the shots land
+  QVector<KitsuAssetTaskPush> m_kitsuPendingAssetTasks;  // pushed after assets land
   // Assets tab
   QTableWidget *m_assetTable = nullptr;
   QStringList   m_assetTaskCols;
@@ -73,6 +74,10 @@ class ZtoryProductionPanel final : public TPanel {
   QListWidget  *m_techList     = nullptr;
   QListWidget  *m_taskTypeList = nullptr;
   bool          m_wfLoading    = false;
+
+  QListWidget  *m_assetTypeList     = nullptr;  // custom asset types
+  QListWidget  *m_assetTaskTypeList = nullptr;  // selected type's task pipeline
+  bool          m_atLoading         = false;
 
 public:
   ZtoryProductionPanel(QWidget *parent = nullptr);
@@ -114,6 +119,11 @@ private:
   void reloadWorkflowsTab();        // model → workflow (technique) list
   void reloadTaskTypeList();        // selected workflow → its task-type list
   void applyTaskTypesToTechnique(); // task-type list → selected workflow + persist
+
+  QWidget *buildAssetTypesTab();
+  void reloadAssetTypesTab();        // model → asset-type list
+  void reloadAssetTaskTypeList();    // selected asset type → its task pipeline
+  void applyAssetTaskTypesToType();  // task list → selected asset type + persist
 
 private slots:
   void onModelChanged();

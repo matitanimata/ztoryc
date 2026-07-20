@@ -118,6 +118,14 @@ struct Technique {
   QStringList taskTypes;   // ordered task-type names for this technique
 };
 
+// A named asset type = its own ordered asset-task pipeline (Kitsu-aligned: each
+// asset type — Character, Prop, … — carries its own tasks). Editable/custom and
+// persisted in the project DB, exactly like Technique does for shots.
+struct AssetType {
+  QString     name;        // "Character", "Prop", "Environment", …
+  QStringList taskTypes;   // ordered asset-task names for this type
+};
+
 struct ShotData {
   int                    xsheetColumn;
   QString                uuid;          // immutable project-unique key (assigned once); back-link to project tracker
@@ -235,6 +243,7 @@ class ZtoryModel : public QObject {
   QString                           m_resolution;       // Kitsu: e.g. 1920x1080
   std::vector<Technique>            m_techniques;       // editable presets (seeded with defaults)
   QString                           m_defaultTechnique; // project default technique name
+  std::vector<AssetType>            m_assetTypes;       // custom asset types + their task pipelines
   QStringList                       m_team;             // project roster (names) for the assignee picker
   QString                           m_pdfLogoPath; // custom PDF header logo (abs or scene-relative); empty = default Ztoryc logo
   bool                              m_pdfNoLogo = false;  // true = export PDF with no logo at all
@@ -413,10 +422,23 @@ public:
   void removeAssetAt(int i);
   // Canonical asset types, aligned 1:1 with Kitsu's default asset-types so the
   // bidirectional sync maps by name without a translation table. Legacy "BG"
-  // assets are migrated to "Environment" on load.
+  // assets are migrated to "Environment" on load. Used to SEED the editable
+  // m_assetTypes; the live taxonomy is assetTypes() below.
   static const QStringList &canonicalAssetTypes();
-  // Asset task pipeline (fixed for now; the Workflows editor will make it custom).
+  // Default asset task pipeline — seeds each type's editable pipeline.
   static const QStringList &canonicalAssetTaskOrder();
+
+  // ── Asset types (custom, per-type task pipeline — Kitsu-aligned) ────────────
+  const std::vector<AssetType> &assetTypes() const { return m_assetTypes; }
+  std::vector<AssetType>       &assetTypes()       { return m_assetTypes; }
+  void seedDefaultAssetTypes();                       // populate presets if empty
+  const AssetType *findAssetType(const QString &name) const;
+  // Ordered asset-task names for an asset type (falls back to the canonical
+  // order for an unknown/empty type, so legacy assets never lose their tasks).
+  QStringList assetTaskTypesForType(const QString &type) const;
+  // Union of asset-task names across the types actually used by the assets, in
+  // asset-type pipeline order — the asset table's task columns.
+  QStringList assetTaskColumns() const;
   // Edit asset tasks — keyed by index (live) or by uuid (undo-safe across reorders).
   void setAssetTaskStatus(int i, const QString &taskType, TaskStatus status);
   void setAssetTaskStatusByUuid(const QString &uuid, const QString &taskType,

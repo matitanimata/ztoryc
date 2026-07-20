@@ -118,6 +118,70 @@
 
 ---
 
+### 🆕 Segnalazioni Franco 2026-07-19 (da triage/investigare)
+
+Raccolte a fine sessione. Le voci con ✅ hanno una causa individuata **leggendo il codice**
+(non verificata a runtime); le altre sono ancora da investigare da zero.
+
+**Animatic / trimming**
+1. **FEATURE — durata shot visibile durante il trim + timing manuale.** Mentre si trimma,
+   mostrare la durata dello shot sulla timeline; e poter **impostare a mano il timing** della
+   scena invece che solo trascinando.
+2. **BUG — play riparte da frame 1 (o dal mark in) durante il trim** invece che dalla posizione
+   del cursore. Rende il trim a orecchio scomodo: si riascolta sempre dall'inizio.
+3. **BUG — timing scena con transizione: la colonna note dei ftg extra in coda non segue il
+   mark out.** Modificando il timing di una scena con transizione, le note dei fotogrammi extra
+   in coda restano dov'erano invece di seguire il mark out.
+
+**Audio**
+4. **BUG — LINK AUDIO/VIDEO rompe l'UNDO sull'audio.** Con il link attivo, l'undo su una
+   operazione audio non si comporta correttamente.
+5. **BUG — multiselezione sulle clip audio non funziona.**
+
+**Import**
+6. **BUG — importando DUE psd come sotto-scene finiscono su UNA sola colonna.**
+   ✅ **CAUSA TROVATA (lettura codice, non verificata a runtime).** In `loadPSDResource`
+   (`toonz/iocommand.cpp:2565`) il ramo "expose in sub-xsheet" deposita la sotto-scena nel main
+   xsheet con `xsh->setCell(row0 + r, col0, ...)` (`:2633`), ma **`col0` viene incrementato SOLO
+   nel ramo non-subxsheet** (`:2621`). `col0` e' un riferimento ad `args.col0` e la funzione e'
+   chiamata **una volta per file** dal loop di import (`:2891`) → il secondo PSD scrive nella
+   stessa colonna del primo, sovrascrivendolo.
+   **Fix**: nel ramo subxsheet, dopo il piazzamento, avanzare `col0` (+ `setColumnIndex`) come fa
+   gia' l'altro ramo. Verificare l'interazione con `args.col1`.
+
+**Tool / shortcut**
+7. **BUG — le shortcut degli editing tool non funzionano / non sono quelle degli hint.**
+   ✅ **CAUSA TROVATA (lettura codice).** I tooltip dei tool animatic promettono **S** (Select),
+   **T** (Trim/Roll), **C** (Razor) — vedi le stringhe in `ztoryanimatic.cpp` — ma **non esiste
+   alcun handler per `Qt::Key_S`, `Qt::Key_T` o `Qt::Key_C` "nudi"**: gli unici `Key_C` gestiti
+   richiedono Ctrl/Cmd (copy, `:2170`, `:6194`, `:6225`). Le shortcut non sono "rotte": non sono
+   **mai state implementate** (o sono andate perse), mentre gli hint le annunciano.
+   **Fix**: implementarle nel keyPressEvent del pannello (i tasti nudi S/T/C sono liberi, nessun
+   conflitto con Cmd+C), oppure — se si preferisce passarle dal CommandManager — attenzione alla
+   nota gia' presente a `:5096` sull'inaffidabilita' di QShortcut+WidgetWithChildrenShortcut.
+
+**Production tracker**
+8. **BUG — i task non rispecchiano l'ordine del workflow (shot E asset).**
+   ✅ **CAUSA TROVATA (lettura codice), due bug distinti:**
+   - **Shot**: la catena di aggiornamento **funziona gia'** — riordino → `applyTaskTypesToTechnique`
+     (`ztoryproductionpanel.cpp:1655`) salva e emette `taskStatusChanged`, il pannello fa `rebuild()`
+     (`:409`). Il problema e' a valle: `rebuild()` prende le colonne da
+     `ZtoryModel::spreadsheetTaskColumns()` (`ztorymodel.cpp:962`), che **riordina tutto secondo
+     `canonicalTaskOrder()` — una lista statica hardcoded** (`ztorymodel.cpp:951`), buttando via
+     l'ordine del workflow; i task fuori dalla canon finiscono in coda in ordine di `std::set`
+     (alfabetico), non del workflow.
+   - **Asset**: piu' grave — `rebuildAssets()` fa
+     `m_assetTaskCols = ZtoryModel::canonicalAssetTaskOrder()` (`:1358`), cioe' una lista **fissa di
+     4 voci** `{Concept, Rough, Clean, Color}` (`ztorymodel.cpp:265`) che **non consulta MAI i
+     workflow**. Gli asset non sono proprio collegati al Workflow tab.
+   **Fix**: ordinare per sequenza-workflow invece che per lista canonica. Con piu' tecniche in
+   gioco serve una regola di merge (proposta: ordine di prima apparizione scorrendo le tecniche,
+   preservando l'ordine interno di ciascuna); la lista canonica resta come fallback per i tipi
+   orfani. Per gli asset va deciso PRIMA se devono avere workflow propri o condividere quelli
+   delle tecniche — e' una scelta di modello, non solo un fix.
+
+---
+
 ### BUG (PRIORITÀ ALTA) — Animatic camera ≠ shot camera = CAMERA FIELD INCOERENTE ✅ CAUSA TROVATA
 
 **Priorità: ALTA | Tipo: BUG | Causa radice trovata: 2026-05-31 (SB_APPENNINGERS)**

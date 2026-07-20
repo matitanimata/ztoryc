@@ -2856,6 +2856,7 @@ bool FillTool::onPropertyChanged(std::string propertyName) {
       }
       TFrameId fid = getCurrentFid();
       vi->setAutocloseTolerance(m_maxGapDistance.getValue());
+      m_lastUserGapValue = m_maxGapDistance.getValue();
       int count = vi->getStrokeCount();
       std::vector<int> v(count);
       int i;
@@ -2937,6 +2938,19 @@ void FillTool::onImageChanged() {
 void FillTool::onFrameSwitched() {
   m_frameSwitched = true;
   if (TVectorImageP vi = TImageP(getImage(true))) {
+    if (!TTool::m_application->getCurrentFrame()->isPlaying()) {
+      // carry the user's gap over to images still having the default
+      // tolerance, instead of resetting the slider on every frame
+      if (m_lastUserGapValue > 0.0 &&
+          areAlmostEqual(vi->getAutocloseTolerance(), c_newAutocloseTolerance,
+                         0.001) &&
+          !areAlmostEqual(m_lastUserGapValue, c_newAutocloseTolerance, 0.001))
+        vi->setAutocloseTolerance(m_lastUserGapValue);
+      // incremental region updates can leave stale intersection data that
+      // makes closed shapes unfillable until the scene is reloaded: rebuild
+      // regions from scratch as a reload would
+      vi->forceRegionsRecompute();
+    }
     if (m_maxGapDistance.getValue() != vi->getAutocloseTolerance()) {
       m_maxGapDistance.setValue(vi->getAutocloseTolerance());
       getApplication()->getCurrentTool()->notifyToolChanged();
@@ -3157,7 +3171,17 @@ void FillTool::onActivate() {
   //  getApplication()->editImage();
   TVectorImageP vi = TImageP(getImage(false));
   if (!vi) return;
-  vi->findRegions();
+  // carry the user's gap over to images still having the default tolerance
+  // (same policy as onFrameSwitched)
+  if (m_lastUserGapValue > 0.0 &&
+      areAlmostEqual(vi->getAutocloseTolerance(), c_newAutocloseTolerance,
+                     0.001) &&
+      !areAlmostEqual(m_lastUserGapValue, c_newAutocloseTolerance, 0.001))
+    vi->setAutocloseTolerance(m_lastUserGapValue);
+  // full rebuild instead of findRegions(): incremental updates can leave
+  // stale intersection data that findRegions() considers still valid,
+  // making closed shapes unfillable until the scene is reloaded
+  vi->forceRegionsRecompute();
   if (m_targetType == TTool::VectorImage) {
     if (m_level) {
       TImageP img = getImage(true);

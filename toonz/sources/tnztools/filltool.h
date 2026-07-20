@@ -93,6 +93,10 @@ class FillTool final : public QObject, public TTool {
   bool m_firstClick;
   bool m_frameSwitched             = false;
   double m_changedGapOriginalValue = -1.0;
+  // last gap value explicitly set by the user in this session; propagated to
+  // images still having the default tolerance, so the slider does not reset
+  // on every frame switch
+  double m_lastUserGapValue = -1.0;
   TXshSimpleLevelP m_level;
   TFrameId m_firstFrameId, m_veryFirstFrameId;
   int m_onionStyleId;

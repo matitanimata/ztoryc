@@ -15,7 +15,9 @@
 #include "tundo.h"
 
 #include <QUuid>
+#include <QPointer>
 #include "tapp.h"
+#include "outputsettingspopup.h"
 #include "tenv.h"
 #include "toonz/toonzscene.h"
 #include "toonz/stage.h"
@@ -3499,10 +3501,15 @@ void StoryboardPanel::onModelResequenced() {
     // so xsheetColumn still matches. The column's stage-object name is kept equal
     // to the shot label by updateColumnName(); compare it against this shot's
     // label — a mismatch means another panel reordered the shots underneath us.
+    //
+    // Only when the column actually carries an explicit name: getName() falls
+    // back to "Col<N>" for unnamed columns, which never equals a shot label, so
+    // comparing it flagged drift on EVERY resequence — a full Board rebuild
+    // (loadZtoryc() re-reads the .ztoryc from disk) on every trim.
     TStageObject *obj =
         tree ? tree->getStageObject(TStageObjectId::ColumnId(childCols[si]), false)
              : nullptr;
-    if (obj) {
+    if (obj && obj->hasSpecifiedName()) {
       const QString colName = QString::fromStdString(obj->getName());
       if (!colName.isEmpty() && colName != m_shots[si].data.label()) {
         drifted = true;
@@ -4426,11 +4433,28 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
 // ── UndoBoardState ────────────────────────────────────────────────────────────
 
 void UndoBoardState::undo() const {
+  // Levels must be back in the cast before the columns that reference them.
+  if (!m_removedLevels.empty()) {
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    TLevelSet *ls     = scene ? scene->getLevelSet() : nullptr;
+    if (ls)
+      for (const TXshLevelP &lvl : m_removedLevels)
+        if (!ls->getLevel(lvl->getName())) ls->insertLevel(lvl.getPointer());
+  }
   m_panel->restoreFromSnapshot(m_before);
 }
 
 void UndoBoardState::redo() const {
   m_panel->restoreFromSnapshot(m_after);
+  // Drop them from the cast again once nothing exposes them; the smart
+  // pointers here keep the objects alive for a later undo.
+  if (!m_removedLevels.empty()) {
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    TLevelSet *ls     = scene ? scene->getLevelSet() : nullptr;
+    if (ls)
+      for (const TXshLevelP &lvl : m_removedLevels)
+        ls->removeLevel(lvl.getPointer(), false);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4457,6 +4481,30 @@ void StoryboardPanel::onDeleteShot() {
 
   disconnect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged, this, &StoryboardPanel::onXsheetChanged);
 
+  // Levels exposed by the shots being deleted: their sub-scene child level plus
+  // everything used inside it (the OVL drawings).  Collected BEFORE the columns
+  // go away; afterwards we drop from the cast only those left with no user, so
+  // deleting a shot frees its level name again instead of leaving an orphan
+  // that later forces export-to-board to disambiguate (or, before the guard,
+  // to hang).  Shots sharing a level (Copy) keep it alive via isLevelUsed().
+  std::set<TXshLevel *> shotLevels;
+  {
+    ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+    TXsheet *top    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
+    if (top) {
+      int frameCount = top->getFrameCount();
+      for (int col : xshCols)
+        for (int r = 0; r <= frameCount; r++) {
+          TXshCell cell = top->getCell(r, col);
+          if (cell.isEmpty() || !cell.m_level) continue;
+          shotLevels.insert(cell.m_level.getPointer());
+          if (TXshChildLevel *cl = cell.m_level->getChildLevel())
+            cl->getXsheet()->getUsedLevels(shotLevels);
+          break;  // one cell is enough: the column exposes a single sub-scene
+        }
+    }
+  }
+
   for (int col : xshCols) {
     // Cerca il board shot corrispondente a questa colonna xsheet.
     int si = -1;
@@ -4482,11 +4530,27 @@ void StoryboardPanel::onDeleteShot() {
   renumberAll();
   ZtoryModel::instance()->resequenceXsheet();
   rebuildGrid();
+
+  // Purge the now-unused levels from the cast (kept alive by the undo item).
+  std::vector<TXshLevelP> removedLevels;
+  {
+    ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+    TXsheet *top    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
+    TLevelSet *ls   = scn ? scn->getLevelSet() : nullptr;
+    if (top && ls)
+      for (TXshLevel *lvl : shotLevels) {
+        if (!lvl || top->isLevelUsed(lvl)) continue;
+        removedLevels.push_back(TXshLevelP(lvl));
+        ls->removeLevel(lvl, false);  // keep alive: the undo item owns it now
+      }
+  }
+
   saveZtoryc();
 
   auto after = captureSnapshot();
   TUndoManager::manager()->add(
-      new UndoBoardState(this, tr("Delete Shot"), std::move(before), std::move(after)));
+      new UndoBoardState(this, tr("Delete Shot"), std::move(before), std::move(after),
+                         std::move(removedLevels)));
 }
 
 void StoryboardPanel::onAddShot() {
@@ -6332,8 +6396,32 @@ void StoryboardPanel::onExportAnimatic() {
     auto *rsBtn = new QPushButton(tr("Render Settings…"), &dlg);
     rsBtn->setToolTip(tr("Set the output format, codec, fps and resolution "
                          "before exporting"));
-    connect(rsBtn, &QPushButton::clicked, &dlg, []() {
-      CommandManager::instance()->execute(MI_OutputSettings);
+    // A dedicated, settings-only Output Settings popup: this export dialog is
+    // what actually launches the render, so hide the popup's Render / Save and
+    // Render buttons to avoid two confusing ways to start one. Kept separate from
+    // the menu's shared singleton (MI_OutputSettings) so hiding the buttons never
+    // leaks into the normal Output Settings window.
+    //
+    // Parented to THIS dialog with the Window flag: it's still a separate window
+    // (a QFrame needs Qt::Window to float when it has a parent), but owned by the
+    // export dialog — so CLOSING it doesn't tear down the export dialog (a
+    // parentless popup closing inside the dialog's local event loop was ending
+    // that loop), and it dies together with the dialog (no leak, no static).
+    // Capture only &dlg (a function-scope local that stays alive for the whole
+    // loop.exec() below). The popup is looked up as a child of dlg rather than
+    // held in a captured local — a captured QPointer would live only inside this
+    // inner block and dangle by the time the click fires during loop.exec().
+    connect(rsBtn, &QPushButton::clicked, &dlg, [&dlg]() {
+      OutputSettingsPopup *rsPopup = dlg.findChild<OutputSettingsPopup *>();
+      if (!rsPopup) {
+        rsPopup = new OutputSettingsPopup(&dlg);
+        rsPopup->setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint);
+        rsPopup->setWindowTitle(tr("Render Settings"));
+        rsPopup->setRenderButtonsVisible(false);
+      }
+      rsPopup->show();
+      rsPopup->raise();
+      rsPopup->activateWindow();
     });
     fmtRow->addWidget(rsBtn);
     mainLay->addLayout(fmtRow);

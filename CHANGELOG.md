@@ -1,3 +1,704 @@
+## [2026-07-19] — STEP C: il personaggio cucito diventa UN solo scheletro (+ global key, pin domain)
+
+> **Riepilogo**: 10 commit su `feature/superplastic`. C.1 e C.2 chiuse, solve unificato,
+> switch d'appoggio, dominio param-time dei pin, Set Key con posa plastic. Restano aperti il
+> controllo del multi-pin sotto stress (due esperimenti falliti, diagnosi ristretta) e 8
+> segnalazioni minori raccolte a fine giornata (3 con causa gia' individuata) in ANIMATIC_TASKS.md.
+
+### STEP C.1: autorita' unica del planting + IK di personaggio + global key con posa plastic
+
+Sessione su `feature/superplastic` (commit `3a035bd4a`).
+
+### ✅ STEP C.1 — un solo proprietario del planting
+L'autorita' sulla traslazione rigida che pianta un pin si sceglieva **per-pin dal ruolo della
+colonna** (`isChildColumn`): figlia -> target scena PINWX/PINWY piantato dallo stage; radice ->
+PINTX/PINTY piantato dentro `storeDeformedSkeleton`. Su un rig cucito erano attive **entrambe** e
+si contro-traslavano a ogni switch d'appoggio. Ora e' una proprieta' del **personaggio**: nel rig
+cucito tutti i pin sono stage-owned, `storeDeformedSkeleton` sopprime la propria traslazione
+rigida (e il ciclo di bilanciamento damped), e il DFS stage copre anche la colonna radice.
+Rig a colonna singola: percorso invariato.
+
+**Verificato da Franco:** la regressione dello switch non c'e' piu' e i pin reggono sugli
+intercalati.
+
+### ✅ Fix — scelta deterministica del pin primario (commit `edeac9f05`)
+Sintomo: pinnando il **secondo** piede cedeva il **primo**. Causa: il primario si sceglieva per sola
+anzianita' con `if (found && since >= bestSince) continue;`, ma due pin piantati allo **stesso
+frame** (cioe' un doppio appoggio) hanno lo stesso `activationFrame` e vinceva quello raggiunto per
+primo dal DFS — scelta arbitraria su uno stack LIFO. Se usciva il pin nuovo, il vecchio restava
+senza planter. Ora l'ordine e' la chiave totale `(since, colonna, vertice)`. Il solver a colonna
+singola gia' evitava il problema con `std::stable_sort`.
+**Verificato:** con due pin ora regge il primo e cede il secondo.
+
+### ✅ C.2 — il personaggio cucito e' UN solo scheletro (commit `7ecaf6f11`, `960b9a8d8`)
+Le colonne vengono posate, mappate in spazio scena e cucite in **un unico joint tree** (la radice
+di ogni figlia legata al vertice-hook del padre: un osso normale, non un caso speciale), poi ci
+gira sopra il **solver del livello singolo**. Quel solver e' stato prima **estratto alla lettera**
+da `storeDeformedSkeleton` in `PlasticPinSolver::plant`, col percorso a colonna singola migrato e
+verificato invariato PRIMA di costruirci sopra il multi-colonna. Un solo solver, quindi nessuna
+seconda implementazione che possa contraddire la prima.
+
+Conseguenza: il piantaggio vive **negli scheletri**, mai nella placement.
+`computePlasticPinCorrection` e' sparita, e con lei l'ultimo residuo del disegno a due meccanismi.
+Il bilanciamento damped arriva gratis, quindi un pin fuori portata non si stacca piu'.
+
+**Ciclo di vita della cache** (imparato a caro prezzo, quattro giri di correzioni):
+- il solve azzera tutti gli scheletri risolti prima di comporre, o un re-solve sullo stesso frame
+  (= ogni movimento del mouse in un drag) costruirebbe sul proprio output precedente e accumula;
+- un cambio parametro scarta lo scheletro risolto, che altrimenti sopravvive ai suoi input (un
+  braccio trascinato scriveva gli ANGLE e si vedeva restituire la risposta vecchia: si bloccava);
+- invalidare una colonna-arto deve far scadere la placement della colonna **top**, che e' cio' che
+  innesca il solve — e va fatto azzerando **direttamente** il timestamp: passare da `invalidate()`
+  ricorre sui figli, che risalgono, ciclo infinito (stack esaurito **aprendo una scena**).
+
+**Verificato:** braccia mobili, un pin solido, due pin reggono.
+**Aperto:** con due pin la posa "schizza" e il controllo e' grossolano — l'albero unificato da' al
+CCD molti piu' gradi di liberta' della catena di una singola colonna. Mitigazioni: **limiti
+angolari sui giunti** (prima leva, da mettere comunque nel rig) e smorzamento del CCD per
+profondita'.
+
+### ✅ Switch d'appoggio: un solo frame, cross-colonna, undo corretto (commit `cbb2ec4ff`)
+Lo switch fa tutto al frame CORRENTE: pianta il vertice selezionato e rilascia ogni altro pin del
+personaggio, comprese le colonne diverse da quella corrente — scritte direttamente nella loro
+deformazione con coordinate `(riga, colonna)` esplicite per l'undo, **mai** attivando quelle
+colonne (un primo tentativo via `TemporaryActivation` aveva peggiorato: nessuna chiave, piede
+precedente spinnato, selezione lasciata su una colonna estranea). Scelta di Franco e scelta giusta:
+scambiare l'appoggio su una sola chiave e' quello che vuole l'animazione, ed e' cio' che rende
+l'operazione semplice — niente frame handle spostato dentro il blocco di undo, tutti gli undo sulla
+stessa riga. Identico per rig a livello singolo e cuciti.
+
+Due bug di dominio delle coordinate risolti: il rilascio cross-colonna scriveva a
+`paramsTime(frame)` mentre `togglePinAtCurrentFrame` scrive al frame **grezzo**; e l'undo riceveva
+il FRAME dove `AnimateValuesUndo` vuole la RIGA (riga = frame+1), quindi agiva un frame prima.
+
+⚠️ **Disallineamento latente da sistemare:** i pin vengono **scritti** al frame grezzo ma **letti**
+via `paramsTime` dal solve. Invisibile finche' i due domini coincidono; su una colonna riggata con
+repeat/cycling i pin si comporterebbero male.
+
+### 🛠️ Difesa di processo: istanza gia' aperta
+Tre volte in questa sessione si e' testato un binario **vecchio** perche' l'app era rimasta aperta
+da prima del deploy — una delle quali ha quasi fatto scartare un fix corretto, e un'altra ha
+prodotto tre ipotesi diagnostiche sbagliate di fila su un bug che **non esisteva piu'**.
+`build_and_deploy.sh` ora stampa un avviso ben visibile quando trova un'istanza precedente al
+deploy. (Lo stesso script preferisce ora `Ztoryc-SP.app` quando esiste, e stampa sempre il bundle
+di destinazione.)
+
+### ✅ Pin nel dominio param-time (commit `5cf729696`) — [in autonomia, DA TESTARE]
+I pin erano SCRITTI al frame xsheet grezzo ma LETTI via `paramsTime` (valutazione, solve
+unificato e query del tool). `paramsTime` e' identita' tranne oltre l'ultima chiave stage con
+**Cycle** attivo — li' una chiave pin finiva a un tempo che nessuna lettura campiona. Ora tutte le
+scritture pin vivono nel dominio param, convertite per colonna: `togglePinAtCurrentFrame` a
+`::sdFrame()` (il frame grezzo sopravvive solo per `getPlacement`), lo switch rilascia a
+`obj->paramsTime(rawFrame)`, `crossColumns_animate` da' anche alla colonna corrente un paramFrame
+convertito, `pinnedVerticesAtFrame` converte in ingresso (idempotente), e ogni `AnimateValuesUndo`
+dei percorsi pin riceve riga esplicita = frame scritto + 1. Bit-identico senza Cycle; le scritture
+ANGLE dei drag restano alla convenzione upstream (oltre il cycle erano gia' morte).
+
+### ✅ Global key: Set Key include la posa + oro = chiave piena (commit `d08319068`) — [in autonomia, DA TESTARE]
+- **Diamante bianco su Set Key**: solo il global key dello stage era stato istruito; lo Z
+  dell'xsheet e il KeyframeNavigator passavano da `UndoSetKeyFrame`/`UndoRemoveKeyFrame` intonsi.
+  La gestione posa ora sta in QUELLE classi undo — key e unkey, dietro la preferenza, con snapshot
+  dello stato plastic alla costruzione. Il navigator instrada entrambe le branch da `undo->redo()`
+  invece di operare inline. Deliberatamente NON dentro `setKeyframeWithoutUndo`: serve decine di
+  percorsi copy/move/paste i cui undo non sanno nulla di plastic.
+- **Oro letto come parziale**: l'oro scattava su QUALSIASI chiave stage che coincidesse con chiavi
+  plastic — comprese le parziali (un drag Animate chiavizza solo X/Y). Ora richiede
+  `isFullKeyframe`: trasformazione intera + posa intera, o niente oro.
+- Nuovo `removePlasticPoseKeyframe` (inverso esatto, pin e limiti intoccati): Z-Z su colonna
+  riggata fa round-trip pulito senza chiavi plastic orfane.
+
+### ✅ Damped CCD sull'albero unificato (commit `d80cba2da`) — [in autonomia, DA TESTARE A/B]
+Il multi-pin era meno solido del single-level per una ragione strutturale: stesso solver, albero
+diverso — catene 2-3x piu' lunghe (attraversano le colonne) e giunti di cucitura sintetici senza
+limiti autorali. Il CCD classico ruota il pivot piu' vicino al pin completamente verso il target a
+ogni sweep: su quella catena, target vicini trovano configurazioni selvaggiamente diverse →
+controllo nervoso, blocco cedevole. Rimedio da manuale: `plant()` accetta `maxStepDegrees` (opt-in)
+che clampa la rotazione per giunto per sweep — la portata resta piena (24 sweep x 15° = 360° per
+giunto) ma la piega si distribuisce lungo la catena e la soluzione varia con continuita'. Il solve
+unificato usa 15°/sweep; il percorso a colonna singola resta a 0 = bit-identico. La costante e' un
+solo numero da tarare se 15 risulta troppo rigido o troppo lasco.
+
+### ❌ Esperimento fallito e revertato: plant primary-only durante il drag (`e090f8859` → revert `8d8d58367`)
+Ipotesi: la vibrazione/accartocciamento con 2 pin nasce dal tool che cattura nei parametri le
+pieghe CCD della valutazione (fit assoluto alla geometria mostrata). Esperimento: durante il drag
+la valutazione pianta solo il primario (traslazione, invisibile al write-back). **Attivazione
+verificata dal log** (secondo giro — il primo aggancio era in `ensureCrossLevelBaselines_animate`,
+che si è scoperto essere CODICE MORTO, zero chiamanti: l'esperimento non girava). Esito con
+esperimento attivo: **vibrazione identica** → diagnosi FALSIFICATA. Il loop non passa dal CCD di
+valutazione: sta nel write-back stesso (fit-assoluto ↔ traslazione del plant che rimbalzano,
+sospetto ping-pong della traslazione dentro/fuori ROOTX/Y). Il fix vero è ridisegnare il
+write-back del drag in forma DELTA param-space (come il single-level, che scrive un solo vertice)
+— sessione dedicata. Resta attivo il damped CCD (15°/sweep, `d80cba2da`).
+
+### 🐛 Scoperto: undo per-colonna del drag cross-level MAI attivo
+`ensureCrossLevelBaselines_animate` (baseline undo + flag `m_ikCrossDragged`) non ha chiamanti —
+il caller si è perso in un merge/rewrite. Conseguenza: `finishCrossLevelUndo_animate` non scatta
+mai → i drag cross-level non producono gli undo per-colonna previsti. Da ricablare nella sessione
+sul write-back (stessa area).
+
+### 🔴 Residui aperti
+**Il multi-pin regge un solo pin:** il secondo cede, come atteso. La correzione stage e' una
+**traslazione pura** (soddisfa un punto solo) e i pin stage-owned sono esclusi dalla lista locale,
+quindi `if (pins.empty()) return;` esce prima di ogni CCD e i secondari non hanno alcun planter.
+C.2 deve portare alla valutazione per-colonna il mapping scena->locale che il passaggio stage gia'
+compone (`parentP * baseLocal * acc`).
+
+⚠️ **Ostacolo noto per C.2:** `storeDeformedSkeleton` non conosce l'affine world della propria
+colonna, e calcolarlo passa dalla placement della colonna, che richiama `storeDeformedSkeleton` →
+ricorsione. Se ne esce in **due fasi**: (1) scheletri senza CCD secondario → correzione primaria →
+trasformazione di personaggio nota; (2) scheletri con CCD secondario che usa quella trasformazione.
+Delicato: tocca codice condiviso viewer/render, attenzione a ordine e staleness.
+
+### Fixed
+- **IK di personaggio** — `pinsEnabled` era per-colonna: IK sulla gamba col corpo in FK lasciava la
+  root del corpo bloccata e i pin apparentemente inerti. Nuovi helper `characterColumns()` /
+  `characterDeformations()` / `enablePinsOnCharacter()`. ✅ verificato
+- **Vertice pinnato non trascinabile** — il solver cross-level declinava il drag (il pin e' la sua
+  base di re-root) e il fallback FK lo spostava, sganciando il pin senza causa visibile. ✅ verificato
+- **`build_and_deploy.sh`** — deployava su `Ztoryc.app` mentre il bundle lanciato era
+  `Ztoryc-SP.app`: ora preferisce il bundle rinominato e **stampa la destinazione**.
+
+### Added — Global Key include la posa plastic
+Il global key dello stage chiavizza anche la posa plastic sulle colonne riggate, dietro la
+preferenza `GlobalKeyIncludesPlastic` (default ON) con toggle nel menu **Xsheet**. Lista di
+parametri **curata**: mai i pin ne' gli override dei limiti di giunto, perche' entrambe le famiglie
+usano la **presenza di chiavi come interruttore semantico** (PINW = autorita' stage,
+MIN/MAXANGLE = override attivo). E' quasi certamente il motivo per cui upstream tiene commentato il
+blocco plastic in `setKeyframeWithoutUndo`. Le chiavi con posa plastic hanno il **diamante oro**.
+
+### Da rifinire (sessione separata, richiesta di Franco)
+- "Set Key" col toggle attivo produce un diamante **bianco** invece che oro
+- selezionando un diamante oro il viewer lo legge come chiave **parziale**, a volte globale
+- lo **switch d'appoggio** non scrive ancora la chiave di rilascio sulla colonna padre: un primo
+  tentativo via `TemporaryActivation` peggiorava le cose (nessuna chiave, piede precedente
+  spinnato, selezione lasciata su una colonna estranea) ed e' stato revertato, con un TODO che
+  spiega il vincolo: non spostare colonna/selezione dentro il blocco di undo
+
+### Note di processo
+Mezza sessione persa perche' il deploy scriveva su un bundle diverso da quello lanciato. Il primo
+giro di test era valido, il secondo e il terzo no — e C.1 e' stata revertata e poi ripristinata
+sulla base di un verdetto che non la riguardava. Da qui la riga `Bundle di destinazione` nello
+script.
+
+## [2026-07-18] — IK cross-colonna: il pin regge (STEP A+B) + rifiniture controller
+
+Sessione lunga tutta su `feature/superplastic`. Obiettivo: far reggere il **foot-planting su rig
+multi-colonna** (corpo+testa+una gamba su una colonna, braccia e gamba dietro su colonne figlie
+parentate via handle). Due milestone raggiunte e verificate da Franco.
+
+### Diagnosi — perché l'attachment-pin mirror falliva
+Il mirror specchiava il pin del tallone sull'anca del genitore → **sovra-vincolo** della catena 3+
+(anca inchiodata + tallone inchiodato, solo il tratto in mezzo libero). Muovendo il ginocchio il pin
+cedeva, muovendo il busto pivotava sull'anca invece che sul tallone. È il limite previsto nel design.
+Causa di fondo: il tallone è piantato nello spazio **locale** della gamba, agganciato rigidamente
+all'anca → la figlia non può traslare contro il genitore → il tallone non resta in world se il corpo
+si muove, a meno che la gamba **si pieghi** (IK vera).
+
+### ✅ STEP A — solver IK sul grafo unificato (commit `ed2abbfdd`)
+`crossLevelIK_animate`: re-root del grafo unificato **al pin**, rotazione single-joint del
+sotto-albero trascinato, write-back ANGLE per colonna + **ROOTX/ROOTY sulla sola colonna radice**
+(traslazione free-root). Nuovi param SkVD `ROOTX/ROOTY` applicati in `updateBranchPositions`, gated
+da un flag così single-level e FK cross-livello restano invariati. `togglePin` su colonna figlia
+setta **solo** il flag PIN (niente PINTX locale, niente mirror). Gestito il nodo "incollato"
+(anca ≡ root gamba, osso lunghezza-0) e resa trascinabile la root del corpo quando il pin è su una
+figlia. Verificato: punta, ginocchio, anca e busto reggono tutti il tallone.
+
+### ✅ STEP B — hold sugli intercalati (commit `5d2671842`)
+Il drift tra le chiavi è **inerente** all'interpolazione degli angoli: nessun keyframing lo risolve.
+Fix per-frame a livello **stage-placement** (viewer e render condividono `getPlacement` → coerenti
+per costruzione): nuovi param `PINWX/PINWY` = target del pin in spazio scena, e
+`TStageObject::computePlasticPinCorrection` che pre-trasla il personaggio perché il vertice pinnato
+torni sul target ad ogni frame. Catena composta a mano → nessuna ricorsione su `getPlacement`.
+A differenza del `computeIkRootOffset` nativo **non c'è foot-chaining**: ogni attivazione ri-cattura
+il target assoluto, quindi le correzioni non si accumulano.
+
+### Rifiniture controller (commit WIP `221693bdb`)
+- **Overlay che segue durante il drag**: `updateMatrix()` anche in move/scale (prima lo scheletro
+  restava indietro e scattava al rilascio).
+- **Fix feedback di coordinate**: i delta si calcolano nella matrice congelata al press
+  (`m_ctrlPressMatrix`) — la matrice viva si muove coi valori scritti e faceva rimbalzare (padre) o
+  vibrare (figlio) la maniglia.
+- **Sway dei livelli figli**: la maniglia Move su una colonna figlia agganciata scrive ora l'**X/Y di
+  colonna** (stesso canale dell'Animate tool) invece del TRANS del controller → mesh + scheletro +
+  nipoti si spostano insieme restando agganciati. Hint contestuali sulle maniglie.
+- **Provvisorio, non convince ancora**: col pin attivo il Move sul padre è lockato e Cmd+drag sposta
+  tutto coi target al seguito. Manca l'undo dello spostamento dei target.
+
+### 🔴 Regressione nota — da risolvere in STEP C
+Con un pin sulla colonna **radice** (plant dentro lo scheletro) e uno su una **figlia** (hold a
+livello placement), lo **switch d'appoggio della camminata** fa spostare il piede precedente: l'unpin
+trasferisce il plant al TRANS del controller, questo muove l'aggancio della figlia, e la correzione
+di placement contro-trasla tutto il personaggio. **I due meccanismi di planting si combattono.**
+Workaround per lavorare: niente pin sulle colonne figlie → comportamento identico a v0.9.
+
+### STEP C (prossima sessione, pezzo architetturale)
+Unificare il planting in **un solo passaggio per-frame** che veda entrambi i tipi di pin. Ne
+discendono anche: multi-pin cross-colonna (oggi regge un solo pin — la correzione è una traslazione
+pura e può soddisfare un punto solo), la regressione dello switch, e il buco dell'undo.
+
+### Note
+- Squash & stretch con IK: sui pin **cross-colonna** il piede resta piantato (la correzione legge la
+  posizione col controller già applicato). Sui pin **single-level** invece lo squash sposta il pin —
+  rimedio attuale: mettere il pivot del controller sul vertice pinnato (snap ai vertici).
+- Il worktree `feature/superplastic` è ancora a **0.8.1** (il bump a 0.9.0 è solo su master):
+  cosmetico, il merge lo riallinea.
+- ⚠️ `build_and_deploy.sh` ha `DEFAULT_WS` hardcoded al workspace master: per il worktree serve
+  **sempre** `ZTORYC_WORKSPACE=.../tahoma2d-superplastic`, altrimenti compila e riapre il master.
+
+## [2026-07-13] — v0.9.0 rilasciata (rigging IK) + fix drag colonna figlia + rifiniture UI
+
+Merge di `feature/superplastic` su master e **release pubblica v0.9.0** (macOS + Windows), note
+bilingui. Il branch resta vivo per continuare il rigging.
+
+### Rilasciato in v0.9.0
+- **Rigging/IK SUPERPLASTIC**: IK single-level (pin/foot-plant per-frame, limiti angolari, bake in
+  FK), scheletri cross-level (vista+selezione unificata, posing cross-colonna via attachment-pin,
+  FK unificata sul grafo combinato, pick redirect su root-figlia coincidente), **toggle gizmo
+  controller**.
+- Incluso anche: Kitsu (skip-unchanged/pull asset-status/team sync), Production Tracker asset types,
+  Edit Cels/Keys, vector fill fix, **crash handler Windows** (`set_terminate` → `Crash-*.log`+`.dmp`
+  simbolicati coi PDB già inclusi nel build RelWithDebInfo).
+
+### Fix (post-v0.9.0, su master → nella release)
+- **Drag colonna figlia**: lo scheletro non si disallinea più dalla mesh durante il drag (refresh
+  xsheet in tempo reale quando la colonna corrente ha un genitore-colonna). Prima si correggeva solo
+  al rilascio.
+
+### Rifiniture UI (branch, non ancora rilasciate)
+- Bottone **Pin** con **icona** (icon-only, da `design/pin.svg` ripulito); "Inverse Kinematics" → **"IK"**.
+- RIMANDATO (ristrutturazione layout): IK a sinistra del Pin, Maintain dopo Scale V, Controller Gizmo
+  prima di Scale H.
+
+### Tester Windows (crash)
+- Il tester era su 0.8 (senza crash handler). v0.9.0 lo include + PDB → al prossimo crash otterrà un
+  `Crash-*.log` simbolicato. Nessuna build speciale necessaria.
+
+### Note / prossimi passi
+- **Compatibilità export OT/Tahoma** dei nuovi param Plastic: verifica RIMANDATA a rigging finito
+  (formato ancora in evoluzione). Atteso: file si apre (tag-based skip), posa diversa se IK/controller
+  live → bake IK prima di esportare; controller squash&stretch non bakabile.
+- **Prossimo**: path B — IK cross-colonna per-frame nel Plastic (ispirato a `computeIkRootOffset` dello
+  Skeleton nativo). Prima documentarsi su Harmony/Moho.
+
+## [2026-07-12b] — SUPERPLASTIC: cross-level IK (saga) → attachment-pin checkpoint + modello unificato
+
+Sessione lunga interamente su `feature/superplastic`, guidata dai test dal vivo di Franco su un rig
+multi-colonna (corpo + mano/treccia parentate via handle `H<n>`). Obiettivo: posare il corpo con un
+**pin end-effector** (es. la mano) che resta fermo nello spazio. Molte iterazioni, ognuna ha chiarito
+il modello.
+
+### Percorso (per memoria; dettaglio in project_superplastic_worktree.md)
+- **v1/v2 re-root + PINTX live** → esplodeva: feedback dell'ancoraggio + matrice colonna stale
+  (`getPlacement`/`computeLocalPlacement` cachano per-frame; serve `invalidate()`). Finding:
+  la colonna figlia eredita dal bend del genitore **solo la traslazione** dell'handle, non la
+  rotazione (tstageobject.cpp:1532 + xshhandlemanager.cpp).
+- **v3 CCD reach** (piega il braccio per tenere la mano) → “spalla quasi ferma”, ma gomito/polso/pin
+  su altra parte incompleti.
+- **v4 re-root sul grafo unificato** → “root inchiodata”: il re-root appende il corpo al pin, il
+  vertice trascinato è vincolato a un arco → poco controllabile. Diagnosi con log su file + marker
+  magenta a schermo: nessun mismatch di spazio (solver=eval), era la reach del CCD.
+- **Chiave (storeDeformedSkeleton:946)**: il single-level tiene il pin primario **traslando
+  rigidamente l’intero scheletro** sul target PINTX/PINTY a eval-time → **root libera**, non piega
+  niente. Continuavo a piegare (CCD) → sbagliato.
+
+### Fatto e committato (checkpoint `af2fc6049`)
+- **Attachment-pin mirroring**: un pin su una colonna figlia viene specchiato sul **vertice-aggancio
+  del genitore**, passando dalla stessa `togglePinAtCurrentFrame` (quindi bake della posa + transfer
+  della traslazione al controller all’unpin = **niente scatto**, e **ricorsione su per la
+  gerarchia**). Il posing del corpo diventa **puro single-level** col pin-polso → root libera, pin
+  esatto, controllabile. **Regge benissimo a 2 colonne** (foglia+radice). Undo unico (block).
+- Limite: catene **3+ colonne** → le colonne intermedie si sovra-vincolano (entrambe le estremità
+  pinnate) → “root avambraccio bloccata”.
+
+### Modello DEFINITIVO per il prossimo giro (definito da Franco)
+Nel cross-level **le root di colonna si annullano e diventano vertici normali** che linkano un
+livello all’altro (vale per **FK e IK**). Uno **scheletro unico**, una sola root effettiva, l’IK
+single-level gira su quello (pin primario = traslazione rigida dell’intero rig → root libera,
+single-joint, multi-pin), write-back ANGLE per colonna (l’angolo del primo giunto della figlia
+assorbe la rotazione ereditata → nessuna modifica all’eval). Sostituirà attachment-pin e il vecchio
+path FK per personaggi multi-colonna. È il rework grosso, rimandato a sessione fresca per budget.
+
+## [2026-07-12] — Kitsu “chiuso” (master) + Plastic multi-livello: vista/selezione unificata (feature/superplastic)
+
+Sessione doppia guidata dai test di Franco. Kitsu completato su `master`; nuovo filone
+SUPERPLASTIC multi-livello su `feature/superplastic`.
+
+### Added / Fixed — Kitsu (master, `kitsuclient.cpp/.h`, `ztoryproductionpanel.cpp`, `kitsuconnectdialog.cpp`)
+- **Push status skip-unchanged** (shot + asset): il push confronta lo status target con quello
+  corrente in Kitsu (catturato dal GET tasks) e **salta gli invariati** — niente commenti/
+  notifiche ridondanti sulla activity feed. Messaggio: “N changed, M unchanged”.
+- **Pull asset task-status** — `pullAssetStatuses()` (gemello di `pullStatuses`): asset-types→
+  assets→task-types(Asset)→tasks→`assetStatusesPulled`; agganciato al bottone “Pull assets
+  from Kitsu” (prima entità, poi status, add-only con match kitsuAssetId poi type+name).
+- **Team/assignee sync** — struct `KitsuPerson`; `pullTeam()` popola il roster `m_team` dal
+  **team del progetto** (`GET projects/<id>?relations=true` — il campo `team` è m2m, senza
+  `relations=true` è assente); pull assignee (union add-only su shot+asset); **push assignee
+  add-only ristretto ai membri del team** (`PUT actions/tasks/<id>/assign`, chi è fuori team
+  viene saltato e riportato). Helper condiviso `loadRosterThen(projectId,next)` (persone +
+  team-ids). Roster tirato giù **automaticamente alla connessione** (onLink, loginFinished,
+  apertura panel).
+
+### Added — SUPERPLASTIC multi-livello (feature/superplastic, `plastictool.h/_animate.cpp`)
+- Milestone ridefinito (scartato l'adapter del vecchio Skeleton tool): **Plastic tool che gestisce
+  scheletri su più livelli connessi in gerarchia** (personaggio articolato su più drawing level).
+  Finding: “vertice→vertice” tra mesh = parenting di colonna su handle `H<n>` (risolve al vertice
+  deformato del genitore); la FK cross-livello già funziona in eval, nessun nuovo modello dati.
+- **Vista unificata** (`connectedSkeletons_animate`): BFS sul parenting, disegna gli scheletri
+  delle colonne connesse come contesto attenuato, piazzati via `A_C = getMatrix()⁻¹·getColumnMatrix(C)·ctrl_C`.
+- **Selezione cross-livello**: click su un vertice di un'altra colonna → la rende attiva + seleziona.
+
+### Fixed — SUPERPLASTIC bug latente (feature/superplastic, `toonzlib/xshhandlemanager.cpp`)
+- La gerarchia multi-livello si **sganciava** muovendo un livello con controller squash attivo:
+  `getHandlePos` risolveva l'handle-vertice del genitore in posizione **pre-controller** mentre la
+  mesh renderizzata è post-controller. Fix: applica `getSquashControllerAffine` al vertice prima
+  dello scale 1/inch. No-op sui rig senza controller (identità). Bug SP, non stock.
+
+### Notes
+- Prossimo SUPERPLASTIC: **IK/pin cross-livello** (grafo unificato in spazio comune + write-back
+  dispatchato per colonna) — rimandato a sessione fresca. Rifiniture: hover cross-colonna.
+
+## [2026-07-11c] — Thumbnail room, Production Tracker, Edit Cels/Keys, Kitsu asset-task push
+
+Sessione lunga guidata dai test in parallelo di Franco. Tutto su `master`, non ancora sotto SUPERPLASTIC.
+
+### Fixed — Thumbnail room (`ztorythumbnailcanvas.cpp/.h`)
+- **Panel "affettati/compressi" al reopen**: il reopen ricostruiva `m_boxAspect` dall'altezza intera del PNG salvato → drift sub-pixel su camere non-16:9 (>1e-4) → `onSceneChanged` lanciava un reflow spurio che ritagliava i disegni cross-box e lasciava ghost-seam. Fix: `onSceneChanged` confronta l'**altezza raster in pixel interi** invece dell'aspect float; stesso layout → nessun reflow. Bug invisibile su 16:9 (per questo non si replicava su Mac).
+- **Tasto Canc in Transform**: l'eventFilter intercettava solo KeyPress, ma Canc è una scorciatoia globale (cancella celle) → mai consegnato. Ora gestisce anche `ShortcutOverride` (predicato `wantsTransformKey`), reclamando Del/Backspace/Invio/Esc/Cmd+C/V prima che la QAction globale li mangi.
+- **Undo del float**: lo stato del float (immagine + trasform + srcRect + wasMove) entra ora nello `Snapshot`; `deleteFloat` registra uno snapshot col float invece di scartarlo → Cmd+Z dopo Canc/incolla **fa riapparire** il disegno flottante. `cancel`/`delete` non lasciano più snapshot fantasma.
+
+### Fixed — Crash handler Windows (`crashhandler.cpp`) — candidato PR upstream
+- Le eccezioni C++ non catturate (TException & co.) e gli abort CRT morivano **senza** log (il VEH cattura solo structured exceptions). Aggiunti `std::set_terminate` (cross-platform, cattura anche il **messaggio** dell'eccezione via `TException::getMessage()`/`what()`) + `_set_invalid_parameter_handler`/`_set_purecall_handler` su Windows. Ora il tester ottiene `Crash-*.log` + `.dmp` anche in quei casi.
+
+### Added — Production Tracker
+- **Tipi asset custom + pipeline task per-tipo** (Kitsu-aligned): nuova struct `AssetType{name,taskTypes}`, persistita in `production.ztrack` (`<assetTypes>`), seedata dai canonici, tab **"Asset Types"** (editor a due pannelli come i Workflow). Tabella Assets: colonne = unione dei task dei tipi usati, celle attive solo per la pipeline del tipo dell'asset. Picker tipo usa i custom. (`ztorymodel.h/.cpp`, `ztoryproductionpanel.h/.cpp`)
+- **Ordine task workflow → schermata shot**: `spreadsheetTaskColumns()` ordina per la pipeline del workflow, non più per l'ordine canonico → riordinare i task nel workflow si riflette subito negli shot.
+
+### Added / Fixed — Edit Cels/Keys + export
+- Menu celle "Edit Cell Numbers" → **"Edit Cels/Keys"**; aggiunto lo stesso submenu (Reverse/Swing/Rollup/Rolldown/TimeStretch) nel menu contestuale delle **chiavi** — operano sulle chiavi via le versioni key-only già cablate in `TKeyframeSelection::enableCommands`. (`xshcellviewer.cpp`)
+- **Render Settings dall'export animatic**: popup dedicato **senza** bottoni Render/Save-and-Render (`OutputSettingsPopup::setRenderButtonsVisible`), parented al dialog export con `Qt::Window` così chiuderlo non termina l'export. Fix crash `EXC_BAD_ACCESS`: il lambda del bottone catturava un `QPointer` locale block-scoped che dangling-ava durante `loop.exec()` → ora il popup si trova via `findChild` su `dlg`. (`outputsettingspopup.h/.cpp`, `storyboardpanel.cpp`)
+
+### Added — Kitsu: push asset-task + status
+- `pushAssetTasks` (gemello di `pushTasks` per `for_entity=Asset`) + `buildAssetTasksFromModel` (asset × pipeline del suo tipo, con status), concatenato dopo `assetsPushed` come per gli shot. (`kitsuclient.h/.cpp`, `ztoryproductionpanel.cpp`)
+
+### Notes / TODO
+- **Kitsu ancora da fare** (rimandato dopo validazione del push contro istanza locale): **team/assignee sync bidirezionale** (pull persone → roster, push assignee sui task; il client non ha nulla per persone/assignee) e **pull asset-status** (gemello di `pullStatuses`).
+- Rinominare un tipo asset non migra gli asset esistenti (parità con la rinomina workflow).
+- Crash "cambio workflow storyboard→cutout" segnalato una volta, non riproducibile poi (nessun listener su `workflowChanged`).
+
+## [2026-07-11b] — SUPERPLASTIC: pin robusti + limiti angolari visivi + undo bake (feature/superplastic)
+
+Seconda parte della sessione (dopo il controller). Tutto su `feature/superplastic` (commit finale `965ebd3ed`, pushato). Guidato dai test/stress-test di Franco.
+
+### Fixed / Added — pin & doppio appoggio
+- **Limiti angolari applicati in modalità pin** (prima solo FK): clamp nel write-back unificato + nel CCD dell'eval (le pieghe "a cascata" ora rispettano i min/max; helper relAngleDeg).
+- **Unpin dell'ultimo pin senza shift**: la traslazione rigida del planting va nei canali TransX/TransY del controller (chiave di confinamento a f-1, mappata con la parte lineare → esatta anche sotto squash).
+- **IK off = bake completo dell'animazione pinnata** (`bakePinsToFK_animate`): itera TUTTI i keyframe con pin attivo, cattura la posa piantata via storeDeformedSkeleton a frame esplicito, elimina PIN/PINTX/PINTY, bakes forma negli ANGLE + traslazione nel controller → ogni chiave resta identica, rig FK puro e libero (risolve "spegnendo IK a metà si perde l'animazione successiva"). Confinamento del transfer alla prossima attivazione pin per le camminate a piedi alternati.
+- **Constraint del doppio appoggio**: i pin secondari non si staccano più a fine corsa — ciclo di correzione (trasla verso il residuo medio + ri-pianta) che assesta il corpo dove tutti i piedi restano a terra; soglia RELATIVA alla scala del rig + damping + più sweep CCD → niente piccoli spostamenti con 3+ pin asimmetrici (2 e 4 già ok). No-op nel caso raggiungibile (primario esatto preservato).
+- **Undo del bake IK-off** (`BakeToFKUndo`): snapshot SkDKey per-frame a tutti i frame coinvolti prima/dopo, ripristino wholesale; riporta su anche checkbox IK + visibilità pin. Il bake non è più distruttivo.
+
+### Added — limiti angolari keyframabili + gizmo visivo
+- Param SkVD **MINANGLE/MAXANGLE** = override keyframabile del limite statico del vertice (i limiti del giunto possono cambiare nel tempo); senza chiavi = statico di sempre (retrocompat). Nel function editor come canali MinAngle/MaxAngle.
+- **Gizmo nel viewer**: due maniglie draggabili (min/max) su un arco attorno al genitore + cuneo del range consentito; drag = angolo mouse vs rest; hover arancio, hit-test prima della selezione. Commit = chiave se già keyato, altrimenti statico.
+- **Toggle "Angle Bounds Gizmo"** (default OFF) per tenere pulito lo scheletro; campo toolbar **live** durante il drag; **undo** del drag (AngleLimitUndo: statico + snapshot SkVD).
+
+### Notes
+- Restano per SUPERPLASTIC: **adapter Skeleton Tool** (milestone grosso), pole vector opzionale, campi toolbar per trans/rot/shear, dedup ctrlContrastColor. Merge su master rimandato (regression pass sui file core + già fatto l'undo del bake).
+- **Kitsu**: il flag `useKitsu` è creation-only (attributo su `<project>` in `production.ztrack`). Per attivarlo su un progetto esistente: aggiungere `useKitsu="1"` al tag `<project>` ad app chiusa (workaround dato a Franco, ha funzionato). Da fare: checkbox in-app "Enable Kitsu" nella Production room.
+
+## [2026-07-11] — SUPERPLASTIC: controller "Animate tool sopra lo scheletro" + task 62 vector fill (master)
+
+Sessione doppia: fix core su `master`, poi tutta l'evoluzione squash&stretch → controller su `feature/superplastic`.
+
+### Fixed — master (task 62, candidato PR upstream, commit `021d6886d`)
+- **Vector fill che si "ripara" solo ricaricando la scena**: nuovo `TVectorImage::forceRegionsRecompute()`
+  (stesso rebuild del load, colori preservati) chiamato dal FillTool su attivazione e cambio frame
+  (guardia isPlaying). **Maximum Gap che si resettava al cambio frame**: `m_lastUserGapValue` propaga
+  l'ultimo valore utente alle immagini ancora a tolerance default. Verificato Franco: gap OK, fill in osservazione.
+
+### Added — feature/superplastic: controller completo (commit finale `c7de1b20f`)
+- **Architettura (design Franco, 3 iterazioni)**: lo squash&stretch NON entra mai nella catena dello
+  scheletro. È un'affine controller T(trans)·T(C)·Rot·Shear·Scale·T(−C) composta SOPRA il risultato
+  deformato (`getSquashControllerAffine`), iniettata nei 3 siti di draw/render (stagevisitor ×2 +
+  plasticdeformerfx) e nella matrice del tool (`updateMatrix` override) → manipolazione, pin e IK
+  lavorano in spazio pre-controller PER COSTRUZIONE (spariti i feedback loop che "esplodevano" la posa).
+- **Pivot keyframabile che segue il personaggio**: offset PIVOTX/PIVOTY dalla root DEFORMATA (default 0).
+- **Param**: SCALEX/SCALEY (fattori, 100%=neutro, measure "scale"), TRANSX/TRANSY, ROT, SHEARX/SHEARY —
+  tutti sul vd della root, serializzazione tag-based retrocompatibile, esclusi dal Set Key (p<PIN).
+- **Gizmo "modalità all"**: doppio ESAGONO al pivot (drag=sposta pivot, snap ai vertici) + raggi
+  TRATTEGGIATI (identità visiva vs Animate tool di colonna, mockup approvato); disco=rotate,
+  quadrati=scala uniforme/libera, parallelogramma=shear, rombo=move. Matematica replicata dai
+  Drag*Tool di edittool (Shift/Alt/combo Maintain con Mass=1/v). **Colori dinamici** come l'Animate
+  tool Ztoryc (sample framebuffer + contrasto complementare, highlight per-maniglia) + hint in hover
+  (gotcha: testo GLUT da scalare ×devPixRatio o su retina è invisibile).
+- **Global key** chiava anche i param del controller (PIN* sempre esclusi).
+- **Pin dormienti**: IK off → diamanti nascosti, manipolazione pin-aware spenta, bottone Pin
+  disabilitato; IK on → tornano identici (chiavi intatte). Il PLANTING all'eval NON è gated (il primo
+  tentativo spostava la posa al toggle): flag `pinsEnabled` sulla deformazione (tag `PinsDisabled`),
+  checkbox sincronizzata allo switch colonna se il rig ha chiavi PIN.
+
+### Notes
+- Trade-off accettato: i pin secondari non "tengono" sotto squash (niente stretch braccio-barra);
+  pivot snappato sul pin d'appoggio copre il caso principale. `ctrlContrastColor` duplicata da
+  edittool → da condividere prima di eventuale PR. Restano: cursori per-maniglia, campi toolbar
+  trans/rot/shear, taratura stiffness, limiti angolari in pin mode, adapter Skeleton.
+- Task 62: voce PR candidates aggiunta in AGENTS.md; nota implementazione in SUPERPLASTIC.md.
+
+## [2026-07-10] — SUPERPLASTIC: multi-pin completo (eval 2-target, manipolazione simmetrica, cambio appoggio)
+
+Branch `feature/superplastic` (Ztoryc-SP). Sessione interamente guidata dai test di Franco.
+
+### Fixed — falsa regressione "root non draggabile"
+- NESSUNA regressione nel codice: `Ztoryc-SP.app` era la build PRE-revert del 07-07 (rename
+  mancato dopo l'ultima build) + scene di test inquinate da chiavi PIN della build rotta.
+  Controprova su scena nuova = ok. Morale: rename dopo OGNI build; bonifica scene = unpin di
+  tutti i diamanti e re-pin.
+
+### Added — eval multi-pin (`storeDeformedSkeleton`)
+- Pin PRIMARIO = il più anziano (attivazione, non indice) → traslazione rigida (root libera,
+  nessun salto di posa quando si aggiunge il 2° pin); pin successivi → CCD confinato sotto la
+  divergenza dalle catene già piantate. Robusto ai residui (pin senza target saltati).
+
+### Added — manipolazione multi-pin (plastictool_animate)
+- Re-root sul pin PIÙ VICINO al vertice trascinato; gli altri pin vengono ri-piantati DENTRO
+  il drag (CCD sul solo loro arto) → tool e eval non si combattono più (fine dei vertici che
+  "scappano" vicino ai pin).
+- Pin DURI: θ-bisezione nel posing locale (il drag si irrigidisce a fondo corsa invece di
+  strappare un pin); target del mouse clampato alla portata nel solve simmetrico.
+- Vertice TRA i pin (sottoalbero spanning) → FABRIK multi-ancora: entrambe le catene si
+  piegano (barra: entrambe le spalle salgono). Stiffness per profondità ELASTICA verso la posa
+  di riposo (clavicole rigide che TORNANO, gomiti assorbono per primi — niente cricchetto);
+  lunghezze ossa ripristinate post-solve + re-nail di ogni pin sul ramo esclusivo (la media
+  FABRIK alle giunzioni violava le lunghezze → pin che si staccavano). Pivot extra = ultimo
+  vertice condiviso, ruotando solo il ramo del pin (la clavicola cede se serve al planting).
+- Mount del vertice trascinato (tratto v→top) esente da stiffness → clavicole e anche
+  manipolabili direttamente senza resistenza.
+- Ancore ai target assoluti PINTX/PINTY (niente deriva accumulata nei drag lunghi).
+- Bake della posa piantata all'UNPIN → il vertice non scatta più al toggle-off. Caveat: unpin
+  dell'ULTIMO pin può mostrare shift globale (traslazione non rappresentabile negli angoli) —
+  si ricollega alla task squash/pivot.
+- **"Switch Support Pin Here"** (context menu, cambio appoggio one-click): pinna il vertice
+  selezionato al frame corrente e rilascia gli altri pin a f+1 (double support su una sola
+  chiave), tutto in un unico undo. La chiave PIN=0 a f+1 è by-design.
+- Pin selezionato = diamante ciano PIENO (feedback visivo).
+
+### Fixed — CRASH switch colonna (candidato PR upstream)
+- `PlasticTool::onSelectionChanged()` dereferenziava `m_sd->skeleton(skelId)->vertex(m_svSel)`
+  senza guardie: su switch colonna skeleton può essere null e la selezione un indice stale →
+  SIGSEGV (repro: click su altra colonna con tool attivo). Fix: guardia + drop della selezione
+  stale. Codice STOCK Tahoma2D → candidato hardening upstream.
+
+### Aperti (prossima sessione)
+- Taratura fine pesi stiffness (0.8/0.5/0.2 per profondità) se serve.
+- Limiti angolari in modalità pin; pole vector; adapter Skeleton Tool; task squash/pivot.
+
+## [2026-07-07c] — SUPERPLASTIC: timing pin corretto (fix "shift al 2° passo")
+
+Branch `feature/superplastic` (Ztoryc-SP, master intatto). Commit `ed8daf47e`. ✅ Franco "meraviglioso".
+
+### Fixed — keyframing dei pin IK
+- **Pin fantasma all'indietro**: una chiave PIN=1 messa a un frame > 1 si estrapolava costante
+  all'indietro → il piede risultava pinnato anche sui frame precedenti. Fix: baseline PIN=0 al
+  frame 1 alla prima chiave "on" (confina il pin a [frame, …)).
+- **Target stale ("il 2° pin prende i valori di un frame passato" e sposta tutto)**: il target
+  PINTX/PINTY veniva catturato DOPO aver attivato PIN → l'eval ripiantava il vertice sul suo
+  target vecchio (residuo Constant di un pin precedente) e si registrava quella posizione stale.
+  Fix: cattura del target PRIMA di attivare PIN (posizione reale corrente). Diagnosi via log su
+  file dei keyframe reali.
+- **Global Set Key** non keyframa più PIN/PINTX/PINTY: propagava in avanti il target vecchio
+  (Constant), inquinando i frame successivi. I pin restano keyframati dal loro toggle.
+
+### Aperti (prossima sessione)
+Ri-abilitare la eval a 2 target (centroide + CCD per-pin, oggi rivertita) ora che i pin fantasma
+sono risolti; anomalia braccio→gamba nella manipolazione; comando one-click "cambio appoggio".
+
+## [2026-07-07b] — SUPERPLASTIC: manipolazione IK rifatta (root libera / pin=root provvisoria)
+
+Branch `feature/superplastic` (build separata Ztoryc-SP, master NON toccato). Rifatta da capo
+la manipolazione IK del Plastic Tool sul modello corretto emerso dal feedback diretto di Franco.
+
+### Fixed / Reworked — manipolazione IK a 1 pin (✅ Franco: "MERAVIGLIOSO")
+- **Posa sempre a giunto singolo locale**, mai chain-solve: il CCD nel drag distribuiva la
+  rotazione su tutta la catena radice→handle riconfigurando il corpo in modo incontrollabile.
+  Rimosso il CCD/`solveChainIK_animate` dal drag.
+- **Senza pin**: giunto singolo sulla gerarchia originale (come manipolazione normale).
+- **Con pin**: il pin è una **root provvisoria** (re-root BFS); il drag ruota solo il bone verso
+  il genitore-re-rooted a lunghezza costante, il sottoalbero segue rigido, il lato-pin resta
+  fermo; planting a eval-time via PINTX/PINTY (traslazione rigida singola).
+- **La ROOT nativa è manipolabile** sotto IK con pin — era l'unico vertice il cui drag non era
+  rappresentabile (niente ANGLE): ruota attorno al vicino verso il pin, l'angolo scritto è quello
+  del vicino, conserva le lunghezze. Sbloccarla ha risolto l'ingestibilità della zona vicino alla
+  root. (commit `13ca6724d`)
+
+### WIP parcheggiato — due pin / IK a 2 target (NON attivo)
+- Tentato foot-planting a 2 pin (centroide+traslazione, CCD per-pin per snappare ogni pin, draw
+  multi-diamante, `pinnedVerticesAtFrame`, re-àncoraggio pin). Multipli bug nei test di Franco:
+  shift al 2° passo (pin "fantasma" non rilasciati — PIN keyframe Constant persiste), il 2° pin
+  non blocca il movimento della gamba del 1°, anomalia braccio→gamba. **L'eval a 2 pin è stato
+  RIVERTITO al single-pin** (`git checkout` di `plasticskeletondeformation.cpp`) per non regredire
+  la root libera a 1 pin. Lo scaffolding lato-tool (helper multi-pin + draw) resta committato come
+  base. Da rifare la prossima sessione partendo dalla **semantica di rilascio/switch dei pin** (un
+  pin vale solo nel suo intervallo) + comando one-click "cambio appoggio". Dettaglio dei 4 punti
+  aperti nella memoria `project-superplastic-worktree`.
+
+## [2026-07-07b] — Board/thumbnail room: hang export risolto + performance (disegno e timeline)
+
+Sessione di debug su master, tutta guidata da evidenze (`sample` sul processo bloccato),
+su segnalazioni di Franco sulla scena `SB_maggiolatazombie`.
+
+### Fixed — hang dell'export-to-board
+- **Causa (root)**: `StoryboardPanel::onDeleteShot` cancellava la colonna dell'xsheet ma
+  lasciava nel cast la sotto-scena e i suoi livelli OVL. Il nome restava occupato → il Send
+  to Board successivo riusava l'etichetta → `createNewLevel` riceveva un nome già nel
+  levelSet → la sua disambiguazione `_N` viene riletta come **separatore di frame**
+  (`sh150_1` → livello `sh150`) → **loop infinito**. Confermato dal sample: 100% dei campioni
+  in `addShotFromRasters → createNewLevel → doesExistFileOrLevel`.
+  Fix (`2bdb3d19e`): raccolta dei livelli esposti dagli shot cancellati (child level +
+  `getUsedLevels()` della sotto-scena, ricorsivo) e rimozione dal cast dei soli livelli senza
+  utilizzatori (`isLevelUsed` → un Copy Shot che condivide il livello lo mantiene). I livelli
+  non vengono distrutti: `UndoBoardState` li possiede via `TXshLevelP` e li reinserisce in
+  `undo()` prima di ripristinare le colonne.
+- **Rete di sicurezza** (`be4856c69`): in `addShotFromRasters` il controllo di collisione ora
+  guarda **levelSet in RAM + disco** (prima solo disco: i livelli restano in RAM fino al
+  salvataggio) e fa rollback invece di passare a `createNewLevel` un nome occupato.
+
+### Performance — thumbnail room (lag di disegno)
+- `paintEvent` chiamava `rasterToQImage(..., mirrored=true)`: il wrapper è a costo zero ma
+  `QImage::mirrored()` **deep-copia l'intera superficie** (~31 MB su griglia 4×15) a **ogni
+  repaint**, cioè a ogni mouse move durante il tratto. Ora vista zero-copy + flip via
+  trasformazione del painter.
+- `pushUndo()` clonava tutto il raster a **ogni inizio tratto** (hitch) e con `kMaxUndo=16` la
+  cronologia arrivava a ~500 MB (pressione di memoria → lag intermittenti che alteravano il
+  segno). I tratti usano ora un undo **copy-on-write a tile 256×256** via `askWrite()` (che il
+  pennello MyPaint chiama prima di scrivere). Snapshot pieno mantenuto per resize/paste/transform.
+  Commit `91f167a2b`.
+
+### Performance — timeline animatic (stallo ~2s a ogni trim)
+- Sample: `onShotDurationChanged → resequenceXsheet → modelReset → clearThumbCache`, poi
+  `refreshFromScene` rirenderizzava **ogni** shot con `IconGenerator::renderXsheetFrame` →
+  `ToonzScene::renderFrame` → **`QtOfflineGL::createContext`** (un contesto GL offscreen nuovo
+  per thumbnail, da solo ~40% dello stallo). Ma trimmare cambia la durata, non il disegno.
+- La cache era chiavata sull'**indice di colonna**, quindi andava svuotata a ogni `modelReset`
+  (i riordini fanno scalare gli indici). Ora è chiavata sul **nome della sotto-scena**, stabile
+  a trim/riordini/cancellazioni. Clear rimosso da `modelReset`; aggiunto all'uscita da una
+  sotto-scena (unico punto da cui un disegno può cambiare). Commit `2f20de7f2`.
+
+### Upstream candidates
+- **Loop infinito di `createNewLevel` con nome livello occupato** (`toonzlib/toonzscene.cpp`):
+  il suffisso `_N` della disambiguazione viene riletto da `TFilePath` come separatore di frame,
+  quindi il nome collassa su sé stesso e il ciclo non termina mai. Codice Tahoma/OpenToonz
+  condiviso, innescabile da chiunque. Alta priorità.
+
+### Performance — Board: rebuild completo a ogni resequence (drift falso positivo)
+- Ogni trim ricostruiva da zero **ogni istanza di Board** (`clearShots` + rebuild widget +
+  `loadZtoryc()`, che **rilegge il `.ztoryc` da disco**). Misurato sul log: **24 `full rebuild`**
+  in pochi trim, con i conteggi coincidenti (42 shot = 42).
+- Causa: la detection di riordino confronta il nome della colonna con l'etichetta dello shot,
+  ma `TStageObject::getName()` per una colonna **senza nome esplicito** restituisce il default
+  `"Col<N>"` — mai uguale a `"sh130"`. Drift a ogni resequence, per sempre.
+- Colpevole a monte: `addShotFromRasters` (export-to-board) **non chiamava `updateColumnName()`**,
+  a differenza di ogni altro percorso di creazione shot → tutte le colonne anonime.
+- Fix (`5c245fd20`): (1) confronto solo se `obj->hasSpecifiedName()` — una colonna anonima non
+  porta informazione d'ordine; (2) `addShotFromRasters` nomina la colonna, il che **ripristina
+  anche la detection dei riordini** per gli shot da export-to-board, finora di fatto rotta.
+- Verificato sul log, stessi trim: `full rebuild` **24 → 0**.
+
+### Performance — StoryStrip (stesso pattern)
+- `ZtoryStoryStrip` (room SHOTEDITOR) aveva la stessa cache chiavata per colonna, svuotata su
+  `modelReset` → un `renderXsheetFrame` + contesto GL nuovo per shot a ogni trim/riordino.
+  Stessa correzione: chiave = nome sotto-scena, clear su uscita da sotto-scena + `sceneSwitched`.
+  Commit `68098976e`. Da verificare visivamente.
+
+### Note
+- **Falsa pista scagionata**: l'hang era stato attribuito a un incolla di thumb in uno shot
+  nuovo; era solo un tentativo di workaround di Franco. Lezione: il primo stack ("main thread
+  in `nextEventMatchingMask`") era stato campionato a processo non bloccato e portava fuori
+  strada — il `sample` sul processo davvero bloccato ha dato la risposta in un colpo.
+- **Tecnica**: lanciare il bundle del workspace da terminale con stderr su file e leggere i
+  `qWarning` `[ZTORY]` già presenti nel codice — dicono chi ricostruisce e perché, senza
+  aggiungere diagnostica. (NON `/Applications/Ztoryc.app`: è una copia vecchia.)
+- `ZtoryModel::removeShot()` risulta **codice morto** (nessun chiamante: la cancellazione passa
+  da `StoryboardPanel::onDeleteShot`). Non rimosso.
+
+## [2026-07-07] — SUPERPLASTIC: adapter Plastic Tool con pin/foot-planting (re-rooting + vincolo per-frame)
+
+Sessione lunga e iterativa sul branch `feature/superplastic` (build separata Ztoryc-SP,
+master NON toccato). Costruito l'adapter del solver CCD sul Plastic Tool fino al
+foot-planting reale, raffinato in più giri sul feedback diretto di Franco.
+
+### Added — branch feature/superplastic (NON su master)
+- **Adapter Plastic → SolveIK_CCD** (commit d528b8ad2): checkbox "Inverse Kinematics" nelle
+  opzioni Animate (default off). Attiva, il drag di un vertice risolve la catena
+  radice→vertice col solver CCD condiviso, riscrivendo solo gli ANGLE (distanze intatte →
+  proporzioni preservate). Gli Angle Bounds per-vertice diventano veri limiti IK.
+- **Pin IK keyframabile** (2016a2eb5): nuovo param `PIN` nel SkVD (step/Constant,
+  retrocompatibile via serializzazione tag-based), bottone "Pin" checkable, diamante ciano
+  sul vertice pinnato. Escluso da Set Key/Rest/isFullKeyframe.
+- **Il pin diventa la radice della gerarchia** (ecd6746a0): re-rooting vero — il vertice
+  pinnato è la base fissa, la maniglia raggiunge il mouse, ogni altro vertice (radice
+  originale inclusa) segue liberamente. Modello chiarito da Franco ("altrimenti non è
+  utilizzabile").
+- **Pin = vincolo per-frame** (c7bcf22c5): risolto il drift sugli intercalati (IK-vs-
+  interpolazione-FK). Il pin ora memorizza una posizione TARGET (`PINTX/PINTY`) e a OGNI
+  frame lo scheletro è traslato rigidamente così il pin cade esatto sul target — piantato
+  su tutti gli intercalati, non solo alle chiavi. Applicato sia in vista tool sia in
+  deformazione mesh (render coerente).
+
+### Notes / percorso
+- Scartata dopo verifica l'idea di pilotare il transform di COLONNA per il free-root: nel
+  Plastic tutto è in spazio locale e la colonna sposta tutto in blocco (piede+corpo) → non
+  può piantare il piede mentre il corpo trasla. La libertà mancante è interna alla
+  deformazione (prima offset di radice ROOTX/ROOTY, poi evoluto in PINTX/PINTY + shift a
+  eval-time).
+- Gotcha risolto: build_and_deploy fa `open Ztoryc.app` → istanza stale tiene il QLockFile
+  single-instance dopo il rename → Ztoryc-SP "si chiude da sola" (NON un crash). Ricetta
+  rename aggiornata (pkill + rm lock prima del rename, cp del plist completo generato).
+
+### Limiti noti aperti (prossima sessione)
+- Limiti angolari non applicati in modalità pin (re-root). Possibile ribaltamento del verso
+  di piega senza pole vector (Franco: "un po' difficoltoso da controllare").
+- Adapter Skeleton Tool ancora da fare (il pin drift stock è in `computeIkRootOffset`).
+
+### Extra
+- Trapiantati i set di pennelli MyPaint `aotz` e `slos_mpb` da OpenToonz a Ztoryc/Tahoma2D.
+
+## [2026-07-06c] — SUPERPLASTIC avviato: branch separato + core solver IK CCD (task 58)
+
+Avviato il filone SUPERPLASTIC (spec: `Drive/Ztoryc/SUPERPLASTIC.md` — solver IK
+condiviso Skeleton/Plastic + task 59-62 collegate) su **branch separato con build
+separata**: master NON viene toccato da questo lavoro.
+
+### Added — branch feature/superplastic (commit 3f15802fa, NON su master)
+- **Setup**: worktree git `/Volumes/ZioSam/tahoma2d-workspace/tahoma2d-superplastic`
+  (branch `feature/superplastic`), build Ninja separata configurata nella root del
+  worktree (stessi flag della release). `thirdparty/` rsyncato dal workspace
+  principale (le lib compilate, es. libtiff.a, non sono in git). Build:
+  `ZTORYC_WORKSPACE=.../tahoma2d-superplastic ./build_and_deploy.sh`.
+- **Core solver `SolveIK_CCD`** (`include/toonz/ikccd.h` + `toonzlib/ikccd.cpp`):
+  CCD in spazio angolare relativo (limiti per-bone = clamp diretto, il motivo della
+  scelta CCD vs FABRIK), pole vector con mirror sulla linea root→target, nudge
+  progressivo della root per uscire dalle pose singolari collineari (CCD stalla se
+  catena e target sono allineati), `IKSolveInfo` con ambiguità-senza-pole segnalata
+  al chiamante (non risolta in silenzio). Tipi adattati a `TPointD` (nessun Point2D
+  nel codebase). Test standalone 5/5 verdi: target raggiungibile, zero drift su
+  solve ripetuti, clamp limiti, scelta lato con pole, target irraggiungibile.
+
+### Notes — findings esplorazione (decisivi per i prossimi step)
+- Esiste già un solver IK in toonzlib: **`IKEngine`** (Jacobiano DLS, `ikengine.cpp`),
+  usato SOLO dal drag dello Skeleton Tool (`IKTool` in skeletonsubtools.cpp). Plastic
+  non lo usa: fa FK ricorsivo (`updateBranchPositions`,
+  plasticskeletondeformation.cpp:492). Scelto comunque il nuovo CCD come da spec
+  (pulito, deterministico, limiti+pole nativi); IKEngine resta come riferimento.
+- **Il pin per-frame NON è in IKTool** ma in `TStageObject::computeIkRootOffset()`
+  (tstageobject.cpp:1429): tiene fermo il piede TRASLANDO la radice (compensazione
+  con l'inversa del placement FK del piede), gli angoli tra keyframe restano
+  interpolazione FK. Il drift nasce lì (catena changeFootAff tra pin successivi +
+  caching lazyData/m_ikflag). Quindi il fix drift = modifica alla valutazione
+  per-frame del placement, da progettare a mente fresca — non uno swap del solver
+  nel drag. Il drift nel drag su nuovo pin è invece in `IKTool::computeIHateIK()`
+  (skeletonsubtools.cpp:925).
+- Prossimi step: (1) design del re-solve per-frame in/accanto a computeIkRootOffset,
+  (2) adapter drag IKTool→SolveIK_CCD con parità senza pin, (3) adapter Plastic.
+
 ## [2026-07-06b] — Fix export (target OT/Tahoma/Ztoryc, audio trimmato) + timing transizioni + Board — release 0.8.1
 
 Sessione dedicata ai tre problemi grossi segnalati da Franco: export (normale e a

@@ -2,6 +2,8 @@
 
 #include <inttypes.h>
 #include <signal.h>
+#include <exception>
+#include <cstdlib>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -573,7 +575,56 @@ void CrashHandler::openFolder() {
 
 //-----------------------------------------------------------------------------
 
+// An uncaught C++ exception is NOT a structured exception: it never reaches the
+// vectored/signal handlers above — the CRT just calls std::terminate → abort,
+// killing the app with no dialog and no crash log. Many Tahoma paths throw
+// (TException on project/level/file errors), so this was a silent-death hole.
+// Grab the pending exception's message (the usual root cause) and write a report
+// before exiting.
+static void terminateHandler() {
+  static volatile bool handling = false;
+  if (handling) _Exit(1);  // a throw inside the handler → don't recurse
+  handling = true;
+
+  QString reason = "Unhandled C++ exception (std::terminate)";
+  if (std::exception_ptr ep = std::current_exception()) {
+    try {
+      std::rethrow_exception(ep);
+    } catch (const TException &e) {
+      reason += ": " + QString::fromStdWString(e.getMessage());
+    } catch (const std::exception &e) {
+      reason += QString(": ") + e.what();
+    } catch (...) {
+      reason += ": (non-standard exception)";
+    }
+  }
+  CrashHandler::trigger(reason, true);
+  _Exit(1);
+}
+
+#ifdef _WIN32
+// The CRT calls these on a bad library argument (e.g. an invalid iterator or an
+// out-of-range index in a hardened STL) and on a pure-virtual call. Both default
+// to a silent abort() that skips the vectored handler — route them through the
+// same report path.
+static void invalidParameterHandler(const wchar_t *, const wchar_t *,
+                                    const wchar_t *, unsigned int, uintptr_t) {
+  static volatile bool handling = false;
+  if (!handling) {
+    handling = true;
+    CrashHandler::trigger("CRT invalid parameter", true);
+  }
+  _Exit(1);
+}
+static void pureCallHandler() {
+  CrashHandler::trigger("Pure virtual function call", true);
+  _Exit(1);
+}
+#endif
+
 void CrashHandler::install() {
+  // Cross-platform: catch uncaught C++ exceptions (silent std::terminate/abort).
+  std::set_terminate(terminateHandler);
 #ifdef _WIN32
   // std library seems to override this
   //SetUnhandledExceptionFilter(exceptionHandler);
@@ -581,6 +632,8 @@ void CrashHandler::install() {
   void *handler = AddVectoredExceptionHandler(0, exceptionHandler);
   assert(handler != NULL);
   //RemoveVectoredExceptionHandler(handler);
+  _set_invalid_parameter_handler(invalidParameterHandler);
+  _set_purecall_handler(pureCallHandler);
 #else
   signal(SIGABRT, signalHandler);
   signal(SIGFPE, signalHandler);

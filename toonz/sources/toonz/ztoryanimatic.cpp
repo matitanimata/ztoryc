@@ -1227,11 +1227,25 @@ public:
 
 // ── Audio clipboard ───────────────────────────────────────────────────────────
 // Stores cloned ColumnLevel objects from the copied/cut selection.
-struct AudioClipboard {
-  int originFrame = 0;          // visibleStartFrame of the first clipped level
+// One entry per source track, so a selection spanning several tracks pastes
+// back onto the same relative tracks instead of collapsing into one.
+struct AudioClipEntry {
+  int colOffset = 0;                  // source column - anchor column
   std::vector<ColumnLevel *> levels;  // owned clones
-  bool empty() const { return levels.empty(); }
-  void clear() { for (auto *l : levels) delete l; levels.clear(); }
+};
+struct AudioClipboard {
+  int originFrame = 0;          // earliest visibleStartFrame across all entries
+  std::vector<AudioClipEntry> entries;
+  bool empty() const {
+    for (const auto &e : entries)
+      if (!e.levels.empty()) return false;
+    return true;
+  }
+  void clear() {
+    for (auto &e : entries)
+      for (auto *l : e.levels) delete l;
+    entries.clear();
+  }
   ~AudioClipboard() { clear(); }
 };
 static AudioClipboard s_audioClip;
@@ -1505,10 +1519,11 @@ void ZtoryAudioTrack::paintEvent(QPaintEvent *e) {
   if (m_muted || m_effectiveMuted)
     p.fillRect(labelW, 0, trackW, trackH, QColor(0, 0, 0, 130));  // dim veil, both themes
 
-  // Highlight selected segment
-  if (m_selSeg.r0 >= 0 && m_selSeg.r1 >= m_selSeg.r0) {
-    int x0 = labelW + (int)(m_selSeg.r0 * m_ppf);
-    int x1 = labelW + (int)((m_selSeg.r1 + 1) * m_ppf);
+  // Highlight every selected segment
+  for (const Segment &sel : m_selSegs) {
+    if (sel.r0 < 0 || sel.r1 < sel.r0) continue;
+    int x0 = labelW + (int)(sel.r0 * m_ppf);
+    int x1 = labelW + (int)((sel.r1 + 1) * m_ppf);
     p.fillRect(x0, 0, x1 - x0, trackH, QColor(100, 180, 255, 50));
     p.setPen(QColor(100, 180, 255, 150));
     p.drawRect(x0, 0, x1 - x0 - 1, trackH - 1);
@@ -1560,16 +1575,79 @@ void ZtoryAudioTrack::setRazorActive(bool on) {
 }
 
 void ZtoryAudioTrack::clearSelection() {
-  if (m_selSeg.r0 >= 0) { m_selSeg = {-1, -1}; update(); }
+  if (!m_selSegs.empty()) { m_selSegs.clear(); update(); }
+}
+
+// ── Selection helpers ─────────────────────────────────────────────────────────
+// Segments are identified by their frame range: findSegments() rebuilds them
+// from the column on every click, so pointer identity is not available.
+bool ZtoryAudioTrack::isSegmentSelected(const Segment &s) const {
+  for (const Segment &sel : m_selSegs)
+    if (sel.r0 == s.r0 && sel.r1 == s.r1) return true;
+  return false;
+}
+
+void ZtoryAudioTrack::selectOnlySegment(const Segment &s) {
+  m_selSegs.clear();
+  m_selSegs.push_back(s);
+}
+
+void ZtoryAudioTrack::toggleSegmentSelected(const Segment &s) {
+  for (auto it = m_selSegs.begin(); it != m_selSegs.end(); ++it)
+    if (it->r0 == s.r0 && it->r1 == s.r1) { m_selSegs.erase(it); return; }
+  m_selSegs.push_back(s);
+  sortSelection();
+}
+
+void ZtoryAudioTrack::sortSelection() {
+  std::sort(m_selSegs.begin(), m_selSegs.end(),
+            [](const Segment &a, const Segment &b) { return a.r0 < b.r0; });
+}
+
+// Scene fps, rounded — the timecode readouts are frame-based, so an int is the
+// honest granularity here.
+static int ztorySceneFps() {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  int fps = scene ? (int)qRound(
+                        scene->getProperties()->getOutputProperties()->getFrameRate())
+                  : 24;
+  return fps > 0 ? fps : 24;
+}
+
+// Duration readout shared by the trim HUD and the Set Duration dialog, in the
+// Board's own format (mm:ss:ff) followed by the raw frame count — so the two
+// panels can be compared without converting in your head.
+static QString ztoryFormatDuration(int frames, int fps) {
+  int ff = frames % fps, ts = frames / fps;
+  return QString("%1:%2:%3  (%4f)")
+      .arg(ts / 60, 2, 10, QChar('0'))
+      .arg(ts % 60, 2, 10, QChar('0'))
+      .arg(ff, 2, 10, QChar('0'))
+      .arg(frames);
+}
+
+// Shift several selected ranges of one sound column by the same delta.
+// Order matters: a segment moved right can land on the original position of the
+// next one, so a positive delta has to be applied right-to-left (and a negative
+// one left-to-right).  `segs` is expected sorted by r0.
+static void shiftSelectedRanges(TXshSoundColumn *sc,
+                                const std::vector<ZtoryAudioTrack::Segment> &segs,
+                                int delta) {
+  if (!sc || delta == 0) return;
+  if (delta > 0)
+    for (auto it = segs.rbegin(); it != segs.rend(); ++it)
+      sc->shiftLevelInRange(it->r0, it->r1, delta);
+  else
+    for (const auto &s : segs) sc->shiftLevelInRange(s.r0, s.r1, delta);
 }
 
 // ── Group move (multi-track) ──────────────────────────────────────────────────
 // beginGroupDrag: called by the panel on every selected track when a group drag
 // starts.  Captures the selection's origin and takes an undo snapshot.
 void ZtoryAudioTrack::beginGroupDrag() {
-  if (m_selSeg.r0 < 0) { m_groupOrigR0 = m_groupOrigR1 = -1; return; }
-  m_groupOrigR0 = m_selSeg.r0;
-  m_groupOrigR1 = m_selSeg.r1;
+  m_groupOrigSegs.clear();
+  if (m_selSegs.empty()) return;
+  m_groupOrigSegs = m_selSegs;
   delete m_undoBefore; m_undoBefore = nullptr;
   TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
   TXshColumn *c = xsh ? xsh->getColumn(m_col) : nullptr;
@@ -1580,35 +1658,41 @@ void ZtoryAudioTrack::beginGroupDrag() {
 // previewGroupMove: visual-only move of this track's selection by deltaFrames
 // from its captured origin (clamped to >= 0).  Used for sibling tracks.
 void ZtoryAudioTrack::previewGroupMove(int deltaFrames) {
-  if (m_groupOrigR0 < 0) return;
-  int len  = m_groupOrigR1 - m_groupOrigR0;
-  int newR0 = qMax(0, m_groupOrigR0 + deltaFrames);
-  m_selSeg.r0 = newR0;
-  m_selSeg.r1 = newR0 + len;
+  if (m_groupOrigSegs.empty()) return;
+  // Clamp once for the whole set: shifting each segment independently would
+  // squash the gaps between them as soon as the leftmost one hits frame 0.
+  int minR0 = m_groupOrigSegs.front().r0;
+  for (const Segment &s : m_groupOrigSegs) minR0 = std::min(minR0, s.r0);
+  int applied = std::max(deltaFrames, -minR0);
+  m_selSegs.clear();
+  for (const Segment &s : m_groupOrigSegs)
+    m_selSegs.push_back({s.r0 + applied, s.r1 + applied});
   update();
 }
 
 // commitGroupMove: apply the shift to the audio data and push an undo step.
 void ZtoryAudioTrack::commitGroupMove(int deltaFrames) {
-  if (m_groupOrigR0 < 0) { m_groupOrigR0 = m_groupOrigR1 = -1; return; }
-  int len   = m_groupOrigR1 - m_groupOrigR0;
-  int newR0 = qMax(0, m_groupOrigR0 + deltaFrames);
-  int applied = newR0 - m_groupOrigR0;
+  if (m_groupOrigSegs.empty()) return;
+  int minR0 = m_groupOrigSegs.front().r0;
+  for (const Segment &s : m_groupOrigSegs) minR0 = std::min(minR0, s.r0);
+  int applied = std::max(deltaFrames, -minR0);
   TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
   TXshColumn *c = xsh ? xsh->getColumn(m_col) : nullptr;
   TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
   if (sc && applied != 0) {
-    sc->shiftLevelInRange(m_groupOrigR0, m_groupOrigR1, applied);
+    shiftSelectedRanges(sc, m_groupOrigSegs, applied);
     TXshSoundColumn *after = dynamic_cast<TXshSoundColumn *>(sc->clone());
     TUndoManager::manager()->add(
         new UndoAudioEdit(m_col, m_undoBefore, after, tr("Move Audio")));
     m_undoBefore = nullptr;  // ownership transferred
     invalidateWaveform();
-    m_selSeg = {newR0, newR0 + len};
+    m_selSegs.clear();
+    for (const Segment &s : m_groupOrigSegs)
+      m_selSegs.push_back({s.r0 + applied, s.r1 + applied});
   } else {
     delete m_undoBefore; m_undoBefore = nullptr;
   }
-  m_groupOrigR0 = m_groupOrigR1 = -1;
+  m_groupOrigSegs.clear();
   update();
 }
 
@@ -1758,7 +1842,7 @@ void ZtoryAudioTrack::mousePressEvent(QMouseEvent *e) {
   if (m_razorActive && !m_locked && e->y() < scrubTop) {
     int frame = frameAtX(e->x());
     // Clear selection so the highlight doesn't persist after the cut
-    if (m_selSeg.r0 >= 0) { m_selSeg = {-1, -1}; update(); }
+    if (!m_selSegs.empty()) { m_selSegs.clear(); update(); }
     emit razorRequested(m_col, frame);
     return;
   }
@@ -1774,20 +1858,37 @@ void ZtoryAudioTrack::mousePressEvent(QMouseEvent *e) {
   // Select / drag / trim segment — blocked when locked
   if (e->button() == Qt::LeftButton && !m_razorActive && !m_locked) {
     setFocus(Qt::MouseFocusReason);
-    // Ctrl/Cmd adds to the cross-track selection instead of replacing it.
+    // Ctrl/Cmd toggles a clip in or out of the selection; Shift extends the
+    // selection over every clip between the anchor and the clicked one.
     bool additive = (e->modifiers() & (Qt::ControlModifier | Qt::MetaModifier));
+    bool ranged   = (e->modifiers() & Qt::ShiftModifier);
     int frame = frameAtX(e->x());
     int mx = e->x();
     auto segs = findSegments();
-    Segment prevSel = m_selSeg;  // remember selection state before this click
-    m_selSeg = {-1, -1};
     m_dragMode = NoDrag;
     delete m_undoBefore; m_undoBefore = nullptr;
     bool wasSelected = false;
+    bool hitSegment  = false;
     for (auto &s : segs) {
       if (frame < s.r0 || frame > s.r1) continue;
-      m_selSeg = s;
-      wasSelected = (prevSel.r0 == s.r0 && prevSel.r1 == s.r1);
+      hitSegment  = true;
+      wasSelected = isSegmentSelected(s);
+      if (ranged && !m_selSegs.empty()) {
+        // Extend from the current selection's outer bounds to the clicked clip.
+        int lo = std::min(m_selSegs.front().r0, s.r0);
+        int hi = std::max(m_selSegs.back().r1, s.r1);
+        m_selSegs.clear();
+        for (auto &cand : segs)
+          if (cand.r0 >= lo && cand.r1 <= hi) m_selSegs.push_back(cand);
+        sortSelection();
+      } else if (additive) {
+        toggleSegmentSelected(s);
+      } else if (!wasSelected) {
+        // Plain click on an unselected clip: it becomes the whole selection.
+        selectOnlySegment(s);
+      }
+      // else: plain click on an already-selected clip keeps the multi-selection
+      // intact so the whole group can be dragged.
       m_dragOrigR0 = s.r0;
       m_dragOrigR1 = s.r1;
       m_dragStartFrame = frame;
@@ -1811,15 +1912,21 @@ void ZtoryAudioTrack::mousePressEvent(QMouseEvent *e) {
       }
       break;
     }
-    if (m_selSeg.r0 >= 0) {
+    if (hitSegment) {
       // Plain click on an UNselected segment selects it exclusively (panel
-      // clears the other tracks).  Ctrl/Cmd adds to the selection, and a plain
-      // click on an ALREADY-selected segment keeps the multi-selection so it can
-      // be dragged as a group.
-      if (!additive && !wasSelected) emit exclusiveSelectRequested();
+      // clears the other tracks).  Ctrl/Cmd and Shift extend the selection, and
+      // a plain click on an ALREADY-selected segment keeps the multi-selection
+      // so it can be dragged as a group.
+      if (!additive && !ranged && !wasSelected) emit exclusiveSelectRequested();
       // Tell the panel to arm a group move across all selected tracks so a
       // SegmentDrag here moves every selected segment by the same delta.
-      if (m_dragMode == SegmentDrag) { m_isGroupLeader = true; emit groupDragStarted(); }
+      if (m_dragMode == SegmentDrag) {
+        // Freeze where this track's selection started, so the drag math stays
+        // relative to the press even after several mouse-move updates.
+        m_dragOrigSegs  = m_selSegs;
+        m_isGroupLeader = true;
+        emit groupDragStarted();
+      }
     } else {
       // Clicked empty area — clear this track and notify siblings.
       emit selectionCleared();
@@ -1864,66 +1971,81 @@ void ZtoryAudioTrack::mouseMoveEvent(QMouseEvent *e) {
     return;
   }
 
-  // Segment drag with overlap clamping
-  if (m_dragMode == SegmentDrag && m_selSeg.r0 >= 0) {
+  // Segment drag with overlap clamping — the WHOLE selection of this track
+  // moves by one shared delta, so the clamps are computed over all of it.
+  if (m_dragMode == SegmentDrag && !m_dragOrigSegs.empty()) {
     int frame = frameAtX(e->x());
     int delta = frame - m_dragStartFrame;
-    int segLen = m_dragOrigR1 - m_dragOrigR0;
-    int newR0 = m_dragOrigR0 + delta;
-    if (newR0 < 0) newR0 = 0;
-    // Clamp against neighboring segments to prevent overlap
+
+    // Allowed delta window: never before frame 0, and never onto a segment that
+    // is NOT part of the selection (the selected ones travel together, so they
+    // can't collide with each other).
+    int minR0 = m_dragOrigSegs.front().r0;
+    for (const Segment &s : m_dragOrigSegs) minR0 = std::min(minR0, s.r0);
+    int minDelta = -minR0;
+    int maxDelta = INT_MAX;
     auto segs = findSegments();
-    for (auto &s : segs) {
-      if (s.r0 == m_dragOrigR0 && s.r1 == m_dragOrigR1) continue;
-      // Neighbor on the left: newR0 must be > s.r1
-      if (s.r1 < m_dragOrigR0 && newR0 <= s.r1)
-        newR0 = s.r1 + 1;
-      // Neighbor on the right: newR0 + segLen must be < s.r0
-      if (s.r0 > m_dragOrigR1 && newR0 + segLen >= s.r0)
-        newR0 = s.r0 - segLen - 1;
+    // Compare against the ORIGINS: m_selSegs already holds moved positions by
+    // the time the second mouse-move arrives, so it would no longer match.
+    auto isDragged = [this](const Segment &s) {
+      for (const Segment &o : m_dragOrigSegs)
+        if (o.r0 == s.r0 && o.r1 == s.r1) return true;
+      return false;
+    };
+    for (const Segment &sel : m_dragOrigSegs) {
+      for (const Segment &s : segs) {
+        if (isDragged(s)) continue;
+        if (s.r1 < sel.r0) minDelta = std::max(minDelta, (s.r1 + 1) - sel.r0);
+        if (s.r0 > sel.r1) maxDelta = std::min(maxDelta, (s.r0 - 1) - sel.r1);
+      }
     }
-    if (newR0 < 0) newR0 = 0;
-    // Snap: align the start or the end edge (whichever is closer) to a target.
+    if (minDelta > maxDelta) minDelta = maxDelta;  // boxed in: no room to move
+    int applied = qBound(minDelta, delta, maxDelta);
+
+    // Snap: align the leading segment's start or the trailing one's end,
+    // whichever correction is smaller.
     if (m_snapEnabled && !m_snapFrames.isEmpty()) {
-      int endR = newR0 + segLen + 1;  // one-past-end
-      int sStart = snapToTargets(newR0, m_ppf, m_snapFrames, true);
-      int sEnd   = snapToTargets(endR,  m_ppf, m_snapFrames, true);
-      int corrStart = sStart - newR0;
-      int corrEnd   = sEnd - endR;
+      int startR = m_dragOrigSegs.front().r0 + applied;
+      int endR   = m_dragOrigSegs.back().r1 + applied + 1;  // one-past-end
+      int corrStart = snapToTargets(startR, m_ppf, m_snapFrames, true) - startR;
+      int corrEnd   = snapToTargets(endR,   m_ppf, m_snapFrames, true) - endR;
       int corr = 0;
       if (corrStart != 0 && (corrEnd == 0 || std::abs(corrStart) <= std::abs(corrEnd)))
         corr = corrStart;
       else if (corrEnd != 0)
         corr = corrEnd;
-      newR0 = qMax(0, newR0 + corr);
+      applied = qBound(minDelta, applied + corr, maxDelta);
     }
-    m_selSeg.r0 = newR0;
-    m_selSeg.r1 = newR0 + segLen;
+
+    m_selSegs.clear();
+    for (const Segment &s : m_dragOrigSegs)
+      m_selSegs.push_back({s.r0 + applied, s.r1 + applied});
     // Broadcast the applied delta so the panel moves every other selected
-    // track's segment by the same amount (group move).
-    emit groupDragDelta(newR0 - m_dragOrigR0);
+    // track's segments by the same amount (group move).
+    emit groupDragDelta(applied);
     update();
     return;
   }
 
-  // Trim left/right edge: visual feedback
-  if ((m_dragMode == TrimLeft || m_dragMode == TrimRight) && m_selSeg.r0 >= 0) {
+  // Trim left/right edge: visual feedback.  A trim always applies to the single
+  // clip whose edge was grabbed, so it collapses the selection down to it.
+  if ((m_dragMode == TrimLeft || m_dragMode == TrimRight) && m_dragOrigR0 >= 0) {
     int frame = frameAtX(e->x());
     int delta = frame - m_dragStartFrame;
+    Segment trimmed{m_dragOrigR0, m_dragOrigR1};
     if (m_dragMode == TrimLeft) {
       int newR0 = m_dragOrigR0 + delta;
       newR0 = snapToTargets(newR0, m_ppf, m_snapFrames, m_snapEnabled);
       if (newR0 < 0) newR0 = 0;
       if (newR0 > m_dragOrigR1 - 1) newR0 = m_dragOrigR1 - 1;
-      m_selSeg.r0 = newR0;
-      m_selSeg.r1 = m_dragOrigR1;
+      trimmed.r0 = newR0;
     } else {
       int newR1 = m_dragOrigR1 + delta;
       newR1 = snapToTargets(newR1 + 1, m_ppf, m_snapFrames, m_snapEnabled) - 1;
       if (newR1 < m_dragOrigR0 + 1) newR1 = m_dragOrigR0 + 1;
-      m_selSeg.r0 = m_dragOrigR0;
-      m_selSeg.r1 = newR1;
+      trimmed.r1 = newR1;
     }
+    selectOnlySegment(trimmed);
     update();
     return;
   }
@@ -2004,12 +2126,11 @@ void ZtoryAudioTrack::mouseReleaseEvent(QMouseEvent *e) {
 
   // Finish segment drag — commit via shiftLevelInRange on the ColumnLevel
   if (finishedMode == SegmentDrag) {
-    int segLen = m_dragOrigR1 - m_dragOrigR0;
-
     // Cross-track drop: if mouse is outside this widget vertically
     QPoint localPos = e->pos();
     if (localPos.y() < 0 || localPos.y() >= height()) {
       m_isGroupLeader = false;  // a vertical drop is a cross-track move, not a group move
+      m_dragOrigSegs.clear();   // drag state ends here — don't leave it armed
       int dragOffset = m_dragStartFrame - m_dragOrigR0;
       emit segmentDroppedOutside(m_col, m_dragOrigR0, m_dragOrigR1,
                                  dragOffset, e->globalPos());
@@ -2017,17 +2138,21 @@ void ZtoryAudioTrack::mouseReleaseEvent(QMouseEvent *e) {
       return;
     }
 
-    int finalDelta = m_selSeg.r0 - m_dragOrigR0;
+    // The whole selection moved by the same delta — read it off any one of
+    // them (they are all in lockstep with their captured origins).
+    int finalDelta = (!m_selSegs.empty() && !m_dragOrigSegs.empty())
+                         ? m_selSegs.front().r0 - m_dragOrigSegs.front().r0
+                         : 0;
     m_isGroupLeader = false;
     // Group the leader's move and every sibling's move (committed synchronously
     // via the groupDragCommitted signal below) into one undo step.
     TUndoScopedBlock undoBlock;
-    if (finalDelta != 0 && m_dragOrigR0 >= 0) {
+    if (finalDelta != 0 && !m_dragOrigSegs.empty()) {
       TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
       TXshColumn *column = xsh ? xsh->getColumn(m_col) : nullptr;
       TXshSoundColumn *sc = column ? column->getSoundColumn() : nullptr;
       if (sc) {
-        sc->shiftLevelInRange(m_dragOrigR0, m_dragOrigR1, finalDelta);
+        shiftSelectedRanges(sc, m_dragOrigSegs, finalDelta);
         TXshSoundColumn *after = dynamic_cast<TXshSoundColumn *>(sc->clone());
         TUndoManager::manager()->add(
             new UndoAudioEdit(m_col, m_undoBefore, after, tr("Move Audio")));
@@ -2036,12 +2161,13 @@ void ZtoryAudioTrack::mouseReleaseEvent(QMouseEvent *e) {
         ZtoryAnimaticController::instance()->invalidateSoundTrack();
         emit segmentMoved();
       } else {
-        m_selSeg = {m_dragOrigR0, m_dragOrigR0 + segLen};
+        m_selSegs = m_dragOrigSegs;  // no column: snap the highlight back
         delete m_undoBefore; m_undoBefore = nullptr;
       }
     } else {
       delete m_undoBefore; m_undoBefore = nullptr;
     }
+    m_dragOrigSegs.clear();
     // Commit the same delta on every other selected (sibling) track.
     emit groupDragCommitted(finalDelta);
     update();
@@ -2055,11 +2181,14 @@ void ZtoryAudioTrack::mouseReleaseEvent(QMouseEvent *e) {
     TXshSoundColumn *sc = column ? column->getSoundColumn() : nullptr;
     if (sc) {
       bool changed = false;
+      // mouseMove collapsed the selection to the trimmed clip alone.
+      const Segment trimmed = m_selSegs.empty() ? Segment{m_dragOrigR0, m_dragOrigR1}
+                                                : m_selSegs.front();
       if (finishedMode == TrimLeft) {
-        int delta = m_selSeg.r0 - m_dragOrigR0;
+        int delta = trimmed.r0 - m_dragOrigR0;
         if (delta != 0) { sc->modifyCellRange(m_dragOrigR0, delta, true); changed = true; }
       } else {
-        int delta = m_selSeg.r1 - m_dragOrigR1;
+        int delta = trimmed.r1 - m_dragOrigR1;
         if (delta != 0) { sc->modifyCellRange(m_dragOrigR1, delta, false); changed = true; }
       }
       if (changed) {
@@ -2106,89 +2235,140 @@ void ZtoryAudioTrack::mouseReleaseEvent(QMouseEvent *e) {
 
 // ---- Clipboard operations ----
 
-void ZtoryAudioTrack::clipboardCopy(ZtoryAudioTrack *src) {
-  if (!src || src->m_selSeg.r0 < 0) return;
+// Clone every level overlapping this track's selection.  Levels are appended,
+// so the caller decides how to group them.
+void ZtoryAudioTrack::copySelectionInto(std::vector<ColumnLevel *> &out) const {
+  if (m_selSegs.empty()) return;
   TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
   if (!xsh) return;
-  TXshColumn *c = xsh->getColumn(src->m_col);
+  TXshColumn *c = xsh->getColumn(m_col);
   TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
   if (!sc) return;
-
-  s_audioClip.clear();
-  s_audioClip.originFrame = src->m_selSeg.r0;
-
-  int r0 = src->m_selSeg.r0, r1 = src->m_selSeg.r1;
   for (int i = 0; i < sc->getColumnLevelCount(); i++) {
     ColumnLevel *cl = sc->getColumnLevel(i);
-    if (cl->getVisibleEndFrame() < r0 || cl->getVisibleStartFrame() > r1) continue;
-    s_audioClip.levels.push_back(cl->clone());
+    for (const Segment &sel : m_selSegs) {
+      if (cl->getVisibleEndFrame() < sel.r0 ||
+          cl->getVisibleStartFrame() > sel.r1)
+        continue;
+      out.push_back(cl->clone());
+      break;  // a level overlapping two selected ranges is still copied once
+    }
   }
 }
 
-void ZtoryAudioTrack::clipboardCut(ZtoryAudioTrack *src) {
-  if (!src || src->m_selSeg.r0 < 0) return;
-  clipboardCopy(src);
-  // Delete the selection with undo.
+// Clear every selected range on this track, as a single undo step.
+bool ZtoryAudioTrack::deleteSelection() {
+  if (m_selSegs.empty()) return false;
   TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
-  if (!xsh) return;
-  TXshColumn *c = xsh->getColumn(src->m_col);
+  if (!xsh) return false;
+  TXshColumn *c = xsh->getColumn(m_col);
   TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
-  if (!sc) return;
+  if (!sc) return false;
   TXshSoundColumn *before = dynamic_cast<TXshSoundColumn *>(sc->clone());
-  sc->clearCells(src->m_selSeg.r0, src->m_selSeg.r1 - src->m_selSeg.r0 + 1);
+  // Right to left: clearCells does not renumber the frames after it, but going
+  // backwards keeps the ranges valid regardless of that implementation detail.
+  for (auto it = m_selSegs.rbegin(); it != m_selSegs.rend(); ++it)
+    sc->clearCells(it->r0, it->r1 - it->r0 + 1);
   TXshSoundColumn *after = dynamic_cast<TXshSoundColumn *>(sc->clone());
   TUndoManager::manager()->add(
-      new UndoAudioEdit(src->m_col, before, after, QObject::tr("Cut Audio")));
-  src->m_selSeg = {-1, -1};
-  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+      new UndoAudioEdit(m_col, before, after, QObject::tr("Delete Audio")));
+  m_selSegs.clear();
+  invalidateWaveform();
+  return true;
 }
 
-void ZtoryAudioTrack::clipboardPaste(ZtoryAudioTrack *dst, int targetFrame) {
+void ZtoryAudioTrack::clipboardCopy(const QList<ZtoryAudioTrack *> &tracks,
+                                    ZtoryAudioTrack *anchor) {
+  if (!anchor) return;
+  s_audioClip.clear();
+  int origin = INT_MAX;
+  for (ZtoryAudioTrack *t : tracks) {
+    if (!t || !t->hasSelection()) continue;
+    AudioClipEntry entry;
+    entry.colOffset = t->m_col - anchor->m_col;
+    t->copySelectionInto(entry.levels);
+    if (entry.levels.empty()) continue;
+    for (const Segment &sel : t->m_selSegs) origin = std::min(origin, sel.r0);
+    s_audioClip.entries.push_back(std::move(entry));
+  }
+  // Frames are stored absolute; originFrame is what a paste rebases them on.
+  s_audioClip.originFrame = (origin == INT_MAX) ? 0 : origin;
+}
+
+void ZtoryAudioTrack::clipboardCut(const QList<ZtoryAudioTrack *> &tracks,
+                                   ZtoryAudioTrack *anchor) {
+  if (!anchor) return;
+  clipboardCopy(tracks, anchor);
+  // One undo step for the whole cut, however many tracks it spans.
+  TUndoScopedBlock undoBlock;
+  bool any = false;
+  for (ZtoryAudioTrack *t : tracks)
+    if (t && t->deleteSelection()) any = true;
+  if (any) {
+    ZtoryAnimaticController::instance()->invalidateSoundTrack();
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+}
+
+void ZtoryAudioTrack::clipboardPaste(const QList<ZtoryAudioTrack *> &tracks,
+                                     ZtoryAudioTrack *dst, int targetFrame) {
   if (s_audioClip.empty() || !dst) return;
   TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
   if (!xsh) return;
-  TXshColumn *c = xsh->getColumn(dst->m_col);
-  TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
-  if (!sc) return;
-  TXshSoundColumn *before = dynamic_cast<TXshSoundColumn *>(sc->clone());
-  int offset = targetFrame - s_audioClip.originFrame;
-  for (ColumnLevel *cl : s_audioClip.levels) {
-    ColumnLevel *copy = cl->clone();
-    int newVsf = cl->getVisibleStartFrame() + offset;
-    sc->adoptLevel(copy, newVsf);
+  const int offset = targetFrame - s_audioClip.originFrame;
+  TUndoScopedBlock undoBlock;
+  bool any = false;
+  for (const AudioClipEntry &entry : s_audioClip.entries) {
+    // Rebuild the cross-track layout relative to the destination track.
+    const int wantCol = dst->m_col + entry.colOffset;
+    ZtoryAudioTrack *target = nullptr;
+    for (ZtoryAudioTrack *t : tracks)
+      if (t && t->m_col == wantCol) { target = t; break; }
+    // No track at that offset (pasted too close to the edge of the stack) —
+    // drop those levels rather than piling them onto the wrong track.
+    if (!target) continue;
+    TXshColumn *c = xsh->getColumn(target->m_col);
+    TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
+    if (!sc) continue;
+    TXshSoundColumn *before = dynamic_cast<TXshSoundColumn *>(sc->clone());
+    for (ColumnLevel *cl : entry.levels) {
+      // A level can start before the selection that captured it, so a paste
+      // near frame 0 could land negative — skip those instead of corrupting
+      // the column.
+      int newVsf = cl->getVisibleStartFrame() + offset;
+      if (newVsf < 0) continue;
+      sc->adoptLevel(cl->clone(), newVsf);
+    }
+    TXshSoundColumn *after = dynamic_cast<TXshSoundColumn *>(sc->clone());
+    TUndoManager::manager()->add(new UndoAudioEdit(
+        target->m_col, before, after, QObject::tr("Paste Audio")));
+    target->invalidateWaveform();
+    any = true;
   }
-  TXshSoundColumn *after = dynamic_cast<TXshSoundColumn *>(sc->clone());
-  TUndoManager::manager()->add(
-      new UndoAudioEdit(dst->m_col, before, after, QObject::tr("Paste Audio")));
-  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  if (any) {
+    ZtoryAnimaticController::instance()->invalidateSoundTrack();
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  }
 }
 
 void ZtoryAudioTrack::keyPressEvent(QKeyEvent *e) {
   if (m_locked) { QWidget::keyPressEvent(e); return; }
+  // These are routed through the panel: a selection can span several tracks and
+  // only the panel owns the full track list, so acting on `this` alone would
+  // silently drop the rest of the selection.
   bool ctrl = (e->modifiers() & Qt::ControlModifier);
-  if (ctrl && e->key() == Qt::Key_X) { clipboardCut(this); e->accept(); return; }
-  if (ctrl && e->key() == Qt::Key_C) { clipboardCopy(this); e->accept(); return; }
+  if (ctrl && e->key() == Qt::Key_X) { emit cutSelectionRequested(); e->accept(); return; }
+  if (ctrl && e->key() == Qt::Key_C) { emit copySelectionRequested(); e->accept(); return; }
   if (ctrl && e->key() == Qt::Key_V) {
     // Paste at the playhead (cursor), not at the lingering copy selection —
     // standard NLE behaviour: position the playhead, then paste there.
-    clipboardPaste(this, m_currentFrame);
+    emit pasteRequested(m_currentFrame);
     e->accept();
     return;
   }
   if (!ctrl && (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace)) {
-    if (m_selSeg.r0 < 0) { QWidget::keyPressEvent(e); return; }
-    TXsheet *xsh = ZtoryAnimaticController::instance()->mainXsheet();
-    if (!xsh) { QWidget::keyPressEvent(e); return; }
-    TXshColumn *c = xsh->getColumn(m_col);
-    TXshSoundColumn *sc = c ? c->getSoundColumn() : nullptr;
-    if (!sc) { QWidget::keyPressEvent(e); return; }
-    TXshSoundColumn *before = dynamic_cast<TXshSoundColumn *>(sc->clone());
-    sc->clearCells(m_selSeg.r0, m_selSeg.r1 - m_selSeg.r0 + 1);
-    TXshSoundColumn *after = dynamic_cast<TXshSoundColumn *>(sc->clone());
-    TUndoManager::manager()->add(
-        new UndoAudioEdit(m_col, before, after, QObject::tr("Delete Audio")));
-    m_selSeg = {-1, -1};
-    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+    if (m_selSegs.empty()) { QWidget::keyPressEvent(e); return; }
+    emit deleteSelectionRequested();
     e->accept();
     return;
   }
@@ -2204,14 +2384,21 @@ ZtoryAnimaticTrack::ZtoryAnimaticTrack(QWidget *parent) : QWidget(parent) {
   // ZtoryAnimaticPanel can verify focus is inside its subtree and fire shortcuts.
   setFocusPolicy(Qt::ClickFocus);
 
-  // Clear thumbnail cache on model reset (shots added/deleted/reordered) so
-  // new shots get fresh renders on the next refreshFromScene().
-  connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
-          this, &ZtoryAnimaticTrack::clearThumbCache);
+  // NOT cleared on modelReset any more: the cache is keyed by sub-scene level
+  // name, so shots added/deleted/reordered keep valid entries and a new shot
+  // simply misses.  Clearing there made every trim (which resequences, hence
+  // resets) re-render every thumbnail through a fresh offline GL context.
 
-  // The cache is keyed by column index only: without this, opening another
-  // scene whose refresh doesn't pass through modelReset (or repaints before it
-  // arrives) would reuse the PREVIOUS scene's thumbnails on matching columns.
+  // Drawings can only change from inside a shot, so refresh the renders when we
+  // come back up to the main xsheet.
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched,
+          this, [this]() {
+            ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
+            if (sc && sc->getChildStack()->getAncestorCount() == 0)
+              clearThumbCache();
+          });
+
+  // Level names repeat across scenes: never reuse the previous scene's renders.
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
           this, &ZtoryAnimaticTrack::clearThumbCache);
 
@@ -2319,11 +2506,13 @@ void ZtoryAnimaticTrack::refreshFromScene() {
     b.transitionFrames = xdNoteHalfCount(cl->getXsheet(), kXDOutName) * 2;
 
     // Thumbnail: render the composed sub-xsheet frame (all layers) at a small
-    // fixed size.  Use a per-column cache so refreshFromScene() called on every
-    // xsheetChanged does not re-render unless the shot set actually changed.
-    // Cache is cleared by clearThumbCache() which is called on model reset.
-    if (m_thumbCache.contains(col)) {
-      b.thumbnail = m_thumbCache.value(col);
+    // fixed size.  Cached by the sub-scene level NAME, which survives reorders
+    // and duration changes — so trimming a shot reuses the renders instead of
+    // rebuilding an offline GL context per shot.
+    const QString thumbKey =
+        cl ? QString::fromStdWString(cl->getName()) : QString();
+    if (!thumbKey.isEmpty() && m_thumbCache.contains(thumbKey)) {
+      b.thumbnail = m_thumbCache.value(thumbKey);
     } else if (cl) {
       TXsheet *subXsh = cl->getXsheet();
       if (subXsh) {
@@ -2338,7 +2527,7 @@ void ZtoryAnimaticTrack::refreshFromScene() {
         QPixmap px = IconGenerator::renderXsheetFrame(
             subXsh, 0, TDimension(thW, thH));
         if (!px.isNull()) {
-          m_thumbCache.insert(col, px);
+          m_thumbCache.insert(thumbKey, px);
           b.thumbnail = px;
         }
       }
@@ -2529,11 +2718,101 @@ void ZtoryAnimaticTrack::paintEvent(QPaintEvent *) {
     p.drawLine(rx, 0, rx, height());
   }
 
+  // ── Trim HUD ──────────────────────────────────────────────────────────────
+  // While dragging, show the resulting timing right at the edge being moved,
+  // so the shot can be timed by reading instead of by guessing.  m_blocks is
+  // already updated live by mouseMoveEvent, so it is the source of truth here.
+  if (m_dragMode == RippleTrim || m_dragMode == Roll ||
+      m_dragMode == TransitionTrim) {
+    const int fps = ztorySceneFps();
+    auto fmtDur = [fps](int frames) {
+      return ztoryFormatDuration(frames, fps);
+    };
+
+    const ShotBlock *blockA = nullptr;
+    const ShotBlock *blockB = nullptr;
+    for (const auto &b : m_blocks) {
+      if (b.col == m_dragColA) blockA = &b;
+      if (b.col == m_dragColB) blockB = &b;
+    }
+
+    // A badge hangs off `frame`, on the given side of it.  A roll changes both
+    // shots at once, so it gets one badge per side of the seam — each sitting
+    // over the shot it describes.
+    struct Badge { QString text; int frame; bool onLeft; };
+    std::vector<Badge> badges;
+    if (m_dragMode == RippleTrim && blockA) {
+      int dur = blockA->f1 - blockA->f0 + 1;
+      badges.push_back({fmtDur(dur), blockA->startFrameInMain + dur, true});
+    } else if (m_dragMode == Roll && blockA && blockB) {
+      int seam = blockB->startFrameInMain;
+      badges.push_back({fmtDur(blockA->f1 - blockA->f0 + 1), seam, true});
+      badges.push_back({fmtDur(blockB->f1 - blockB->f0 + 1), seam, false});
+    } else if (m_dragMode == TransitionTrim && blockA) {
+      badges.push_back({tr("dissolve %1f").arg(blockA->transitionFrames),
+                        blockA->startFrameInMain +
+                            (blockA->f1 - blockA->f0 + 1),
+                        true});
+    }
+
+    if (!badges.empty()) {
+      p.save();
+      p.setFont(QFont("Arial", 14, QFont::Bold));
+      QFontMetrics fm(p.font());
+      p.setRenderHint(QPainter::Antialiasing, true);
+      const int padX = 10, padY = 5, kGap = 14;
+      for (const Badge &badge : badges) {
+        int tw = fm.horizontalAdvance(badge.text) + padX * 2;
+        int th = fm.height() + padY * 2;
+        // Keep a gap from the edge so the badge never sits under the cursor,
+        // and flip to the other side when that side has no room left.
+        int edgeX = kLabelW + (int)(badge.frame * m_ppf);
+        int bx;
+        if (badge.onLeft) {
+          bx = edgeX - kGap - tw;
+          if (bx < kLabelW + 2) bx = edgeX + kGap;
+        } else {
+          bx = edgeX + kGap;
+          if (bx + tw > width() - 2) bx = edgeX - kGap - tw;
+        }
+        bx = qBound(kLabelW + 2, bx, qMax(kLabelW + 2, width() - tw - 2));
+        QRect box(bx, 4, tw, th);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(20, 20, 20, 225));
+        p.drawRoundedRect(box, 3, 3);
+        p.setPen(QPen(QColor(255, 190, 80), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(box, 3, 3);
+        p.setPen(QColor(255, 225, 160));
+        p.drawText(box, Qt::AlignCenter, badge.text);
+      }
+      p.restore();
+    }
+  }
+
   // Bottom-edge resize grip — thin separator + a short centered handle hint.
   p.fillRect(0, height() - kZtoryResizeGrip, width(), kZtoryResizeGrip,
              ZtoryTheme::g(20));
   p.setPen(ZtoryTheme::g(110));
   p.drawLine(kLabelW / 2 - 12, height() - 3, kLabelW / 2 + 12, height() - 3);
+}
+
+// Type a shot's duration instead of dragging for it.  Goes through the very
+// same signal as a trim, so undo, resequence and the Board↔Animatic sync all
+// behave exactly as they do for a dragged edit.
+void ZtoryAnimaticTrack::promptShotDuration(int col, int currentDuration) {
+  const int fps = ztorySceneFps();
+  bool ok = false;
+  int newDuration = QInputDialog::getInt(
+      this, tr("Set Shot Duration"),
+      tr("Duration in frames — current: %1 at %2 fps")
+          .arg(ztoryFormatDuration(currentDuration, fps))
+          .arg(fps),
+      currentDuration, 1, 100000, 1, &ok);
+  if (!ok || newDuration == currentDuration) return;
+  // f0 is always 0 for animatic shots, so f1 = duration - 1 (same convention
+  // RippleTrim uses when it commits).
+  emit shotDurationChanged(col, newDuration - 1);
 }
 
 void ZtoryAnimaticTrack::mousePressEvent(QMouseEvent *e) {
@@ -2581,10 +2860,14 @@ void ZtoryAnimaticTrack::mousePressEvent(QMouseEvent *e) {
       int w = (int)(duration * m_ppf);
       if (mx >= x && mx < x + w) {
         QMenu menu(this);
+        QAction *durationAct = menu.addAction(tr("Set Duration…"));
+        menu.addSeparator();
         QAction *matchAct   = menu.addAction(tr("Match Subscene Duration"));
         QAction *mergeAct   = menu.addAction(tr("Merge with Next Shot"));
         QAction *chosen = menu.exec(e->globalPos());
-        if (chosen == matchAct)
+        if (chosen == durationAct)
+          promptShotDuration(b.col, duration);
+        else if (chosen == matchAct)
           emit matchSubsceneDuration(b.col);
         else if (chosen == mergeAct)
           emit mergeWithNextRequested(b.col);
@@ -2992,7 +3275,17 @@ ZtoryStoryStrip::ZtoryStoryStrip(QWidget *parent) : QWidget(parent) {
   setFixedHeight(kThumbH + 8);
   setMinimumWidth(100);
   setStyleSheet("background:#1a1a1a;");
-  connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
+  // Keyed by sub-scene level name, so a resequence (trim, reorder) no longer
+  // invalidates every render — each miss costs a fresh offline GL context.
+  // Drawings only change from inside a shot: refresh on the way back up.
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched,
+          this, [this]() {
+            ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
+            if (sc && sc->getChildStack()->getAncestorCount() == 0)
+              m_thumbCache.clear();
+          });
+  // Level names repeat across scenes: never reuse the previous scene's renders.
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
           this, [this]() { m_thumbCache.clear(); });
 }
 
@@ -3034,9 +3327,11 @@ void ZtoryStoryStrip::refreshFromScene() {
     QString colName = QString::fromStdString(
         xsh->getStageObject(xsh->getColumnObjectId(col))->getName());
     if (!colName.isEmpty()) e.shotNumber = colName;
-    // Render composed frame — cache per-column so we don't re-render every refresh
-    if (m_thumbCache.contains(col)) {
-      e.thumb = m_thumbCache.value(col);
+    // Render composed frame — cached by sub-scene level name, so trims and
+    // reorders reuse the render instead of rebuilding an offline GL context.
+    const QString thumbKey = QString::fromStdWString(cl->getName());
+    if (!thumbKey.isEmpty() && m_thumbCache.contains(thumbKey)) {
+      e.thumb = m_thumbCache.value(thumbKey);
     } else {
       // Render at the scene camera aspect (height fixed at 90) so a non-16:9
       // camera isn't squished.
@@ -3046,7 +3341,7 @@ void ZtoryStoryStrip::refreshFromScene() {
       QPixmap px = IconGenerator::renderXsheetFrame(
           cl->getXsheet(), 0, TDimension(thW, thH));
       if (!px.isNull()) {
-        m_thumbCache.insert(col, px);
+        m_thumbCache.insert(thumbKey, px);
         e.thumb = px;
       }
     }
@@ -3737,6 +4032,23 @@ void ZtoryAnimaticViewer::showEvent(QShowEvent *e) {
           this, &ZtoryAnimaticViewer::updateAnimaticFrameMarkers);
   connect(app->getCurrentScene(), &TSceneHandle::sceneChanged,
           this, &ZtoryAnimaticViewer::onAudioToggleChanged);
+
+  // xsheetChanged needs the same correction: the base connects it to
+  // onSceneChanged() too (viewerpane.cpp), and updateFrameRange() there reads
+  // TApp's GLOBAL frame handle — which the animatic never moves, since it runs
+  // on its own.  Any edit to the xsheet (a trim, most of all) therefore pushed
+  // that stale global frame into the FlipConsole, and the next Play jumped to
+  // it instead of resuming from the animatic playhead.  Unlike the sceneHandle
+  // signals above, hideEvent() does not drop xshHandle→this connections, so
+  // disconnect first or they accumulate across show/hide cycles.
+  disconnect(app->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+             this, &ZtoryAnimaticViewer::updateAnimaticFrameRange);
+  disconnect(app->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+             this, &ZtoryAnimaticViewer::updateAnimaticFrameMarkers);
+  connect(app->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+          this, &ZtoryAnimaticViewer::updateAnimaticFrameRange);
+  connect(app->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+          this, &ZtoryAnimaticViewer::updateAnimaticFrameMarkers);
 
   // ctrl frame handle: re-add the range-update connection, removing any
   // previous one first to avoid accumulation across show/hide cycles.
@@ -5140,6 +5452,7 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   tbLay->addSpacing(16);
 
   QToolButton *selectBtn = new QToolButton(toolbar);
+  m_selectBtn            = selectBtn;
   selectBtn->setIcon(createQIcon("ztoryc_select"));
   selectBtn->setIconSize(QSize(20, 20));
   selectBtn->setFixedSize(28, 28);
@@ -5149,6 +5462,7 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   selectBtn->setChecked(true);
 
   QToolButton *trimBtn = new QToolButton(toolbar);
+  m_trimBtn            = trimBtn;
   trimBtn->setIcon(createQIcon("ztoryc_trim"));
   trimBtn->setIconSize(QSize(20, 20));
   trimBtn->setFixedSize(28, 28);
@@ -5157,6 +5471,7 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   trimBtn->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}QToolButton:hover{background:#555;}QToolButton:checked{background:#666;}");
 
   QToolButton *razorBtn = new QToolButton(toolbar);
+  m_razorBtn            = razorBtn;
   razorBtn->setIcon(createQIcon("ztoryc_razor"));
   razorBtn->setIconSize(QSize(20, 20));
   razorBtn->setFixedSize(28, 28);
@@ -5884,6 +6199,28 @@ void ZtoryAnimaticPanel::refreshAudioTracks() {
     // Group move: a SegmentDrag on one track moves every other selected track's
     // segment by the same delta.  src is the leader; the siblings are armed,
     // previewed and committed here.
+    // Clipboard / delete: apply to EVERY track that holds a selection, not just
+    // the focused one, so a multi-track (or multi-clip) selection is never cut
+    // or deleted only in part.
+    connect(src, &ZtoryAudioTrack::copySelectionRequested, this, [this, src]() {
+      ZtoryAudioTrack::clipboardCopy(m_audioTracks, src);
+    });
+    connect(src, &ZtoryAudioTrack::cutSelectionRequested, this, [this, src]() {
+      ZtoryAudioTrack::clipboardCut(m_audioTracks, src);
+    });
+    connect(src, &ZtoryAudioTrack::pasteRequested, this, [this, src](int frame) {
+      ZtoryAudioTrack::clipboardPaste(m_audioTracks, src, frame);
+    });
+    connect(src, &ZtoryAudioTrack::deleteSelectionRequested, this, [this]() {
+      TUndoScopedBlock undoBlock;  // one undo step for the whole selection
+      bool any = false;
+      for (auto *t : m_audioTracks)
+        if (t->deleteSelection()) any = true;
+      if (any) {
+        ZtoryAnimaticController::instance()->invalidateSoundTrack();
+        TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+      }
+    });
     connect(src, &ZtoryAudioTrack::groupDragStarted, this, [this, src]() {
       for (auto *other : m_audioTracks)
         if (other != src && other->hasSelection()) other->beginGroupDrag();
@@ -6118,6 +6455,7 @@ void ZtoryAnimaticPanel::onCloneShots() {
 bool ZtoryAnimaticPanel::eventFilter(QObject *obj, QEvent *e) {
   const QEvent::Type t = e->type();
 
+
   // ── Middle-mouse / Space+drag panning on ruler or track ──────────────────
   if (m_scroll && (obj == m_ruler || obj == m_track)) {
     if (t == QEvent::MouseButtonPress) {
@@ -6162,6 +6500,30 @@ bool ZtoryAnimaticPanel::eventFilter(QObject *obj, QEvent *e) {
     if (w == this) { inPanel = true; break; }
 
   if (!inPanel) return false;
+
+  // ── S / T / C — tool selection, as announced by the toolbar tooltips ──────
+  // Handled before the audio-track bail-out below so switching tool works
+  // wherever the focus sits inside the animatic (the audio tracks don't use
+  // these keys).  They are bound globally to drawing tools in
+  // deftahoma2d.ini (T_Selection=S, T_Tape=T, T_ControlPointEditor=C), hence
+  // the same two-phase claim/dispatch as the shot ops further down.  Bare keys
+  // only, so Cmd+C (copy shots) is untouched.  Clicking the toolbar button
+  // reuses its clicked() slot, keeping the checked state and the audio-track
+  // razor in sync for free.
+  if (t != QEvent::KeyRelease) {
+    auto *tke = static_cast<QKeyEvent *>(e);
+    QToolButton *toolBtn = nullptr;
+    if (tke->modifiers() == Qt::NoModifier) {
+      if (tke->key() == Qt::Key_S)      toolBtn = m_selectBtn;
+      else if (tke->key() == Qt::Key_T) toolBtn = m_trimBtn;
+      else if (tke->key() == Qt::Key_C) toolBtn = m_razorBtn;
+    }
+    if (toolBtn) {
+      if (t == QEvent::KeyPress) toolBtn->click();
+      tke->accept();
+      return true;
+    }
+  }
 
   // Audio tracks handle their own shortcuts (Delete, Ctrl+C/X/V) — don't intercept.
   if (qobject_cast<ZtoryAudioTrack *>(fw)) return false;

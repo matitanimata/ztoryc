@@ -27,6 +27,7 @@
 // and viewer, isolating them from TApp's global TFrameHandle.
 class TFrameHandle;
 class ZtoryAnimaticViewer;
+class ColumnLevel;  // toonz/txshsoundcolumn.h — audio clipboard payload
 #include "tsound.h"
 
 class ZtoryAnimaticController : public QObject {
@@ -328,7 +329,11 @@ private:
   QMap<int, int> m_origDurations;
   std::set<int> m_selectedCols;
   int m_lastClickedCol = -1; // for Shift+click range selection
-  QHash<int, QPixmap> m_thumbCache; // col → rendered composite thumbnail
+  // Keyed by the shot's sub-scene level NAME, not by column: the name survives
+  // reorders and duration changes, so trimming a shot no longer invalidates
+  // every thumbnail (each miss costs a full renderXsheetFrame + a fresh
+  // offline GL context — seconds of stall on a long timeline).
+  QHash<QString, QPixmap> m_thumbCache;
   double m_thumbCacheAspect = -1.0; // camera aspect the cache was rendered at
   Tool m_tool = SelectTool;
   int m_razorHoverFrame = -1;
@@ -339,6 +344,8 @@ private:
   QVector<int> m_snapFrames;
 
   void updateCursor();
+  // Right-click → "Set Duration…": type the timing instead of dragging it.
+  void promptShotDuration(int col, int currentDuration);
 };
 
 // ---- ZtoryAudioTrack ----
@@ -376,9 +383,15 @@ public:
   struct Segment { int r0; int r1; };  // inclusive frame range
   std::vector<Segment> findSegments() const;
 
-  // Selection
-  bool hasSelection() const { return m_selSeg.r0 >= 0; }
-  Segment selectedSegment() const { return m_selSeg; }
+  // Selection — a track can hold several selected segments at once (NLE-style).
+  // Kept sorted by r0 so the commit order of a move is well defined.
+  bool hasSelection() const { return !m_selSegs.empty(); }
+  const std::vector<Segment> &selectedSegments() const { return m_selSegs; }
+  // Cut/copy/delete of the whole selection, on this track only.  The panel
+  // drives these across every selected track so the operation never loses part
+  // of a multi-track selection.
+  void copySelectionInto(std::vector<ColumnLevel *> &out) const;
+  bool deleteSelection();  // true if anything was removed (undo step included)
 
   // ── Group move (multi-track) ────────────────────────────────────────────────
   // Coordinated by the panel: when one track's selected segment is dragged, the
@@ -391,10 +404,16 @@ public:
   void setSnapEnabled(bool on) { m_snapEnabled = on; }
   void setSnapFrames(const QVector<int> &f) { m_snapFrames = f; }
 
-  // Clipboard (shared across all audio tracks)
-  static void clipboardCut(ZtoryAudioTrack *src);
-  static void clipboardCopy(ZtoryAudioTrack *src);
-  static void clipboardPaste(ZtoryAudioTrack *dst, int frame);
+  // Clipboard (shared across all audio tracks).  These take the full track list
+  // because a selection can span several tracks: `anchor` is the focused track,
+  // and the clip stores each entry's column offset relative to it so a paste
+  // rebuilds the same cross-track layout.
+  static void clipboardCut(const QList<ZtoryAudioTrack *> &tracks,
+                           ZtoryAudioTrack *anchor);
+  static void clipboardCopy(const QList<ZtoryAudioTrack *> &tracks,
+                            ZtoryAudioTrack *anchor);
+  static void clipboardPaste(const QList<ZtoryAudioTrack *> &tracks,
+                             ZtoryAudioTrack *dst, int frame);
 
   int frameAtX(int x) const;
 
@@ -424,6 +443,12 @@ signals:
   void groupDragStarted();                // SegmentDrag begun on a selected seg
   void groupDragDelta(int deltaFrames);   // live delta during the drag
   void groupDragCommitted(int deltaFrames);// final delta on release
+  // Clipboard / delete: routed through the panel, which owns the track list and
+  // applies them to every selected track inside one undo block.
+  void copySelectionRequested();
+  void cutSelectionRequested();
+  void deleteSelectionRequested();
+  void pasteRequested(int frame);
   // Emitted while/after the bottom resize grip is dragged (final height on release).
   void trackHeightChanged(int h);
 
@@ -464,12 +489,22 @@ private:
   int  m_razorHoverFrame  = -1;
   QVector<int> m_cutFrames;
   // Segment selection & drag
-  Segment m_selSeg{-1, -1};
+  std::vector<Segment> m_selSegs;      // selected segments, sorted by r0
+  // Positions of the selected segments at drag start — a SegmentDrag moves the
+  // whole selection, so every one of them needs its own origin.
+  std::vector<Segment> m_dragOrigSegs;
   enum DragMode { NoDrag, SegmentDrag, TrimLeft, TrimRight, Resize };
   DragMode m_dragMode     = NoDrag;
   int  m_dragStartFrame   = -1;
+  // The segment actually clicked: anchor of the drag and target of a trim
+  // (a trim only ever affects that one edge, never the rest of the selection).
   int  m_dragOrigR0       = -1;
   int  m_dragOrigR1       = -1;
+  // Selection helpers
+  bool isSegmentSelected(const Segment &s) const;
+  void selectOnlySegment(const Segment &s);
+  void toggleSegmentSelected(const Segment &s);
+  void sortSelection();
   // L/M/S state — toggled via mousePressEvent, rendered in paintEvent
   bool m_locked = false;
   bool m_muted  = false;
@@ -486,10 +521,9 @@ private:
   bool m_hasFocus = false;
   // Undo snapshot taken at drag/trim start; committed in mouseReleaseEvent
   TXshSoundColumn *m_undoBefore = nullptr;
-  // Group-move: orig position of this track's selection captured at drag start.
-  // -1 when this track is not part of an active group move.
-  int m_groupOrigR0 = -1;
-  int m_groupOrigR1 = -1;
+  // Group-move: orig positions of this track's selection captured at drag
+  // start.  Empty when this track is not part of an active group move.
+  std::vector<Segment> m_groupOrigSegs;
   // True while THIS track is the one being dragged (drives group broadcast) so
   // it commits itself; sibling tracks are committed by the panel.
   bool m_isGroupLeader = false;
@@ -524,7 +558,8 @@ private:
   std::vector<ThumbEntry> m_entries;
   int m_currentCol = -1;
   int m_scrollOffset = 0; // horizontal pixel offset
-  QHash<int, QPixmap> m_thumbCache; // col → rendered composite thumbnail
+  // Keyed by sub-scene level name, not column — see ZtoryAnimaticTrack.
+  QHash<QString, QPixmap> m_thumbCache;
   double m_thumbCacheAspect = -1.0; // camera aspect the cache was rendered at
   static constexpr int kThumbH = 54;
   static constexpr int kThumbW = 80;
@@ -928,6 +963,11 @@ private:
   QToolButton *m_fitAllBtn      = nullptr;
   QToolButton *m_timecodeBtn    = nullptr;
   QToolButton *m_snapBtn        = nullptr;
+  // Kept so the S/T/C shortcuts in keyPressEvent can just click them, instead
+  // of duplicating the tool-switch logic that hangs off their clicked() slots.
+  QToolButton *m_selectBtn      = nullptr;
+  QToolButton *m_trimBtn        = nullptr;
+  QToolButton *m_razorBtn       = nullptr;
   bool m_snapEnabled = true;   // magnet on by default
   bool m_audioLinked = true;
   double m_ppf = 8.0;

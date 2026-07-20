@@ -24,12 +24,18 @@ class UndoBoardState final : public TUndo {
     QString                    m_label;
     std::vector<ZtoryShotSnap> m_before;
     std::vector<ZtoryShotSnap> m_after;
+    // Levels pulled out of the scene cast because the deleted shots were their
+    // last users.  The smart pointers keep them alive while this undo lives, so
+    // undo() can put them back and the snapshots' level pointers stay valid.
+    std::vector<TXshLevelP>    m_removedLevels;
 public:
     UndoBoardState(StoryboardPanel *panel, const QString &label,
                    std::vector<ZtoryShotSnap> before,
-                   std::vector<ZtoryShotSnap> after)
+                   std::vector<ZtoryShotSnap> after,
+                   std::vector<TXshLevelP> removedLevels = {})
         : m_panel(panel), m_label(label)
-        , m_before(std::move(before)), m_after(std::move(after)) {}
+        , m_before(std::move(before)), m_after(std::move(after))
+        , m_removedLevels(std::move(removedLevels)) {}
 
     void    undo() const override;
     void    redo() const override;

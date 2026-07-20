@@ -177,11 +177,26 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
   const int oldH       = m_ras ? m_ras->getLy() : 0;
   if (oldH <= 0 || oldBoxH <= 0.0 || !m_ras) return;
 
+  const double newBoxH = m_boxW / aspect;
+  const int newH       = qMax(1, (int)(m_rows * newBoxH));
+  // Compare the resulting PIXEL layout, not the float aspect. On reopen,
+  // persistLoad reconstructs m_boxAspect from the saved PNG's integer height, so
+  // it drifts from the true camera aspect by sub-pixel rounding (harmless on a
+  // clean 16:9, but ~0.0015 on e.g. a 1.85:1 camera — above the 1e-4 guard).
+  // That drift used to trigger a spurious reanchor that sliced every cross-box
+  // drawing into its own box and left ghost seams in the empty panels. When the
+  // new layout has the SAME raster height, nothing really changed: just adopt
+  // the exact aspect and skip the destructive reflow.
+  if (newH == oldH) {
+    m_boxAspect = aspect;  // correct the drift so the fast-path guard sticks
+    return;
+  }
+
   // Snapshot the pre-reshape canvas (raster + its aspect) so Cmd-Z reverts the
   // camera-format reflow cleanly instead of leaving a stale grid.
   pushUndo();
   m_boxAspect = aspect;
-  m_boxH      = m_boxW / aspect;
+  m_boxH      = newBoxH;
   m_ras       = reanchorRaster(m_ras, oldBoxH, m_boxH);
   update();
 }
@@ -686,7 +701,9 @@ void ZtoryThumbnailCanvas::beginStroke(const QPointF &widgetPos, double pressure
   const QPointF w = widgetToWorld(widgetPos);
   if (w.x() < 0 || w.y() < 0 || w.x() > gridW() || w.y() > gridH()) return;
 
-  pushUndo();   // snapshot before the stroke modifies the canvas
+  // Record only the tiles the stroke touches (see askWrite): a full-canvas
+  // clone here was the stall at stroke start.
+  beginStrokeRecording();
   setFocus();   // so Cmd-Z reaches us right after drawing
 
   // Erasers paint white onto the opaque page; brushes use the chosen ink.
@@ -732,6 +749,7 @@ void ZtoryThumbnailCanvas::endStroke() {
   delete m_brush;
   m_brush    = nullptr;
   m_stroking = false;
+  endStrokeRecording();  // turn the touched tiles into one undo entry
   update();
   schedulePersistSave();
 }
@@ -886,21 +904,38 @@ void ZtoryThumbnailCanvas::mouseReleaseEvent(QMouseEvent *e) {
   }
 }
 
-bool ZtoryThumbnailCanvas::handleTransformKey(QKeyEvent *e) {
+// Would this key be consumed by the Transform tool? Kept separate from
+// handleTransformKey so eventFilter can claim it on ShortcutOverride (see below)
+// WITHOUT executing the action — otherwise a global shortcut like Delete (clear
+// cells) swallows the key before it ever reaches us as a KeyPress.
+bool ZtoryThumbnailCanvas::wantsTransformKey(QKeyEvent *e) const {
   if (!m_xformMode) return false;
   // On macOS Qt maps Cmd → ControlModifier (Cmd-C/V here, Ctrl-C/V elsewhere).
   const bool cmd = e->modifiers() & Qt::ControlModifier;
+  if (cmd && e->key() == Qt::Key_C) return hasFloat();
+  if (cmd && e->key() == Qt::Key_V) return !m_clip.isNull();
+  if (!hasFloat()) return false;
+  switch (e->key()) {
+  case Qt::Key_Escape:
+  case Qt::Key_Return:
+  case Qt::Key_Enter:
+  case Qt::Key_Delete:
+  case Qt::Key_Backspace: return true;
+  }
+  return false;
+}
+
+bool ZtoryThumbnailCanvas::handleTransformKey(QKeyEvent *e) {
+  if (!wantsTransformKey(e)) return false;
+  const bool cmd = e->modifiers() & Qt::ControlModifier;
   if (cmd && e->key() == Qt::Key_C) {
-    if (!hasFloat()) return false;
     copyFloat();
     return true;
   }
   if (cmd && e->key() == Qt::Key_V) {
-    if (m_clip.isNull()) return false;
     pasteFloat();
     return true;
   }
-  if (!hasFloat()) return false;
   switch (e->key()) {
   case Qt::Key_Escape: cancelFloat(); return true;
   case Qt::Key_Return:
@@ -921,14 +956,31 @@ bool ZtoryThumbnailCanvas::eventFilter(QObject *obj, QEvent *ev) {
   // Catch our shortcuts regardless of which widget in our window has focus (a
   // toolbar button often steals it). Guarded to our active window and to keys we
   // actually consume, so normal typing / the app's own undo elsewhere is safe.
-  if (ev->type() == QEvent::KeyPress && isVisible() && window() &&
-      window()->isActiveWindow()) {
+  const bool isKey = ev->type() == QEvent::KeyPress ||
+                     ev->type() == QEvent::ShortcutOverride;
+  if (isKey && isVisible() && window() && window()->isActiveWindow()) {
     auto *ke = static_cast<QKeyEvent *>(ev);
     // Undo only when this canvas is the focus of attention (focused, hovered or
     // in a selection tool) AND we have history — else let the app handle Cmd-Z.
-    if ((hasFocus() || underMouse() || m_xformMode || m_selectMode) &&
-        handleUndoKey(ke))
-      return true;
+    const bool undoish =
+        hasFocus() || underMouse() || m_xformMode || m_selectMode;
+    const bool wantsUndo = undoish && (ke->modifiers() & Qt::ControlModifier) &&
+                           ke->key() == Qt::Key_Z &&
+                           ((ke->modifiers() & Qt::ShiftModifier)
+                                ? !m_redo.empty()
+                                : !m_undo.empty());
+    // ShortcutOverride fires BEFORE a matching global QAction (e.g. Delete =
+    // clear cells) would eat the key. Accepting it makes Qt re-deliver the key
+    // as an ordinary KeyPress that the branches below then handle — without it,
+    // Del/Backspace never reach the Transform tool at all.
+    if (ev->type() == QEvent::ShortcutOverride) {
+      if (wantsUndo || wantsTransformKey(ke)) {
+        ke->accept();
+        return true;
+      }
+      return QWidget::eventFilter(obj, ev);
+    }
+    if (undoish && handleUndoKey(ke)) return true;
     if (m_xformMode && handleTransformKey(ke)) return true;
   }
   return QWidget::eventFilter(obj, ev);
@@ -1165,6 +1217,11 @@ void ZtoryThumbnailCanvas::cancelFloat() {
     m_ras = rasterFromQImage(canvasImg, true, true);
     schedulePersistSave();
   }
+  // Cancel fully reverts to the pre-lift canvas (a move restored its source, a
+  // copy/paste never touched it), so the snapshot pushed when the float was
+  // created now matches the current state exactly. Drop it so Esc leaves no
+  // dangling undo step that would make the next Cmd+Z a silent no-op.
+  if (!m_undo.empty()) m_undo.pop_back();
   m_floatImg  = QImage();
   m_floatDrag = -1;
   update();
@@ -1172,6 +1229,10 @@ void ZtoryThumbnailCanvas::cancelFloat() {
 
 void ZtoryThumbnailCanvas::deleteFloat() {
   if (!hasFloat()) return;
+  // Snapshot the canvas AND the float we're about to drop, so Cmd+Z brings the
+  // deleted selection back (the user expects Del to be undoable). makeMetaSnapshot
+  // captures the still-live float; pushUndo clones the raster alongside it.
+  pushUndo();
   m_floatImg  = QImage();  // source already cleared on lift (for a move)
   m_floatDrag = -1;
   update();
@@ -1181,12 +1242,114 @@ void ZtoryThumbnailCanvas::deleteFloat() {
 // Undo / redo — full-canvas snapshots (raster + grid + merges)
 //=============================================================================
 
-void ZtoryThumbnailCanvas::pushUndo() {
-  if (!m_ras) return;
+static const int kUndoTile = 256;  // tile side for stroke copy-on-write
+
+ZtoryThumbnailCanvas::Snapshot ZtoryThumbnailCanvas::makeMetaSnapshot() const {
+  Snapshot s;
+  s.ras       = TRaster32P();
+  s.cols      = m_cols;
+  s.rows      = m_rows;
+  s.merges    = m_merges;
+  s.boxAspect = m_boxAspect;
+  // Carry the live floating selection so undo/redo can restore it (see Snapshot).
+  s.floatImg      = m_floatImg;
+  s.floatCenter   = m_floatCenter;
+  s.floatScale    = m_floatScale;
+  s.floatAngle    = m_floatAngle;
+  s.floatWasMove  = m_floatWasMove;
+  s.floatSrcRect  = m_floatSrcRect;
+  return s;
+}
+
+void ZtoryThumbnailCanvas::trimHistory() {
   static const size_t kMaxUndo = 16;
-  m_undo.push_back({m_ras->clone(), m_cols, m_rows, m_merges, m_boxAspect});
   if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
   m_redo.clear();  // a fresh edit invalidates the redo branch
+}
+
+void ZtoryThumbnailCanvas::pushUndo() {
+  if (!m_ras) return;
+  Snapshot s = makeMetaSnapshot();
+  s.ras      = m_ras->clone();
+  m_undo.push_back(s);
+  trimHistory();
+}
+
+// Copy the tiles listed in \a like out of the current raster (used to build the
+// opposite-direction snapshot when undoing/redoing a stroke).
+std::vector<ZtoryThumbnailCanvas::Patch>
+ZtoryThumbnailCanvas::capturePatchesAt(const std::vector<Patch> &like) const {
+  std::vector<Patch> out;
+  if (!m_ras) return out;
+  out.reserve(like.size());
+  for (const Patch &p : like) {
+    const int lx = p.before->getLx(), ly = p.before->getLy();
+    // Geometry changed under us (undo across a resize): skip rather than
+    // read out of bounds.  The resize's own full snapshot restores the pixels.
+    if (p.pos.x < 0 || p.pos.y < 0 || p.pos.x + lx > m_ras->getLx() ||
+        p.pos.y + ly > m_ras->getLy())
+      continue;
+    TRaster32P cur(lx, ly);
+    cur->copy(m_ras->extract(p.pos.x, p.pos.y, p.pos.x + lx - 1,
+                             p.pos.y + ly - 1));
+    out.push_back({p.pos, cur});
+  }
+  return out;
+}
+
+void ZtoryThumbnailCanvas::applyPatches(const std::vector<Patch> &patches) {
+  if (!m_ras) return;
+  for (const Patch &p : patches) {
+    if (p.pos.x < 0 || p.pos.y < 0 ||
+        p.pos.x + p.before->getLx() > m_ras->getLx() ||
+        p.pos.y + p.before->getLy() > m_ras->getLy())
+      continue;
+    m_ras->copy(p.before, p.pos);
+  }
+}
+
+void ZtoryThumbnailCanvas::beginStrokeRecording() {
+  m_strokeTiles.clear();
+  m_recordingStroke = true;
+}
+
+// Turn the tiles saved during the stroke into one undo entry.  Nothing touched
+// → nothing to undo.
+void ZtoryThumbnailCanvas::endStrokeRecording() {
+  m_recordingStroke = false;
+  if (m_strokeTiles.empty()) return;
+  Snapshot s = makeMetaSnapshot();
+  s.patches.reserve(m_strokeTiles.size());
+  for (auto &kv : m_strokeTiles)
+    s.patches.push_back(
+        {TPoint(kv.first.first * kUndoTile, kv.first.second * kUndoTile),
+         kv.second});
+  m_strokeTiles.clear();
+  m_undo.push_back(std::move(s));
+  trimHistory();
+}
+
+// The brush calls this before writing \a rect: save the untouched pixels of any
+// tile it overlaps, once.  This is the whole stroke undo cost.
+bool ZtoryThumbnailCanvas::askWrite(const TRect &rect) {
+  if (!m_recordingStroke || !m_ras) return true;
+  const int rx0 = std::max(0, rect.x0), ry0 = std::max(0, rect.y0);
+  const int rx1 = std::min(m_ras->getLx() - 1, rect.x1);
+  const int ry1 = std::min(m_ras->getLy() - 1, rect.y1);
+  if (rx0 > rx1 || ry0 > ry1) return true;
+
+  for (int ty = ry0 / kUndoTile; ty <= ry1 / kUndoTile; ++ty)
+    for (int tx = rx0 / kUndoTile; tx <= rx1 / kUndoTile; ++tx) {
+      auto key = std::make_pair(tx, ty);
+      if (m_strokeTiles.count(key)) continue;  // already saved: copy-on-write
+      const int x0 = tx * kUndoTile, y0 = ty * kUndoTile;
+      const int x1 = std::min(x0 + kUndoTile - 1, m_ras->getLx() - 1);
+      const int y1 = std::min(y0 + kUndoTile - 1, m_ras->getLy() - 1);
+      TRaster32P tile(x1 - x0 + 1, y1 - y0 + 1);
+      tile->copy(m_ras->extract(x0, y0, x1, y1));
+      m_strokeTiles[key] = tile;
+    }
+  return true;
 }
 
 void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
@@ -1200,7 +1363,15 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
     m_boxAspect = s.boxAspect;
     m_boxH      = m_boxW / s.boxAspect;
   }
-  m_floatImg = QImage();  // any floating selection is dropped on undo/redo
+  // Restore whatever floating selection was captured with this snapshot (a null
+  // image simply clears the float) — this is what makes an undone Del re-float
+  // the drawing, and a redone one drop it again.
+  m_floatImg     = s.floatImg;
+  m_floatCenter  = s.floatCenter;
+  m_floatScale   = s.floatScale;
+  m_floatAngle   = s.floatAngle;
+  m_floatWasMove = s.floatWasMove;
+  m_floatSrcRect = s.floatSrcRect;
   m_floatDrag = -1;
   clearSelection();
   schedulePersistSave();
@@ -1208,22 +1379,48 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
   update();
 }
 
+// A patch snapshot only swaps the touched tiles: build the opposite entry from
+// the current pixels of those same tiles, then paste the stored ones back.
 void ZtoryThumbnailCanvas::undo() {
   if (m_undo.empty()) return;
   if (!m_ras) return;
-  m_redo.push_back({m_ras->clone(), m_cols, m_rows, m_merges, m_boxAspect});
   Snapshot s = m_undo.back();
   m_undo.pop_back();
-  restoreSnapshot(s);
+
+  if (s.ras) {
+    Snapshot cur = makeMetaSnapshot();
+    cur.ras      = m_ras->clone();
+    m_redo.push_back(std::move(cur));
+    restoreSnapshot(s);
+    return;
+  }
+  Snapshot cur = makeMetaSnapshot();
+  cur.patches  = capturePatchesAt(s.patches);
+  m_redo.push_back(std::move(cur));
+  applyPatches(s.patches);
+  schedulePersistSave();
+  update();
 }
 
 void ZtoryThumbnailCanvas::redo() {
   if (m_redo.empty()) return;
   if (!m_ras) return;
-  m_undo.push_back({m_ras->clone(), m_cols, m_rows, m_merges, m_boxAspect});
   Snapshot s = m_redo.back();
   m_redo.pop_back();
-  restoreSnapshot(s);
+
+  if (s.ras) {
+    Snapshot cur = makeMetaSnapshot();
+    cur.ras      = m_ras->clone();
+    m_undo.push_back(std::move(cur));
+    restoreSnapshot(s);
+    return;
+  }
+  Snapshot cur = makeMetaSnapshot();
+  cur.patches  = capturePatchesAt(s.patches);
+  m_undo.push_back(std::move(cur));
+  applyPatches(s.patches);
+  schedulePersistSave();
+  update();
 }
 
 bool ZtoryThumbnailCanvas::handleUndoKey(QKeyEvent *e) {
@@ -1255,8 +1452,17 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   const QPointF tl = worldToWidget(QPointF(0, 0));
   const QRectF target(tl, QSizeF(gridW() * m_zoom, gridH() * m_zoom));
 
-  QImage img = rasterToQImage(m_ras, /*premultiplied=*/true, /*mirrored=*/true);
-  p.drawImage(target, img);
+  // rasterToQImage() wraps the raster memory without copying, but mirrored=true
+  // deep-copies the whole surface (~31 MB on a 4x15 grid) on EVERY repaint —
+  // i.e. on every mouse move while drawing.  Take the zero-copy view and let
+  // the painter apply the vertical flip: Qt then only touches the pixels inside
+  // the clip region.
+  QImage img = rasterToQImage(m_ras, /*premultiplied=*/true, /*mirrored=*/false);
+  p.save();
+  p.translate(target.left(), target.top() + target.height());
+  p.scale(1.0, -1.0);
+  p.drawImage(QRectF(0.0, 0.0, target.width(), target.height()), img);
+  p.restore();
 
   // Thin panel separators (overlay only — the surface itself is contiguous).
   // Drawn per box-edge so the borders INTERNAL to a merged region are skipped,

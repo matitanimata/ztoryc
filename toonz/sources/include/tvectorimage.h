@@ -392,6 +392,12 @@ existing stroke. this method is used for undoing removeEndpoints . */
   //! having loaded the vectorimage)
   void recomputeRegionsIfNeeded();
 
+  //! Rebuilds all regions from scratch (same full recompute performed after
+  //! loading), regardless of the just-loaded gate; existing region colors are
+  //! preserved. Needed because incremental updates can leave stale
+  //! intersection data that makes closed shapes unfillable until reload.
+  void forceRegionsRecompute();
+
   /*! Remove all image strokes and all image regions with style index contained
    * in \b styleIds vector.*/
   void eraseStyleIds(const std::vector<int> styleIds);

@@ -532,8 +532,12 @@ void KitsuClient::pushTasks(const QString &projectId,
   m_taskSeqIds.clear();
   m_taskShotIds.clear();
   m_taskIdByKey.clear();
+  m_taskStatusByKey.clear();
+  m_taskAssigneesByKey.clear();
+  m_assignQueue.clear();
+  m_assignIdx = 0;
   m_ttCreateQueue.clear();
-  m_taskCreateIdx = m_taskApplyIdx = m_taskStatusesSet = 0;
+  m_taskCreateIdx = m_taskApplyIdx = m_taskStatusesSet = m_taskUnchanged = 0;
 
   // Reverse status map: Ztoryc TaskStatus -> canonical Kitsu status id (only the
   // six pipeline short names, so approved/rejected/neutral don't shadow them).
@@ -544,7 +548,9 @@ void KitsuClient::pushTasks(const QString &projectId,
         sn == "retake" || sn == "done")
       m_statusIdByZ.insert(static_cast<int>(mapStatus(st)), st.id);
   }
-  taskLoadTaskTypes();
+  // Load the roster first so assignee names resolve to person ids for the
+  // add-only assign pass that follows the status updates.
+  loadRosterThen(m_taskProjectId, [this]() { taskLoadTaskTypes(); });
 }
 
 void KitsuClient::taskLoadTaskTypes() {
@@ -629,9 +635,14 @@ void KitsuClient::taskLoadProjectTasks() {
     if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
     for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
       const QJsonObject o = v.toObject();
-      m_taskIdByKey.insert(o.value("entity_id").toString() + "/" +
-                               o.value("task_type_id").toString(),
-                           o.value("id").toString());
+      const QString key = o.value("entity_id").toString() + "/" +
+                          o.value("task_type_id").toString();
+      m_taskIdByKey.insert(key, o.value("id").toString());
+      m_taskStatusByKey.insert(key, o.value("task_status_id").toString());
+      QSet<QString> assignees;
+      for (const QJsonValue &a : o.value("assignees").toArray())
+        assignees.insert(a.toString());
+      m_taskAssigneesByKey.insert(key, assignees);
     }
     taskApplyNext();
   });
@@ -648,6 +659,13 @@ void KitsuClient::taskApplyNext() {
     // Skip anything we couldn't resolve (unknown task-type, shot or status).
     if (ttId.isEmpty() || shotId.isEmpty() || taskId.isEmpty() ||
         statusId.isEmpty()) {
+      ++m_taskApplyIdx;
+      continue;
+    }
+    // Already at the target status in Kitsu → don't re-comment (would spam the
+    // activity feed and notifications); only touch what actually changed.
+    if (m_taskStatusByKey.value(shotId + "/" + ttId) == statusId) {
+      ++m_taskUnchanged;
       ++m_taskApplyIdx;
       continue;
     }
@@ -669,8 +687,44 @@ void KitsuClient::taskApplyNext() {
     });
     return;  // resume in the reply callback
   }
-  emit tasksPushed(true, m_taskStatusesSet,
-                   tr("Done — %1 task statuses set in Kitsu.").arg(m_taskStatusesSet));
+  // Statuses done — now queue the add-only assignee updates and run them before
+  // reporting completion. Each Ztoryc assignee that maps to a known person and
+  // isn't already on the task is added (never removed).
+  const int statusesSet = m_taskStatusesSet, unchanged = m_taskUnchanged;
+  m_assignQueue.clear();
+  m_assignIdx = 0;
+  QSet<QString> skippedNames;  // Ztoryc assignees that aren't on the Kitsu team
+  for (const KitsuTaskPush &t : m_taskQueue) {
+    if (t.assignees.isEmpty()) continue;
+    const QString ttId   = resolveTaskTypeId(t.taskType);
+    const QString shotId = m_taskShotIds.value(m_taskSeqIds.value(t.seq) + "/" + t.shot);
+    const QString taskId = m_taskIdByKey.value(shotId + "/" + ttId);
+    if (taskId.isEmpty()) continue;
+    QSet<QString> &have = m_taskAssigneesByKey[shotId + "/" + ttId];
+    for (const QString &name : t.assignees) {
+      const QString pid = m_personIdByName.value(name.trimmed().toLower());
+      // Only assign people who are on this project's Kitsu team — never create
+      // an out-of-team assignment. Unknown/out-of-team names are reported.
+      if (pid.isEmpty() || !m_teamPersonIds.contains(pid)) {
+        if (!name.trimmed().isEmpty()) skippedNames.insert(name.trimmed());
+        continue;
+      }
+      if (have.contains(pid)) continue;
+      have.insert(pid);  // avoid duplicate assigns within this push
+      m_assignQueue.push_back({taskId, pid});
+    }
+  }
+  const int assigned = m_assignQueue.size(), skipped = skippedNames.size();
+  m_assignOnDone = [this, statusesSet, unchanged, assigned, skipped]() {
+    QString msg = unchanged > 0
+                      ? tr("Done — %1 task statuses changed, %2 unchanged.")
+                            .arg(statusesSet).arg(unchanged)
+                      : tr("Done — %1 task statuses set in Kitsu.").arg(statusesSet);
+    if (assigned > 0) msg += tr("  %1 people assigned.").arg(assigned);
+    if (skipped > 0)  msg += tr("  %1 not in team (skipped).").arg(skipped);
+    emit tasksPushed(true, statusesSet, msg);
+  };
+  assignRun();
 }
 
 //----------------------------------------------------------------------------
@@ -692,7 +746,8 @@ void KitsuClient::pullStatuses(const QString &projectId) {
   m_pullShotSeq.clear();
   m_pullShotName.clear();
   m_pullTtName.clear();
-  pullLoadSequences();
+  // Load the roster first so task assignees resolve to display names.
+  loadRosterThen(m_pullProjectId, [this]() { pullLoadSequences(); });
 }
 
 void KitsuClient::pullLoadSequences() {
@@ -763,6 +818,10 @@ void KitsuClient::pullLoadTasks() {
       e.kitsuShotId = shotId;
       e.taskType    = ttName;
       e.status      = toZtoryStatus(o.value("task_status_id").toString());
+      for (const QJsonValue &a : o.value("assignees").toArray()) {
+        const QString nm = m_personNameById.value(a.toString());
+        if (!nm.isEmpty()) e.assignees.push_back(nm);
+      }
       entries.push_back(e);
     }
     emit statusesPulled(true, entries,
@@ -789,6 +848,26 @@ QVector<KitsuAsset> KitsuClient::buildAssetsFromModel() {
     ka.name         = a.name.trimmed();
     ka.kitsuAssetId = a.kitsuAssetId;
     out.push_back(ka);
+  }
+  return out;
+}
+
+QVector<KitsuAssetTaskPush> KitsuClient::buildAssetTasksFromModel() {
+  QVector<KitsuAssetTaskPush> out;
+  ZtoryModel *m = ZtoryModel::instance();
+  for (const Asset &a : m->assets()) {
+    if (a.name.trimmed().isEmpty()) continue;
+    // Push every task in this asset TYPE's (custom) pipeline, with its status
+    // (defaults to TODO when the asset has no explicit state for it yet).
+    for (const QString &tt : m->assetTaskTypesForType(a.type)) {
+      KitsuAssetTaskPush p;
+      p.assetType = a.type;
+      p.assetName = a.name.trimmed();
+      p.taskType  = tt;
+      p.status    = a.tasks.value(tt).status;
+      p.assignees = a.tasks.value(tt).assignees;
+      out.push_back(p);
+    }
   }
   return out;
 }
@@ -895,6 +974,218 @@ void KitsuClient::asPushProcessNext() {
                         .arg(m_asUpdated));
 }
 
+//----------------------------------------------------------------------------
+// Push asset TASK statuses (mirror of the shot task pipeline, for_entity=Asset)
+//----------------------------------------------------------------------------
+
+void KitsuClient::atFail(const QString &message) {
+  emit assetTasksPushed(false, m_atStatusesSet, message);
+}
+
+void KitsuClient::pushAssetTasks(const QString &projectId,
+                                 const QVector<KitsuAssetTaskPush> &tasks) {
+  if (!isLoggedIn()) { emit assetTasksPushed(false, 0, tr("Not logged in.")); return; }
+  if (projectId.isEmpty() || tasks.isEmpty()) {
+    emit assetTasksPushed(true, 0, tr("No asset task statuses to push."));
+    return;
+  }
+  m_atProjectId = projectId;
+  m_atQueue     = tasks;
+  m_atTtIdByName.clear();
+  m_atAssetTypeIdByName.clear();
+  m_atAssetIds.clear();
+  m_atTaskIdByKey.clear();
+  m_atStatusByKey.clear();
+  m_atAssigneesByKey.clear();
+  m_assignQueue.clear();
+  m_assignIdx = 0;
+  m_atTtCreateQueue.clear();
+  m_atCreateIdx = m_atApplyIdx = m_atStatusesSet = m_atUnchanged = 0;
+
+  // Reverse status map (same six pipeline statuses as the shot push).
+  m_statusIdByZ.clear();
+  for (const KitsuTaskStatus &st : m_taskStatuses) {
+    const QString sn = st.shortName.toLower();
+    if (sn == "todo" || sn == "ready" || sn == "wip" || sn == "wfa" ||
+        sn == "retake" || sn == "done")
+      m_statusIdByZ.insert(static_cast<int>(mapStatus(st)), st.id);
+  }
+  // Load the roster first so assignee names resolve for the add-only assign pass.
+  loadRosterThen(m_atProjectId, [this]() { atLoadTaskTypes(); });
+}
+
+void KitsuClient::atLoadTaskTypes() {
+  emit shotsPushProgress(tr("Loading asset task types…"));
+  QNetworkReply *r = m_nam->get(authGet("/api/data/task-types"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      if (o.value("for_entity").toString() == "Asset")
+        m_atTtIdByName.insert(o.value("name").toString().toLower(),
+                              o.value("id").toString());
+    }
+    // Distinct asset task-type ids used by the queue and known to Kitsu.
+    for (const KitsuAssetTaskPush &t : m_atQueue) {
+      const QString id = m_atTtIdByName.value(normalizeTaskType(t.taskType));
+      if (!id.isEmpty() && !m_atTtCreateQueue.contains(id))
+        m_atTtCreateQueue.push_back(id);
+    }
+    atCreateNext();
+  });
+}
+
+void KitsuClient::atCreateNext() {
+  if (m_atCreateIdx >= m_atTtCreateQueue.size()) { atLoadAssetTypes(); return; }
+  const QString ttId = m_atTtCreateQueue[m_atCreateIdx];
+  emit shotsPushProgress(tr("Creating asset tasks (%1/%2)…")
+                             .arg(m_atCreateIdx + 1)
+                             .arg(m_atTtCreateQueue.size()));
+  QNetworkReply *r = authPost("/api/actions/projects/" + m_atProjectId +
+                                  "/task-types/" + ttId + "/assets/create-tasks",
+                              "{}");
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+    ++m_atCreateIdx;
+    atCreateNext();
+  });
+}
+
+void KitsuClient::atLoadAssetTypes() {
+  QNetworkReply *r = m_nam->get(authGet("/api/data/asset-types"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_atAssetTypeIdByName.insert(o.value("name").toString().toLower(),
+                                   o.value("id").toString());
+    }
+    atLoadAssets();
+  });
+}
+
+void KitsuClient::atLoadAssets() {
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_atProjectId + "/assets"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_atAssetIds.insert(o.value("entity_type_id").toString() + "/" +
+                              o.value("name").toString().toLower(),
+                          o.value("id").toString());
+    }
+    atLoadTasks();
+  });
+}
+
+void KitsuClient::atLoadTasks() {
+  emit shotsPushProgress(tr("Reading existing asset tasks…"));
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_atProjectId + "/tasks"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      const QString key = o.value("entity_id").toString() + "/" +
+                          o.value("task_type_id").toString();
+      m_atTaskIdByKey.insert(key, o.value("id").toString());
+      m_atStatusByKey.insert(key, o.value("task_status_id").toString());
+      QSet<QString> assignees;
+      for (const QJsonValue &a : o.value("assignees").toArray())
+        assignees.insert(a.toString());
+      m_atAssigneesByKey.insert(key, assignees);
+    }
+    atApplyNext();
+  });
+}
+
+void KitsuClient::atApplyNext() {
+  while (m_atApplyIdx < m_atQueue.size()) {
+    const KitsuAssetTaskPush t = m_atQueue[m_atApplyIdx];
+    const QString ttId      = m_atTtIdByName.value(normalizeTaskType(t.taskType));
+    const QString typeId    = m_atAssetTypeIdByName.value(t.assetType.toLower());
+    const QString assetId   = m_atAssetIds.value(typeId + "/" + t.assetName.toLower());
+    const QString taskId    = m_atTaskIdByKey.value(assetId + "/" + ttId);
+    const QString statusId  = statusIdFor(t.status);
+    // Skip anything we couldn't resolve (unknown task-type, asset or status).
+    if (ttId.isEmpty() || assetId.isEmpty() || taskId.isEmpty() ||
+        statusId.isEmpty()) {
+      ++m_atApplyIdx;
+      continue;
+    }
+    // Already at the target status in Kitsu → don't re-comment (would spam the
+    // activity feed and notifications); only touch what actually changed.
+    if (m_atStatusByKey.value(assetId + "/" + ttId) == statusId) {
+      ++m_atUnchanged;
+      ++m_atApplyIdx;
+      continue;
+    }
+    emit shotsPushProgress(tr("Setting asset task status (%1/%2)…")
+                               .arg(m_atApplyIdx + 1)
+                               .arg(m_atQueue.size()));
+    QJsonObject body;
+    body["task_status_id"] = statusId;
+    body["comment"]        = "Status synced from Ztoryc";
+    QNetworkReply *r = authPost("/api/actions/tasks/" + taskId + "/comment",
+                                QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(r, &QNetworkReply::finished, this, [this, r]() {
+      r->deleteLater();
+      const QByteArray b = r->readAll();
+      if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
+      ++m_atStatusesSet;
+      ++m_atApplyIdx;
+      atApplyNext();
+    });
+    return;  // resume in the reply callback
+  }
+  // Statuses done — queue the add-only assignee updates, then report.
+  const int statusesSet = m_atStatusesSet, unchanged = m_atUnchanged;
+  m_assignQueue.clear();
+  m_assignIdx = 0;
+  QSet<QString> skippedNames;  // assignees that aren't on the Kitsu team
+  for (const KitsuAssetTaskPush &t : m_atQueue) {
+    if (t.assignees.isEmpty()) continue;
+    const QString ttId    = m_atTtIdByName.value(normalizeTaskType(t.taskType));
+    const QString typeId  = m_atAssetTypeIdByName.value(t.assetType.toLower());
+    const QString assetId = m_atAssetIds.value(typeId + "/" + t.assetName.toLower());
+    const QString taskId  = m_atTaskIdByKey.value(assetId + "/" + ttId);
+    if (taskId.isEmpty()) continue;
+    QSet<QString> &have = m_atAssigneesByKey[assetId + "/" + ttId];
+    for (const QString &name : t.assignees) {
+      const QString pid = m_personIdByName.value(name.trimmed().toLower());
+      if (pid.isEmpty() || !m_teamPersonIds.contains(pid)) {
+        if (!name.trimmed().isEmpty()) skippedNames.insert(name.trimmed());
+        continue;
+      }
+      if (have.contains(pid)) continue;
+      have.insert(pid);
+      m_assignQueue.push_back({taskId, pid});
+    }
+  }
+  const int assigned = m_assignQueue.size(), skipped = skippedNames.size();
+  m_assignOnDone = [this, statusesSet, unchanged, assigned, skipped]() {
+    QString msg = unchanged > 0
+                      ? tr("Done — %1 asset task statuses changed, %2 unchanged.")
+                            .arg(statusesSet).arg(unchanged)
+                      : tr("Done — %1 asset task statuses set in Kitsu.").arg(statusesSet);
+    if (assigned > 0) msg += tr("  %1 people assigned.").arg(assigned);
+    if (skipped > 0)  msg += tr("  %1 not in team (skipped).").arg(skipped);
+    emit assetTasksPushed(true, statusesSet, msg);
+  };
+  assignRun();
+}
+
 void KitsuClient::asPullFail(const QString &message) {
   emit assetsPulled(false, {}, message);
 }
@@ -941,6 +1232,219 @@ void KitsuClient::asPullLoadAssets() {
     }
     emit assetsPulled(true, out,
                       tr("Pulled %1 assets from Kitsu.").arg(out.size()));
+  });
+}
+
+//----------------------------------------------------------------------------
+// Asset-task status pull (review sync) — Kitsu -> Ztoryc, mirror of
+// pullStatuses for the asset entity. Chain: asset-types -> assets ->
+// task-types(Asset) -> tasks -> emit assetStatusesPulled.
+//----------------------------------------------------------------------------
+
+void KitsuClient::apFail(const QString &message) {
+  emit assetStatusesPulled(false, {}, message);
+}
+
+void KitsuClient::pullAssetStatuses(const QString &projectId) {
+  if (!isLoggedIn()) { emit assetStatusesPulled(false, {}, tr("Not logged in.")); return; }
+  if (projectId.isEmpty()) {
+    emit assetStatusesPulled(false, {}, tr("Project not linked to Kitsu."));
+    return;
+  }
+  m_apProjectId = projectId;
+  m_apAssetTypeName.clear();
+  m_apAssetName.clear();
+  m_apAssetType.clear();
+  m_apTtName.clear();
+  // Load the roster first so task assignees resolve to display names.
+  loadRosterThen(m_apProjectId, [this]() { apLoadTypes(); });
+}
+
+void KitsuClient::apLoadTypes() {
+  emit shotsPushProgress(tr("Reading Kitsu asset types…"));
+  QNetworkReply *r = m_nam->get(authGet("/api/data/asset-types"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { apFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_apAssetTypeName.insert(o.value("id").toString(), o.value("name").toString());
+    }
+    apLoadAssets();
+  });
+}
+
+void KitsuClient::apLoadAssets() {
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_apProjectId + "/assets"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { apFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      const QString id    = o.value("id").toString();
+      m_apAssetName.insert(id, o.value("name").toString());
+      m_apAssetType.insert(
+          id, m_apAssetTypeName.value(o.value("entity_type_id").toString()));
+    }
+    apLoadTaskTypes();
+  });
+}
+
+void KitsuClient::apLoadTaskTypes() {
+  QNetworkReply *r = m_nam->get(authGet("/api/data/task-types"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { apFail(errorMessage(r, b)); return; }
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      if (o.value("for_entity").toString() == "Asset")
+        m_apTtName.insert(o.value("id").toString(), o.value("name").toString());
+    }
+    apLoadTasks();
+  });
+}
+
+void KitsuClient::apLoadTasks() {
+  emit shotsPushProgress(tr("Reading Kitsu asset task statuses…"));
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_apProjectId + "/tasks"));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { apFail(errorMessage(r, b)); return; }
+    QVector<KitsuAssetStatusEntry> entries;
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o    = v.toObject();
+      const QString assetId  = o.value("entity_id").toString();
+      const QString ttName   = m_apTtName.value(o.value("task_type_id").toString());
+      if (ttName.isEmpty() || !m_apAssetName.contains(assetId)) continue;
+      KitsuAssetStatusEntry e;
+      e.assetType    = m_apAssetType.value(assetId);
+      e.assetName    = m_apAssetName.value(assetId);
+      e.kitsuAssetId = assetId;
+      e.taskType     = ttName;
+      e.status       = toZtoryStatus(o.value("task_status_id").toString());
+      for (const QJsonValue &a : o.value("assignees").toArray()) {
+        const QString nm = m_personNameById.value(a.toString());
+        if (!nm.isEmpty()) e.assignees.push_back(nm);
+      }
+      entries.push_back(e);
+    }
+    emit assetStatusesPulled(
+        true, entries,
+        tr("Pulled %1 asset task statuses from Kitsu.").arg(entries.size()));
+  });
+}
+
+//----------------------------------------------------------------------------
+// Team / assignees (persons) — shared by the status pulls (to resolve assignee
+// names) and by the assign pass (to resolve names -> person ids and to restrict
+// assignments to the project team). Routes verified against live Zou:
+//   persons     : GET /api/data/persons                     (id, full_name, …)
+//   project team: GET /api/data/projects/<pid>?relations=true  ("team" = [id,…])
+//   assign      : PUT /api/actions/tasks/<tid>/assign  {person_id}  (add-only)
+// Note: the project's `team` is a many-to-many relationship, so it only appears
+// with ?relations=true — without it the field is absent and the team looks empty.
+//----------------------------------------------------------------------------
+
+void KitsuClient::loadRosterThen(const QString &projectId,
+                                 std::function<void()> next) {
+  emit shotsPushProgress(tr("Reading Kitsu team…"));
+  m_teamProjectId = projectId;
+  QNetworkReply *r = m_nam->get(authGet("/api/data/persons"));
+  connect(r, &QNetworkReply::finished, this, [this, r, projectId, next]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    m_personNameById.clear();
+    m_personIdByName.clear();
+    // Persons are best-effort context: if the roster can't be read (restricted
+    // account) we still continue — the project GET below carries its own error.
+    if (r->error() == QNetworkReply::NoError) {
+      for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+        const QJsonObject o = v.toObject();
+        const QString id    = o.value("id").toString();
+        QString name        = o.value("full_name").toString();
+        if (name.trimmed().isEmpty())
+          name = (o.value("first_name").toString() + " " +
+                  o.value("last_name").toString()).trimmed();
+        if (name.trimmed().isEmpty()) name = o.value("email").toString();
+        if (id.isEmpty() || name.isEmpty()) continue;
+        m_personNameById.insert(id, name);
+        m_personIdByName.insert(name.toLower(), id);
+      }
+    }
+    // Now resolve which of them are on THIS project's team (assignable set).
+    QNetworkReply *pr = m_nam->get(
+        authGet("/api/data/projects/" + projectId + "?relations=true"));
+    connect(pr, &QNetworkReply::finished, this, [this, pr, next]() {
+      pr->deleteLater();
+      const QByteArray pb = pr->readAll();
+      m_teamPersonIds.clear();
+      if (pr->error() == QNetworkReply::NoError) {
+        const QJsonObject proj = QJsonDocument::fromJson(pb).object();
+        for (const QJsonValue &v : proj.value("team").toArray())
+          m_teamPersonIds.insert(v.toString());
+      }
+      if (next) next();
+    });
+  });
+}
+
+void KitsuClient::teamFail(const QString &message) {
+  emit teamPulled(false, {}, message);
+}
+
+void KitsuClient::pullTeam(const QString &projectId) {
+  if (!isLoggedIn()) { emit teamPulled(false, {}, tr("Not logged in.")); return; }
+  if (projectId.isEmpty()) {
+    emit teamPulled(false, {}, tr("Project not linked to Kitsu."));
+    return;
+  }
+  loadRosterThen(projectId, [this]() {
+    QVector<KitsuPerson> team;
+    for (const QString &id : m_teamPersonIds) {
+      const QString nm = m_personNameById.value(id);
+      if (!nm.isEmpty()) team.push_back({id, nm});
+    }
+    // Distinguish the failure modes so a stuck-looking pull is diagnosable.
+    if (m_teamPersonIds.isEmpty())
+      emit teamPulled(true, team, tr("Kitsu project has no team members."));
+    else if (team.isEmpty())
+      emit teamPulled(false, team,
+                      tr("Team has %1 members but their names couldn't be read "
+                         "(persons endpoint restricted?).")
+                          .arg(m_teamPersonIds.size()));
+    else
+      emit teamPulled(true, team,
+                      tr("Pulled %1 team members from Kitsu.").arg(team.size()));
+  });
+}
+
+void KitsuClient::assignRun() {
+  if (m_assignIdx >= m_assignQueue.size()) {
+    if (m_assignOnDone) m_assignOnDone();
+    return;
+  }
+  const QString taskId   = m_assignQueue[m_assignIdx].first;
+  const QString personId = m_assignQueue[m_assignIdx].second;
+  emit shotsPushProgress(tr("Assigning people (%1/%2)…")
+                             .arg(m_assignIdx + 1)
+                             .arg(m_assignQueue.size()));
+  QJsonObject body;
+  body["person_id"] = personId;
+  QNetworkReply *r = authPut("/api/actions/tasks/" + taskId + "/assign",
+                             QJsonDocument(body).toJson(QJsonDocument::Compact));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    r->readAll();
+    // Assignment is best-effort (add-only); a failure on one person shouldn't
+    // abort the whole push, so we just move on.
+    ++m_assignIdx;
+    assignRun();
   });
 }
 
@@ -1035,6 +1539,7 @@ QVector<KitsuShotPush> KitsuClient::buildShotPushFromProject(
       KitsuTaskPush tp;
       tp.seq = s.seq; tp.shot = s.name;
       tp.taskType = it.key(); tp.status = it.value().status;
+      tp.assignees = it.value().assignees;
       outTasks.push_back(tp);
     }
   }
