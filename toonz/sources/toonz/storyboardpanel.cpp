@@ -1643,7 +1643,17 @@ void StoryboardPanel::addPanelWidget(int shotIdx, int panelIdx) {
       panelIdx >= (int)m_shots[shotIdx].data.panels.size())
     return;
   Shot &shot = m_shots[shotIdx];
-  PanelWidget *pw = new PanelWidget(m_container);
+  // Built DETACHED, then reparented once at the end of this function.
+  //
+  // A layout reparents every child it receives, and QWidget::setParent runs
+  // reparentFocusWidgets, which walks the focus chain of the whole WINDOW. With
+  // m_container already in the window, that chain holds every panel already on
+  // the board, so each of this panel's ~8 children (three of them QTextEdit)
+  // paid an O(total widgets) walk — panel creation was quadratic in the number
+  // of panels. Profiling Add Shot on a heavy storyboard put the bulk of the
+  // time in reparentFocusWidgets; building detached and joining the hierarchy
+  // once took that operation from ~20s to ~12s.
+  PanelWidget *pw = new PanelWidget(nullptr);
   pw->setFps(m_fps);
   pw->setShotIndex(shotIdx);
   pw->setPanelIndex(panelIdx, (int)shot.data.panels.size());
@@ -1663,6 +1673,11 @@ void StoryboardPanel::addPanelWidget(int shotIdx, int panelIdx) {
   pw->setAction(shot.data.panels[panelIdx].action);
   pw->setNotes(shot.data.panels[panelIdx].notes);
   connectPanelWidget(pw);
+  // Join the hierarchy now that the panel is fully built: ONE focus-chain walk
+  // for the whole subtree instead of one per child. m_container takes ownership
+  // (so a panel never leaks if rebuildGrid does not place it), and the widget
+  // stays hidden until rebuildGrid() adds it to the layout and calls show().
+  pw->setParent(m_container);
   shot.panels.push_back(pw);
 }
 
