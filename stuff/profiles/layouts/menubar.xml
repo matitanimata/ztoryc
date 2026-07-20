@@ -57,7 +57,7 @@
     <item>MI_SaveSubxsheetAs</item>
     <item>MI_Resequence</item>
     <separator/>
-    <item>MI_ToggleGlobalKeyIncludesPlastic</item>
+    <item>MI_CycleGlobalKeyScope</item>
 
     <menu>M_Cells</menu>
 

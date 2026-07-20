@@ -120,6 +120,10 @@ private:
       m_rigidValue;  //!< Rigidity drawing value (ie draw rigidity/flexibility)
                      //!< put a keyframe at current frame
 
+  //! What a Global Key covers on a rigged column: Stage / Plastic / All.
+  //! Mirrors the GlobalKeyScope preference — the same combo appears in the
+  //! Animate tool, so both always show (and mean) the same thing.
+  TEnumProperty m_globalKeyScope;
   TBoolProperty
       m_globalKey;  //!< Whether animating a vertex will cause EVERY vertex to
   TBoolProperty

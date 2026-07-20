@@ -155,15 +155,20 @@ double TStageObjectValues::getValue(int index) const {
 void TStageObjectValues::setGlobalKeyframe() {
   TXsheet *xsh              = m_xsheetHandle->getXsheet();
   TStageObject *stageObject = xsh->getStageObject(m_objectId);
-  stageObject->setKeyframeWithoutUndo(m_frame);
 
-  // Ztoryc: on a rigged column the column transform is only half the pose —
-  // without this the plastic deformation stays free and a "global" key silently
-  // fails to hold the character. Note this runs even when setKeyframeWithoutUndo
-  // returned early on isFullKeyframe(): the stage channels being already keyed
-  // says nothing about the plastic ones.
-  if (Preferences::instance()->getBoolValue(GlobalKeyIncludesPlastic))
-    stageObject->setPlasticPoseKeyframe(m_frame);
+  // Ztoryc: a rigged column has TWO halves — the column transform and the
+  // plastic pose — and GlobalKeyScope says which of them a "global" key covers
+  // (0 Stage, 1 Plastic, 2 All). Keying only one half is what made a global key
+  // silently fail to hold a character: the column froze while the deformation
+  // stayed free.
+  const int scope = Preferences::instance()->getIntValue(GlobalKeyScope);
+  const bool doStage   = (scope != 1);
+  const bool doPlastic = (scope != 0);
+
+  if (doStage) stageObject->setKeyframeWithoutUndo(m_frame);
+  // Runs even when setKeyframeWithoutUndo returned early on isFullKeyframe():
+  // the stage channels being already keyed says nothing about the plastic ones.
+  if (doPlastic) stageObject->setPlasticPoseKeyframe(m_frame);
 
   m_xsheetHandle->notifyXsheetChanged();
 }
@@ -246,7 +251,7 @@ UndoSetKeyFrame::UndoSetKeyFrame(TStageObjectId objectId, int frame,
   if (const PlasticSkeletonDeformationP &sd =
           obj->getPlasticSkeletonDeformation()) {
     m_withPlastic =
-        Preferences::instance()->getBoolValue(GlobalKeyIncludesPlastic);
+        Preferences::instance()->getIntValue(GlobalKeyScope) != 0;  // != Stage
     if (m_withPlastic) sd->getKeyframeAt(obj->paramsTime(frame), m_plasticOld);
   }
 }
@@ -322,7 +327,7 @@ UndoRemoveKeyFrame::UndoRemoveKeyFrame(TStageObjectId objectId, int frame,
     if (const PlasticSkeletonDeformationP &sd =
             obj->getPlasticSkeletonDeformation()) {
       m_withPlastic =
-          Preferences::instance()->getBoolValue(GlobalKeyIncludesPlastic);
+          Preferences::instance()->getIntValue(GlobalKeyScope) != 0;  // != Stage
       if (m_withPlastic)
         sd->getKeyframeAt(obj->paramsTime(frame), m_plasticOld);
     }

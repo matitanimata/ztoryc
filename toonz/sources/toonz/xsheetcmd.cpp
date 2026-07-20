@@ -312,23 +312,22 @@ public:
 } ToggleKeyframesFollowExposureCommand;
 
 //=============================================================================
-// Ztoryc: se ON, la chiave globale su una colonna riggata chiavizza anche la
-// POSA plastic (scheletro + root + controller), non solo la trasformazione di
-// colonna. Il diamante di quelle chiavi e' oro invece che bianco.
-class ToggleGlobalKeyIncludesPlasticCommand final : public MenuItemHandler {
+// Ztoryc: cicla la PORTATA della chiave globale su una colonna riggata —
+// Stage (solo trasformazione di colonna) -> Plastic (solo posa) -> All.
+// La stessa preferenza e' esposta come combo nelle opzioni dell'Animate tool e
+// del Plastic tool; questo comando resta per chi preferisce una scorciatoia da
+// tastiera, e mostra la modalita' scelta nel messaggio di stato.
+class CycleGlobalKeyScopeCommand final : public MenuItemHandler {
 public:
-  ToggleGlobalKeyIncludesPlasticCommand()
-      : MenuItemHandler(MI_ToggleGlobalKeyIncludesPlastic) {}
+  CycleGlobalKeyScopeCommand() : MenuItemHandler(MI_CycleGlobalKeyScope) {}
   void execute() override {
-    bool current =
-        Preferences::instance()->getBoolValue(GlobalKeyIncludesPlastic);
-    if (CommandManager::instance()
-            ->getAction(MI_ToggleGlobalKeyIncludesPlastic)
-            ->isChecked() == current)
-      return;
-    Preferences::instance()->setValue(GlobalKeyIncludesPlastic, !current);
+    Preferences *prefs = Preferences::instance();
+    const int next     = (prefs->getIntValue(GlobalKeyScope) + 1) % 3;
+    prefs->setValue(GlobalKeyScope, next);
+    // No status message here: the tool option combos show the current scope,
+    // and they refresh from the preference.
   }
-} ToggleGlobalKeyIncludesPlasticCommand;
+} CycleGlobalKeyScopeCommand;
 
 //=============================================================================
 

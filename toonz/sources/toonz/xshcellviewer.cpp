@@ -3611,7 +3611,26 @@ void CellArea::drawKeyframe(QPainter &p, const QRect toBeUpdated) {
                 pegbar->getPlasticSkeletonDeformation()) {
           const double pf = pegbar->paramsTime(row);
           plasticAny      = psd->isKeyframe(pf);
-          plasticFull     = plasticAny && psd->isFullKeyframe(pf);
+          // "Whole pose keyed" = every vertex deformation fully keyed.
+          //
+          // NOT PlasticSkeletonDeformation::isFullKeyframe(): that also
+          // requires the skeleton-ids parameter, which NEITHER path that sets a
+          // pose key touches — the Plastic tool's setKeyframe says so outright
+          // ("The skeleton ids parameter is NOT affected") and
+          // TStageObject::setPlasticPoseKeyframe only walks the pose params. So
+          // that predicate is unreachable in practice, and using it made every
+          // pose key read as partial: the diamond was stuck on half gold
+          // whatever the Global Key scope was.
+          if (plasticAny) {
+            plasticFull = true;
+            PlasticSkeletonDeformation::vd_iterator vdt, vdEnd;
+            psd->vertexDeformations(vdt, vdEnd);
+            for (; vdt != vdEnd; ++vdt)
+              if (!(*vdt).second->isFullKeyframe(pf)) {
+                plasticFull = false;
+                break;
+              }
+          }
         }
 
         QColor color = Qt::white;

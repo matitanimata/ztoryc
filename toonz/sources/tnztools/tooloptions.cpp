@@ -591,6 +591,16 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
     m_globalKey =
         new ToolOptionCheckbox(m_tool, globalKeyProp, toolHandle, this);
 
+  // Ztoryc: scope of that Global Key on a rigged column. This options box
+  // builds its widgets explicitly (it does not auto-generate them from the
+  // property group), so binding the property in the tool is not enough — the
+  // combo has to be created and laid out here.
+  TEnumProperty *globalKeyScopeProp =
+      dynamic_cast<TEnumProperty *>(m_pg->getProperty("Key:"));
+  if (globalKeyScopeProp)
+    m_globalKeyScope =
+        new ToolOptionCombo(m_tool, globalKeyScopeProp, toolHandle);
+
   m_lockEWPosCheckbox->setObjectName("EditToolLockButton");
   m_lockNSPosCheckbox->setObjectName("EditToolLockButton");
   m_lockEWCenterCheckbox->setObjectName("EditToolLockButton");
@@ -903,6 +913,7 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
     }
 
     mainLay->addWidget(m_globalKey, 0);
+    if (m_globalKeyScope) mainLay->addWidget(m_globalKeyScope, 0);
 
     mainLay->addSpacing(ITEM_SPACING);
   }
@@ -1227,6 +1238,9 @@ void ArrowToolOptionsBox::updateStatus() {
   m_lockNSCenterCheckbox->updateStatus();
 
   m_globalKey->updateStatus();
+  // Keep the scope combo in step: the Plastic tool and the menu command
+  // write the same preference, so it can change while this box is up.
+  if (m_globalKeyScope) m_globalKeyScope->updateStatus();
 
   bool splined = isCurrentObjectSplined();
   if (splined != m_splined) setSplined(splined);

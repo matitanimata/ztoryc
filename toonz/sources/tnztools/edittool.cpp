@@ -25,6 +25,8 @@
 #include "toonz/tscenehandle.h"
 #include "toonz/tfxhandle.h"
 #include "toonz/tstageobjectcmd.h"
+#include "toonz/preferences.h"
+#include "toonz/preferencesitemids.h"
 
 #include "edittoolgadgets.h"
 
@@ -748,6 +750,7 @@ EditTool::EditTool()
     , m_scaleConstraint("Scale Constraint:")  // W_ToolOptions_ScaleConstraint
     , m_autoSelect("Auto Select Column")      // W_ToolOptions_AutoSelect
     , m_globalKeyframes("Global Key", false)  // W_ToolsOptions_GlobalKeyframes
+    , m_globalKeyScope("Key:")  // Ztoryc: portata della chiave globale
     , m_lockCenterX("Lock Center X", false)
     , m_lockCenterY("Lock Center Y", false)
     , m_lockPositionX("Lock Position X", false)
@@ -775,6 +778,7 @@ EditTool::EditTool()
   m_prop.bind(m_scaleConstraint);
   m_prop.bind(m_autoSelect);
   m_prop.bind(m_globalKeyframes);
+  m_prop.bind(m_globalKeyScope);
 
   m_prop.bind(m_lockCenterX);
   m_prop.bind(m_lockCenterY);
@@ -808,6 +812,10 @@ EditTool::EditTool()
   m_autoSelect.setValue(L"None");
 
   m_globalKeyframes.setId("GlobalKey");
+  m_globalKeyScope.addValue(L"Stage");
+  m_globalKeyScope.addValue(L"Plastic");
+  m_globalKeyScope.addValue(L"All");
+  m_globalKeyScope.setId("GlobalKeyScope");
   m_autoSelect.setId("AutoSelect");
 
   m_prop.bind(m_activeAxis);
@@ -844,6 +852,10 @@ void EditTool::updateTranslation() {
   m_autoSelect.setItemUIName(L"Pegbar", tr("Pegbar"));
 
   m_globalKeyframes.setQStringName(tr("Global Key"));
+  m_globalKeyScope.setQStringName(tr("Key:"));
+  m_globalKeyScope.setItemUIName(L"Stage", tr("Stage"));
+  m_globalKeyScope.setItemUIName(L"Plastic", tr("Plastic"));
+  m_globalKeyScope.setItemUIName(L"All", tr("All"));
   m_lockCenterX.setQStringName(tr("Lock Center X"));
   m_lockCenterY.setQStringName(tr("Lock Center Y"));
   m_lockPositionX.setQStringName(tr("Lock Position X"));
@@ -1813,6 +1825,12 @@ void EditTool::onActivate() {
     m_autoSelect.setValue(::to_wstring(AutoSelect.getValue()));
     m_scaleConstraint.setValue(::to_wstring(ScaleConstraint.getValue()));
     m_globalKeyframes.setValue(ArrowGlobalKeyFrame ? 1 : 0);
+    // Scope lives in the preference, not in a tool-local TEnv var: the
+    // Plastic tool reads the same value, and both must show the same
+    // choice however the user changed it (either combo, or the menu
+    // command that cycles it).
+    m_globalKeyScope.setIndex(
+        Preferences::instance()->getIntValue(GlobalKeyScope));
 
     onPropertyChanged(m_activeAxis.getName());
 
@@ -1932,6 +1950,10 @@ bool EditTool::onPropertyChanged(std::string propertyName) {
 
   else if (propertyName == m_globalKeyframes.getName())
     ArrowGlobalKeyFrame = (int)m_globalKeyframes.getValue();
+
+  else if (propertyName == m_globalKeyScope.getName())
+    Preferences::instance()->setValue(GlobalKeyScope,
+                                      m_globalKeyScope.getIndex());
 
   return true;
 }

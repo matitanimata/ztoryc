@@ -607,11 +607,14 @@ void Preferences::definePreferenceItems() {
   define(EnableAutocreation, "EnableAutocreation", QMetaType::Bool, true);
   define(KeyframesFollowExposure, "KeyframesFollowExposure", QMetaType::Bool,
          false);
-  // Ztoryc: a Global Key on a rigged column also keys the plastic POSE, so
-  // blocking freezes the whole character and not just its column transform.
-  // Default ON — a "global" key that leaves half the pose free is a footgun.
-  define(GlobalKeyIncludesPlastic, "GlobalKeyIncludesPlastic", QMetaType::Bool,
-         true);
+  // Ztoryc: what a Global Key covers on a rigged column — 0 = Stage (column
+  // transform only), 1 = Plastic (the pose only), 2 = All (both).
+  //
+  // Default All: a "global" key that leaves half the pose free is a footgun —
+  // it freezes the column while the character can still deform. Exposed as a
+  // combo in both the Animate and Plastic tool option bars, so the two tools
+  // always agree on what "global" means.
+  define(GlobalKeyScope, "GlobalKeyScope", QMetaType::Int, 2);
   define(NumberingSystem, "NumberingSystem", QMetaType::Int, 0);  // Incremental
   define(EnableAutoStretch, "EnableAutoStretch", QMetaType::Bool, false);
   define(EnableImplicitHold, "EnableImplicitHold", QMetaType::Bool,

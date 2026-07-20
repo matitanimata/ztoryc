@@ -65,6 +65,10 @@ class EditTool final : public QObject, public TTool {
   TEnumProperty m_scaleConstraint;
   TEnumProperty m_autoSelect;
   TBoolProperty m_globalKeyframes;
+  //! What a Global Key covers on a rigged column: Stage / Plastic / All.
+  //! Mirrors the GlobalKeyScope preference, so this tool and the Plastic tool
+  //! always agree on what "global" means.
+  TEnumProperty m_globalKeyScope;
 
   TBoolProperty m_lockCenterX;
   TBoolProperty m_lockCenterY;

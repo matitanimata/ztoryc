@@ -291,6 +291,9 @@ class ArrowToolOptionsBox final : public ToolOptionsBox {
   ToolOptionCheckbox *m_lockNSCenterCheckbox;
 
   ToolOptionCheckbox *m_globalKey;
+  //! Ztoryc: what a Global Key covers on a rigged column (Stage/Plastic/All).
+  //! Shown next to the checkbox, which stays the on/off switch.
+  ToolOptionCombo *m_globalKeyScope = nullptr;
 
   // Flip buttons
   QPushButton *m_hFlipButton, *m_vFlipButton, *m_leftRotateButton,

@@ -24,6 +24,8 @@
 #include "toonz/doubleparamcmd.h"
 #include "toonz/palettecontroller.h"
 #include "toonz/txshsimplelevel.h"
+#include "toonz/preferences.h"
+#include "toonz/preferencesitemids.h"
 
 // TnzExt includes
 #include "ext/plasticskeleton.h"
@@ -1038,6 +1040,7 @@ PlasticTool::PlasticTool()
     , m_thickness("Thickness", 1, 100, 5)
     , m_rigidValue("rigidValue")
     , m_globalKey("globalKeyframe", true)
+    , m_globalKeyScope("Key:")  // Ztoryc: portata della chiave globale
     , m_keepDistance("keepDistance", true)
     , m_ikDrag("inverseKinematics", false)
     , m_scaleConstraint("scaleConstraint")
@@ -1080,6 +1083,7 @@ PlasticTool::PlasticTool()
   m_propGroup[BUILD_IDX].bind(m_snapToMesh);
 
   m_propGroup[ANIMATE_IDX].bind(m_globalKey);
+  m_propGroup[ANIMATE_IDX].bind(m_globalKeyScope);
   m_propGroup[ANIMATE_IDX].bind(m_keepDistance);
   m_propGroup[ANIMATE_IDX].bind(m_ikDrag);
   m_scaleConstraint.addValue(L"None");
@@ -1104,6 +1108,10 @@ PlasticTool::PlasticTool()
   m_thickness.setId("Thickness");
   m_rigidValue.setId("RigidValue");
   m_globalKey.setId("GlobalKey");
+  m_globalKeyScope.addValue(L"Stage");
+  m_globalKeyScope.addValue(L"Plastic");
+  m_globalKeyScope.addValue(L"All");
+  m_globalKeyScope.setId("GlobalKeyScope");
   m_keepDistance.setId("KeepDistance");
   m_ikDrag.setId("PlasticInverseKinematics");
   m_scaleConstraint.setId("PlasticScaleConstraint");
@@ -1168,6 +1176,10 @@ void PlasticTool::updateTranslation() {
   m_rigidValue.addValue(tr("Flex").toStdWString());
 
   m_globalKey.setQStringName(tr("Global Key"));
+  m_globalKeyScope.setQStringName(tr("Key:"));
+  m_globalKeyScope.setItemUIName(L"Stage", tr("Stage"));
+  m_globalKeyScope.setItemUIName(L"Plastic", tr("Plastic"));
+  m_globalKeyScope.setItemUIName(L"All", tr("All"));
   m_keepDistance.setQStringName(tr("Keep Distance"));
   m_ikDrag.setQStringName(tr("IK"));
   m_showAngleLimits.setQStringName(tr("Angle Bounds Gizmo"));
@@ -1448,6 +1460,12 @@ void PlasticTool::onSetViewer() {
 //------------------------------------------------------------------------
 
 void PlasticTool::onActivate() {
+  // Show the scope the preference currently holds: the Animate tool writes the
+  // same value, and the menu command cycles it, so this must be re-read on
+  // every activation rather than kept in tool-local state.
+  m_globalKeyScope.setIndex(
+      Preferences::instance()->getIntValue(GlobalKeyScope));
+
   bool ret;
   ret = connect(TTool::m_application->getCurrentFrame(),
                 SIGNAL(frameSwitched()), this, SLOT(onFrameSwitched())),
@@ -2188,6 +2206,12 @@ public:
 //------------------------------------------------------------------------
 
 bool PlasticTool::onPropertyChanged(std::string propertyName) {
+  if (propertyName == m_globalKeyScope.getName()) {
+    Preferences::instance()->setValue(GlobalKeyScope,
+                                      m_globalKeyScope.getIndex());
+    return true;
+  }
+
   struct locals {
     static bool alreadyContainsVertexName(const PlasticSkeleton &skel,
                                           const QString &name) {
