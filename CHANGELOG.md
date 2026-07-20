@@ -1,3 +1,61 @@
+## [2026-07-20] — SUPERPLASTIC su master + fix Windows GPU + performance Board + Global Key scope + diamanti a due assi
+
+> **Riepilogo**: sessione lunga e densa. Merge SUPERPLASTIC su master; risolto il rendering
+> offline Windows che usava il rasterizzatore software (utente sbloccato); quattro fix di
+> performance del Board tutti da profiling reale (`sample`); Global Key con portata
+> Stage/Plastic/All condivisa Animate+Plastic tool; grammatica diamante keyframe a due assi
+> (trasformazione + posa plastic) nello xsheet. Viewer navigator + legenda manuale rimandati
+> a sessione dedicata (grammatica gia' bloccata, fondo magenta #B01E9A deciso).
+
+### Recupero sessione persa
+La chat SUPERPLASTIC di stamattina era stata cancellata dall'indice ma il transcript era
+intatto su disco (7d98de6f...): contesto ricostruito e lavoro ripreso senza perdite.
+
+### Rigging (merge `a9d98dc68`)
+- Drag IK cross-colonna DETERMINISTICO: baseline press-time (il grafo unificato non viene
+  piu' ricostruito dalla posa deformata a ogni mossa → rotto l'anello FABRIK↔CCD che faceva
+  oscillare i giunti dentro le catene pinnate). Commit `7dac71339`.
+- Multi-anchor per vertici TRA i pin (base del collo con piedi+mano piantati): passa dal
+  solveMultiAnchor del single-level via scheletro sintetico.
+- Undo multi-colonna raggruppato (ensureCrossLevelBaselines_animate ricablata) + flush
+  placement (overlay non piu' disallineato dal disegno).
+- Pin visibili su TUTTE le colonne collegate (`14bc4c012`).
+- Interruttore diagnostico ZTORYC_SUSPEND_PLANT (`5a55895e8`, inerte senza env).
+
+### Windows — rendering offline (`344ec9d6f`)
+WIN32Implementation di TOfflineGL disegna in DIB section GDI col pixel format
+PFD_DRAW_TO_BITMAP|PFD_SUPPORT_GDI, che NESSUN driver OpenGL hardware espone → ChoosePixelFormat
+ripiega SEMPRE sul rasterizzatore software Microsoft. Ogni thumbnail/icona/renderFrame girava
+in software, qualunque GPU. Ora Windows usa QtOfflineGL come macOS/Linux (gia' compilato ovunque).
+Fallback ZTORYC_LEGACY_OFFLINEGL. Log diagnostico backend GL (`c0f8788ef`). Candidato PR upstream forte.
+
+### Performance Board (tutto da profiling `sample`)
+- Selezione clip: `setStyleSheet` a ogni cambio selezione (68% del tempo in QCss) → stile base
+  una volta, evidenziazione in paintEvent (`59e7ffe83`).
+- PanelWidget costruiti staccati dalla gerarchia: reparentFocusWidgets O(widget totali) per
+  figlio → add shot 20s→12s (`bba1ff405`).
+- Aggiornamento incrementale add/delete shot: Shot::childLevel come identita' lato scena,
+  onModelResequenced riconosce inserimento/cancellazione e aggiorna solo cio' che cambia →
+  12s→istantaneo. Ricostruzione totale resta rete di sicurezza (`merge 1681ae7e7`).
+
+### Global Key scope + diamanti
+- Preferenza GlobalKeyScope (Stage/Plastic/All, default All) al posto del booleano
+  GlobalKeyIncludesPlastic; combo "Key:" condiviso in Animate e Plastic tool; menu che cicla
+  (MI_CycleGlobalKeyScope). setGlobalKeyframe applica la portata. Fix: Animate tool ora chiama
+  setGlobalKeyframe (prima solo lo Skeleton tool lo faceva). Commit `78d3a613b`, `e6889b39f`.
+- Diamante xsheet a due assi: drawTriPartPredefinedPath (3 regioni), destra vuota=parziale,
+  sinistra=quali sistemi (bianco trasf/oro posa/bianco-sopra-oro-sotto entrambi). Nuovo il
+  doppio-parziale. Fix detection: iterare i vertex deformation, non isFullKeyframe (pretende
+  skelIdsParam mai chiaviato). Commit `2ea4a5a44`.
+
+### Rimandato (memoria: project_keyframe_diamond_grammar)
+Viewer KeyframeNavigator con la stessa grammatica (icone a codice, fondo magenta #B01E9A,
+hint hover) + immagine-legenda inglese per il manuale.
+
+### Aperto — Windows heap corruption
+Crash utente `0xc0000374` (STATUS_HEAP_CORRUPTION), pre-esistente ai fix di oggi, prima traccia
+solida catturata. Da inseguire col page heap (gflags /p /enable ... /full) in sessione dedicata.
+
 ## [2026-07-19] — STEP C: il personaggio cucito diventa UN solo scheletro (+ global key, pin domain)
 
 > **Riepilogo**: 10 commit su `feature/superplastic`. C.1 e C.2 chiuse, solve unificato,
