@@ -252,6 +252,16 @@ public:
     else
       m_isStarted = false;
 
+    // Ztoryc: a Global Key here must mean the same thing it means in the
+    // Skeleton tool, which already ends its drag with exactly this call (see
+    // skeletonsubtools.cpp, DragChannelTool::leftButtonUp). Without it the
+    // Animate tool only keyed the transform channels registered above, so on a
+    // rigged column the plastic POSE stayed free: the key claimed to be global,
+    // the xsheet drew it as a full key, and the character could still deform.
+    // setGlobalKeyframe() is what honours the GlobalKeyIncludesPlastic
+    // preference — it was reachable from the Skeleton tool only.
+    if (m_globalKeyframesEnabled) m_after.setGlobalKeyframe();
+
     TTool::Application *app   = TTool::getApplication();
     UndoStageObjectMove *undo = new UndoStageObjectMove(m_before, m_after);
     undo->setXsheetHandle(app->getCurrentXsheet());
