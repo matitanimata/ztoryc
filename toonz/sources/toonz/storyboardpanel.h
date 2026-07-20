@@ -10,6 +10,9 @@
 #include "toonz/childstack.h"
 #include "viewerpane.h"
 
+#include <deque>
+#include <utility>
+
 #include <QWidget>
 #include <QScrollArea>
 #include <QGridLayout>
@@ -131,6 +134,14 @@ signals:
                    double depth, double spread);
   void lightRemoveRequested(int shotIndex, int panelIndex);
 protected:
+  //! Draws the selection highlight. Kept out of the stylesheet on purpose:
+  //! QWidget::setStyleSheet() reparses the CSS and re-polishes the widget AND
+  //! its whole child subtree, and Qt's selector matching runs per rule per
+  //! node — doing that on every selection change made clicking clips in the
+  //! Animatic timeline cost ~68% of the frame time on a large storyboard
+  //! (measured with sample). The base look stays in the stylesheet, applied
+  //! once; only the highlight is painted.
+  void paintEvent(QPaintEvent *e) override;
   void mousePressEvent(QMouseEvent *e) override;
   void mouseMoveEvent(QMouseEvent *e) override;
   void mouseReleaseEvent(QMouseEvent *e) override;
@@ -244,6 +255,15 @@ struct Shot {
   void clearShots();
   void updatePreview(int shotIdx, int panelIdx);
   void updateVisiblePreviews();
+  //! Render ONE queued preview, then re-arm for the next on the event loop.
+  //! Previews are rendered synchronously on the UI thread, so doing the whole
+  //! visible set in one loop freezes the window for as long as it takes —
+  //! Windows then paints the "not responding" ghost over it. Spreading them one
+  //! per event-loop turn keeps the same total work but leaves the app alive and
+  //! makes the thumbnails appear progressively.
+  void pumpPendingPreviews();
+  std::deque<std::pair<int, int>> m_pendingPreviews;  //!< (shotIdx, panelIdx)
+  bool m_previewPumpArmed = false;
   void rebuildGrid();
   void selectShot(int shotIdx);
   // Mirror the shared selection (set by the Animatic timeline) onto the board

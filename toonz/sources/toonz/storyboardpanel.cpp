@@ -673,11 +673,29 @@ QString PanelWidget::framesToTimecode(int frames) const {
 }
 
 void PanelWidget::updateBorderStyle() {
-  if (m_selected)
-    setStyleSheet("PanelWidget{background:#2b2b2b;border:1px solid #e05a00;border-radius:3px;box-shadow:0 0 0 2px #e05a00;}");
-  else
-    setStyleSheet("PanelWidget{background:#2b2b2b;border:1px solid #555;border-radius:3px;}"
-                  "PanelWidget:hover{border:1px solid #888;}");
+  // Base look only, and set ONCE (this runs from the constructor). The
+  // selection highlight is painted in paintEvent instead of swapping the
+  // stylesheet: setStyleSheet() reparses the CSS and re-polishes this widget
+  // plus every child (preview label, three text fields, spin box…), with Qt's
+  // selector matching splitting strings per rule per node. Doing that per
+  // selection change dominated the profile — clicking clips in the Animatic
+  // timeline spent ~68% of its time inside QCss::StyleSelector.
+  setStyleSheet("PanelWidget{background:#2b2b2b;border:1px solid #555;border-radius:3px;}"
+                "PanelWidget:hover{border:1px solid #888;}");
+}
+
+void PanelWidget::paintEvent(QPaintEvent *e) {
+  QWidget::paintEvent(e);  // stylesheet background/border first
+  if (!m_selected) return;
+
+  // Selection highlight drawn over the base border: a 2px inset frame in the
+  // Ztoryc orange, matching the old box-shadow look.
+  QPainter p(this);
+  p.setRenderHint(QPainter::Antialiasing, true);
+  QPen pen(QColor(0xe0, 0x5a, 0x00), 2.0);
+  p.setPen(pen);
+  p.setBrush(Qt::NoBrush);
+  p.drawRoundedRect(QRectF(rect()).adjusted(1.0, 1.0, -1.0, -1.0), 3.0, 3.0);
 }
 
 void PanelWidget::rescalePreview() {
@@ -809,8 +827,9 @@ void PanelWidget::setPreviewPixmap(const QPixmap &px) {
 }
 
 void PanelWidget::setSelected(bool sel) {
+  if (m_selected == sel) return;  // no-op changes must not cost a repaint
   m_selected = sel;
-  updateBorderStyle();
+  update();  // highlight lives in paintEvent — no stylesheet work
 }
 
 void PanelWidget::setDialog(const QString &t) {
@@ -1949,6 +1968,12 @@ void StoryboardPanel::updateVisiblePreviews() {
   if (m_grid) m_grid->activate();
   QRect vpRect = m_scrollArea->viewport()->rect();
 
+  // Collect what needs rendering, then hand it to the pump: each preview is a
+  // synchronous scene render on THIS thread, so rendering the whole visible set
+  // in one loop locks the window for the duration (on a slow machine long
+  // enough for Windows to grey it out as "not responding"). Same total work,
+  // spread one per event-loop turn.
+  m_pendingPreviews.clear();
   for (int si = 0; si < (int)m_shots.size(); si++) {
     for (int pi = 0; pi < (int)m_shots[si].panels.size(); pi++) {
       PanelWidget *pw = m_shots[si].panels[pi];
@@ -1963,8 +1988,41 @@ void StoryboardPanel::updateVisiblePreviews() {
       QRect widgetRect = QRect(pw->mapTo(m_scrollArea->viewport(),
                                          QPoint(0, 0)), pw->size());
       if (vpRect.intersects(widgetRect))
-        updatePreview(si, pi);
+        m_pendingPreviews.push_back(std::make_pair(si, pi));
     }
+  }
+
+  if (!m_pendingPreviews.empty() && !m_previewPumpArmed) {
+    m_previewPumpArmed = true;
+    QTimer::singleShot(0, this, [this]() { pumpPendingPreviews(); });
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+void StoryboardPanel::pumpPendingPreviews() {
+  m_previewPumpArmed = false;
+  if (m_pendingPreviews.empty()) return;
+
+  const std::pair<int, int> job = m_pendingPreviews.front();
+  m_pendingPreviews.pop_front();
+
+  // Re-validate at pop time. A queue entry is only a pair of indices, and the
+  // grid may have been rebuilt (shot added, panel deleted, view toggled) since
+  // it was queued — so a stale entry must be dropped, not trusted. This is what
+  // lets updateVisiblePreviews() simply refill the queue without any explicit
+  // cancellation handshake.
+  const int si = job.first, pi = job.second;
+  if (si >= 0 && si < (int)m_shots.size() &&
+      pi >= 0 && pi < (int)m_shots[si].panels.size()) {
+    PanelWidget *pw = m_shots[si].panels[pi];
+    if (pw && pw->isVisible() && pw->previewPixmap().isNull())
+      updatePreview(si, pi);
+  }
+
+  if (!m_pendingPreviews.empty()) {
+    m_previewPumpArmed = true;
+    QTimer::singleShot(0, this, [this]() { pumpPendingPreviews(); });
   }
 }
 
