@@ -7658,6 +7658,73 @@ static void addXDNoteCol(TXsheet *subXsh, int startRow, int count,
   subXsh->getStageObject(subXsh->getColumnObjectId(insertIdx))->setName(name);
 }
 
+// First row occupied by a named XD note column, or -1 if there is none.
+static int xdNoteStartRow(TXsheet *subXsh, const std::string &name) {
+  if (!subXsh) return -1;
+  for (int c = 0; c < subXsh->getColumnCount(); c++) {
+    TXshColumn *col = subXsh->getColumn(c);
+    if (!col || !col->getSoundTextColumn()) continue;
+    std::string colName =
+        subXsh->getStageObject(subXsh->getColumnObjectId(c))->getName();
+    if (colName != name) continue;
+    int r0 = 0, r1 = 0;
+    if (col->getRange(r0, r1)) return r0;
+    return -1;
+  }
+  return -1;
+}
+
+// Sub-xsheet exposed by a main-xsheet shot column.  Resolved on demand from the
+// column index — the same approach undoRedoTransition uses — so an undo object
+// never has to hold a TXsheet pointer across a sub-scene's lifetime.
+static TXsheet *ztorySubXsheetOfColumn(int col) {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return nullptr;
+  TXsheet *mainXsh = scene->getChildStack()->getTopXsheet();
+  if (!mainXsh) return nullptr;
+  TXshColumn *column = mainXsh->getColumn(col);
+  if (!column || column->isEmpty()) return nullptr;
+  int r0 = 0, r1 = 0;
+  column->getRange(r0, r1, /*ignoreLastStop=*/true);
+  for (int r = r0; r <= r1; r++) {
+    TXshCell cell = mainXsh->getCell(r, col);
+    if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
+      return cell.m_level->getChildLevel()->getXsheet();
+  }
+  return nullptr;
+}
+
+// Undo for the XD-out note re-anchoring done by onShotDurationChanged.  The
+// duration itself is restored by the UndoBoardState this is grouped with; the
+// notes live in the sub-scene, which that snapshot does not cover.
+class UndoXDOutNotes final : public TUndo {
+  int m_col, m_oldStart, m_oldCount, m_newStart, m_newCount;
+
+  static void place(int col, int start, int count) {
+    TXsheet *subXsh = ztorySubXsheetOfColumn(col);
+    if (!subXsh) return;
+    removeXDNoteCol(subXsh, kXDOutName);
+    if (count > 0 && start >= 0)
+      addXDNoteCol(subXsh, start, count, kXDOutName);
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+
+public:
+  UndoXDOutNotes(int col, int oldStart, int oldCount, int newStart,
+                 int newCount)
+      : m_col(col)
+      , m_oldStart(oldStart)
+      , m_oldCount(oldCount)
+      , m_newStart(newStart)
+      , m_newCount(newCount) {}
+  void undo() const override { place(m_col, m_oldStart, m_oldCount); }
+  void redo() const override { place(m_col, m_newStart, m_newCount); }
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override {
+    return QObject::tr("Move Cross-Dissolve Notes");
+  }
+};
+
 // ── onTransitionChanged ──────────────────────────────────────────────────────
 // Sets the cross-dissolve duration on the seam between colA (outgoing) and
 // colB (incoming).  T/2 hold frames are added/removed at the tail of subA and
@@ -7974,11 +8041,30 @@ void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
   // hold copies before and tailHalf extra frames after the real content, and
   // the Ztoryc convention (see onTransitionChanged) is that the editing range
   // covers them too so the animator can work on the dissolve material.
-  int rangeOut = newDuration - 1;
-  if (TXsheet *subXsh = typeCell.m_level->getChildLevel()->getXsheet())
-    rangeOut += ZtoryShotOps::xdInHeadOffset(subXsh) +
-                ZtoryShotOps::xdOutTailCount(subXsh);
+  int rangeOut     = newDuration - 1;
+  TXsheet *subXsh  = typeCell.m_level->getChildLevel()->getXsheet();
+  int xdOutTail    = 0;
+  if (subXsh) {
+    xdOutTail = ZtoryShotOps::xdOutTailCount(subXsh);
+    rangeOut += ZtoryShotOps::xdInHeadOffset(subXsh) + xdOutTail;
+  }
   ztorySetShotRange(col, 0, rangeOut);
+
+  // Re-anchor the XD-out notes to the new tail.  They mark the dissolve's extra
+  // frames, so they belong to the LAST xdOutTail rows of the editing range —
+  // but they are placed once, when the transition is created, and nothing else
+  // moves them.  Without this a later timing change slides the mark out while
+  // the notes stay behind, stranded in the middle of the shot.
+  // (XD-in needs no such fix: its notes sit at row 0, which never moves.)
+  int xdOldStart = -1, xdNewStart = -1;
+  if (subXsh && xdOutTail > 0) {
+    xdOldStart = xdNoteStartRow(subXsh, kXDOutName);
+    xdNewStart = rangeOut - xdOutTail + 1;
+    if (xdNewStart != xdOldStart) {
+      removeXDNoteCol(subXsh, kXDOutName);
+      addXDNoteCol(subXsh, xdNewStart, xdOutTail, kXDOutName);
+    }
+  }
 
   // If this shot's sub-xsheet is currently open, also update the live
   // play range so the FlipConsole markers move immediately.
@@ -8001,6 +8087,13 @@ void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
 
   m_track->refreshFromScene();
 
+  // One history entry for the whole edit: the board snapshot restores the
+  // duration, the XD-out step puts the dissolve notes back where they were.
+  // Without the block a single Ctrl+Z would undo only half of it.
+  TUndoScopedBlock undoBlock;
+  if (xdOldStart != xdNewStart)
+    TUndoManager::manager()->add(new UndoXDOutNotes(
+        col, xdOldStart, xdOutTail, xdNewStart, xdOutTail));
   if (board) {
     auto after = board->captureSnapshot();
     TUndoManager::manager()->add(
