@@ -7,10 +7,14 @@
 #include <QLineEdit>
 #include <QTimer>
 
+#include <boost/optional.hpp>
+
 #include "orientation.h"
 
 #include "toonz/txshcell.h"
 #include "tundo.h"
+
+using boost::optional;
 
 // forward declaration
 class XsheetViewer;
@@ -154,9 +158,15 @@ class CellArea final : public QWidget {
   void drawCurrentTimeIndicator(QPainter &p, const QPoint &xy,
                                 bool isFolded = false);
 
+  //! \p color fills the whole marker. For keyframe diamonds \p rightColor may
+  //! override the RIGHT half: Ztoryc splits the diamond into column transform
+  //! (left) and plastic pose (right) — see drawSplitPredefinedPath. Leave it
+  //! unset for a plain single-colour marker. An explicitly invalid QColor()
+  //! means "this half is hollow".
   void drawFrameMarker(QPainter &p, const QPoint &xy, QColor color,
                        bool isKeyFrame = false, bool isCamera = false,
-                       bool keyHighlight = false);
+                       bool keyHighlight = false,
+                       optional<QColor> rightColor = boost::none);
   void drawEndOfLevelMarker(QPainter &p, QRect rect, bool isNextEmpty,
                             bool isStopFrame = false, bool isLooped = false);
   void drawCellMarker(QPainter &p, int markId, QRect rect,

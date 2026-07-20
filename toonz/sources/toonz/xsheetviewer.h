@@ -782,6 +782,21 @@ public:
                           optional<QColor> fill, optional<QColor> outline,
                           int lineWidth = 1) const;
 
+  //! Split-fill variant: the shape's left half takes \p leftFill, the right
+  //! half \p rightFill, and the outline is stroked around the WHOLE shape. An
+  //! unset fill leaves that half hollow.
+  //!
+  //! Ztoryc: keyframe diamonds encode two independent axes — the column
+  //! transform (left, white) and the plastic pose (right, gold) — where fill
+  //! means "this half is fully keyed" and hollow means partial/absent. Passing
+  //! the same colour to both halves reproduces the plain solid diamond, so this
+  //! is a superset of the single-fill overloads above.
+  void drawSplitPredefinedPath(QPainter &p, PredefinedPath which, QPoint xy,
+                               optional<QColor> leftFill,
+                               optional<QColor> rightFill,
+                               optional<QColor> outline,
+                               int lineWidth = 1) const;
+
   //---------
 
   void updateCells() { m_cellArea->update(m_cellArea->visibleRegion()); }

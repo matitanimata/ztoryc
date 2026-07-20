@@ -1984,7 +1984,7 @@ void CellArea::drawCurrentTimeIndicator(QPainter &p, const QPoint &xy,
 
 void CellArea::drawFrameMarker(QPainter &p, const QPoint &xy, QColor color,
                                bool isKeyFrame, bool isCamera,
-                               bool keyHighlight) {
+                               bool keyHighlight, optional<QColor> rightColor) {
   QColor outlineColor = Qt::black;
   QPoint frameAdj     = m_viewer->getFrameZoomAdjustment();
   QRect dotRect       = (isCamera)
@@ -2019,9 +2019,21 @@ void CellArea::drawFrameMarker(QPainter &p, const QPoint &xy, QColor color,
         keyHighlight ? PredefinedPath::FRAME_MARKER_DIAMOND_LARGE
                      : useSmall ? PredefinedPath::FRAME_MARKER_DIAMOND_SMALL
                                 : PredefinedPath::FRAME_MARKER_DIAMOND;
-    m_viewer->drawPredefinedPath(p, diamondPath,
-                                 dotRect.adjusted(1, 1, 1, 1).center(), color,
-                                 outlineColor);
+    const QPoint diamondCenter = dotRect.adjusted(1, 1, 1, 1).center();
+    if (rightColor) {
+      // Split diamond: how many halves are filled reads as completeness
+      // (one = partial, two = full), and their colours say which system —
+      // white for the column transform, gold for the plastic pose. An
+      // invalid rightColor leaves that half hollow, which is the classic
+      // "partial key" look the viewer's key_partial icon already uses.
+      m_viewer->drawSplitPredefinedPath(
+          p, diamondPath, diamondCenter, color,
+          rightColor->isValid() ? optional<QColor>(*rightColor)
+                                : optional<QColor>(),
+          outlineColor);
+    } else
+      m_viewer->drawPredefinedPath(p, diamondPath, diamondCenter, color,
+                                   outlineColor);
   } else {
     int adjust =
         (!isCamera && !showDragBars && isMinimumLayout)
@@ -3583,27 +3595,53 @@ void CellArea::drawKeyframe(QPainter &p, const QRect toBeUpdated) {
         QPoint xy     = m_viewer->positionToXY(CellPosition(row, col));
         QPoint target = tmpKeyRect.translated(xy).topLeft();
 
-        QColor color  = Qt::white;
-        // Ztoryc: a key that also holds the plastic POSE is a different animal
-        // from a plain column-transform key — it freezes the whole rigged
-        // character. Mark it with the logo gold so blocking is readable at a
-        // glance. Selection colour still wins (it is transient feedback).
-        // Two subtleties:
-        //  * FULL stage key required. Gold on any stage key made a partial key
-        //    (say, X/Y from an Animate drag) that merely COINCIDED with plastic
-        //    keys read as "global" — while the keyframe navigator correctly
-        //    called it partial. Gold now means: whole transform + whole pose.
-        //  * paramsTime(), not the raw row: plastic params are sampled in the
-        //    stage object's param time, which diverges from the xsheet row
-        //    under cycling.
-        if (pegbar->isFullKeyframe(row))
-          if (const PlasticSkeletonDeformationP &psd =
-                  pegbar->getPlasticSkeletonDeformation())
-            if (psd->isKeyframe(pegbar->paramsTime(row)))
-              color = ZtoryTheme::gold();
+        // Ztoryc: the diamond carries TWO independent axes — the column
+        // transform and the plastic pose — in one glyph. How many halves are
+        // filled says how complete the key is (one = partial, two = full);
+        // their colour says which system: white for the transform, gold for
+        // the pose. So a rigged character blocked on everything reads as a
+        // full white+gold diamond, while a pose-only key reads gold and a
+        // transform-only key reads white, exactly as before for unrigged
+        // columns. Note paramsTime(), not the raw row: plastic params are
+        // sampled in the stage object's param time, which diverges from the
+        // xsheet row under cycling.
+        const bool stageFull = pegbar->isFullKeyframe(row);
+        bool plasticAny = false, plasticFull = false;
+        if (const PlasticSkeletonDeformationP &psd =
+                pegbar->getPlasticSkeletonDeformation()) {
+          const double pf = pegbar->paramsTime(row);
+          plasticAny      = psd->isKeyframe(pf);
+          plasticFull     = plasticAny && psd->isFullKeyframe(pf);
+        }
+
+        QColor color = Qt::white;
+        optional<QColor> rightColor;
+        if (plasticAny) {
+          const QColor gold = ZtoryTheme::gold();
+          if (stageFull) {
+            // Both systems keyed: left half the transform, right half the
+            // pose. Two filled halves, so it still reads as a full key.
+            color      = Qt::white;
+            rightColor = gold;
+          } else {
+            // Pose only (the transform is absent or partial): gold, filled
+            // fully when the whole pose is keyed, half when it is partial.
+            color      = gold;
+            rightColor = plasticFull ? optional<QColor>(gold)
+                                     : optional<QColor>(QColor());
+          }
+        } else if (!stageFull) {
+          // Plain partial transform key: half white, as the navigator shows.
+          rightColor = optional<QColor>(QColor());
+        }
+
+        // Selection colour still wins — it is transient feedback, and it must
+        // read as "selected" regardless of what the key holds.
         if (m_viewer->getKeyframeSelection() &&
-            m_viewer->getKeyframeSelection()->isSelected(row, col))
-          color = QColor(85, 157, 255);
+            m_viewer->getKeyframeSelection()->isSelected(row, col)) {
+          color      = QColor(85, 157, 255);
+          rightColor = boost::none;
+        }
 
         int x = xy.x();
         int y = xy.y();
@@ -3620,7 +3658,7 @@ void CellArea::drawKeyframe(QPainter &p, const QRect toBeUpdated) {
 
         drawFrameMarker(p, QPoint(x, y), color, true,
                         (col < 0 || isPegNarrow),
-                        (m_keyHighlight == QPoint(row, col)));
+                        (m_keyHighlight == QPoint(row, col)), rightColor);
       }
     }
 

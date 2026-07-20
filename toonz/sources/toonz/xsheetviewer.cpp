@@ -1055,6 +1055,50 @@ void XsheetViewer::drawPredefinedPath(QPainter &p, PredefinedPath which,
 
 //-----------------------------------------------------------------------------
 
+void XsheetViewer::drawSplitPredefinedPath(QPainter &p, PredefinedPath which,
+                                           QPoint xy,
+                                           optional<QColor> leftFill,
+                                           optional<QColor> rightFill,
+                                           optional<QColor> outline,
+                                           int lineWidth) const {
+  QPainterPath path = orientation()->path(which).translated(xy);
+
+  // Clip to each half before filling. The halves are split on the bounding
+  // box's vertical midline, so for the diamond the seam runs through its two
+  // vertical tips — the same left/right division the key_partial icon uses in
+  // the viewer's keyframe navigator, keeping the two surfaces readable as one
+  // language. Rounded outwards so no seam pixel is left unpainted.
+  const QRectF bb = path.boundingRect();
+  const qreal mid = bb.center().x();
+
+  auto fillHalf = [&](const optional<QColor> &fill, bool leftSide) {
+    if (!fill) return;  // hollow half: only the shared outline will show
+    QRectF clip = leftSide ? QRectF(bb.left(), bb.top(), mid - bb.left(),
+                                    bb.height())
+                           : QRectF(mid, bb.top(), bb.right() - mid,
+                                    bb.height());
+    p.save();
+    p.setClipRect(clip.adjusted(-1.0, -1.0, 1.0, 1.0), Qt::IntersectClip);
+    p.fillPath(path, QBrush(*fill));
+    p.restore();
+  };
+
+  fillHalf(leftFill, true);
+  fillHalf(rightFill, false);
+
+  if (outline) {
+    QPen oldPen = p.pen();
+    QPen newPen = oldPen;
+    newPen.setColor(*outline);
+    newPen.setWidth(lineWidth);
+    p.setPen(newPen);
+    p.drawPath(path);
+    p.setPen(oldPen);
+  }
+}
+
+//-----------------------------------------------------------------------------
+
 bool XsheetViewer::areCellsSelectedEmpty() {
   int r0, c0, r1, c1;
   getCellSelection()->getSelectedCells(r0, c0, r1, c1);
