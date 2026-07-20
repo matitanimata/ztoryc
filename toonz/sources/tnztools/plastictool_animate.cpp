@@ -3801,7 +3801,8 @@ void PlasticTool::draw_animate() {
     // connected columns as dimmed context, so the whole articulated character
     // (spread across several drawing levels) is visible at once. Each is placed
     // via its own affine into the current tool's draw space.
-    for (const ConnectedSkel &cs : connectedSkeletons_animate()) {
+    const std::vector<ConnectedSkel> connSkels = connectedSkeletons_animate();
+    for (const ConnectedSkel &cs : connSkels) {
       glPushMatrix();
       tglMultMatrix(cs.toCur);
       drawSkeleton(cs.skel, pixelSize, 90);
@@ -3844,6 +3845,41 @@ void PlasticTool::draw_animate() {
       glVertex2d(p.x - r, p.y);
       glEnd();
     }
+
+    // Pins on the CONNECTED columns too: a planted hand must stay visible
+    // while posing from the body column. Before, the diamond existed only
+    // while its own column was current — so placing a pin on another level's
+    // vertex gave no visual feedback at all, and already-planted limbs looked
+    // free the moment you switched column. Read each column's PIN params
+    // directly (same convention as hasCrossLevelPin_animate / the eval) and
+    // map the deformed position through that column's toCur affine.
+    if (TXsheet *xsh =
+            TTool::getApplication()->getCurrentXsheet()->getXsheet())
+      for (const ConnectedSkel &cs : connSkels) {
+        TStageObject *obj =
+            xsh->getStageObject(TStageObjectId::ColumnId(cs.columnIndex));
+        if (!obj) continue;
+        const PlasticSkeletonDeformationP &def =
+            obj->getPlasticSkeletonDeformation();
+        if (!def) continue;
+        const double sdFr = obj->paramsTime((double)::frame());
+        const int skId    = def->skeletonId(sdFr);
+        glColor4ub(0, 220, 255, 255);
+        for (auto vt = cs.skel.vertices().begin();
+             vt != cs.skel.vertices().end(); ++vt) {
+          SkVD *vd = def->vertexDeformation(skId, (int)vt.m_idx);
+          if (!vd || !vd->m_params[SkVD::PIN] ||
+              vd->m_params[SkVD::PIN]->getValue(sdFr) < 0.5)
+            continue;
+          const TPointD p = cs.toCur * vt->P();
+          glBegin(GL_LINE_LOOP);
+          glVertex2d(p.x, p.y - r);
+          glVertex2d(p.x + r, p.y);
+          glVertex2d(p.x, p.y + r);
+          glVertex2d(p.x - r, p.y);
+          glEnd();
+        }
+      }
     glLineWidth(1.0f);
 
     // SuperPlastic controller gizmo: full Animate-tool replica ON TOP of the
