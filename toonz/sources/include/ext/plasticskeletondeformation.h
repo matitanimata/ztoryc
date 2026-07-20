@@ -95,6 +95,25 @@ DVAPI void plant(const std::vector<Joint> &joints, const std::vector<Pin> &pins,
                  const std::vector<int> &preplanted = std::vector<int>(),
                  double maxStepDegrees               = 0.0);
 
+//! DIAGNOSTIC (2026-07-20) — suspends the evaluation-time plant.
+//!
+//! Hypothesis under test: posing a stitched rig fights itself because TWO
+//! different IK solvers act on the same pins. The tool runs FABRIK
+//! (solveMultiAnchor) while dragging and writes ANGLEs; evaluation then re-runs
+//! this CCD plant over those ANGLEs and lands somewhere else; the next mouse
+//! move starts from THAT. A closed loop between two algorithms that answer the
+//! same question differently — which is what the snapping looks like.
+//!
+//! With this on during the drag, FABRIK alone owns the pose. If the snapping
+//! disappears, the loop is confirmed and the real fix is to make the drag call
+//! plant() too (one solver, as in STEP C.2). If it does NOT disappear, the
+//! hypothesis is wrong and this comes straight back out.
+//!
+//! The flag lives here because tnzext cannot see tnztools; the tool sets it on
+//! button-down and clears it on button-up.
+DVAPI void setSolveSuspended(bool on);
+DVAPI bool isSolveSuspended();
+
 }  // namespace PlasticPinSolver
 
 //====================================================

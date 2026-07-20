@@ -15,6 +15,7 @@
 #include "tcg/tcg_misc.h"
 
 // STL includes
+#include <atomic>
 #include <memory>
 #include <set>
 #include <map>
@@ -1013,6 +1014,32 @@ double solverRelAngleDeg(const std::vector<PlasticPinSolver::Joint> &joints,
 
 }  // namespace
 
+//-----------------------------------------------------------------------------
+
+// DIAGNOSTIC (2026-07-20) — see the header for the hypothesis being tested.
+// Atomic because plant() runs during evaluation, which is not necessarily the
+// thread that flips the flag (the tool does, on button down/up).
+namespace {
+std::atomic<bool> l_solveSuspended{false};
+
+// Opt-in, so the A/B is two launches of the same binary rather than two builds.
+bool solveSuspendEnabled() {
+  static const bool enabled = ::getenv("ZTORYC_SUSPEND_PLANT") != nullptr;
+  return enabled;
+}
+}  // namespace
+
+void PlasticPinSolver::setSolveSuspended(bool on) {
+  if (!solveSuspendEnabled()) return;
+  l_solveSuspended.store(on, std::memory_order_relaxed);
+}
+
+bool PlasticPinSolver::isSolveSuspended() {
+  return l_solveSuspended.load(std::memory_order_relaxed);
+}
+
+//-----------------------------------------------------------------------------
+
 void PlasticPinSolver::plant(const std::vector<Joint> &joints,
                              const std::vector<Pin> &pinsIn,
                              std::vector<TPointD> &pos,
@@ -1046,6 +1073,18 @@ void PlasticPinSolver::plant(const std::vector<Joint> &joints,
 
     if (pins.size() == 1) return;
   }
+
+  // DIAGNOSTIC (2026-07-20) — return HERE, not at the top: the primary pin's
+  // rigid translation above is the anchoring the tool deliberately delegates to
+  // us (see writeBackAngles_animate: the drag writes ANGLEs only and leaves the
+  // free root to this plant). Suspending that too makes the character drift.
+  //
+  // What we drop is everything below — the CCD over secondary pins and the
+  // balancing loop that re-runs it. That is the half which duplicates FABRIK's
+  // job and fights it. Note the single-pin early return just above: with one pin
+  // the CCD never runs at all, which is exactly why a lone pin has always felt
+  // nailed while two pins do not.
+  if (l_solveSuspended.load(std::memory_order_relaxed)) return;
 
   // Plant every secondary pin: CCD on its own limb, below the point where it
   // diverges from the already-planted chains. Re-runnable — the planted chains
