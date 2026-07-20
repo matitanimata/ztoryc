@@ -3545,6 +3545,10 @@ void StoryboardPanel::onModelResequenced() {
   // its own stale selection) silently stayed desynced — showing a different
   // layout and, in the worst case, holding a shot with no panel widget.
   std::vector<int> childCols;
+  // The sub-scene each shot column exposes, in the same order as childCols.
+  // This is the scene's own answer to "which shots exist, and in what order",
+  // expressed in identities that survive column shifts — see Shot::childLevel.
+  std::vector<TXshChildLevel *> childLevels;
   for (int col = 0; col < xsh->getColumnCount(); col++) {
     TXshColumn *column = xsh->getColumn(col);
     if (!column || column->isEmpty()) continue;
@@ -3554,10 +3558,111 @@ void StoryboardPanel::onModelResequenced() {
       TXshCell cell = xsh->getCell(r, col);
       if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
         childCols.push_back(col);
+        childLevels.push_back(cell.m_level->getChildLevel());
         break;
       }
     }
   }
+
+  // Fast path: recognise a plain INSERTION and handle just that, instead of
+  // rebuilding every panel on the board.
+  //
+  // Rebuilding is what makes Add Shot expensive: each new PanelWidget (and its
+  // ~8 children) is style-matched against the application-wide theme sheet, a
+  // cost that profiling showed cannot be optimised away. But adding a shot does
+  // not change the other shots at all — so if the scene's shot list is exactly
+  // ours with one extra entry, the only correct update is to insert that one.
+  //
+  // Identity is Shot::childLevel, not the column index: inserting shifts every
+  // later column, so index comparison cannot tell "same shot, moved" from
+  // "different shot". Every shot must already carry an identity, otherwise we
+  // cannot reason about it and fall through to the safe full rebuild below.
+  if (!m_updating && childLevels.size() == m_shots.size() + 1) {
+    bool identified = true;
+    for (const Shot &s : m_shots)
+      if (!s.childLevel) { identified = false; break; }
+
+    // onShotInserted() uses one number as BOTH the shot position and the xsheet
+    // column (it inserts at m_shots.begin()+col and reads xsh->getColumn(col)),
+    // which only holds when the shot columns are 0..N-1 with no gaps. A scene
+    // can interleave other column types — this one carries three sound columns
+    // — so verify the layout before relying on that equivalence; anything else
+    // takes the full rebuild, which does not make the assumption.
+    for (int i = 0; identified && i < (int)childCols.size(); i++)
+      if (childCols[i] != i) identified = false;
+
+    if (identified) {
+      // Walk both lists in step; the first mismatch is the insertion point, and
+      // everything after it must line up again for this to BE an insertion.
+      int insertAt = -1;
+      bool isPlainInsert = true;
+      for (int i = 0, j = 0; j < (int)childLevels.size(); j++) {
+        if (i < (int)m_shots.size() && m_shots[i].childLevel == childLevels[j]) {
+          i++;
+          continue;
+        }
+        if (insertAt >= 0) {  // a second mismatch: not a plain insertion
+          isPlainInsert = false;
+          break;
+        }
+        insertAt = j;
+      }
+      if (isPlainInsert && insertAt >= 0) {
+        qWarning("[ZTORY] onModelResequenced: shot inserted at %d -> incremental "
+                 "(board keeps its %d existing panels)",
+                 insertAt, (int)m_shots.size());
+        onShotInserted(insertAt);
+        return;
+      }
+    }
+  }
+
+  // Mirror image: a plain REMOVAL. Same reasoning and the same guards — one of
+  // our shots is gone from the scene and the rest still line up, so the only
+  // correct update is to drop that shot's panels.
+  if (!m_updating && m_shots.size() == childLevels.size() + 1) {
+    bool identified = true;
+    for (const Shot &s : m_shots)
+      if (!s.childLevel) { identified = false; break; }
+    for (int i = 0; identified && i < (int)childCols.size(); i++)
+      if (childCols[i] != i) identified = false;
+
+    if (identified) {
+      int removeAt = -1;
+      bool isPlainRemove = true;
+      for (int i = 0, j = 0; i < (int)m_shots.size(); i++) {
+        if (j < (int)childLevels.size() && m_shots[i].childLevel == childLevels[j]) {
+          j++;
+          continue;
+        }
+        if (removeAt >= 0) {  // a second mismatch: not a plain removal
+          isPlainRemove = false;
+          break;
+        }
+        removeAt = i;
+      }
+      if (isPlainRemove && removeAt >= 0) {
+        qWarning("[ZTORY] onModelResequenced: shot removed at %d -> incremental "
+                 "(board keeps its %d remaining panels)",
+                 removeAt, (int)m_shots.size() - 1);
+        for (PanelWidget *pw : m_shots[removeAt].panels) {
+          m_grid->removeWidget(pw);
+          delete pw;
+        }
+        m_shots.erase(m_shots.begin() + removeAt);
+        // Re-anchor the columns from the scene rather than shifting our own
+        // numbers: childCols IS what the xsheet now holds, so there is nothing
+        // to deduce and no drift to accumulate.
+        for (int i = 0; i < (int)m_shots.size(); i++)
+          m_shots[i].data.xsheetColumn = childCols[i];
+        renumberAll();
+        rebuildGrid();
+        saveZtoryc();
+        return;
+      }
+    }
+  }
+
   bool drifted = (childCols.size() != m_shots.size());
   TStageObjectTree *tree = xsh->getStageObjectTree();
   for (int si = 0; !drifted && si < (int)m_shots.size(); si++) {
@@ -3761,6 +3866,13 @@ void StoryboardPanel::onShotInserted(int col) {
     // ignoreLastStop=true: exclude the resequence SFH so the new shot reads its
     // true length, not length+1.
     column->getRange(r0, r1, /*ignoreLastStop=*/true);
+    // Scene-side identity: the sub-scene this column exposes. Recorded so a
+    // later resequence can recognise this shot wherever it ends up.
+    for (int r = r0; r <= r1 && !shot.childLevel; r++) {
+      TXshCell cell = xsh->getCell(r, col);
+      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
+        shot.childLevel = cell.m_level->getChildLevel();
+    }
     PanelData pd;
     pd.duration = (r1 >= r0) ? (r1 - r0 + 1) : 24;
     shot.data.panels.push_back(pd);
@@ -3976,6 +4088,7 @@ void StoryboardPanel::refreshFromScene() {
     }
     if (!cl) continue;
     Shot shot;
+    shot.childLevel = cl;  // scene-side identity, immune to column shifts
     shot.data.xsheetColumn = col;
     shot.data.shotNumber = QString("%1").arg((int)m_shots.size()+1, 2, 10, QChar(48));
     PanelData pd;

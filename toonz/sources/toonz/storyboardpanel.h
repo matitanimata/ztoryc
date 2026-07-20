@@ -196,6 +196,16 @@ struct Shot {
     std::vector<PanelWidget*> panels;
     bool selected = false;
     int  viewPanel = 0;  // panel shown in collapsed "Compact view" view
+    //! The sub-scene this shot exposes — its STABLE identity.
+    //!
+    //! xsheetColumn shifts whenever a shot is inserted or removed, so it cannot
+    //! tell "same shot, moved" from "different shot". The child level pointer
+    //! does: it survives resequencing untouched. onModelResequenced compares
+    //! this against the scene's ordered child levels to recognise a plain
+    //! insertion or removal and update incrementally, instead of rebuilding
+    //! every panel on the board (which is what made Add Shot cost seconds).
+    //! Never dereferenced for identity purposes — only compared.
+    TXshChildLevel *childLevel = nullptr;
   };
   std::vector<Shot> m_shots;
   int  m_columnsPerRow;
