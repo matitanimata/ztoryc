@@ -3,15 +3,20 @@
 # Compila Ztoryc e aggiorna Ztoryc.app
 # Uso: ./build_and_deploy.sh [file.cpp opzionale da toccare]
 #
-# Workspace: default macchina Cowork; override con export ZTORYC_WORKSPACE=/path/to/repo
-# oppure si usa automaticamente la directory del clone se il path default non esiste.
+# Workspace: la directory dello SCRIPT, cioe' il worktree da cui lo lanci.
+# Override esplicito con export ZTORYC_WORKSPACE=/path/to/repo.
+#
+# ATTENZIONE, non rimettere un path fisso qui: prima c'era hardcoded il path di
+# master, quindi lanciare lo script da un worktree di feature (es. superplastic)
+# compilava e deployava MASTER senza dirlo — vanificando anche la scelta del
+# bundle Ztoryc-SP.app qui sotto, che veniva risolta sul workspace sbagliato.
+# Il worktree giusto e' sempre quello in cui lo script si trova.
 
 SCRIPT_DIR="${0:A:h}"
-DEFAULT_WS="/Volumes/ZioSam/tahoma2d-workspace/tahoma2d"
 if [[ -n "${ZTORYC_WORKSPACE:-}" ]]; then
   WORKSPACE="$ZTORYC_WORKSPACE"
 else
-  WORKSPACE="$DEFAULT_WS"
+  WORKSPACE="$SCRIPT_DIR"
 fi
 
 # Individua la directory di build: se build.ninja è nella root del workspace
