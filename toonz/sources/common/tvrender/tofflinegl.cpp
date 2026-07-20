@@ -12,6 +12,9 @@
 
 // Platform-specific includes
 #include <cstdlib>  // getenv (offline-GL backend override)
+#include <mutex>    // call_once (one-shot offline context report)
+
+#include <QDebug>
 
 // QtOfflineGL is built on every platform (tnzcore/CMakeLists.txt) and is now
 // the default backend everywhere, Windows included — see
@@ -627,6 +630,24 @@ void TOfflineGL::makeCurrent() {
   if (currentContextManager) currentContextManager->store();
   // All the code was moved inside Imp
   m_imp->makeCurrent();
+
+  // Report ONCE what the offline context actually is. This is the only place
+  // that can answer it: the crash handler's GPU info describes the main
+  // viewer's context, which says nothing about the offscreen one used for
+  // scene icons and thumbnails. A driver name here means hardware; the
+  // Microsoft software rasterizer identifies itself as "GDI Generic", and a
+  // Qt fallback shows up as ANGLE or llvmpipe. Cheap enough to leave in: it
+  // fires on the first offline render of the session and never again.
+  static std::once_flag reportOnce;
+  std::call_once(reportOnce, []() {
+    const char *vendor   = (const char *)glGetString(GL_VENDOR);
+    const char *renderer = (const char *)glGetString(GL_RENDERER);
+    const char *version  = (const char *)glGetString(GL_VERSION);
+    qWarning("[ZTORY] offline GL context: vendor=%s renderer=%s version=%s",
+             vendor ? vendor : "?", renderer ? renderer : "?",
+             version ? version : "?");
+  });
+
   assert(glGetError() == GL_NO_ERROR);
 }
 
