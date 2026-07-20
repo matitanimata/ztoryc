@@ -1061,30 +1061,44 @@ void XsheetViewer::drawSplitPredefinedPath(QPainter &p, PredefinedPath which,
                                            optional<QColor> rightFill,
                                            optional<QColor> outline,
                                            int lineWidth) const {
+  // Left/right split is the common case; forward to the three-region form with
+  // the left half a single colour (leftTop == leftBottom).
+  drawTriPartPredefinedPath(p, which, xy, leftFill, leftFill, rightFill, outline,
+                            lineWidth);
+}
+
+//-----------------------------------------------------------------------------
+
+void XsheetViewer::drawTriPartPredefinedPath(
+    QPainter &p, PredefinedPath which, QPoint xy, optional<QColor> leftTopFill,
+    optional<QColor> leftBottomFill, optional<QColor> rightFill,
+    optional<QColor> outline, int lineWidth) const {
   QPainterPath path = orientation()->path(which).translated(xy);
 
-  // Clip to each half before filling. The halves are split on the bounding
-  // box's vertical midline, so for the diamond the seam runs through its two
-  // vertical tips — the same left/right division the key_partial icon uses in
-  // the viewer's keyframe navigator, keeping the two surfaces readable as one
-  // language. Rounded outwards so no seam pixel is left unpainted.
-  const QRectF bb = path.boundingRect();
-  const qreal mid = bb.center().x();
+  // Three fillable regions carry the whole keyframe-diamond grammar (Ztoryc):
+  //   right half  -> hollow marks a PARTIAL key
+  //   left half   -> which system(s): white transform, gold pose, or split
+  //                  white-over-gold when a partial key holds both.
+  // A full key fills all three the same; the vertical white|gold split (left
+  // vs right) is the complete "All" key. Clip rects are rounded outwards so no
+  // seam pixel between regions is left unpainted.
+  const QRectF bb  = path.boundingRect();
+  const qreal midX = bb.center().x();
+  const qreal midY = bb.center().y();
 
-  auto fillHalf = [&](const optional<QColor> &fill, bool leftSide) {
-    if (!fill) return;  // hollow half: only the shared outline will show
-    QRectF clip = leftSide ? QRectF(bb.left(), bb.top(), mid - bb.left(),
-                                    bb.height())
-                           : QRectF(mid, bb.top(), bb.right() - mid,
-                                    bb.height());
+  auto fillRegion = [&](const optional<QColor> &fill, const QRectF &clip) {
+    if (!fill) return;  // hollow: only the shared outline shows here
     p.save();
     p.setClipRect(clip.adjusted(-1.0, -1.0, 1.0, 1.0), Qt::IntersectClip);
     p.fillPath(path, QBrush(*fill));
     p.restore();
   };
 
-  fillHalf(leftFill, true);
-  fillHalf(rightFill, false);
+  const qreal lw = midX - bb.left(), rw = bb.right() - midX;
+  const qreal th = midY - bb.top(), bh = bb.bottom() - midY;
+  fillRegion(leftTopFill, QRectF(bb.left(), bb.top(), lw, th));
+  fillRegion(leftBottomFill, QRectF(bb.left(), midY, lw, bh));
+  fillRegion(rightFill, QRectF(midX, bb.top(), rw, bb.height()));
 
   if (outline) {
     QPen oldPen = p.pen();

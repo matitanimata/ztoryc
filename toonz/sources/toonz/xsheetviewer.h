@@ -797,6 +797,19 @@ public:
                                optional<QColor> outline,
                                int lineWidth = 1) const;
 
+  //! Three-region fill: left half is split horizontally into \p leftTopFill and
+  //! \p leftBottomFill, \p rightFill is the whole right half. Any unset region
+  //! is left hollow. This is the full keyframe-diamond grammar (Ztoryc): the
+  //! right half hollow marks a partial key, and the left half's colours say
+  //! which system(s) — white transform over gold pose. drawSplitPredefinedPath
+  //! is the special case leftTop == leftBottom.
+  void drawTriPartPredefinedPath(QPainter &p, PredefinedPath which, QPoint xy,
+                                 optional<QColor> leftTopFill,
+                                 optional<QColor> leftBottomFill,
+                                 optional<QColor> rightFill,
+                                 optional<QColor> outline,
+                                 int lineWidth = 1) const;
+
   //---------
 
   void updateCells() { m_cellArea->update(m_cellArea->visibleRegion()); }

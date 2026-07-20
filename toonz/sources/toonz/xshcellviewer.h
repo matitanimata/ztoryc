@@ -158,15 +158,18 @@ class CellArea final : public QWidget {
   void drawCurrentTimeIndicator(QPainter &p, const QPoint &xy,
                                 bool isFolded = false);
 
-  //! \p color fills the whole marker. For keyframe diamonds \p rightColor may
-  //! override the RIGHT half: Ztoryc splits the diamond into column transform
-  //! (left) and plastic pose (right) — see drawSplitPredefinedPath. Leave it
-  //! unset for a plain single-colour marker. An explicitly invalid QColor()
-  //! means "this half is hollow".
+  //! \p color fills the whole marker. For keyframe diamonds the three optional
+  //! region colours drive the Ztoryc grammar (see drawTriPartPredefinedPath):
+  //! \p color is the left-top region, \p leftBottomColor the left-bottom, and
+  //! \p rightColor the right half. When \p leftBottomColor is unset it mirrors
+  //! \p color (plain left/right split); an explicitly invalid QColor() region
+  //! is left hollow, marking a partial key. Leave all three unset for a plain
+  //! single-colour marker.
   void drawFrameMarker(QPainter &p, const QPoint &xy, QColor color,
                        bool isKeyFrame = false, bool isCamera = false,
                        bool keyHighlight = false,
-                       optional<QColor> rightColor = boost::none);
+                       optional<QColor> rightColor = boost::none,
+                       optional<QColor> leftBottomColor = boost::none);
   void drawEndOfLevelMarker(QPainter &p, QRect rect, bool isNextEmpty,
                             bool isStopFrame = false, bool isLooped = false);
   void drawCellMarker(QPainter &p, int markId, QRect rect,

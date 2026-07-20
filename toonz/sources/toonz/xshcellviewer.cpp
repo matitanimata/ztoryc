@@ -1984,7 +1984,8 @@ void CellArea::drawCurrentTimeIndicator(QPainter &p, const QPoint &xy,
 
 void CellArea::drawFrameMarker(QPainter &p, const QPoint &xy, QColor color,
                                bool isKeyFrame, bool isCamera,
-                               bool keyHighlight, optional<QColor> rightColor) {
+                               bool keyHighlight, optional<QColor> rightColor,
+                               optional<QColor> leftBottomColor) {
   QColor outlineColor = Qt::black;
   QPoint frameAdj     = m_viewer->getFrameZoomAdjustment();
   QRect dotRect       = (isCamera)
@@ -2020,17 +2021,19 @@ void CellArea::drawFrameMarker(QPainter &p, const QPoint &xy, QColor color,
                      : useSmall ? PredefinedPath::FRAME_MARKER_DIAMOND_SMALL
                                 : PredefinedPath::FRAME_MARKER_DIAMOND;
     const QPoint diamondCenter = dotRect.adjusted(1, 1, 1, 1).center();
-    if (rightColor) {
-      // Split diamond: how many halves are filled reads as completeness
-      // (one = partial, two = full), and their colours say which system —
-      // white for the column transform, gold for the plastic pose. An
-      // invalid rightColor leaves that half hollow, which is the classic
-      // "partial key" look the viewer's key_partial icon already uses.
-      m_viewer->drawSplitPredefinedPath(
-          p, diamondPath, diamondCenter, color,
-          rightColor->isValid() ? optional<QColor>(*rightColor)
-                                : optional<QColor>(),
-          outlineColor);
+    if (rightColor || leftBottomColor) {
+      // Three-region diamond: left-top = color, left-bottom = leftBottomColor
+      // (mirrors color when unset), right = rightColor. Right hollow marks a
+      // partial key; the left colours say which system(s). An explicitly
+      // invalid region colour is left hollow.
+      auto reg = [](const optional<QColor> &c) -> optional<QColor> {
+        if (!c) return optional<QColor>();
+        return c->isValid() ? optional<QColor>(*c) : optional<QColor>();
+      };
+      optional<QColor> lt = optional<QColor>(color);
+      optional<QColor> lb = leftBottomColor ? reg(leftBottomColor) : lt;
+      m_viewer->drawTriPartPredefinedPath(p, diamondPath, diamondCenter, lt, lb,
+                                          reg(rightColor), outlineColor);
     } else
       m_viewer->drawPredefinedPath(p, diamondPath, diamondCenter, color,
                                    outlineColor);
@@ -3633,34 +3636,53 @@ void CellArea::drawKeyframe(QPainter &p, const QRect toBeUpdated) {
           }
         }
 
-        QColor color = Qt::white;
-        optional<QColor> rightColor;
-        if (plasticAny) {
-          const QColor gold = ZtoryTheme::gold();
-          if (stageFull) {
-            // Both systems keyed: left half the transform, right half the
-            // pose. Two filled halves, so it still reads as a full key.
-            color      = Qt::white;
-            rightColor = gold;
-          } else {
-            // Pose only (the transform is absent or partial): gold, filled
-            // fully when the whole pose is keyed, half when it is partial.
-            color      = gold;
-            rightColor = plasticFull ? optional<QColor>(gold)
-                                     : optional<QColor>(QColor());
-          }
-        } else if (!stageFull) {
-          // Plain partial transform key: half white, as the navigator shows.
-          rightColor = optional<QColor>(QColor());
+        // Three-region diamond grammar (see drawTriPartPredefinedPath):
+        //   right half hollow  = partial key
+        //   left half colour(s) = which system(s): white transform, gold pose,
+        //                         or white-over-gold when a partial key holds
+        //                         both.
+        // The diamond only draws when the stage object is keyed, so a stage key
+        // is always present; the cases below fold plastic on top of that.
+        const QColor white = Qt::white;
+        const QColor gold  = ZtoryTheme::gold();
+        const optional<QColor> HOLLOW = optional<QColor>(QColor());
+        optional<QColor> leftTop, leftBottom, right;
+
+        if (!plasticAny) {
+          // Transform only. Full = solid white; partial = left white, right
+          // hollow.
+          leftTop = leftBottom = white;
+          right   = stageFull ? optional<QColor>(white) : HOLLOW;
+        } else if (stageFull) {
+          // Everything keyed (the "All" key): clean vertical white | gold.
+          leftTop = leftBottom = white;
+          right   = gold;
+        } else if (plasticFull) {
+          // Pose is the intent and it is complete: solid gold. (A partial
+          // stage key from the mechanics of the drag is deliberately treated
+          // as "gold" here, matching what the animator asked for with a
+          // Plastic-scope Global Key.)
+          leftTop = leftBottom = gold;
+          right   = gold;
+        } else {
+          // Partial pose over a not-full transform: both systems present but
+          // incomplete — left white over gold, right hollow.
+          leftTop    = white;
+          leftBottom = gold;
+          right      = HOLLOW;
         }
 
         // Selection colour still wins — it is transient feedback, and it must
         // read as "selected" regardless of what the key holds.
         if (m_viewer->getKeyframeSelection() &&
             m_viewer->getKeyframeSelection()->isSelected(row, col)) {
-          color      = QColor(85, 157, 255);
-          rightColor = boost::none;
+          const QColor sel(85, 157, 255);
+          leftTop = leftBottom = right = sel;
         }
+
+        // Back-compat name kept for the plain (non-plastic) call path below.
+        QColor color = leftTop ? *leftTop : white;
+        optional<QColor> rightColor = right;
 
         int x = xy.x();
         int y = xy.y();
@@ -3677,7 +3699,8 @@ void CellArea::drawKeyframe(QPainter &p, const QRect toBeUpdated) {
 
         drawFrameMarker(p, QPoint(x, y), color, true,
                         (col < 0 || isPegNarrow),
-                        (m_keyHighlight == QPoint(row, col)), rightColor);
+                        (m_keyHighlight == QPoint(row, col)), rightColor,
+                        leftBottom);
       }
     }
 
