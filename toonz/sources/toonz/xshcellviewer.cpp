@@ -44,6 +44,8 @@
 #include "toonz/txshsoundcolumn.h"
 #include "toonz/txshcell.h"
 #include "toonz/tstageobject.h"
+#include "ext/plasticskeletondeformation.h"
+#include "ztorytheme.h"
 #include "toonz/tstageobjecttree.h"
 #include "toonz/sceneproperties.h"
 #include "toonz/columnfan.h"
@@ -3582,6 +3584,23 @@ void CellArea::drawKeyframe(QPainter &p, const QRect toBeUpdated) {
         QPoint target = tmpKeyRect.translated(xy).topLeft();
 
         QColor color  = Qt::white;
+        // Ztoryc: a key that also holds the plastic POSE is a different animal
+        // from a plain column-transform key — it freezes the whole rigged
+        // character. Mark it with the logo gold so blocking is readable at a
+        // glance. Selection colour still wins (it is transient feedback).
+        // Two subtleties:
+        //  * FULL stage key required. Gold on any stage key made a partial key
+        //    (say, X/Y from an Animate drag) that merely COINCIDED with plastic
+        //    keys read as "global" — while the keyframe navigator correctly
+        //    called it partial. Gold now means: whole transform + whole pose.
+        //  * paramsTime(), not the raw row: plastic params are sampled in the
+        //    stage object's param time, which diverges from the xsheet row
+        //    under cycling.
+        if (pegbar->isFullKeyframe(row))
+          if (const PlasticSkeletonDeformationP &psd =
+                  pegbar->getPlasticSkeletonDeformation())
+            if (psd->isKeyframe(pegbar->paramsTime(row)))
+              color = ZtoryTheme::gold();
         if (m_viewer->getKeyframeSelection() &&
             m_viewer->getKeyframeSelection()->isSelected(row, col))
           color = QColor(85, 157, 255);

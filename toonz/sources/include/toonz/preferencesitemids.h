@@ -102,6 +102,7 @@ enum PreferencesItemId {
   // AutocreationType,// deprecated
   EnableAutocreation,
   KeyframesFollowExposure,  // i keyframe seguono le celle in insert/remove/extend
+  GlobalKeyIncludesPlastic,  // Ztoryc: la chiave globale include la posa plastic
   NumberingSystem,
   EnableAutoStretch,
   EnableImplicitHold,

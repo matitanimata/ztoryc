@@ -312,6 +312,25 @@ public:
 } ToggleKeyframesFollowExposureCommand;
 
 //=============================================================================
+// Ztoryc: se ON, la chiave globale su una colonna riggata chiavizza anche la
+// POSA plastic (scheletro + root + controller), non solo la trasformazione di
+// colonna. Il diamante di quelle chiavi e' oro invece che bianco.
+class ToggleGlobalKeyIncludesPlasticCommand final : public MenuItemHandler {
+public:
+  ToggleGlobalKeyIncludesPlasticCommand()
+      : MenuItemHandler(MI_ToggleGlobalKeyIncludesPlastic) {}
+  void execute() override {
+    bool current =
+        Preferences::instance()->getBoolValue(GlobalKeyIncludesPlastic);
+    if (CommandManager::instance()
+            ->getAction(MI_ToggleGlobalKeyIncludesPlastic)
+            ->isChecked() == current)
+      return;
+    Preferences::instance()->setValue(GlobalKeyIncludesPlastic, !current);
+  }
+} ToggleGlobalKeyIncludesPlasticCommand;
+
+//=============================================================================
 
 class ToggleCreationInHoldCellsCommand final : public MenuItemHandler {
 public:

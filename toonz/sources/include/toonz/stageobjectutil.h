@@ -113,6 +113,13 @@ class DVAPI UndoSetKeyFrame final : public TUndo {
 
   TStageObject::Keyframe m_key;
 
+  // Ztoryc: on a rigged column, Set Key also captures the plastic POSE (behind
+  // the GlobalKeyIncludesPlastic preference — the gold diamond). The plastic
+  // keyframe state at m_frame is snapshotted at construction so undo restores
+  // it exactly; SkDKey comes in through tstageobject.h.
+  SkDKey m_plasticOld;
+  bool m_withPlastic = false;
+
 public:
   UndoSetKeyFrame(TStageObjectId objectId, int frame,
                   TXsheetHandle *xsheetHandle);
@@ -157,6 +164,11 @@ class DVAPI UndoRemoveKeyFrame final : public TUndo {
 
   TStageObject::Keyframe m_key;
   TPointD m_center, m_offset;
+
+  // Ztoryc: symmetric to UndoSetKeyFrame — removing a full key also drops the
+  // plastic POSE it captured (pref-gated), and undo restores the snapshot.
+  SkDKey m_plasticOld;
+  bool m_withPlastic = false;
 
 public:
   UndoRemoveKeyFrame(TStageObjectId objectId, int frame,

@@ -2618,6 +2618,15 @@ void MainWindow::defineActions() {
                tr("When on, keyframes stay pinned to their cells: selection and "
                   "drag include them, and insert/remove/extend frame operations "
                   "shift them together with the exposure."));
+  createToggle(
+      MI_ToggleGlobalKeyIncludesPlastic,
+      QT_TR_NOOP("Global Key Includes Plastic Pose"), "",
+      Preferences::instance()->getBoolValue(GlobalKeyIncludesPlastic),
+      MenuXsheetCommandType, "ztoryc_globalkey_plastic",
+      tr("When on, a Global Key on a rigged column also keys the plastic pose "
+         "(skeleton, root offset and squash & stretch controller), so blocking "
+         "freezes the whole character. Those keys show a gold diamond. Pins and "
+         "joint limits are never keyed."));
   createMenuXsheetAction(MI_CloseChild, QT_TR_NOOP("&Close Sub-Scene"), "",
                          "sub_leave");
   createMenuXsheetAction(MI_ExplodeChild, QT_TR_NOOP("Explode Sub-Scene"), "",

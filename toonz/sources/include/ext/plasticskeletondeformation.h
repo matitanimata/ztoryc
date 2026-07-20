@@ -34,6 +34,88 @@
 #define DVVAR DV_IMPORT_VAR
 #endif
 
+//**************************************************************************************
+//    SuperPlastic pin solver
+//**************************************************************************************
+
+//! Plants IK pins on an articulated structure, in ONE space.
+//!
+//! Extracted verbatim from the single-column planting that used to live inside
+//! PlasticSkeletonDeformation::storeDeformedSkeleton, so the multi-column case
+//! can reuse it instead of growing a second, competing implementation — which is
+//! exactly how the cross-column planting went wrong before (two mechanisms, each
+//! translating the character, fighting on every support switch).
+//!
+//! The caller decides what "one space" means: a single column's skeleton space,
+//! or a whole stitched character mapped into the scene. Feed it the character as
+//! a single joint tree and it behaves the way a single-level rig does — which is
+//! the whole point.
+namespace PlasticPinSolver {
+
+struct Joint {
+  int parent = -1;            //!< parent joint index, -1 for the root
+  TPointD rest;               //!< rest position, same space as the positions
+  double minAngle = -1.0e10,  //!< joint limits in DEGREES, wide open when unset
+      maxAngle    = 1.0e10;
+};
+
+struct Pin {
+  int joint = -1;
+  TPointD target;      //!< where the joint must land, same space as positions
+  double since = 0.0;  //!< activation frame — seniority picks the primary
+};
+
+//! Plants \p pins by moving \p pos in place.
+//!
+//! The OLDEST pin is planted by rigidly translating the whole structure onto its
+//! target, leaving the root free and the authored pose untouched. Every further
+//! pin plants by bending ONLY its own limb (CCD confined strictly below the
+//! point where its chain diverges from the ones already planted, so an
+//! already-planted pin can never move). Finally, pins that cannot be reached at
+//! all pull the whole structure toward their damped average residual, a few
+//! passes, so the body settles where every pin stays ~planted instead of one of
+//! them detaching.
+//!
+//! \p preplanted lists joints already held by an EXTERNAL mechanism. When it is
+//! non-empty the rigid translation is skipped (someone else owns it), those
+//! chains seed the "do not touch" set, and every pin bends its own limb. Keep it
+//! empty to get the self-contained behaviour described above.
+//!
+//! \p maxStepDegrees > 0 enables DAMPED CCD: each joint's rotation is clamped
+//! to that many degrees per sweep. Reachability is preserved (sweeps
+//! accumulate), but the bend spreads along the chain instead of whipping the
+//! pivot nearest to the pin, and the solution varies continuously with the
+//! target. Meant for the UNIFIED multi-column tree, whose chains are 2-3x
+//! longer than a single skeleton's and whose stitch bonds are synthetic
+//! (no authored limits): plain CCD finds wildly different configurations for
+//! nearby targets there. 0 (the default) = classic behaviour, and the proven
+//! single-column path stays bit-identical.
+DVAPI void plant(const std::vector<Joint> &joints, const std::vector<Pin> &pins,
+                 std::vector<TPointD> &pos,
+                 const std::vector<int> &preplanted = std::vector<int>(),
+                 double maxStepDegrees               = 0.0);
+
+//! DIAGNOSTIC (2026-07-20) — suspends the evaluation-time plant.
+//!
+//! Hypothesis under test: posing a stitched rig fights itself because TWO
+//! different IK solvers act on the same pins. The tool runs FABRIK
+//! (solveMultiAnchor) while dragging and writes ANGLEs; evaluation then re-runs
+//! this CCD plant over those ANGLEs and lands somewhere else; the next mouse
+//! move starts from THAT. A closed loop between two algorithms that answer the
+//! same question differently — which is what the snapping looks like.
+//!
+//! With this on during the drag, FABRIK alone owns the pose. If the snapping
+//! disappears, the loop is confirmed and the real fix is to make the drag call
+//! plant() too (one solver, as in STEP C.2). If it does NOT disappear, the
+//! hypothesis is wrong and this comes straight back out.
+//!
+//! The flag lives here because tnzext cannot see tnztools; the tool sets it on
+//! button-down and clears it on button-up.
+DVAPI void setSolveSuspended(bool on);
+DVAPI bool isSolveSuspended();
+
+}  // namespace PlasticPinSolver
+
 //====================================================
 
 //    Forward declarations
@@ -65,6 +147,26 @@ public:
                 //!< whole skeleton is translated so the pinned vertex lands on
                 //!< (PINTX,PINTY) — a true per-frame constraint, so the pin
                 //!< stays planted on in-between frames, not just on keyframes.
+    PINWX,      //!< SuperPlastic cross-column pin target, in SCENE (stage
+    PINWY,      //!< placement) space. Set only for pins on a stitched CHILD
+                //!< column (whose local PINTX plant cannot hold a world spot —
+                //!< the column is glued to its parent). Read by the STAGE-level
+                //!< per-frame correction (TStageObject::computeLocalPlacement of
+                //!< the chain's top column), which pre-translates the whole
+                //!< character so this vertex lands on (PINWX,PINWY) — the
+                //!< cross-column analogue of the PINTX plant, making the pin
+                //!< hold on in-between frames. Ignored by storeDeformedSkeleton.
+    ROOTX,      //!< SuperPlastic: keyframeable offset of the skeleton ROOT from
+    ROOTY,      //!< its rest position (stored on the root vertex's own
+                //!< deformation; default 0 = root stays at rest, old scenes
+                //!< unaffected). The root has no ANGLE/DISTANCE of its own, so
+                //!< without this a pin-driven rotation of the near-pin segment
+                //!< that sweeps the root along as a rigid passenger (e.g.
+                //!< dragging a joint with the root one bone further, pivoting
+                //!< around a pin beyond it) has nowhere to record the root's
+                //!< new position — the drag becomes a silent no-op. Applied in
+                //!< updateBranchPositions BEFORE the per-frame PINTX/PINTY
+                //!< plant, so the pin still holds exactly regardless.
     SCALEX,     //!< SuperPlastic squash & stretch: scale FACTORS (1.0 = 100%
     SCALEY,     //!< = neutral; custom default handling in save/touchParams
                 //!< keeps untouched scales unserialized). Stored on the ROOT
@@ -321,6 +423,47 @@ public:
   bool isKeyframe(double frame) const;
   bool isFullKeyframe(double frame) const;
   void deleteKeyframe(double frame);
+
+  // SuperPlastic STEP C.2 — secondary cross-column pins.
+  //
+  // A pin carrying a SCENE target (PINW) is planted by the character-level
+  // correction, which is a pure translation and therefore satisfies exactly ONE
+  // pin. Every further pin has to plant by BENDING its own limb, and CCD needs
+  // its target in this skeleton's LOCAL space — which requires the column's
+  // local->scene affine, something this class (in tnzext) cannot and must not
+  // know about: TStageObject lives in the layer ABOVE.
+  //
+  // So the stage side pushes the data down. TStageObject::
+  // computePlasticPinCorrection already composes each column's local->scene
+  // affine while looking for the primary pin, so it maps the secondary targets
+  // into local space and hands them over here, keyed by vertex index. Purely
+  // transient: never serialized, never observed, dropped on any frame change.
+  void setSecondaryPinTargets(double frame,
+                              const std::map<int, TPointD> &localTargets);
+  void clearSecondaryPinTargets();
+
+  //! The posed skeleton WITHOUT any pin planting — storeDeformedSkeleton minus
+  //! its final plant. The multi-column solve needs the raw pose: it plants the
+  //! whole character itself, on the unified joint tree.
+  void storePosedSkeleton(int skeletonId, double frame,
+                          PlasticSkeleton &skeleton) const;
+
+  //! One solver Joint per vertex of this skeleton, in DENSE order (the tcg slot
+  //! of each is returned in \p vertexIds). Parent indices are dense and local to
+  //! this skeleton — the caller re-parents the root when stitching several
+  //! columns into one character. Rest positions and the effective angle limits
+  //! at \p frame come from here so the limit rules stay in one place.
+  void buildSolverJoints(int skeletonId, double frame,
+                         std::vector<PlasticPinSolver::Joint> &joints,
+                         std::vector<int> &vertexIds) const;
+
+  //! Result of a character-level solve for this column, in this column's own
+  //! skeleton space. While one is set for the requested (skeletonId, frame),
+  //! storeDeformedSkeleton returns it verbatim instead of planting locally:
+  //! a stitched character has ONE solver, and this is where its answer lands.
+  void setSolvedSkeleton(int skeletonId, double frame,
+                         const PlasticSkeleton &skeleton);
+  void clearSolvedSkeleton();
 
   // Interface methods using a deformed copy of the original skeleton (which is
   // owned by this class)

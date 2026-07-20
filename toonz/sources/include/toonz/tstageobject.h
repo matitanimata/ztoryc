@@ -353,6 +353,16 @@ with the frame.
 
   void setKeyframeWithoutUndo(int frame, const Keyframe &);
   void setKeyframeWithoutUndo(int frame);
+
+  //! SuperPlastic: key the plastic POSE parameters (skeleton pose, free-root
+  //! offset, squash & stretch controller) of every vertex deformation. Pins and
+  //! joint-limit overrides are deliberately excluded — see the definition.
+  //! No-op when the object carries no plastic deformation.
+  void setPlasticPoseKeyframe(double frame);
+
+  //! Exact inverse of setPlasticPoseKeyframe: drops the plastic POSE keys at
+  //! \p frame, leaving pins and joint-limit overrides untouched.
+  void removePlasticPoseKeyframe(double frame);
   void removeKeyframeWithoutUndo(int frame);
 
   /*!
@@ -569,6 +579,16 @@ private:
   TAffine computeIkRootOffset(int t);
   int m_ikflag;
   // ----
+
+  // SuperPlastic: solve the whole stitched plastic character at once (per
+  // frame). Called on the TOP column of a column-parenting chain. Poses every
+  // column, stitches them into ONE joint tree in scene space — each child
+  // column's root bonded to its attachment vertex on the parent — and runs the
+  // ordinary single-level pin solver on it, then hands each column its solved
+  // skeleton. Returns nothing: the plant lives in the skeletons, exactly like a
+  // rig drawn on a single level, so no second mechanism can contradict it.
+  // baseLocal is this object's local placement, already computed by the caller.
+  void solvePlasticCharacter(double t, const TAffine &baseLocal);
 
   double m_noScaleZ;
 

@@ -65,4 +65,9 @@ inline QColor activeShot() {
 // Accento secondario (verde salvia) — dettagli/waveform nel tema chiaro.
 inline QColor accent() { return QColor(0x4E, 0x7A, 0x51); }
 
+// Oro del logo Ztoryc. Usato per marcare gli elementi "arricchiti" rispetto al
+// corrispettivo Tahoma standard — p.es. il diamante di una chiave globale che
+// comprende anche la posa plastic, distinto dal diamante bianco normale.
+inline QColor gold() { return QColor(0xEC, 0xA6, 0x1C); }
+
 }  // namespace ZtoryTheme

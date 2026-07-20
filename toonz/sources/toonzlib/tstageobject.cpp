@@ -1038,6 +1038,9 @@ void TStageObject::setKeyframeWithoutUndo(int frame) {
   invalidate();
 
   // Plastic keys are currently not *created* by xsheet commands.
+  // (SuperPlastic: the Global Key path opts in explicitly, via
+  // setPlasticPoseKeyframe below — NOT the wholesale loop commented out here,
+  // which would be actively harmful. See that function for why.)
 
   /*if(m_skeletonDeformation)
 {
@@ -1055,6 +1058,76 @@ for(int p=0; p<SkVD::PARAMS_COUNT; ++p)
   setkey(vd->m_params[p], frame);
 }
 }*/
+}
+
+//-----------------------------------------------------------------------------
+
+// SuperPlastic: key the POSE parameters of every vertex deformation at `frame`,
+// so a Global Key on a rigged column freezes the whole pose and not just the
+// column transform (blocking with Constant interpolation needs the plastic pose
+// pinned down too).
+//
+// Deliberately NOT every SkVD param — that is the wholesale loop commented out
+// in setKeyframeWithoutUndo above, and it would break the rig. Two families use
+// the PRESENCE of keys as a semantic switch rather than as data:
+//   * PIN / PINTX / PINTY / PINWX / PINWY — a keyed PINW means "this pin's
+//     planting belongs to the stage level", so keying them everywhere would
+//     re-route the planting authority of every column at once;
+//   * MINANGLE / MAXANGLE — active only where keyed, so keying them would freeze
+//     every joint limit at its current value.
+// Only genuine pose channels below: skeleton pose, free-root offset, and the
+// squash & stretch controller.
+namespace {
+// The POSE parameters, and only those — the explicit list both key and unkey
+// share. See the comment above setPlasticPoseKeyframe for why pins and
+// joint-limit overrides must never appear here.
+static const int l_plasticPoseParams[] = {
+    SkVD::ANGLE,  SkVD::DISTANCE, SkVD::SO,     SkVD::ROOTX,  SkVD::ROOTY,
+    SkVD::SCALEX, SkVD::SCALEY,   SkVD::PIVOTX, SkVD::PIVOTY, SkVD::TRANSX,
+    SkVD::TRANSY, SkVD::ROT,      SkVD::SHEARX, SkVD::SHEARY};
+}
+
+void TStageObject::setPlasticPoseKeyframe(double frame) {
+  const PlasticSkeletonDeformationP &sd = getPlasticSkeletonDeformation();
+  if (!sd) return;
+
+  // Param-time domain, like every other plastic key (pins included): identity
+  // except past the last stage key with Cycle on, where a raw-frame key would
+  // land at a time no evaluation ever samples.
+  frame = paramsTime(frame);
+
+  PlasticSkeletonDeformation::vd_iterator vdt, vdEnd;
+  sd->vertexDeformations(vdt, vdEnd);
+  for (; vdt != vdEnd; ++vdt) {
+    SkVD *vd = (*vdt).second;
+    if (!vd) continue;
+    for (int p : l_plasticPoseParams)
+      if (vd->m_params[p]) setkey(vd->m_params[p], (int)frame);
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+// Drops the plastic POSE keys at `frame` — the exact inverse of
+// setPlasticPoseKeyframe, over the same explicit param list. Used by the
+// Set Key toggle (removing a "full" key must also drop the pose it captured)
+// and by its undo. Pins and joint-limit overrides are untouched: deleting
+// those would cut pin ranges / re-enable disabled limits as a side effect of
+// an unrelated key operation.
+void TStageObject::removePlasticPoseKeyframe(double frame) {
+  const PlasticSkeletonDeformationP &sd = getPlasticSkeletonDeformation();
+  if (!sd) return;
+
+  frame = paramsTime(frame);
+
+  PlasticSkeletonDeformation::vd_iterator vdt, vdEnd;
+  sd->vertexDeformations(vdt, vdEnd);
+  for (; vdt != vdEnd; ++vdt) {
+    SkVD *vd = (*vdt).second;
+    if (!vd) continue;
+    for (int p : l_plasticPoseParams)
+      if (vd->m_params[p]) vd->m_params[p]->deleteKeyframe((int)frame);
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -1470,6 +1543,276 @@ TAffine TStageObject::computeIkRootOffset(int t) {
 }
 
 //-----------------------------------------------------------------------------
+
+// SuperPlastic cross-column pin hold. A pin on a stitched CHILD column (a heel
+// on a leg parented to the body via a hook) cannot be planted by the child's
+// own in-skeleton PINTX plant: the child's local space is glued to the parent,
+// so no local translation can hold a WORLD spot while the parent moves. The
+// tool's unified IK solve makes the pose exact AT keyframes; between them the
+// interpolated angles let the heel drift. This is the per-frame fix, at the
+// stage-placement level (shared by viewer and render, so they can't diverge):
+// pre-translate the whole character so the pinned vertex lands back on its
+// captured scene target (PINWX/PINWY) — the cross-column analogue of the
+// single-level per-frame plant, and the same idea as the native skeleton's
+// computeIkRootOffset above, minus its foot-chaining (targets are re-captured
+// absolute at every pin activation, so corrections never accumulate).
+//
+// Recursion/feedback safety: the descendant chain is composed MANUALLY
+// (parentP * baseLocal * childLocals * heel) — this object's own getPlacement
+// is never invoked, and child computeLocalPlacement calls only reach the
+// parent's skeleton eval (getHandlePos), never a placement of this object.
+// SuperPlastic STEP C.2b — ONE solve for the whole stitched character.
+//
+// A character spread over several columns must behave exactly like a rig drawn
+// on a single level: same planting, same reach behaviour, same everything. The
+// way to get that is not to write a second solver for the multi-column case —
+// that is precisely what went wrong before, two mechanisms each translating the
+// character and fighting on every support switch — but to present the character
+// as ONE joint tree and hand it to the single-level solver unchanged.
+//
+// So: pose every column, map its joints into scene space, stitch each child
+// column's root onto the parent's attachment vertex (that is a real bone, not a
+// special case), and call PlasticPinSolver::plant on the result. What comes back
+// is distributed to the columns as their solved skeletons.
+//
+// The plant therefore lives in the SKELETONS, never in the placement — the same
+// place the single-level rig keeps it. This function returns nothing to prepend
+// to a placement, and that is the point: there is no longer a second mechanism
+// that could disagree with the first.
+void TStageObject::solvePlasticCharacter(double t, const TAffine &baseLocal) {
+  // Re-entrancy: composing the child placements below asks the columns for
+  // their skeletons, and that must not kick off another solve.
+  static bool l_solving = false;
+  if (l_solving) return;
+  l_solving = true;
+  struct Guard {
+    bool &f;
+    ~Guard() { f = false; }
+  } guard{l_solving};
+
+  struct locals {
+    // First frame of the pin's current ON run (Constant keys) — seniority picks
+    // the primary pin, exactly as the solver expects.
+    static double activationFrame(const TDoubleParam &pin, double frame) {
+      double on = frame;
+      for (int k = pin.getKeyframeCount() - 1; k >= 0; --k) {
+        const TDoubleKeyframe &kf = pin.getKeyframe(k);
+        if (kf.m_frame > frame) continue;
+        if (kf.m_value < 0.5) break;
+        on = kf.m_frame;
+      }
+      return on;
+    }
+  };
+
+  // One column of the character, resolved for the unified solve.
+  struct Col {
+    TStageObject *obj;
+    PlasticSkeletonDeformation *def;
+    int skelId;
+    double sdFr;
+    TAffine toScene;  //!< skeleton space -> scene, controller included
+    std::vector<int> vertexIds;  //!< dense -> tcg slot
+    int base;                    //!< offset of this column in the unified tree
+    int parentCol;               //!< index in cols, -1 for the top column
+    int hookVertexDense;         //!< attachment vertex on the PARENT, dense
+  };
+
+  const TAffine parentP = m_parent ? m_parent->getPlacement(t) : TAffine();
+
+  // Pass 0 — start from a clean slate. This runs inside computeLocalPlacement,
+  // which is recomputed on every invalidate, i.e. on every mouse move during a
+  // drag. Without this the second solve at the same frame would compose the
+  // child placements from the skeletons the FIRST solve produced, so each pass
+  // would re-solve its own output and the error would compound: the rig goes
+  // wild rather than merely drifting. Drop the solved skeletons and the cached
+  // placements built on them, so what follows always sees the raw pose.
+  {
+    std::vector<TStageObject *> walk;
+    walk.push_back(this);
+    for (size_t i = 0; i < walk.size(); ++i) {
+      TStageObject *o = walk[i];
+      if (const PlasticSkeletonDeformationP &d =
+              o->getPlasticSkeletonDeformation())
+        d->clearSolvedSkeleton();
+      if (o != this) o->invalidate();
+      for (TStageObject *ch : o->m_children)
+        if (ch->getId().isColumn()) walk.push_back(ch);
+    }
+  }
+
+  std::vector<Col> cols;
+  std::vector<PlasticPinSolver::Joint> joints;
+  std::vector<TPointD> pos;
+
+  // Walk the character top-down so a column is always processed after its
+  // parent: the stitching needs the parent's joints to already be in place.
+  struct Pending {
+    TStageObject *obj;
+    TAffine toObj;  //!< maps that column's local frame into THIS object's
+    int parentCol;
+  };
+  std::vector<Pending> queue;
+  queue.push_back({this, TAffine(), -1});
+
+  for (size_t qi = 0; qi < queue.size(); ++qi) {
+    TStageObject *obj = queue[qi].obj;
+    const TAffine acc = queue[qi].toObj;
+    const int parentCol = queue[qi].parentCol;
+
+    const PlasticSkeletonDeformationP &def = obj->getPlasticSkeletonDeformation();
+    int thisCol = -1;
+
+    if (def) {
+      const double sdFr = obj->paramsTime(t);
+      const int skelId  = def->skeletonId(sdFr);
+
+      std::vector<PlasticPinSolver::Joint> cj;
+      std::vector<int> vids;
+      def->buildSolverJoints(skelId, sdFr, cj, vids);
+
+      if (!cj.empty()) {
+        PlasticSkeleton posed;
+        def->storePosedSkeleton(skelId, sdFr, posed);
+
+        Col c;
+        c.obj       = obj;
+        c.def       = def.getPointer();
+        c.skelId    = skelId;
+        c.sdFr      = sdFr;
+        c.toScene   = parentP * baseLocal * acc *
+                    def->getSquashControllerAffine(skelId, sdFr);
+        c.vertexIds = vids;
+        c.base      = (int)joints.size();
+        c.parentCol = parentCol;
+        c.hookVertexDense = -1;
+
+        // Stitch this column's root onto the parent's attachment vertex. The
+        // parent handle "H<n>" names hook n of the parent mesh.
+        if (parentCol >= 0) {
+          const std::string &h = obj->getParentHandle();
+          if (h.size() > 1 && h[0] == 'H') {
+            const Col &pc = cols[parentCol];
+            const int hookV =
+                pc.def->vertexIndex(atoi(h.c_str() + 1), pc.skelId);
+            for (size_t k = 0; k < pc.vertexIds.size(); ++k)
+              if (pc.vertexIds[k] == hookV) {
+                c.hookVertexDense = pc.base + (int)k;
+                break;
+              }
+          }
+        }
+
+        for (size_t k = 0; k < cj.size(); ++k) {
+          PlasticPinSolver::Joint j = cj[k];
+          j.parent = (j.parent >= 0) ? c.base + j.parent : c.hookVertexDense;
+          // Rest positions go through the same mapping as the live ones, so the
+          // angles the limits are measured against stay comparable.
+          j.rest = c.toScene * j.rest;
+          joints.push_back(j);
+          pos.push_back(c.toScene * posed.vertex(vids[k]).P());
+        }
+
+        thisCol = (int)cols.size();
+        cols.push_back(c);
+      }
+    }
+
+    for (TStageObject *ch : obj->m_children)
+      if (ch->getId().isColumn())
+        queue.push_back({ch, acc * ch->computeLocalPlacement(t),
+                         thisCol >= 0 ? thisCol : parentCol});
+  }
+
+  if (cols.empty()) return;
+
+  // Collect the pins of the whole character, in scene space.
+  std::vector<PlasticPinSolver::Pin> pins;
+  for (const Col &c : cols) {
+    SkD::vd_iterator vdt, vdEnd;
+    c.def->vertexDeformations(vdt, vdEnd);
+    for (; vdt != vdEnd; ++vdt) {
+      SkVD *vd = (*vdt).second;
+      if (!vd->m_params[SkVD::PIN]) continue;
+      if (vd->m_params[SkVD::PIN]->getValue(c.sdFr) < 0.5) continue;
+
+      const bool hasW = vd->m_params[SkVD::PINWX] && vd->m_params[SkVD::PINWY] &&
+                        (vd->m_params[SkVD::PINWX]->getKeyframeCount() > 0 ||
+                         vd->m_params[SkVD::PINWY]->getKeyframeCount() > 0);
+      if (!hasW) continue;  // never captured as a character-level pin
+
+      const int v = c.def->vertexIndex(c.def->hookNumber(*(*vdt).first), c.skelId);
+      if (v < 0) continue;
+      int dense = -1;
+      for (size_t k = 0; k < c.vertexIds.size(); ++k)
+        if (c.vertexIds[k] == v) {
+          dense = c.base + (int)k;
+          break;
+        }
+      if (dense < 0) continue;
+
+      PlasticPinSolver::Pin p;
+      p.joint  = dense;
+      p.target = TPointD(vd->m_params[SkVD::PINWX]->getValue(c.sdFr),
+                         vd->m_params[SkVD::PINWY]->getValue(c.sdFr));
+      p.since  = locals::activationFrame(*vd->m_params[SkVD::PIN], c.sdFr);
+      pins.push_back(p);
+    }
+  }
+
+  if (pins.empty()) {
+    for (const Col &c : cols) c.def->clearSolvedSkeleton();
+    return;
+  }
+
+  // The character is now one joint tree in one space: the single-level solver
+  // applies verbatim, balancing pass and all.
+  // Damped CCD on the unified tree only: its chains cross column boundaries
+  // (2-3x longer than a single skeleton's) and the stitch bonds are synthetic,
+  // with no authored limits — plain CCD whips them and nearby targets find
+  // wildly different poses, which reads as a nervous, weak multi-pin hold.
+  // 15°/sweep spreads the bend along the chain while keeping full reach
+  // (24 sweeps accumulate up to 360° per joint). The single-column path calls
+  // plant() without damping and is untouched.
+  PlasticPinSolver::plant(joints, pins, pos, std::vector<int>(),
+                          /*maxStepDegrees=*/15.0);
+
+  // Hand each column its share of the answer, top-down. A column's mapping back
+  // to local space runs through its parent's attachment vertex, so the parent
+  // must already carry its solved skeleton — and its placement must be
+  // recomputed from it, which is what the invalidate() is for.
+  // Chain of local placements from o up to (but excluding) this object — the
+  // same composition the DFS above accumulated, recomputed now that the parents
+  // carry their solved skeletons.
+  auto accToTop = [&](TStageObject *o) {
+    TAffine a;
+    for (TStageObject *p = o; p && p != this; p = p->m_parent)
+      a = p->computeLocalPlacement(t) * a;
+    return a;
+  };
+
+  for (size_t ci = 0; ci < cols.size(); ++ci) {
+    Col &c = cols[ci];
+
+    TAffine toScene = c.toScene;
+    if (c.parentCol >= 0) {
+      for (TStageObject *p = c.obj; p && p != this; p = p->m_parent)
+        p->invalidate();
+      toScene = parentP * baseLocal * accToTop(c.obj) *
+                c.def->getSquashControllerAffine(c.skelId, c.sdFr);
+    }
+    const TAffine toLocal = toScene.inv();
+
+    PlasticSkeleton solved;
+    c.def->storePosedSkeleton(c.skelId, c.sdFr, solved);
+    for (size_t k = 0; k < c.vertexIds.size(); ++k)
+      solved.vertex(c.vertexIds[k]).P() = toLocal * pos[c.base + (int)k];
+
+    c.def->setSolvedSkeleton(c.skelId, c.sdFr, solved);
+  }
+}
+
+//-----------------------------------------------------------------------------
 /*
 inline double getPosPathAtCP(const TStroke* path, int cpIndex)
 {
@@ -1534,6 +1877,17 @@ TAffine TStageObject::computeLocalPlacement(double frame) {
 
     m_localPlacement = TTranslation(pos) * makeRotation(ang) * shear *
                        TScale(sx, sy) * TTranslation(-center);
+
+    // SuperPlastic cross-column pin hold: pre-translate the top column of a
+    // plastic character so a pinned descendant vertex (heel on a child leg)
+    // stays planted on its scene target at EVERY frame, in-betweens included.
+    // Cheap gate first — the vast majority of objects have no column children.
+    if (!m_children.empty() && m_id.isColumn() &&
+        !(m_parent && m_parent->getId().isColumn())) {
+      // The plant now lives in the SKELETONS (see solvePlasticCharacter), so
+      // nothing is prepended to the placement any more: one mechanism only.
+      solvePlasticCharacter(frame, m_localPlacement);
+    }
   }
 
   return m_localPlacement;
@@ -1626,7 +1980,32 @@ void TStageObject::invalidate(LazyData &ld) const {
 
 //-----------------------------------------------------------------------------
 
-void TStageObject::invalidate() { invalidate(m_lazyData(tcg::direct_access)); }
+void TStageObject::invalidate() {
+  invalidate(m_lazyData(tcg::direct_access));
+
+  // SuperPlastic: a stitched character is solved as a whole, and that solve is
+  // triggered by the TOP column's placement. Invalidating a limb column alone
+  // would leave the top column's placement cached, so no re-solve would run and
+  // the limb would keep being served the previous answer — which is exactly how
+  // a dragged arm ended up frozen. Push the invalidation up to the top of the
+  // chain so the character is re-solved as a unit.
+  //
+  // Expire the top column's cached placement DIRECTLY, without calling
+  // invalidate() on it: invalidate(LazyData&) recurses down to the children,
+  // and the children call this very function, which would climb back to the top
+  // — an infinite loop (it blew the stack while loading a scene, 174k frames
+  // deep, through setParent). Clearing the timestamp is all that is needed:
+  // computeLocalPlacement re-runs the solve when it no longer matches the frame.
+  if (m_id.isColumn() && m_parent && m_parent->getId().isColumn()) {
+    TStageObject *top = m_parent;
+    for (int guard = 0; guard < 1000; ++guard) {
+      TStageObject *p = top->m_parent;
+      if (!p || !p->getId().isColumn()) break;
+      top = p;
+    }
+    top->m_lazyData(tcg::direct_access).m_time = -1;
+  }
+}
 
 //-----------------------------------------------------------------------------
 

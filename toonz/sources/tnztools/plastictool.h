@@ -193,6 +193,34 @@ private:
   double m_scaleOldX = 1.0,        //!< Controller values at press time
       m_scaleOldY = 1.0, m_ctrlOldRot = 0.0, m_ctrlOldTX = 0.0,
          m_ctrlOldTY = 0.0, m_ctrlOldShX = 0.0, m_ctrlOldShY = 0.0;
+  // Move handle on a STITCHED CHILD column: the drag steers the column's own
+  // X/Y (inches, the same channel the Animate tool writes) instead of the
+  // controller's TRANSX/TRANSY. The controller is a render-time affine over the
+  // mesh only — it would slide the drawing off its attachment while skeleton,
+  // placement and any grand-children stayed behind. Column X/Y is summed on top
+  // of the parent's handle position in computeLocalPlacement, so the whole child
+  // moves coherently: exactly the shoulder/hip sway of a walk.
+  bool m_ctrlChildColumn = false;  //!< current column is a stitched child
+  double m_ctrlOldColX = 0.0, m_ctrlOldColY = 0.0;  //!< its X/Y at press
+  // Controller Move on the TOP column: active cross-column pins must travel
+  // with the whole-character translation (single-level precedent: the
+  // in-skeleton plant rides the controller). Without this the stage-level hold
+  // (PINW re-plant) would cancel the move outright. Snapshot of each active
+  // descendant pin's PINW params + value at press; the drag re-keys them
+  // shifted by the world delta.
+  struct CtrlPinW {
+    TDoubleParamP px, py;
+    TPointD oldW;
+    double keyFrame;
+  };
+  std::vector<CtrlPinW> m_ctrlPinWSnapshot;
+  // Tool matrix at press time. The controller affine is composed into the live
+  // tool matrix (updateMatrix during the drag keeps the overlay glued), so
+  // mouse positions arrive in a space that MOVES with the very values being
+  // written — using them raw makes the delta cancel itself (handle bouncing
+  // back / vibrating). Every controller drag therefore re-projects the mouse
+  // into this frozen press-time space before computing deltas.
+  TAffine m_ctrlPressMatrix;
 
   // Selection/Highlighting-related vars
 
@@ -330,6 +358,19 @@ public:
   //! clean-release logic (used by the IK-release undo/redo)
   void setIkPinsUiEnabled(bool on);
 
+  //! Column indices of the stitched character the current column belongs to
+  //! (itself included), restricted to those carrying a plastic deformation.
+  //! Column parenting only — no skeleton evaluation, so it is safe/cheap
+  //! outside animate mode.
+  std::vector<int> characterColumns() const;
+
+  //! characterColumns(), resolved to their plastic deformations.
+  std::vector<PlasticSkeletonDeformationP> characterDeformations() const;
+
+  //! Enable/disable IK pins on the WHOLE character: the flag is a property of
+  //! the character, not of one column (see the definition for why).
+  void enablePinsOnCharacter(bool on);
+
   // Actions with associated undo
   int addSkeleton_undo(const PlasticSkeletonP &skeleton);
   void addSkeleton_undo(int skelId, const PlasticSkeletonP &skeleton);
@@ -397,11 +438,16 @@ protected:
   // desired-positions snapshot (in `def`'s own local space) into that column's
   // root-down ANGLE params. The single-column wrapper above passes the current
   // column; the cross-level solver calls it once per touched column.
+  // writeRootOffset: when true, the skeleton root's new position is recorded as
+  // its ROOTX/ROOTY offset (used only by the unified IK solver, for the one
+  // effective root column that carries the free-root translation). Default false
+  // keeps every other caller — single-level and cross-level FK — unchanged: the
+  // root has no representable motion there and is simply skipped.
   void writeBackAnglesFor_animate(const PlasticSkeleton &orig, const SkDP &def,
                                   int skelId, double frame,
                                   const std::map<int, TPointD> &curLocal,
                                   const std::map<int, TPointD> &desiredLocal,
-                                  bool clampToLimits);
+                                  bool clampToLimits, bool writeRootOffset = false);
   void leftButtonUp_animate(const TPointD &pos, const TMouseEvent &me);
   void controllerDrag_animate(const TPointD &pos, const TMouseEvent &me);
   void scaleDrag_animate(const TPointD &pos, const TMouseEvent &me);
@@ -558,10 +604,22 @@ private:
   //! Build the unified skeleton graph from the columns connected to the current
   //! one (foundation for the unified cross-level FK/IK solver). No side effects.
   UnifiedGraph buildUnifiedGraph_animate(double frame);
+  //! Multi-anchor posing of a vertex lying BETWEEN >= 2 pins on the unified
+  //! graph (the cross-level analogue of moveVertexMultiAnchor_animate).
+  //! Returns false when it doesn't apply and the re-root rotation should run.
+  bool crossLevelMultiAnchor_animate(const UNode &dragged,
+                                     const TPointD &mousePos);
   //! Unified FK single-joint drag on the combined graph (child columns turn as
   //! ordinary chain joints). Returns false (no-op) when it doesn't apply —
   //! single column, pins present, dragging the root — so the caller falls back.
   bool crossLevelFK_animate(double frame, int vDragged, const TPointD &mousePos);
+  //! Unified IK pin drag on the combined graph (STEP A): when a pin lives on a
+  //! CHILD column, re-root the whole cross-column graph at that pin and pose the
+  //! dragged vertex about it, so the pinned foot stays put while the body
+  //! articulates — the free-root translation lands on the one root column's
+  //! ROOTX/ROOTY. Returns false (caller falls back) when there is no cross-column
+  //! pin, it's single-column, or the dragged vertex is the pin itself.
+  bool crossLevelIK_animate(double frame, int vDragged, const TPointD &mousePos);
   //! Redirect a pick on a child column's (non-draggable) root to the coincident
   //! parent attachment vertex, which is draggable. In-place; no-op otherwise.
   void redirectChildRootToParent_animate(int &col, int &v);
@@ -582,6 +640,18 @@ private:
   std::map<int, SkDP>    m_ikCrossDefs;  //!< per-column deformation (col->def)
   std::map<std::pair<int, int>, TPointD>
       m_ikCrossPinWorld;  //!< world plant target per pin, key (col,vertex)
+
+  // Press-time pose baseline for the cross-level IK drag. Rebuilding the
+  // unified graph from the DEFORMED skeletons on every mouse move feeds the
+  // eval-time plant's CCD output back into the next drag step: drag writes
+  // ANGLEs -> plant re-solves elsewhere -> next move measures against THAT.
+  // Two solvers answering the same question in a closed loop is the
+  // snapping/oscillation on joints inside pinned chains. Capturing the graph
+  // once per drag makes each move a pure function of (baseline, mouse):
+  // plant still refines what is DISPLAYED, but never re-enters the solve.
+  bool                  m_ikCrossBaseValid = false;
+  UnifiedGraph          m_ikCrossBaseGraph;  //!< unified graph at press time
+  std::vector<CrossCol> m_ikCrossBaseCols;   //!< column snapshots at press time
 
   // Selection methods
 

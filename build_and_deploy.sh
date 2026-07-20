@@ -8,9 +8,10 @@
 #
 # ATTENZIONE, non rimettere un path fisso qui: prima c'era hardcoded il path di
 # master, quindi lanciare lo script da un worktree di feature (es. superplastic)
-# compilava e deployava MASTER senza dirlo. Si crede di provare le proprie
-# modifiche e si sta provando tutt'altro ramo. Il worktree giusto e' sempre
-# quello in cui lo script si trova.
+# compilava e deployava MASTER senza dirlo — vanificando anche la scelta del
+# bundle Ztoryc-SP.app qui sotto, che veniva risolta sul workspace sbagliato.
+# Si crede di provare le proprie modifiche e si sta provando tutt'altro ramo.
+# Il worktree giusto e' sempre quello in cui lo script si trova.
 
 SCRIPT_DIR="${0:A:h}"
 if [[ -n "${ZTORYC_WORKSPACE:-}" ]]; then
@@ -30,12 +31,19 @@ else
 fi
 
 # Bundle prodotto da Ninja: toonz/Ztoryc.app (root layout) o toonz/build/toonz/Ztoryc.app (legacy).
-if [[ -d "$WORKSPACE/toonz/Ztoryc.app" ]]; then
+# I worktree di feature usano un bundle rinominato (es. Ztoryc-SP.app per
+# feature/superplastic) per non confonderlo con la build master: se c'e', ha la
+# precedenza. Senza questo il deploy scriveva su Ztoryc.app mentre si lanciava
+# Ztoryc-SP.app, cioe' si testava un binario vecchio senza accorgersene.
+if [[ -d "$WORKSPACE/toonz/Ztoryc-SP.app" ]]; then
+  APP="$WORKSPACE/toonz/Ztoryc-SP.app"
+elif [[ -d "$WORKSPACE/toonz/Ztoryc.app" ]]; then
   APP="$WORKSPACE/toonz/Ztoryc.app"
 else
   APP="$BUILD/toonz/Ztoryc.app"
 fi
 MACOS="$APP/Contents/MacOS"
+echo "→ Bundle di destinazione: $APP"
 
 if [ -n "$1" ]; then
   echo "→ Touch $1..."
@@ -162,4 +170,12 @@ echo "✓ Fatto."
 if ! pgrep -x Ztoryc > /dev/null 2>&1; then
   echo "→ Apertura app..."
   open "$APP"
+else
+  # Un'istanza avviata PRIMA di questo deploy esegue il binario VECCHIO: ogni
+  # test fatto lì sopra è invalido. È già successo tre volte in una sessione
+  # (2026-07-19), una delle quali ha quasi fatto scartare un fix corretto.
+  echo ""
+  echo "⚠️⚠️⚠️  ISTANZA GIÀ APERTA — STA ESEGUENDO IL BINARIO VECCHIO  ⚠️⚠️⚠️"
+  echo "    Chiudila e riaprila PRIMA di testare, o il test non vale niente."
+  echo ""
 fi

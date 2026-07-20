@@ -10,6 +10,8 @@
 #include "toonz/tframehandle.h"
 #include "toonz/doubleparamcmd.h"
 #include "toonz/tstageobjecttree.h"
+#include "toonz/preferences.h"
+#include "toonz/preferencesitemids.h"
 
 #include "toonz/stageobjectutil.h"
 
@@ -154,6 +156,15 @@ void TStageObjectValues::setGlobalKeyframe() {
   TXsheet *xsh              = m_xsheetHandle->getXsheet();
   TStageObject *stageObject = xsh->getStageObject(m_objectId);
   stageObject->setKeyframeWithoutUndo(m_frame);
+
+  // Ztoryc: on a rigged column the column transform is only half the pose —
+  // without this the plastic deformation stays free and a "global" key silently
+  // fails to hold the character. Note this runs even when setKeyframeWithoutUndo
+  // returned early on isFullKeyframe(): the stage channels being already keyed
+  // says nothing about the plastic ones.
+  if (Preferences::instance()->getBoolValue(GlobalKeyIncludesPlastic))
+    stageObject->setPlasticPoseKeyframe(m_frame);
+
   m_xsheetHandle->notifyXsheetChanged();
 }
 
@@ -227,6 +238,17 @@ UndoSetKeyFrame::UndoSetKeyFrame(TStageObjectId objectId, int frame,
   TStageObject *obj = xsh->getStageObject(m_objId);
 
   m_key = obj->getKeyframe(frame);
+
+  // Ztoryc: snapshot the plastic keyframe state BEFORE redo() writes the pose
+  // keys, so undo can put back exactly what was there. The preference is read
+  // once, here — the undo must replay the action as it happened, not as the
+  // preference stands later.
+  if (const PlasticSkeletonDeformationP &sd =
+          obj->getPlasticSkeletonDeformation()) {
+    m_withPlastic =
+        Preferences::instance()->getBoolValue(GlobalKeyIncludesPlastic);
+    if (m_withPlastic) sd->getKeyframeAt(obj->paramsTime(frame), m_plasticOld);
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -239,6 +261,14 @@ void UndoSetKeyFrame::undo() const {
   if (TStageObject *obj = xsh->getStageObject(m_objId)) {
     obj->removeKeyframeWithoutUndo(m_frame);
     if (m_key.m_isKeyframe) obj->setKeyframeWithoutUndo(m_frame, m_key);
+
+    // Drop the pose keys redo() wrote, then put back what was there before.
+    if (m_withPlastic) {
+      obj->removePlasticPoseKeyframe(m_frame);
+      if (const PlasticSkeletonDeformationP &sd =
+              obj->getPlasticSkeletonDeformation())
+        sd->setKeyframe(m_plasticOld);
+    }
   }
 
   m_xsheetHandle->notifyXsheetChanged();
@@ -252,8 +282,12 @@ void UndoSetKeyFrame::redo() const {
 
   assert(xsh->getStageObject(m_objId));
 
-  if (TStageObject *obj = xsh->getStageObject(m_objId))
+  if (TStageObject *obj = xsh->getStageObject(m_objId)) {
     obj->setKeyframeWithoutUndo(m_frame);
+    // Ztoryc: a Set Key on a rigged column freezes the whole pose, not just
+    // the column transform — same reasoning as the stage-values global key.
+    if (m_withPlastic) obj->setPlasticPoseKeyframe(m_frame);
+  }
 
   m_xsheetHandle->notifyXsheetChanged();
   m_objectHandle->notifyObjectIdChanged(false);
@@ -278,7 +312,22 @@ UndoRemoveKeyFrame::UndoRemoveKeyFrame(TStageObjectId objectId, int frame,
     , m_xsheetHandle(xsheetHandle)
     , m_key(key)
     , m_center(center)
-    , m_offset(offset) {}
+    , m_offset(offset) {
+  // Ztoryc: same plastic snapshot as UndoSetKeyFrame. Callers construct this
+  // undo BEFORE (or right after) removing the stage key, and stage-key removal
+  // never touches plastic params, so the snapshot is valid either way.
+  TXsheet *xsh      = m_xsheetHandle->getXsheet();
+  TStageObject *obj = xsh ? xsh->getStageObject(m_objId) : 0;
+  if (obj) {
+    if (const PlasticSkeletonDeformationP &sd =
+            obj->getPlasticSkeletonDeformation()) {
+      m_withPlastic =
+          Preferences::instance()->getBoolValue(GlobalKeyIncludesPlastic);
+      if (m_withPlastic)
+        sd->getKeyframeAt(obj->paramsTime(frame), m_plasticOld);
+    }
+  }
+}
 
 //-----------------------------------------------------------------------------
 
@@ -291,6 +340,12 @@ void UndoRemoveKeyFrame::undo() const {
     obj->setKeyframeWithoutUndo(m_frame);
     obj->setKeyframeWithoutUndo(m_frame, m_key);
     if (m_center != TPointD()) obj->setCenterAndOffset(m_center, m_offset);
+
+    // Put back the plastic pose keys the removal dropped.
+    if (m_withPlastic)
+      if (const PlasticSkeletonDeformationP &sd =
+              obj->getPlasticSkeletonDeformation())
+        sd->setKeyframe(m_plasticOld);
   }
 
   m_xsheetHandle->notifyXsheetChanged();
@@ -308,6 +363,11 @@ void UndoRemoveKeyFrame::redo() const {
     obj->removeKeyframeWithoutUndo(m_frame);
     // Move frame center back to origin
     if (m_center != TPointD()) obj->setCenter(m_frame, m_center, true);
+
+    // Removing a "full" key removes the pose it captured, too — otherwise the
+    // gold diamond's plastic half would linger invisibly after the stage half
+    // is gone.
+    if (m_withPlastic) obj->removePlasticPoseKeyframe(m_frame);
   }
 
   m_xsheetHandle->notifyXsheetChanged();

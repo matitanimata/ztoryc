@@ -607,6 +607,11 @@ void Preferences::definePreferenceItems() {
   define(EnableAutocreation, "EnableAutocreation", QMetaType::Bool, true);
   define(KeyframesFollowExposure, "KeyframesFollowExposure", QMetaType::Bool,
          false);
+  // Ztoryc: a Global Key on a rigged column also keys the plastic POSE, so
+  // blocking freezes the whole character and not just its column transform.
+  // Default ON — a "global" key that leaves half the pose free is a footgun.
+  define(GlobalKeyIncludesPlastic, "GlobalKeyIncludesPlastic", QMetaType::Bool,
+         true);
   define(NumberingSystem, "NumberingSystem", QMetaType::Int, 0);  // Incremental
   define(EnableAutoStretch, "EnableAutoStretch", QMetaType::Bool, false);
   define(EnableImplicitHold, "EnableImplicitHold", QMetaType::Bool,

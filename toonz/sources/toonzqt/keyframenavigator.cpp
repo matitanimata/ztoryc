@@ -247,25 +247,26 @@ void ViewerKeyframeNavigator::toggle() {
       m_xsheetHandle->getXsheet()->getColumnForPegbarObjectId(pegbar->getId());
   if (pegbarColumn && pegbarColumn->isLocked()) return;
 
+  // Both branches go through the undo's redo(): that is where the Ztoryc
+  // plastic-pose handling lives (Set Key on a rigged column also keys/unkeys
+  // the pose, pref-gated), and doing the operations inline here would bypass
+  // it — the navigator key would stay white while the xsheet Z key turns gold.
   if (pegbar->isFullKeyframe(frame)) {
     TStageObject::Keyframe key = pegbar->getKeyframe(frame);
-    pegbar->removeKeyframeWithoutUndo(frame);
-
-    // Move frame center back to origin
     TPointD center, offset;
     pegbar->getCenterAndOffset(center, offset);
-    if (center != TPointD()) pegbar->setCenter(frame, center, true);
 
     UndoRemoveKeyFrame *undo = new UndoRemoveKeyFrame(
         pegbar->getId(), frame, key, center, offset, m_xsheetHandle);
     undo->setObjectHandle(m_objectHandle);
     TUndoManager::manager()->add(undo);
+    undo->redo();
   } else {
     UndoSetKeyFrame *undo =
         new UndoSetKeyFrame(pegbar->getId(), frame, m_xsheetHandle);
-    pegbar->setKeyframeWithoutUndo(frame);
     undo->setObjectHandle(m_objectHandle);
     TUndoManager::manager()->add(undo);
+    undo->redo();
   }
   m_xsheetHandle->notifyXsheetChanged();
   m_objectHandle->notifyObjectIdChanged(false);

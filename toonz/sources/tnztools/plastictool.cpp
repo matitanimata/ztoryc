@@ -186,12 +186,19 @@ void setKeyframe(const PlasticSkeletonDeformationP &sd, double frame) {
     for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
          ++vt)
       if (vt->parent() < 0) {
-        // Only the controller channels (SCALE..SHEAR); MINANGLE/MAXANGLE are
-        // per-joint limits, not part of the pose → a global key must not key
-        // them.
-        if (SkVD *vd = sd->vertexDeformation(::skeletonId(), (int)vt.m_idx))
+        if (SkVD *vd = sd->vertexDeformation(::skeletonId(), (int)vt.m_idx)) {
+          // ROOTX/ROOTY: the root's own pose offset (see plasticskeleton-
+          // deformation.h) — genuinely part of the shape, unlike the
+          // controller channels below, but stored outside the ordinary
+          // ANGLE/DISTANCE/SO loop above since it only exists on the root.
+          for (int p : {(int)SkVD::ROOTX, (int)SkVD::ROOTY})
+            if (vd->m_params[p]) setKeyframe(vd->m_params[p], frame);
+          // Only the controller channels (SCALE..SHEAR); MINANGLE/MAXANGLE
+          // are per-joint limits, not part of the pose → a global key must
+          // not key them.
           for (int p = SkVD::SCALEX; p <= SkVD::SHEARY; ++p)
             if (vd->m_params[p]) setKeyframe(vd->m_params[p], frame);
+        }
         break;
       }
   }
@@ -570,8 +577,10 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   m_setRestKeyButton->setIcon(createQIcon("rest_key"));
 
   // SuperPlastic: pin/unpin the selected vertex as IK anchor at current frame
-  m_pinButton = new QPushButton(tr("Pin"), this);
-  m_pinButton->setFixedSize(QSize(34, 20));
+  m_pinButton = new QPushButton(this);
+  m_pinButton->setIcon(createQIcon("ztoryc_pin"));
+  m_pinButton->setIconSize(QSize(16, 16));
+  m_pinButton->setFixedSize(QSize(28, 20));
   m_pinButton->setCheckable(true);
   m_pinButton->setToolTip(
       tr("Pin the selected vertex as IK anchor (keyframeable)"));
@@ -592,6 +601,36 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   animateLayout->insertWidget(0, m_setRestKeyButton);
   animateLayout->insertWidget(0, m_setKeyButton);
   animateLayout->insertWidget(0, m_interpolationCombo);
+
+  // SuperPlastic: the IK toggle, the Controller-gizmo toggle and the Maintain
+  // combo are auto-generated from the property group, so they end up in the
+  // rightmost (auto) block. Pull them out and cluster each next to the widget it
+  // logically belongs with: IK left of the Pin, Controller left of Scale H,
+  // Maintain right of Scale V.
+  if (auto *ikCtl = dynamic_cast<ToolOptionCheckbox *>(
+          animateOptionsBox->control("inverseKinematics"))) {
+    animateLayout->removeWidget(ikCtl);
+    animateLayout->insertWidget(animateLayout->indexOf(m_pinButton), ikCtl);
+  }
+  if (auto *ctrlCtl = dynamic_cast<ToolOptionCheckbox *>(
+          animateOptionsBox->control("showController"))) {
+    animateLayout->removeWidget(ctrlCtl);
+    animateLayout->insertWidget(animateLayout->indexOf(scaleXLabel), ctrlCtl);
+  }
+  if (auto *maintainCtl = dynamic_cast<ToolOptionCombo *>(
+          animateOptionsBox->control("scaleConstraint"))) {
+    // The combo carries a separate "Maintain:" QLabel immediately to its left;
+    // move both so the label doesn't stay stranded in the old block.
+    int comboIdx    = animateLayout->indexOf(maintainCtl);
+    QLayoutItem *li = comboIdx > 0 ? animateLayout->itemAt(comboIdx - 1) : nullptr;
+    QWidget *maintainLabel =
+        (li && qobject_cast<QLabel *>(li->widget())) ? li->widget() : nullptr;
+    animateLayout->removeWidget(maintainCtl);
+    if (maintainLabel) animateLayout->removeWidget(maintainLabel);
+    int insAt = animateLayout->indexOf(m_scaleYField) + 1;
+    animateLayout->insertWidget(insAt, maintainCtl);
+    if (maintainLabel) animateLayout->insertWidget(insAt, maintainLabel);
+  }
 
   ret = ret && connect(distanceLabel, SIGNAL(onMousePress(QMouseEvent *)),
                        m_distanceField, SLOT(receiveMousePress(QMouseEvent *)));
@@ -1130,7 +1169,7 @@ void PlasticTool::updateTranslation() {
 
   m_globalKey.setQStringName(tr("Global Key"));
   m_keepDistance.setQStringName(tr("Keep Distance"));
-  m_ikDrag.setQStringName(tr("Inverse Kinematics"));
+  m_ikDrag.setQStringName(tr("IK"));
   m_showAngleLimits.setQStringName(tr("Angle Bounds Gizmo"));
   m_showController.setQStringName(tr("Controller Gizmo"));
   m_scaleConstraint.setQStringName(tr("Maintain:"));
@@ -2043,9 +2082,85 @@ void PlasticTool::reset() {
 
 //------------------------------------------------------------------------
 
+// SuperPlastic: the plastic deformations of every column of the stitched
+// character the current column belongs to (itself included). Walks the column
+// parenting only — no skeleton evaluation — so it is cheap and usable outside
+// animate mode.
+std::vector<int> PlasticTool::characterColumns() const {
+  std::vector<int> out;
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh) return out;
+
+  // Climb to the character's top column.
+  TStageObjectId topId = TStageObjectId::ColumnId(::column());
+  for (int guard = 0; guard < 1000; ++guard) {
+    TStageObject *obj = xsh->getStageObject(topId);
+    if (!obj) break;
+    const TStageObjectId pid = obj->getParent();
+    if (!pid.isColumn()) break;
+    topId = pid;
+  }
+
+  // Every column that reaches that top through column parenting.
+  for (int c = 0; c < xsh->getColumnCount(); ++c) {
+    TStageObjectId walk = TStageObjectId::ColumnId(c);
+    bool inCharacter    = false;
+    for (int guard = 0; guard < 1000; ++guard) {
+      if (walk == topId) {
+        inCharacter = true;
+        break;
+      }
+      TStageObject *obj = xsh->getStageObject(walk);
+      if (!obj) break;
+      const TStageObjectId pid = obj->getParent();
+      if (!pid.isColumn()) break;
+      walk = pid;
+    }
+    if (!inCharacter) continue;
+
+    TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+    if (!obj) continue;
+    if (obj->getPlasticSkeletonDeformation()) out.push_back(c);
+  }
+  return out;
+}
+
+//------------------------------------------------------------------------
+
+std::vector<PlasticSkeletonDeformationP> PlasticTool::characterDeformations()
+    const {
+  std::vector<PlasticSkeletonDeformationP> out;
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh) return out;
+
+  for (int c : characterColumns()) {
+    TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+    if (!obj) continue;
+    if (const PlasticSkeletonDeformationP &sd =
+            obj->getPlasticSkeletonDeformation())
+      out.push_back(sd);
+  }
+  return out;
+}
+
+//------------------------------------------------------------------------
+
+// IK/pin mode is a property of the CHARACTER, not of one column: the solver
+// works on the unified graph spanning all the stitched columns, so enabling it
+// on the leg while the body stays in FK left the body root locked (nothing can
+// write its free-root translation) and pins appeared to do nothing at all.
+// Propagate the flag to every column of the character.
+void PlasticTool::enablePinsOnCharacter(bool on) {
+  if (m_sd) m_sd->enablePins(on);
+  for (const PlasticSkeletonDeformationP &sd : characterDeformations())
+    sd->enablePins(on);
+}
+
+//------------------------------------------------------------------------
+
 void PlasticTool::setIkPinsUiEnabled(bool on) {
   m_ikDrag.setValue(on);
-  if (m_sd) m_sd->enablePins(on);
+  enablePinsOnCharacter(on);
   m_ikDrag.notifyListeners();
   m_deformedSkeleton.invalidate();
   invalidate();
@@ -2227,7 +2342,7 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
     // and re-pin from scratch when needed.
     if (m_sd) {
       if (!m_ikDrag.getValue()) bakePinsToFK_animate();
-      m_sd->enablePins(m_ikDrag.getValue());
+      enablePinsOnCharacter(m_ikDrag.getValue());
       m_deformedSkeleton.invalidate();
       invalidate();
     }
