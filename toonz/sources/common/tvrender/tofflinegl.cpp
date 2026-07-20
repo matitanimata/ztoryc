@@ -11,17 +11,19 @@
 #include "trop.h"
 
 // Platform-specific includes
+#include <cstdlib>  // getenv (offline-GL backend override)
+
+// QtOfflineGL is built on every platform (tnzcore/CMakeLists.txt) and is now
+// the default backend everywhere, Windows included — see
+// defaultOfflineGLGenerator below for why the legacy DIB path lost the job.
+#include "qtofflinegl.h"
+
 #if defined(LINUX) || defined(FREEBSD)
 
-#include "qtofflinegl.h"
 #include <X11/Xlib.h>
 #include <GL/glx.h>
 
 #include "tthread.h"
-
-#elif defined(MACOSX) || defined(HAIKU)
-
-#include "qtofflinegl.h"
 
 #endif
 
@@ -308,9 +310,28 @@ public:
 };
 
 // default imp generator
+//
+// WIN32Implementation renders into a GDI DIB section: its pixel format asks
+// for PFD_DRAW_TO_BITMAP | PFD_SUPPORT_GDI (see createContext above), and no
+// hardware OpenGL driver on Windows exposes a pixel format with those flags.
+// ChoosePixelFormat therefore always lands on Microsoft's generic SOFTWARE
+// rasterizer, so every offline render — scene icons, level thumbnails, the
+// Board/StoryStrip shot icons, renderFrame — runs on the CPU no matter which
+// GPU Windows assigns to the process. On a storyboard scene with many
+// sub-scenes this is the difference between usable and unusable, and it looks
+// exactly like "the app is not using my graphics card", because for this code
+// path it genuinely is not.
+//
+// macOS/Linux already go through QtOfflineGL (QOffscreenSurface +
+// QOpenGLContext + FBO), which IS hardware accelerated; qtofflinegl.cpp is
+// compiled on every platform, so Windows can use the same path. The legacy DIB
+// implementation stays reachable via ZTORYC_LEGACY_OFFLINEGL for the case where
+// some driver/RDP/headless configuration cannot create an offscreen surface.
 static std::shared_ptr<TOfflineGL::Imp> defaultOfflineGLGenerator(
     const TDimension &dim, std::shared_ptr<TOfflineGL::Imp> shared) {
-  return std::make_shared<WIN32Implementation>(dim, shared);
+  static const bool legacy = ::getenv("ZTORYC_LEGACY_OFFLINEGL") != nullptr;
+  if (legacy) return std::make_shared<WIN32Implementation>(dim, shared);
+  return std::make_shared<QtOfflineGL>(dim, shared);
 }
 
 //=============================================================================
