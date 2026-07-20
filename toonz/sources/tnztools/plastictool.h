@@ -604,6 +604,11 @@ private:
   //! Build the unified skeleton graph from the columns connected to the current
   //! one (foundation for the unified cross-level FK/IK solver). No side effects.
   UnifiedGraph buildUnifiedGraph_animate(double frame);
+  //! Multi-anchor posing of a vertex lying BETWEEN >= 2 pins on the unified
+  //! graph (the cross-level analogue of moveVertexMultiAnchor_animate).
+  //! Returns false when it doesn't apply and the re-root rotation should run.
+  bool crossLevelMultiAnchor_animate(const UNode &dragged,
+                                     const TPointD &mousePos);
   //! Unified FK single-joint drag on the combined graph (child columns turn as
   //! ordinary chain joints). Returns false (no-op) when it doesn't apply —
   //! single column, pins present, dragging the root — so the caller falls back.
@@ -635,6 +640,18 @@ private:
   std::map<int, SkDP>    m_ikCrossDefs;  //!< per-column deformation (col->def)
   std::map<std::pair<int, int>, TPointD>
       m_ikCrossPinWorld;  //!< world plant target per pin, key (col,vertex)
+
+  // Press-time pose baseline for the cross-level IK drag. Rebuilding the
+  // unified graph from the DEFORMED skeletons on every mouse move feeds the
+  // eval-time plant's CCD output back into the next drag step: drag writes
+  // ANGLEs -> plant re-solves elsewhere -> next move measures against THAT.
+  // Two solvers answering the same question in a closed loop is the
+  // snapping/oscillation on joints inside pinned chains. Capturing the graph
+  // once per drag makes each move a pure function of (baseline, mouse):
+  // plant still refines what is DISPLAYED, but never re-enters the solve.
+  bool                  m_ikCrossBaseValid = false;
+  UnifiedGraph          m_ikCrossBaseGraph;  //!< unified graph at press time
+  std::vector<CrossCol> m_ikCrossBaseCols;   //!< column snapshots at press time
 
   // Selection methods
 

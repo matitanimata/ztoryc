@@ -211,11 +211,18 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
   // Track mouse position
   m_pressedPos = m_pos = pos;
 
+  // DIAGNOSTIC (2026-07-20, opt-in via ZTORYC_SUSPEND_PLANT): for the duration
+  // of the drag, let FABRIK alone own the pose. See plasticskeletondeformation.h.
+  PlasticPinSolver::setSolveSuspended(true);
+
   // Fresh drag: drop any cross-level IK state left over from an aborted drag.
   m_ikCrossDragged = false;
   m_ikCrossOld.clear();
   m_ikCrossDefs.clear();
   m_ikCrossPinWorld.clear();
+  m_ikCrossBaseValid = false;
+  m_ikCrossBaseGraph = UnifiedGraph();
+  m_ikCrossBaseCols.clear();
 
   // Controller gizmo, hit-tested FIRST (it must not touch the vertex
   // selection): a full Animate-tool replica whose pivot follows the deformed
@@ -2456,6 +2463,10 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
   // Track mouse position
   m_pos = pos;
 
+  // Drag over: hand the pose back to the evaluation-time solver. Cleared here,
+  // ahead of every early return below, so no exit path can leave it stuck on.
+  PlasticPinSolver::setSolveSuspended(false);
+
   // End of an angle-limit bound drag: the value was written live during the
   // drag (no undo, like the toolbar field). The toolbar text field refreshes
   // on the next selection change.
@@ -3093,6 +3104,146 @@ bool PlasticTool::crossLevelFK_animate(double frame, int vDragged,
 
 //------------------------------------------------------------------------
 
+// Unified multi-anchor: dragging a vertex that lies BETWEEN two or more pins
+// (the neck base with both feet and a hand planted). The re-root rotation
+// below is the wrong tool there: whichever single pin it picks as base, the
+// rigid rotation displaces ALL the others — including the one the eval-time
+// plant translates the whole structure onto — so the plant cancels most of
+// the intended motion and the vertex barely responds to the mouse. This is
+// the same problem the single-level path already solved with
+// moveVertexMultiAnchor_animate ("posing a vertex BETWEEN the pins"): FABRIK
+// over the tree spanned by the chains dragged -> each pin, every pin nailed.
+// Reuse that machinery unchanged by mirroring the unified graph onto a
+// SYNTHETIC single skeleton (dense indices, unified parenting, rest = the
+// graph's world-frame rest), then dispatch per column off the same baseline
+// snapshots the rotation path uses.
+bool PlasticTool::crossLevelMultiAnchor_animate(const UNode &dragged,
+                                                const TPointD &mousePos) {
+  UnifiedGraph &g = m_ikCrossBaseGraph;
+  if ((int)g.pins.size() < 2) return false;
+
+  auto pathFromRootU = [&](const UNode &n) {
+    std::vector<UNode> path;
+    UNode u = n;
+    path.push_back(u);
+    auto it = g.parent.find(u);
+    while (it != g.parent.end() && it->second.col >= 0) {
+      u = it->second;
+      path.push_back(u);
+      it = g.parent.find(u);
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
+  };
+
+  // Engage only when the dragged vertex sits INSIDE the minimal subtree
+  // spanning the pins (the unified analogue of spanningOfPins): outside it,
+  // the vertex hangs off a single chain and the rotation path serves better.
+  std::set<UNode> span;
+  {
+    std::vector<std::vector<UNode>> pinPaths;
+    for (const UNode &p : g.pins) pinPaths.push_back(pathFromRootU(p));
+    for (size_t i = 0; i < pinPaths.size(); ++i)
+      for (size_t j = i + 1; j < pinPaths.size(); ++j) {
+        const std::vector<UNode> &pa = pinPaths[i], &pb = pinPaths[j];
+        size_t k = 0;
+        while (k < pa.size() && k < pb.size() && pa[k] == pb[k]) ++k;
+        for (size_t q = (k ? k - 1 : 0); q < pa.size(); ++q) span.insert(pa[q]);
+        for (size_t q = (k ? k - 1 : 0); q < pb.size(); ++q) span.insert(pb[q]);
+      }
+  }
+  if (!span.count(dragged)) return false;
+
+  // Synthetic skeleton mirroring the unified graph. BFS from the effective
+  // root so every parent is added before its children; rest positions feed
+  // solveMultiAnchor's stiffness pass (it springs toward rest directions).
+  PlasticSkeleton synth;
+  std::map<UNode, int> denseOf;
+  std::vector<UNode> idxOf;
+  {
+    std::queue<UNode> q;
+    q.push(g.root);
+    while (!q.empty()) {
+      UNode u = q.front();
+      q.pop();
+      int par  = -1;
+      auto pit = g.parent.find(u);
+      if (pit != g.parent.end() && pit->second.col >= 0)
+        par = denseOf.at(pit->second);
+      int d      = synth.addVertex(PlasticSkeletonVertex(g.rest.at(u)), par);
+      denseOf[u] = d;
+      if (d >= (int)idxOf.size()) idxOf.resize(d + 1);
+      idxOf[d] = u;
+      auto ct  = g.children.find(u);
+      if (ct != g.children.end())
+        for (const UNode &w : ct->second) q.push(w);
+    }
+    // A disconnected rig can't be mirrored onto one skeleton — let the
+    // rotation path (which walks reachability explicitly) deal with it.
+    if (denseOf.size() != g.nodes.size()) return false;
+  }
+
+  std::map<int, TPointD> curPos;
+  for (const auto &kv : denseOf) curPos[kv.second] = g.world.at(kv.first);
+  std::vector<int> pinsD;
+  std::map<int, TPointD> anchor;
+  for (const UNode &p : g.pins) {
+    const int pd = denseOf.at(p);
+    pinsD.push_back(pd);
+    auto ta    = g.pinTarget.find(p);
+    anchor[pd] = (ta != g.pinTarget.end()) ? ta->second : g.world.at(p);
+  }
+  const int vD = denseOf.at(dragged);
+
+  PinTree T = buildPinTree(synth, curPos, vD, pinsD);
+
+  // Clamp the mouse target inside every pin's reach (alternating projection),
+  // exactly as the single-level path does.
+  TPointD t = getMatrix() * mousePos;
+  for (int it = 0; it < 4; ++it)
+    for (int p : pinsD) {
+      double L = 0.0;
+      for (int u = p; T.parentT.at(u) >= 0; u = T.parentT.at(u))
+        L += T.len.at(u);
+      TPointD d = t - anchor[p];
+      double n  = norm(d);
+      if (n > L && n > 1e-9) t = anchor[p] + d * (L / n);
+    }
+
+  std::map<int, TPointD> P = curPos;
+  solveMultiAnchor(synth, T, anchor, t, P);
+
+  std::map<int, TPointD> desiredD = curPos;
+  for (const auto &kv : T.parentT) desiredD[kv.first] = P[kv.first];
+  rigidFollowOffTree(synth, curPos, desiredD, T.parentT);
+
+  std::map<UNode, TPointD> desired;
+  for (const auto &kv : denseOf) desired[kv.first] = desiredD.at(kv.second);
+
+  // Per-column dispatch off the BASELINE snapshots — same reasons as the
+  // rotation path (write-back is absolute; a mid-drag re-fetch would map
+  // through drifted child-column affines).
+  for (const CrossCol &cc : m_ikCrossBaseCols) {
+    const TAffine wInv = cc.world.inv();
+    std::map<int, TPointD> curLocal, desLocal;
+    for (auto vt = cc.deformed.vertices().begin();
+         vt != cc.deformed.vertices().end(); ++vt) {
+      curLocal[(int)vt.m_idx] = vt->P();
+      auto dit = desired.find(UNode{cc.columnIndex, (int)vt.m_idx});
+      desLocal[(int)vt.m_idx] = (dit != desired.end()) ? wInv * dit->second
+                                                       : vt->P();
+    }
+    writeBackAnglesFor_animate(cc.rest, cc.def, cc.skelId, cc.paramFrame,
+                               curLocal, desLocal, true,
+                               /*writeRootOffset=*/cc.columnIndex == g.root.col);
+  }
+
+  invalidateConnectedPlacements_animate();
+  return true;
+}
+
+//------------------------------------------------------------------------
+
 // STEP A — unified IK pin drag. When a pin sits on a CHILD column (a foot on a
 // leg parented to the body), the whole articulated character is treated as ONE
 // skeleton: re-root the unified graph at that pin, rotate the dragged vertex's
@@ -3104,7 +3255,29 @@ bool PlasticTool::crossLevelFK_animate(double frame, int vDragged,
 // cross-column pin, it's a single column, or the dragged vertex is the pin.
 bool PlasticTool::crossLevelIK_animate(double frame, int vDragged,
                                        const TPointD &mousePos) {
-  UnifiedGraph g = buildUnifiedGraph_animate(frame);
+  // Solve against the PRESS-TIME baseline, captured on the first move of the
+  // drag. Rebuilding from the deformed skeletons here would read back the
+  // eval-time plant's answer to our own previous write — the closed loop
+  // between two solvers that oscillates joints inside pinned chains (see the
+  // m_ikCrossBase* members). writeBackAnglesFor_animate writes ABSOLUTE
+  // angles from `desired` alone, so a fixed baseline is exactly as valid a
+  // reference as the live pose. theta below thus becomes the TOTAL rotation
+  // since the press, not a per-move increment.
+  if (!m_ikCrossBaseValid) {
+    // First move of the drag. ensureCrossLevelBaselines_animate flushes the
+    // per-frame placement caches (or the photograph below would inherit the
+    // PREVIOUS drag's mid-frame state and the whole drag would solve against
+    // a skewed baseline) and captures the per-column undo baselines, setting
+    // m_ikCrossDragged so the button-up routes through
+    // finishCrossLevelUndo_animate — the grouped multi-column undo block.
+    // Before this call was wired in, undoing a cross-column pose restored
+    // ONLY the current column and left every other column's ANGLEs dirty.
+    ensureCrossLevelBaselines_animate(frame);
+    m_ikCrossBaseGraph = buildUnifiedGraph_animate(frame);
+    m_ikCrossBaseCols  = crossColumns_animate(frame);
+    m_ikCrossBaseValid = true;
+  }
+  UnifiedGraph &g = m_ikCrossBaseGraph;
   if (g.nodes.empty() || g.pins.empty() || g.root.col < 0) return false;
 
   // Only engage for a pin on a CHILD column (col != root). Pins on the root
@@ -3132,6 +3305,10 @@ bool PlasticTool::crossLevelIK_animate(double frame, int vDragged,
   if (!g.world.count(dragged)) return false;
   for (const UNode &p : g.pins)
     if (p == dragged) return false;  // dragging the pin itself
+
+  // A vertex BETWEEN >= 2 pins gets the multi-anchor FABRIK; the single-pivot
+  // rotation below would fight the eval plant's primary translation there.
+  if (crossLevelMultiAnchor_animate(dragged, mousePos)) return true;
 
   // Undirected adjacency over the unified parent map.
   std::map<UNode, std::vector<UNode>> adj;
@@ -3246,8 +3423,12 @@ bool PlasticTool::crossLevelIK_animate(double frame, int vDragged,
   std::set<int> touchedCols;
   for (const UNode &u : moved) touchedCols.insert(u.col);
   touchedCols.insert(g.root.col);
-  std::vector<CrossCol> cols = crossColumns_animate(frame);
-  for (const CrossCol &cc : cols) {
+  // Baseline snapshots, NOT crossColumns_animate(frame): cc.world of a child
+  // column follows its parent's attachment vertex, so re-fetching mid-drag
+  // would map `desired` (baseline world space) through a drifted affine.
+  // curLocal only enumerates joints in writeBackAnglesFor_animate — the
+  // baseline deformed pose serves that equally well.
+  for (const CrossCol &cc : m_ikCrossBaseCols) {
     if (!touchedCols.count(cc.columnIndex)) continue;
     const TAffine wInv = cc.world.inv();
     std::map<int, TPointD> curLocal, desLocal;
@@ -3261,6 +3442,12 @@ bool PlasticTool::crossLevelIK_animate(double frame, int vDragged,
                                curLocal, desLocal, true,
                                /*writeRootOffset=*/cc.columnIndex == g.root.col);
   }
+
+  // The ANGLEs just written move attachment vertices, so the connected
+  // columns' same-frame placement caches now lie: flush them, or the overlay
+  // (connectedSkeletons_animate -> getColumnMatrix) keeps drawing a limb's
+  // skeleton where the column WAS until some unrelated click refreshes it.
+  invalidateConnectedPlacements_animate();
   return true;
 }
 
@@ -3596,6 +3783,9 @@ void PlasticTool::finishCrossLevelUndo_animate(double frame) {
   m_ikCrossOld.clear();
   m_ikCrossDefs.clear();
   m_ikCrossPinWorld.clear();
+  m_ikCrossBaseValid = false;
+  m_ikCrossBaseGraph = UnifiedGraph();
+  m_ikCrossBaseCols.clear();
 }
 
 //------------------------------------------------------------------------
