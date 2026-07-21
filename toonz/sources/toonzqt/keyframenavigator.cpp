@@ -74,7 +74,7 @@ QString keyHint(bool hasKey, bool stageFull, bool poseAny, bool poseFull,
   if (fullInScope) {
     if (poseInScope)
       return QObject::tr("Key: transform + pose — click to remove");
-    if (poseAny)  // rig chiaviato ma scope=Stage: il glifo mostra oro, il
+    if (poseAny)  // rig con chiavi di posa ma scope=Stage: il glifo mostra oro, il
                   // click non lo tocca — dirlo evita la sorpresa
       return QObject::tr(
           "Key: transform — click to remove (pose not in Key scope)");

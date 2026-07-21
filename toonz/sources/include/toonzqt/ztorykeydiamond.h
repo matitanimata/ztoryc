@@ -12,7 +12,7 @@
 //
 //   [] bianco pieno            trasformazione completa
 //   [| bianco/vuoto            trasformazione parziale
-//   [] bianco | oro            tutto chiaviato (chiave "All")
+//   [] bianco | oro            chiavi su tutto (chiave "All")
 //   [] oro pieno               posa completa
 //   [| bianco-su-oro / vuoto   entrambi parziali
 //
@@ -42,10 +42,10 @@ struct KeyDiamond {
   QColor leftTop, leftBottom, right;  // QColor() invalido = regione vuota
 };
 
-//! \p stageFull: la trasformazione di colonna e' chiaviata su tutti i canali.
+//! \p stageFull: la trasformazione di colonna ha chiavi su tutti i canali.
 //! \p plasticAny / \p plasticFull: la posa plastic ha almeno una / tutte le
-//! deformazioni di vertice chiaviate. Presuppone che una chiave ci sia (il
-//! diamante si disegna solo su un frame chiaviato).
+//! deformazioni di vertice con chiavi. Presuppone che una chiave ci sia (il
+//! diamante si disegna solo su un frame che ha una chiave).
 inline KeyDiamond keyDiamond(bool stageFull, bool plasticAny,
                              bool plasticFull) {
   const QColor white  = Qt::white;
@@ -54,7 +54,7 @@ inline KeyDiamond keyDiamond(bool stageFull, bool plasticAny,
 
   if (!plasticAny)  // Solo trasformazione.
     return {white, white, stageFull ? white : hollow};
-  if (stageFull)  // Tutto chiaviato (la chiave "All"): bianco | oro netto.
+  if (stageFull)  // Chiavi su tutto (la chiave "All"): bianco | oro netto.
     return {white, white, g};
   if (plasticFull)
     // La posa e' l'intenzione ed e' completa: oro pieno. Una trasformazione
@@ -71,8 +71,8 @@ inline KeyDiamond keyDiamond(bool stageFull, bool plasticAny,
 inline KeyDiamond keyDiamondSolid(const QColor &c) { return {c, c, c}; }
 
 //! Stato della posa plastic di \p pegbar alla riga \p row.
-//! \p any = almeno una deformazione di vertice chiaviata,
-//! \p full = tutte chiaviate.
+//! \p any = almeno una deformazione di vertice ha una chiave,
+//! \p full = le hanno tutte.
 //!
 //! NON PlasticSkeletonDeformation::isFullKeyframe(): quella pretende anche il
 //! parametro skeleton-ids, che NESSUNO dei due percorsi che mettono una chiave
@@ -106,7 +106,7 @@ inline void plasticPoseState(TStageObject *pegbar, int row, bool &any,
 }
 
 //! Il diamante che compete a \p pegbar alla riga \p row. Il chiamante ha gia'
-//! verificato che il frame sia chiaviato.
+//! verificato che il frame abbia una chiave.
 inline KeyDiamond keyDiamondForStageObject(TStageObject *pegbar, int row) {
   bool any = false, full = false;
   plasticPoseState(pegbar, row, any, full);

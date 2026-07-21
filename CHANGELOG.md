@@ -48,9 +48,9 @@ il file si re-infettava da solo.
   "si riparava" a un click qualsiasi: `PlasticTool::onChange` ora flusha i placement delle
   colonne collegate (le cache per-frame non sanno di dipendere dai parametri plastic).
   I percorsi di drag lo facevano gia'; mancava tutto il resto.
-- **Global Key ignorato dal drag cross-colonna**: il personaggio cucito chiaviava solo gli
+- **Global Key ignorato dal drag cross-colonna**: il personaggio cucito metteva le chiavi solo sugli
   ANGLE della catena trascinata → posa parziale, e il diamante mostrava il doppio-parziale
-  (letto come "ha chiaviato anche il transform", che infatti non era vero). Ora la posa si
+  (letto come "ci sono chiavi anche sul transform", che infatti non era vero). Ora la posa si
   completa su **tutte** le colonne collegate, ciascuna al suo param-time, prima dello
   snapshot undo.
 - **Limiti angolari (MINANGLE/MAXANGLE) continuity-first**: il valore memorizzato puo'
@@ -153,7 +153,7 @@ Fallback ZTORYC_LEGACY_OFFLINEGL. Log diagnostico backend GL (`c0f8788ef`). Cand
 - Diamante xsheet a due assi: drawTriPartPredefinedPath (3 regioni), destra vuota=parziale,
   sinistra=quali sistemi (bianco trasf/oro posa/bianco-sopra-oro-sotto entrambi). Nuovo il
   doppio-parziale. Fix detection: iterare i vertex deformation, non isFullKeyframe (pretende
-  skelIdsParam mai chiaviato). Commit `2ea4a5a44`.
+  skelIdsParam su cui nessuno mette mai chiavi). Commit `2ea4a5a44`.
 
 ### Rimandato (memoria: project_keyframe_diamond_grammar)
 Viewer KeyframeNavigator con la stessa grammatica (icone a codice, fondo magenta #B01E9A,

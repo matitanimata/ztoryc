@@ -506,7 +506,7 @@ Dentro uno shot (doppio click per entrarci):
 
 ## 17. Leggere le chiavi — il diamante
 
-Un personaggio riggato ha **due cose indipendenti** che possono essere chiaviate: la
+Un personaggio riggato ha **due cose indipendenti** su cui puoi mettere delle chiavi: la
 **trasformazione di colonna** (posizione, rotazione, scala…) e la **posa plastic** (la
 forma dello scheletro). Ztoryc le mostra entrambe in un solo diamante, sia nell'xsheet
 sia sul bottone **Set Key** del viewer:
