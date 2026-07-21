@@ -66,6 +66,18 @@ void CellsMover::start(int r0, int c0, int r1, int c1, int qualifiers,
   m_colCount = c1 - c0 + 1;
   assert(m_rowCount > 0);
   assert(m_colCount > 0);
+  // The asserts above are compiled out in release, where an empty range used to
+  // sail straight into getCells() and index a zero-sized vector. Callers are
+  // expected to check, but this is the last gate before memory gets touched:
+  // clamp to nothing and let every loop below run zero times.
+  if (m_rowCount <= 0 || m_colCount <= 0) {
+    m_rowCount = m_colCount = 0;
+    m_orientation           = o;
+    m_startPos = m_pos =
+        (o->isVerticalTimeline() ? TPoint(c0, r0) : TPoint(r0, c0));
+    m_qualifiers = qualifiers;
+    return;
+  }
   m_orientation = o;
   m_startPos    = m_pos =
       (o->isVerticalTimeline() ? TPoint(c0, r0) : TPoint(r0, c0));
@@ -594,6 +606,20 @@ void LevelMoverTool::onClick(const QMouseEvent *e) {
   int r0, c0, r1, c1;
   getViewer()->getCellSelection()->getSelectedCells(r0, c0, r1, c1);
 
+  // An EMPTY selection is (0,0,-1,-1) — the Range default. Feeding it to
+  // CellsMover::start gives rowCount/colCount <= 0, which sizes m_cells to
+  // nothing and then indexes into it (&cells[...] is unchecked): out-of-bounds
+  // access on a click. Debug builds stop on the assert in start(); release
+  // builds have no assert and quietly corrupt the heap — which is how this
+  // showed up on Windows as a silent STATUS_HEAP_CORRUPTION when entering a
+  // shot and clicking a frame, with nothing to click to move in the first
+  // place. Nothing selected, nothing to drag: leave the tool inert.
+  if (r1 < r0 || c1 < c0) {
+    m_validPos = false;
+    m_moved    = false;
+    return;
+  }
+
   m_validPos             = true;
   m_undo                 = new LevelMoverUndo();
   CellsMover *cellsMover = m_undo->getCellsMover();
@@ -652,6 +678,11 @@ void LevelMoverTool::onCellChange(int row, int col) {
   TPoint delta = pos - m_aimedPos;
   int dCol     = delta.x;
   if (!o->isVerticalTimeline()) dCol = delta.y;
+
+  // onClick bails out on an empty selection without ever creating the undo, so
+  // there is nothing to drag — and m_undo is also null between a release and
+  // the next click. canMove() already guards the same way.
+  if (!m_undo) return;
 
   CellsMover *cellsMover = m_undo->getCellsMover();
   std::set<int> ii;
@@ -769,6 +800,8 @@ void LevelMoverTool::onRelease(const CellPosition &pos) {
   m_range.ly = 0;
   setToolCursor(getViewer(), ToolCursor::CURSOR_ARROW);
   refreshCellsArea();
+  // Same as onDrag: a click on an empty selection never built an undo.
+  if (!m_undo) return;
   CellsMover *cellMover = m_undo->getCellsMover();
   int startX            = cellMover->getStartPos().x;
   int startY            = cellMover->getStartPos().y;
