@@ -20,7 +20,14 @@ public:
 
 private:
   const char *applicationName     = "Ztoryc";
-  const float applicationVersion  = 0.9f;
+  /* The DISPLAYED version is a string, and it has to be: the float below cannot
+     represent a two-digit minor at all — 0.10f IS 0.1f, the same number, so
+     "10" was already lost before any formatting happened. That is how 0.10.0
+     reached the splash screen as "0.1.0". The floats stay only because
+     getAppVersion()/getAppRevision() are public API used elsewhere. */
+  const char *applicationVersionStr  = "0.10";
+  const char *applicationRevisionStr = "0";
+  const float applicationVersion  = 0.10f;
   /* PATCH.0f — never use bare f (PATCH 0 becomes illegal token "0f"). */
   const float applicationRevision = 0.0f;
   const char *applicationNote     = "";
@@ -45,16 +52,11 @@ std::string ToonzVersion::getAppNote(void) {
 }
 bool ToonzVersion::hasAppNote(void) { return *applicationNote != 0; }
 std::string ToonzVersion::getAppVersionString(void) {
-  char buffer[50];
-  snprintf(buffer, sizeof(buffer), "%.1f", applicationVersion);
-  std::string appver = std::string(buffer);
-  return appver;
+  /* Straight from the string: formatting the float printed 0.10 as "0.1". */
+  return std::string(applicationVersionStr);
 }
 std::string ToonzVersion::getAppRevisionString(void) {
-  char buffer[50];
-  snprintf(buffer, sizeof(buffer), "%g", applicationRevision);
-  std::string apprev = std::string(buffer);
-  return apprev;
+  return std::string(applicationRevisionStr);
 }
 std::string ToonzVersion::getTahomaBaseVersionString(void) {
   return std::string(tahomaBaseVersion);
