@@ -92,6 +92,21 @@ protected:
   virtual void goNext()               = 0;
   virtual void goPrev()               = 0;
 
+  //! Ztoryc: secondo asse del diamante chiave, la posa plastic. Solo il
+  //! navigator del viewer ce l'ha — palette, fx e curve restano sul solo asse
+  //! della trasformazione, e per loro il diamante e' bianco pieno o mezzo.
+  virtual bool isPoseKeyframe() const { return false; }
+  virtual bool isFullPoseKeyframe() const { return false; }
+
+  //! True quando il click deve considerare la posa: c'e' un rig plastic E il
+  //! Global Key scope la include (scope come tetto — con Stage il navigator
+  //! ignora la posa, sia nel ciclo del click sia nei suggerimenti).
+  virtual bool isPoseInScope() const { return false; }
+
+  //! Ridipinge l'icona del bottone chiave visibile secondo la grammatica del
+  //! diamante e ne aggiorna il suggerimento in hover.
+  void updateKeyGlyph(QAction *visibleAct);
+
   void showEvent(QShowEvent *) override;
   void hideEvent(QHideEvent *) override;
 };
@@ -134,6 +149,9 @@ protected:
   bool hasKeyframes() const override;
   bool isKeyframe() const override;
   bool isFullKeyframe() const override;
+  bool isPoseKeyframe() const override;
+  bool isFullPoseKeyframe() const override;
+  bool isPoseInScope() const override;
   void toggle() override;
   void goNext() override;
   void goPrev() override;

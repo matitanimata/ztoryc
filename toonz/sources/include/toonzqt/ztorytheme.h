@@ -70,4 +70,11 @@ inline QColor accent() { return QColor(0x4E, 0x7A, 0x51); }
 // comprende anche la posa plastic, distinto dal diamante bianco normale.
 inline QColor gold() { return QColor(0xEC, 0xA6, 0x1C); }
 
+// Fondo del bottone "Set Key" del KeyframeNavigator quando il frame corrente ha
+// una chiave. Sostituisce l'arancio Tahoma (#be7323), che nascondeva l'oro
+// della posa plastic: il magenta e' abbastanza scuro e abbastanza lontano in
+// tinta da lasciar leggere sia il bianco sia l'oro del diamante.
+inline QColor keyBackground() { return QColor(0xB0, 0x1E, 0x9A); }
+inline QColor keyBackgroundHover() { return keyBackground().lighter(125); }
+
 }  // namespace ZtoryTheme

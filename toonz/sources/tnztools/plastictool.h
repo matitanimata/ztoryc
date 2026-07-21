@@ -797,6 +797,10 @@ void setKeyframe(
 void setKeyframe(
     const PlasticSkeletonDeformationP &sd,
     double frame);  //!< Sets a keyframe to an entire skeleton deformation.
+void setKeyframe(const PlasticSkeletonDeformationP &sd, double frame,
+                 int skelId);  //!< Same, but with an explicit skeleton id —
+                               //!< needed for connected columns other than the
+                               //!< current one (::skeletonId() is current-only).
 
 void invalidateXsheet();  //!< Refreshes xsheet content.
 

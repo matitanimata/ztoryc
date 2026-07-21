@@ -1791,7 +1791,12 @@ void PlasticTool::writeBackAnglesFor_animate(
       if (vd->m_params[SkVD::MAXANGLE] &&
           vd->m_params[SkVD::MAXANGLE]->getKeyframeCount() > 0)
         hiLim = vd->m_params[SkVD::MAXANGLE]->getValue(frame);
-      newDelta = tcrop(newDelta, loLim, hiLim);
+      // Continuity-first, like updateAngle: the stored delta can legitimately
+      // sit outside [lo, hi] (unpin bake writes unclamped; wrapped writers can
+      // store 185 as -175). Never yank past the current value — out of range
+      // you can only come back IN; inside, the full limits apply.
+      newDelta =
+          tcrop(newDelta, std::min(loLim, oldDelta), std::max(hiLim, oldDelta));
     }
 
     if (fabs(newDelta - oldDelta) < 1e-4) continue;  // unchanged joint
@@ -2519,6 +2524,26 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
   // group them into one undo block, its own path independent of the single
   // column logic below.
   if (m_ikCrossDragged && m_dragged) {
+    // Global key: complete the pose on EVERY connected column, not just the
+    // ANGLEs the solver wrote — a drag that keys only the touched chain leaves
+    // the pose partial (the xsheet diamond showed white-over-gold instead of
+    // solid gold, reading as "transform keyed too"). Keyed BEFORE the undo
+    // snapshot in finishCrossLevelUndo_animate, so undo removes these keys as
+    // well. Per-column param time, same rule as the undo loop.
+    if (m_globalKey.getValue()) {
+      TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+      for (auto &kv : m_ikCrossDefs) {
+        const int col   = kv.first;
+        const SkDP &def = kv.second;
+        if (!def) continue;
+        double pf = ::frame();
+        if (col != ::column() && xsh)
+          if (TStageObject *obj =
+                  xsh->getStageObject(TStageObjectId::ColumnId(col)))
+            pf = obj->paramsTime(pf);
+        ::setKeyframe(def, pf, def->skeletonId(pf));
+      }
+    }
     finishCrossLevelUndo_animate(::frame());
     m_dragged = false;
     updateMatrix();

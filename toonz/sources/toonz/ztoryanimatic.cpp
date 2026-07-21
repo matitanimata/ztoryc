@@ -1,6 +1,6 @@
 
 #include "ztoryanimatic.h"
-#include "ztorytheme.h"
+#include "toonzqt/ztorytheme.h"
 #include "ztorylightgizmo.h"
 #include "viewerpane.h"
 #include "comboviewerpane.h"

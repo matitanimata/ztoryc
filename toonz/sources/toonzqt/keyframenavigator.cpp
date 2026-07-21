@@ -2,6 +2,7 @@
 
 #include "toonzqt/keyframenavigator.h"
 #include "toonzqt/styleselection.h"
+#include "toonzqt/ztorykeydiamond.h"
 
 #include "toonzqt/gutil.h"
 #include "toonz/txsheet.h"
@@ -32,6 +33,76 @@
 using namespace std;
 
 //=============================================================================
+namespace {
+//-----------------------------------------------------------------------------
+
+const int KEY_ICON_SIZE = 20;
+
+//! Ztoryc: i .qss dei temi forzano `image: url(transparent.svg)` sui tre
+//! bottoni chiave, cioe' le icone su file NON si vedono e gli stati si
+//! distinguono solo dal fondo (arancio = c'e' una chiave, punto). Con sei stati
+//! da dire quello non basta piu': queste regole inline — che hanno la
+//! precedenza su quelle applicative — riabilitano l'icona (disegnata a codice)
+//! e mettono il magenta al posto dell'arancio, che divorava l'oro della posa.
+QString keyButtonStyleSheet(bool hasKey) {
+  if (!hasKey)
+    // Nessuna chiave: solo l'icona: fondo e hover restano quelli del tema.
+    return QStringLiteral("QToolButton { image: none; }");
+
+  const QString bg    = ZtoryTheme::keyBackground().name();
+  const QString hover = ZtoryTheme::keyBackgroundHover().name();
+  return QStringLiteral(
+             "QToolButton { image: none; background-color: %1; "
+             "border: 1px solid %1; }"
+             "QToolButton:hover { background-color: %2; border-color: %2; }")
+      .arg(bg, hover);
+}
+
+//! Suggerimento in hover: il glifo dice lo STATO (verita' del frame), la frase
+//! dice l'AZIONE del click — che dipende dal Global Key scope (tetto): il click
+//! avvicina la chiave al completo-nello-scope e solo da li' rimuove. Il
+//! suggerimento nomina sempre l'asse che manca, mai contraddicendo il diamante
+//! (una posa completa e' "Key: pose", non "partial", anche se il click deve
+//! ancora aggiungere la trasformazione).
+QString keyHint(bool hasKey, bool stageFull, bool poseAny, bool poseFull,
+                bool poseInScope) {
+  if (!hasKey)
+    return poseInScope ? QObject::tr("Set Key (transform + pose)")
+                       : QObject::tr("Set Key");
+
+  const bool fullInScope = stageFull && (!poseInScope || poseFull);
+  if (fullInScope) {
+    if (poseInScope)
+      return QObject::tr("Key: transform + pose — click to remove");
+    if (poseAny)  // rig chiaviato ma scope=Stage: il glifo mostra oro, il
+                  // click non lo tocca — dirlo evita la sorpresa
+      return QObject::tr(
+          "Key: transform — click to remove (pose not in Key scope)");
+    return QObject::tr("Key: transform — click to remove");
+  }
+
+  if (!poseInScope)
+    return poseAny ? QObject::tr(
+                         "Partial key: transform — click to complete "
+                         "(pose not in Key scope)")
+                   : QObject::tr(
+                         "Partial key: transform — click to complete");
+  if (stageFull)
+    return poseAny
+               ? QObject::tr(
+                     "Key: transform + partial pose — click to complete pose")
+               : QObject::tr("Key: transform — click to add pose");
+  if (poseFull) return QObject::tr("Key: pose — click to add transform");
+  if (poseAny)
+    return QObject::tr("Partial key: transform + pose — click to complete");
+  return QObject::tr("Partial key: transform — click to complete");
+}
+
+//-----------------------------------------------------------------------------
+}  // namespace
+//=============================================================================
+
+//=============================================================================
 // KeyframeNavigator
 //-----------------------------------------------------------------------------
 
@@ -51,31 +122,35 @@ KeyframeNavigator::KeyframeNavigator(QWidget *parent, TFrameHandle *frameHandle)
   prevWidget->setObjectName("PreviousKey");
 
   // key off button
-  QIcon keyIcon = createQIcon("key_off");
-  m_actKeyNo    = new QAction(keyIcon, tr("Set Key"), this);
+  m_actKeyNo = new QAction(tr("Set Key"), this);
   connect(m_actKeyNo, SIGNAL(triggered()), SLOT(toggleKeyAct()));
   addAction(m_actKeyNo);
   QWidget *keyNoWidget =
       widgetForAction(m_actKeyNo);  // obtain a widget generated from QAction
   keyNoWidget->setObjectName("KeyNo");
+  keyNoWidget->setStyleSheet(keyButtonStyleSheet(false));
 
   // key partial button
-  QIcon keyPartialIcon = createQIcon("key_partial", true);
-  m_actKeyPartial      = new QAction(keyPartialIcon, tr("Set Key"), this);
+  m_actKeyPartial = new QAction(tr("Set Key"), this);
   connect(m_actKeyPartial, SIGNAL(triggered()), SLOT(toggleKeyAct()));
   addAction(m_actKeyPartial);
   QWidget *keyPartialWidget = widgetForAction(
       m_actKeyPartial);  // obtain a widget generated from QAction
   keyPartialWidget->setObjectName("KeyPartial");
+  keyPartialWidget->setStyleSheet(keyButtonStyleSheet(true));
 
   // key total button
-  QIcon keyTotalIcon = createQIcon("key_on", true);
-  m_actKeyTotal      = new QAction(keyTotalIcon, tr("Set Key"), this);
+  m_actKeyTotal = new QAction(tr("Set Key"), this);
   connect(m_actKeyTotal, SIGNAL(triggered()), SLOT(toggleKeyAct()));
   addAction(m_actKeyTotal);
   QWidget *keyTotalWidget =
       widgetForAction(m_actKeyTotal);  // obtain a widget generated from QAction
   keyTotalWidget->setObjectName("KeyTotal");
+  keyTotalWidget->setStyleSheet(keyButtonStyleSheet(true));
+
+  // Le icone dei tre bottoni sono dipinte a codice in updateKeyGlyph(): sei
+  // stati non stanno in tre file svg, e i file svg qui non si vedrebbero
+  // comunque (vedi keyButtonStyleSheet).
 
   // next key button
   QIcon nextKeyIcon = createQIcon("nextkey");
@@ -104,18 +179,21 @@ void KeyframeNavigator::update() {
     m_actKeyTotal->setVisible(false);
     m_actKeyPartial->setVisible(true);
     m_actKeyPartial->setDisabled(false);
+    updateKeyGlyph(m_actKeyPartial);
   }
   if (isFullKey) {
     m_actKeyNo->setVisible(false);
     m_actKeyPartial->setVisible(false);
     m_actKeyTotal->setVisible(true);
     m_actKeyTotal->setDisabled(false);
+    updateKeyGlyph(m_actKeyTotal);
   }
   if (!isKey && !isFullKey) {
     m_actKeyPartial->setVisible(false);
     m_actKeyTotal->setVisible(false);
     m_actKeyNo->setVisible(true);
     m_actKeyNo->setDisabled(false);
+    updateKeyGlyph(m_actKeyNo);
   }
 
   // Next button
@@ -123,6 +201,29 @@ void KeyframeNavigator::update() {
     m_actNextKey->setDisabled(false);
   else
     m_actNextKey->setDisabled(true);
+}
+
+//-----------------------------------------------------------------------------
+
+void KeyframeNavigator::updateKeyGlyph(QAction *visibleAct) {
+  const bool hasKey    = isKeyframe() || isFullKeyframe();
+  const bool stageFull = isFullKeyframe();
+  const bool poseAny   = isPoseKeyframe();
+  const bool poseFull  = isFullPoseKeyframe();
+
+  // Senza chiave il diamante e' solo contorno: prima il bottone era del tutto
+  // invisibile (icona trasparente su fondo trasparente) e per trovarlo si
+  // doveva sapere che c'era. Il glifo mostra la verita' del frame qualunque
+  // sia lo scope; e' il suggerimento a raccontare l'azione scope-dipendente.
+  ZtoryTheme::KeyDiamond d =
+      hasKey ? ZtoryTheme::keyDiamond(stageFull, poseAny, poseFull)
+             : ZtoryTheme::keyDiamondSolid(QColor());
+  const QColor outline = hasKey ? QColor(0, 0, 0) : QColor(150, 150, 150);
+
+  visibleAct->setIcon(QIcon(ZtoryTheme::keyDiamondPixmap(
+      d, KEY_ICON_SIZE, devicePixelRatioF(), outline)));
+  visibleAct->setToolTip(
+      keyHint(hasKey, stageFull, poseAny, poseFull, isPoseInScope()));
 }
 
 //-----------------------------------------------------------------------------
@@ -238,6 +339,30 @@ bool ViewerKeyframeNavigator::isFullKeyframe() const {
 
 //-------------------------------------------------------------------
 
+bool ViewerKeyframeNavigator::isPoseKeyframe() const {
+  bool any = false, full = false;
+  ZtoryTheme::plasticPoseState(getStageObject(), getCurrentFrame(), any, full);
+  return any;
+}
+
+//-------------------------------------------------------------------
+
+bool ViewerKeyframeNavigator::isFullPoseKeyframe() const {
+  bool any = false, full = false;
+  ZtoryTheme::plasticPoseState(getStageObject(), getCurrentFrame(), any, full);
+  return full;
+}
+
+//-------------------------------------------------------------------
+
+bool ViewerKeyframeNavigator::isPoseInScope() const {
+  TStageObject *pegbar = getStageObject();
+  return pegbar && pegbar->getPlasticSkeletonDeformation() &&
+         Preferences::instance()->getIntValue(GlobalKeyScope) != 0;  // != Stage
+}
+
+//-------------------------------------------------------------------
+
 void ViewerKeyframeNavigator::toggle() {
   TStageObject *pegbar = getStageObject();
   if (!pegbar) return;
@@ -251,7 +376,18 @@ void ViewerKeyframeNavigator::toggle() {
   // plastic-pose handling lives (Set Key on a rigged column also keys/unkeys
   // the pose, pref-gated), and doing the operations inline here would bypass
   // it — the navigator key would stay white while the xsheet Z key turns gold.
-  if (pegbar->isFullKeyframe(frame)) {
+  //
+  // Il click cicla verso il completo-NELLO-SCOPE, e solo da li' rimuove:
+  // transform pieno ma posa mancante (scope All) non e' "completo" — il click
+  // aggiunge la posa invece di cancellare. Con scope Stage la posa non conta
+  // (ne' viene toccata: gli undo leggono la stessa preferenza), quindi una
+  // colonna riggata si comporta come una liscia.
+  const bool includePose = isPoseInScope();
+  bool poseFull          = includePose && isFullPoseKeyframe();
+  const bool fullWithinScope =
+      pegbar->isFullKeyframe(frame) && (!includePose || poseFull);
+
+  if (fullWithinScope) {
     TStageObject::Keyframe key = pegbar->getKeyframe(frame);
     TPointD center, offset;
     pegbar->getCenterAndOffset(center, offset);

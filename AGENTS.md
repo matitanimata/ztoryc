@@ -278,9 +278,6 @@ cd toonz/sources && ./beautification.sh
 
 ## Known Bugs (do not regress)
 
-- Frame handle shared between animatic viewer and normal viewer — moving playhead
-  in animatic also moves frame in current sub-scene. Fix planned: separate TFrameHandle
-  for ZtoryAnimaticPanel.
 - Panel not removed when a drawing is deleted — `detectAndUpdatePanels` does not
   handle panel removal.
 - Panels missing on scene open — `refreshFromScene` does not load all panels correctly.

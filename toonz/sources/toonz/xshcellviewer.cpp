@@ -45,7 +45,7 @@
 #include "toonz/txshcell.h"
 #include "toonz/tstageobject.h"
 #include "ext/plasticskeletondeformation.h"
-#include "ztorytheme.h"
+#include "toonzqt/ztorykeydiamond.h"
 #include "toonz/tstageobjecttree.h"
 #include "toonz/sceneproperties.h"
 #include "toonz/columnfan.h"
@@ -3599,90 +3599,22 @@ void CellArea::drawKeyframe(QPainter &p, const QRect toBeUpdated) {
         QPoint target = tmpKeyRect.translated(xy).topLeft();
 
         // Ztoryc: the diamond carries TWO independent axes — the column
-        // transform and the plastic pose — in one glyph. How many halves are
-        // filled says how complete the key is (one = partial, two = full);
-        // their colour says which system: white for the transform, gold for
-        // the pose. So a rigged character blocked on everything reads as a
-        // full white+gold diamond, while a pose-only key reads gold and a
-        // transform-only key reads white, exactly as before for unrigged
-        // columns. Note paramsTime(), not the raw row: plastic params are
-        // sampled in the stage object's param time, which diverges from the
-        // xsheet row under cycling.
-        const bool stageFull = pegbar->isFullKeyframe(row);
-        bool plasticAny = false, plasticFull = false;
-        if (const PlasticSkeletonDeformationP &psd =
-                pegbar->getPlasticSkeletonDeformation()) {
-          const double pf = pegbar->paramsTime(row);
-          plasticAny      = psd->isKeyframe(pf);
-          // "Whole pose keyed" = every vertex deformation fully keyed.
-          //
-          // NOT PlasticSkeletonDeformation::isFullKeyframe(): that also
-          // requires the skeleton-ids parameter, which NEITHER path that sets a
-          // pose key touches — the Plastic tool's setKeyframe says so outright
-          // ("The skeleton ids parameter is NOT affected") and
-          // TStageObject::setPlasticPoseKeyframe only walks the pose params. So
-          // that predicate is unreachable in practice, and using it made every
-          // pose key read as partial: the diamond was stuck on half gold
-          // whatever the Global Key scope was.
-          if (plasticAny) {
-            plasticFull = true;
-            PlasticSkeletonDeformation::vd_iterator vdt, vdEnd;
-            psd->vertexDeformations(vdt, vdEnd);
-            for (; vdt != vdEnd; ++vdt)
-              if (!(*vdt).second->isFullKeyframe(pf)) {
-                plasticFull = false;
-                break;
-              }
-          }
-        }
-
-        // Three-region diamond grammar (see drawTriPartPredefinedPath):
-        //   right half hollow  = partial key
-        //   left half colour(s) = which system(s): white transform, gold pose,
-        //                         or white-over-gold when a partial key holds
-        //                         both.
-        // The diamond only draws when the stage object is keyed, so a stage key
-        // is always present; the cases below fold plastic on top of that.
-        const QColor white = Qt::white;
-        const QColor gold  = ZtoryTheme::gold();
-        const optional<QColor> HOLLOW = optional<QColor>(QColor());
-        optional<QColor> leftTop, leftBottom, right;
-
-        if (!plasticAny) {
-          // Transform only. Full = solid white; partial = left white, right
-          // hollow.
-          leftTop = leftBottom = white;
-          right   = stageFull ? optional<QColor>(white) : HOLLOW;
-        } else if (stageFull) {
-          // Everything keyed (the "All" key): clean vertical white | gold.
-          leftTop = leftBottom = white;
-          right   = gold;
-        } else if (plasticFull) {
-          // Pose is the intent and it is complete: solid gold. (A partial
-          // stage key from the mechanics of the drag is deliberately treated
-          // as "gold" here, matching what the animator asked for with a
-          // Plastic-scope Global Key.)
-          leftTop = leftBottom = gold;
-          right   = gold;
-        } else {
-          // Partial pose over a not-full transform: both systems present but
-          // incomplete — left white over gold, right hollow.
-          leftTop    = white;
-          leftBottom = gold;
-          right      = HOLLOW;
-        }
+        // transform and the plastic pose — in one glyph. Both the state
+        // detection and the colour grammar live in ztorykeydiamond.h, because
+        // the viewer's keyframe navigator paints the same glyph from the same
+        // code: two surfaces describing one frame must not be able to drift.
+        ZtoryTheme::KeyDiamond d =
+            ZtoryTheme::keyDiamondForStageObject(pegbar, row);
 
         // Selection colour still wins — it is transient feedback, and it must
         // read as "selected" regardless of what the key holds.
         if (m_viewer->getKeyframeSelection() &&
-            m_viewer->getKeyframeSelection()->isSelected(row, col)) {
-          const QColor sel(85, 157, 255);
-          leftTop = leftBottom = right = sel;
-        }
+            m_viewer->getKeyframeSelection()->isSelected(row, col))
+          d = ZtoryTheme::keyDiamondSolid(QColor(85, 157, 255));
 
-        // Back-compat name kept for the plain (non-plastic) call path below.
-        QColor color = leftTop ? *leftTop : white;
-        optional<QColor> rightColor = right;
+        QColor color                    = d.leftTop;
+        optional<QColor> rightColor     = d.right;
+        optional<QColor> leftBottom     = d.leftBottom;
 
         int x = xy.x();
         int y = xy.y();
@@ -3854,6 +3786,11 @@ bool CellArea::getEaseHandles(int r0, int r1, double e0, double e1, int &rh0,
     rh1 = r1;
     return false;
   }
+  // Ztoryc: on a 3-row segment (r1 - r0 == 3) the asymmetric branches below
+  // degenerate — e.g. with e0 <= 1 < e1, a = r0+2 > b = r1-2 — so tcrop's
+  // range inverts and debug builds died on assert(a <= b) while painting a
+  // perfectly legitimate scene. Clamp the range instead of asserting.
+  auto cropOrLow = [](int v, int a, int b) { return a <= b ? tcrop(v, a, b) : a; };
   if (e0 <= 1 && e1 <= 1) {
     rh0 = r0 + 1;
     rh1 = r1 - 1;
@@ -3861,25 +3798,21 @@ bool CellArea::getEaseHandles(int r0, int r1, double e0, double e1, int &rh0,
     rh0   = r0 + 1;
     int a = rh0 + 1;
     int b = r1 - 2;
-    assert(a <= b);
-    rh1 = tcrop((int)(r1 - e1 + 0.5), a, b);
+    rh1   = cropOrLow((int)(r1 - e1 + 0.5), a, b);
   } else if (e1 <= 1) {
     rh1   = r1 - 1;
     int b = rh1 - 1;
     int a = r0 + 2;
-    assert(a <= b);
-    rh0 = tcrop((int)(r0 + e0 + 0.5), a, b);
+    rh0   = a <= b ? tcrop((int)(r0 + e0 + 0.5), a, b) : b;
   } else {
     int m = tfloor(0.5 * (r0 + e0 + r1 - e1));
     m     = tcrop(m, r0 + 2, r1 - 2);
     int a = r0 + 2;
     int b = std::min(m, r1 - 3);
-    assert(a <= b);
-    rh0 = tcrop((int)(r0 + e0 + 0.5), a, b);
-    a   = rh0 + 1;
-    b   = r1 - 2;
-    assert(a <= b);
-    rh1 = tcrop((int)(r1 - e1 + 0.5), a, b);
+    rh0   = a <= b ? tcrop((int)(r0 + e0 + 0.5), a, b) : a;
+    a     = rh0 + 1;
+    b     = r1 - 2;
+    rh1   = cropOrLow((int)(r1 - e1 + 0.5), a, b);
   }
   if (rh0 == rh1) rh1++; // Make sure handles dont overlap
   return true;

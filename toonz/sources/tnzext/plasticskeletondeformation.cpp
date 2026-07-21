@@ -1641,10 +1641,18 @@ void PlasticSkeletonDeformation::updateAngle(
   double loLim, hiLim;
   effAngleLimits(&vd, vx, frame, loLim, hiLim);
 
+  // Continuity-first clamp: the stored angle can sit OUTSIDE [lo, hi] for
+  // legitimate reasons — the unpin bake writes the planted pose unclamped, and
+  // a wrapped writer can store 185 as -175. A hard tcrop against the static
+  // range would then yank the joint to the numerically nearest limit on the
+  // FIRST touch (the "suddenly feels bounds it didn't have" snap, or the flip
+  // to the other side of the arc past 180). Widening the range to include the
+  // current value means: from out of range you can only move back IN — never
+  // further out, never teleported — and once inside the full limits apply.
+  const double cur = vd.m_params[SkVD::ANGLE]->getValue(frame);
   double aDelta = tcg::point_ops::angle(vx.P() - vParentPos, pos - vParentPos) *
                   M_180_PI,
-         a = tcrop(vd.m_params[SkVD::ANGLE]->getValue(frame) + aDelta, loLim,
-                   hiLim);
+         a = tcrop(cur + aDelta, std::min(loLim, cur), std::max(hiLim, cur));
 
   vd.m_params[SkVD::ANGLE]->setValue(frame, a);
 

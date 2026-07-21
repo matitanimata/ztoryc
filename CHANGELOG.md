@@ -1,3 +1,80 @@
+## [2026-07-21] — Grammatica diamante nel viewer + la famiglia di bug "pegbar zombie" (v0.10.0)
+
+> **Riepilogo**: partiti dal KeyframeNavigator del viewer (l'ultimo pezzo rimandato ieri),
+> la sessione ha scoperchiato una famiglia intera di bug legati a un `TStageObjectId`
+> corrotto — tre crash diversi, la corruzione silenziosa dei file di scena e le scene
+> reali gia' infette. Tutti chiusi. Piu' due fix di rigging riportati da Franco.
+
+### KeyframeNavigator del viewer — grammatica del diamante (chiude il blocco di ieri)
+- **Sorgente unica**: nuovo header condiviso `include/toonzqt/ztorykeydiamond.h` con la
+  grammatica dei colori (`keyDiamond`) **e** il rilevamento dello stato
+  (`plasticPoseState`). Xsheet e navigator dipingono dalla stessa funzione: due superfici
+  che descrivono lo stesso frame non possono piu' divergere. Il rilevamento sta li' apposta
+  — il bug storico "ogni chiave di posa sembra parziale" nasceva proprio da quello.
+  `xshcellviewer.cpp` perde ~45 righe, `drawTriPartPredefinedPath` delega a `fillKeyRegions`.
+- `ztorytheme.h` spostato in `include/toonzqt/` (serviva a due librerie) + `keyBackground()`.
+- **Icone dipinte a codice**: i .qss di tutti i temi forzano `image: transparent` sui
+  bottoni chiave, quindi le icone su file non si sono **mai** viste (parziale e completa
+  erano lo stesso quadrato arancione, e "nessuna chiave" era un bottone invisibile).
+  Neutralizzate con foglio di stile inline sul widget; fondo magenta `#B01E9A` al posto
+  dell'arancio, che divorava l'oro della posa. Sei stati leggibili invece di tre.
+- **Ciclo del click con lo scope come tetto**: qualunque stato incompleto → il click
+  avvicina al completo-nello-scope; solo da li' rimuove. Prima "transform pieno, posa
+  assente" cancellava tutto invece di aggiungere la posa. Con scope Stage la colonna
+  riggata si comporta come una liscia. Hint in hover che nominano l'asse mancante.
+
+### La famiglia "pegbar zombie" — un id corrotto, tre crash e i file infetti
+Radice comune: `PlasticTool::stageObject()` chiamava `getStageObject(ColumnId(column()))`
+senza guardia, ma `column()` vale **-1** con la colonna camera corrente (e nei cambi di
+xsheet). In release l'`assert` di `ColumnId` non c'e', `-1` sborda dai bit dell'indice a
+quelli del **tipo** → id invalido; e `getStageObject(..., create=true)` **crea** l'oggetto
+richiesto → zombie nella pegbar table, che `saveData` **scrive nella scena** come
+`<pegbar id="BadPegbar">`. Al load l'id non riparsabile torna NoneId e ne genera un altro:
+il file si re-infettava da solo.
+- **CRASH 1** — `PlasticTool::onFrameSwitched` (SIGSEGV) entrando in uno shot col Plastic
+  tool attivo: `sdFrame()` deferenziava a nudo. Guardie null in
+  `stageObject()`/`sdFrame()`/`skeletonId()`/`invalidateXsheet()`.
+- **CRASH 2** — assert `checkIntegrity` all'apertura della scena (debug), zombie in tabella.
+  `TStageObjectTree::getStageObject` ora **rifiuta di creare** oggetti con id di tipo
+  invalido: protegge ogni chiamante presente e futuro. `loadData`/`saveData` saltano i
+  pegbar non riparsabili → **guariscono** le scene infette al salvataggio.
+- **CRASH 3** — `assert(a <= b)` in `CellArea::getEaseHandles` su segmenti di 3 righe: i
+  rami asimmetrici degenerano e l'intervallo si inverte. Ora clampa invece di asserire.
+- **Bonifica dati**: trovate e ripulite 3 scene reali infette (`sh040`, `sh050` del progetto
+  MaggiolataZombie; backup `.prezombiefix.bak` accanto). Nessuna scena infetta rimasta.
+
+### Rigging — due difetti riportati da Franco
+- **Scheletro disallineato dal disegno** dopo aver mosso vertici o toccato le chiavi, che
+  "si riparava" a un click qualsiasi: `PlasticTool::onChange` ora flusha i placement delle
+  colonne collegate (le cache per-frame non sanno di dipendere dai parametri plastic).
+  I percorsi di drag lo facevano gia'; mancava tutto il resto.
+- **Global Key ignorato dal drag cross-colonna**: il personaggio cucito chiaviava solo gli
+  ANGLE della catena trascinata → posa parziale, e il diamante mostrava il doppio-parziale
+  (letto come "ha chiaviato anche il transform", che infatti non era vero). Ora la posa si
+  completa su **tutte** le colonne collegate, ciascuna al suo param-time, prima dello
+  snapshot undo.
+- **Limiti angolari (MINANGLE/MAXANGLE) continuity-first**: il valore memorizzato puo'
+  stare legittimamente fuori dai limiti (il bake di unpin scrive la posa non clampata; un
+  writer con wrapping salva 185 come -175). Il clamp secco strattonava il giunto al limite
+  numericamente vicino al primo click — o lo faceva saltare dall'altro lato dell'arco oltre
+  i 180 gradi. Ora il range e' `[min(lo,corrente), max(hi,corrente)]`: da fuori si puo' solo
+  rientrare, mai essere teletrasportati.
+
+### Risolti (confermati da Franco, tolti dai task attivi)
+- Scrub audio del viewer/xsheet normale: tornato reattivo sul singolo frame (task 47).
+- Frame handle condiviso animatic ↔ viewer: risolto (era in Known Bugs di AGENTS.md).
+
+### Candidati PR upstream (in `UPSTREAM_PR_CANDIDATES.md`)
+Tre nuovi, tutti in file core condivisi: il crash+corruzione di `stageObject()` con la
+colonna camera (alto impatto: corrompe i file), l'assert di `getEaseHandles`, e la
+segnalazione dei .qss che rendono indistinguibili gli stati del KeyframeNavigator.
+
+### Note di metodo
+Il crash log della release non bastava (simbolicazione approssimata): la diagnosi e' venuta
+dalla build debug sotto lldb con `MallocScribble`, piu' un `DYLD_INSERT_LIBRARIES` che
+interpone `__assert_rtn` per **loggare** gli assert invece di abortire — cosi' la scena
+arriva a caricarsi e si vede il vero difetto a valle.
+
 ## [2026-07-20] — SUPERPLASTIC su master + fix Windows GPU + performance Board + Global Key scope + diamanti a due assi
 
 > **Riepilogo**: sessione lunga e densa. Merge SUPERPLASTIC su master; risolto il rendering

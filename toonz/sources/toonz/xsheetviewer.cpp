@@ -15,6 +15,7 @@
 #include "toonz/preferences.h"
 #include "toonz/sceneproperties.h"
 #include "toutputproperties.h"
+#include "toonzqt/ztorykeydiamond.h"
 #include "toonzqt/tselectionhandle.h"
 #include "toonzqt/icongenerator.h"
 #include "cellselection.h"
@@ -1075,30 +1076,17 @@ void XsheetViewer::drawTriPartPredefinedPath(
     optional<QColor> outline, int lineWidth) const {
   QPainterPath path = orientation()->path(which).translated(xy);
 
-  // Three fillable regions carry the whole keyframe-diamond grammar (Ztoryc):
-  //   right half  -> hollow marks a PARTIAL key
-  //   left half   -> which system(s): white transform, gold pose, or split
-  //                  white-over-gold when a partial key holds both.
-  // A full key fills all three the same; the vertical white|gold split (left
-  // vs right) is the complete "All" key. Clip rects are rounded outwards so no
-  // seam pixel between regions is left unpainted.
-  const QRectF bb  = path.boundingRect();
-  const qreal midX = bb.center().x();
-  const qreal midY = bb.center().y();
-
-  auto fillRegion = [&](const optional<QColor> &fill, const QRectF &clip) {
-    if (!fill) return;  // hollow: only the shared outline shows here
-    p.save();
-    p.setClipRect(clip.adjusted(-1.0, -1.0, 1.0, 1.0), Qt::IntersectClip);
-    p.fillPath(path, QBrush(*fill));
-    p.restore();
+  // The three-region fill IS the keyframe-diamond grammar, and it lives in
+  // ZtoryTheme so the xsheet and the viewer's keyframe navigator paint from the
+  // same code — two surfaces showing the same frame must not be able to drift.
+  // An unset region maps to an invalid colour, which fillKeyRegions leaves
+  // hollow.
+  auto reg = [](const optional<QColor> &c) {
+    return c ? *c : QColor();
   };
-
-  const qreal lw = midX - bb.left(), rw = bb.right() - midX;
-  const qreal th = midY - bb.top(), bh = bb.bottom() - midY;
-  fillRegion(leftTopFill, QRectF(bb.left(), bb.top(), lw, th));
-  fillRegion(leftBottomFill, QRectF(bb.left(), midY, lw, bh));
-  fillRegion(rightFill, QRectF(midX, bb.top(), rw, bb.height()));
+  ZtoryTheme::fillKeyRegions(
+      p, path,
+      {reg(leftTopFill), reg(leftBottomFill), reg(rightFill)});
 
   if (outline) {
     QPen oldPen = p.pen();

@@ -448,16 +448,9 @@ Board può essere ristretto → troppe icone danno problemi.
 
 ### 🔧 Aperti — investigare / bassa priorità
 
-47. INVESTIGATE Audio scrub meno reattivo dopo il merge (viewer/xsheet normale) (MEDIA) — l'utente
-    nota che col toggle audio scrub NON distingue piu' il singolo frame come prima. VERIFICATO: il fix
-    Ztoryc "widen scrub window" (scrubLen = max(samplePerFrame, sampleRate*0.15) ~150ms, commit 7b52a5e2e
-    Fase D + evoluzioni gapless 8b1e57ac1/e978d61e4) E' ANCORA PRESENTE in txsheet.cpp:2121 (merge NON
-    l'ha perso). Quindi il regresso e' in un percorso DIVERSO: lo scrub del viewer/xsheet normale usa il
-    native sound scrub (tframehandle/txshsoundcolumn/flipconsole), e il merge ha cambiato il timing del
-    frame-advance in flipconsole.cpp (auto-merge, fix upstream "changing cell during playback"/"resume
-    play"). Ipotesi: il timing del frame-switch influenza durata/frequenza dello scrub nativo. Indagare
-    con confronto A/B (build pre-merge b4aff742f vs post) + percorso onFrameSwitched -> sound scrub.
-    Riferimenti commit audio: 7b52a5e2e, 8b1e57ac1, e978d61e4, ac383df1e (native scrub sub-scene).
+47. ✅ RISOLTO (verificato da Franco 2026-07-21) — Audio scrub meno reattivo dopo il merge.
+    Lo scrub del viewer/xsheet normale e' tornato reattivo sul singolo frame; nessun
+    intervento ulteriore necessario. (L'indagine A/B pre/post merge non serve piu'.)
 41. NEW Cache RAM threshold configurabile (BASSA) — ora a 14.3% shipped in `tsystempd.cpp` (il tentativo di alzarlo al 25% è stato revertito perché l'eviction aggressiva crashava il Save All su scene pesanti, raster liberato durante `TRasterCodecLZO::compress`). Rifarlo in modo MIRATO: non toccare l'eviction globale durante i save; semmai rilevamento per classe di macchina (≤8GB→più aggressivo) + opzione utente. ⚠️ Collegato: cache-leak post-render (frame restano in cache, ~17GB su scena pesante; fix upstream `be20f9512` da portare).
 
 Milestone:

@@ -18,6 +18,10 @@
 #include "toonz/columnfan.h"
 #include "../include/orientation.h"
 
+#ifndef _WIN32
+#include <execinfo.h>  // backtrace in checkIntegrity's invalid-id diagnostics
+#endif
+
 using namespace TSyntax;
 
 //=============================================================================
@@ -147,8 +151,21 @@ void TStageObjectTree::checkIntegrity() {
       assert(imp->getParent() == TStageObjectId());
     else if (id.isCamera())  // la camera puo' essere attaccata dovunque
       cameraCount++;
-    else
-      assert(0);
+    else {
+      // Ztoryc: an invalid id slipped into the pegbar table (typically someone
+      // called getStageObject() with NoneId, which CREATES the zombie entry).
+      // A bare assert(0) says nothing about the culprit: print the id and the
+      // caller's backtrace, so a debug run identifies the call site instead of
+      // dying blind. Don't abort — release builds live with this state anyway,
+      // and stopping here would hide whatever the zombie breaks later.
+      fprintf(stderr, "[checkIntegrity] INVALID StageObjectId code=%u in pegbar table\n",
+              id.getCode());
+#ifndef _WIN32
+      void *bt[24];
+      int n = ::backtrace(bt, 24);
+      ::backtrace_symbols_fd(bt, n, 2);
+#endif
+    }
   }
   if (minColumnIndex > maxColumnIndex) {
     assert(columnIndexTable.size() == 0);
@@ -177,6 +194,19 @@ TStageObject *TStageObjectTree::getStageObject(const TStageObjectId &id,
     TStageObject *pegbar = it->second;
     return pegbar;
   } else if (create) {
+    // Ztoryc: never CREATE an object for an id with a corrupted/none type —
+    // e.g. ColumnId(-1) in release overflows the type bits into "BadPegbar",
+    // and getStageObject(NoneId) is a plain caller bug. Creating it plants a
+    // zombie in the pegbar table that checkIntegrity flags and saveData would
+    // serialize into the scene (self-reinfecting file — see loadData/saveData
+    // guards). Refusing here protects EVERY caller at the source.
+    if (!id.isColumn() && !id.isPegbar() && !id.isTable() && !id.isCamera()) {
+      fprintf(stderr,
+              "TStageObjectTree::getStageObject: refusing to create object "
+              "with invalid id code=%u\n",
+              id.getCode());
+      return 0;
+    }
     TStageObject *pegbar = new TStageObject(this, id);
     if (id.isColumn()) {
       int index = id.getIndex();
@@ -412,6 +442,21 @@ void TStageObjectTree::loadData(TIStream &is, TXsheet *xsh) {
         is >> idStr;
       }
       TStageObjectId id = toStageObjectId(idStr);
+      // Ztoryc: a corrupted session can serialize a stage object whose id
+      // does not parse back ("BadPegbar", "None") — toStageObjectId maps it
+      // to NoneId, and getStageObject(NoneId, true) below would CREATE a
+      // zombie entry in the pegbar table. That zombie then gets re-saved,
+      // so the file re-infects itself on every load. Skip the element:
+      // nothing valid can reference an unparseable id anyway.
+      if (!id.isColumn() && !id.isPegbar() && !id.isTable() &&
+          !id.isCamera()) {
+        fprintf(stderr,
+                "TStageObjectTree::loadData: skipping pegbar with invalid "
+                "id '%s'\n",
+                idStr.c_str());
+        is.skipCurrentTag();
+        continue;
+      }
       if (id.isCamera() && is.getTagAttribute("active") == "yes")
         m_imp->m_currentCameraId = id;
       else if (id.isCamera() && is.getTagAttribute("activepreview") == "yes")
@@ -480,6 +525,19 @@ void TStageObjectTree::saveData(TOStream &os, int occupiedColumnCount,
     if (objectId.isColumn() && objectId.getIndex() >= occupiedColumnCount)
       continue;
     if (objectId == getMotionPathViewerId()) continue;
+    // Ztoryc: never serialize an object whose id would not parse back
+    // (toString gives "BadPegbar"/"None" for these). Writing it re-infects
+    // the file: on load the unparseable id maps to NoneId and a zombie is
+    // recreated in the pegbar table. Skipping here also HEALS an already
+    // infected scene on its next save.
+    if (!objectId.isColumn() && !objectId.isPegbar() && !objectId.isTable() &&
+        !objectId.isCamera()) {
+      fprintf(stderr,
+              "TStageObjectTree::saveData: dropping stage object with "
+              "invalid id '%s'\n",
+              objectId.toString().c_str());
+      continue;
+    }
     std::map<std::string, std::string> attr;
     attr["id"] = objectId.toString();
     if (objectId == m_imp->m_currentCameraId &&

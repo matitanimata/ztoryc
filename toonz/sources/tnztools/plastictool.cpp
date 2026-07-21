@@ -116,8 +116,18 @@ TXshColumn *xshColumn() {
 //------------------------------------------------------------------------
 
 TStageObject *stageObject() {
+  // column() is -1 when the CAMERA column is current (and can be transiently
+  // invalid while onEditShot swaps the xsheet under the tool). ColumnId(-1)
+  // overflows the id's TYPE bits in release (the assert is stripped), and
+  // getStageObject CREATES the object it's asked for — planting a garbage-id
+  // zombie in the pegbar table that then gets serialized into the scene as
+  // <pegbar id="BadPegbar">. No column, no stage object: callers must cope
+  // with 0, as sdFrame()/skeletonId() do.
+  const int col = ::column();
+  if (col < 0) return 0;
   TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
-  return xsh->getStageObject(TStageObjectId::ColumnId(column()));
+  if (!xsh) return 0;
+  return xsh->getStageObject(TStageObjectId::ColumnId(col));
 }
 
 //------------------------------------------------------------------------
@@ -130,7 +140,8 @@ const TXshCell &xshCell() {
 //------------------------------------------------------------------------
 
 int skeletonId() {
-  TStageObject *obj                      = stageObject();
+  TStageObject *obj = stageObject();
+  if (!obj) return 1;  // no column current: same answer as "no deformation"
   const PlasticSkeletonDeformationP &def = obj->getPlasticSkeletonDeformation();
 
   return def ? def->skeletonId(obj->paramsTime(frame()))
@@ -139,7 +150,13 @@ int skeletonId() {
 
 //------------------------------------------------------------------------
 
-double sdFrame() { return stageObject()->paramsTime(frame()); }
+double sdFrame() {
+  // Null-safe: during room/shot switches (onEditShot) frameSwitched fires
+  // while no column is current — the raw frame is the only sane answer, and
+  // dereferencing blindly here was a real crash (onFrameSwitched, release).
+  TStageObject *obj = stageObject();
+  return obj ? obj->paramsTime(frame()) : frame();
+}
 
 //------------------------------------------------------------------------
 
@@ -173,6 +190,11 @@ void setKeyframe(SkVD *vd, double frame) {
 //------------------------------------------------------------------------
 
 void setKeyframe(const PlasticSkeletonDeformationP &sd, double frame) {
+  setKeyframe(sd, frame, ::skeletonId());
+}
+
+void setKeyframe(const PlasticSkeletonDeformationP &sd, double frame,
+                 int skelId) {
   // NOTE: The skeleton ids parameter is NOT affected
 
   SkD::vd_iterator vdt, vdEnd;
@@ -184,11 +206,11 @@ void setKeyframe(const PlasticSkeletonDeformationP &sd, double frame) {
   // stored on the ROOT vertex's deformation) are part of the pose: a global
   // key locks them too. The pin anchor params (PIN/PINTX/PINTY) stay excluded
   // — see the note above.
-  if (PlasticSkeletonP skel = sd->skeleton(::skeletonId())) {
+  if (PlasticSkeletonP skel = sd->skeleton(skelId)) {
     for (auto vt = skel->vertices().begin(); vt != skel->vertices().end();
          ++vt)
       if (vt->parent() < 0) {
-        if (SkVD *vd = sd->vertexDeformation(::skeletonId(), (int)vt.m_idx)) {
+        if (SkVD *vd = sd->vertexDeformation(skelId, (int)vt.m_idx)) {
           // ROOTX/ROOTY: the root's own pose offset (see plasticskeleton-
           // deformation.h) — genuinely part of the shape, unlike the
           // controller channels below, but stored outside the ordinary
@@ -210,7 +232,7 @@ void setKeyframe(const PlasticSkeletonDeformationP &sd, double frame) {
 
 void invalidateXsheet() {
   TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
-  stageObject()->updateKeyframes();
+  if (TStageObject *obj = stageObject()) obj->updateKeyframes();
 
   l_plasticTool.storeDeformation();
   l_plasticTool.invalidate();
@@ -1421,6 +1443,15 @@ void PlasticTool::onChange() {
   // Using invalidate/update and delayed invocation to prevent multiple calls to
   // ::sdFrame()
   m_deformedSkeleton.invalidate();
+
+  // The changed params may re-route the planted placements of the connected
+  // columns (SUPERPLASTIC), and their per-frame placement caches don't know
+  // they depend on plastic params. Without this flush the skeleton overlay
+  // kept drawing against the STALE column matrix after a key was set/removed
+  // or a pose undone, visibly detached from the drawing until an unrelated
+  // click refreshed it. Drag paths flush explicitly (and suspend this
+  // observer); this covers every other route that writes pose params.
+  invalidateConnectedPlacements_animate();
 
   if (!refresh) {
     refresh = true;
