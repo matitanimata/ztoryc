@@ -2,7 +2,7 @@
 
 **The complete solution for professional storyboarding.** From your first thumbnail to the final animatic, Ztoryc supports your creative work through every stage of pre-production — free, open source, and built by artists for artists.
 
-[![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/FcjPJnkqv)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/ZP2gqQwmDb)
 
 Ztoryc is a fork of Tahoma2D built for storyboard artists, directors and studios who need a serious, professional tool to tell better stories, before a single frame is animated.
 
@@ -133,7 +133,7 @@ A heartfelt thank-you to all our sponsors — see [SUPPORTERS.md](SUPPORTERS.md)
 ## 💬 Community
 
 Questions, bug reports, work-in-progress, or just want to show what you're storyboarding?
-**[Join the Ztoryc Discord](https://discord.gg/FcjPJnkqv)** — it's the fastest way to reach us and to hear
+**[Join the Ztoryc Discord](https://discord.gg/ZP2gqQwmDb)** — it's the fastest way to reach us and to hear
 about new releases.
 
 ---
@@ -265,5 +265,5 @@ Un grazie di cuore a tutti i nostri sponsor — vedi [SUPPORTERS.md](SUPPORTERS.
 ## 💬 Community
 
 Domande, segnalazioni, lavori in corso, o semplicemente voglia di mostrare cosa stai
-storyboardando? **[Entra nel Discord di Ztoryc](https://discord.gg/FcjPJnkqv)** — è il modo più veloce per
+storyboardando? **[Entra nel Discord di Ztoryc](https://discord.gg/ZP2gqQwmDb)** — è il modo più veloce per
 raggiungerci e per sapere delle nuove release.

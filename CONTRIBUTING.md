@@ -1,6 +1,6 @@
 # Contributing to Ztoryc
 
-> 💬 **Talk to us first if you like:** the [Ztoryc Discord](https://discord.gg/FcjPJnkqv) is the quickest
+> 💬 **Talk to us first if you like:** the [Ztoryc Discord](https://discord.gg/ZP2gqQwmDb) is the quickest
 > way to ask whether an idea fits, get pointed at the right file, or report something
 > odd before writing it up as an issue.
 
