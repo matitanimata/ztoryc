@@ -100,9 +100,9 @@ master nel worktree `tahoma2d-superplastic` (bundle **Ztoryc-SP.app**). Un solo 
 due sorgenti di guida (dial keyframabile / angolo del giunto), additivo; UI a pannello
 ZtoRig con toggle di link sulle coppie simmetriche; drag IK in opzione C (`base = target
 − blend`). Trappola nota: una correttiva non puo' scrivere il parametro che la guida.
-Anteprima di design in `docs/images/pose_dials_preview.svg` (mockup, etichettato come
-tale — da usare come teaser "coming soon"). Master resta releasabile: il lavoro sta sul
-branch.
+Esiste un mockup di anteprima, ma resta **sul branch e non pubblicato**: Franco preferisce
+mostrarlo solo quando la cosa funziona davvero, invece di annunciare qualcosa che non c'e'
+ancora. Master resta releasabile: il lavoro sta sul branch.
 
 
 ## [2026-07-20] — SUPERPLASTIC su master + fix Windows GPU + performance Board + Global Key scope + diamanti a due assi
