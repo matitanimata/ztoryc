@@ -197,6 +197,17 @@ public:
     TDoubleKeyframe m_keyframes[PARAMS_COUNT];
   };
 
+  //! ZtoRig: the params that describe a POSE, and only those — the shared
+  //! definition behind Global Key, pose recording and pose blending. PIN /
+  //! PINT* / PINW* are excluded because their PRESENCE is a semantic switch
+  //! (planting authority), and MINANGLE / MAXANGLE because they are joint
+  //! limits, not shape: keying or blending either family would silently
+  //! re-wire the rig instead of moving it.
+  static const int POSE_PARAMS[];
+  static const int POSE_PARAMS_COUNT;
+  //! Index of \p param inside POSE_PARAMS, or -1 when it is not a pose param.
+  static int poseParamSlot(int param);
+
 public:
   TDoubleParamP m_params[PARAMS_COUNT];
 
