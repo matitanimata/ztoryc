@@ -75,6 +75,36 @@ dalla build debug sotto lldb con `MallocScribble`, piu' un `DYLD_INSERT_LIBRARIE
 interpone `__assert_rtn` per **loggare** gli assert invece di abortire — cosi' la scena
 arriva a caricarsi e si vede il vero difetto a valle.
 
+### Aggiunta di fine sessione (2026-07-21)
+
+**Release v0.10.0 pubblicata** — build macOS (Intel + Silicon) e Windows (installer +
+portable) verdi, note bilingui EN/IT con la legenda del diamante embeddata e il link
+Discord. Le note coprono l'intero range v0.9.0..HEAD (47 commit), non solo la sessione:
+titolo sui diamanti + Global Key scope (la novita' piu' rilevante secondo Franco),
+rendering GPU su Windows, performance Board, rigging marcato *work in progress*.
+
+**Community** — aperto il server Discord (invito permanente `ZP2gqQwmDb`, il primo era a
+scadenza 7 giorni ed e' stato sostituito prima di andare online). Messo in README (badge
+in cima + sezione Community bilingue), `docs/MANUAL.md`, `CONTRIBUTING.md` e nelle note.
+
+**Bonifica dati** — ripulite `sh040.tnz` e `sh050.tnz` del progetto MaggiolataZombie dai
+pegbar zombie (backup `.prezombiefix.bak` accanto). `lib_gino.tnz` risultava un falso
+positivo: il suo `id="None"` e' un `<parent>`, che e' legittimo.
+
+**Chiusi e tolti dai task attivi** (confermati da Franco): scrub audio del viewer normale
+e frame handle condiviso animatic/viewer.
+
+### Prossimo passo — ZtoRig pose-blend (Task 59 + correttive di giuntura)
+Design concordato e scritto in memoria; branch **`feature/ztorig-pose-blend`** creato da
+master nel worktree `tahoma2d-superplastic` (bundle **Ztoryc-SP.app**). Un solo motore,
+due sorgenti di guida (dial keyframabile / angolo del giunto), additivo; UI a pannello
+ZtoRig con toggle di link sulle coppie simmetriche; drag IK in opzione C (`base = target
+− blend`). Trappola nota: una correttiva non puo' scrivere il parametro che la guida.
+Anteprima di design in `docs/images/pose_dials_preview.svg` (mockup, etichettato come
+tale — da usare come teaser "coming soon"). Master resta releasabile: il lavoro sta sul
+branch.
+
+
 ## [2026-07-20] — SUPERPLASTIC su master + fix Windows GPU + performance Board + Global Key scope + diamanti a due assi
 
 > **Riepilogo**: sessione lunga e densa. Merge SUPERPLASTIC su master; risolto il rendering
