@@ -4,6 +4,18 @@
 
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/ZP2gqQwmDb)
 
+> ### 🔧 Ztoryc 0.10 — back online shortly
+>
+> The 0.10 build published this morning has been pulled: testing turned up a crash that
+> closed the app with no message at all on Windows, when entering a shot and clicking a
+> frame. It is an old bug — present in 0.9 too — and it is now fixed. New builds are on
+> their way; if you downloaded this morning's files, please wait for the replacement.
+>
+> *La 0.10 pubblicata stamattina è stata ritirata: durante i test è emerso un crash che su
+> Windows chiudeva l'app senza alcun messaggio, entrando in uno shot e cliccando un frame.
+> È un bug vecchio, presente anche nella 0.9, ed è risolto. Le nuove build stanno
+> arrivando: se hai scaricato i file di stamattina, aspetta la sostituzione.*
+
 Ztoryc is a fork of Tahoma2D built for storyboard artists, directors and studios who need a serious, professional tool to tell better stories, before a single frame is animated.
 
 Ztoryc works for any production — animated or live action. If you use Tahoma2D or OpenToonz for 2D animation, it integrates directly into your pipeline, but it works as a standalone storyboarding tool for any workflow.
