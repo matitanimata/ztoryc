@@ -245,9 +245,16 @@ cd toonz/sources && ./beautification.sh
 ```
 
 2. Verify no regressions in the modified area
-3. PR candidates — vedi **`~/ZtorYc/UPSTREAM_PR_CANDIDATES.md`** (anche in repo).
-   Lista dei fix Ztoryc proponibili a monte, con file, causa e commit. Consultarla
-   solo quando si prepara davvero una PR: non serve al lavoro quotidiano.
+3. PR candidates — la lista vive in **`~/ZtorYc/UPSTREAM_PR_CANDIDATES.md`**
+   (symlink a Drive, copia anche in repo). Consultarla solo quando si prepara
+   davvero una PR: non serve al lavoro quotidiano.
+
+   > ⚠️ **Quando emerge un nuovo candidato PR, aggiungerlo LI', non qui.**
+   > Un fix e' candidato upstream se tocca file core condivisi con
+   > Tahoma2D/OpenToonz (cioe' fuori dai file Ztoryc: storyboardpanel, ztorymodel,
+   > ztoryanimatic, ztorybackpanel). Scrivere: sintomo, file e riga, causa root,
+   > fix applicato, commit, e se e' stato **verificato su Tahoma2D stock** o solo
+   > diagnosticato. Segnalarlo anche nel CHANGELOG della sessione.
 
 -----
 
@@ -325,6 +332,18 @@ When the user says **"sessione chiusa"**, automatically:
    ## [YYYY-MM-DD] — title
    ### Fixed / Added / Modified / Upstream candidates / Notes
    ```
+
+   > ⚠️ **MAI usare `mv` (o `>` diretto) per riscrivere CHANGELOG.md,
+   > ANIMATIC_TASKS.md o UPSTREAM_PR_CANDIDATES.md: sono SYMLINK a Drive.**
+   > `mv file symlink` sostituisce il symlink con un file normale, e da quel
+   > momento le scritture restano locali — Drive (e quindi Claudio su iPad) non
+   > vede piu' nulla, in silenzio. Successo davvero il 2026-07-20.
+   > Per prependere in sicurezza scrivere ATTRAVERSO il symlink:
+   > ```bash
+   > cat nuova_entry.md ~/ZtorYc/CHANGELOG.md > /tmp/cl.md
+   > cat /tmp/cl.md > ~/ZtorYc/CHANGELOG.md   # `cat >` scrive nel target, `mv` no
+   > ```
+   > Verificare dopo: `ls -la ~/ZtorYc/CHANGELOG.md` deve mostrare `->` a Drive.
 
 2. **Commit and push:**
    ```bash
