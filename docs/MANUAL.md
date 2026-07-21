@@ -236,7 +236,30 @@ Inside a shot (double-click to enter):
 - **AutoFill on Smart Raster** — fill closed areas on smart-raster levels.
 - **Image sequences with `-`** — `frame-0006.jpg` (hyphen) is read as a sequence.
 
-## 17. Export
+## 17. Reading keyframes — the diamond
+
+A rigged character has **two independent things** that can be keyed: the **column
+transform** (position, rotation, scale…) and the **plastic pose** (the skeleton's
+shape). Ztoryc shows both in a single diamond, in the xsheet and on the viewer's
+**Set Key** button alike:
+
+- the **right half empty** means the key is **partial**;
+- the **left half** says *which* system holds it — **white** for the transform,
+  **gold** for the plastic pose, or white over gold when a partial key holds both.
+
+![Keyframe diamond legend](images/keyframe_diamond_legend.svg)
+
+**Set Key in the viewer** cycles towards a complete key and only then removes it:
+click a partial key to complete it, click a pose-only key to add the transform,
+click a complete key to remove it. What counts as "complete" follows the **Global
+Key scope** (the *Key:* dropdown in the Animate and Plastic tool options — Stage /
+Plastic / All): with scope *Stage* the pose is ignored entirely and a rigged column
+behaves like a plain one. Hover the button to read the current state and what the
+click will do.
+
+---
+
+## 18. Export
 
 - **Export spreadsheet** — `.xlsx` production worksheet (per-scene or whole project).
 - **Export storyboard PDF** — printable board (optional custom studio logo).
@@ -476,7 +499,31 @@ Dentro uno shot (doppio click per entrarci):
 - **AutoFill sullo Smart Raster** — riempie le aree chiuse sui livelli smart-raster.
 - **Sequenze immagini con `-`** — `frame-0006.jpg` (trattino) letto come sequenza.
 
-## 17. Export
+## 17. Leggere le chiavi — il diamante
+
+Un personaggio riggato ha **due cose indipendenti** che possono essere chiaviate: la
+**trasformazione di colonna** (posizione, rotazione, scala…) e la **posa plastic** (la
+forma dello scheletro). Ztoryc le mostra entrambe in un solo diamante, sia nell'xsheet
+sia sul bottone **Set Key** del viewer:
+
+- **metà destra vuota** = la chiave è **parziale**;
+- la **metà sinistra** dice *quale* sistema la tiene — **bianco** per la trasformazione,
+  **oro** per la posa plastic, oppure bianco sopra e oro sotto quando una chiave parziale
+  le tiene entrambe.
+
+![Legenda del diamante chiave](images/keyframe_diamond_legend.svg)
+
+**Set Key nel viewer** cicla verso la chiave completa e solo da lì la rimuove: clicca su
+una chiave parziale per completarla, su una chiave di sola posa per aggiungere la
+trasformazione, su una chiave completa per cancellarla. Cosa conti come "completa" lo
+decide la **portata della chiave globale** (il menu *Key:* nelle opzioni dell'Animate e
+del Plastic tool — Stage / Plastic / All): con portata *Stage* la posa viene ignorata del
+tutto e una colonna riggata si comporta come una normale. Passa il mouse sul bottone per
+leggere lo stato corrente e cosa farà il click.
+
+---
+
+## 18. Export
 
 - **Export spreadsheet** — worksheet di produzione `.xlsx` (per-scena o intero progetto).
 - **Export storyboard PDF** — board stampabile (logo studio personalizzato opzionale).

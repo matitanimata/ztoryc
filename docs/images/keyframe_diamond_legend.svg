@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="510" viewBox="0 0 760 510" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+<rect width="760" height="510" rx="10" fill="#2b2b2b"/>
+<text x="28" y="42" fill="#e8e8e8" font-size="19" font-weight="600">Keyframe diamond — how to read it</text>
+<text x="28" y="66" fill="#a8a8a8" font-size="13">Right half empty = partial key &#183; left half = which system: white transform, gold plastic pose</text>
+<rect x="20" y="96" width="720" height="54" rx="6" fill="#3a3a3a"/>
+  <polygon points="56.0,110.0 56.0,123.0 43.0,123.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="56.0,123.0 56.0,136.0 43.0,123.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="56.0,110.0 69.0,123.0 56.0,136.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="56.0,110.0 69.0,123.0 56.0,136.0 43.0,123.0" fill="none" stroke="#1a1a1a" stroke-width="1.2"/>
+<text x="92" y="119" fill="#e8e8e8" font-size="14" font-weight="600">Transform key</text>
+<text x="92" y="137" fill="#a8a8a8" font-size="12.5">The column transform is keyed on every channel.</text>
+<rect x="20" y="158" width="720" height="54" rx="6" fill="#3a3a3a"/>
+  <polygon points="56.0,172.0 56.0,185.0 43.0,185.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="56.0,185.0 56.0,198.0 43.0,185.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="56.0,172.0 69.0,185.0 56.0,198.0 43.0,185.0" fill="none" stroke="#1a1a1a" stroke-width="1.2"/>
+<text x="92" y="181" fill="#e8e8e8" font-size="14" font-weight="600">Partial transform key</text>
+<text x="92" y="199" fill="#a8a8a8" font-size="12.5">Some transform channels are keyed, not all.</text>
+<rect x="20" y="220" width="720" height="54" rx="6" fill="#3a3a3a"/>
+  <polygon points="56.0,234.0 56.0,247.0 43.0,247.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="56.0,247.0 56.0,260.0 43.0,247.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="56.0,234.0 69.0,247.0 56.0,260.0" fill="#ECA61C" stroke="#ECA61C" stroke-width="0.8"/>
+  <polygon points="56.0,234.0 69.0,247.0 56.0,260.0 43.0,247.0" fill="none" stroke="#1a1a1a" stroke-width="1.2"/>
+<text x="92" y="243" fill="#e8e8e8" font-size="14" font-weight="600">Full key — transform + pose</text>
+<text x="92" y="261" fill="#a8a8a8" font-size="12.5">Everything is keyed: the whole character is locked here.</text>
+<rect x="20" y="282" width="720" height="54" rx="6" fill="#3a3a3a"/>
+  <polygon points="56.0,296.0 56.0,309.0 43.0,309.0" fill="#ECA61C" stroke="#ECA61C" stroke-width="0.8"/>
+  <polygon points="56.0,309.0 56.0,322.0 43.0,309.0" fill="#ECA61C" stroke="#ECA61C" stroke-width="0.8"/>
+  <polygon points="56.0,296.0 69.0,309.0 56.0,322.0" fill="#ECA61C" stroke="#ECA61C" stroke-width="0.8"/>
+  <polygon points="56.0,296.0 69.0,309.0 56.0,322.0 43.0,309.0" fill="none" stroke="#1a1a1a" stroke-width="1.2"/>
+<text x="92" y="305" fill="#e8e8e8" font-size="14" font-weight="600">Pose key</text>
+<text x="92" y="323" fill="#a8a8a8" font-size="12.5">The plastic pose is fully keyed (Global Key scope: Plastic).</text>
+<rect x="20" y="344" width="720" height="54" rx="6" fill="#3a3a3a"/>
+  <polygon points="56.0,358.0 56.0,371.0 43.0,371.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="56.0,371.0 56.0,384.0 43.0,371.0" fill="#ECA61C" stroke="#ECA61C" stroke-width="0.8"/>
+  <polygon points="56.0,358.0 69.0,371.0 56.0,384.0 43.0,371.0" fill="none" stroke="#1a1a1a" stroke-width="1.2"/>
+<text x="92" y="367" fill="#e8e8e8" font-size="14" font-weight="600">Partial — transform + pose</text>
+<text x="92" y="385" fill="#a8a8a8" font-size="12.5">Both systems hold a key, neither is complete.</text>
+<rect x="20" y="422" width="720" height="72" rx="6" fill="#3a3a3a"/>
+<text x="36" y="448" fill="#e8e8e8" font-size="13" font-weight="600">Same grammar in the viewer&#8217;s Set Key button</text>
+  <polygon points="53.0,457.0 62.0,466.0 53.0,475.0 44.0,466.0" fill="none" stroke="#969696" stroke-width="1.2"/>
+<text x="74" y="471" fill="#a8a8a8" font-size="12">no key</text>
+<rect x="168" y="453" width="26" height="26" rx="3" fill="#B01E9A"/>
+  <polygon points="181.0,457.0 181.0,466.0 172.0,466.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="181.0,466.0 181.0,475.0 172.0,466.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="181.0,457.0 190.0,466.0 181.0,475.0 172.0,466.0" fill="none" stroke="#1a1a1a" stroke-width="1.2"/>
+<text x="202" y="471" fill="#a8a8a8" font-size="12">partial</text>
+<rect x="296" y="453" width="26" height="26" rx="3" fill="#B01E9A"/>
+  <polygon points="309.0,457.0 309.0,466.0 300.0,466.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="309.0,466.0 309.0,475.0 300.0,466.0" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.8"/>
+  <polygon points="309.0,457.0 318.0,466.0 309.0,475.0" fill="#ECA61C" stroke="#ECA61C" stroke-width="0.8"/>
+  <polygon points="309.0,457.0 318.0,466.0 309.0,475.0 300.0,466.0" fill="none" stroke="#1a1a1a" stroke-width="1.2"/>
+<text x="330" y="471" fill="#a8a8a8" font-size="12">full</text>
+<text x="430" y="471" fill="#a8a8a8" font-size="12">&#8212; magenta background = this frame holds a key</text>
+</svg>
