@@ -6,6 +6,11 @@
 > Ztoryc is an open-source storyboard & animatic pipeline built on Tahoma2D 1.6.
 > Ztoryc è una pipeline open-source di storyboard e animatic costruita su Tahoma2D 1.6.
 
+> 💬 **Need help?** Join the [Ztoryc Discord](https://discord.gg/FcjPJnkqv) — questions, bug reports and
+> release announcements.
+> 💬 **Serve aiuto?** Entra nel [Discord di Ztoryc](https://discord.gg/FcjPJnkqv) — domande, segnalazioni e
+> annunci delle nuove versioni.
+
 ---
 
 # 🇬🇧 English

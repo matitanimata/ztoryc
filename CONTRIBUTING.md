@@ -1,5 +1,10 @@
 # Contributing to Ztoryc
 
+> 💬 **Talk to us first if you like:** the [Ztoryc Discord](https://discord.gg/FcjPJnkqv) is the quickest
+> way to ask whether an idea fits, get pointed at the right file, or report something
+> odd before writing it up as an issue.
+
+
 Ztoryc is currently in active development by Matitanimata.
 
 ## Bug reports
