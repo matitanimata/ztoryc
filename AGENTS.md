@@ -249,12 +249,20 @@ cd toonz/sources && ./beautification.sh
    (symlink a Drive, copia anche in repo). Consultarla solo quando si prepara
    davvero una PR: non serve al lavoro quotidiano.
 
-   > ⚠️ **Quando emerge un nuovo candidato PR, aggiungerlo LI', non qui.**
+   > ⚠️ **Quando emerge un nuovo candidato PR, aggiungerlo LI', non qui, SUBITO.**
+   > `UPSTREAM_PR_CANDIDATES.md` e' la **fonte di verita'** e va tenuto aggiornato
+   > in tempo reale, non a fine sessione.
    > Un fix e' candidato upstream se tocca file core condivisi con
    > Tahoma2D/OpenToonz (cioe' fuori dai file Ztoryc: storyboardpanel, ztorymodel,
    > ztoryanimatic, ztorybackpanel). Scrivere: sintomo, file e riga, causa root,
    > fix applicato, commit, e se e' stato **verificato su Tahoma2D stock** o solo
    > diagnosticato. Segnalarlo anche nel CHANGELOG della sessione.
+   >
+   > **Non confondere i due file:**
+   > - `UPSTREAM_PR_CANDIDATES.md` — fonte di verita', tecnica, italiano, real-time
+   > - `PR_CANDIDATES_SHARE_EN.md` — versione **derivata** discorsiva in inglese per
+   >   la condivisione esterna (issue, forum, upstream). Si rigenera DA quella
+   >   tecnica quando serve condividere; non modificarla come se fosse l'originale.
 
 -----
 

@@ -1,5 +1,11 @@
 # Ztoryc → Tahoma2D — candidati PR upstream
 
+> ✅ **FONTE DI VERITÀ.** Lista di lavoro tecnica, da aggiornare **in tempo reale**
+> ogni volta che emerge un candidato (vedi la regola in AGENTS.md).
+> La versione discorsiva in inglese per la condivisione esterna è
+> `PR_CANDIDATES_SHARE_EN.md`, che si rigenera da qui quando serve — non il contrario.
+
+
 > Fix sviluppati in Ztoryc, abbastanza puliti da essere proposti a monte.
 > Estratti da AGENTS.md il 2026-07-20: erano il 40% di un file che viene caricato
 > a ogni sessione, mentre servono solo quando si prepara davvero una PR.
