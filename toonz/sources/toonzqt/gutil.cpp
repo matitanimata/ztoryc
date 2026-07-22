@@ -44,7 +44,6 @@ inline bool hasScreensWithDifferentDevPixRatio() {
   // Controlla ogni volta — i monitor possono essere collegati/scollegati a runtime
   int dpr = QApplication::primaryScreen()->devicePixelRatio();
   for (auto screen : QGuiApplication::screens()) {
-    qDebug() << "Screen:" << screen->name() << "DPR:" << screen->devicePixelRatio();
     if ((int)screen->devicePixelRatio() != dpr) return true;
   }
   return false;
