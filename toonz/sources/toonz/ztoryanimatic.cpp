@@ -4668,7 +4668,8 @@ void ZtoryPanelNavigator::refreshPreview() {
           QSettings().value("Ztoryc/ShowCamMoveType", true).toBool();
       px = ztoryRenderPanelPreview(cl->getXsheet(), shot.panels[m_panelIdx],
                                    physSize.width(), physSize.height(),
-                                   moveOrdinal, showCamLabel);
+                                   moveOrdinal, showCamLabel, 0,
+                                   QString::fromStdWString(cl->getName()));
       // Tag with DPR so Qt maps the physical pixels back to logical coordinates.
       px.setDevicePixelRatio(dpr);
       if (QSettings().value("Ztoryc/ShowLightDirection", true).toBool())
