@@ -636,7 +636,34 @@ public:
   // Called on scene switch BEFORE the .ztoryc migration read and loadProjectDb().
   void resetProjectLevelDefaults();
 
+  // ---- Cache CONDIVISA dei render di anteprima ------------------------------
+  // Renderizzare un frame di sotto-scena e' di gran lunga la cosa piu' cara del
+  // Board. Ogni pannello aveva la sua cache privata, quindi con un Board per
+  // room la STESSA anteprima veniva renderizzata una volta per pannello. Qui e'
+  // una sola: il primo che la chiede paga, gli altri leggono.
+  //
+  // Sta in ZtoryModel perche' e' il posto dove vive lo stato condiviso (vedi la
+  // regola in AGENTS.md: niente stato globale mutabile altrove).
+  //
+  // La chiave e' costruita da chi renderizza e comprende TUTTO cio' che cambia
+  // il risultato: nome della sotto-scena (sopravvive ai riordini, a differenza
+  // del puntatore o dell'indice colonna), frame, dimensioni in pixel fisici e
+  // regione di camera. In cache va il render NUDO: l'overlay della camera e'
+  // economico e viene riapplicato su una copia a ogni uso.
+  QPixmap cachedPanelRender(const QString &key) const;
+  void    cachePanelRender(const QString &key, const QPixmap &px);
+  //! Butta via i render di UNA sotto-scena (il disegno e' cambiato).
+  void    invalidatePanelRenders(const QString &subSceneName);
+  //! Butta via tutto (cambio scena).
+  void    clearPanelRenderCache();
+
 private:
+  QHash<QString, QPixmap> m_panelRenderCache;
+  // Tetto prudenziale: le anteprime sono grandi e una scena lunga ne ha tante.
+  // Superato il tetto si svuota tutto — semplice e prevedibile, invece di una
+  // politica di sfratto che sarebbe un'altra cosa da sbagliare.
+  static const int kPanelRenderCacheMax = 400;
+
   void loadProjectDbFromDevice(QIODevice &dev);  // shared XML parser
 
 private slots:

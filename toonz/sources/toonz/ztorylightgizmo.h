@@ -30,6 +30,10 @@ void ztoryApplyLightOverlay(QPixmap &px, const PanelData &pd);
 // camera-move panels precede this one in the shot (A→B lettering);
 // `showCamLabel` toggles the "Trk In/Pan…" type label.  Shared by the Board
 // thumbnails and the Shot Board large preview so the two stay identical.
+// `subSceneName` abilita la cache CONDIVISA dei render (ZtoryModel): passa il
+// nome del TXshChildLevel, che sopravvive ai riordini di colonna. Vuoto =
+// niente cache, si renderizza ogni volta.
 QPixmap ztoryRenderPanelPreview(TXsheet *subXsh, const PanelData &pd,
                                 int physW, int physH, int moveOrdinal,
-                                bool showCamLabel, double labelPxSize = 0);
+                                bool showCamLabel, double labelPxSize = 0,
+                                const QString &subSceneName = QString());

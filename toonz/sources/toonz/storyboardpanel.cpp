@@ -1482,7 +1482,11 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   connect(ZtoryModel::instance(), &ZtoryModel::productionReloaded, this,
           &StoryboardPanel::updateNumberingLock);
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
-          this, &StoryboardPanel::refreshFromScene);
+          this, [this]() {
+            // Scena nuova: i render della precedente non servono piu' a nessuno.
+            ZtoryModel::instance()->clearPanelRenderCache();
+            refreshFromScene();
+          });
   connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
           this, &StoryboardPanel::onXsheetChanged);
   // Sync durations when ZtoryModel resequences (works even inside sub-scenes)
@@ -2115,12 +2119,36 @@ static CamOverlayGeom computeCamOverlayGeom(const PanelData &pd,
 // applyCameraOverlay live in this file; declared in ztorylightgizmo.h.
 QPixmap ztoryRenderPanelPreview(TXsheet *subXsh, const PanelData &pd,
                                 int physW, int physH, int moveOrdinal,
-                                bool showCamLabel, double labelPxSize) {
+                                bool showCamLabel, double labelPxSize,
+                                const QString &subSceneName) {
   if (!subXsh || physW <= 0 || physH <= 0) return QPixmap();
   int frame = (pd.cameraMoveType != PanelData::CamNone) ? pd.camRenderFrame
                                                         : pd.startFrame;
   QPixmap px;
   CamOverlayGeom g = computeCamOverlayGeom(pd, (double)physW / physH);
+
+  // Chiave della cache condivisa: tutto cio' che cambia il RENDER (non
+  // l'overlay, che riapplichiamo sotto). Senza nome di sotto-scena non si puo'
+  // identificare nulla in modo stabile → si renderizza e basta.
+  QString cacheKey;
+  if (!subSceneName.isEmpty()) {
+    cacheKey = QString("%1|%2|%3x%4").arg(subSceneName).arg(frame)
+                   .arg(physW).arg(physH);
+    if (g.valid)  // la regione di camera cambia l'inquadratura renderizzata
+      cacheKey += QString("|r%1,%2,%3,%4")
+                      .arg(g.minX, 0, 'f', 3).arg(g.minY, 0, 'f', 3)
+                      .arg(g.maxX, 0, 'f', 3).arg(g.maxY, 0, 'f', 3);
+    QPixmap hit = ZtoryModel::instance()->cachedPanelRender(cacheKey);
+    if (!hit.isNull()) {
+      // COPIA: applyCameraOverlay dipinge sopra, e la pixmap in cache non deve
+      // essere toccata — la stessa istanza la useranno gli altri pannelli.
+      px = hit.copy();
+      if (pd.cameraMoveType != PanelData::CamNone)
+        applyCameraOverlay(px, pd, moveOrdinal, showCamLabel, labelPxSize);
+      return px;
+    }
+  }
+
   if (g.valid) {
     // localBBox is in getCameraAff-local; renderFrame works in getPlacement-
     // local, which differs by the camera Z scale → convert with TScale(zf).
@@ -2135,8 +2163,16 @@ QPixmap ztoryRenderPanelPreview(TXsheet *subXsh, const PanelData &pd,
     px = IconGenerator::renderXsheetFrame(subXsh, frame,
                                           TDimension(physW, physH));
   }
-  if (!px.isNull() && pd.cameraMoveType != PanelData::CamNone)
+  // In cache va il render NUDO, prima dell'overlay: l'overlay dipende da cose
+  // che non stanno nella chiave (ordinale della lettera, etichette) ed e'
+  // economico da rifare.
+  if (!cacheKey.isEmpty() && !px.isNull())
+    ZtoryModel::instance()->cachePanelRender(cacheKey, px);
+
+  if (!px.isNull() && pd.cameraMoveType != PanelData::CamNone) {
+    px = px.copy();  // non dipingere sulla pixmap appena messa in cache
     applyCameraOverlay(px, pd, moveOrdinal, showCamLabel, labelPxSize);
+  }
   return px;
 }
 
@@ -2187,7 +2223,8 @@ void StoryboardPanel::updatePreview(int shotIdx, int panelIdx) {
   for (int k = 0; k < panelIdx && k < (int)shot.data.panels.size(); k++)
     if (shot.data.panels[k].cameraMoveType != PanelData::CamNone) moveOrdinal++;
   QPixmap px = ztoryRenderPanelPreview(subXsh, pd, physW, physH, moveOrdinal,
-                                       m_showCamMoveType);
+                                       m_showCamMoveType, 0,
+                                       QString::fromStdWString(cl->getName()));
   if (!px.isNull()) {
     if (m_showLights) ztoryApplyLightOverlay(px, pd);
     shot.panels[panelIdx]->setPreviewPixmap(px);
@@ -4008,6 +4045,12 @@ void StoryboardPanel::showEvent(QShowEvent *e) {
       for (int si = 0; si < (int)m_shots.size(); si++) {
         if (m_shots[si].data.xsheetColumn == m_dirtyShotCol) {
           detectAndUpdatePanels(si);  // safe: now handles main-xsheet context
+          // Svuotare la pixmap del widget non basta piu': il render vive nella
+          // cache CONDIVISA, e senza questo updateVisiblePreviews() rileggerebbe
+          // quello vecchio — l'anteprima resterebbe indietro rispetto al disegno.
+          if (m_shots[si].childLevel)
+            ZtoryModel::instance()->invalidatePanelRenders(
+                QString::fromStdWString(m_shots[si].childLevel->getName()));
           for (PanelWidget *pw : m_shots[si].panels)
             pw->setPreviewPixmap(QPixmap());
           break;
@@ -4048,8 +4091,12 @@ void StoryboardPanel::refreshFromScene() {
   if (!scene) return;
   // Diagnostic for the undo-wipe bug (task 48): if the Board empties, the
   // console shows who rebuilt it and what the xsheet looked like.
-  qWarning("[ZTORY] refreshFromScene: shots(before)=%d ancestors=%d",
-           (int)m_shots.size(), scene->getChildStack()->getAncestorCount());
+  // Il puntatore identifica l'ISTANZA: senza, tre righe uguali con shots=0 non
+  // dicono se e' un pannello rifatto tre volte o tre pannelli diversi che si
+  // inizializzano — due diagnosi opposte.
+  qWarning("[ZTORY] refreshFromScene: panel=%p shots(before)=%d ancestors=%d",
+           (void *)this, (int)m_shots.size(),
+           scene->getChildStack()->getAncestorCount());
   // Sync fps from scene output settings — keeps timecodes correct when the
   // user has a non-24 frame rate (e.g. 25, 30).
   {

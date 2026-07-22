@@ -354,6 +354,44 @@ void ZtoryModel::setAssetTaskAssigneesByUuid(const QString &uuid,
     if (m_assets[i].uuid == uuid) { setAssetTaskAssignees(i, taskType, assignees); return; }
 }
 
+//-----------------------------------------------------------------------------
+// Cache condivisa dei render di anteprima — vedi il commento in ztorymodel.h.
+
+QPixmap ZtoryModel::cachedPanelRender(const QString &key) const {
+  return m_panelRenderCache.value(key);
+}
+
+void ZtoryModel::cachePanelRender(const QString &key, const QPixmap &px) {
+  if (key.isEmpty() || px.isNull()) return;
+  // Svuotamento totale al superamento del tetto: una scena lunga a piu'
+  // risoluzioni riempirebbe la memoria di pixmap grandi. Ricostruire e' lento
+  // ma corretto; una politica di sfratto piu' furba sarebbe solo un altro posto
+  // dove sbagliare.
+  if (m_panelRenderCache.size() >= kPanelRenderCacheMax)
+    m_panelRenderCache.clear();
+  m_panelRenderCache.insert(key, px);
+}
+
+void ZtoryModel::invalidatePanelRenders(const QString &subSceneName) {
+  if (subSceneName.isEmpty()) return;
+  // La chiave comincia col nome della sotto-scena seguito da '|', quindi un
+  // confronto di prefisso prende tutte le sue varianti (frame, dimensioni,
+  // regione) senza toccare le altre sotto-scene. Il separatore evita che
+  // "sh01" cancelli anche "sh010".
+  const QString prefix = subSceneName + QLatin1Char('|');
+  for (auto it = m_panelRenderCache.begin();
+       it != m_panelRenderCache.end();) {
+    if (it.key().startsWith(prefix))
+      it = m_panelRenderCache.erase(it);
+    else
+      ++it;
+  }
+}
+
+void ZtoryModel::clearPanelRenderCache() { m_panelRenderCache.clear(); }
+
+//-----------------------------------------------------------------------------
+
 void ZtoryModel::resetProjectLevelDefaults() {
   m_production.clear();
   m_code.clear();
