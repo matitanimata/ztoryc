@@ -16,6 +16,7 @@
 
 #include <QUuid>
 #include <QPointer>
+#include <QElapsedTimer>  // DIAGNOSTICA TEMPORANEA perf — vedi [ZTPROF]
 #include "tapp.h"
 #include "outputsettingspopup.h"
 #include "tenv.h"
@@ -4097,6 +4098,19 @@ void StoryboardPanel::refreshFromScene() {
   qWarning("[ZTORY] refreshFromScene: panel=%p shots(before)=%d ancestors=%d",
            (void *)this, (int)m_shots.size(),
            scene->getChildStack()->getAncestorCount());
+  // DIAGNOSTICA TEMPORANEA (sessione perf 2026-07-22) — DA RIMUOVERE.
+  // Il qWarning qui sopra sta in cima alla funzione, quindi la distanza fra due
+  // righe misura l'intervallo fra due INIZI, non la durata del corpo. Queste
+  // sonde attribuiscono il tempo alle singole fasi.
+  QElapsedTimer ztProf;
+  ztProf.start();
+  qint64 ztPrev = 0;
+  auto ztMark   = [&](const char *tag) {
+    const qint64 now = ztProf.elapsed();
+    qWarning("[ZTPROF] panel=%p %-26s %6lld ms  (tot %6lld)", (void *)this, tag,
+             now - ztPrev, now);
+    ztPrev = now;
+  };
   // Sync fps from scene output settings — keeps timecodes correct when the
   // user has a non-24 frame rate (e.g. 25, 30).
   {
@@ -4145,7 +4159,9 @@ void StoryboardPanel::refreshFromScene() {
     m_shots.push_back(shot);
     addPanelWidget((int)m_shots.size()-1, 0);
   }
+  ztMark("scan colonne+addPanel");
   loadZtoryc();
+  ztMark("loadZtoryc");
   // Rebuild panel widgets to match the panel data loaded from .ztoryc.
   // refreshFromScene creates one placeholder widget per shot; loadZtoryc may
   // have added more panels to shot.data.panels, so we recreate all widgets.
@@ -4165,6 +4181,7 @@ void StoryboardPanel::refreshFromScene() {
       m_shots[si].panels[pi]->setNotes(m_shots[si].data.panels[pi].notes);
     }
   }
+  ztMark("ricostruzione widget");
   // Identity-preserving label restore (Keep mode). loadZtoryc() assigned labels
   // by positional index, which misaligns after a middle insert from the timeline:
   // the new empty column steals that index's label and every later shot's drawing
@@ -4197,9 +4214,12 @@ void StoryboardPanel::refreshFromScene() {
   // Freeze numbering BEFORE renumberAll: a Kitsu-linked project stores labels
   // with Keep-mode suffixes (e.g. SH040A); auto-renumber here would overwrite
   // them with clean sequential labels and desync the Kitsu links.
+  ztMark("restore label (Keep)");
   updateNumberingLock();
   renumberAll();
+  ztMark("renumberAll");
   rebuildGrid();
+  ztMark("rebuildGrid");
   // Re-sync labels + xsheet columns AFTER renumberAll so ZtoryModel always
   // has the final (post-renumber) shot labels and correct column indices.
   // The earlier syncShotPanels in loadZtoryc may have had empty labels for
@@ -4221,8 +4241,10 @@ void StoryboardPanel::refreshFromScene() {
   // panel-detect timer only fires from inside a sub-scene. Main context only:
   // in sub context detectAndUpdatePanels reads the currently open xsheet and is
   // valid only for the open shot.
+  ztMark("syncShotPanels");
   if (scene->getChildStack()->getAncestorCount() == 0)
     for (int si = 0; si < (int)m_shots.size(); si++) detectAndUpdatePanels(si);
+  ztMark("detectAndUpdatePanels");
   // Thumbnails are NOT rendered automatically on scene load.
   // renderXsheetFrame() is synchronous and can take several seconds per panel on
   // scenes with complex sub-xsheets (many raster layers, high resolution).
@@ -4244,6 +4266,7 @@ void StoryboardPanel::refreshFromScene() {
   ZtoryModel *zm = ZtoryModel::instance();
   if (!zm->production().isEmpty() || !zm->title().isEmpty())
     saveZtoryc();
+  ztMark("TOTALE refreshFromScene");
 }
 
 // ── qApp event filter: intercept keyboard shortcuts for the Board ────────────
