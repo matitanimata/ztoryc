@@ -2712,7 +2712,14 @@ public:
       for (it = vOldIndices.rbegin(); it != vOldIndices.rend(); it++, i++) {
         newIndices.insert(newCol + i);
 
-        TXshColumn *column        = xsh->getColumn(*it);
+        TXshColumn *column = xsh->getColumn(*it);
+        // getColumn() puo' restituire nullptr per un indice senza colonna:
+        // durante il drag il layout puo' essere cambiato e un vecchio indice
+        // punta nel vuoto. Deferenziarlo (getFolderIdStack legge un membro)
+        // era EXCEPTION_ACCESS_VIOLATION su Windows rilasciando un drag di
+        // colonne. Stesso pattern `if (!column) continue;` usato ovunque nel
+        // file. Codice ereditato da Tahoma2D (PR #1385 Folders) → candidato PR.
+        if (!column) continue;
         QStack<int> folderIdStack = column->getFolderIdStack();
         vOldFolders.insert(vOldFolders.begin(), folderIdStack);
 
@@ -2740,6 +2747,7 @@ public:
         selection->selectColumn(*it, true);
 
         TXshColumn *column = xsh->getColumn(*it);
+        if (!column) continue;  // stesso motivo del deref sopra
         bool isColumnVisible = column->isColumnVisible();
         for (auto o : Orientations::all()) {
           ColumnFan *columnFan = xsh->getColumnFan(o);
