@@ -223,8 +223,33 @@ function checkLibFile() {
             then
                 local SRC=$BREW_PREFIX/lib/$Y
             fi
+            # La sorgente puo' non esistere dove la dipendenza dice: le formule
+            # brew versionate (protobuf@33, protobuf@34...) sono keg-only e NON
+            # stanno in $BREW_PREFIX/lib. Se non la si cerca, il cp fallisce, ma
+            # l'install_name viene riscritto lo stesso qui sotto -> il bundle
+            # punta a un file che non c'e' e l'app muore in dyld all'avvio, con
+            # la build verde. Upstream Tahoma2D questa guardia ce l'ha.
+            if [ ! -f "$SRC" ]
+            then
+               echo ">>> $SRC non trovato — cerco in $BREW_PREFIX/opt, /usr, /opt"
+               SRC=`find $BREW_PREFIX/opt -name $Y 2>/dev/null | head -1`
+               if [ "$SRC" = "" ]; then SRC=`find /usr -name $Y 2>/dev/null | head -1`; fi
+               if [ "$SRC" = "" ]; then SRC=`find /opt -name $Y 2>/dev/null | head -1`; fi
+               if [ "$SRC" = "" ]
+               then
+                  echo "ERROR: dipendenza $Y non trovata (richiesta da $LIBFILE)."
+                  echo "       Riscrivere l'install name senza averla copiata"
+                  echo "       produrrebbe un bundle che non si avvia. Mi fermo."
+                  exit 1
+               fi
+               echo ">>> trovata: $SRC"
+            fi
             echo "Copying $SRC to Frameworks"
-            cp $SRC $TOONZDIR/Ztoryc.app/Contents/Frameworks
+            if ! cp "$SRC" $TOONZDIR/Ztoryc.app/Contents/Frameworks
+            then
+               echo "ERROR: copia di $SRC in Frameworks fallita."
+               exit 1
+            fi
             chmod 644 $TOONZDIR/Ztoryc.app/Contents/Frameworks/$Y
             local ORIGDEPFILE=$DEPFILE
             checkLibFile $TOONZDIR/Ztoryc.app/Contents/Frameworks/$Y
@@ -356,9 +381,28 @@ ztoryc_verify_portable_macho() {
                ;;
          esac
       done < <(otool -L "$_M" 2>/dev/null | tail -n +2 | sed 's/^[[:space:]]*//;s/ (compatibility.*//')
+      # Riferimenti PENDENTI: un @executable_path/@loader_path perfettamente
+      # riscritto verso un file che non e' stato copiato passa i controlli qui
+      # sopra (non c'e' nessun path brew) e fa morire l'app in dyld all'avvio.
+      # E' il difetto che ha bloccato la 0.10.1 su Intel: libopencv_dnn cercava
+      # @executable_path/../Frameworks/libprotobuf.34.1.0.dylib, mai copiata.
+      while IFS= read -r _dep; do
+         local _res=""
+         case "$_dep" in
+            @executable_path/*)
+               _res="$BUNDLE_ROOT/Contents/MacOS/${_dep#@executable_path/}" ;;
+            @loader_path/*)
+               _res="$(dirname "$_M")/${_dep#@loader_path/}" ;;
+            *) continue ;;
+         esac
+         [ -e "$_res" ] && continue
+         echo "ERROR: dangling reference in $_M -> $_dep"
+         echo "       (atteso: $_res — file assente nel bundle)"
+         _fail=1
+      done < <(otool -L "$_M" 2>/dev/null | tail -n +2 | sed 's/^[[:space:]]*//;s/ (compatibility.*//')
    done < <(find "$BUNDLE_ROOT/Contents" -type f 2>/dev/null)
    if [ "$_fail" != 0 ]; then
-      echo "ERROR: bundle verification failed (Homebrew paths still embedded)."
+      echo "ERROR: bundle verification failed (Homebrew paths o riferimenti pendenti)."
       exit 1
    fi
 }
