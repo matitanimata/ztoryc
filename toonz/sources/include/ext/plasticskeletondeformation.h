@@ -564,6 +564,13 @@ public:
   int addPoseAction(const QString &name);
   void removePoseAction(int idx);
 
+  //! Whole-vector snapshot / restore, for undo. Copies share each action's
+  //! guide TDoubleParam by pointer — intended: the guide is a live object the
+  //! function editor may reference, and restoring the SAME object keeps those
+  //! references valid.
+  std::vector<PoseAction> getPoseActions() const;
+  void setPoseActions(const std::vector<PoseAction> &actions);
+
   //! Sum of every active action's contribution to \p param on \p vertexName
   //! at \p frame — the "blend" term alone, WITHOUT the authored base value.
   /*!

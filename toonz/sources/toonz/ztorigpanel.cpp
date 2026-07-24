@@ -13,6 +13,8 @@
 
 #include "ext/plasticskeletondeformation.h"
 
+#include "tundo.h"
+
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -181,6 +183,11 @@ ZtoRigPanel::ZtoRigPanel(QWidget *parent) : TPanel(parent) {
   // user's drag and reset the scroll position on every frame during playback.
   connect(app->getCurrentFrame(), SIGNAL(frameSwitched()), this,
           SLOT(refreshValues()));
+  // Undo/redo of a Record or Remove changes which actions exist without a
+  // column/scene switch: refresh (which rebuilds on a count mismatch) so the
+  // rows follow the history.
+  connect(TUndoManager::manager(), SIGNAL(somethingChanged()), this,
+          SLOT(refreshValues()));
 
   rebuild();
 }
@@ -211,18 +218,12 @@ double ZtoRigPanel::currentFrame() const {
 
 //-----------------------------------------------------------------------------
 
-void ZtoRigPanel::flushConnectedPlacements() {
-  TApp *app    = TApp::instance();
-  TXsheet *xsh = app->getCurrentXsheet() ? app->getCurrentXsheet()->getXsheet()
-                                         : nullptr;
-  if (!xsh) return;
-
-  const int startCol = app->getCurrentColumn()->getColumnIndex();
-  if (startCol < 0) return;
-
-  // Breadth-first over the column tree from the current column, invalidating
-  // each stage object's cached placement. Mirrors PlasticTool's own flush: the
-  // pose blend can move a parent, and a child column glued to it must refresh.
+// Breadth-first over the column tree from `startCol`, invalidating each stage
+// object's cached placement. Mirrors PlasticTool's own flush: the pose blend
+// can move a parent, and a child column glued to it must refresh. Free so both
+// the panel and the undo object can reach it.
+static void ztorigFlushPlacements(TXsheet *xsh, int startCol) {
+  if (!xsh || startCol < 0) return;
   std::set<int> visited;
   std::queue<int> pending;
   visited.insert(startCol);
@@ -248,6 +249,58 @@ void ZtoRigPanel::flushConnectedPlacements() {
     }
   }
 }
+
+void ZtoRigPanel::flushConnectedPlacements() {
+  TApp *app    = TApp::instance();
+  TXsheet *xsh = app->getCurrentXsheet() ? app->getCurrentXsheet()->getXsheet()
+                                         : nullptr;
+  ztorigFlushPlacements(xsh, app->getCurrentColumn()->getColumnIndex());
+}
+
+//=============================================================================
+// Undo — a Record or a Remove is one step: swap the whole pose-action vector.
+// Snapshotting the vector (guides shared by pointer) is simpler and safer than
+// tracking per-action edits, and covers re-recording an existing action too.
+//=============================================================================
+
+namespace {
+
+class UndoPoseActions final : public TUndo {
+  TXsheetHandle *m_xshHandle;
+  PlasticSkeletonDeformationP m_sd;
+  int m_col;
+  std::vector<PoseAction> m_before, m_after;
+  QString m_label;
+
+  void apply(const std::vector<PoseAction> &actions) const {
+    if (!m_sd) return;
+    m_sd->setPoseActions(actions);
+    if (m_xshHandle && m_xshHandle->getXsheet())
+      ztorigFlushPlacements(m_xshHandle->getXsheet(), m_col);
+    if (m_xshHandle) m_xshHandle->notifyXsheetChanged();
+  }
+
+public:
+  UndoPoseActions(TXsheetHandle *xshHandle,
+                  const PlasticSkeletonDeformationP &sd, int col,
+                  const std::vector<PoseAction> &before,
+                  const std::vector<PoseAction> &after, const QString &label)
+      : m_xshHandle(xshHandle)
+      , m_sd(sd)
+      , m_col(col)
+      , m_before(before)
+      , m_after(after)
+      , m_label(label) {}
+
+  void undo() const override { apply(m_before); }
+  void redo() const override { apply(m_after); }
+  int getSize() const override {
+    return (int)((m_before.size() + m_after.size()) * sizeof(PoseAction)) + 64;
+  }
+  QString getHistoryString() override { return m_label; }
+};
+
+}  // namespace
 
 //-----------------------------------------------------------------------------
 
@@ -330,13 +383,21 @@ void ZtoRigPanel::onRecord() {
       tr("action%1").arg(sd->poseActionsCount() + 1), &ok);
   if (!ok || name.trimmed().isEmpty()) return;
 
+  const std::vector<PoseAction> before = sd->getPoseActions();
   sd->recordPoseAction(name.trimmed(), currentFrame());
+  const std::vector<PoseAction> after = sd->getPoseActions();
 
-  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  TApp *app = TApp::instance();
+  const int col = app->getCurrentColumn()->getColumnIndex();
+  TUndoManager::manager()->add(new UndoPoseActions(
+      app->getCurrentXsheet(), sd, col, before, after,
+      tr("ZtoRig: Record Action")));
+
+  app->getCurrentScene()->setDirtyFlag(true);
   // The new dial is 0, so the render is unchanged; still flush so the viewer is
   // in a known-consistent state and later dial moves start from a clean cache.
   flushConnectedPlacements();
-  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  app->getCurrentXsheet()->notifyXsheetChanged();
   rebuild();
 }
 
@@ -372,15 +433,23 @@ void ZtoRigPanel::onRemove(int index) {
 
   if (QMessageBox::question(
           this, tr("Remove Action"),
-          tr("Remove the action \"%1\"?\n\nThe pose it drives is lost.")
+          tr("Remove the action \"%1\"?\n\nUndo brings it back.")
               .arg(act->m_name),
           QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
     return;
 
+  const std::vector<PoseAction> before = sd->getPoseActions();
   sd->removePoseAction(index);
+  const std::vector<PoseAction> after = sd->getPoseActions();
 
-  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
-  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  TApp *app = TApp::instance();
+  const int col = app->getCurrentColumn()->getColumnIndex();
+  TUndoManager::manager()->add(new UndoPoseActions(
+      app->getCurrentXsheet(), sd, col, before, after,
+      tr("ZtoRig: Remove Action")));
+
+  app->getCurrentScene()->setDirtyFlag(true);
+  app->getCurrentXsheet()->notifyXsheetChanged();
   rebuild();
 }
 

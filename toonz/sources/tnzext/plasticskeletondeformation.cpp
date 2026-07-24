@@ -1953,6 +1953,19 @@ void PlasticSkeletonDeformation::removePoseAction(int idx) {
 
 //------------------------------------------------------------------
 
+std::vector<PoseAction> PlasticSkeletonDeformation::getPoseActions() const {
+  return m_imp->m_poseActions;
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::setPoseActions(
+    const std::vector<PoseAction> &actions) {
+  m_imp->m_poseActions = actions;
+}
+
+//------------------------------------------------------------------
+
 void PlasticSkeletonDeformation::saveData(TOStream &os) {
   // Save skeleton vertex deformations
   os.openChild("VertexDeforms");  // These are saved *before* skeletons
