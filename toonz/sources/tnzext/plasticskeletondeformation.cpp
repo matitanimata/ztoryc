@@ -260,6 +260,11 @@ public:
   //! byte-identical.
   std::vector<PoseAction> m_poseActions;
 
+  //! ZtoRig: blend term for one param. See the public wrapper for the sign
+  //! convention and the recursion rule.
+  double poseBlendOffset(const QString &vertexName, int param,
+                         double frame) const;
+
   // STEP C.2b: result of the character-level solve for this column. Transient.
   PlasticSkeleton m_solvedSkeleton;
   double m_solvedFrame = -1.0e30;
@@ -631,8 +636,13 @@ void PlasticSkeletonDeformation::Imp::updateBranchPositions(
     double a = tcg::point_ops::angle(oDir, ovxPos - ovxParentPos) * M_180_PI;
     double d = tcg::point_ops::dist(ovxParentPos, ovxPos);
 
-    double aDelta = vd.m_params[SkVD::ANGLE]->getValue(frame);
-    double dDelta = vd.m_params[SkVD::DISTANCE]->getValue(frame);
+    // ZtoRig: authored value plus the pose-action blend. The blend is added
+    // HERE, in the evaluation, and never written into the params: the base
+    // animation stays separable from the actions driving it.
+    double aDelta = vd.m_params[SkVD::ANGLE]->getValue(frame) +
+                    poseBlendOffset(dvx.name(), SkVD::ANGLE, frame);
+    double dDelta = vd.m_params[SkVD::DISTANCE]->getValue(frame) +
+                    poseBlendOffset(dvx.name(), SkVD::DISTANCE, frame);
 
     dvx.P() = deformedSkeleton.vertex(vParent).P() +
               (d + dDelta) * (TRotation(a + aDelta) * dDir);
@@ -648,9 +658,12 @@ void PlasticSkeletonDeformation::Imp::updateBranchPositions(
     if (vdIt != m_vds.end()) {
       const SkVD &vd = vdIt->m_vd;
       if (vd.m_params[SkVD::ROOTX] && vd.m_params[SkVD::ROOTY])
-        dvx.P() = originalSkeleton.vertex(v).P() +
-                  TPointD(vd.m_params[SkVD::ROOTX]->getValue(frame),
-                          vd.m_params[SkVD::ROOTY]->getValue(frame));
+        dvx.P() =
+            originalSkeleton.vertex(v).P() +
+            TPointD(vd.m_params[SkVD::ROOTX]->getValue(frame) +
+                        poseBlendOffset(dvx.name(), SkVD::ROOTX, frame),
+                    vd.m_params[SkVD::ROOTY]->getValue(frame) +
+                        poseBlendOffset(dvx.name(), SkVD::ROOTY, frame));
     }
   }
 
@@ -1526,8 +1539,13 @@ TAffine PlasticSkeletonDeformation::getSquashControllerAffine(
   if (it == m_imp->m_vds.end()) return TAffine();
   const SkVD &vd = it->m_vd;
 
-  auto val = [&vd, frame](SkVD::Params p, double def) {
-    return vd.m_params[p] ? vd.m_params[p]->getValue(frame) : def;
+  // ZtoRig: the controller channels blend too, so an action can squash or
+  // rotate the whole character. Additive on the raw value: a +0.1 delta on
+  // SCALEX means 1.0 -> 1.1, which is what an offset from rest should mean.
+  const QString &rootName = skel->vertex(rootIdx).name();
+  auto val = [&vd, frame, this, &rootName](SkVD::Params p, double def) {
+    double base = vd.m_params[p] ? vd.m_params[p]->getValue(frame) : def;
+    return base + m_imp->poseBlendOffset(rootName, p, frame);
   };
 
   double sx  = val(SkVD::SCALEX, 1.0), sy = val(SkVD::SCALEY, 1.0);
@@ -1795,6 +1813,38 @@ void PoseAction::setDelta(const QString &vertexName, int param, double value) {
 //**************************************************************************************
 //    PlasticSkeletonDeformation  pose actions
 //**************************************************************************************
+
+double PlasticSkeletonDeformation::Imp::poseBlendOffset(
+    const QString &vertexName, int param, double frame) const {
+  // Hot path: this sits inside the recursive skeleton evaluation, so the
+  // no-actions case must cost a single comparison.
+  if (m_poseActions.empty()) return 0.0;
+  if (SkVD::poseParamSlot(param) < 0) return 0.0;  // pins, joint limits
+
+  double sum = 0.0;
+  for (size_t a = 0; a < m_poseActions.size(); ++a) {
+    const PoseAction &act = m_poseActions[a];
+    if (!act.m_guide) continue;
+
+    // Cheap test first: most actions touch few vertices, and a map miss is far
+    // cheaper than evaluating the guide curve.
+    const double delta = act.delta(vertexName, param);
+    if (delta == 0.0) continue;
+
+    sum += delta * act.m_guide->getValue(frame);
+  }
+  return sum;
+}
+
+//------------------------------------------------------------------
+
+double PlasticSkeletonDeformation::poseBlendOffset(const QString &vertexName,
+                                                   int param,
+                                                   double frame) const {
+  return m_imp->poseBlendOffset(vertexName, param, frame);
+}
+
+//------------------------------------------------------------------
 
 int PlasticSkeletonDeformation::poseActionsCount() const {
   return (int)m_imp->m_poseActions.size();

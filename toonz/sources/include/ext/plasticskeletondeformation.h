@@ -564,6 +564,21 @@ public:
   int addPoseAction(const QString &name);
   void removePoseAction(int idx);
 
+  //! Sum of every active action's contribution to \p param on \p vertexName
+  //! at \p frame — the "blend" term alone, WITHOUT the authored base value.
+  /*!
+    Evaluation adds it to the base (see updateBranchPositions). The solver needs
+    it separately and with the opposite sign: dragging must reach the pose the
+    user SEES, so what gets written back is <TT>base = target - blend</TT>.
+    Resolve in the space the user sees, store in the base space.
+
+    \note A corrective guided by a joint angle must never write the very param
+    that guides it — that closes the guide->effect->guide loop that made pins
+    oscillate. Correctives read the BASE value of their guide.
+  */
+  double poseBlendOffset(const QString &vertexName, int param,
+                         double frame) const;
+
   //@}
 
 protected:
