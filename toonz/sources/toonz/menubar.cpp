@@ -715,6 +715,7 @@ void TopBar::loadMenubar() {
     addMenuItem(ztoryMenu, "MI_OpenZtoryDrawLeftPanel");
     addMenuItem(ztoryMenu, "MI_OpenZtoryShotBoard");
     addMenuItem(ztoryMenu, "MI_OpenZtoryCameraMoves");
+    addMenuItem(ztoryMenu, MI_OpenZtoRig);
     windowsMenu->addMenu(ztoryMenu);
   }
   addMenuItem(windowsMenu, MI_OpenSchematic);
