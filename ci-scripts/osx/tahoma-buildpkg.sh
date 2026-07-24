@@ -387,17 +387,26 @@ ztoryc_verify_portable_macho() {
       # E' il difetto che ha bloccato la 0.10.1 su Intel: libopencv_dnn cercava
       # @executable_path/../Frameworks/libprotobuf.34.1.0.dylib, mai copiata.
       while IFS= read -r _dep; do
-         local _res=""
+         local _rel="" _c1="" _c2=""
          case "$_dep" in
             @executable_path/*)
-               _res="$BUNDLE_ROOT/Contents/MacOS/${_dep#@executable_path/}" ;;
+               # @executable_path e' la cartella dell'eseguibile che CARICA la
+               # libreria. Per l'app e' Contents/MacOS, ma gli helper spediti in
+               # Resources (ffmpeg, ffprobe e le loro libs) caricano rispetto
+               # alla PROPRIA cartella. Da qui non si sa chi sia il caricatore:
+               # accetto se risolve in uno dei due, fallisco solo se in nessuno.
+               _rel="${_dep#@executable_path/}"
+               _c1="$BUNDLE_ROOT/Contents/MacOS/$_rel"
+               _c2="$(dirname "$_M")/$_rel" ;;
             @loader_path/*)
-               _res="$(dirname "$_M")/${_dep#@loader_path/}" ;;
+               _rel="${_dep#@loader_path/}"
+               _c1="$(dirname "$_M")/$_rel"
+               _c2="$_c1" ;;
             *) continue ;;
          esac
-         [ -e "$_res" ] && continue
+         { [ -e "$_c1" ] || [ -e "$_c2" ]; } && continue
          echo "ERROR: dangling reference in $_M -> $_dep"
-         echo "       (atteso: $_res — file assente nel bundle)"
+         echo "       (provati: $_c1 | $_c2)"
          _fail=1
       done < <(otool -L "$_M" 2>/dev/null | tail -n +2 | sed 's/^[[:space:]]*//;s/ (compatibility.*//')
    done < <(find "$BUNDLE_ROOT/Contents" -type f 2>/dev/null)
