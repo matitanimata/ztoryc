@@ -260,6 +260,10 @@ public:
   //! byte-identical.
   std::vector<PoseAction> m_poseActions;
 
+  //! ZtoRig: joint correctives (mesh pose-space deformation). Same empty-by-
+  //! default, serialize-only-when-used discipline as the pose actions.
+  std::vector<MeshCorrective> m_meshCorrectives;
+
   //! ZtoRig: blend term for one param. See the public wrapper for the sign
   //! convention and the recursion rule.
   double poseBlendOffset(const QString &vertexName, int param,
@@ -1788,6 +1792,33 @@ void PlasticSkeletonDeformation::setGrammar(TSyntax::Grammar *grammar) {
 //    PoseAction  implementation
 //**************************************************************************************
 
+double MeshCorrective::weight(double driverAngle) const {
+  const double span = m_fullAngle - m_restAngle;
+  if (fabs(span) < 1e-9) return 0.0;  // half-built: inert, never NaN
+  double w = (driverAngle - m_restAngle) / span;
+  if (w < 0.0) w = 0.0;
+  if (w > 1.0) w = 1.0;
+  return w;
+}
+
+//------------------------------------------------------------------
+
+TPointD MeshCorrective::delta(int meshIdx, int v) const {
+  std::map<int, std::map<int, TPointD>>::const_iterator mt =
+      m_deltas.find(meshIdx);
+  if (mt == m_deltas.end()) return TPointD();
+  std::map<int, TPointD>::const_iterator vt = mt->second.find(v);
+  return vt == mt->second.end() ? TPointD() : vt->second;
+}
+
+//------------------------------------------------------------------
+
+void MeshCorrective::setDelta(int meshIdx, int v, const TPointD &d) {
+  m_deltas[meshIdx][v] = d;
+}
+
+//------------------------------------------------------------------
+
 double PoseAction::delta(const QString &vertexName, int param) const {
   const int slot = SkVD::poseParamSlot(param);
   if (slot < 0) return 0.0;
@@ -1965,6 +1996,76 @@ void PlasticSkeletonDeformation::setPoseActions(
 }
 
 //------------------------------------------------------------------
+//    Mesh correctives
+//------------------------------------------------------------------
+
+int PlasticSkeletonDeformation::meshCorrectivesCount() const {
+  return (int)m_imp->m_meshCorrectives.size();
+}
+
+const MeshCorrective *PlasticSkeletonDeformation::meshCorrective(int idx) const {
+  if (idx < 0 || idx >= (int)m_imp->m_meshCorrectives.size()) return nullptr;
+  return &m_imp->m_meshCorrectives[idx];
+}
+
+MeshCorrective *PlasticSkeletonDeformation::meshCorrective(int idx) {
+  if (idx < 0 || idx >= (int)m_imp->m_meshCorrectives.size()) return nullptr;
+  return &m_imp->m_meshCorrectives[idx];
+}
+
+MeshCorrective *PlasticSkeletonDeformation::meshCorrective(const QString &name) {
+  for (size_t i = 0; i < m_imp->m_meshCorrectives.size(); ++i)
+    if (m_imp->m_meshCorrectives[i].m_name == name)
+      return &m_imp->m_meshCorrectives[i];
+  return nullptr;
+}
+
+int PlasticSkeletonDeformation::addMeshCorrective(const QString &name) {
+  for (size_t i = 0; i < m_imp->m_meshCorrectives.size(); ++i)
+    if (m_imp->m_meshCorrectives[i].m_name == name) return (int)i;
+  m_imp->m_meshCorrectives.push_back(MeshCorrective(name));
+  return (int)m_imp->m_meshCorrectives.size() - 1;
+}
+
+void PlasticSkeletonDeformation::removeMeshCorrective(int idx) {
+  if (idx < 0 || idx >= (int)m_imp->m_meshCorrectives.size()) return;
+  m_imp->m_meshCorrectives.erase(m_imp->m_meshCorrectives.begin() + idx);
+}
+
+std::vector<MeshCorrective> PlasticSkeletonDeformation::getMeshCorrectives()
+    const {
+  return m_imp->m_meshCorrectives;
+}
+
+void PlasticSkeletonDeformation::setMeshCorrectives(
+    const std::vector<MeshCorrective> &correctives) {
+  m_imp->m_meshCorrectives = correctives;
+}
+
+TPointD PlasticSkeletonDeformation::meshCorrectiveOffset(int meshIdx, int v,
+                                                         double frame) const {
+  if (m_imp->m_meshCorrectives.empty()) return TPointD();
+
+  TPointD sum;
+  for (size_t i = 0; i < m_imp->m_meshCorrectives.size(); ++i) {
+    const MeshCorrective &mc = m_imp->m_meshCorrectives[i];
+
+    const TPointD d = mc.delta(meshIdx, v);
+    if (d.x == 0.0 && d.y == 0.0) continue;  // vertex untouched by this one
+
+    // Driver's BASE angle (never the blended result): no guide->effect loop.
+    SkVDSet::iterator it = m_imp->m_vds.find(mc.m_driverVertexName);
+    if (it == m_imp->m_vds.end()) continue;
+    const SkVD &vd = it->m_vd;
+    if (!vd.m_params[SkVD::ANGLE]) continue;
+
+    const double a = vd.m_params[SkVD::ANGLE]->getValue(frame);
+    sum += mc.weight(a) * d;
+  }
+  return sum;
+}
+
+//------------------------------------------------------------------
 
 void PlasticSkeletonDeformation::saveData(TOStream &os) {
   // Save skeleton vertex deformations
@@ -2023,6 +2124,34 @@ void PlasticSkeletonDeformation::saveData(TOStream &os) {
         for (size_t s = 0; s < dt->second.size(); ++s)
           os.child("D") << dt->second[s];
         os.closeChild();
+      }
+      os.closeChild();
+    }
+    os.closeChild();
+  }
+
+  // ZtoRig mesh correctives — same write-only-when-present, skip-if-unknown
+  // discipline as PoseActions: byte-identical for scenes that never used them.
+  if (!m_imp->m_meshCorrectives.empty()) {
+    os.openChild("MeshCorrectives");
+    for (size_t i = 0; i < m_imp->m_meshCorrectives.size(); ++i) {
+      const MeshCorrective &mc = m_imp->m_meshCorrectives[i];
+      os.openChild("Corrective");
+      os.child("Name") << mc.m_name;
+      os.child("Driver") << mc.m_driverVertexName;
+      os.child("RestAngle") << mc.m_restAngle;
+      os.child("FullAngle") << mc.m_fullAngle;
+      std::map<int, std::map<int, TPointD>>::const_iterator mt;
+      for (mt = mc.m_deltas.begin(); mt != mc.m_deltas.end(); ++mt) {
+        std::map<int, TPointD>::const_iterator vt;
+        for (vt = mt->second.begin(); vt != mt->second.end(); ++vt) {
+          os.openChild("D");
+          os.child("m") << mt->first;
+          os.child("v") << vt->first;
+          os.child("x") << vt->second.x;
+          os.child("y") << vt->second.y;
+          os.closeChild();
+        }
       }
       os.closeChild();
     }
@@ -2105,6 +2234,45 @@ void PlasticSkeletonDeformation::loadData(TIStream &is) {
           is.matchEndTag();
 
           if (!act.m_name.isEmpty()) m_imp->m_poseActions.push_back(act);
+        } else
+          is.skipCurrentTag();
+      }
+      is.matchEndTag();
+    } else if (tagName == "MeshCorrectives") {
+      while (is.openChild(tagName)) {
+        if (tagName == "Corrective") {
+          MeshCorrective mc;
+          while (is.openChild(tagName)) {
+            if (tagName == "Name")
+              is >> mc.m_name, is.matchEndTag();
+            else if (tagName == "Driver")
+              is >> mc.m_driverVertexName, is.matchEndTag();
+            else if (tagName == "RestAngle")
+              is >> mc.m_restAngle, is.matchEndTag();
+            else if (tagName == "FullAngle")
+              is >> mc.m_fullAngle, is.matchEndTag();
+            else if (tagName == "D") {
+              int m = 0, v = 0;
+              double x = 0.0, y = 0.0;
+              while (is.openChild(tagName)) {
+                if (tagName == "m")
+                  is >> m, is.matchEndTag();
+                else if (tagName == "v")
+                  is >> v, is.matchEndTag();
+                else if (tagName == "x")
+                  is >> x, is.matchEndTag();
+                else if (tagName == "y")
+                  is >> y, is.matchEndTag();
+                else
+                  is.skipCurrentTag();
+              }
+              is.matchEndTag();
+              mc.setDelta(m, v, TPointD(x, y));
+            } else
+              is.skipCurrentTag();
+          }
+          is.matchEndTag();
+          if (!mc.m_name.isEmpty()) m_imp->m_meshCorrectives.push_back(mc);
         } else
           is.skipCurrentTag();
       }

@@ -318,6 +318,54 @@ struct PoseAction {
 };
 
 //**************************************************************************************
+//    MeshCorrective  declaration
+//**************************************************************************************
+
+//! ZtoRig joint corrective (pose-space deformation / SmartSkin): a per-mesh-
+//! vertex shape fix that fades in with a driving joint's bend angle.
+/*!
+  Where a PoseAction drives SKELETON pose params, a MeshCorrective drives the
+  MESH itself, applied AFTER the ARAP solve. The ARAP deformer alone pinches a
+  sharp bend (one handle at the joint, no volume term); this stores the shape
+  the artist sculpted at a given bend and blends it back in by angle:
+
+  \code
+    mesh_out[v] += SUM over correctives of  delta[v] * weight(driverAngle)
+    weight(a)    = clamp01((a - restAngle) / (fullAngle - restAngle))
+  \endcode
+
+  
+ote The offsets live in mesh output space (post-deform), keyed by mesh index
+  and vertex INDEX — a corrective is sculpted for THIS drawing's mesh and does
+  not transfer, unlike pose deltas which key by vertex name.
+
+  
+ote No self-loop: the delta touches only the mesh, never the joint ANGLE
+  that drives it, and weight() reads the joint's BASE angle. Same rule that
+  keeps pins from oscillating.
+*/
+struct MeshCorrective {
+  QString m_name;              //!< Unique within the deformation
+  QString m_driverVertexName;  //!< Skeleton vertex whose ANGLE drives the fade
+  double m_restAngle = 0.0;    //!< Angle at which the corrective is off (0)
+  double m_fullAngle = 0.0;    //!< Angle at which it is fully applied (1)
+
+  //! Per-vertex offsets, [meshIndex][vertexIndex] -> (dx, dy), in mesh output
+  //! space. Sparse: only sculpted vertices are stored.
+  std::map<int, std::map<int, TPointD>> m_deltas;
+
+  MeshCorrective() {}
+  explicit MeshCorrective(const QString &name) : m_name(name) {}
+
+  //! Fade weight at \p driverAngle, clamped to [0,1]. 0 when the range is
+  //! degenerate (rest == full), so a half-built corrective stays inert.
+  double weight(double driverAngle) const;
+  //! Offset of vertex \p v in mesh \p meshIdx, or (0,0) when untouched.
+  TPointD delta(int meshIdx, int v) const;
+  void setDelta(int meshIdx, int v, const TPointD &d);
+};
+
+//**************************************************************************************
 //    PlasticSkeletonDeformation  declaration
 //**************************************************************************************
 
@@ -585,6 +633,26 @@ public:
   */
   double poseBlendOffset(const QString &vertexName, int param,
                          double frame) const;
+
+  //! \name ZtoRig mesh correctives (joint pose-space deformation)
+  //@{
+
+  int meshCorrectivesCount() const;
+  const MeshCorrective *meshCorrective(int idx) const;
+  MeshCorrective *meshCorrective(int idx);
+  MeshCorrective *meshCorrective(const QString &name);
+  int addMeshCorrective(const QString &name);
+  void removeMeshCorrective(int idx);
+
+  std::vector<MeshCorrective> getMeshCorrectives() const;
+  void setMeshCorrectives(const std::vector<MeshCorrective> &correctives);
+
+  //! Total mesh-space offset for vertex \p v of mesh \p meshIdx at \p frame:
+  //! the sum over correctives of delta * weight(driver base angle). Added to
+  //! the ARAP result by the deformer. (0,0) when no corrective touches it.
+  TPointD meshCorrectiveOffset(int meshIdx, int v, double frame) const;
+
+  //@}
 
   //! Records the pose authored at \p frame as an action named \p name,
   //! returning its index; an existing action with that name is re-recorded.
