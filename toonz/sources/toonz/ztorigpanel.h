@@ -77,6 +77,11 @@ private:
   //! skeleton — which is the normal case, not an error.
   PlasticSkeletonDeformationP currentDeformation() const;
   double currentFrame() const;
+  //! After a dial moves, the connected columns' cached placements don't know
+  //! they depend on plastic params, so the drawing follows the skeleton only
+  //! at the next click. Invalidate them here — same fix as PlasticTool::
+  //! invalidateConnectedPlacements_animate, walking the parent/child columns.
+  void flushConnectedPlacements();
 
   QVBoxLayout *m_rowsLay  = nullptr;
   QScrollArea *m_scroll   = nullptr;

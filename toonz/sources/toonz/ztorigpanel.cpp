@@ -23,6 +23,9 @@
 #include <QSlider>
 #include <QVBoxLayout>
 
+#include <queue>
+#include <set>
+
 //=============================================================================
 // ZtoRigActionRow
 //=============================================================================
@@ -65,11 +68,30 @@ ZtoRigActionRow::ZtoRigActionRow(int index, const QString &name, double value,
                         "counter-pose."));
   lay->addWidget(m_spin);
 
+  // Rest / Full: jump the dial to 0 or 1 without reaching for Cmd-Z. Rest is
+  // the "back to neutral" the user asked for — clearer than undo, which also
+  // rolls back whatever else was done.
+  auto *restBt = new QPushButton(tr("Rest"), this);
+  restBt->setFixedWidth(40);
+  restBt->setToolTip(tr("Set this dial to 0 (rest pose)."));
+  lay->addWidget(restBt);
+
+  auto *fullBt = new QPushButton(tr("Full"), this);
+  fullBt->setFixedWidth(40);
+  fullBt->setToolTip(tr("Set this dial to 1 (full pose)."));
+  lay->addWidget(fullBt);
+
   auto *removeBt = new QPushButton(tr("×"), this);
   removeBt->setFixedWidth(24);
   removeBt->setToolTip(tr("Remove this action"));
   lay->addWidget(removeBt);
 
+  // Drive the spin box: its valueChanged updates the slider and emits
+  // guideChanged, so the display and the model stay in step.
+  connect(restBt, &QPushButton::clicked, this,
+          [this]() { m_spin->setValue(0.0); });
+  connect(fullBt, &QPushButton::clicked, this,
+          [this]() { m_spin->setValue(1.0); });
   connect(m_slider, &QSlider::valueChanged, this, &ZtoRigActionRow::onSlider);
   connect(m_spin,
           static_cast<void (QDoubleSpinBox::*)(double)>(
@@ -189,6 +211,46 @@ double ZtoRigPanel::currentFrame() const {
 
 //-----------------------------------------------------------------------------
 
+void ZtoRigPanel::flushConnectedPlacements() {
+  TApp *app    = TApp::instance();
+  TXsheet *xsh = app->getCurrentXsheet() ? app->getCurrentXsheet()->getXsheet()
+                                         : nullptr;
+  if (!xsh) return;
+
+  const int startCol = app->getCurrentColumn()->getColumnIndex();
+  if (startCol < 0) return;
+
+  // Breadth-first over the column tree from the current column, invalidating
+  // each stage object's cached placement. Mirrors PlasticTool's own flush: the
+  // pose blend can move a parent, and a child column glued to it must refresh.
+  std::set<int> visited;
+  std::queue<int> pending;
+  visited.insert(startCol);
+  pending.push(startCol);
+  while (!pending.empty()) {
+    const int c = pending.front();
+    pending.pop();
+    TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+    if (!obj) continue;
+    obj->invalidate();
+
+    const TStageObjectId pid = obj->getParent();
+    if (pid.isColumn() && !visited.count(pid.getIndex())) {
+      visited.insert(pid.getIndex());
+      pending.push(pid.getIndex());
+    }
+    for (TStageObject *child : obj->getChildren()) {
+      const TStageObjectId cid = child->getId();
+      if (cid.isColumn() && !visited.count(cid.getIndex())) {
+        visited.insert(cid.getIndex());
+        pending.push(cid.getIndex());
+      }
+    }
+  }
+}
+
+//-----------------------------------------------------------------------------
+
 void ZtoRigPanel::rebuild() {
   for (ZtoRigActionRow *row : m_rows) {
     m_rowsLay->removeWidget(row);
@@ -271,6 +333,10 @@ void ZtoRigPanel::onRecord() {
   sd->recordPoseAction(name.trimmed(), currentFrame());
 
   TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  // The new dial is 0, so the render is unchanged; still flush so the viewer is
+  // in a known-consistent state and later dial moves start from a clean cache.
+  flushConnectedPlacements();
+  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
   rebuild();
 }
 
@@ -283,15 +349,15 @@ void ZtoRigPanel::onGuideChanged(int index, double value) {
   PoseAction *act = sd->poseAction(index);
   if (!act || !act->m_guide) return;
 
-  // Keyed dial -> write a key at this frame; un-keyed -> move the constant
-  // value. Same idiom the rest of the app uses, so a dial can be animated
-  // from the function editor without this panel knowing about it.
-  if (act->m_guide->getKeyframeCount() > 0)
-    act->m_guide->setValue(currentFrame(), value);
-  else
-    act->m_guide->setDefaultValue(value);
+  // Always key at the current frame — never setDefaultValue. A constant guide
+  // applies the pose to the WHOLE timeline, which silently reposes frames the
+  // artist already animated (the bug this replaces). Keyed, the dial lives on
+  // the timeline; combined with the before-first-key = 0 rule in the blend
+  // read, dialling here leaves earlier frames untouched.
+  act->m_guide->setValue(currentFrame(), value);
 
   TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  flushConnectedPlacements();
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
 }
 

@@ -264,6 +264,9 @@ public:
   //! convention and the recursion rule.
   double poseBlendOffset(const QString &vertexName, int param,
                          double frame) const;
+  //! Guide value with the pose-dial rule: 0 before the first key (no backward
+  //! bleed into already-animated frames), held forward past the last.
+  static double guideValue(const TDoubleParam &guide, double frame);
 
   // STEP C.2b: result of the character-level solve for this column. Transient.
   PlasticSkeleton m_solvedSkeleton;
@@ -1831,9 +1834,24 @@ double PlasticSkeletonDeformation::Imp::poseBlendOffset(
     const double delta = act.delta(vertexName, param);
     if (delta == 0.0) continue;
 
-    sum += delta * act.m_guide->getValue(frame);
+    sum += delta * guideValue(*act.m_guide, frame);
   }
   return sum;
+}
+
+//------------------------------------------------------------------
+
+double PlasticSkeletonDeformation::Imp::guideValue(const TDoubleParam &guide,
+                                                   double frame) {
+  // A keyed guide holds its FIRST key's value backwards to the start of time
+  // (constant extrapolation). For a pose dial that is wrong: dialling an action
+  // at frame 50 would silently repose every frame before it — wrecking
+  // animation the artist already made. So the action is OFF (0) before its
+  // first key. It still HOLDS forward past the last key: a pose meant to stay
+  // on stays on, and is switched off by keying the dial back to 0.
+  const int n = guide.getKeyframeCount();
+  if (n > 0 && frame < guide.getKeyframe(0).m_frame) return 0.0;
+  return guide.getValue(frame);
 }
 
 //------------------------------------------------------------------
