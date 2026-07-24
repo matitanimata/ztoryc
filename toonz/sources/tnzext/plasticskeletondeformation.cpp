@@ -255,6 +255,11 @@ public:
   std::map<int, TPointD> m_secondaryTargets;
   double m_secondaryFrame = -1.0e30;
 
+  //! ZtoRig: blendable pose actions. Empty on every scene that never used
+  //! them, and serialized only when non-empty, so old scenes round-trip
+  //! byte-identical.
+  std::vector<PoseAction> m_poseActions;
+
   // STEP C.2b: result of the character-level solve for this column. Transient.
   PlasticSkeleton m_solvedSkeleton;
   double m_solvedFrame = -1.0e30;
@@ -1758,6 +1763,85 @@ void PlasticSkeletonDeformation::setGrammar(TSyntax::Grammar *grammar) {
 
 //------------------------------------------------------------------
 
+//**************************************************************************************
+//    PoseAction  implementation
+//**************************************************************************************
+
+double PoseAction::delta(const QString &vertexName, int param) const {
+  const int slot = SkVD::poseParamSlot(param);
+  if (slot < 0) return 0.0;
+
+  std::map<QString, std::vector<double>>::const_iterator it =
+      m_deltas.find(vertexName);
+  if (it == m_deltas.end()) return 0.0;
+  if (slot >= (int)it->second.size()) return 0.0;
+
+  return it->second[slot];
+}
+
+//------------------------------------------------------------------
+
+void PoseAction::setDelta(const QString &vertexName, int param, double value) {
+  const int slot = SkVD::poseParamSlot(param);
+  if (slot < 0) return;  // not a pose param: silently out of scope, by design
+
+  std::vector<double> &v = m_deltas[vertexName];
+  if (v.size() != (size_t)SkVD::POSE_PARAMS_COUNT)
+    v.resize(SkVD::POSE_PARAMS_COUNT, 0.0);
+
+  v[slot] = value;
+}
+
+//**************************************************************************************
+//    PlasticSkeletonDeformation  pose actions
+//**************************************************************************************
+
+int PlasticSkeletonDeformation::poseActionsCount() const {
+  return (int)m_imp->m_poseActions.size();
+}
+
+//------------------------------------------------------------------
+
+const PoseAction *PlasticSkeletonDeformation::poseAction(int idx) const {
+  if (idx < 0 || idx >= (int)m_imp->m_poseActions.size()) return nullptr;
+  return &m_imp->m_poseActions[idx];
+}
+
+//------------------------------------------------------------------
+
+PoseAction *PlasticSkeletonDeformation::poseAction(int idx) {
+  if (idx < 0 || idx >= (int)m_imp->m_poseActions.size()) return nullptr;
+  return &m_imp->m_poseActions[idx];
+}
+
+//------------------------------------------------------------------
+
+PoseAction *PlasticSkeletonDeformation::poseAction(const QString &name) {
+  for (size_t i = 0; i < m_imp->m_poseActions.size(); ++i)
+    if (m_imp->m_poseActions[i].m_name == name)
+      return &m_imp->m_poseActions[i];
+  return nullptr;
+}
+
+//------------------------------------------------------------------
+
+int PlasticSkeletonDeformation::addPoseAction(const QString &name) {
+  for (size_t i = 0; i < m_imp->m_poseActions.size(); ++i)
+    if (m_imp->m_poseActions[i].m_name == name) return (int)i;
+
+  m_imp->m_poseActions.push_back(PoseAction(name));
+  return (int)m_imp->m_poseActions.size() - 1;
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::removePoseAction(int idx) {
+  if (idx < 0 || idx >= (int)m_imp->m_poseActions.size()) return;
+  m_imp->m_poseActions.erase(m_imp->m_poseActions.begin() + idx);
+}
+
+//------------------------------------------------------------------
+
 void PlasticSkeletonDeformation::saveData(TOStream &os) {
   // Save skeleton vertex deformations
   os.openChild("VertexDeforms");  // These are saved *before* skeletons
@@ -1791,6 +1875,35 @@ void PlasticSkeletonDeformation::saveData(TOStream &os) {
   // SuperPlastic: pins put to sleep (tag only when disabled — old scenes and
   // old readers are unaffected)
   if (!m_imp->m_pinsEnabled) os.child("PinsDisabled") << 1;
+
+  // ZtoRig pose actions. Written only when there are any: a scene that never
+  // used them serializes exactly as before, and a reader that does not know
+  // the tag skips it (loadData falls through to skipCurrentTag), so the format
+  // stays compatible in BOTH directions with Tahoma2D and older Ztoryc.
+  if (!m_imp->m_poseActions.empty()) {
+    os.openChild("PoseActions");
+    for (size_t a = 0; a < m_imp->m_poseActions.size(); ++a) {
+      PoseAction &act = m_imp->m_poseActions[a];
+
+      os.openChild("Action");
+      os.child("Name") << act.m_name;
+      os.child("Guide") << *act.m_guide;
+
+      std::map<QString, std::vector<double>>::const_iterator dt;
+      for (dt = act.m_deltas.begin(); dt != act.m_deltas.end(); ++dt) {
+        os.openChild("Delta");
+        os.child("V") << dt->first;
+        // Slot order is POSE_PARAMS order; the count is written so a future
+        // change to the list is detectable instead of silently misaligning.
+        os.child("N") << (int)dt->second.size();
+        for (size_t s = 0; s < dt->second.size(); ++s)
+          os.child("D") << dt->second[s];
+        os.closeChild();
+      }
+      os.closeChild();
+    }
+    os.closeChild();
+  }
 }
 
 //------------------------------------------------------------------
@@ -1830,6 +1943,48 @@ void PlasticSkeletonDeformation::loadData(TIStream &is) {
       int disabled = 0;
       is >> disabled, is.matchEndTag();
       m_imp->m_pinsEnabled = (disabled == 0);
+    } else if (tagName == "PoseActions") {
+      while (is.openChild(tagName)) {
+        if (tagName == "Action") {
+          PoseAction act;
+          while (is.openChild(tagName)) {
+            if (tagName == "Name")
+              is >> act.m_name, is.matchEndTag();
+            else if (tagName == "Guide")
+              is >> *act.m_guide, is.matchEndTag();
+            else if (tagName == "Delta") {
+              QString vName;
+              std::vector<double> values;
+              while (is.openChild(tagName)) {
+                if (tagName == "V")
+                  is >> vName, is.matchEndTag();
+                else if (tagName == "N") {
+                  int n = 0;
+                  is >> n, is.matchEndTag();
+                  if (n > 0) values.reserve(n);
+                } else if (tagName == "D") {
+                  double d = 0.0;
+                  is >> d, is.matchEndTag();
+                  values.push_back(d);
+                } else
+                  is.skipCurrentTag();
+              }
+              is.matchEndTag();
+
+              // Written by an older/newer POSE_PARAMS list: pad or truncate to
+              // what this build knows, rather than indexing out of the vector.
+              values.resize(SkVD::POSE_PARAMS_COUNT, 0.0);
+              if (!vName.isEmpty()) act.m_deltas[vName] = values;
+            } else
+              is.skipCurrentTag();
+          }
+          is.matchEndTag();
+
+          if (!act.m_name.isEmpty()) m_imp->m_poseActions.push_back(act);
+        } else
+          is.skipCurrentTag();
+      }
+      is.matchEndTag();
     } else if (tagName == "SkelIdsParam")
       is >> *m_imp->m_skelIdsParam, is.matchEndTag();
     else if (tagName == "Skeletons") {

@@ -272,6 +272,52 @@ typedef struct PlasticSkeletonDeformationKeyframe {
 } SkDKey;
 
 //**************************************************************************************
+//    PoseAction  declaration
+//**************************************************************************************
+
+//! ZtoRig: one blendable action — a named pose delta, plus the guide that says
+//! how much of it applies at each frame.
+/*!
+  The blend is ADDITIVE and reads:
+
+  \code
+    effective(param, frame) = base(param, frame)
+                            + SUM over actions of  delta[param] * guide(frame)
+  \endcode
+
+  Additive, not an exclusive crossfade, so independent actions compose: blink L
+  and blink R, or mouth-open and smile, do not fight over the same channel.
+
+  
+ote Deltas are stored BY VERTEX NAME, like keyframes are (see SkDKey), and
+  never by vertex index: that is what lets an action be copied to a skeleton
+  whose internal vertex numbering differs.
+*/
+struct PoseAction {
+  QString m_name;  //!< Action name, unique within the deformation
+
+  //! How much of the action applies, per frame. A keyframeable param on
+  //! purpose: it inherits interpolation, Constant segments, undo and the
+  //! function editor without a line of new code. 0 = action off.
+  TDoubleParamP m_guide;
+
+  //! Deltas from the REST pose, by vertex name. Each entry is
+  //! SkVD::POSE_PARAMS_COUNT long and is indexed by SkVD::poseParamSlot() —
+  //! not by the raw param enum, which is why poseParamSlot() exists.
+  std::map<QString, std::vector<double>> m_deltas;
+
+  PoseAction() : m_guide(new TDoubleParam(0.0)) {}
+  explicit PoseAction(const QString &name)
+      : m_name(name), m_guide(new TDoubleParam(0.0)) {}
+
+  //! Delta of \p param on \p vertexName at rest-relative scale, 0 when the
+  //! action does not touch it.
+  double delta(const QString &vertexName, int param) const;
+  //! Sets the delta, creating the vertex entry on demand.
+  void setDelta(const QString &vertexName, int param, double value);
+};
+
+//**************************************************************************************
 //    PlasticSkeletonDeformation  declaration
 //**************************************************************************************
 
@@ -504,6 +550,21 @@ public:
   void updateAngle(const PlasticSkeleton &originalSkeleton,
                    PlasticSkeleton &deformedSkeleton, double frame, int v,
                    const TPointD &pos);
+
+  //! \name ZtoRig pose actions
+  //@{
+
+  int poseActionsCount() const;
+  //! Action by index, or nullptr when out of range.
+  const PoseAction *poseAction(int idx) const;
+  PoseAction *poseAction(int idx);
+  //! Action by name, or nullptr when there is none.
+  PoseAction *poseAction(const QString &name);
+  //! Adds an action, or returns the index of the existing one with that name.
+  int addPoseAction(const QString &name);
+  void removePoseAction(int idx);
+
+  //@}
 
 protected:
   void saveData(TOStream &os) override;
