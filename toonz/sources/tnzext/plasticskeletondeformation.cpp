@@ -1846,6 +1846,49 @@ double PlasticSkeletonDeformation::poseBlendOffset(const QString &vertexName,
 
 //------------------------------------------------------------------
 
+double PlasticSkeletonDeformation::poseParamNeutral(int param) {
+  // The scale factors rest at 1 (100%); every other pose channel is already an
+  // OFFSET from the original skeleton, so its rest value is 0.
+  return (param == SkVD::SCALEX || param == SkVD::SCALEY) ? 1.0 : 0.0;
+}
+
+//------------------------------------------------------------------
+
+int PlasticSkeletonDeformation::recordPoseAction(const QString &name,
+                                                 double frame) {
+  const int idx   = addPoseAction(name);
+  PoseAction &act = m_imp->m_poseActions[idx];
+
+  // Re-recording replaces the shape wholesale: a leftover delta on a vertex
+  // the new pose does not touch would keep pulling it.
+  act.m_deltas.clear();
+
+  // Below this the delta is numerical noise from the solver, not intent.
+  // Keeping it would make every action dense and every save bigger, for a
+  // contribution no one can see.
+  const double eps = 1e-9;
+
+  SkVDSet::iterator vdt, vdEnd(m_imp->m_vds.end());
+  for (vdt = m_imp->m_vds.begin(); vdt != vdEnd; ++vdt) {
+    const SkVD &vd = vdt->m_vd;
+
+    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
+      const int p = SkVD::POSE_PARAMS[i];
+      if (!vd.m_params[p]) continue;
+
+      // Base value on purpose — see the note on the declaration.
+      const double delta =
+          vd.m_params[p]->getValue(frame) - poseParamNeutral(p);
+
+      if (fabs(delta) > eps) act.setDelta(vdt->m_name, p, delta);
+    }
+  }
+
+  return idx;
+}
+
+//------------------------------------------------------------------
+
 int PlasticSkeletonDeformation::poseActionsCount() const {
   return (int)m_imp->m_poseActions.size();
 }

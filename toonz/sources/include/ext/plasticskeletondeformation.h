@@ -579,6 +579,24 @@ public:
   double poseBlendOffset(const QString &vertexName, int param,
                          double frame) const;
 
+  //! Records the pose authored at \p frame as an action named \p name,
+  //! returning its index; an existing action with that name is re-recorded.
+  /*!
+    Deltas are taken from the BASE params only, never from the blended result:
+    recording while other dials are up captures what the animator authored,
+    not the other actions' contribution — otherwise actions would accumulate
+    each other and re-recording would drift.
+
+    The base animation is left untouched, and the new action's guide starts at
+    0, so recording changes nothing on screen. To check an action: pose, record,
+    undo the pose, then raise the guide — the pose must come back.
+  */
+  int recordPoseAction(const QString &name, double frame);
+
+  //! Value a pose param has at rest: 1 for the scale factors, 0 for every
+  //! other channel. Deltas are stored relative to this.
+  static double poseParamNeutral(int param);
+
   //@}
 
 protected:
