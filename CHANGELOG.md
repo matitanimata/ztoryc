@@ -1,3 +1,145 @@
+## [2026-07-24] — DMG macOS ripubblicati (packaging rotto da 0.10.0) + trappola pennello vettoriale + ZtoRig pose-blend avviato
+
+> **Riepilogo**: sessione lunga su tre fronti. (1) I binari macOS di 0.10.0 e
+> 0.10.1 non partivano affatto — libreria mancante nel bundle — ora ricostruiti e
+> verificati. (2) Un "bug" grave del pennello vettoriale che era in realtà
+> un'opzione. (3) Avviato per davvero ZtoRig pose-blend sul branch SP: motore
+> dial + pannello + correttive di giuntura (motore).
+
+### Fixed — i DMG macOS non partivano (packaging, `2a594e63e` + `b02721f22` + `86b2de167`, su master)
+I binari di **0.10.0 e 0.10.1** morivano in dyld all'avvio, su **entrambe** le
+architetture:
+
+```
+Library not loaded: @executable_path/../Frameworks/libprotobuf.34.1.0.dylib
+Referenced from: libopencv_dnn.411.dylib
+```
+
+Causa: **brew**, non il nostro codice. La formula `protobuf` semplice è ormai
+alla 35.x; quella che entra come dipendenza di OpenCV è **versionata**
+(`protobuf@33`), e le formule versionate sono **keg-only** → non linkate in
+`$BREW_PREFIX/lib`. Il difetto vero: in `tahoma-buildpkg.sh` il `cp` di una
+dipendenza non trovata non era controllato, ma l'`install_name_tool -change`
+girava lo stesso → bundle che punta a un file mai copiato, **build verde, app
+morta**. **Upstream Tahoma2D la guardia ce l'ha; la nostra copia dello script
+l'aveva persa** — regressione nostra, non candidato upstream.
+
+Fix in tre livelli: (1) guardia ripristinata (cerca in `$BREW_PREFIX/opt`, /usr,
+/opt; se non trova ferma la build); (2) verifica dei riferimenti pendenti
+`@executable_path`/`@loader_path` nel bundle; (3) `-DBUILD_opencv_dnn=OFF
+-DWITH_PROTOBUF=OFF` — `dnn` non è usato da nessuna parte ed è l'unico che tira
+dentro protobuf. DMG rifatti via CI, **Silicon e Intel verificati da Franco**.
+
+> ⚠️ **Correzione alla nota del 2026-07-22**: il packaging era rotto **già dalla
+> 0.10.0** (21 luglio), non solo dalla 0.10.1. La nota precedente attribuiva il
+> problema alla sola 0.10.1.
+
+**Trappola del verificatore** (due giri di CI persi): `@executable_path` è la
+cartella dell'eseguibile che CARICA, non della libreria; gli helper in
+`Resources/ffmpeg/libs/` risolvono rispetto alla cartella padre. Lezione: provare
+la logica di packaging in locale su un bundle sintetico prima di rilanciare la CI.
+
+### Not-a-bug — pennello vettoriale che disegna rosso e perde i tratti
+Segnalato come bug grave (tratto rosso al rilascio, il precedente sparisce, i
+raster funzionano, persiste ai riavvii). **Non è un bug**: è l'opzione **Range:
+Linear** della barra del pennello vettoriale (`VectorBrushFrameRange "1"` in
+`env.ini`). In modalità Frame Range la stroke resta in attesa (anteprima
+**rossa** apposta), e un secondo tratto sullo stesso frame rimpiazza il primo.
+Serve a fare gli intermedi tra due frame. Soluzione: **Range → Off**. Nessuna
+modifica al codice. Lezioni di metodo salvate in memoria (diagnostica PRIMA delle
+uscite anticipate; misurare la decisione, non l'effetto).
+
+### Added — ZtoRig pose-blend (branch `feature/ztorig-pose-blend`, worktree SP, bundle Ztoryc-SP.app)
+Avviato per davvero il motore di pose-blend (Task 59 + correttive). **NON su
+master**: tutto sul branch. Nove commit:
+- **Motore dial**: `POSE_PARAMS` unificata (una sola definizione, via il
+  duplicato in `tstageobject.cpp`); `PoseAction` (nome + guida `TDoubleParam` +
+  delta per nome-vertice) con serializzazione retrocompatibile nei due versi;
+  blend iniettato in `updateBranchPositions` + controller squash&stretch (mai nel
+  solver, che i parametri li scrive); `recordPoseAction` (delta dai param BASE).
+- **Pannello ZtoRig** nel menu Windows: riga per azione (nome, dial, Rest/Full,
+  rimozione) + Record. **Cablaggio in 5 file** — factory + comando non bastano,
+  serve `createMenuWindowsAction` in `mainwindow.cpp` o la voce viene saltata.
+- **Fix del dial che riponeva tutta la timeline**: `setDefaultValue` rendeva la
+  guida costante → il blend cambiava anche i frame già animati (chiavi ferme, ma
+  disegno diverso). Ora auto-key al frame corrente + **azione OFF prima della sua
+  prima chiave** (niente bleed all'indietro). Più flush dei placement collegati
+  (il disegno seguiva lo scheletro solo al click successivo).
+- **Undo** su Record/Remove (snapshot del vettore azioni).
+- **Correttive di giuntura — motore (milestone 1/3)**: `MeshCorrective`
+  (pose-space deformation / SmartSkin) risolve ciò che rigid/flex non può, la
+  forma dell'arto in piega. Delta per-vertice-mesh guidati dall'angolo del giunto,
+  iniettati **dopo** il solve ARAP in `plasticdeformerstorage`. Diagnosi: la piega
+  è decisa da un solo handle puntiforme + rigidity, l'ARAP non ha termine di
+  volume → strozza. Mancano authoring (scultura sul posato) e UI.
+
+### Da risolvere (annotato in memoria, non toccato)
+- **Global Key su All non chiavia il transform**: il drag del Plastic tool ignora
+  `GlobalKeyScope`, scrive solo le chiavi plastic. Il diamante lo mostra
+  correttamente. Zona write-back delicata (pin/undo cross-colonna) → sessione
+  dedicata. Feature Ztoryc, non candidato upstream.
+
+### Note di metodo (in memoria)
+Nuovo pannello Ztory = 5 punti di cablaggio. I file di stuff dopo la build vanno
+ri-bundlati (`SystemVar.ini` punta allo stuff sorgente del worktree). La
+diagnostica va PRIMA delle uscite anticipate.
+
+## [2026-07-22] — Il qDebug che rallentava Windows + una cache di anteprime sola per tutti i Board (v0.10.1)
+
+> **Nota**: entry scritta a posteriori il 2026-07-24 — la sessione del 22 si era chiusa
+> senza passare dal CHANGELOG. Ricostruita dai commit `f023e6050`, `f6e47899e`,
+> `1d946b496`, `c6aecd4e1`.
+
+### Fixed — la lentezza su Windows veniva da una riga di log (`f023e6050`)
+`hasScreensWithDifferentDevPixRatio()` in `toonzqt/gutil.cpp` stampava un `qDebug` per
+**ogni monitor a ogni chiamata**, e la funzione è interrogata da `getDevicePixelRatio()`
+sui percorsi di **disegno** — quindi in continuazione. Su una macchina a due schermi il
+log di un tester erano centinaia di righe `Screen: DPR` in pochi secondi.
+
+Non era solo rumore: `qDebug` formatta la stringa e la scrive, e su Windows la scrittura
+su console/`OutputDebugString` è **sincrona e serializzata**, moltiplicata per il numero
+di schermi. L'indizio decisivo è stato un tester che ha visto una differenza enorme
+**scollegando un monitor**. Era una riga lasciata indietro dal lavoro sul DPR di macOS.
+Gli altri `qDebug` del file restano: stanno tutti su percorsi d'errore.
+
+### Release v0.10.1 (bump in `f6e47899e`, tag su `c6aecd4e1`, pubblicata il 2026-07-22)
+Bump di `ZtorycVersion.cmake` e rigenerati `BundleInfo.plist` / `tversion.h`. Il tag
+`v0.10.1` è stato creato dal workflow sul **merge della cache condivisa** (`c6aecd4e1`),
+quindi la release contiene **sia** il fix del qDebug **sia** la cache di anteprime
+condivisa descritta qui sotto.
+
+⚠️ **I binari 0.10.1 pubblicati il 22 sono però inavviabili su entrambe le architetture
+Mac** (libreria mancante nel bundle) — vedi l'entry del 2026-07-24.
+
+### Performance — una cache di anteprime sola per tutti i Board (`1d946b496`, merge `c6aecd4e1`)
+Ogni pannello Board teneva la **propria** cache privata: con un Board per room la STESSA
+anteprima veniva renderizzata una volta per pannello. E renderizzare un frame di
+sotto-scena è di gran lunga la cosa più cara del Board — molto più della scansione delle
+colonne. Su una scena pesante era il lavoro moltiplicato per il numero di room.
+
+Ora la cache è unica e vive in **`ZtoryModel`** (dove sta lo stato condiviso, come da
+regola in AGENTS.md): il primo che chiede un'anteprima paga, gli altri leggono. Due
+scelte tengono insieme la cosa:
+- **In cache va il render NUDO, non l'anteprima finita.** L'overlay della camera dipende
+  da dati che non stanno nella chiave (ordinale della lettera A→B, etichette del tipo di
+  movimento) ed è economico: si riapplica a ogni uso, su una **copia**, così la pixmap
+  condivisa non viene mai dipinta da chi la legge.
+- **La chiave è il NOME della sotto-scena** (più frame, dimensioni fisiche e regione di
+  camera). Il nome sopravvive ai riordini di colonna, a differenza del puntatore o
+  dell'indice — stessa scelta già fatta per l'animatic e per la thumb cache.
+
+Invalidazione **mirata** per sotto-scena quando uno shot è stato modificato (prefisso
+`"nome|"`, col separatore perché `sh01` non cancelli `sh010`) e **totale** al cambio
+scena. Senza la parte mirata l'anteprima sarebbe rimasta indietro rispetto al disegno:
+il vero rischio di una cache condivisa non è la memoria, è la staleness.
+
+File toccati: `storyboardpanel.cpp`, `ztorymodel.h/.cpp`, `ztoryanimatic.cpp`,
+`ztorylightgizmo.h`.
+
+Verificato su macOS: anteprime aggiornate dopo aver disegnato, in tutte le room; cambio
+room più rapido. **Il guadagno vero è su Windows, dove il render costa di più — non
+ancora misurato.**
+
 ## [2026-07-21] — Grammatica diamante nel viewer + la famiglia di bug "pegbar zombie" (v0.10.0)
 
 > **Riepilogo**: partiti dal KeyframeNavigator del viewer (l'ultimo pezzo rimandato ieri),

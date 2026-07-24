@@ -359,7 +359,15 @@ nella sub-scene corretta.
 
 ### 🆕 DA FARE (giugno 2026) — in cima per priorità
 
-**🆕🆕 PROSSIMO — M5: Integrazione Kitsu [brainstorming 2026-06-26/27].**
+**🆕🆕 PROSSIMO — Import da carta nella Thumbnail room (task 63)
+[richiesto dagli utenti, brainstorming 2026-07-24].**
+Stampa la griglia della thumb room su A4 → disegni a matita → fotografi/acquisisci →
+i pannelli tornano dentro la thumb room raddrizzati e ritagliati, pronti per *Send to
+Board*. Stessa idea del worksheet di Storyboarder. Fattibilità verificata: OpenCV,
+QPdfWriter e la webcam ci sono già. **Dettaglio completo: task 63 più sotto.**
+Franco (2026-07-24): questa viene **prima** di ZtoRig pose-blend.
+
+**🆕🆕 POI — M5: Integrazione Kitsu [brainstorming 2026-06-26/27].**
 Il prossimo grande filone. Tracking/review della pipeline via Kitsu (CGWire).
 - **Client config-driven** (`KitsuClient`, QtNetwork + QJsonDocument): un solo URL+login,
   funziona identico su istanza locale docker, LAN, tunnel Cloudflare e **CGWire hosted**.
@@ -688,6 +696,106 @@ Python (script bundled) o in C++ con una libreria xlsx minimale.
 **File:** `storyboardpanel.cpp` (voce menu + dialog),
 `ztoryexport.h/.cpp` (logica generazione xlsx),
 `ztorymodel.h/.cpp` (lettura dati shot + preferenze colonne task).
+
+### NEW — Import da carta nella Thumbnail room (task 63) ⭐ FEATURE MAGGIORE
+
+Richiesta dagli utenti; il riferimento è il *print worksheet / import worksheet* di
+**Storyboarder** (open source). Ciclo completo: **stampa la griglia → disegna a matita →
+fotografa o acquisisce → i pannelli rientrano nella thumb room** già raddrizzati e
+ritagliati, da lì *Send to Board* esistente fa il resto senza modifiche.
+
+#### Perché è fattibile senza dipendenze nuove (verificato 2026-07-24)
+
+- **OpenCV 4 è già linkato nell'eseguibile `toonz`** su tutte le piattaforme
+  (`toonz/sources/CMakeLists.txt:532` e seguenti) → omografia, soglia adattiva e
+  rilevamento marker sono disponibili subito da `ztorythumbnail*.cpp`.
+- **`QPdfWriter` già in uso** per l'export PDF del Board
+  (`storyboardpanel.cpp:7317`) → la stampa del foglio riusa lo stesso schema
+  A4/300dpi/`QPainter`.
+- **Webcam già disponibile**: `stopmotion/webcam.h`, `getWebcamImage(TRaster32P&)` →
+  la variante "acquisisci" invece di "importa file" è quasi gratis.
+- **Il canvas è fatto apposta**: `ZtoryThumbnailCanvas` è UN raster contiguo con i box
+  come rettangoli logici → incollare un pannello ritagliato è un blit in un rettangolo
+  noto. Serve solo il duale di `panelRaster()` (`ztorythumbnailcanvas.h:106`), che oggi
+  esiste **solo in lettura**.
+
+#### Fase 1 — Stampa del foglio (`Print Sheet…`)
+
+Bottone nella toolbar della thumb room. PDF A4, landscape se la camera è 16:9, con
+tanti box quanti ne entrano **mantenendo l'aspect della camera** (2×3 sta comodo, 3×3
+si stringe — vedi nota risoluzione). Se la griglia in scena è più grande di un foglio
+(es. 4×15) escono **più pagine**. Su ogni foglio:
+
+- **4 marker di registro** agli angoli, di cui **uno diverso dagli altri** per dare
+  l'orientamento → una foto ruotata o capovolta si raddrizza da sola.
+- **Codice pagina** stampato (testo leggibile + fila di quadratini binari): scena,
+  numero pagina, riga/colonna di partenza nella griglia. All'import il software sa
+  **dove incollare senza chiederlo**.
+- **Cornici dei box in ciano chiaro.** All'import si legge il **canale rosso** della
+  foto: il ciano sparisce, la matita nera resta. È il trucco che evita che la cornice
+  stampata finisca dentro il disegno.
+
+#### Fase 2 — Acquisizione
+
+Tre sorgenti, stessa pipeline a valle:
+- **File** (JPG/PNG/PDF), multi-selezione = più fogli in una volta.
+- **Webcam / capture card** riusando `Webcam` di stopmotion.
+- *(v2)* cartella "watch" per le foto che arrivano dal telefono via sync.
+
+#### Fase 3 — Raddrizzamento e ritaglio (il cuore)
+
+1. Grayscale + `cv::adaptiveThreshold` per isolare i marker.
+2. `findContours` con **gerarchia** → quadrati concentrici → i 4 centri; il marker
+   asimmetrico dà l'ordine.
+3. `getPerspectiveTransform` + `warpPerspective` verso un rettangolo di dimensione
+   nota → **prospettiva, rotazione e foto storta corrette in un colpo solo**.
+4. Lettura del codice pagina (ora è in posizione nota).
+5. **Normalizzazione carta**: divisione per il fondo sfocato (`GaussianBlur` largo +
+   `divide`) → via ombre e vignettatura, carta bianca uniforme. **Non binarizzare di
+   default** — la matita coi suoi grigi è più bella; toggle *"tratto secco"* per chi
+   lo vuole.
+6. **Ritaglio per geometria**, non per detection: dopo il warp i box sono in posizione
+   nota. Resample alla dimensione del box nel canvas → blit nel raster contiguo.
+7. Pannelli sotto soglia d'inchiostro → **saltati**, non sovrascrivono quello che c'è
+   già (riusare la logica di `isPanelEmpty`).
+
+#### Fase 4 — Anteprima e conferma
+
+Dialog con: immagine raddrizzata + griglia sovrapposta, slider contrasto/soglia,
+spunte per-pannello (quali importare), scelta *Sostituisci / Fondi*. Commit come **una
+sola operazione undo** — `pushUndo()` full-canvas esiste già.
+
+#### Punti delicati (decisi/da tenere d'occhio)
+
+- ⚠️ **La CI non compila i moduli contrib di OpenCV**
+  (`ci-scripts/osx/tahoma-buildopencv.sh` non passa `OPENCV_EXTRA_MODULES_PATH`):
+  `cv::aruco` c'è sul Mac di sviluppo via brew (4.13) ma **non è garantito nei binari
+  di release**. Da OpenCV 4.7 ArUco sta in `objdetect` (modulo main), ma dipende dalla
+  versione del fork `tahoma2d/opencv`. **Decisione: marker fatti a mano** (quadrati
+  concentrici stile finder pattern QR, ~80 righe con `findContours` + gerarchia) →
+  usano solo `imgproc`, presente ovunque, e la domanda non si pone.
+- **Risoluzione.** A4 fotografato con telefono 12MP ≈ 3000px sul lato lungo. Con 2×3
+  box il pannello esce ~1400×800 (ottimo); con 4×4 box scende a ~700×400 — ancora
+  buono per una thumb, ma è il limite. **Da dire nell'UI** quando si sceglie quanti
+  box per foglio.
+- **HEIC dell'iPhone**: Qt non lo legge di serie. Supportare JPG/PNG/PDF e documentare
+  "esporta in JPEG".
+- *(v2, non ora)* **Fallback "carta libera"**: foto di un foglio senza griglia
+  stampata, riquadri disegnati a mano, riconosciuti via contours. Meno affidabile;
+  Storyboarder stesso non lo fa.
+
+#### Stima e ordine di lavoro
+
+1. **Stampa del foglio** — mezza giornata, ed è **utile da sola**: si può già stampare
+   e disegnare mentre il resto non esiste.
+2. **Import da file** (marker + warp + ritaglio) — una sessione buona. È la parte vera.
+3. **Dialog di anteprima** — mezza giornata.
+4. **Sorgente webcam** — piccola, appoggiata alla pipeline già fatta.
+
+**File:** `ztorythumbnailpanel.h/.cpp` (bottoni toolbar + dialog),
+`ztorythumbnailcanvas.h/.cpp` (`setPanelRaster()` — il duale di `panelRaster()`),
+nuovo `ztorypapersheet.h/.cpp` (stampa PDF del foglio + pipeline OpenCV di
+raddrizzamento/ritaglio), `stopmotion/webcam.h` (riuso, sola lettura).
 
 ## File Structure
 
