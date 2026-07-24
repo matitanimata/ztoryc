@@ -115,6 +115,7 @@ set(MOC_HEADERS
     ztoryannotations.h
     ztorymonitorpanel.h
     ztorythumbnailpanel.h
+    ztorigpanel.h
     ztorythumbnailcanvas.h
     ztoryscriptpanel.h
     ztorystartup.h
@@ -257,6 +258,7 @@ set(SOURCES
     ztoryannotations.cpp
     ztorymonitorpanel.cpp
     ztorythumbnailpanel.cpp
+    ztorigpanel.cpp
     ztorythumbnailcanvas.cpp
     ztoryscriptpanel.cpp
     ztorystartup.cpp
