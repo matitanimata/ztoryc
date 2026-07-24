@@ -100,6 +100,26 @@ void effAngleLimits(const SkVD *vd, const PlasticSkeletonVertex &vx,
 //    PlasticSkeletonVertex  implementation
 //**************************************************************************************
 
+// ZtoRig: l'unica definizione di cosa sia una POSA. Dichiarata nell'header
+// perche' la leggono in tre — Global Key, registrazione della posa e pose
+// blending — e tre copie separate un giorno divergono. Vedi il commento sulla
+// dichiarazione per il motivo per cui PIN* e MIN/MAXANGLE restano fuori.
+const int SkVD::POSE_PARAMS[] = {
+    SkVD::ANGLE,  SkVD::DISTANCE, SkVD::SO,     SkVD::ROOTX,  SkVD::ROOTY,
+    SkVD::SCALEX, SkVD::SCALEY,   SkVD::PIVOTX, SkVD::PIVOTY, SkVD::TRANSX,
+    SkVD::TRANSY, SkVD::ROT,      SkVD::SHEARX, SkVD::SHEARY};
+
+const int SkVD::POSE_PARAMS_COUNT =
+    (int)(sizeof(SkVD::POSE_PARAMS) / sizeof(SkVD::POSE_PARAMS[0]));
+
+int SkVD::poseParamSlot(int param) {
+  for (int i = 0; i < POSE_PARAMS_COUNT; ++i)
+    if (POSE_PARAMS[i] == param) return i;
+  return -1;
+}
+
+//------------------------------------------------------------------
+
 SkVD::Keyframe SkVD::getKeyframe(double frame) const {
   Keyframe kf;
   for (int p          = 0; p < PARAMS_COUNT; ++p)

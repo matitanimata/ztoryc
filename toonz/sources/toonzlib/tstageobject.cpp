@@ -1077,15 +1077,10 @@ for(int p=0; p<SkVD::PARAMS_COUNT; ++p)
 //     every joint limit at its current value.
 // Only genuine pose channels below: skeleton pose, free-root offset, and the
 // squash & stretch controller.
-namespace {
-// The POSE parameters, and only those — the explicit list both key and unkey
-// share. See the comment above setPlasticPoseKeyframe for why pins and
-// joint-limit overrides must never appear here.
-static const int l_plasticPoseParams[] = {
-    SkVD::ANGLE,  SkVD::DISTANCE, SkVD::SO,     SkVD::ROOTX,  SkVD::ROOTY,
-    SkVD::SCALEX, SkVD::SCALEY,   SkVD::PIVOTX, SkVD::PIVOTY, SkVD::TRANSX,
-    SkVD::TRANSY, SkVD::ROT,      SkVD::SHEARX, SkVD::SHEARY};
-}
+// The POSE parameters live in SkVD::POSE_PARAMS — one definition shared with
+// pose blending, so key, unkey and blend can never disagree on what a pose is.
+// Indexed loop, not range-for: the array is declared without a bound in the
+// header, so its size is not visible here.
 
 void TStageObject::setPlasticPoseKeyframe(double frame) {
   const PlasticSkeletonDeformationP &sd = getPlasticSkeletonDeformation();
@@ -1101,8 +1096,10 @@ void TStageObject::setPlasticPoseKeyframe(double frame) {
   for (; vdt != vdEnd; ++vdt) {
     SkVD *vd = (*vdt).second;
     if (!vd) continue;
-    for (int p : l_plasticPoseParams)
+    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
+      int p = SkVD::POSE_PARAMS[i];
       if (vd->m_params[p]) setkey(vd->m_params[p], (int)frame);
+    }
   }
 }
 
@@ -1125,8 +1122,10 @@ void TStageObject::removePlasticPoseKeyframe(double frame) {
   for (; vdt != vdEnd; ++vdt) {
     SkVD *vd = (*vdt).second;
     if (!vd) continue;
-    for (int p : l_plasticPoseParams)
+    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
+      int p = SkVD::POSE_PARAMS[i];
       if (vd->m_params[p]) vd->m_params[p]->deleteKeyframe((int)frame);
+    }
   }
 }
 
