@@ -211,7 +211,7 @@ ZtoRigPanel::ZtoRigPanel(QWidget *parent) : TPanel(parent) {
   // Frame changes only refresh the numbers: rebuilding here would fight the
   // user's drag and reset the scroll position on every frame during playback.
   connect(app->getCurrentFrame(), SIGNAL(frameSwitched()), this,
-          SLOT(refreshValues()));
+          SLOT(onFrameSwitched()));
   // Undo/redo of a Record or Remove changes which actions exist without a
   // column/scene switch: refresh (which rebuilds on a count mismatch) so the
   // rows follow the history.
@@ -459,6 +459,39 @@ void ZtoRigPanel::refreshValues() {
     const PoseAction *act = sd->poseAction(row->index());
     if (!act || !act->m_guide) continue;
     row->setValueSilently(act->m_guide->getValue(frame));
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoRigPanel::onFrameSwitched() {
+  const PlasticSkeletonDeformationP sd = currentDeformation();
+  if (!sd) return;
+  if (sd->poseActionsCount() != m_rows.size()) {
+    rebuild();
+    return;
+  }
+
+  // The dial is a preview at THIS frame, not an animated channel: reset every
+  // guide to 0 on a frame change so a preview left over from another frame does
+  // not leak forward (the stamped plastic keys ARE the animation). "0" then
+  // means the current pose at the new frame, computed fresh.
+  bool changed = false;
+  for (int i = 0; i < sd->poseActionsCount(); ++i) {
+    PoseAction *act = sd->poseAction(i);
+    if (!act || !act->m_guide) continue;
+    if (act->m_guide->getKeyframeCount() > 0 ||
+        act->m_guide->getDefaultValue() != 0.0) {
+      act->m_guide->clearKeyframes();
+      act->m_guide->setDefaultValue(0.0);
+      changed = true;
+    }
+  }
+  for (ZtoRigActionRow *row : m_rows) row->setValueSilently(0.0);
+
+  if (changed) {
+    flushConnectedPlacements();  // also invalidates the mesh deformer
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
   }
 }
 

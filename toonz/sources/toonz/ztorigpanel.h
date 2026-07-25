@@ -75,6 +75,10 @@ private slots:
   void onModeChanged(int index, bool absolute);
   void onApply(int index);
   void onRemove(int index);
+  //! Frame changed: the dials are a per-frame PREVIEW, not a persistent
+  //! channel, so reset them to 0 and let "0" mean the current pose at the new
+  //! frame, freshly.
+  void onFrameSwitched();
   //! Rebuild the rows from the current column (column/scene changed).
   void rebuild();
   //! Only refresh the shown values (frame changed): rebuilding on every frame
