@@ -1265,15 +1265,34 @@ void PlasticTool::touchSkeleton() {
 void PlasticTool::touchDeformation() {
   if (m_sd) return;
 
+  TStageObject *obj = stageObject();
+  if (!obj) return;  // camera column / transient swap: nothing to touch
+
   // Store a new deformation in the column's stage object
-  stageObject()->setPlasticSkeletonDeformation(new PlasticSkeletonDeformation);
+  obj->setPlasticSkeletonDeformation(new PlasticSkeletonDeformation);
   storeDeformation();  // Builds the deformed skeleton too
 }
 
 //------------------------------------------------------------------------
 
 void PlasticTool::storeDeformation() {
-  const SkDP &sd = stageObject()->getPlasticSkeletonDeformation();
+  // stageObject() returns 0 on the camera column (column() == -1) and while the
+  // xsheet is swapped under the tool — onColumnSwitched can land here then, and
+  // dereferencing it crashed (SIGSEGV) clicking a column with the tool active.
+  // No stage object => no deformation to store; drop what we hold and bail.
+  TStageObject *obj = stageObject();
+  if (!obj) {
+    if (m_sd) {
+      clearSkeletonSelections();
+      m_sd->removeObserver(this);
+      m_skelIdRelay.setParam(TDoubleParamP());
+      m_sd = SkDP();
+      m_skelIdRelay.notifyListeners();
+    }
+    return;
+  }
+
+  const SkDP &sd = obj->getPlasticSkeletonDeformation();
   if (m_sd != sd) {
     clearSkeletonSelections();
 
