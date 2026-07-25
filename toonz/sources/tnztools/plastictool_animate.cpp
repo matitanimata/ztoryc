@@ -32,6 +32,52 @@ using namespace PlasticToolLocals;
 
 namespace {
 
+// ZtoRig: undo for the STAGE-object transform key that Global-All posing now
+// also writes (the plastic key has its own AnimateValuesUndo). Restores the
+// frame to exactly what it was — a key with its old values, or no key at all.
+class StageTransformKeyUndo final : public TUndo {
+  TXsheetHandle *m_xsh;
+  TStageObjectId m_id;
+  int m_frame;
+  bool m_hadKey;
+  TStageObject::Keyframe m_oldKey;
+
+  TStageObject *obj() const {
+    return (m_xsh && m_xsh->getXsheet())
+               ? m_xsh->getXsheet()->getStageObject(m_id)
+               : 0;
+  }
+
+public:
+  StageTransformKeyUndo(TXsheetHandle *xsh, const TStageObjectId &id, int frame,
+                        bool hadKey, const TStageObject::Keyframe &oldKey)
+      : m_xsh(xsh)
+      , m_id(id)
+      , m_frame(frame)
+      , m_hadKey(hadKey)
+      , m_oldKey(oldKey) {}
+
+  int getSize() const override { return sizeof(*this); }
+
+  void undo() const override {
+    TStageObject *o = obj();
+    if (!o) return;
+    if (m_hadKey)
+      o->setKeyframeWithoutUndo(m_frame, m_oldKey);
+    else
+      o->removeKeyframeWithoutUndo(m_frame);
+    o->updateKeyframes();
+    if (m_xsh) m_xsh->notifyXsheetChanged();
+  }
+  void redo() const override {
+    TStageObject *o = obj();
+    if (!o) return;
+    o->setKeyframeWithoutUndo(m_frame);
+    o->updateKeyframes();
+    if (m_xsh) m_xsh->notifyXsheetChanged();
+  }
+};
+
 class AnimateValuesUndo final : public TUndo {
   int m_row, m_col;  //!< Xsheet coordinates
   int m_v;           //!< Moved vertex
@@ -2554,8 +2600,37 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
   }
 
   if (m_svSel.hasSingleObject() && m_dragged) {
-    // Set a keyframe to each skeleton vertex, if that was requested
-    if (m_globalKey.getValue())
+    // Global Key scope: 0 Stage, 1 Plastic, 2 All. Posing always writes the
+    // moved plastic params; the global key adds the OTHER channels per scope.
+    // Ztoryc: with scope All (or Stage) a pose must also drop a TRANSFORM key
+    // on the column — otherwise the column stays un-keyed and drifts relative
+    // to the plastic keys ("in global all, posing must also key the transform").
+    const int scope       = m_globalKeyScope.getIndex();
+    const bool globalKey  = m_globalKey.getValue();
+    const bool doTransform = globalKey && scope != 1;  // Stage or All
+    const bool doFullPlastic = globalKey && scope != 0;  // Plastic or All
+
+    TUndoManager::manager()->beginBlock();
+
+    // Transform key first, with its own undo (AnimateValuesUndo below covers
+    // only the plastic side).
+    if (doTransform) {
+      TStageObject *o = stageObject();
+      if (o) {
+        const int f = (int)::frame();
+        const bool had = o->isKeyframe(f);
+        TStageObject::Keyframe oldKey;
+        if (had) oldKey = o->getKeyframe(f);
+        o->setKeyframeWithoutUndo(f);
+        TUndoManager::manager()->add(new StageTransformKeyUndo(
+            TTool::getApplication()->getCurrentXsheet(), o->getId(), f, had,
+            oldKey));
+      }
+    }
+
+    // Plastic side: full pose key when the scope includes Plastic; otherwise
+    // just surface the params the drag already keyed.
+    if (doFullPlastic)
       ::setKeyframe(m_sd, ::frame());  // Already invokes keyframes rebuild
     else
       stageObject()->updateKeyframes();  // Otherwise, must be explicit
@@ -2567,6 +2642,8 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
     m_sd->getKeyframeAt(frame(), undo->m_newValues);
 
     TUndoManager::manager()->add(undo);
+
+    TUndoManager::manager()->endBlock();
 
     m_dragged = false; // Turn this off now so toolbar updates
 
