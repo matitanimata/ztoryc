@@ -12,6 +12,7 @@
 #include "toonz/tstageobjecttree.h"
 
 #include "ext/plasticskeletondeformation.h"
+#include "ext/plasticdeformerstorage.h"
 
 #include "tundo.h"
 
@@ -293,6 +294,15 @@ void ZtoRigPanel::flushConnectedPlacements() {
   TXsheet *xsh = app->getCurrentXsheet() ? app->getCurrentXsheet()->getXsheet()
                                          : nullptr;
   ztorigFlushPlacements(xsh, app->getCurrentColumn()->getColumnIndex());
+
+  // The dial GUIDE is a TDoubleParam the deformation does not observe (unlike
+  // the real pose params), so moving the slider never fired onChange and the
+  // MESH deformer cache stayed stale — the skeleton overlay moved but the
+  // drawing did not follow until a click wrote a real param. Invalidate the
+  // deformer explicitly here so the mesh re-solves on the next redraw.
+  if (const PlasticSkeletonDeformationP sd = currentDeformation())
+    PlasticDeformerStorage::instance()->invalidateDeformation(
+        sd.getPointer(), PlasticDeformerStorage::NONE);
 }
 
 //=============================================================================
