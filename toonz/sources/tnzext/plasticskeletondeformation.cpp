@@ -1869,29 +1869,47 @@ double PlasticSkeletonDeformation::Imp::poseBlendOffset(
     return base;
   };
 
-  double sum = 0.0;
+  // Absolute actions blend as a normalized weighted average toward their
+  // recorded poses; additive actions layer on top. Two passes: first the total
+  // absolute weight, so overlapping poses fuse (weights summing past 1 are
+  // normalized) instead of subtracting the base twice — which rotated the
+  // character when two Pose dials were up together.
+  double absSum = 0.0;
+  for (size_t a = 0; a < m_poseActions.size(); ++a) {
+    const PoseAction &act = m_poseActions[a];
+    if (act.m_absolute && act.m_guide) {
+      const double g = guideValue(*act.m_guide, frame);
+      if (g > 0.0) absSum += g;  // negative dial = off for an absolute pose
+    }
+  }
+  const double denom  = absSum > 1.0 ? absSum : 1.0;   // normalize only past 1
+  const double wBase  = absSum < 1.0 ? 1.0 - absSum : 0.0;  // base fills the rest
+
+  // effective = wBase*base + SUM (g_i/denom)*target_i  +  additive offsets
+  // poseBlendOffset returns effective - base (it is added to base upstream).
+  double effAbs         = 0.0;  // absolute part of `effective`
+  bool anyAbsolute      = false;
+  double additive       = 0.0;
   for (size_t a = 0; a < m_poseActions.size(); ++a) {
     const PoseAction &act = m_poseActions[a];
     if (!act.m_guide) continue;
-
     const double g = guideValue(*act.m_guide, frame);
 
     if (act.m_absolute) {
-      // Absolute pose: lerp base -> recorded. An absolute action covers the
-      // WHOLE skeleton, so even a param it never moved (delta 0) has a target
-      // of its neutral and is pulled to rest. contribution = g*(target - base),
-      // which at g=1 yields exactly `target` on top of base.
+      anyAbsolute = true;
+      if (g <= 0.0) continue;
       const double target =
           PlasticSkeletonDeformation::poseParamNeutral(param) +
           act.delta(vertexName, param);
-      if (g != 0.0) sum += g * (target - readBase());
+      effAbs += (g / denom) * target;
     } else {
-      // Additive offset: delta from rest, only where the action touched. Cheap
-      // map miss skips untouched params without evaluating anything further.
       const double delta = act.delta(vertexName, param);
-      if (delta != 0.0) sum += delta * g;
+      if (delta != 0.0) additive += delta * g;
     }
   }
+
+  double sum = additive;
+  if (anyAbsolute) sum += (wBase * readBase() + effAbs) - readBase();
   return sum;
 }
 
