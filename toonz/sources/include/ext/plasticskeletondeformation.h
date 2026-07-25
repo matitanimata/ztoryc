@@ -296,6 +296,15 @@ ote Deltas are stored BY VERTEX NAME, like keyframes are (see SkDKey), and
 struct PoseAction {
   QString m_name;  //!< Action name, unique within the deformation
 
+  //! ABSOLUTE (a "pose") vs additive (an "offset"). Absolute at guide=1 gives
+  //! exactly the recorded pose from ANY start pose — it lerps base -> recorded,
+  //! and covers the WHOLE skeleton (params not moved go to their neutral).
+  //! Additive layers a delta-from-rest on top, only on the params it touched —
+  //! good for per-element controllers that stack (a brow dial + a mouth dial).
+  //! Non-overlapping actions stay independent in BOTH modes; only two actions
+  //! fighting over the same param need a single dominant one.
+  bool m_absolute = false;
+
   //! How much of the action applies, per frame. A keyframeable param on
   //! purpose: it inherits interpolation, Constant segments, undo and the
   //! function editor without a line of new code. 0 = action off.

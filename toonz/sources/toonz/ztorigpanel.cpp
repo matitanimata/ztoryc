@@ -23,6 +23,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSlider>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <queue>
@@ -43,14 +44,26 @@ const double kSpinMax   = 2.0;
 }  // namespace
 
 ZtoRigActionRow::ZtoRigActionRow(int index, const QString &name, double value,
-                                 QWidget *parent)
-    : QWidget(parent), m_index(index) {
+                                 bool absolute, QWidget *parent)
+    : QWidget(parent), m_index(index), m_absolute(absolute) {
   auto *lay = new QHBoxLayout(this);
   lay->setContentsMargins(4, 2, 4, 2);
   lay->setSpacing(6);
 
+  // Mode toggle: "Pose" = absolute (recall exactly), "Offset" = additive (stack
+  // on top). Checkable, label reflects the state.
+  m_modeButton = new QToolButton(this);
+  m_modeButton->setCheckable(true);
+  m_modeButton->setChecked(m_absolute);
+  m_modeButton->setFixedWidth(52);
+  m_modeButton->setText(m_absolute ? tr("Pose") : tr("Offset"));
+  m_modeButton->setToolTip(
+      tr("Pose = recall this pose exactly (absolute).\n"
+         "Offset = add on top of the current pose (additive)."));
+  lay->addWidget(m_modeButton);
+
   auto *label = new QLabel(name, this);
-  label->setMinimumWidth(90);
+  label->setMinimumWidth(80);
   label->setToolTip(name);
   lay->addWidget(label);
 
@@ -101,6 +114,11 @@ ZtoRigActionRow::ZtoRigActionRow(int index, const QString &name, double value,
           this, &ZtoRigActionRow::onSpin);
   connect(removeBt, &QPushButton::clicked, this,
           [this]() { emit removeRequested(m_index); });
+  connect(m_modeButton, &QToolButton::toggled, this, [this](bool on) {
+    m_absolute = on;
+    m_modeButton->setText(on ? tr("Pose") : tr("Offset"));
+    emit modeChanged(m_index, on);
+  });
 }
 
 //-----------------------------------------------------------------------------
@@ -338,11 +356,13 @@ void ZtoRigPanel::rebuild() {
 
     const double v = act->m_guide ? act->m_guide->getValue(frame) : 0.0;
 
-    auto *row = new ZtoRigActionRow(i, act->m_name, v, this);
+    auto *row = new ZtoRigActionRow(i, act->m_name, v, act->m_absolute, this);
     connect(row, &ZtoRigActionRow::guideChanged, this,
             &ZtoRigPanel::onGuideChanged);
     connect(row, &ZtoRigActionRow::removeRequested, this,
             &ZtoRigPanel::onRemove);
+    connect(row, &ZtoRigActionRow::modeChanged, this,
+            &ZtoRigPanel::onModeChanged);
 
     m_rowsLay->insertWidget(m_rowsLay->count() - 1, row);
     m_rows.push_back(row);
@@ -417,6 +437,20 @@ void ZtoRigPanel::onGuideChanged(int index, double value) {
   // read, dialling here leaves earlier frames untouched.
   act->m_guide->setValue(currentFrame(), value);
 
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  flushConnectedPlacements();
+  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoRigPanel::onModeChanged(int index, bool absolute) {
+  const PlasticSkeletonDeformationP sd = currentDeformation();
+  if (!sd) return;
+  PoseAction *act = sd->poseAction(index);
+  if (!act) return;
+
+  act->m_absolute = absolute;
   TApp::instance()->getCurrentScene()->setDirtyFlag(true);
   flushConnectedPlacements();
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();

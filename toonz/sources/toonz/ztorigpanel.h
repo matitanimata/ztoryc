@@ -25,13 +25,14 @@ class QLabel;
 class QPushButton;
 class QSlider;
 class QDoubleSpinBox;
+class QToolButton;
 
 //! One row: name + dial + remove.
 class ZtoRigActionRow final : public QWidget {
   Q_OBJECT
 
 public:
-  ZtoRigActionRow(int index, const QString &name, double value,
+  ZtoRigActionRow(int index, const QString &name, double value, bool absolute,
                   QWidget *parent = nullptr);
 
   int index() const { return m_index; }
@@ -42,6 +43,8 @@ public:
 signals:
   void guideChanged(int index, double value);
   void removeRequested(int index);
+  //! Absolute (pose) <-> additive (offset) toggled for this action.
+  void modeChanged(int index, bool absolute);
 
 private slots:
   void onSlider(int v);
@@ -49,9 +52,11 @@ private slots:
 
 private:
   int m_index;
-  QSlider *m_slider        = nullptr;
-  QDoubleSpinBox *m_spin   = nullptr;
-  bool m_updating          = false;  // slider <-> spin feedback guard
+  QSlider *m_slider         = nullptr;
+  QDoubleSpinBox *m_spin    = nullptr;
+  QToolButton *m_modeButton = nullptr;  // Pose (absolute) / Offset (additive)
+  bool m_absolute           = false;
+  bool m_updating           = false;  // slider <-> spin feedback guard
 };
 
 //----------------------------------------------------------------------------
@@ -65,6 +70,7 @@ public:
 private slots:
   void onRecord();
   void onGuideChanged(int index, double value);
+  void onModeChanged(int index, bool absolute);
   void onRemove(int index);
   //! Rebuild the rows from the current column (column/scene changed).
   void rebuild();

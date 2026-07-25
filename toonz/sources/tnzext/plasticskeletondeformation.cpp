@@ -1855,17 +1855,42 @@ double PlasticSkeletonDeformation::Imp::poseBlendOffset(
   if (m_poseActions.empty()) return 0.0;
   if (SkVD::poseParamSlot(param) < 0) return 0.0;  // pins, joint limits
 
+  // Base value of this param, needed only by ABSOLUTE actions (lerp base ->
+  // recorded). Read lazily so pure-offset rigs never pay for it.
+  bool baseKnown = false;
+  double base    = 0.0;
+  auto readBase  = [&]() -> double {
+    if (baseKnown) return base;
+    baseKnown                     = true;
+    base                          = PlasticSkeletonDeformation::poseParamNeutral(param);
+    SkVDSet::const_iterator it    = m_vds.find(vertexName);
+    if (it != m_vds.end() && it->m_vd.m_params[param])
+      base = it->m_vd.m_params[param]->getValue(frame);
+    return base;
+  };
+
   double sum = 0.0;
   for (size_t a = 0; a < m_poseActions.size(); ++a) {
     const PoseAction &act = m_poseActions[a];
     if (!act.m_guide) continue;
 
-    // Cheap test first: most actions touch few vertices, and a map miss is far
-    // cheaper than evaluating the guide curve.
-    const double delta = act.delta(vertexName, param);
-    if (delta == 0.0) continue;
+    const double g = guideValue(*act.m_guide, frame);
 
-    sum += delta * guideValue(*act.m_guide, frame);
+    if (act.m_absolute) {
+      // Absolute pose: lerp base -> recorded. An absolute action covers the
+      // WHOLE skeleton, so even a param it never moved (delta 0) has a target
+      // of its neutral and is pulled to rest. contribution = g*(target - base),
+      // which at g=1 yields exactly `target` on top of base.
+      const double target =
+          PlasticSkeletonDeformation::poseParamNeutral(param) +
+          act.delta(vertexName, param);
+      if (g != 0.0) sum += g * (target - readBase());
+    } else {
+      // Additive offset: delta from rest, only where the action touched. Cheap
+      // map miss skips untouched params without evaluating anything further.
+      const double delta = act.delta(vertexName, param);
+      if (delta != 0.0) sum += delta * g;
+    }
   }
   return sum;
 }
@@ -2112,6 +2137,7 @@ void PlasticSkeletonDeformation::saveData(TOStream &os) {
 
       os.openChild("Action");
       os.child("Name") << act.m_name;
+      if (act.m_absolute) os.child("Absolute") << 1;  // tag only when true
       os.child("Guide") << *act.m_guide;
 
       std::map<QString, std::vector<double>>::const_iterator dt;
@@ -2203,7 +2229,11 @@ void PlasticSkeletonDeformation::loadData(TIStream &is) {
           while (is.openChild(tagName)) {
             if (tagName == "Name")
               is >> act.m_name, is.matchEndTag();
-            else if (tagName == "Guide")
+            else if (tagName == "Absolute") {
+              int abs = 0;
+              is >> abs, is.matchEndTag();
+              act.m_absolute = (abs != 0);
+            } else if (tagName == "Guide")
               is >> *act.m_guide, is.matchEndTag();
             else if (tagName == "Delta") {
               QString vName;
