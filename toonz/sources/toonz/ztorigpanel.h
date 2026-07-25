@@ -41,12 +41,16 @@ public:
   void setValueSilently(double v);
 
 signals:
+  //! Interaction started (slider pressed / spin about to change): snapshot for
+  //! one undo per gesture.
+  void guideBegin(int index);
+  //! Live value while dragging: write the pose into keys at this strength.
   void guideChanged(int index, double value);
+  //! Interaction ended (slider released / spin committed): finalize the undo.
+  void guideCommit(int index);
   void removeRequested(int index);
   //! Absolute (pose) <-> additive (offset) toggled for this action.
   void modeChanged(int index, bool absolute);
-  //! "Key" pressed: stamp this pose into plastic keys at the current frame.
-  void applyRequested(int index);
 
 private slots:
   void onSlider(int v);
@@ -71,13 +75,13 @@ public:
 
 private slots:
   void onRecord();
+  void onGuideBegin(int index);
   void onGuideChanged(int index, double value);
+  void onGuideCommit(int index);
   void onModeChanged(int index, bool absolute);
-  void onApply(int index);
   void onRemove(int index);
-  //! Frame changed: the dials are a per-frame PREVIEW, not a persistent
-  //! channel, so reset them to 0 and let "0" mean the current pose at the new
-  //! frame, freshly.
+  //! Frame changed: the slider reads the current pose STRENGTH off the keys, so
+  //! it shows where you are (0 rest, 1 pose) and can be dialled in and out.
   void onFrameSwitched();
   //! Rebuild the rows from the current column (column/scene changed).
   void rebuild();
@@ -96,6 +100,13 @@ private:
   //! at the next click. Invalidate them here — same fix as PlasticTool::
   //! invalidateConnectedPlacements_animate, walking the parent/child columns.
   void flushConnectedPlacements();
+
+  // One undo per slider gesture: snapshot on begin, finalize on commit.
+  PlasticSkeletonDeformation::PoseKeyState m_dragBefore;
+  bool m_dragActive          = false;
+  bool m_dragXformHadKey     = false;
+  TStageObject::Keyframe m_dragXformOldKey;
+  int m_dragXformFrame       = -1;
 
   QVBoxLayout *m_rowsLay  = nullptr;
   QScrollArea *m_scroll   = nullptr;

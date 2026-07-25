@@ -2145,6 +2145,82 @@ void PlasticSkeletonDeformation::applyPoseAction(int idx, double frame) {
 }
 
 //------------------------------------------------------------------
+
+double PlasticSkeletonDeformation::poseStrengthAt(int idx, double frame) const {
+  const PoseAction *act = poseAction(idx);
+  if (!act) return 0.0;
+
+  // Read the strength off the action's most-moved param: strength =
+  // (value - neutral) / delta. That param has the best signal-to-noise, and a
+  // clean pose sits at the same strength on all of them.
+  QString bestV;
+  int bestParam    = -1;
+  double bestDelta = 0.0;
+  for (std::map<QString, std::vector<double>>::const_iterator it =
+           act->m_deltas.begin();
+       it != act->m_deltas.end(); ++it) {
+    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT && i < (int)it->second.size();
+         ++i) {
+      if (fabs(it->second[i]) > fabs(bestDelta)) {
+        bestDelta = it->second[i];
+        bestParam = SkVD::POSE_PARAMS[i];
+        bestV     = it->first;
+      }
+    }
+  }
+  if (bestParam < 0 || fabs(bestDelta) < 1e-9) return 0.0;
+
+  SkVDSet::const_iterator vt = m_imp->m_vds.find(bestV);
+  if (vt == m_imp->m_vds.end() || !vt->m_vd.m_params[bestParam]) return 0.0;
+
+  const double neutral = poseParamNeutral(bestParam);
+  const double value   = vt->m_vd.m_params[bestParam]->getValue(frame);
+  return (value - neutral) / bestDelta;
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::applyPoseStrength(int idx, double strength,
+                                                   double frame) {
+  PoseAction *act = poseAction(idx);
+  if (!act) return;
+
+  // Precompute targets before writing (an Offset reads the live base, which a
+  // just-written key would perturb).
+  struct Target {
+    QString m_v;
+    int m_param;
+    double m_value;
+  };
+  std::vector<Target> targets;
+
+  for (std::map<QString, std::vector<double>>::const_iterator it =
+           act->m_deltas.begin();
+       it != act->m_deltas.end(); ++it) {
+    SkVDSet::iterator vt = m_imp->m_vds.find(it->first);
+    if (vt == m_imp->m_vds.end()) continue;
+    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT && i < (int)it->second.size();
+         ++i) {
+      const double delta = it->second[i];
+      if (delta == 0.0) continue;
+      const int p = SkVD::POSE_PARAMS[i];
+      if (!vt->m_vd.m_params[p]) continue;
+      const double neutral = poseParamNeutral(p);
+      // Pose: from rest (neutral). Offset: from the current base.
+      const double from =
+          act->m_absolute ? neutral : vt->m_vd.m_params[p]->getValue(frame);
+      targets.push_back({it->first, p, from + strength * delta});
+    }
+  }
+
+  for (const Target &t : targets) {
+    SkVDSet::iterator vt = m_imp->m_vds.find(t.m_v);
+    if (vt != m_imp->m_vds.end() && vt->m_vd.m_params[t.m_param])
+      vt->m_vd.m_params[t.m_param]->setValue(frame, t.m_value);
+  }
+}
+
+//------------------------------------------------------------------
 //    Mesh correctives
 //------------------------------------------------------------------
 

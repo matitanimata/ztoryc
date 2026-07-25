@@ -648,6 +648,19 @@ public:
   //! the params it touched (so partial controllers stay partial).
   void applyPoseAction(int idx, double frame);
 
+  //! Current strength of the action at \p frame, read back from the params:
+  //! 0 when the character is at rest for it, 1 when it is in the recorded pose.
+  //! Measured on the action's most-moved param (robust to the others). Lets the
+  //! slider show where you are so you can dial the pose in AND out.
+  double poseStrengthAt(int idx, double frame) const;
+
+  //! Write the action at \p strength straight into keyframes at \p frame:
+  //! Pose (absolute) -> neutral + strength*delta (0 = rest, 1 = recorded);
+  //! Offset (additive) -> base + strength*delta. This is the auto-stamp behind
+  //! the slider — no hidden guide, the keys ARE the animation. Returns the set
+  //! of vertex params it wrote (for the caller's undo snapshot / updateKeyframes).
+  void applyPoseStrength(int idx, double strength, double frame);
+
   //! Sum of every active action's contribution to \p param on \p vertexName
   //! at \p frame — the "blend" term alone, WITHOUT the authored base value.
   /*!

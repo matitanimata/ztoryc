@@ -3,6 +3,8 @@
 #include "tapp.h"
 #include "menubarcommandids.h"
 
+#include "toonz/preferences.h"
+
 #include "toonz/txsheet.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/tcolumnhandle.h"
@@ -71,8 +73,9 @@ ZtoRigActionRow::ZtoRigActionRow(int index, const QString &name, double value,
   m_slider = new QSlider(Qt::Horizontal, this);
   m_slider->setRange(kSliderMin, kSliderMax);
   m_slider->setValue((int)(value * 100.0 + 0.5));
-  m_slider->setToolTip(tr("How much of this action applies at the current "
-                          "frame. The dial is keyframeable."));
+  m_slider->setToolTip(tr("Pose strength at this frame: 0 = rest, 1 = the "
+                          "recorded pose.\nMoving it writes the keyframes "
+                          "directly — no separate Key step."));
   lay->addWidget(m_slider, 1);
 
   m_spin = new QDoubleSpinBox(this);
@@ -97,14 +100,6 @@ ZtoRigActionRow::ZtoRigActionRow(int index, const QString &name, double value,
   fullBt->setToolTip(tr("Set this dial to 1 (full pose)."));
   lay->addWidget(fullBt);
 
-  auto *keyBt = new QPushButton(tr("Key"), this);
-  keyBt->setFixedWidth(40);
-  keyBt->setToolTip(
-      tr("Stamp this pose into plastic keys at the current frame.\n"
-         "The pose becomes real keyframes the xsheet interpolates from the\n"
-         "previous key; the dial resets."));
-  lay->addWidget(keyBt);
-
   auto *removeBt = new QPushButton(tr("×"), this);
   removeBt->setFixedWidth(24);
   removeBt->setToolTip(tr("Remove this action"));
@@ -116,13 +111,17 @@ ZtoRigActionRow::ZtoRigActionRow(int index, const QString &name, double value,
           [this]() { m_spin->setValue(0.0); });
   connect(fullBt, &QPushButton::clicked, this,
           [this]() { m_spin->setValue(1.0); });
+  connect(m_slider, &QSlider::sliderPressed, this,
+          [this]() { emit guideBegin(m_index); });
   connect(m_slider, &QSlider::valueChanged, this, &ZtoRigActionRow::onSlider);
+  connect(m_slider, &QSlider::sliderReleased, this,
+          [this]() { emit guideCommit(m_index); });
+  // The spin box (and the Rest/Full buttons that drive it) is a discrete edit:
+  // begin + change + commit in one, so it too gets a single undo.
   connect(m_spin,
           static_cast<void (QDoubleSpinBox::*)(double)>(
               &QDoubleSpinBox::valueChanged),
           this, &ZtoRigActionRow::onSpin);
-  connect(keyBt, &QPushButton::clicked, this,
-          [this]() { emit applyRequested(m_index); });
   connect(removeBt, &QPushButton::clicked, this,
           [this]() { emit removeRequested(m_index); });
   connect(m_modeButton, &QToolButton::toggled, this, [this](bool on) {
@@ -148,6 +147,7 @@ void ZtoRigActionRow::onSlider(int v) {
   m_updating = true;
   m_spin->setValue(v / 100.0);
   m_updating = false;
+  // Live during the drag (begin/commit come from sliderPressed/Released).
   emit guideChanged(m_index, v / 100.0);
 }
 
@@ -158,7 +158,11 @@ void ZtoRigActionRow::onSpin(double v) {
   m_updating = true;
   m_slider->setValue((int)(v * 100.0 + 0.5));
   m_updating = false;
+  // A spin edit / Rest / Full is one discrete change: bracket it so it becomes
+  // a single undo, like a slider gesture.
+  emit guideBegin(m_index);
   emit guideChanged(m_index, v);
+  emit guideCommit(m_index);
 }
 
 //=============================================================================
@@ -356,10 +360,28 @@ class UndoPoseKeyState final : public TUndo {
   PlasticSkeletonDeformationP m_sd;
   int m_col;
   PlasticSkeletonDeformation::PoseKeyState m_before, m_after;
+  // Optional column TRANSFORM key (Global scope Stage/All). m_xformFrame < 0
+  // means the gesture did not touch the transform.
+  int m_xformFrame;
+  bool m_beforeHad, m_afterHad;
+  TStageObject::Keyframe m_beforeKey, m_afterKey;
 
-  void apply(const PlasticSkeletonDeformation::PoseKeyState &st) const {
+  void restoreXform(bool had, const TStageObject::Keyframe &key) const {
+    if (m_xformFrame < 0 || !m_xshHandle || !m_xshHandle->getXsheet()) return;
+    TStageObject *o =
+        m_xshHandle->getXsheet()->getStageObject(TStageObjectId::ColumnId(m_col));
+    if (!o) return;
+    if (had)
+      o->setKeyframeWithoutUndo(m_xformFrame, key);
+    else
+      o->removeKeyframeWithoutUndo(m_xformFrame);
+  }
+
+  void apply(const PlasticSkeletonDeformation::PoseKeyState &st, bool xHad,
+             const TStageObject::Keyframe &xKey) const {
     if (!m_sd) return;
     m_sd->setPoseKeyState(st);
+    restoreXform(xHad, xKey);
     if (m_xshHandle && m_xshHandle->getXsheet()) {
       TXsheet *xsh = m_xshHandle->getXsheet();
       ztorigFlushPlacements(xsh, m_col);
@@ -373,17 +395,25 @@ public:
   UndoPoseKeyState(TXsheetHandle *xshHandle,
                    const PlasticSkeletonDeformationP &sd, int col,
                    const PlasticSkeletonDeformation::PoseKeyState &before,
-                   const PlasticSkeletonDeformation::PoseKeyState &after)
+                   const PlasticSkeletonDeformation::PoseKeyState &after,
+                   int xformFrame, bool beforeHad,
+                   const TStageObject::Keyframe &beforeKey, bool afterHad,
+                   const TStageObject::Keyframe &afterKey)
       : m_xshHandle(xshHandle)
       , m_sd(sd)
       , m_col(col)
       , m_before(before)
-      , m_after(after) {}
-  void undo() const override { apply(m_before); }
-  void redo() const override { apply(m_after); }
+      , m_after(after)
+      , m_xformFrame(xformFrame)
+      , m_beforeHad(beforeHad)
+      , m_afterHad(afterHad)
+      , m_beforeKey(beforeKey)
+      , m_afterKey(afterKey) {}
+  void undo() const override { apply(m_before, m_beforeHad, m_beforeKey); }
+  void redo() const override { apply(m_after, m_afterHad, m_afterKey); }
   int getSize() const override { return 256; }
   QString getHistoryString() override {
-    return QObject::tr("ZtoRig: Key Pose");
+    return QObject::tr("ZtoRig: Pose");
   }
 };
 
@@ -423,17 +453,19 @@ void ZtoRigPanel::rebuild() {
     const PoseAction *act = sd->poseAction(i);
     if (!act) continue;
 
-    const double v = act->m_guide ? act->m_guide->getValue(frame) : 0.0;
+    const double v = sd->poseStrengthAt(i, frame);
 
     auto *row = new ZtoRigActionRow(i, act->m_name, v, act->m_absolute, this);
+    connect(row, &ZtoRigActionRow::guideBegin, this,
+            &ZtoRigPanel::onGuideBegin);
     connect(row, &ZtoRigActionRow::guideChanged, this,
             &ZtoRigPanel::onGuideChanged);
+    connect(row, &ZtoRigActionRow::guideCommit, this,
+            &ZtoRigPanel::onGuideCommit);
     connect(row, &ZtoRigActionRow::removeRequested, this,
             &ZtoRigPanel::onRemove);
     connect(row, &ZtoRigActionRow::modeChanged, this,
             &ZtoRigPanel::onModeChanged);
-    connect(row, &ZtoRigActionRow::applyRequested, this,
-            &ZtoRigPanel::onApply);
 
     m_rowsLay->insertWidget(m_rowsLay->count() - 1, row);
     m_rows.push_back(row);
@@ -455,11 +487,8 @@ void ZtoRigPanel::refreshValues() {
   }
 
   const double frame = currentFrame();
-  for (ZtoRigActionRow *row : m_rows) {
-    const PoseAction *act = sd->poseAction(row->index());
-    if (!act || !act->m_guide) continue;
-    row->setValueSilently(act->m_guide->getValue(frame));
-  }
+  for (ZtoRigActionRow *row : m_rows)
+    row->setValueSilently(sd->poseStrengthAt(row->index(), frame));
 }
 
 //-----------------------------------------------------------------------------
@@ -472,27 +501,12 @@ void ZtoRigPanel::onFrameSwitched() {
     return;
   }
 
-  // The dial is a preview at THIS frame, not an animated channel: reset every
-  // guide to 0 on a frame change so a preview left over from another frame does
-  // not leak forward (the stamped plastic keys ARE the animation). "0" then
-  // means the current pose at the new frame, computed fresh.
-  bool changed = false;
-  for (int i = 0; i < sd->poseActionsCount(); ++i) {
-    PoseAction *act = sd->poseAction(i);
-    if (!act || !act->m_guide) continue;
-    if (act->m_guide->getKeyframeCount() > 0 ||
-        act->m_guide->getDefaultValue() != 0.0) {
-      act->m_guide->clearKeyframes();
-      act->m_guide->setDefaultValue(0.0);
-      changed = true;
-    }
-  }
-  for (ZtoRigActionRow *row : m_rows) row->setValueSilently(0.0);
-
-  if (changed) {
-    flushConnectedPlacements();  // also invalidates the mesh deformer
-    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
-  }
+  // The slider READS the pose strength off the keys at the new frame: 0 where
+  // the character is at rest for this action, 1 where it is fully in the pose.
+  // So it always shows where you are and can be dialled in or out.
+  const double frame = currentFrame();
+  for (ZtoRigActionRow *row : m_rows)
+    row->setValueSilently(sd->poseStrengthAt(row->index(), frame));
 }
 
 //-----------------------------------------------------------------------------
@@ -527,67 +541,86 @@ void ZtoRigPanel::onRecord() {
 
 //-----------------------------------------------------------------------------
 
-void ZtoRigPanel::onGuideChanged(int index, double value) {
+void ZtoRigPanel::onGuideBegin(int index) {
   const PlasticSkeletonDeformationP sd = currentDeformation();
   if (!sd) return;
 
-  PoseAction *act = sd->poseAction(index);
-  if (!act || !act->m_guide) return;
-
-  // Always key at the current frame — never setDefaultValue. A constant guide
-  // applies the pose to the WHOLE timeline, which silently reposes frames the
-  // artist already animated (the bug this replaces). Keyed, the dial lives on
-  // the timeline; combined with the before-first-key = 0 rule in the blend
-  // read, dialling here leaves earlier frames untouched.
-  act->m_guide->setValue(currentFrame(), value);
-
-  // Exclusive Pose group: dialling one absolute Pose zeroes the others (a full
-  // pose is a selection, not a layer). Offsets are independent and untouched.
-  if (act->m_absolute) {
-    const double f = currentFrame();
-    for (int i = 0; i < sd->poseActionsCount(); ++i) {
-      if (i == index) continue;
-      PoseAction *other = sd->poseAction(i);
-      if (!other || !other->m_absolute || !other->m_guide) continue;
-      other->m_guide->setValue(f, 0.0);
-      for (ZtoRigActionRow *row : m_rows)
-        if (row->index() == i) row->setValueSilently(0.0);
-    }
+  // Snapshot for one undo per gesture: the pose params + the column transform
+  // key at this frame (which the commit may add under Global Stage/All).
+  m_dragBefore   = sd->getPoseKeyState();
+  m_dragXformFrame   = (int)currentFrame();
+  m_dragXformHadKey  = false;
+  if (TStageObject *o = currentStageObject()) {
+    m_dragXformHadKey = o->isKeyframe(m_dragXformFrame);
+    if (m_dragXformHadKey) m_dragXformOldKey = o->getKeyframe(m_dragXformFrame);
   }
+  m_dragActive = true;
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoRigPanel::onGuideChanged(int index, double value) {
+  const PlasticSkeletonDeformationP sd = currentDeformation();
+  if (!sd) return;
+  if (!m_dragActive) onGuideBegin(index);  // safety if begin was missed
+
+  // The slider IS the animation: write the pose straight into plastic keys at
+  // the current frame, live. No hidden guide. A full Pose overwrites the shared
+  // params (so Poses are mutually exclusive by construction); an Offset only
+  // its own, so partial controllers stack.
+  TStageObject *obj = currentStageObject();
+  const double f    = obj ? obj->paramsTime(currentFrame()) : currentFrame();
+  sd->applyPoseStrength(index, value, f);
+  if (obj) obj->updateKeyframes();
 
   TApp::instance()->getCurrentScene()->setDirtyFlag(true);
-  flushConnectedPlacements();
+  flushConnectedPlacements();  // also invalidates the mesh deformer
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
 }
 
 //-----------------------------------------------------------------------------
 
-void ZtoRigPanel::onApply(int index) {
+void ZtoRigPanel::onGuideCommit(int index) {
   const PlasticSkeletonDeformationP sd = currentDeformation();
-  if (!sd) return;
-  if (!sd->poseAction(index)) return;
+  if (!sd || !m_dragActive) {
+    m_dragActive = false;
+    return;
+  }
+  m_dragActive = false;
 
-  TStageObject *obj = currentStageObject();
-  // Plastic keys live in the param-time domain, and only show in the xsheet
-  // after updateKeyframes() rebuilds the stage object's keyframe table — the
-  // two steps setPlasticPoseKeyframe does and this was missing ("non stampa la
-  // chiave").
-  const double f = obj ? obj->paramsTime(currentFrame()) : currentFrame();
+  // Respect the Plastic tool's Global Key scope: with All (or Stage) a pose
+  // also drops a TRANSFORM key on the column, exactly like posing by hand.
+  const int scope    = Preferences::instance()->getIntValue(GlobalKeyScope);
+  bool afterHad      = m_dragXformHadKey;
+  TStageObject::Keyframe afterKey = m_dragXformOldKey;
+  int xformFrame     = -1;
+  TStageObject *obj  = currentStageObject();
+  if (obj && scope != 1 /* Stage or All */) {
+    xformFrame = (int)currentFrame();
+    obj->setKeyframeWithoutUndo(xformFrame);
+    obj->updateKeyframes();
+    afterHad = true;
+    afterKey = obj->getKeyframe(xformFrame);
+  }
 
-  PlasticSkeletonDeformation::PoseKeyState before = sd->getPoseKeyState();
-  sd->applyPoseAction(index, f);
-  if (obj) obj->updateKeyframes();
   PlasticSkeletonDeformation::PoseKeyState after = sd->getPoseKeyState();
-
   TUndoManager::manager()->add(new UndoPoseKeyState(
       TApp::instance()->getCurrentXsheet(), sd,
-      TApp::instance()->getCurrentColumn()->getColumnIndex(), before, after));
+      TApp::instance()->getCurrentColumn()->getColumnIndex(), m_dragBefore,
+      after, xformFrame, m_dragXformHadKey, m_dragXformOldKey, afterHad,
+      afterKey));
 
-  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
-  flushConnectedPlacements();
+  // The move can have changed how much of the OTHER actions reads as applied
+  // (overlapping params): refresh every slider from the keys.
+  const double frame = currentFrame();
+  for (ZtoRigActionRow *row : m_rows)
+    row->setValueSilently(sd->poseStrengthAt(row->index(), frame));
+
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
-  rebuild();  // the dial reset to 0
 }
+
+//-----------------------------------------------------------------------------
+
 
 //-----------------------------------------------------------------------------
 
