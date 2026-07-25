@@ -1942,8 +1942,94 @@ void PlasticTool::setRestKey_undo() { keyFunc_undo(&PlasticTool::setRestKey); }
 
 //------------------------------------------------------------------------
 
+//------------------------------------------------------------------------
+// ZtoRig: "rest" must mean rest of the WHOLE rig, so Set Global Rest Key also
+// zeroes the pose-action dials. The stage-param reset already has its own undo
+// (AnimateValuesUndo); the dials need their own, or Undo would restore the
+// skeleton but leave the dials at 0. Snapshot each guide's full keyframe list
+// so undo/redo is exact.
+
+namespace {
+
+struct GuideState {
+  std::vector<TDoubleKeyframe> m_keys;
+  double m_def = 0.0;
+};
+
+std::vector<GuideState> ztorigCaptureGuides(
+    const PlasticSkeletonDeformationP &sd) {
+  std::vector<GuideState> out;
+  const int n = sd->poseActionsCount();
+  out.reserve(n);
+  for (int i = 0; i < n; ++i) {
+    GuideState gs;
+    PoseAction *act = sd->poseAction(i);
+    if (act && act->m_guide) {
+      TDoubleParam *g    = act->m_guide.getPointer();
+      const int keyCount = g->getKeyframeCount();
+      for (int k = 0; k < keyCount; ++k) gs.m_keys.push_back(g->getKeyframe(k));
+      gs.m_def = g->getDefaultValue();
+    }
+    out.push_back(gs);
+  }
+  return out;
+}
+
+void ztorigRestoreGuides(const PlasticSkeletonDeformationP &sd,
+                         const std::vector<GuideState> &states) {
+  const int n = sd->poseActionsCount();
+  for (int i = 0; i < n && i < (int)states.size(); ++i) {
+    PoseAction *act = sd->poseAction(i);
+    if (!act || !act->m_guide) continue;
+    TDoubleParam *g = act->m_guide.getPointer();
+    g->clearKeyframes();
+    for (const TDoubleKeyframe &k : states[i].m_keys) g->setKeyframe(k);
+    g->setDefaultValue(states[i].m_def);
+  }
+  if (TTool::getApplication() && TTool::getApplication()->getCurrentXsheet())
+    TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+}
+
+class UndoRestGuides final : public TUndo {
+  PlasticSkeletonDeformationP m_sd;
+  std::vector<GuideState> m_before, m_after;
+
+public:
+  UndoRestGuides(const PlasticSkeletonDeformationP &sd,
+                 const std::vector<GuideState> &before,
+                 const std::vector<GuideState> &after)
+      : m_sd(sd), m_before(before), m_after(after) {}
+  void undo() const override { ztorigRestoreGuides(m_sd, m_before); }
+  void redo() const override { ztorigRestoreGuides(m_sd, m_after); }
+  int getSize() const override { return 128; }
+  QString getHistoryString() override {
+    return QObject::tr("Set Global Rest Key");
+  }
+};
+
+}  // namespace
+
 void PlasticTool::setGlobalRestKey_undo() {
-  keyFunc_undo(&PlasticTool::setGlobalRestKey);
+  TUndoManager *manager = TUndoManager::manager();
+  manager->beginBlock();
+
+  keyFunc_undo(&PlasticTool::setGlobalRestKey);  // stage params (existing undo)
+
+  // Then zero the ZtoRig pose-action dials, in the same undo block.
+  if (m_sd && m_sd->poseActionsCount() > 0) {
+    std::vector<GuideState> before = ztorigCaptureGuides(m_sd);
+    const double f                 = ::frame();
+    for (int i = 0; i < m_sd->poseActionsCount(); ++i) {
+      PoseAction *act = m_sd->poseAction(i);
+      if (act && act->m_guide) act->m_guide->setValue(f, 0.0);
+    }
+    std::vector<GuideState> after = ztorigCaptureGuides(m_sd);
+    manager->add(new UndoRestGuides(m_sd, before, after));
+    if (TTool::getApplication() && TTool::getApplication()->getCurrentXsheet())
+      TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+
+  manager->endBlock();
 }
 
 //------------------------------------------------------------------------
