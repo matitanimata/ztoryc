@@ -12,6 +12,9 @@
 - **Stamping**: applicare una posa scrive **chiavi plastic vere** nell'xsheet (non piu'
   un dial nascosto). Mancavano `paramsTime()` + `updateKeyframes()` perche' il diamante
   comparisse.
+- **Esclusivita' completa**: una Posa ripristina TUTTO lo scheletro (i param che non
+  muove scrivono il riposo), cosi' alternando due pose ognuna riporta il personaggio
+  esattamente nella sua — verificato da Franco (`98e99b3bc`).
 - **Slider auto-keying (rework finale)**: muovere lo slider scrive le chiavi in diretta,
   `0 = rest`, `1 = posa`, e al cambio frame LEGGE la forza dalle chiavi (`poseStrengthAt`)
   → dialabile in entrambe le direzioni (entra/esce dalla posa). Undo per gesto
