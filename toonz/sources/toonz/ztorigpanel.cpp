@@ -96,6 +96,14 @@ ZtoRigActionRow::ZtoRigActionRow(int index, const QString &name, double value,
   fullBt->setToolTip(tr("Set this dial to 1 (full pose)."));
   lay->addWidget(fullBt);
 
+  auto *keyBt = new QPushButton(tr("Key"), this);
+  keyBt->setFixedWidth(40);
+  keyBt->setToolTip(
+      tr("Stamp this pose into plastic keys at the current frame.\n"
+         "The pose becomes real keyframes the xsheet interpolates from the\n"
+         "previous key; the dial resets."));
+  lay->addWidget(keyBt);
+
   auto *removeBt = new QPushButton(tr("×"), this);
   removeBt->setFixedWidth(24);
   removeBt->setToolTip(tr("Remove this action"));
@@ -112,6 +120,8 @@ ZtoRigActionRow::ZtoRigActionRow(int index, const QString &name, double value,
           static_cast<void (QDoubleSpinBox::*)(double)>(
               &QDoubleSpinBox::valueChanged),
           this, &ZtoRigActionRow::onSpin);
+  connect(keyBt, &QPushButton::clicked, this,
+          [this]() { emit applyRequested(m_index); });
   connect(removeBt, &QPushButton::clicked, this,
           [this]() { emit removeRequested(m_index); });
   connect(m_modeButton, &QToolButton::toggled, this, [this](bool on) {
@@ -318,6 +328,41 @@ public:
   QString getHistoryString() override { return m_label; }
 };
 
+// Undo for stamping a pose into plastic keys: swap the whole pose-key snapshot
+// (param keyframes + guide curves). Covers the exclusive zeroing of the other
+// dials too, since those live in the same snapshot.
+class UndoPoseKeyState final : public TUndo {
+  TXsheetHandle *m_xshHandle;
+  PlasticSkeletonDeformationP m_sd;
+  int m_col;
+  PlasticSkeletonDeformation::PoseKeyState m_before, m_after;
+
+  void apply(const PlasticSkeletonDeformation::PoseKeyState &st) const {
+    if (!m_sd) return;
+    m_sd->setPoseKeyState(st);
+    if (m_xshHandle && m_xshHandle->getXsheet())
+      ztorigFlushPlacements(m_xshHandle->getXsheet(), m_col);
+    if (m_xshHandle) m_xshHandle->notifyXsheetChanged();
+  }
+
+public:
+  UndoPoseKeyState(TXsheetHandle *xshHandle,
+                   const PlasticSkeletonDeformationP &sd, int col,
+                   const PlasticSkeletonDeformation::PoseKeyState &before,
+                   const PlasticSkeletonDeformation::PoseKeyState &after)
+      : m_xshHandle(xshHandle)
+      , m_sd(sd)
+      , m_col(col)
+      , m_before(before)
+      , m_after(after) {}
+  void undo() const override { apply(m_before); }
+  void redo() const override { apply(m_after); }
+  int getSize() const override { return 256; }
+  QString getHistoryString() override {
+    return QObject::tr("ZtoRig: Key Pose");
+  }
+};
+
 }  // namespace
 
 //-----------------------------------------------------------------------------
@@ -363,6 +408,8 @@ void ZtoRigPanel::rebuild() {
             &ZtoRigPanel::onRemove);
     connect(row, &ZtoRigActionRow::modeChanged, this,
             &ZtoRigPanel::onModeChanged);
+    connect(row, &ZtoRigActionRow::applyRequested, this,
+            &ZtoRigPanel::onApply);
 
     m_rowsLay->insertWidget(m_rowsLay->count() - 1, row);
     m_rows.push_back(row);
@@ -437,9 +484,44 @@ void ZtoRigPanel::onGuideChanged(int index, double value) {
   // read, dialling here leaves earlier frames untouched.
   act->m_guide->setValue(currentFrame(), value);
 
+  // Exclusive Pose group: dialling one absolute Pose zeroes the others (a full
+  // pose is a selection, not a layer). Offsets are independent and untouched.
+  if (act->m_absolute) {
+    const double f = currentFrame();
+    for (int i = 0; i < sd->poseActionsCount(); ++i) {
+      if (i == index) continue;
+      PoseAction *other = sd->poseAction(i);
+      if (!other || !other->m_absolute || !other->m_guide) continue;
+      other->m_guide->setValue(f, 0.0);
+      for (ZtoRigActionRow *row : m_rows)
+        if (row->index() == i) row->setValueSilently(0.0);
+    }
+  }
+
   TApp::instance()->getCurrentScene()->setDirtyFlag(true);
   flushConnectedPlacements();
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoRigPanel::onApply(int index) {
+  const PlasticSkeletonDeformationP sd = currentDeformation();
+  if (!sd) return;
+  if (!sd->poseAction(index)) return;
+
+  PlasticSkeletonDeformation::PoseKeyState before = sd->getPoseKeyState();
+  sd->applyPoseAction(index, currentFrame());
+  PlasticSkeletonDeformation::PoseKeyState after = sd->getPoseKeyState();
+
+  TUndoManager::manager()->add(new UndoPoseKeyState(
+      TApp::instance()->getCurrentXsheet(), sd,
+      TApp::instance()->getCurrentColumn()->getColumnIndex(), before, after));
+
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  flushConnectedPlacements();
+  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  rebuild();  // the dial reset to 0
 }
 
 //-----------------------------------------------------------------------------

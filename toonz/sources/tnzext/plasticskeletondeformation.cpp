@@ -2039,6 +2039,112 @@ void PlasticSkeletonDeformation::setPoseActions(
 }
 
 //------------------------------------------------------------------
+
+PlasticSkeletonDeformation::PoseKeyState
+PlasticSkeletonDeformation::getPoseKeyState() const {
+  PoseKeyState st;
+  SkVDSet::iterator vdt, vdEnd(m_imp->m_vds.end());
+  for (vdt = m_imp->m_vds.begin(); vdt != vdEnd; ++vdt) {
+    std::map<int, std::vector<TDoubleKeyframe>> byParam;
+    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
+      const int p = SkVD::POSE_PARAMS[i];
+      TDoubleParam *pp = vdt->m_vd.m_params[p].getPointer();
+      if (!pp) continue;
+      std::vector<TDoubleKeyframe> keys;
+      const int kc = pp->getKeyframeCount();
+      for (int k = 0; k < kc; ++k) keys.push_back(pp->getKeyframe(k));
+      byParam[p] = keys;
+    }
+    st.m_paramKeys[vdt->m_name] = byParam;
+  }
+  for (size_t a = 0; a < m_imp->m_poseActions.size(); ++a) {
+    std::vector<TDoubleKeyframe> keys;
+    double def = 0.0;
+    if (m_imp->m_poseActions[a].m_guide) {
+      TDoubleParam *g = m_imp->m_poseActions[a].m_guide.getPointer();
+      const int kc    = g->getKeyframeCount();
+      for (int k = 0; k < kc; ++k) keys.push_back(g->getKeyframe(k));
+      def = g->getDefaultValue();
+    }
+    st.m_guides.push_back(std::make_pair(keys, def));
+  }
+  return st;
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::setPoseKeyState(const PoseKeyState &s) {
+  for (std::map<QString, std::map<int, std::vector<TDoubleKeyframe>>>::
+           const_iterator vt = s.m_paramKeys.begin();
+       vt != s.m_paramKeys.end(); ++vt) {
+    SkVDSet::iterator it = m_imp->m_vds.find(vt->first);
+    if (it == m_imp->m_vds.end()) continue;
+    for (std::map<int, std::vector<TDoubleKeyframe>>::const_iterator pt =
+             vt->second.begin();
+         pt != vt->second.end(); ++pt) {
+      TDoubleParam *pp = it->m_vd.m_params[pt->first].getPointer();
+      if (!pp) continue;
+      pp->clearKeyframes();
+      for (const TDoubleKeyframe &k : pt->second) pp->setKeyframe(k);
+    }
+  }
+  for (size_t a = 0; a < s.m_guides.size() && a < m_imp->m_poseActions.size();
+       ++a) {
+    if (!m_imp->m_poseActions[a].m_guide) continue;
+    TDoubleParam *g = m_imp->m_poseActions[a].m_guide.getPointer();
+    g->clearKeyframes();
+    for (const TDoubleKeyframe &k : s.m_guides[a].first) g->setKeyframe(k);
+    g->setDefaultValue(s.m_guides[a].second);
+  }
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::applyPoseAction(int idx, double frame) {
+  PoseAction *act = poseAction(idx);
+  if (!act) return;
+
+  // Collect the on-screen (base + blend) value of every param the pose covers
+  // BEFORE writing anything, so setting one key can't perturb the next read.
+  struct Target {
+    QString m_v;
+    int m_param;
+    double m_value;
+  };
+  std::vector<Target> targets;
+
+  auto collect = [&](const QString &vname, SkVD &vd) {
+    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
+      const int p = SkVD::POSE_PARAMS[i];
+      if (!vd.m_params[p]) continue;
+      if (!act->m_absolute && act->delta(vname, p) == 0.0)
+        continue;  // Offset stamps only the params it moved
+      const double base = vd.m_params[p]->getValue(frame);
+      const double eff  = base + m_imp->poseBlendOffset(vname, p, frame);
+      targets.push_back({vname, p, eff});
+    }
+  };
+
+  SkVDSet::iterator vdt, vdEnd(m_imp->m_vds.end());
+  for (vdt = m_imp->m_vds.begin(); vdt != vdEnd; ++vdt)
+    collect(vdt->m_name, vdt->m_vd);
+
+  // Write the keys.
+  for (const Target &t : targets) {
+    SkVDSet::iterator it = m_imp->m_vds.find(t.m_v);
+    if (it != m_imp->m_vds.end() && it->m_vd.m_params[t.m_param])
+      it->m_vd.m_params[t.m_param]->setValue(frame, t.m_value);
+  }
+
+  // The pose now lives in the keys: clear the dial so the blend does not
+  // double-apply on top of them.
+  if (act->m_guide) {
+    act->m_guide->clearKeyframes();
+    act->m_guide->setDefaultValue(0.0);
+  }
+}
+
+//------------------------------------------------------------------
 //    Mesh correctives
 //------------------------------------------------------------------
 

@@ -45,6 +45,8 @@ signals:
   void removeRequested(int index);
   //! Absolute (pose) <-> additive (offset) toggled for this action.
   void modeChanged(int index, bool absolute);
+  //! "Key" pressed: stamp this pose into plastic keys at the current frame.
+  void applyRequested(int index);
 
 private slots:
   void onSlider(int v);
@@ -71,6 +73,7 @@ private slots:
   void onRecord();
   void onGuideChanged(int index, double value);
   void onModeChanged(int index, bool absolute);
+  void onApply(int index);
   void onRemove(int index);
   //! Rebuild the rows from the current column (column/scene changed).
   void rebuild();

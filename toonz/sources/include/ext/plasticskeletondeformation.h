@@ -628,6 +628,26 @@ public:
   std::vector<PoseAction> getPoseActions() const;
   void setPoseActions(const std::vector<PoseAction> &actions);
 
+  //! Snapshot of everything a stamp touches: the pose-param KEYFRAMES of every
+  //! vertex, plus every action's guide curve. One blob so applying a pose (and
+  //! the exclusive zeroing of the other pose dials) is a single undo step.
+  struct PoseKeyState {
+    // vertexName -> pose param enum -> its keyframes
+    std::map<QString, std::map<int, std::vector<TDoubleKeyframe>>> m_paramKeys;
+    // per action (same order as getPoseActions): guide keyframes + default
+    std::vector<std::pair<std::vector<TDoubleKeyframe>, double>> m_guides;
+  };
+  PoseKeyState getPoseKeyState() const;
+  void setPoseKeyState(const PoseKeyState &s);
+
+  //! Stamp the action's pose into PLASTIC KEYS at \p frame: writes, per param,
+  //! the value currently on screen (base + blend), so what you previewed with
+  //! the dial becomes real keyframes the xsheet interpolates from the previous
+  //! key. Then clears the action's guide (the pose now lives in the keys, not a
+  //! live layer). An absolute Pose stamps the WHOLE skeleton; an Offset only
+  //! the params it touched (so partial controllers stay partial).
+  void applyPoseAction(int idx, double frame);
+
   //! Sum of every active action's contribution to \p param on \p vertexName
   //! at \p frame — the "blend" term alone, WITHOUT the authored base value.
   /*!
