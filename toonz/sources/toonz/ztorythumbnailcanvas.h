@@ -66,6 +66,29 @@ public:
   void setSizeModifier(double logMod);      // brush size (log2 units)
   void addRow();                            // grow the grid by one row
 
+  // Paper-import blit (task 63): drop each imported cell (an upright, top-down
+  // QImage) into its grid box, as ONE undoable edit, growing the grid to at
+  // least minRows first so a following printed page has empty rows to land in.
+  struct ImportedBlit {
+    int row = 0;
+    int col = 0;
+    QImage image;
+  };
+  void applyImportedCells(const std::vector<ImportedBlit> &cells, int minRows);
+  // Last grid row holding any ink, or -1 when the canvas is blank. Paper import
+  // appends after it, so scanning order — not the sheet's printed page number —
+  // decides where a sheet lands (blank sheets are meant to be photocopied, so
+  // every copy carries the same page code).
+  int lastNonEmptyRow() const;
+  // Scroll (and zoom out if needed) so `row` is on screen. Imported sheets land
+  // BELOW whatever is already drawn, which on a tall grid is off-screen — with
+  // no view change the import looks like it did nothing.
+  void revealRow(int row);
+  // The whole contiguous surface as a top-down QImage (world orientation).
+  // Used to print the drawn thumbnails; panoramas stay seamless because the
+  // printed grid is contiguous too.
+  QImage canvasImage() const;
+
   // --- Panel selection (for export-to-board) -------------------------------
   // In Select mode a left click toggles a panel's membership in the ordered
   // selection (click order == export order); drawing is suspended.

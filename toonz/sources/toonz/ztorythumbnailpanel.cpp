@@ -6,7 +6,9 @@
 #include "toonz/mypaintbrushstyle.h"  // getBrushesDirs()
 
 #include "ztorymodel.h"    // addShotFromRasters
-#include "ztoryshotops.h"  // cameraRes
+#include "ztoryshotops.h"  // cameraRes, cameraAspect
+#include "ztorypapersheet.h"     // printSheet / importSheet (paper import)
+#include "ztorypapercapture.h"   // webcam capture dialog
 #include "tapp.h"
 #include "toonz/tscenehandle.h"
 #include "toonz/toonzscene.h"
@@ -17,6 +19,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QToolButton>
+#include <QMenu>
 #include <QButtonGroup>
 #include <QSlider>
 #include <QSpinBox>
@@ -32,6 +35,7 @@
 #include <QColorDialog>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QDir>
 
 #include <algorithm>
 
@@ -330,6 +334,41 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   connect(addRow, &QToolButton::clicked, this, [this] { m_canvas->addRow(); });
   m_brushBarLay->addWidget(addRow);
 
+  auto *printSep = new QFrame(bar);
+  printSep->setFrameShape(QFrame::VLine);
+  printSep->setFrameShadow(QFrame::Sunken);
+  m_brushBarLay->addWidget(printSep);
+
+  auto *printBtn = new QToolButton(bar);
+  printBtn->setIcon(createQIcon("printer"));
+  printBtn->setToolTip(tr("Print the grid as an A4 PDF"));
+  printBtn->setPopupMode(QToolButton::InstantPopup);
+  auto *printMenu = new QMenu(printBtn);
+  printMenu->addAction(
+      tr("Blank sheet to draw on…"), this, [this] { printPaperSheet(false); });
+  printMenu->addAction(
+      tr("Sheet with the current thumbnails…"), this,
+      [this] { printPaperSheet(true); });
+  printBtn->setMenu(printMenu);
+  m_brushBarLay->addWidget(printBtn);
+
+  auto *importBtn = new QToolButton(bar);
+  importBtn->setIcon(createQIcon("import"));
+  importBtn->setToolTip(
+      tr("Import a photo/scan of a printed sheet: de-warp, crop and drop the\n"
+         "hand-drawn panels back into the grid"));
+  connect(importBtn, &QToolButton::clicked, this,
+          [this] { importPaperSheetFromFile(); });
+  m_brushBarLay->addWidget(importBtn);
+
+  auto *camBtn = new QToolButton(bar);
+  camBtn->setIcon(createQIcon("camera"));
+  camBtn->setToolTip(
+      tr("Shoot the printed sheet with a webcam or capture card and import it"));
+  connect(camBtn, &QToolButton::clicked, this,
+          [this] { importPaperSheetFromCamera(); });
+  m_brushBarLay->addWidget(camBtn);
+
   root->addWidget(bar);
   root->addWidget(m_canvas, /*stretch=*/1);
 
@@ -424,6 +463,160 @@ void ZtoryThumbnailPanel::exportSelectionToBoard() {
   m_canvas->clearSelection();
   DVGui::info(tr("Exported %1 panel(s) to the Board as one shot.")
                   .arg((int)frames.size()));
+}
+
+void ZtoryThumbnailPanel::printPaperSheet(bool withContent) {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+
+  ZtoryPaperSheet::SheetParams p;
+  p.gridCols     = m_canvas->gridCols();
+  p.gridRows     = m_canvas->gridRows();
+  p.cameraAspect = ZtoryShotOps::cameraAspect(scene);
+  if (withContent) p.content = m_canvas->canvasImage();
+
+  // Default filename + folder from the scene path (mirrors the Board PDF export).
+  QString sceneName = "storyboard", dir;
+  if (scene) {
+    TFilePath sp = scene->getScenePath();
+    QString wn   = QString::fromStdWString(sp.getWideName());
+    if (!wn.isEmpty()) sceneName = wn;
+    dir = QString::fromStdWString(sp.getParentDir().getWideString());
+  }
+  p.sceneName = sceneName;
+
+  const QString defaultPath = (dir.isEmpty() ? QDir::homePath() : dir) + "/" +
+                              sceneName +
+                              (withContent ? "_thumbs.pdf" : "_sheet.pdf");
+  QString path = QFileDialog::getSaveFileName(
+      this, tr("Print Thumbnail Sheet"), defaultPath, tr("PDF (*.pdf)"));
+  if (path.isEmpty()) return;
+
+  if (ZtoryPaperSheet::printSheet(path, p))
+    DVGui::info(tr("Printed thumbnail sheet: %1").arg(path));
+  else
+    DVGui::warning(tr("Could not write the PDF: %1").arg(path));
+}
+
+int ZtoryThumbnailPanel::importOneSheet(const QImage &photo,
+                                        const QString &label,
+                                        QStringList &failed, int &faint) {
+  ZtoryPaperSheet::ImportResult r = ZtoryPaperSheet::importSheet(photo);
+  if (!r.ok) {
+    failed << QString("%1: %2").arg(label, r.error);
+    return 0;
+  }
+  // Columns are never split across pages, so the sheet must have been printed
+  // for this room's grid width. Rows, instead, simply grow.
+  if (r.gridCols != m_canvas->gridCols()) {
+    failed << tr("%1: printed for a %2-column grid, the room has %3")
+                  .arg(label)
+                  .arg(r.gridCols)
+                  .arg(m_canvas->gridCols());
+    return 0;
+  }
+
+  // Placement is by CAPTURE / SCANNING ORDER, not by the page number printed on
+  // the sheet: blank sheets are meant to be photocopied, so every copy carries
+  // the same page code. Each sheet lands on the rows after whatever is drawn.
+  const int baseRow = m_canvas->lastNonEmptyRow() + 1;
+
+  std::vector<ZtoryThumbnailCanvas::ImportedBlit> blits;
+  int maxRow = -1, rowsOnSheet = 0;
+  for (const ZtoryPaperSheet::ImportedCell &c : r.cells) {
+    rowsOnSheet = std::max(rowsOnSheet, c.gridRow - r.startRow + 1);
+    if (c.faint) ++faint;
+    if (c.empty) continue;  // blank cells never overwrite what is there
+    const int row = baseRow + (c.gridRow - r.startRow);
+    blits.push_back({row, c.gridCol, c.image});
+    maxRow = std::max(maxRow, row);
+  }
+  if (blits.empty()) {
+    failed << tr("%1: no hand-drawn panels found").arg(label);
+    return 0;
+  }
+
+  // Keep one sheet's worth of empty rows ready for the next page.
+  const int ensureRows = maxRow + 1 + std::max(1, rowsOnSheet);
+  m_canvas->applyImportedCells(blits, ensureRows);
+  // Scroll to what was just imported: on a grid that already had drawings the
+  // new sheet lands below the fold, and the import would look like a no-op.
+  m_canvas->revealRow(baseRow);
+  return (int)blits.size();
+}
+
+void ZtoryThumbnailPanel::importPaperSheetFromFile() {
+  // Several sheets at once: they are imported in the order picked, which is the
+  // order they land in the grid.
+  QStringList paths = QFileDialog::getOpenFileNames(
+      this, tr("Import Sheet Photos"), QDir::homePath(),
+      tr("Images (*.jpg *.jpeg *.png *.bmp *.tif *.tiff)"));
+  if (paths.isEmpty()) return;
+  paths.sort();  // scanner output is usually numbered — keep that order
+
+  int totalPanels = 0, totalSheets = 0, totalFaint = 0;
+  QStringList failed;
+  for (const QString &path : paths) {
+    QImage photo(path);
+    const QString label = QFileInfo(path).fileName();
+    if (photo.isNull()) {
+      failed << tr("%1: not a readable image").arg(label);
+      continue;
+    }
+    const int n = importOneSheet(photo, label, failed, totalFaint);
+    if (n > 0) {
+      totalPanels += n;
+      ++totalSheets;
+    }
+  }
+
+  if (totalSheets > 0) {
+    QString msg = tr("Imported %1 sheet(s), %2 panel(s).")
+                      .arg(totalSheets)
+                      .arg(totalPanels);
+    if (totalFaint > 0)
+      msg += "\n" + tr("%1 panel(s) were skipped as blank but do carry very "
+                       "light marks — draw them darker and shoot again.")
+                        .arg(totalFaint);
+    DVGui::info(msg);
+  }
+  if (!failed.isEmpty())
+    DVGui::warning(tr("Not imported:\n%1").arg(failed.join("\n")));
+}
+
+void ZtoryThumbnailPanel::importPaperSheetFromCamera() {
+  ZtoryPaperCaptureDialog dlg(this);
+  if (dlg.exec() != QDialog::Accepted) return;
+
+  const QList<QImage> shots = dlg.captured();
+  if (shots.isEmpty()) {
+    DVGui::info(tr("No sheet was captured: press “Capture sheet” while the "
+                   "outline is green, then import."));
+    return;
+  }
+
+  int totalPanels = 0, totalSheets = 0, totalFaint = 0;
+  QStringList failed;
+  for (int i = 0; i < shots.size(); ++i) {
+    const int n = importOneSheet(shots.at(i), tr("Capture %1").arg(i + 1),
+                                 failed, totalFaint);
+    if (n > 0) {
+      totalPanels += n;
+      ++totalSheets;
+    }
+  }
+
+  if (totalSheets > 0) {
+    QString msg = tr("Imported %1 sheet(s), %2 panel(s).")
+                      .arg(totalSheets)
+                      .arg(totalPanels);
+    if (totalFaint > 0)
+      msg += "\n" + tr("%1 panel(s) were skipped as blank but do carry very "
+                       "light marks — draw them darker and shoot again.")
+                        .arg(totalFaint);
+    DVGui::info(msg);
+  }
+  if (!failed.isEmpty())
+    DVGui::warning(tr("Not imported:\n%1").arg(failed.join("\n")));
 }
 
 //=============================================================================

@@ -163,6 +163,92 @@ void ZtoryThumbnailCanvas::addRow() {
   schedulePersistSave();
 }
 
+void ZtoryThumbnailCanvas::applyImportedCells(
+    const std::vector<ImportedBlit> &cells, int minRows) {
+  if (!m_ras) return;
+  pushUndo();
+
+  // Grow the grid (rows are added at the world bottom; existing content keeps
+  // its world Y, exactly like addRow()) so the next page has room to land.
+  if (minRows > m_rows) {
+    const int oldH   = m_ras->getLy();
+    m_rows           = minRows;
+    const int newH   = (int)gridH();
+    const int addedH = newH - oldH;
+    TRaster32P nr((int)gridW(), newH);
+    nr->fill(TPixel32::White);
+    nr->copy(m_ras, TPoint(0, addedH));
+    m_ras = nr;
+  }
+
+  const int lx = m_ras->getLx(), ly = m_ras->getLy();
+  m_ras->lock();
+  for (const ImportedBlit &b : cells) {
+    if (b.image.isNull() || b.col < 0 || b.col >= m_cols || b.row < 0 ||
+        b.row >= m_rows)
+      continue;
+    const int x0 = qBound(0, (int)(b.col * m_boxW), lx);
+    const int x1 = qBound(0, (int)((b.col + 1) * m_boxW), lx);
+    // World y is top-down, the raster is bottom-up: flip when placing rows.
+    const int ry0 = qBound(0, (int)(ly - (b.row + 1) * m_boxH), ly);
+    const int ry1 = qBound(0, (int)(ly - b.row * m_boxH), ly);
+    const int dw = x1 - x0, dh = ry1 - ry0;
+    if (dw < 2 || dh < 2) continue;
+
+    // Smooth-scale to the box, then copy with a vertical flip: the QImage's top
+    // row (j = 0) goes to the box's top, which is the HIGHEST raster row.
+    const QImage s = b.image
+                         .scaled(dw, dh, Qt::IgnoreAspectRatio,
+                                 Qt::SmoothTransformation)
+                         .convertToFormat(QImage::Format_RGB888);
+    for (int j = 0; j < dh; ++j) {
+      const int rr = ry1 - 1 - j;
+      if (rr < 0 || rr >= ly) continue;
+      TPixel32 *drow      = m_ras->pixels(rr);
+      const uchar *srow   = s.scanLine(j);
+      for (int i = 0; i < dw; ++i) {
+        const uchar *px = srow + i * 3;
+        drow[x0 + i]    = TPixel32(px[0], px[1], px[2], 255);
+      }
+    }
+  }
+  m_ras->unlock();
+  updateScrollBars();
+  update();
+  schedulePersistSave();
+}
+
+int ZtoryThumbnailCanvas::lastNonEmptyRow() const {
+  for (int r = m_rows - 1; r >= 0; --r)
+    for (int c = 0; c < m_cols; ++c)
+      if (!isPanelEmpty(r * m_cols + c)) return r;
+  return -1;
+}
+
+void ZtoryThumbnailCanvas::revealRow(int row) {
+  if (row < 0 || m_rows <= 0) return;
+  row = qBound(0, row, m_rows - 1);
+
+  // Fit the grid width, so a freshly imported sheet is shown whole rather than
+  // zoomed into one panel.
+  const double margin = 28.0;
+  if (gridW() > 0.0)
+    m_zoom = qBound(0.05, (width() - 2 * margin) / gridW(), 4.0);
+
+  const double rowTop = row * m_boxH * m_zoom;
+  m_pan.setX(margin);
+  m_pan.setY(margin - rowTop);
+  updateScrollBars();
+  update();
+}
+
+QImage ZtoryThumbnailCanvas::canvasImage() const {
+  if (!m_ras) return QImage();
+  // Same conversion the per-scene autosave uses, so orientation matches the
+  // world (top-down) rather than the bottom-up raster.
+  return rasterToQImage(m_ras, /*premultiplied=*/false).copy();
+}
+
 void ZtoryThumbnailCanvas::onSceneChanged() {
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   if (!scene) return;

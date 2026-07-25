@@ -116,6 +116,8 @@ set(MOC_HEADERS
     ztorymonitorpanel.h
     ztorythumbnailpanel.h
     ztorythumbnailcanvas.h
+    ztorypapersheet.h
+    ztorypapercapture.h
     ztoryscriptpanel.h
     ztorystartup.h
     trackerpopup.h
@@ -258,6 +260,8 @@ set(SOURCES
     ztorymonitorpanel.cpp
     ztorythumbnailpanel.cpp
     ztorythumbnailcanvas.cpp
+    ztorypapersheet.cpp
+    ztorypapercapture.cpp
     ztoryscriptpanel.cpp
     ztorystartup.cpp
     xshcellmover.cpp
