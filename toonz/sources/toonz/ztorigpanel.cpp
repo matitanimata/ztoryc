@@ -12,6 +12,18 @@
 #include "toonz/tscenehandle.h"
 #include "toonz/tstageobjectid.h"
 #include "toonz/tstageobjecttree.h"
+#include "toonz/txshlevel.h"
+#include "toonz/txshleveltypes.h"
+#include "toonz/txshcell.h"
+#include "tvectorimage.h"
+#include "tstroke.h"
+#include "toonz/txshlevelhandle.h"
+#include "toonz/txshsimplelevel.h"
+#include "toonz/imagemanager.h"
+#include "tools/toolhandle.h"
+#include "tools/tool.h"
+#include "toonzqt/icongenerator.h"
+#include "tinbetween.h"
 
 #include "ext/plasticskeletondeformation.h"
 #include "ext/plasticdeformerstorage.h"
@@ -20,6 +32,7 @@
 
 #include <QDoubleSpinBox>
 #include <QFrame>
+#include <QDebug>
 #include <QLineEdit>
 #include <QDialogButtonBox>
 #include <QDialog>
@@ -379,6 +392,43 @@ ZtoRigPanel::ZtoRigPanel(QWidget *parent) : TPanel(parent) {
       tr("Store the pose authored at the current frame as a new action.\n"
          "Nothing changes on screen: the new dial starts at 0."));
   lay->addWidget(m_recordBt);
+
+  // ---- Vector pose, FIRST TEST ----
+  {
+    auto *vecBox = new QWidget(root);
+    auto *vl     = new QHBoxLayout(vecBox);
+    vl->setContentsMargins(0, 2, 0, 2);
+    vl->setSpacing(4);
+
+    auto *aBt = new QPushButton(tr("Vec A"), vecBox);
+    auto *bBt = new QPushButton(tr("Vec B"), vecBox);
+    aBt->setToolTip(tr("Capture the current frame's vector drawing as end A."));
+    bBt->setToolTip(tr("Capture the current frame's vector drawing as end B.\n"
+                       "Must be the SAME drawing with points MOVED — adding or "
+                       "removing points breaks the correspondence."));
+    aBt->setFixedWidth(52);
+    bBt->setFixedWidth(52);
+    vl->addWidget(aBt);
+    vl->addWidget(bBt);
+
+    m_vecSlider = new QSlider(Qt::Horizontal, vecBox);
+    m_vecSlider->setRange(0, 100);
+    m_vecSlider->setEnabled(false);
+    m_vecSlider->setToolTip(
+        tr("Interpolate A -> B into the CURRENT FRAME's drawing.\n"
+           "Destructive and without undo: use a throwaway scene."));
+    vl->addWidget(m_vecSlider, 1);
+
+    m_vecLabel = new QLabel(tr("vector test: no ends"), vecBox);
+    vl->addWidget(m_vecLabel);
+
+    lay->addWidget(vecBox);
+
+    connect(aBt, &QPushButton::clicked, this, &ZtoRigPanel::onVecGrabA);
+    connect(bBt, &QPushButton::clicked, this, &ZtoRigPanel::onVecGrabB);
+    connect(m_vecSlider, &QSlider::valueChanged, this,
+            &ZtoRigPanel::onVecBlend);
+  }
 
   m_showAllBt = new QCheckBox(tr("Show all skeletons"), root);
   m_showAllBt->setToolTip(
@@ -1001,6 +1051,195 @@ bool ZtoRigPanel::askRecordDetails(const std::vector<int> &allSkelIds,
   // authored on rather than leaving it applicable everywhere by accident.
   if (skelIds.empty()) skelIds.insert(activeSkelId);
   return true;
+}
+
+//-----------------------------------------------------------------------------
+
+namespace {
+
+//! The vector drawing being edited, or null with a reason in \p why.
+/*!
+  There are TWO ways a drawing is "current" and they resolve differently: with
+  the level strip in front the frame handle holds a level FrameId, while in the
+  xsheet it holds a scene row and the drawing has to be read out of the CELL.
+  Asking for getFid() in the second case gets you nothing, which reported a
+  perfectly good vector level as "not a vector level".
+*/
+TVectorImageP currentVectorImage(TXshSimpleLevel **outLevel, TFrameId *outFid,
+                                 QString *why = 0) {
+  TApp *app                = TApp::instance();
+  TFrameHandle *frameH     = app->getCurrentFrame();
+  TXshSimpleLevel *sl      = 0;
+  TFrameId fid;
+
+  if (frameH->isEditingLevel()) {
+    TXshLevel *xl = app->getCurrentLevel() ? app->getCurrentLevel()->getLevel() : 0;
+    if (xl) sl = xl->getSimpleLevel();
+    fid = frameH->getFid();
+  } else {
+    TXsheet *xsh = app->getCurrentXsheet() ? app->getCurrentXsheet()->getXsheet() : 0;
+    if (!xsh) {
+      if (why) *why = QObject::tr("no xsheet");
+      return TVectorImageP();
+    }
+    const int row = frameH->getFrame();
+    const int col = app->getCurrentColumn()->getColumnIndex();
+    const TXshCell cell = xsh->getCell(row, col);
+    if (cell.isEmpty()) {
+      if (why) *why = QObject::tr("empty cell (row %1, col %2)").arg(row + 1).arg(col + 1);
+      return TVectorImageP();
+    }
+    sl  = cell.getSimpleLevel();
+    fid = cell.getFrameId();
+  }
+
+  if (!sl) {
+    if (why) *why = QObject::tr("no level here");
+    return TVectorImageP();
+  }
+  if (sl->getType() != PLI_XSHLEVEL) {
+    if (why) *why = QObject::tr("level is not PLI (vector)");
+    return TVectorImageP();
+  }
+
+  TVectorImageP vi = (TVectorImageP)sl->getFrame(fid, true);
+  if (!vi) {
+    if (why) *why = QObject::tr("no drawing at %1").arg(fid.getNumber());
+    return TVectorImageP();
+  }
+  if (outLevel) *outLevel = sl;
+  if (outFid) *outFid = fid;
+  return vi;
+}
+
+}  // namespace
+
+void ZtoRigPanel::onVecGrabA() {
+  QString why;
+  TVectorImageP vi = currentVectorImage(nullptr, nullptr, &why);
+  if (!vi) {
+    m_vecLabel->setText(why);
+    return;
+  }
+  // clone() does not carry the palette — it belongs to the LEVEL, not to the
+  // drawing. Without it the tween comes out with style indices pointing at
+  // nothing and the result is invisible: strokes there, nothing on screen.
+  m_vecA = vi->clone();
+  m_vecA->setPalette(vi->getPalette());
+  currentVectorImage(nullptr, &m_vecFidA, nullptr);
+  m_vecSlider->setEnabled((bool)m_vecA && (bool)m_vecB);
+  m_vecLabel->setText(m_vecB ? tr("A+B ready") : tr("A set"));
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoRigPanel::onVecGrabB() {
+  QString why;
+  TVectorImageP vi = currentVectorImage(nullptr, nullptr, &why);
+  if (!vi) {
+    m_vecLabel->setText(why);
+    return;
+  }
+  m_vecB = vi->clone();
+  m_vecB->setPalette(vi->getPalette());
+  currentVectorImage(nullptr, &m_vecFidB, nullptr);
+  m_vecSlider->setEnabled((bool)m_vecA && (bool)m_vecB);
+
+  // Mismatched structure is THE failure mode of this whole idea, so say it out
+  // loud rather than letting the result look merely ugly.
+  if (m_vecA && m_vecA->getStrokeCount() != m_vecB->getStrokeCount())
+    m_vecLabel->setText(tr("A+B: %1 vs %2 strokes — will not match")
+                            .arg(m_vecA->getStrokeCount())
+                            .arg(m_vecB->getStrokeCount()));
+  else
+    m_vecLabel->setText(m_vecA ? tr("A+B ready") : tr("B set"));
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoRigPanel::onVecBlend(int value) {
+  if (!m_vecA || !m_vecB) return;
+
+  TXshSimpleLevel *sl = 0;
+  TFrameId fid;
+  TVectorImageP cur = currentVectorImage(&sl, &fid, nullptr);
+  if (!cur || !sl) return;
+
+  // Never write over the frames A and B were taken from. Learned the hard way:
+  // sitting on B and moving the slider replaced B with the tween, and the pose
+  // was gone for good — there is no undo here.
+  if (fid == m_vecFidA || fid == m_vecFidB) {
+    m_vecLabel->setText(tr("stand on a THIRD drawing, not on A or B"));
+    return;
+  }
+
+  const double t = value / 100.0;
+  TInbetween tw(m_vecA, m_vecB);
+  TVectorImageP mid = tw.tween(t);
+
+  if (::getenv("ZTORYC_VECPOSE_DIAG"))
+    qDebug().noquote() << QString(
+                            "[VECPOSE] t=%1 A=%2 B=%3 mid=%4 cur=%5 "
+                            "palA=%6 palMid=%7 palCur=%8")
+                            .arg(t, 0, 'f', 2)
+                            .arg(m_vecA ? (int)m_vecA->getStrokeCount() : -1)
+                            .arg(m_vecB ? (int)m_vecB->getStrokeCount() : -1)
+                            .arg(mid ? (int)mid->getStrokeCount() : -1)
+                            .arg((int)cur->getStrokeCount())
+                            .arg(m_vecA && m_vecA->getPalette() ? "y" : "n")
+                            .arg(mid && mid->getPalette() ? "y" : "n")
+                            .arg(cur->getPalette() ? "y" : "n");
+
+  if (!mid || mid->getStrokeCount() == 0) {
+    m_vecLabel->setText(tr("tween gave nothing"));
+    return;
+  }
+
+  // Replace the CONTENT of the drawing that is already on screen, not the
+  // image object. setFrame swaps the level's entry, but the viewer and the
+  // image cache still hold the old object — the write lands somewhere nobody
+  // is looking at, which is exactly what "I see nothing" looked like.
+  {
+    const TRectD bb = mid->getStroke(0)->getBBox();
+    QString adds;
+    while (cur->getStrokeCount() > 0) cur->deleteStroke(0);
+    for (UINT i = 0; i < mid->getStrokeCount(); ++i) {
+      // discardPoints=false: the default drops any stroke whose bbox is empty,
+      // and we would rather see a degenerate stroke than silently lose the
+      // drawing.
+      const int r = cur->addStroke(new TStroke(*mid->getStroke(i)), false);
+      adds += QString(" %1").arg(r);
+    }
+    if (::getenv("ZTORYC_VECPOSE_DIAG"))
+      qDebug().noquote()
+        << QString("[VECPOSE2] midBBox=(%1,%2)-(%3,%4) added=%5 curAfter=%6")
+               .arg(bb.x0, 0, 'f', 1).arg(bb.y0, 0, 'f', 1)
+               .arg(bb.x1, 0, 'f', 1).arg(bb.y1, 0, 'f', 1)
+               .arg(adds)
+               .arg((int)cur->getStrokeCount());
+  }
+  if (!cur->getPalette()) cur->setPalette(mid->getPalette());
+
+  // Exactly what a drawing tool does after editing an image (see
+  // TTool::notifyImageChanged): mark the frame as EDITED and refresh the icons.
+  //
+  // NOT invalidateFrame / ImageManager::invalidate. Those mean "this drawing is
+  // stale, rebuild it from the source" — and the source on disk knows nothing
+  // about the edit, so they threw away the interpolation and left the drawing
+  // empty. That was the drawing "disappearing", and the reason only ONE slider
+  // event ever reached the log: from the second one on there was no drawing
+  // left to find.
+  sl->touchFrame(fid);
+  IconGenerator::instance()->invalidate(sl, fid);
+  IconGenerator::instance()->invalidateSceneIcon();
+
+  TApp *app = TApp::instance();
+  app->getCurrentScene()->setDirtyFlag(true);
+  app->getCurrentLevel()->notifyLevelChange();
+  app->getCurrentXsheet()->notifyXsheetChanged();
+  // Repaint the viewer: the panel is not a tool, so nothing else asks for it.
+  if (app->getCurrentTool())
+    if (TTool *tool = app->getCurrentTool()->getTool()) tool->invalidate();
 }
 
 //-----------------------------------------------------------------------------

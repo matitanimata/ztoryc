@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "toonz/tstageobject.h"
+#include "tvectorimage.h"
 
 class QVBoxLayout;
 class QScrollArea;
@@ -110,6 +111,21 @@ public:
   explicit ZtoRigPanel(QWidget *parent = nullptr);
 
 private slots:
+  //! ---- Vector pose, FIRST TEST (2026-07-27) ----
+  //! Capture the current frame's vector drawing as end A / end B of a slider,
+  //! then interpolate between them live with TInbetween — the engine already
+  //! behind Cells > Inbetween. The question this answers, and the only one:
+  //! does driving that interpolation from a slider give something an animator
+  //! would keep?
+  //!
+  //! DESTRUCTIVE and deliberately crude: it overwrites the current frame's
+  //! drawing on every slider move, has no undo, no persistence, no stable point
+  //! ids. Use a throwaway scene. Both ends must be the SAME drawing with points
+  //! MOVED — add or remove a point and the correspondence is gone.
+  void onVecGrabA();
+  void onVecGrabB();
+  void onVecBlend(int value);
+
   void onRecord();
   void onGuideBegin(int index);
   void onGuideChanged(int index, double value);
@@ -198,6 +214,12 @@ private:
   QPushButton *m_recordBt = nullptr;
   QVector<ZtoRigActionRow *> m_rows;
   QCheckBox *m_showAllBt = nullptr;
+
+  // Vector pose test (see the slots above).
+  TVectorImageP m_vecA, m_vecB;
+  TFrameId m_vecFidA, m_vecFidB;  //!< where the ends came from: never overwrite
+  QLabel *m_vecLabel     = nullptr;
+  QSlider *m_vecSlider   = nullptr;
   //! Skeleton the rows were built for, so a frame change only rebuilds when it
   //! actually switches skeleton — not on every frame during playback.
   int m_builtSkelId = -1;
