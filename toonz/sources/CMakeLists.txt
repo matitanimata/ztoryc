@@ -1,7 +1,7 @@
 ﻿cmake_policy(SET CMP0141 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0141 NEW)
 
-cmake_minimum_required(VERSION 2.8.11)
+cmake_minimum_required(VERSION 3.10)
 
 # ccache speeds up rebuilds; must be set before project() (CMake >= 3.4).
 # Install: optional PATH (brew, etc.) or run scripts/install_ccache_local.sh → .tools/ccache/bin
@@ -255,7 +255,7 @@ elseif(BUILD_ENV_APPLE)
     endif()
 elseif(BUILD_ENV_UNIXLIKE)
     # Needed for correct Qt detection
-    cmake_minimum_required(VERSION 2.8.12)
+    cmake_minimum_required(VERSION 3.10)
     set(PRELOAD_VARIABLE "LD_LIBRARY_PATH")
     if(CMAKE_SIZEOF_VOID_P MATCHES "8")
         set(PLATFORM 64)
@@ -677,7 +677,7 @@ if(BUILD_ENV_MSVC OR BUILD_ENV_APPLE)
     )
     find_package(Boost 1.55 REQUIRED)
 else()
-    find_package(Boost)
+    find_package(Boost CONFIG)
 endif()
 
 include_directories(
