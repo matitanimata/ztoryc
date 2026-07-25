@@ -625,12 +625,16 @@ ImportResult importSheet(const QImage &photo) {
 
   const double canonW = f.pageW;
 
-  // BLUE channel + background division. Measured on a real print, a cyan grid
-  // line reads 235-249 in the blue channel (already white) but only 150-224 in
-  // red — so it is BLUE that erases the printed grid, while graphite stays dark
-  // in every channel. Using red left the lines visibly dark, and only the inset
-  // crop below hid them: a stroke drawn across a rule, or a slightly-off warp,
-  // would have dragged the printed line into the imported drawing.
+  // BLUE channel + background division.
+  //
+  // What actually removes the printed rules is the INSET CROP further down —
+  // measured on a real sheet printed in black and white, where the cyan turns
+  // into a neutral grey 201 that no channel choice can lighten. The channel only
+  // helps on a COLOUR print, where a cyan rule reads 235-249 in blue (already
+  // white) against 150-224 in red: there it erases whatever rule the crop does
+  // not catch (a stroke drawn across a rule, a slightly-off warp). Graphite is
+  // neutral, so it stays dark in every channel either way. Red was simply the
+  // wrong pick — it made the rules darker.
   std::vector<cv::Mat> ch;
   cv::split(warped, ch);  // OpenCV channel order is B, G, R
   cv::Mat blue = ch[0];
@@ -657,8 +661,13 @@ ImportResult importSheet(const QImage &photo) {
   res.pageIndex = code.pageIndex;
   res.startRow  = code.startRow;
 
-  // Crop each cell slightly INSIDE its rectangle so the printed border line
-  // (whose exact position we know) is excluded from the drawing.
+  // Crop each cell slightly INSIDE its rectangle so the printed rule (whose
+  // exact position we know) is excluded from the drawing. This — not the colour
+  // channel — is what keeps the grid out of the imported panels, and it is why
+  // a black-and-white print works just as well. The cropped content is then
+  // stretched back to the full box: measured on a stroke spanning four cells,
+  // the resulting misalignment at the seams is 1-2 px out of 287, so panoramas
+  // drawn across cells stay visually continuous.
   const int inset = std::max(3, (int)std::lround(g.cellW * 0.02));
   for (int r = 0; r < rowsThisPage; ++r) {
     for (int c = 0; c < code.gridCols; ++c) {

@@ -46,8 +46,11 @@
   ora impaginato in millimetri espliciti.
 - **Canale colore sbagliato**: usavo il ROSSO per far sparire il ciano, ma su
   stampa reale una linea ciano legge 150-224 in rosso (scura) e 235-249 in blu
-  (bianca). Passato al canale **blu**: ora la griglia stampata sparisce davvero,
-  anche sotto un tratto che la attraversa.
+  (bianca). Passato al canale **blu**. Nota emersa provando: a togliere le righe
+  e' in realta' il **ritaglio interno** della cella, non il canale — infatti
+  funziona anche stampando in **bianco e nero** (li' il ciano diventa un grigio
+  201 che nessun canale schiarisce). Il canale blu resta utile sulle stampe a
+  colori, per le righe che il ritaglio non prende.
 - **Capienza di stampa**: la griglia non viene più rimpicciolita per farla stare
   in una pagina (dopo un import la room a 8 righe stampava un 4×8 illeggibile).
   Celle sempre grandi quanto la pagina consente → 4 colonne = 4 righe/foglio.
