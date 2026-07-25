@@ -85,6 +85,7 @@ private:
   //! Deformation of the current column, or null when the column has no plastic
   //! skeleton — which is the normal case, not an error.
   PlasticSkeletonDeformationP currentDeformation() const;
+  TStageObject *currentStageObject() const;
   double currentFrame() const;
   //! After a dial moves, the connected columns' cached placements don't know
   //! they depend on plastic params, so the drawing follows the skeleton only

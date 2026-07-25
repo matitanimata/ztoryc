@@ -244,6 +244,16 @@ double ZtoRigPanel::currentFrame() const {
   return (double)TApp::instance()->getCurrentFrame()->getFrame();
 }
 
+TStageObject *ZtoRigPanel::currentStageObject() const {
+  TApp *app    = TApp::instance();
+  TXsheet *xsh = app->getCurrentXsheet() ? app->getCurrentXsheet()->getXsheet()
+                                         : nullptr;
+  if (!xsh) return nullptr;
+  const int col = app->getCurrentColumn()->getColumnIndex();
+  if (col < 0) return nullptr;
+  return xsh->getStageObject(TStageObjectId::ColumnId(col));
+}
+
 //-----------------------------------------------------------------------------
 
 // Breadth-first over the column tree from `startCol`, invalidating each stage
@@ -340,8 +350,12 @@ class UndoPoseKeyState final : public TUndo {
   void apply(const PlasticSkeletonDeformation::PoseKeyState &st) const {
     if (!m_sd) return;
     m_sd->setPoseKeyState(st);
-    if (m_xshHandle && m_xshHandle->getXsheet())
-      ztorigFlushPlacements(m_xshHandle->getXsheet(), m_col);
+    if (m_xshHandle && m_xshHandle->getXsheet()) {
+      TXsheet *xsh = m_xshHandle->getXsheet();
+      ztorigFlushPlacements(xsh, m_col);
+      if (TStageObject *o = xsh->getStageObject(TStageObjectId::ColumnId(m_col)))
+        o->updateKeyframes();  // keep the xsheet diamonds in sync on undo/redo
+    }
     if (m_xshHandle) m_xshHandle->notifyXsheetChanged();
   }
 
@@ -510,8 +524,16 @@ void ZtoRigPanel::onApply(int index) {
   if (!sd) return;
   if (!sd->poseAction(index)) return;
 
+  TStageObject *obj = currentStageObject();
+  // Plastic keys live in the param-time domain, and only show in the xsheet
+  // after updateKeyframes() rebuilds the stage object's keyframe table — the
+  // two steps setPlasticPoseKeyframe does and this was missing ("non stampa la
+  // chiave").
+  const double f = obj ? obj->paramsTime(currentFrame()) : currentFrame();
+
   PlasticSkeletonDeformation::PoseKeyState before = sd->getPoseKeyState();
-  sd->applyPoseAction(index, currentFrame());
+  sd->applyPoseAction(index, f);
+  if (obj) obj->updateKeyframes();
   PlasticSkeletonDeformation::PoseKeyState after = sd->getPoseKeyState();
 
   TUndoManager::manager()->add(new UndoPoseKeyState(
