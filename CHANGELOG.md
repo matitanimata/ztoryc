@@ -1,3 +1,56 @@
+## [2026-07-25] — ZtoRig: pose assolute/offset, correttive di giuntura (motore), stamping su xsheet
+
+> **Riepilogo**: sessione lunga tutta su ZtoRig (branch `feature/ztorig-pose-blend`,
+> worktree SP, bundle **Ztoryc-SP.app** — NON master). 10 commit oggi (+ i 6 di ieri).
+> Il modello delle pose e' stato ribaltato due volte seguendo il feedback di Franco,
+> fino a quello giusto: **lo slider e' l'animazione, scritta sulle chiavi vere
+> dell'xsheet**. Tutto verificato a mano da Franco tranne l'ultimo rework grosso.
+
+### Pose: da blend nascosto a stamping sull'xsheet
+- **Assoluta vs additiva, per azione** (toggle Pose/Offset): Posa = richiamo esatto da
+  rest; Offset = layer additivo che si somma (controller di arti/pupille/bocche).
+- **Stamping**: applicare una posa scrive **chiavi plastic vere** nell'xsheet (non piu'
+  un dial nascosto). Mancavano `paramsTime()` + `updateKeyframes()` perche' il diamante
+  comparisse.
+- **Slider auto-keying (rework finale)**: muovere lo slider scrive le chiavi in diretta,
+  `0 = rest`, `1 = posa`, e al cambio frame LEGGE la forza dalle chiavi (`poseStrengthAt`)
+  → dialabile in entrambe le direzioni (entra/esce dalla posa). Undo per gesto
+  (begin/commit). La guida `m_guide` resta nel dato ma inutilizzata (ripulibile).
+- **Rispetta il Global Key scope**: con Stage/All la posa chiavia anche il **transform**.
+- Fix lungo la strada: due Pose insieme non ruotano piu' il personaggio (normalizzazione);
+  Set Global Rest Key azzera anche i dial (con undo); il DISEGNO segue lo slider (la
+  guida non era osservata dalla deformazione → deformer non invalidato).
+
+### Correttive di giuntura (mesh PSD / SmartSkin) — MOTORE (milestone 1/3, ieri)
+`MeshCorrective`: delta per-vertice-mesh guidati dall'angolo del giunto, iniettati DOPO
+il solve ARAP in `plasticdeformerstorage`. Risolve cio' che rigid/flex non puo' (la
+forma dell'arto in piega). Mancano authoring (scultura sul posato) e UI.
+
+### Multi-level: gia' corretto per costruzione
+Le pose sono per NOME di vertice, condivise tra tutti gli scheletri della colonna → una
+posa vale su ogni scheletro del turnaround (la disciplina di corrispondenza di Franco).
+
+### Fixed (core condiviso, famiglia pegbar-zombie)
+`PlasticTool::storeDeformation`/`touchDeformation` deferenziavano `stageObject()` senza
+guardia → crash cliccando una colonna senza stage object (camera/vuota/transitorio).
+Guardati. Restano scoperti altri `stageObject()->` (undo set-deformation, paramsTime in
+animate) — da fare se emergono.
+
+### Roadmap emersa (in memoria) — library + mocap = stesso motore
+Pose singole → clip/library (camminate/corse cross-personaggio via **template a id
+fissi**; ANGLE rest-relativo si trasferisce tra corpi di taglia diversa) → import mocap
+AI (MediaPipe → clip). Canali di taglia (DISTANCE/ROOT/TRANS) da escludere/scalare.
+
+### Da fare alla ripresa
+- Verificare il rework finale dello slider (auto-keying, 0=rest, scope, undo).
+- **Disallineamento residuo**: se emerge ancora "svariati clic per assestarsi" nel posing
+  plastic normale (non ZtoRig), serve diagnosi dal vivo (sample/lldb).
+- Correttive milestone 2 (authoring) + 3 (UI), poi il morph vettoriale, poi library/mocap.
+
+### Note
+Anche i DMG macOS 0.10.1 sono stati ripubblicati e verificati (Silicon+Intel) — vedi
+2026-07-24. Tutto il lavoro ZtoRig e' su branch: master resta releasabile.
+
 ## [2026-07-24] — DMG macOS ripubblicati (packaging rotto da 0.10.0) + trappola pennello vettoriale + ZtoRig pose-blend avviato
 
 > **Riepilogo**: sessione lunga su tre fronti. (1) I binari macOS di 0.10.0 e
