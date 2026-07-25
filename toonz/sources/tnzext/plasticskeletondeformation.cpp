@@ -2194,22 +2194,39 @@ void PlasticSkeletonDeformation::applyPoseStrength(int idx, double strength,
   };
   std::vector<Target> targets;
 
-  for (std::map<QString, std::vector<double>>::const_iterator it =
-           act->m_deltas.begin();
-       it != act->m_deltas.end(); ++it) {
-    SkVDSet::iterator vt = m_imp->m_vds.find(it->first);
-    if (vt == m_imp->m_vds.end()) continue;
-    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT && i < (int)it->second.size();
-         ++i) {
-      const double delta = it->second[i];
-      if (delta == 0.0) continue;
-      const int p = SkVD::POSE_PARAMS[i];
-      if (!vt->m_vd.m_params[p]) continue;
-      const double neutral = poseParamNeutral(p);
-      // Pose: from rest (neutral). Offset: from the current base.
-      const double from =
-          act->m_absolute ? neutral : vt->m_vd.m_params[p]->getValue(frame);
-      targets.push_back({it->first, p, from + strength * delta});
+  if (act->m_absolute) {
+    // A Pose is EXCLUSIVE and covers the WHOLE skeleton: iterate every vertex
+    // param, not just the ones the pose moved. Params it leaves at rest write
+    // neutral (delta 0 -> neutral + s*0), so they OVERRIDE whatever another pose
+    // left there — otherwise switching from a pose that bent the torso back to
+    // one that does not would keep the torso bent (delta absent = untouched).
+    SkVDSet::iterator vt, vEnd(m_imp->m_vds.end());
+    for (vt = m_imp->m_vds.begin(); vt != vEnd; ++vt) {
+      for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
+        const int p = SkVD::POSE_PARAMS[i];
+        if (!vt->m_vd.m_params[p]) continue;
+        const double neutral = poseParamNeutral(p);
+        const double delta   = act->delta(vt->m_name, p);  // 0 if untouched
+        targets.push_back({vt->m_name, p, neutral + strength * delta});
+      }
+    }
+  } else {
+    // An Offset is partial: only the params it moved, added on the current base,
+    // so independent controllers stack without wiping one another.
+    for (std::map<QString, std::vector<double>>::const_iterator it =
+             act->m_deltas.begin();
+         it != act->m_deltas.end(); ++it) {
+      SkVDSet::iterator vt = m_imp->m_vds.find(it->first);
+      if (vt == m_imp->m_vds.end()) continue;
+      for (int i = 0; i < SkVD::POSE_PARAMS_COUNT && i < (int)it->second.size();
+           ++i) {
+        const double delta = it->second[i];
+        if (delta == 0.0) continue;
+        const int p = SkVD::POSE_PARAMS[i];
+        if (!vt->m_vd.m_params[p]) continue;
+        targets.push_back(
+            {it->first, p, vt->m_vd.m_params[p]->getValue(frame) + strength * delta});
+      }
     }
   }
 
