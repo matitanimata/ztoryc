@@ -1,3 +1,77 @@
+## [2026-07-26] — Task 63: import da carta (stampa + import file + cattura webcam)
+
+> **Riepilogo**: feature completa sul branch `feature/paper-import`. Nuovi moduli
+> `ztorypapersheet` (stampa PDF + pipeline OpenCV di raddrizzamento/ritaglio) e
+> `ztorypapercapture` (dialog di cattura da webcam). Ciclo chiuso: stampi la
+> griglia → disegni a matita → fotografi o scansioni → i pannelli rientrano nella
+> Thumbnail room raddrizzati e ritagliati. Verificato da Franco sul campo.
+
+### Added — Fase 1: stampa del foglio
+- `Print` nella toolbar della Thumbnail room, PDF A4 via `QPdfWriter` (stesso
+  schema del PDF del Board). Menu a due voci: **foglio vuoto da disegnare**
+  (fotocopiabile) e **foglio con i thumbs correnti** (contact sheet).
+- Griglia **continua** come il canvas della room (celle adiacenti, nessun gap) →
+  si possono disegnare panoramiche a cavallo di più celle. Nessuna etichetta R/C
+  dentro la griglia: la posizione la porta il codice macchina.
+- **4 marker di registro** a quadrati concentrici (finder pattern), rilevabili con
+  il solo `imgproc` — niente `cv::aruco`, che la CI non compila.
+- **Codice-pagina** auto-descrittivo (9 byte + checksum XOR): versione, hash
+  scena, colonne, righe, aspect, pagina, riga iniziale.
+- Cornici in ciano chiaro, footer con logo + link repo, caselle `Page ☐/☐` da
+  compilare a mano.
+- Il **foglio vuoto è sempre UNA pagina** e sempre a piena capienza (4×4 con 4
+  colonne), svincolato dalle righe della room: è un template da fotocopiare.
+
+### Added — Fase 2: import da file
+- `importSheet()`: marker → `warpPerspective` → lettura codice → normalizzazione
+  carta → ritaglio per geometria → blit nel canvas come **un solo undo**.
+- Selezione **multi-file**; i fogli si accodano **nell'ordine di scansione**.
+- `ZtoryThumbnailCanvas::applyImportedCells()` (duale di `panelRaster`), con
+  crescita automatica delle righe per la pagina successiva.
+
+### Added — Fase 2b: cattura da webcam
+- `ZtoryPaperCaptureDialog`: selettore camera, preview live e **feedback di
+  inquadratura** (contorno verde quando i 4 marker sono visibili, scatto abilitato
+  solo allora). Scatti multipli, importati nell'ordine di scatto.
+- Riusa `Webcam` della Stop Motion room; stessa pipeline dell'import da file
+  (helper `importOneSheet` condiviso).
+
+### Fixed (durante lo sviluppo, tutti trovati provando sul campo)
+- **Orientamento**: non si deduce più da un marker "speciale" (due tentativi
+  falliti: l'anello extra sparisce in scansione, il marker più grande veniva
+  mis-classificato su scan reale → foglio importato capovolto). Ora si provano
+  **tutte e 4 le rotazioni** e vince quella il cui **checksum del codice valida**.
+- **Titolo sopra il codice-pagina**: l'inchiostro del titolo alterava i primi bit
+  → checksum KO → import impossibile anche con foglio appena stampato. Header
+  ora impaginato in millimetri espliciti.
+- **Canale colore sbagliato**: usavo il ROSSO per far sparire il ciano, ma su
+  stampa reale una linea ciano legge 150-224 in rosso (scura) e 235-249 in blu
+  (bianca). Passato al canale **blu**: ora la griglia stampata sparisce davvero,
+  anche sotto un tratto che la attraversa.
+- **Capienza di stampa**: la griglia non viene più rimpicciolita per farla stare
+  in una pagina (dopo un import la room a 8 righe stampava un 4×8 illeggibile).
+  Celle sempre grandi quanto la pagina consente → 4 colonne = 4 righe/foglio.
+- **Uscite silenziose nell'import da webcam** ("clicco Import e non succede
+  niente"): pulsante ora disabilitato finché non c'è uno scatto e con contatore;
+  e `revealRow()` porta la vista sulle righe importate, che atterrano sotto il
+  disegno esistente e restavano fuori schermo.
+- **Celle troppo chiare**: venivano scartate in silenzio. Ora vengono contate
+  (misurando *prima* del white-point, che è ciò che le cancella) e segnalate.
+- Rilevamento marker: filtro per area + un marker per angolo immagine (i
+  quadratini del codice formavano falsi marker), risoluzione di lavoro della
+  preview alzata a 1280 px (a 640 si perdeva un marker su 4; costo 4 ms/frame).
+
+### Notes
+- **Colonne**: si resta a 4×4. Per lavorare più in grande si stampa lo stesso PDF
+  su **A3** (stesso rapporto √2 dell'A4, l'import lavora in proporzione → nessun
+  codice da toccare; usare "adatta al foglio"). Analisi per un eventuale
+  selettore di colonne in memoria: la parte delicata è solo il reflow dei disegni
+  esistenti, il resto (persistenza, undo, stampa, import) è già cols-agnostico.
+- **Non fatto** (Fase 4 della scheda): dialog di anteprima con spunte per-pannello
+  e slider di soglia. Valutato e rimandato: duplica quello che la room già fa, e
+  la rete di sicurezza è l'undo singolo.
+- Nessun candidato PR upstream: tutti i file toccati sono Ztoryc.
+
 ## [2026-07-25] — ZtoRig: pose assolute/offset, correttive di giuntura (motore), stamping su xsheet
 
 > **Riepilogo**: sessione lunga tutta su ZtoRig (branch `feature/ztorig-pose-blend`,
