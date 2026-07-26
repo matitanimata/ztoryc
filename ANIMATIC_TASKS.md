@@ -420,6 +420,30 @@ master il 2026-07-26 (`d7b7ff283`). Stampa foglio A4 (vuoto fotocopiabile o con 
 thumbs), import da file multi-foglio e cattura da webcam, tutto verificato da Franco.
 Dettagli nel CHANGELOG del 2026-07-26.
 
+**🆕 NUOVO FILONE — Pose vettoriali / blend shape (avviato 2026-07-27).**
+Primo test **funzionante e verificato**: due disegni vettoriali come estremi,
+`TInbetween` come motore, slider a pilotare → «è una bocca eccome» (Franco).
+Riquadro di test nel pannello ZtoRig, distruttivo e opt-in.
+
+Architettura decisa: **NON serve un nuovo tipo di livello**. Una colonna con
+deformazione Plastic espone già UN disegno e cambia forma via parametri
+chiaviabili applicati al render — serve una **deformazione nuova sullo stage
+object**. E il sistema di pose (Add/Pose/Part + curva di forza) **è già un
+sistema di blend shape**: manca solo un secondo tipo di bersaglio, delta di
+PUNTI per id di stroke accanto ai delta dei parametri.
+
+Mattoni, in ordine:
+1. **ID persistenti sui punti** — primo e non aggirabile. Inserimento a forma
+   invariata via suddivisione di de Casteljau (stesso *t* su tutte le pose).
+   Cancellazione = punto nascosto con peso 0, mai rimozione vera.
+2. **Delta vettoriale dentro `PoseAction`**, accanto ai delta dei parametri.
+3. **Sostituzione a render-time**, come le dissolvenze animatic (v0.8.0).
+
+Da decidere prima di partire: stroke interi che compaiono/scompaiono, unione e
+divisione di stroke, e che gli ID sopravvivano al salvataggio (entrano nel
+formato file — la decisione più vincolante).
+⚠️ Il vettoriale è **PLI**. TLV è raster colormappato.
+
 **🆕🆕 POI — M5: Integrazione Kitsu [brainstorming 2026-06-26/27].**
 Il prossimo grande filone. Tracking/review della pipeline via Kitsu (CGWire).
 - **Client config-driven** (`KitsuClient`, QtNetwork + QJsonDocument): un solo URL+login,

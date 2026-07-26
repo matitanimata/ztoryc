@@ -1,3 +1,64 @@
+## [2026-07-27] — Posa vettoriale: il primo test funziona. E il crash della 0.10.1 portato su master
+
+> Codice su branch `feature/ztorig-pose-blend` (`139f43082`), bundle Ztoryc-SP.app.
+
+### Fixed — crash della 0.10.1 rilasciata, ora su MASTER (`dd33b5865`)
+Tre crash di Franco la sera del 25 (`~/Library/Application Support/Ztoryc/Ztoryc/crash/`),
+backtrace identico: `PlasticTool::storeDeformation` → `onColumnSwitched` →
+`XsheetViewer::setCurrentColumn` → clic su una cella. SIGSEGV.
+
+Il fix esisteva (`ccdd2ca89`, famiglia pegbar-zombie) ma **solo sul branch SP**:
+su master `stageObject()->getPlasticSkeletonDeformation()` era ancora senza
+guardia. Cioe' **la 0.10.1 in mano agli utenti ha questo crash**: Plastic tool
+attivo + clic su una colonna senza stage object (camera, o xsheet scambiato sotto
+il tool). Cherry-pick su master. Da solo giustifica una 0.10.2.
+
+Deciso di NON mergiare il branch SP su master: ZtoRig e' a meta' (anche che
+partono, angle bounds cross-colonna, correttive 2/3) e master resta releasabile.
+
+### Added — posa vettoriale, primo test: FUNZIONA
+Riquadro `Vec A / Vec B / slider` nel pannello ZtoRig: cattura due disegni
+vettoriali come estremi e li interpola con `TInbetween` (il motore gia' dietro
+Cells > Inbetween). Verificato da Franco: **«è una bocca eccome»**.
+
+Distruttivo per scelta (sovrascrive il disegno corrente, niente undo, niente
+persistenza), si rifiuta di scrivere sui frame di A e B. Diagnostica opt-in:
+`ZTORYC_VECPOSE_DIAG`.
+
+**Tre trappole trovate, tutte annotate nel codice:**
+1. Il disegno si legge dalla **CELLA** quando sei nell'xsheet;
+   `getCurrentFrame()->getFid()` vale solo con la level strip davanti — un
+   livello vettoriale valido veniva riportato come "not a vector level".
+2. `clone()` non porta la **palette**, che appartiene al LIVELLO: l'interpolazione
+   usciva con indici di stile che non puntavano a niente (stroke presenti, nulla
+   a schermo).
+3. `invalidateFrame` / `ImageManager::invalidate` significano «ricostruisci dalla
+   sorgente», e la sorgente non sa nulla della modifica in memoria: buttavano via
+   il risultato, svuotavano il disegno e rompevano il salvataggio del `.pli`. La
+   notifica giusta e' quella di `TTool::notifyImageChanged`: **`touchFrame`**
+   (= «modificato») piu' il rinfresco icone. Un errore, tre sintomi scollegati.
+
+### Architettura decisa (discussa con Franco, da un doc ChatGPT come spunto)
+Il «oggetto bocca» che si chiavia sull'xsheet **non richiede un nuovo tipo di
+livello**. Il modello esiste gia' due volte: una colonna con deformazione Plastic
+espone UN disegno e cambia forma via parametri chiaviabili applicati al render.
+Serve quindi una **deformazione nuova sullo stage object**, non un livello nuovo
+(che significherebbe mesi di plumbing Toonz).
+
+E il sistema di pose costruito il 26 **e' gia' un sistema di blend shape**: azioni
+con curva di forza, modi Add/Pose/Part, piu' azioni che si sommano. Manca solo un
+**secondo tipo di bersaglio**: delta di PUNTI per id di stroke accanto ai delta
+dei parametri di posa.
+
+Ordine dei mattoni:
+1. **ID persistenti sui punti** (idea di Franco) — primo, senza quello ogni
+   ritocco del disegno rompe la corrispondenza. Inserire un punto a forma
+   invariata e' esatto (suddivisione di de Casteljau, stesso *t* su tutte le pose).
+2. **Delta vettoriale dentro l'azione di posa** — stesso slider, stesse chiavi.
+3. **Sostituzione a render-time**, come le dissolvenze dell'animatic (v0.8.0).
+
+Nota tecnica: il vettoriale e' **PLI**, non TLV (che e' raster colormappato) — il
+doc di partenza li confondeva.
 ## [2026-07-26d] — Multi-pin: i limiti d'angolo, il corpo che resiste, lo slider IK. E tre lezioni di metodo pagate care
 
 > Worktree SP, branch `feature/ztorig-pose-blend`, bundle **Ztoryc-SP.app**.
