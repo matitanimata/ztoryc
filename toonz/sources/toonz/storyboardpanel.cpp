@@ -1920,16 +1920,27 @@ void StoryboardPanel::rebuildGrid() {
   }
   m_container->adjustSize();
   QTimer::singleShot(200, this, [this](){
-    int available = m_scrollArea->viewport()->width() - 8 * (m_columnsPerRow + 1);
-    int colW = qMax(150, available / m_columnsPerRow);
-    for (Shot &shot : m_shots)
-      for (PanelWidget *pw : shot.panels) {
-        if (!pw->isVisible()) continue;  // skip collapsed-away panels
-        pw->setFixedWidth(colW);
-        pw->rescalePreview();
-      }
-    m_container->adjustSize();
+    applyPanelWidths();
   });
+}
+
+void StoryboardPanel::applyPanelWidths() {
+  if (m_shots.empty() || !m_scrollArea) return;
+  const int available =
+      m_scrollArea->viewport()->width() - 8 * (m_columnsPerRow + 1);
+  const int colW = qMax(150, available / m_columnsPerRow);
+  for (Shot &shot : m_shots)
+    for (PanelWidget *pw : shot.panels) {
+      // isHidden(), NOT !isVisible(): the test must catch only the panels we
+      // deliberately hid (the collapsed-away ones in compact view). isVisible()
+      // is also false for every panel while the Board sits in another room, so
+      // a shot created from the Thumbnail room was skipped here and kept its
+      // natural size — visibly narrower than the rest until a resize.
+      if (pw->isHidden()) continue;
+      pw->setFixedWidth(colW);
+      pw->rescalePreview();
+    }
+  m_container->adjustSize();
 }
 
 void StoryboardPanel::selectShot(int shotIdx) {
@@ -3918,6 +3929,18 @@ void StoryboardPanel::onShotInserted(int col) {
     shot.data.panels.push_back(pd);
   }
 
+  // A shot can arrive already knowing how many panels it has: Send to Board
+  // from the Thumbnail room builds one PanelData per selected thumbnail, with
+  // its start frame and hold, before the Board hears about the insertion. Take
+  // that list rather than the single panel guessed above — otherwise the Board
+  // shows one panel until the user opens the shot and detectAndUpdatePanels
+  // finally counts the drawings.
+  {
+    ZtoryModel *m = ZtoryModel::instance();
+    if (col < m->shotCount() && m->shot(col).panels.size() > 1)
+      shot.data.panels = m->shot(col).panels;
+  }
+
   // Update xsheetColumn for all shots at col or later (they shifted right)
   for (int i = 0; i < (int)m_shots.size(); i++)
     if (m_shots[i].data.xsheetColumn >= col)
@@ -3931,11 +3954,22 @@ void StoryboardPanel::onShotInserted(int col) {
     m_shots[col].data.orderIndex = model->shot(col).orderIndex;
     m_shots[col].data.shotNumber = m_shots[col].data.shotLabel;
   }
-  addPanelWidget(col, 0);
+  for (int pi = 0; pi < (int)m_shots[col].data.panels.size(); pi++)
+    addPanelWidget(col, pi);
 
   renumberAll();
   rebuildGrid();
   saveZtoryc();
+
+  // Render the new panels' thumbnails. Deferred so the insertion returns at
+  // once (updatePreview renders synchronously) but without waiting for the user
+  // to open the shot, which is what used to be needed for anything to appear.
+  const int nPanels = (int)m_shots[col].data.panels.size();
+  QTimer::singleShot(0, this, [this, col, nPanels]() {
+    if (col >= (int)m_shots.size()) return;
+    for (int pi = 0; pi < nPanels && pi < (int)m_shots[col].panels.size(); pi++)
+      updatePreview(col, pi);
+  });
 }
 
 void StoryboardPanel::onShotRemovedAt(int col) {
@@ -4058,6 +4092,9 @@ void StoryboardPanel::showEvent(QShowEvent *e) {
       }
       m_dirtyShotCol = -1;
     }
+    // Normalise widths now that the viewport is real: shots added while this
+    // Board lived in another room were never sized (see applyPanelWidths).
+    applyPanelWidths();
     QTimer::singleShot(200, this, &StoryboardPanel::onRefreshPreviews);
   }
 }
@@ -4070,16 +4107,10 @@ void StoryboardPanel::resizeEvent(QResizeEvent *e) {
     m_resizeTimer = new QTimer(this);
     m_resizeTimer->setSingleShot(true);
     connect(m_resizeTimer, &QTimer::timeout, this, [this]() {
-      if (m_shots.empty()) return;
-      int available = m_scrollArea->viewport()->width() - 8 * (m_columnsPerRow + 1);
-      int colW = qMax(150, available / m_columnsPerRow);
-      for (Shot &shot : m_shots)
-        for (PanelWidget *pw : shot.panels)
-          pw->setFixedWidth(colW);
       // PanelWidget::resizeEvent fires automatically on each setFixedWidth call:
       //   → rescalePreview() updates display immediately
       //   → previewRerenderNeeded emitted if pixmap resolution is insufficient
-      m_container->adjustSize();
+      applyPanelWidths();
     });
   }
   m_resizeTimer->start(150);

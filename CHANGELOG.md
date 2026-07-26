@@ -64,6 +64,21 @@
   quadratini del codice formavano falsi marker), risoluzione di lavoro della
   preview alzata a 1280 px (a 640 si perdeva un marker su 4; costo 4 ms/frame).
 
+### Fixed — Board, dopo "Send to Board" dalla Thumbnail room
+- **Pannelli e anteprime non comparivano** finche' non si entrava nello shot:
+  `addShotFromRasters` costruisce gia' un `PanelData` per ogni raster (start
+  frame + hold), ma `StoryboardPanel::onShotInserted` li scartava e ne fabbricava
+  UNO solo dalla colonna xsheet. Ora prende la lista dal modello quando c'e',
+  crea un widget per pannello e renderizza le anteprime subito (deferred a
+  evento zero, cosi' l'inserimento resta immediato).
+- **L'ultimo shot aveva dimensione diversa** finche' non si forzava un resize:
+  la passata delle larghezze saltava i pannelli con `!pw->isVisible()`, che e'
+  falso per TUTTI i pannelli mentre il Board sta in un'altra room — ed e'
+  esattamente il caso del Send to Board, fatto dalla Thumbnail room. Ora il test
+  e' `pw->isHidden()` (solo i pannelli nascosti apposta dalla vista compatta) e
+  le tre copie del calcolo sono unificate in `applyPanelWidths()`, chiamata
+  anche da `showEvent`.
+
 ### Notes
 - **Colonne**: si resta a 4×4. Per lavorare più in grande si stampa lo stesso PDF
   su **A3** (stesso rapporto √2 dell'A4, l'import lavora in proporzione → nessun

@@ -275,6 +275,11 @@ struct Shot {
   std::deque<std::pair<int, int>> m_pendingPreviews;  //!< (shotIdx, panelIdx)
   bool m_previewPumpArmed = false;
   void rebuildGrid();
+  // Give every panel the column width for the current viewport. Shared by the
+  // grid rebuild, the resize debounce and showEvent: a panel created while the
+  // Board sat in another room is never "visible", so without a pass on show it
+  // would keep its natural size and stand out from the rest.
+  void applyPanelWidths();
   void selectShot(int shotIdx);
   // Mirror the shared selection (set by the Animatic timeline) onto the board
   // grid, highlighting the matching shots — without writing back to the model.
