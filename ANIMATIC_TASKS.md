@@ -365,18 +365,35 @@ branch `feature/ztorig-pose-blend`. **Il bundle da lanciare e deployare è
 `Ztoryc-SP.app`, NON `Ztoryc.app`** (quello è master e NON contiene ZtoRig).
 Master resta releasabile: il lavoro non va lì.
 
-Stato al 2026-07-26 — il motore c'è (pose assolute/offset, stamping delle chiavi
+Stato al 2026-07-26c — il motore c'è (pose assolute/offset, stamping delle chiavi
 plastic sull'xsheet, correttive di giuntura milestone 1/3). Franco ha collaudato
 il rework finale dello slider auto-keying (l'unica parte mai verificata a mano):
 
 - ✅ **Offset che schizzava via — RISOLTO** (`422461463`, verificato).
-- ⬜ **Gli altri slider non si azzerano.** Causa trovata: `poseStrengthAt` NON
-  memorizza la forza, la *deduce* dal parametro più mosso con
-  `(valore−riposo)/delta` → corretto solo se le azioni sono disgiunte; se due pose
-  toccano lo stesso parametro la lettura è spuria. **Fix proposto**: memorizzare la
-  forza usando il campo *guida* per azione, già nel dato e inutilizzato dopo il
-  rework (`m_guide`); e azzerare le guide delle altre azioni quando una Posa
-  assoluta prende il controllo.
+- ✅ **Gli altri slider non si azzerano — RISOLTO** (2026-07-26c, verificato). La forza
+  ora è REGISTRATA nella curva guida invece che dedotta. Trappola trovata strada
+  facendo: `m_guide` alimentava ancora il *blend* a runtime, quindi il fix proposto
+  avrebbe applicato la posa due volte → blend rimosso (era vestigiale).
+- ✅ **Pose di PERSONAGGIO, non di colonna** (2026-07-26c, verificato). Sparivano
+  cambiando colonna sul rig esploso. `characterParts()` usa la stessa risalita di
+  `PlasticTool::characterColumns()`; Record scrive su tutte le colonne, le operazioni
+  si propagano per nome, un solo undo per gesto.
+- ✅ **Posa Base** (2026-07-26c, verificato). Su un rig esploso il riposo vero è il
+  disassemblato: si marca un'azione come Base e lo stamping interpola da lì.
+- ✅ **Modalità `Part`** (2026-07-26c). Richiamo esatto sui soli parametri registrati —
+  per fonemi e pose per-arto. `Offset` rinominato `Add`.
+- ✅ **IK spento spegne davvero i pin** (2026-07-26c, verificato). `pinsEnabled` non era
+  guardato da NESSUNA parte nella valutazione.
+- ✅ **Angle bounds: il gizmo non creava mai la prima chiave** (2026-07-26c). Il ramo
+  animato era irraggiungibile. Ora chiavia sempre → i bound seguono anche i livelli.
+- ⬜ **Multi-pin «non regge granché»** (segnalato 2026-07-26c). Con IK acceso il percorso
+  è identico a prima delle modifiche, quindi *sulla carta* è preesistente. **Verificare
+  con un A/B vero** (compilare `422461463`, stesso rig), NON dedurlo.
+- ⬜ **Pin legati allo scheletro.** I parametri `PIN` sono condivisi per nome tra gli
+  scheletri della colonna. Tentato il 2026-07-26c deducendo lo scheletro dal frame di
+  attivazione: **sbagliato**, rompeva il multi-pin e non spegneva il ciano (cambiando
+  disegno allo stesso frame il frame di attivazione non cambia). Ritirato. Serve un
+  campo esplicito in `SkVD`, come `m_skelIds` per le pose, con «pin vecchi = ovunque».
 - ⬜ **Il personaggio scivola registrando pose con i PIN.** Da indagare, tocca
   l'autorità del planting (zona che ha già avuto un bug di oscillazione multi-pin).
 - ⬜ Correttive di giuntura: milestone 2 (authoring) e 3 (UI).

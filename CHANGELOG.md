@@ -1,3 +1,148 @@
+## [2026-07-26c] — ZtoRig: azioni di personaggio, posa Base, modalita' Part, IK che spegne davvero i pin
+
+> ⚠️ Tutto su **worktree SP**, branch `feature/ztorig-pose-blend`, bundle
+> **`Ztoryc-SP.app`**. Master non e' toccato dal codice (solo i doc).
+> Verificato da Franco a runtime tranne dove indicato.
+
+### Fixed — gli altri slider non si azzeravano (il ⬜ n.1 della lista)
+`poseStrengthAt` **deduceva** la forza da `(valore−riposo)/delta` sul parametro piu'
+mosso: corretto solo se le azioni sono disgiunte, spurio appena due ne condividono uno.
+Ora la forza e' **registrata** nella curva guida (`m_guide`, gia' nel dato e serializzata)
+e riletta da li'.
+
+**La trappola:** `m_guide` era ancora il campo che alimentava il *blend* a runtime, quindi
+scriverci la forza avrebbe applicato la posa una seconda volta sopra le chiavi gia'
+stampate. Il blend era vestigiale dal rework dello slider (nessuno scriveva piu' una guida
+≠ 0, `applyPoseAction`/`poseBlendOffset` senza chiamanti): **rimosso** insieme al fix
+(~90 righe, comprese le 5 iniezioni nel percorso di valutazione).
+
+Corollario: l'azzeramento delle altre azioni segue quanto e' stato **rivendicato**
+davvero — `Pose` azzera tutte quelle della sua skeleton, `Part` solo quelle con cui
+collide su almeno un (vertice, parametro), `Add` nessuna.
+
+Chiuso anche un buco aperto strada facendo: `UndoPoseActions` copiava il vettore di
+azioni, ma `m_guide` e' uno **smart pointer** → prima e dopo condividevano la curva e la
+forza scritta al Record sopravviveva all'undo. Ora l'undo porta anche il `PoseKeyState`.
+
+### Added — le pose sono del PERSONAGGIO, non della colonna
+Sintomo: «le registra ma spariscono appena cambio colonna». Il pannello guardava
+`currentDeformation()`; su un rig esploso l'azione viveva su una colonna sola.
+
+`ZtoRigPanel::characterParts()` fa **la stessa risalita di `PlasticTool::characterColumns()`**
+(su al padre piu' alto per parentela di colonna, poi giu'). Deve essere la stessa
+definizione o l'app avrebbe due idee diverse di «personaggio».
+- **Record** registra su tutte le colonne, in un blocco di undo unico. Una colonna che la
+  posa non muove registra zero delta — giusto: come Posa assoluta poi la porta alla base.
+- **Slider / modo / Base / rimozione** si propagano alle sorelle **per nome** (gli indici
+  non coincidono tra colonne).
+- Ogni colonna usa il **proprio orologio**: `paramsTime` e' per stage object, quindi
+  `CharPart` porta il frame calcolato sulla sua colonna.
+- Restano per-colonna, di proposito: la chiave di **transform** e la **lista scheletri
+  spuntati** (ogni colonna ha la sua numerazione).
+
+### Added — posa Base (il problema del rig esploso)
+Su un rig esploso il riposo vero e' il **disassemblato**, quindi lo 0 dello slider
+smontava il personaggio. Ora un'azione si marca **Base** e diventa lo zero della sua
+skeleton: lo stamping assoluto interpola `base + forza*(posa − base)`.
+I delta restano misurati dal riposo vero (un'unica origine assoluta), la Base si applica
+allo stamp → si puo' cambiare quale azione e' Base senza riscrivere nulla.
+Una sola Base per skeleton; due Base coesistono se i loro insiemi non si intersecano.
+
+### Added — terza modalita' `Part` + rinomina `Offset` → `Add`
+L'asse che conta e' **richiamo vs spinta**, incrociato con quanto scheletro si rivendica:
+- **Add** — spinge da dove sei, sui suoi parametri. Il risultato dipende dalla posa di
+  partenza: una "A" dopo una "O" da' "O+A", mai la "A" registrata.
+- **Pose** — richiama esatto su **tutto** lo scheletro (→ esclusiva).
+- **Part** — richiama esatto sui **suoi** parametri. Per fonemi e pose per-arto: la bocca
+  cade identica dopo qualsiasi altra forma e non tocca gli occhi.
+
+Pulsante a 3 stati che cicla al clic. Enum rinominato `PoseAction::ADD` per non portarsi
+due nomi. Serializzazione: nuovo tag `Mode` scritto solo se ≠ Add; il vecchio `Absolute`
+si continua a **leggere** e mappa su `Pose`.
+
+### Added — pose vincolate agli scheletri (insiemi)
+`m_skelIds` (`std::set<int>`), **vuoto = nessuna restrizione**. Motivo: i nomi di vertice
+sono condivisi tra le viste, ma `DISTANCE` e' una lunghezza nello spazio di *quello*
+scheletro, non un rapporto — la posa "si trasferisce" ma non ha senso.
+- Il **Record apre un dialogo**: nome + caselle degli scheletri (corrente gia' spuntato).
+- Menu a tendina sulla riga per modificarlo dopo, «All skeletons» in cima.
+- Vista **filtrata sullo scheletro corrente** di default; spunta «Show all skeletons» per
+  la vista completa raggruppata, dove **la stessa azione si ripete sotto ogni scheletro**
+  su cui e' attiva (le copie si sincronizzano da sole: le righe sono per indice azione).
+- Il rifiuto sta nel **modello**: `applyPoseStrength` esce se l'azione non appartiene
+  allo scheletro attivo. Il pannello disabilita la riga, ma non e' lui l'autorita'.
+- Il cambio frame ricostruisce la lista **solo se cambia lo scheletro attivo**, non a ogni
+  frame (altrimenti resetta lo scroll in play e combatte il drag).
+
+### Fixed — clock unico nel pannello
+Il pannello parlava con la deformazione su **due tempi**: scritture a
+`paramsTime(frame)`, letture (Record, `poseStrengthAt`, skeleton attivo) al frame xsheet
+grezzo. Ora tutto passa da `ZtoRigPanel::paramsFrame()`; il frame xsheet resta solo per la
+chiave di transform.
+
+> ⚠️ **Correzione a caldo, annotata perche' e' una lezione**: avevo dichiarato che i due
+> tempi divergono sul multilevel. **Falso.** `TStageObject::paramsTime`
+> (`tstageobject.cpp:569`) rimappa solo con **Cycle attivo** e ≥2 keyframe, altrimenti
+> ritorna `t`. Avevo dedotto il collegamento invece di leggerlo. Il fix e' giusto a
+> prescindere (leggere e scrivere sullo stesso orologio), ma non c'entrava col multilevel.
+
+### Fixed — spegnere l'IK ora spegne davvero i pin
+`pinsEnabled` **non era guardato da nessuna parte nella valutazione**: `grep` non lo
+trovava affatto in `tstageobject.cpp`, e nel planting per-colonna c'era una nota che
+diceva esplicitamente di non filtrarlo. Il flag addormentava solo la UI del tool.
+- Guardia nel **planting per-colonna** e nel **solve unificato di personaggio** — questa
+  **dopo** la passata di pulizia, altrimenti restano gli scheletri risolti sotto il vecchio
+  stato dei pin, che e' lo stato in cui il rig sembrava rotto.
+- `enablePins()` ora butta via `clearSolvedSkeleton()` + `clearSecondaryPinTargets()`: e'
+  questo che fa valere il toggle **subito** (era la cache sopravvissuta a costringere al
+  clic per «farlo riassestare»).
+- La posa non si sposta perche' **uscire dalla modalita' IK fa gia' il bake** in FK +
+  controller (`plastictool.cpp`, ramo `inverseKinematics`).
+
+### Fixed — diamanti ciano delle colonne connesse
+Disegnavano i pin **anche con IK spento**: erano l'unico percorso che leggeva i parametri
+`PIN` direttamente invece di passare da `pinnedVerticesAtFrame`. Verificato da Franco.
+
+### Fixed — angle bounds: il gizmo non creava mai la prima chiave
+`plastictool_animate.cpp` — *se gia' chiaviato metti una chiave, altrimenti scrivi il
+limite statico sul vertice*. Ma niente creava mai la prima chiave: il ramo animato era
+**irraggiungibile** e nel function editor non compariva nulla.
+Ora **chiavia sempre** (gizmo **e** campo Angle Bounds della toolbar; svuotare il campo
+cancella le chiavi invece di chiaviare un infinito), tenendo allineato il valore statico.
+Effetto collaterale voluto: i bound ora **seguono i livelli**, perche' `MINANGLE/MAXANGLE`
+stanno nei parametri condivisi per nome invece che sul vertice del singolo scheletro —
+era questo il «come se non li mantenesse».
+
+### Tentato e RITIRATO — legare i pin allo scheletro
+Avevo dedotto «su quale scheletro e' stato messo il pin» dallo **scheletro attivo al frame
+di attivazione**. Sbagliato su due fronti, e i due fallimenti hanno la stessa radice:
+- **rompeva il multi-pin** — su un multilevel lo scheletro cambia a ogni cambio di
+  disegno, quindi ogni pin tenuto attraverso un cambio livello veniva rilasciato;
+- **non spegneva il ciano** — cambiando disegno *allo stesso frame* il frame di
+  attivazione non cambia, quindi il confronto dava «stesso scheletro».
+
+Ho inferito un dato che **non esiste** invece di ammettere che va memorizzato. Revert dei
+tre punti (planting, solve di personaggio, `pinnedVerticesAtFrame`).
+**Da fare davvero:** un campo esplicito in `SkVD`, stessa logica di `m_skelIds` delle pose,
+con retrocompatibilita' «pin vecchi = valgono ovunque». Zona delicata (ha gia' avuto il
+bug di oscillazione multi-pin, `7dac71339`): da affrontare da fresco.
+
+### Aperto a fine sessione
+- **Multi-pin «non regge granche'»** (Franco, dopo il revert). Con IK acceso il percorso e'
+  identico a stamattina, quindi **sulla carta** e' preesistente — ma va verificato con un
+  A/B vero: compilare `422461463` e riprovare lo stesso rig. Non dedurlo.
+- Pin legati allo scheletro (sopra).
+
+### Upstream candidates
+**Nessuno.** I file core toccati (`tstageobject.cpp`, `plastictool*.cpp`,
+`plasticskeletondeformation.cpp`) lo sono solo per funzionalita' **SuperPlastic/ZtoRig**,
+che upstream non ha: pin, `MINANGLE/MAXANGLE`, pose actions sono aggiunte nostre.
+
+### Note di metodo (in memoria)
+Due volte in questa sessione ho annunciato percentuali di contesto inventate (60-65%, poi
+70%) mentre il pannello di Franco segnava **31%**. Non ho una lettura diretta del consumo:
+**non annunciare piu' percentuali**. Aggiornata `feedback_context_window_1m`.
+
 ## [2026-07-26b] — ZtoRig: Offset risolto, due difetti aperti (LAVORO IN CORSO)
 
 > ⚠️ **ZtoRig vive nel worktree `tahoma2d-superplastic`, branch
