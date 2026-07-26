@@ -426,6 +426,28 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
 
 //------------------------------------------------------------------------
 
+// IK damping, driven by the tool's "IK Damping" slider. Lives here as a plain
+// value because the CCD helpers below are free functions: they must not reach
+// back into the tool, and re-reading a TDoubleProperty per rotation would be
+// absurd. Set once per drag event, in leftButtonDrag_animate.
+double l_ikDampPercent = 12.0;
+
+//! Largest rotation, in radians, that one step of posing may apply to a joint.
+//! The slider reads directly in DEGREES per step.
+/*!
+  Expressed in degrees, not as a distance budget, after measuring the thing it
+  has to control. A cap on how far the pinned END travels grows as the lever
+  shortens — right for a CCD step, exactly backwards for the joints near the
+  root: there the lever is short and the body hanging off it is long, so a few
+  degrees fling everything above. What has to be bounded is the ANGLE, because
+  the swing of the far body is proportional to it and to nothing else.
+
+  That is why the hips ran away at every slider value while the other joints
+  behaved: their rotation never went through the damped CCD at all, and the cap
+  that did exist grew for precisely the geometry that needed it smallest.
+*/
+static double ikMaxStep() { return l_ikDampPercent * (M_PI / 180.0); }
+
 void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
                                          const TMouseEvent &me) {
   // Track mouse position
@@ -488,14 +510,39 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
       // graph (STEP A): re-root at the pin so the foot holds while the body
       // articulates. If it doesn't apply, FK posing (no pins) also runs on the
       // unified graph; otherwise fall back to the single-level pin path.
+      l_ikDampPercent = m_ikDamping.getValue();
+
       const bool diag = ::getenv("ZTORYC_PIN_DIAG") != nullptr;
-      if (crossLevelIK_animate(frame, m_svSel, pos)) {
-        if (diag) qDebug().noquote() << "[PIN_PATH] crossLevelIK";
-      } else if (crossLevelFK_animate(frame, m_svSel, pos)) {
-        if (diag) qDebug().noquote() << "[PIN_PATH] crossLevelFK";
-      } else {
-        if (diag) qDebug().noquote() << "[PIN_PATH] moveVertexIK";
+
+      // GAIN probe: how far the dragged joint actually travels compared with
+      // how far the mouse asked it to. A joint that "takes off" is a gain
+      // above 1 — the pose answering with MORE than it was asked for, which is
+      // the signature of a feedback loop, not of a stiff solver.
+      TPointD beforeP, askDelta;
+      if (diag) {
+        beforeP  = deformedSkeleton().vertex(m_svSel).P();
+        askDelta = pos - beforeP;
+      }
+
+      const char *path = "moveVertexIK";
+      if (crossLevelIK_animate(frame, m_svSel, pos))
+        path = "crossLevelIK";
+      else if (crossLevelFK_animate(frame, m_svSel, pos))
+        path = "crossLevelFK";
+      else
         moveVertexIK_animate(frame, m_svSel, pos);
+
+      if (diag) {
+        m_deformedSkeleton.invalidate();
+        const TPointD gotDelta = deformedSkeleton().vertex(m_svSel).P() - beforeP;
+        const double ask = norm(askDelta), got = norm(gotDelta);
+        qDebug().noquote()
+            << QString("[PIN_GAIN] %1 v=%2 asked=%3 got=%4 gain=%5")
+                   .arg(path)
+                   .arg(m_svSel)
+                   .arg(ask, 0, 'f', 3)
+                   .arg(got, 0, 'f', 3)
+                   .arg(ask > 1e-9 ? got / ask : 0.0, 0, 'f', 2);
       }
     } else if (m_keepDistance.getValue()) {
       ::setKeyframe(vd->m_params[SkVD::ANGLE],
@@ -1378,6 +1425,22 @@ void solveMultiAnchor(const PlasticSkeleton &orig, const PinTree &T,
         TPointD cur = P[p] - pivot, tgt = ap.second - pivot;
         if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
         double ang = atan2(cross(cur, tgt), cur * tgt);
+
+        // Damp by LEVER ARM. Rotating about a pivot at distance d to move the
+        // end by D costs an angle of roughly D/d: the shorter the lever, the
+        // more degrees the same millimetre of mouse travel demands — and those
+        // degrees are paid by everything hanging below. That is why the joints
+        // near the root feel nervous while a long limb feels calm, and why the
+        // measured response swung between 0 and 24x for the same input.
+        //
+        // So the step is capped in DISTANCE (a fraction of the chain's own
+        // length) and turned back into an angle through the lever. A fixed cap
+        // in degrees would do the opposite of what is wanted: the same limit
+        // for a short bone and a long one, when it is the short one that has to
+        // be reined in.
+        const double maxAng = ikMaxStep();
+        ang                 = std::min(std::max(ang, -maxAng), maxAng);
+
         double c = cos(ang), s = sin(ang);
         std::queue<int> q;
         q.push(chain[i + 1]);
@@ -1484,6 +1547,11 @@ double replantOtherPins(const PlasticSkeleton &orig,
         TPointD tgt = target - pivot;
         if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
         double ang = atan2(cross(cur, tgt), cur * tgt);
+        // Same lever-arm damping as the multi-anchor path: this is the branch
+        // the single-level rig actually takes, and without it the slider had no
+        // effect there at all.
+        const double maxAng = ikMaxStep();
+        ang                 = std::min(std::max(ang, -maxAng), maxAng);
         double c = cos(ang), s = sin(ang);
         for (auto &kv : desired) {
           if (!isInSubtree(orig, kv.first, path[j + 1])) continue;
@@ -1550,7 +1618,11 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
 
   std::vector<int> pins = pinnedVerticesAtFrame(frame);
   bool vIsPin = std::find(pins.begin(), pins.end(), v) != pins.end();
+  const bool ikDiag = ::getenv("ZTORYC_PIN_DIAG") != nullptr;
   if (pins.empty() || vIsPin) {
+    if (ikDiag)
+      qDebug().noquote() << QString("[IK_BRANCH] plainFK v=%1 pins=%2")
+                                .arg(v).arg((int)pins.size());
     // No pin (or dragging the pin itself): local single joint, original tree.
     if (orig.vertex(v).parent() < 0) return;  // the root has no ANGLE param
     SkVD *vd = m_sd->vertexDeformation(::skeletonId(), v);
@@ -1579,6 +1651,9 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
   // target is clamped to what the chains can reach (the drag stiffens at
   // end-of-range instead of tearing a pin off).
   if (pins.size() >= 2 && spanningOfPins(orig, pins).count(v)) {
+    if (ikDiag)
+      qDebug().noquote() << QString("[IK_BRANCH] multiAnchor v=%1 pins=%2")
+                                .arg(v).arg((int)pins.size());
     moveVertexMultiAnchor_animate(frame, v, pos, pins, curPos);
     return;
   }
@@ -1651,6 +1726,27 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
   TPointD newD = pos - pivot;
   if (norm2(oldD) < 1e-12 || norm2(newD) < 1e-12) return;
   double theta = wrapPi(atan2(newD.y, newD.x) - atan2(oldD.y, oldD.x));
+
+  // Cap the rotation applied per mouse event. This is the one that flings the
+  // hips: theta comes straight from the mouse, and the whole re-rooted body
+  // turns by it, so a short lever between the joint and its pivot converts a
+  // small drag into a large sweep. Nothing downstream limited it — the damping
+  // added earlier lived in the CCD that re-plants the OTHER pins, which this
+  // path barely touches.
+  {
+    const double maxTheta = ikMaxStep();
+    const double raw      = theta;
+    theta = std::min(std::max(theta, -maxTheta), maxTheta);
+    if (::getenv("ZTORYC_PIN_DIAG"))
+      qDebug().noquote()
+          << QString("[IK_BRANCH] rotateAboutPin v=%1 pins=%2 rawDeg=%3 "
+                     "capDeg=%4 clamped=%5")
+                 .arg(v)
+                 .arg((int)pins.size())
+                 .arg(raw * 180.0 / M_PI, 0, 'f', 1)
+                 .arg(maxTheta * 180.0 / M_PI, 0, 'f', 1)
+                 .arg(fabs(raw) > maxTheta ? "YES" : "no");
+  }
 
   // v's re-rooted subtree = vertices reached from v descending re-rooted edges.
   std::set<int> moved;
@@ -1730,10 +1826,35 @@ void PlasticTool::moveVertexMultiAnchor_animate(
   std::map<int, TPointD> anchor =
       pinTargetsAtFrame(m_sd, ::skeletonId(), frame, pins, curPos);
 
-  // First cut: clamp the mouse target inside every pin's straight-line reach
-  // (alternating projection). Cheap, and it removes the grossly impossible
-  // targets before the solve.
+  // Bound how far the dragged joint may travel in ONE event, before anything
+  // else touches the target.
+  //
+  // The slider used to reach only the CCD that re-nails the pins — the SECOND
+  // half of solveMultiAnchor. The first half, the FABRIK pass with the
+  // stiffness springs, is what repositions the body from the target, and it was
+  // completely undamped: no slider value could calm a joint whose motion is
+  // decided there. Measured, that is where the hips live (v=1, multiAnchor,
+  // 1754 events) while the rotate path that WAS damped saw 107 and never once
+  // hit its cap.
+  //
+  // Bounding the input instead of one internal stage damps every stage at once,
+  // and the bound is an arc: the slider's degrees, swung at the joint's own
+  // distance from its anchor, so a joint far from its pin may travel further
+  // per event than one sitting right on top of it.
   TPointD t = pos;
+  {
+    const TPointD here = curPos.at(v);
+    double leverToPin  = 0.0;
+    for (const auto &ap : anchor)
+      leverToPin = std::max(leverToPin, norm(here - ap.second));
+
+    const double maxTravel = ikMaxStep() * std::max(leverToPin, 1e-6);
+    const TPointD step     = t - here;
+    const double stepLen   = norm(step);
+    if (stepLen > maxTravel && stepLen > 1e-9)
+      t = here + step * (maxTravel / stepLen);
+  }
+
   for (int it = 0; it < 4; ++it)
     for (int p : pins) {
       double L = 0.0;
@@ -1788,14 +1909,19 @@ void PlasticTool::moveVertexMultiAnchor_animate(
   const double tol  = getPixelSize();
   const double tol2 = tol * tol;
 
-  auto attempt = poseAt(t);
-  std::map<int, TPointD> P;
+  // Nothing feasible = DO NOT MOVE. Falling back to poseAt(from) looks
+  // equivalent and is not: it re-runs the solver, which re-nails the pins and
+  // springs the bones toward their rest orientation. Applying that whenever the
+  // mouse asked for too much fed a fresh bias into the pose on every gesture —
+  // the baseline is recaptured per drag, so it compounded across drags and the
+  // character slowly walked away with no way to stand it back up.
+  std::map<int, TPointD> P = curPos;
+  auto attempt             = poseAt(t);
   if (attempt.first <= tol2)
     P = std::move(attempt.second);
   else {
     const TPointD from = curPos.at(v);
     double lo = 0.0, hi = 1.0;
-    P         = poseAt(from).second;  // the standing pose always holds
     for (int i = 0; i < 8; ++i) {
       const double mid = 0.5 * (lo + hi);
       auto r           = poseAt(from + (t - from) * mid);
@@ -2089,6 +2215,27 @@ bool PlasticTool::limitDisplay_animate(int v, TPointD &pp, double &branch,
     dirFromGrand    = vxParent.P() - skel.vertex(vGrand).P();
     dirFromDefGrand = defSkel.vertex(vParent).P() - defSkel.vertex(vGrand).P();
   }
+  // TODO (2026-07-26): when vGrand < 0 the reference is the world X axis, a
+  // CONSTANT — the reported bug where an arm on its own column has a different
+  // usable range with the torso bent forward or back.
+  // parentColumnRefDirs_animate() supplies the parent column's bone instead,
+  // and was MEASURED working here: found on 890 of 997 samples, turning from
+  // -4.5 to 51 degrees as the body bends. It is not wired in because feeding it
+  // to this spot did not change the symptom, and the reason is a distinction
+  // never established: bending the torso rotates the arm's whole COLUMN via its
+  // placement (which cancels in local space), whereas this reference tracks the
+  // parent BONE bending inside the parent's skeleton. Two different rotations.
+  // DECIDED by Franco (2026-07-26): the limit must be anchored to the PARENT
+  // BONE, exactly as it already is on a single-level rig — whichever column
+  // that bone happens to live on. So the reference above is the right one.
+  //
+  // What is NOT understood, and is the first thing to measure next time:
+  // wiring it into writeBackAnglesFor_animate did not change the effective
+  // range (the arm still reaches the nose in one torso pose and the ears in
+  // another). Instrument THAT function first — is columnOfDeformation_animate
+  // resolving the column, is the clamp branch even reached for this joint —
+  // before touching the reference again. The symptom is judged on the range,
+  // and the range is decided there, not by the wedge drawn here.
   TPointD dirFromParent = vx.P() - vxParent.P();
   defAng = atan2(cross(dirFromGrand, dirFromParent),
                  dirFromGrand * dirFromParent) *
@@ -2974,6 +3121,79 @@ PlasticTool::connectedSkeletons_animate() const {
 
 //------------------------------------------------------------------------
 
+int PlasticTool::columnOfDeformation_animate(const SkDP &def) const {
+  if (!def) return -1;
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh) return -1;
+  for (int c = 0; c < xsh->getColumnCount(); ++c) {
+    TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+    if (obj && obj->getPlasticSkeletonDeformation() == def) return c;
+  }
+  return -1;
+}
+
+//------------------------------------------------------------------------
+
+bool PlasticTool::parentColumnRefDirs_animate(int column, TPointD &restDir,
+                                              TPointD &defDir) const {
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  if (!xsh || column < 0) return false;
+
+  int parentColumn = -1, parentVertex = -1;
+  for (const CrossLevelLink &lk :
+       const_cast<PlasticTool *>(this)->crossLevelLinks_animate())
+    if (lk.childColumn == column) {
+      parentColumn = lk.parentColumn;
+      parentVertex = lk.parentVertex;
+      break;
+    }
+  if (parentColumn < 0 || parentVertex < 0) return false;
+
+  TStageObject *pobj =
+      xsh->getStageObject(TStageObjectId::ColumnId(parentColumn));
+  if (!pobj) return false;
+  const SkDP &pdef = pobj->getPlasticSkeletonDeformation();
+  if (!pdef) return false;
+
+  const double pFrame = pobj->paramsTime((double)::frame());
+  const int pSkelId   = pdef->skeletonId(pFrame);
+  PlasticSkeletonP pRest = pdef->skeleton(pSkelId);
+  if (!pRest || parentVertex >= (int)pRest->vertices().size()) return false;
+
+  const int gp = pRest->vertex(parentVertex).parent();
+  if (gp < 0) return false;  // the attachment is the parent's own root
+
+  PlasticSkeleton pDeformed;
+  pdef->storeDeformedSkeleton(pSkelId, pFrame, pDeformed);
+
+  TPointD r = pRest->vertex(parentVertex).P() - pRest->vertex(gp).P();
+  TPointD d = pDeformed.vertex(parentVertex).P() - pDeformed.vertex(gp).P();
+  if (norm2(r) < 1e-8 || norm2(d) < 1e-8) return false;
+
+  // Into this column's space. Only the LINEAR part: a direction has no origin,
+  // and the two spaces differ by the column parenting, which is exactly the
+  // rotation that has to be carried over.
+  TAffine toCur;
+  bool found = false;
+  for (const ConnectedSkel &cs : connectedSkeletons_animate())
+    if (cs.columnIndex == parentColumn) {
+      toCur = cs.toCur;
+      found = true;
+      break;
+    }
+  if (found) {
+    const TAffine lin(toCur.a11, toCur.a12, 0.0, toCur.a21, toCur.a22, 0.0);
+    r = lin * r;
+    d = lin * d;
+  }
+
+  restDir = r;
+  defDir  = d;
+  return true;
+}
+
+//------------------------------------------------------------------------
+
 std::vector<PlasticTool::CrossLevelLink>
 PlasticTool::crossLevelLinks_animate() {
   std::vector<CrossLevelLink> links;
@@ -3394,8 +3614,105 @@ bool PlasticTool::crossLevelMultiAnchor_animate(const UNode &dragged,
       if (n > L && n > 1e-9) t = anchor[p] + d * (L / n);
     }
 
+  if (::getenv("ZTORYC_PIN_DIAG"))
+    qDebug().noquote() << "[PIN_PATH] crossLevelMultiAnchor pins="
+                       << (int)pinsD.size();
+
+  // Solve at a candidate target and report how far the WORST pin lands from
+  // where it must stay. The straight-line clamp above is optimistic: here the
+  // chains toward the pins share whole COLUMNS, so a target inside every pin's
+  // radius can still be one no configuration satisfies at once — and an
+  // unreached pin is not a pin that merely misses, it is an error the
+  // evaluation then spreads over every pin, the primary included.
+  auto poseAt = [&](const TPointD &tt) {
+    std::map<int, TPointD> Pc = curPos;
+    solveMultiAnchor(synth, T, anchor, tt, Pc);
+    double worst2 = 0.0;
+    for (const auto &ap : anchor) {
+      auto it = Pc.find(ap.first);
+      if (it != Pc.end())
+        worst2 = std::max(worst2, norm2(ap.second - it->second));
+    }
+    return std::make_pair(worst2, Pc);
+  };
+
+  // The body RESISTS: bisect between where the dragged joint stands (feasible
+  // by construction) and where the mouse asks it to go, keeping the farthest
+  // point that still holds every pin.
+  //
+  // If NOTHING is feasible the answer is curPos — do not move at all. Handing
+  // back a re-solved "safe" pose instead is what walked the character away:
+  // that pose has the stiffness pass in it, springing bones toward rest, and
+  // since the baseline is recaptured per gesture the bias compounded drag after
+  // drag until the character could not be stood back up.
+  //
+  // NOTE this judges with solveMultiAnchor while the CHARACTER-level solve in
+  // TStageObject has the last word, so it is an approximation — the exact
+  // version needs that solve exposed as a query, the way plantPins now is for a
+  // single column. It still rejects the plainly impossible targets.
+  // Tolerance in PIXELS. Not one pixel: solveMultiAnchor re-nails the pins with
+  // a fixed number of sweeps, so it leaves a small residue even on a pose that
+  // is perfectly fine. Judging at one pixel makes this test stricter than the
+  // solver it is testing, and the drag then stiffens on poses nobody would call
+  // impossible — the root barely moved at all.
+  const double tolC  = 4.0 * getPixelSize();
+  const double tolC2 = tolC * tolC;
+
+  // The test is RELATIVE: "does this move make the pins worse than standing
+  // still?" — not "are the pins perfect?". They often are not perfect to begin
+  // with (the solver leaves a residue, and a pose can be inherited slightly
+  // off), and an absolute bar then rejects every candidate including a
+  // one-pixel nudge: the bisection returned nothing, the character froze, and
+  // the drag alternated between moving freely and not moving at all. That is
+  // the jerkiness — measured: sequences of kept=0% with the standing residual
+  // already above the bar.
+  // ON by default; ZTORYC_PIN_NORESIST turns it off for comparison.
+  //
+  // Tried the other way round (2026-07-26) on the theory that the single-level
+  // path is fluid precisely BECAUSE it does not resist — pose freely, write the
+  // angles, let the evaluation hold the pins. Verified with Franco on the rig:
+  // without the resistance it is clearly worse. Holding the pins is not
+  // something the evaluation can be left to sort out alone on a stitched
+  // character.
+  static const bool resist = ::getenv("ZTORYC_PIN_NORESIST") == nullptr;
+
+  const TPointD from   = curPos.at(denseOf.at(dragged));
+  const double stand2  = resist ? poseAt(from).first : 0.0;
+  const double accept2 = std::max(tolC2, stand2 * 1.21);  // +10% in distance
+
   std::map<int, TPointD> P = curPos;
-  solveMultiAnchor(synth, T, anchor, t, P);
+  auto firstTry            = poseAt(t);
+  double acceptedAt        = 1.0;
+  if (!resist || firstTry.first <= accept2)
+    P = std::move(firstTry.second);
+  else {
+    // Scan from far to near and keep the FIRST fraction that holds — do not
+    // bisect. Bisection assumes feasibility is monotone along the segment, and
+    // this solver does not offer that: "plain CCD finds wildly different
+    // configurations for nearby targets" (see plant()'s header). A single
+    // unlucky midpoint sent the search into a false infeasible half and it came
+    // back with a few percent of the drag even when most of it was fine —
+    // measured as partials bunched at 4-8%, which is the stutter.
+    static const double kSteps[] = {0.85, 0.70, 0.55, 0.40, 0.28, 0.18, 0.10,
+                                    0.05};
+    acceptedAt                   = 0.0;
+    for (double f : kSteps) {
+      auto r = poseAt(from + (t - from) * f);
+      if (r.first <= accept2) {
+        acceptedAt = f;
+        P          = std::move(r.second);
+        break;
+      }
+    }
+  }
+
+  if (::getenv("ZTORYC_PIN_DIAG"))
+    qDebug().noquote()
+        << QString("[PIN_REACH] asked=%1px standing=%2px bar=%3px kept=%4%%")
+               .arg(sqrt(firstTry.first) / getPixelSize(), 0, 'f', 2)
+               .arg(sqrt(stand2) / getPixelSize(), 0, 'f', 2)
+               .arg(sqrt(accept2) / getPixelSize(), 0, 'f', 2)
+               .arg(100.0 * acceptedAt, 0, 'f', 0);
 
   std::map<int, TPointD> desiredD = curPos;
   for (const auto &kv : T.parentT) desiredD[kv.first] = P[kv.first];

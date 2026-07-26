@@ -1060,6 +1060,7 @@ PlasticTool::PlasticTool()
     , m_interpolate("interpolate", false)
     , m_snapToMesh("snapToMesh", false)
     , m_thickness("Thickness", 1, 100, 5)
+    , m_ikDamping("IKDamping", 1, 90, 15)
     , m_rigidValue("rigidValue")
     , m_globalKey("globalKeyframe", true)
     , m_globalKeyScope("Key:")  // Ztoryc: portata della chiave globale
@@ -1099,6 +1100,7 @@ PlasticTool::PlasticTool()
   m_propGroup[MODES_COUNT].bind(m_vertexName);
 
   m_propGroup[RIGIDITY_IDX].bind(m_thickness);
+  m_propGroup[ANIMATE_IDX].bind(m_ikDamping);
   m_propGroup[RIGIDITY_IDX].bind(m_rigidValue);
 
   m_propGroup[BUILD_IDX].bind(m_interpolate);
@@ -1128,6 +1130,7 @@ PlasticTool::PlasticTool()
   m_interpolate.setId("Interpolate");
   m_snapToMesh.setId("SnapToMesh");
   m_thickness.setId("Thickness");
+  m_ikDamping.setId("IKDamping");
   m_rigidValue.setId("RigidValue");
   m_globalKey.setId("GlobalKey");
   m_globalKeyScope.addValue(L"Stage");
@@ -1191,6 +1194,7 @@ void PlasticTool::updateTranslation() {
   m_interpolate.setQStringName(tr("Allow Stretching"));
   m_snapToMesh.setQStringName(tr("Snap To Mesh"));
   m_thickness.setQStringName(tr("Thickness"));
+  m_ikDamping.setQStringName(tr("IK Max Step"));
 
   m_rigidValue.setQStringName("");
   m_rigidValue.deleteAllValues();
