@@ -2473,6 +2473,20 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
       if (m_mode.getIndex() == ANIMATE_IDX)
         deformedSkeleton().vertex(m_svSel).m_minAngle = value;
 
+      // Mirror it into the keyable param, which is where the bound has to live
+      // to be visible in the function editor and to be shared by vertex name
+      // across the skeletons of a multilevel rig. Clearing the field (no valid
+      // number = no bound) drops the keys instead of keying an infinity.
+      if (SkVD *vd = m_sd->vertexDeformation(skelId, m_svSel)) {
+        if (TDoubleParamP par = vd->m_params[SkVD::MINANGLE]) {
+          if (ok) {
+            ::setKeyframe(par, ::frame());
+            par->setValue(::frame(), value);
+          } else
+            par->clearKeyframes();
+        }
+      }
+
       m_minAngle.notifyListeners();  // NOTE: This should NOT invoke this
                                      // function recursively
     }
@@ -2490,6 +2504,20 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
       m_sd->skeleton(skelId)->vertex(m_svSel).m_maxAngle = value;
       if (m_mode.getIndex() == ANIMATE_IDX)
         deformedSkeleton().vertex(m_svSel).m_maxAngle = value;
+
+      // Mirror it into the keyable param, which is where the bound has to live
+      // to be visible in the function editor and to be shared by vertex name
+      // across the skeletons of a multilevel rig. Clearing the field (no valid
+      // number = no bound) drops the keys instead of keying an infinity.
+      if (SkVD *vd = m_sd->vertexDeformation(skelId, m_svSel)) {
+        if (TDoubleParamP par = vd->m_params[SkVD::MAXANGLE]) {
+          if (ok) {
+            ::setKeyframe(par, ::frame());
+            par->setValue(::frame(), value);
+          } else
+            par->clearKeyframes();
+        }
+      }
 
       m_maxAngle.notifyListeners();  // NOTE: This should NOT invoke this
                                      // function recursively

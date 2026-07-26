@@ -2079,23 +2079,28 @@ void PlasticTool::limitDrag_animate(const TPointD &pos) {
   int skelId = ::skeletonId();
   SkVD *vd   = m_sd->vertexDeformation(skelId, v);
   int p      = (m_limitDrag == 1) ? SkVD::MINANGLE : SkVD::MAXANGLE;
-  bool keyed =
-      vd && vd->m_params[p] && vd->m_params[p]->getKeyframeCount() > 0;
 
-  if (keyed) {
-    // Already animated → set a key at the current frame
+  // Always key. Two reasons it cannot stay "static until someone else animates
+  // it": there was no way to create that first key from here, so the animated
+  // branch was unreachable and the function editor never showed the bound; and
+  // the static value lives on the VERTEX of this skeleton, while the param is
+  // shared by vertex name across all of them — so on a multilevel rig a bound
+  // set on one view was simply absent on the others.
+  if (vd && vd->m_params[p]) {
     ::setKeyframe(vd->m_params[p], ::frame());
     vd->m_params[p]->setValue(::frame(), L);
+  }
+
+  // Keep the static limit in step for this skeleton. Evaluation prefers the
+  // keyed value once there is one, so this changes nothing on its own — it just
+  // stops the two from disagreeing for any reader that still looks at the
+  // vertex.
+  if (m_limitDrag == 1) {
+    m_sd->skeleton(skelId)->vertex(v).m_minAngle = L;
+    deformedSkeleton().vertex(v).m_minAngle      = L;
   } else {
-    // Constant limit → the static vertex value (rest + deformed), like the
-    // toolbar field
-    if (m_limitDrag == 1) {
-      m_sd->skeleton(skelId)->vertex(v).m_minAngle = L;
-      deformedSkeleton().vertex(v).m_minAngle      = L;
-    } else {
-      m_sd->skeleton(skelId)->vertex(v).m_maxAngle = L;
-      deformedSkeleton().vertex(v).m_maxAngle      = L;
-    }
+    m_sd->skeleton(skelId)->vertex(v).m_maxAngle = L;
+    deformedSkeleton().vertex(v).m_maxAngle      = L;
   }
 
   // Live-update the toolbar Angle Bounds field (notifyListeners refreshes the
@@ -2195,17 +2200,20 @@ std::vector<int> PlasticTool::pinnedVerticesAtFrame(double frame) const {
   // so read them there. paramsTime is idempotent: callers may pass either the
   // raw xsheet frame or an already-converted one.
   frame = ::stageObject()->paramsTime(frame);
-  // Pins asleep (IK mode off): single gating point — no diamonds drawn, no
-  // pin-aware manipulation. Keys AND evaluation planting stay untouched, so
-  // toggling IK never moves the pose.
+  // Pins off (IK mode off): no diamonds drawn, no pin-aware manipulation. The
+  // KEYS stay untouched, so turning IK back on restores them exactly; the
+  // evaluation stops planting them too, and the pose stays where it is because
+  // leaving IK bakes the planted result into the params first.
   if (!m_sd->pinsEnabled()) return pins;
   PlasticSkeletonP skel = skeleton();
   if (!skel) return pins;
   int skelId = ::skeletonId();
+
   for (auto vt = skel->vertices().begin(); vt != skel->vertices().end(); ++vt) {
     SkVD *vd = m_sd->vertexDeformation(skelId, vt.m_idx);
-    if (vd && vd->m_params[SkVD::PIN]->getValue(frame) >= 0.5)
-      pins.push_back(vt.m_idx);
+    if (!vd || !vd->m_params[SkVD::PIN]) continue;
+    if (vd->m_params[SkVD::PIN]->getValue(frame) < 0.5) continue;
+    pins.push_back(vt.m_idx);
   }
   return pins;
 }
@@ -3955,8 +3963,12 @@ void PlasticTool::draw_animate() {
     // free the moment you switched column. Read each column's PIN params
     // directly (same convention as hasCrossLevelPin_animate / the eval) and
     // map the deformed position through that column's toCur affine.
-    if (TXsheet *xsh =
-            TTool::getApplication()->getCurrentXsheet()->getXsheet())
+    // Same gate as the current column's diamonds above: this loop reads the PIN
+    // params directly instead of going through pinnedVerticesAtFrame, so it was
+    // the one path that kept drawing pins with IK switched off.
+    if (TXsheet *xsh = (m_sd && m_sd->pinsEnabled())
+                           ? TTool::getApplication()->getCurrentXsheet()->getXsheet()
+                           : nullptr)
       for (const ConnectedSkel &cs : connSkels) {
         TStageObject *obj =
             xsh->getStageObject(TStageObjectId::ColumnId(cs.columnIndex));

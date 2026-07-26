@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <functional>
+#include <set>
 
 // TnzCore includes
 #include "tsmartpointer.h"
@@ -275,40 +276,79 @@ typedef struct PlasticSkeletonDeformationKeyframe {
 //    PoseAction  declaration
 //**************************************************************************************
 
-//! ZtoRig: one blendable action — a named pose delta, plus the guide that says
-//! how much of it applies at each frame.
+//! ZtoRig: one recallable action — a named pose delta, plus the curve that
+//! records how much of it is applied at each frame.
 /*!
-  The blend is ADDITIVE and reads:
+  An action is STAMPED, not blended: applyPoseStrength() writes the pose
+  straight into the plastic params as real keys, so the slider IS the
+  animation and evaluation never has to know actions exist.
 
   \code
-    effective(param, frame) = base(param, frame)
-                            + SUM over actions of  delta[param] * guide(frame)
+    param(frame) := neutral + strength * delta[param]     // absolute Pose
+    param(frame) := base    + strength * delta[param]     // additive Offset
   \endcode
 
-  Additive, not an exclusive crossfade, so independent actions compose: blink L
-  and blink R, or mouth-open and smile, do not fight over the same channel.
-
-  
-ote Deltas are stored BY VERTEX NAME, like keyframes are (see SkDKey), and
+  \note Deltas are stored BY VERTEX NAME, like keyframes are (see SkDKey), and
   never by vertex index: that is what lets an action be copied to a skeleton
   whose internal vertex numbering differs.
 */
 struct PoseAction {
   QString m_name;  //!< Action name, unique within the deformation
 
-  //! ABSOLUTE (a "pose") vs additive (an "offset"). Absolute at guide=1 gives
-  //! exactly the recorded pose from ANY start pose — it lerps base -> recorded,
-  //! and covers the WHOLE skeleton (params not moved go to their neutral).
-  //! Additive layers a delta-from-rest on top, only on the params it touched —
-  //! good for per-element controllers that stack (a brow dial + a mouth dial).
-  //! Non-overlapping actions stay independent in BOTH modes; only two actions
-  //! fighting over the same param need a single dominant one.
-  bool m_absolute = false;
+  //! How the action is stamped. Three modes, and the difference that matters is
+  //! RECALL (land on the recorded value, wherever you started) vs PUSH (add to
+  //! wherever you are), crossed with how much of the skeleton is claimed:
+  //!
+  //! - ADD — push, on its own params only. Stacks with anything, but the
+  //!   result depends on the starting pose: the same strength gives a different
+  //!   shape depending on what came before.
+  //! - POSE — recall, over the WHOLE skeleton: params the action never moved go
+  //!   to the base, which is what makes two Poses mutually exclusive. Right for
+  //!   a full-body pose, wrong for a per-element controller (it would wipe it).
+  //! - PART — recall, over its OWN params only. A mouth shape lands exactly as
+  //!   recorded no matter which shape preceded it, and leaves the eyes alone.
+  //!   This is what lip-sync phonemes and per-limb poses need: an ADD "A"
+  //!   after an "O" gives "O+A", never the "A" that was recorded.
+  enum Mode { ADD = 0, POSE = 1, PART = 2 };
+  int m_mode = ADD;
 
-  //! How much of the action applies, per frame. A keyframeable param on
+  //! True when the action RECALLS its recorded values (POSE and PART) rather
+  //! than pushing from wherever the character is (ADD).
+  bool isAbsolute() const { return m_mode != ADD; }
+  //! True when the action claims only the params it recorded, leaving the rest
+  //! of the skeleton to whoever else is driving it.
+  bool isPartial() const { return m_mode == PART; }
+
+  //! How much of the action IS applied, per frame — a record of what the
+  //! stamping wrote, not a driver of the deformation. A keyframeable param on
   //! purpose: it inherits interpolation, Constant segments, undo and the
-  //! function editor without a line of new code. 0 = action off.
+  //! function editor without a line of new code. 0 = action not applied.
+  //! Named "guide" for the serialized tag's sake: it used to drive a runtime
+  //! blend, superseded by stamping the pose into the params themselves.
   TDoubleParamP m_guide;
+
+  //! Skeletons this action may be applied to. Vertex names are shared across a
+  //! turnaround's views, so a pose is TECHNICALLY replayable on any of them —
+  //! but DISTANCE is a length in skeleton space, not a ratio, so replaying a
+  //! front pose on the side view lands somewhere nobody authored.
+  //! Recording fills this with the skeleton it was authored on; the artist can
+  //! widen it, because a pose that only moves matching parts (a blink) really
+  //! does work on several views.
+  //! EMPTY = no restriction, applies everywhere. That is both the deliberate
+  //! "works on all of them" and what actions recorded before this existed get.
+  std::set<int> m_skelIds;
+
+  //! Whether the action may be applied on skeleton \p skelId.
+  bool appliesTo(int skelId) const {
+    return m_skelIds.empty() || m_skelIds.count(skelId) > 0;
+  }
+
+  //! This action is the ZERO of its skeleton: an absolute Pose interpolates
+  //! from HERE instead of from the skeleton's real rest pose. That rest is the
+  //! EXPLODED layout on an exploded rig — limbs scattered — so dialling a pose
+  //! to 0 would take the character apart. Record the assembled pose once, mark
+  //! it Base, and 0 means assembled. At most one per skeleton.
+  bool m_isBase = false;
 
   //! Deltas from the REST pose, by vertex name. Each entry is
   //! SkVD::POSE_PARAMS_COUNT long and is indexed by SkVD::poseParamSlot() —
@@ -640,28 +680,40 @@ public:
   PoseKeyState getPoseKeyState() const;
   void setPoseKeyState(const PoseKeyState &s);
 
-  //! Stamp the action's pose into PLASTIC KEYS at \p frame: writes, per param,
-  //! the value currently on screen (base + blend), so what you previewed with
-  //! the dial becomes real keyframes the xsheet interpolates from the previous
-  //! key. Then clears the action's guide (the pose now lives in the keys, not a
-  //! live layer). An absolute Pose stamps the WHOLE skeleton; an Offset only
-  //! the params it touched (so partial controllers stay partial).
-  void applyPoseAction(int idx, double frame);
+  //! The action acting as the zero of skeleton \p skelId, or null when that
+  //! skeleton has none and the real rest pose is the zero. (The base is looked
+  //! up per skeleton, so each view of a turnaround can have its own assembled
+  //! pose while sharing the actions that work on both.)
+  const PoseAction *baseActionOf(int skelId) const;
 
-  //! Current strength of the action at \p frame, read back from the params:
-  //! 0 when the character is at rest for it, 1 when it is in the recorded pose.
-  //! Measured on the action's most-moved param (robust to the others). Lets the
-  //! slider show where you are so you can dial the pose in AND out.
+  //! Value param \p param of \p vertexName has at strength 0: the base action's
+  //! if the skeleton has one, the real neutral otherwise.
+  double poseBaseValue(const QString &vertexName, int param, int skelId) const;
+
+  //! Makes action \p idx the zero of its skeleton (or clears the flag). Only
+  //! one action per skeleton can be the base, so this clears the others.
+  void setPoseActionAsBase(int idx, bool isBase);
+
+  //! Whether action \p idx can be applied at \p frame, i.e. whether it was
+  //! recorded on the skeleton that is active there. Unbound (legacy) actions
+  //! apply everywhere.
+  bool poseActionAppliesAt(int idx, double frame) const;
+
+  //! Strength of the action at \p frame, 0 at rest and 1 in the recorded pose,
+  //! read back from the RECORD written by applyPoseStrength — never re-derived
+  //! from the params, which cannot tell two actions sharing a param apart. Lets
+  //! the slider show where you are so you can dial the pose in AND out.
   double poseStrengthAt(int idx, double frame) const;
 
   //! Write the action at \p strength straight into keyframes at \p frame:
   //! Pose (absolute) -> neutral + strength*delta (0 = rest, 1 = recorded);
-  //! Offset (additive) -> base + strength*delta. This is the auto-stamp behind
-  //! the slider — no hidden guide, the keys ARE the animation. Returns the set
-  //! of vertex params it wrote (for the caller's undo snapshot / updateKeyframes).
+  //! Add (additive) -> base + strength*delta. This is the auto-stamp behind
+  //! the slider: the keys ARE the animation. Also records \p strength so
+  //! poseStrengthAt() can read it back, and — for an absolute Pose, which
+  //! overwrites the whole skeleton — zeroes the other actions' records.
   void applyPoseStrength(int idx, double strength, double frame);
 
-  //! Open/close an Offset drag. An Offset is <TT>base + strength*delta</TT>, and
+  //! Open/close an Add drag. An Add is <TT>base + strength*delta</TT>, and
   //! the slider calls applyPoseStrength on EVERY move: without a base frozen at
   //! the start of the gesture each move would read back its own previous write
   //! and add to it, so the offset compounds and the character shoots away after
@@ -670,21 +722,6 @@ public:
   //! the live value.
   void beginPoseDrag(int idx, double frame);
   void endPoseDrag();
-
-  //! Sum of every active action's contribution to \p param on \p vertexName
-  //! at \p frame — the "blend" term alone, WITHOUT the authored base value.
-  /*!
-    Evaluation adds it to the base (see updateBranchPositions). The solver needs
-    it separately and with the opposite sign: dragging must reach the pose the
-    user SEES, so what gets written back is <TT>base = target - blend</TT>.
-    Resolve in the space the user sees, store in the base space.
-
-    \note A corrective guided by a joint angle must never write the very param
-    that guides it — that closes the guide->effect->guide loop that made pins
-    oscillate. Correctives read the BASE value of their guide.
-  */
-  double poseBlendOffset(const QString &vertexName, int param,
-                         double frame) const;
 
   //! \name ZtoRig mesh correctives (joint pose-space deformation)
   //@{

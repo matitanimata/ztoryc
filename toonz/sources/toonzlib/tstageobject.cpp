@@ -1640,6 +1640,16 @@ void TStageObject::solvePlasticCharacter(double t, const TAffine &baseLocal) {
     }
   }
 
+  // IK off: no solve, exactly as on a single-level rig where the per-column
+  // plant is skipped too. It matters that this sits AFTER the clean slate
+  // above — returning before it would leave the skeletons solved under the
+  // previous pin state, which is the state the rig looked broken in.
+  //
+  // The flag is a property of the character: PlasticTool::enablePinsOnCharacter
+  // sets it on every column, so this object's own copy answers for all of them.
+  if (const PlasticSkeletonDeformationP &mine = getPlasticSkeletonDeformation())
+    if (!mine->pinsEnabled()) return;
+
   std::vector<Col> cols;
   std::vector<PlasticPinSolver::Joint> joints;
   std::vector<TPointD> pos;

@@ -269,13 +269,14 @@ public:
   std::map<std::pair<QString, int>, double> m_poseDragBase;
   int m_poseDragIdx = -1;
 
-  //! ZtoRig: blend term for one param. See the public wrapper for the sign
-  //! convention and the recursion rule.
-  double poseBlendOffset(const QString &vertexName, int param,
-                         double frame) const;
-  //! Guide value with the pose-dial rule: 0 before the first key (no backward
-  //! bleed into already-animated frames), held forward past the last.
-  static double guideValue(const TDoubleParam &guide, double frame);
+  //! ZtoRig: records how much of action \p idx is applied at \p frame in its
+  //! guide curve, and clears the other actions when this one is an absolute
+  //! Pose (which overwrites the whole skeleton, so nothing else is left).
+  void writePoseStrength(int idx, double strength, double frame);
+
+  //! Whether two actions drive any of the same (vertex, param) — which is when
+  //! stamping one invalidates the other's record.
+  static bool overlaps(const PoseAction &a, const PoseAction &b);
 
   // STEP C.2b: result of the character-level solve for this column. Transient.
   PlasticSkeleton m_solvedSkeleton;
@@ -648,13 +649,11 @@ void PlasticSkeletonDeformation::Imp::updateBranchPositions(
     double a = tcg::point_ops::angle(oDir, ovxPos - ovxParentPos) * M_180_PI;
     double d = tcg::point_ops::dist(ovxParentPos, ovxPos);
 
-    // ZtoRig: authored value plus the pose-action blend. The blend is added
-    // HERE, in the evaluation, and never written into the params: the base
-    // animation stays separable from the actions driving it.
-    double aDelta = vd.m_params[SkVD::ANGLE]->getValue(frame) +
-                    poseBlendOffset(dvx.name(), SkVD::ANGLE, frame);
-    double dDelta = vd.m_params[SkVD::DISTANCE]->getValue(frame) +
-                    poseBlendOffset(dvx.name(), SkVD::DISTANCE, frame);
+    // ZtoRig: nothing to add here. A pose action is STAMPED into these very
+    // params by applyPoseStrength, so by the time evaluation runs the pose is
+    // already part of the authored animation.
+    double aDelta = vd.m_params[SkVD::ANGLE]->getValue(frame);
+    double dDelta = vd.m_params[SkVD::DISTANCE]->getValue(frame);
 
     dvx.P() = deformedSkeleton.vertex(vParent).P() +
               (d + dDelta) * (TRotation(a + aDelta) * dDir);
@@ -670,12 +669,9 @@ void PlasticSkeletonDeformation::Imp::updateBranchPositions(
     if (vdIt != m_vds.end()) {
       const SkVD &vd = vdIt->m_vd;
       if (vd.m_params[SkVD::ROOTX] && vd.m_params[SkVD::ROOTY])
-        dvx.P() =
-            originalSkeleton.vertex(v).P() +
-            TPointD(vd.m_params[SkVD::ROOTX]->getValue(frame) +
-                        poseBlendOffset(dvx.name(), SkVD::ROOTX, frame),
-                    vd.m_params[SkVD::ROOTY]->getValue(frame) +
-                        poseBlendOffset(dvx.name(), SkVD::ROOTY, frame));
+        dvx.P() = originalSkeleton.vertex(v).P() +
+                  TPointD(vd.m_params[SkVD::ROOTX]->getValue(frame),
+                          vd.m_params[SkVD::ROOTY]->getValue(frame));
     }
   }
 
@@ -1337,11 +1333,17 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   // out of the skeleton evaluation means pins, IK and pose manipulation never
   // interact with the scale.
 
-  // NOTE: the planting below is NOT gated by pinsEnabled — the flag only
-  // puts the pins to sleep in the TOOL UI (no diamonds, no pin manipulation).
-  // Removing the planting from the evaluation would shift the whole pose the
-  // moment IK mode is toggled, and viewer/render would diverge from the
-  // animation as authored.
+  // IK off means the pins are GONE, not merely hidden: no planting at all, the
+  // character sits at the pose its params describe. The tool writes the planted
+  // result back into those params, so it stays where it is — which is what
+  // switching IK off on a single-level rig has always done.
+  //
+  // This used to run regardless of the flag, on the theory that skipping it
+  // would shift the pose. It does not, and leaving it on had a worse effect on
+  // a multi-column character: the stage-level solve and the per-column plant
+  // disagreed about who owns the pinned chain, and the rig came apart until the
+  // next click forced a re-solve.
+  if (!m_imp->m_pinsEnabled) return;
 
   // SuperPlastic pin constraints (per-frame). The OLDEST active pin is planted
   // by rigidly translating the whole skeleton onto its target (PINTX,PINTY):
@@ -1551,13 +1553,11 @@ TAffine PlasticSkeletonDeformation::getSquashControllerAffine(
   if (it == m_imp->m_vds.end()) return TAffine();
   const SkVD &vd = it->m_vd;
 
-  // ZtoRig: the controller channels blend too, so an action can squash or
-  // rotate the whole character. Additive on the raw value: a +0.1 delta on
-  // SCALEX means 1.0 -> 1.1, which is what an offset from rest should mean.
-  const QString &rootName = skel->vertex(rootIdx).name();
-  auto val = [&vd, frame, this, &rootName](SkVD::Params p, double def) {
-    double base = vd.m_params[p] ? vd.m_params[p]->getValue(frame) : def;
-    return base + m_imp->poseBlendOffset(rootName, p, frame);
+  // ZtoRig: the controller channels are pose params like any other, so an
+  // action that squashes or rotates the whole character has already been
+  // stamped into them — read the raw value.
+  auto val = [&vd, frame](SkVD::Params p, double def) {
+    return vd.m_params[p] ? vd.m_params[p]->getValue(frame) : def;
   };
 
   double sx  = val(SkVD::SCALEX, 1.0), sy = val(SkVD::SCALEY, 1.0);
@@ -1631,6 +1631,12 @@ void PlasticSkeletonDeformation::clearSolvedSkeleton() {
 void PlasticSkeletonDeformation::enablePins(bool on) {
   if (m_imp->m_pinsEnabled == on) return;
   m_imp->m_pinsEnabled = on;
+
+  // Anything solved under the previous pin state is now wrong. Dropping it here
+  // is what makes the toggle take effect immediately: leaving it behind is why
+  // the rig looked broken until the next click happened to force a re-solve.
+  clearSolvedSkeleton();
+  clearSecondaryPinTargets();
 
   // The evaluation result changes: invalidate the associated deformers
   PlasticDeformerStorage::instance()->invalidateDeformation(
@@ -1853,96 +1859,6 @@ void PoseAction::setDelta(const QString &vertexName, int param, double value) {
 //    PlasticSkeletonDeformation  pose actions
 //**************************************************************************************
 
-double PlasticSkeletonDeformation::Imp::poseBlendOffset(
-    const QString &vertexName, int param, double frame) const {
-  // Hot path: this sits inside the recursive skeleton evaluation, so the
-  // no-actions case must cost a single comparison.
-  if (m_poseActions.empty()) return 0.0;
-  if (SkVD::poseParamSlot(param) < 0) return 0.0;  // pins, joint limits
-
-  // Base value of this param, needed only by ABSOLUTE actions (lerp base ->
-  // recorded). Read lazily so pure-offset rigs never pay for it.
-  bool baseKnown = false;
-  double base    = 0.0;
-  auto readBase  = [&]() -> double {
-    if (baseKnown) return base;
-    baseKnown                     = true;
-    base                          = PlasticSkeletonDeformation::poseParamNeutral(param);
-    SkVDSet::const_iterator it    = m_vds.find(vertexName);
-    if (it != m_vds.end() && it->m_vd.m_params[param])
-      base = it->m_vd.m_params[param]->getValue(frame);
-    return base;
-  };
-
-  // Absolute actions blend as a normalized weighted average toward their
-  // recorded poses; additive actions layer on top. Two passes: first the total
-  // absolute weight, so overlapping poses fuse (weights summing past 1 are
-  // normalized) instead of subtracting the base twice — which rotated the
-  // character when two Pose dials were up together.
-  double absSum = 0.0;
-  for (size_t a = 0; a < m_poseActions.size(); ++a) {
-    const PoseAction &act = m_poseActions[a];
-    if (act.m_absolute && act.m_guide) {
-      const double g = guideValue(*act.m_guide, frame);
-      if (g > 0.0) absSum += g;  // negative dial = off for an absolute pose
-    }
-  }
-  const double denom  = absSum > 1.0 ? absSum : 1.0;   // normalize only past 1
-  const double wBase  = absSum < 1.0 ? 1.0 - absSum : 0.0;  // base fills the rest
-
-  // effective = wBase*base + SUM (g_i/denom)*target_i  +  additive offsets
-  // poseBlendOffset returns effective - base (it is added to base upstream).
-  double effAbs         = 0.0;  // absolute part of `effective`
-  bool anyAbsolute      = false;
-  double additive       = 0.0;
-  for (size_t a = 0; a < m_poseActions.size(); ++a) {
-    const PoseAction &act = m_poseActions[a];
-    if (!act.m_guide) continue;
-    const double g = guideValue(*act.m_guide, frame);
-
-    if (act.m_absolute) {
-      anyAbsolute = true;
-      if (g <= 0.0) continue;
-      const double target =
-          PlasticSkeletonDeformation::poseParamNeutral(param) +
-          act.delta(vertexName, param);
-      effAbs += (g / denom) * target;
-    } else {
-      const double delta = act.delta(vertexName, param);
-      if (delta != 0.0) additive += delta * g;
-    }
-  }
-
-  double sum = additive;
-  if (anyAbsolute) sum += (wBase * readBase() + effAbs) - readBase();
-  return sum;
-}
-
-//------------------------------------------------------------------
-
-double PlasticSkeletonDeformation::Imp::guideValue(const TDoubleParam &guide,
-                                                   double frame) {
-  // A keyed guide holds its FIRST key's value backwards to the start of time
-  // (constant extrapolation). For a pose dial that is wrong: dialling an action
-  // at frame 50 would silently repose every frame before it — wrecking
-  // animation the artist already made. So the action is OFF (0) before its
-  // first key. It still HOLDS forward past the last key: a pose meant to stay
-  // on stays on, and is switched off by keying the dial back to 0.
-  const int n = guide.getKeyframeCount();
-  if (n > 0 && frame < guide.getKeyframe(0).m_frame) return 0.0;
-  return guide.getValue(frame);
-}
-
-//------------------------------------------------------------------
-
-double PlasticSkeletonDeformation::poseBlendOffset(const QString &vertexName,
-                                                   int param,
-                                                   double frame) const {
-  return m_imp->poseBlendOffset(vertexName, param, frame);
-}
-
-//------------------------------------------------------------------
-
 double PlasticSkeletonDeformation::poseParamNeutral(int param) {
   // The scale factors rest at 1 (100%); every other pose channel is already an
   // OFFSET from the original skeleton, so its rest value is 0.
@@ -1980,6 +1896,17 @@ int PlasticSkeletonDeformation::recordPoseAction(const QString &name,
       if (fabs(delta) > eps) act.setDelta(vdt->m_name, p, delta);
     }
   }
+
+  // Bind the action to the skeleton it was authored on. The artist can widen
+  // it afterwards (see PoseAction::m_skelIds); recording only knows this one.
+  act.m_skelIds.clear();
+  act.m_skelIds.insert(skeletonId(frame));
+
+  // The character IS in this pose right now, by definition of recording it:
+  // strength 1 here, and every other action reads 0 because the shape they were
+  // contributing has just been absorbed into this one. A Base action is the
+  // zero itself, so it has no strength to record.
+  if (!act.m_isBase) m_imp->writePoseStrength(idx, 1.0, frame);
 
   return idx;
 }
@@ -2105,82 +2032,120 @@ void PlasticSkeletonDeformation::setPoseKeyState(const PoseKeyState &s) {
 
 //------------------------------------------------------------------
 
-void PlasticSkeletonDeformation::applyPoseAction(int idx, double frame) {
+const PoseAction *PlasticSkeletonDeformation::baseActionOf(int skelId) const {
+  for (size_t a = 0; a < m_imp->m_poseActions.size(); ++a) {
+    const PoseAction &act = m_imp->m_poseActions[a];
+    if (act.m_isBase && act.appliesTo(skelId)) return &act;
+  }
+  return nullptr;
+}
+
+//------------------------------------------------------------------
+
+double PlasticSkeletonDeformation::poseBaseValue(const QString &vertexName,
+                                                 int param, int skelId) const {
+  const double neutral  = poseParamNeutral(param);
+  const PoseAction *base = baseActionOf(skelId);
+  return base ? neutral + base->delta(vertexName, param) : neutral;
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::setPoseActionAsBase(int idx, bool isBase) {
   PoseAction *act = poseAction(idx);
   if (!act) return;
+  act->m_isBase = isBase;
+  if (!isBase) return;
 
-  // Collect the on-screen (base + blend) value of every param the pose covers
-  // BEFORE writing anything, so setting one key can't perturb the next read.
-  struct Target {
-    QString m_v;
-    int m_param;
-    double m_value;
-  };
-  std::vector<Target> targets;
+  // One zero per skeleton, or "strength 0" would mean two different shapes on
+  // the same skeleton. Two bases may coexist as long as they never meet, so
+  // what gets cleared is any base whose skeletons OVERLAP with this one's.
+  for (size_t a = 0; a < m_imp->m_poseActions.size(); ++a) {
+    if ((int)a == idx) continue;
+    PoseAction &other = m_imp->m_poseActions[a];
+    if (!other.m_isBase) continue;
 
-  auto collect = [&](const QString &vname, SkVD &vd) {
-    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
-      const int p = SkVD::POSE_PARAMS[i];
-      if (!vd.m_params[p]) continue;
-      if (!act->m_absolute && act->delta(vname, p) == 0.0)
-        continue;  // Offset stamps only the params it moved
-      const double base = vd.m_params[p]->getValue(frame);
-      const double eff  = base + m_imp->poseBlendOffset(vname, p, frame);
-      targets.push_back({vname, p, eff});
-    }
-  };
+    bool meet = act->m_skelIds.empty() || other.m_skelIds.empty();
+    for (std::set<int>::const_iterator it = act->m_skelIds.begin();
+         !meet && it != act->m_skelIds.end(); ++it)
+      meet = other.m_skelIds.count(*it) > 0;
 
-  SkVDSet::iterator vdt, vdEnd(m_imp->m_vds.end());
-  for (vdt = m_imp->m_vds.begin(); vdt != vdEnd; ++vdt)
-    collect(vdt->m_name, vdt->m_vd);
-
-  // Write the keys.
-  for (const Target &t : targets) {
-    SkVDSet::iterator it = m_imp->m_vds.find(t.m_v);
-    if (it != m_imp->m_vds.end() && it->m_vd.m_params[t.m_param])
-      it->m_vd.m_params[t.m_param]->setValue(frame, t.m_value);
+    if (meet) other.m_isBase = false;
   }
+}
 
-  // The pose now lives in the keys: clear the dial so the blend does not
-  // double-apply on top of them.
-  if (act->m_guide) {
-    act->m_guide->clearKeyframes();
-    act->m_guide->setDefaultValue(0.0);
-  }
+//------------------------------------------------------------------
+
+bool PlasticSkeletonDeformation::poseActionAppliesAt(int idx,
+                                                     double frame) const {
+  const PoseAction *act = poseAction(idx);
+  return act && act->appliesTo(skeletonId(frame));
 }
 
 //------------------------------------------------------------------
 
 double PlasticSkeletonDeformation::poseStrengthAt(int idx, double frame) const {
   const PoseAction *act = poseAction(idx);
-  if (!act) return 0.0;
+  if (!act || !act->m_guide) return 0.0;
 
-  // Read the strength off the action's most-moved param: strength =
-  // (value - neutral) / delta. That param has the best signal-to-noise, and a
-  // clean pose sits at the same strength on all of them.
-  QString bestV;
-  int bestParam    = -1;
-  double bestDelta = 0.0;
-  for (std::map<QString, std::vector<double>>::const_iterator it =
-           act->m_deltas.begin();
-       it != act->m_deltas.end(); ++it) {
-    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT && i < (int)it->second.size();
-         ++i) {
-      if (fabs(it->second[i]) > fabs(bestDelta)) {
-        bestDelta = it->second[i];
-        bestParam = SkVD::POSE_PARAMS[i];
-        bestV     = it->first;
-      }
-    }
+  // The strength is RECORDED in the guide curve, never re-derived from the
+  // params. Deducing it — (value - neutral) / delta on the most-moved param —
+  // only holds while actions are disjoint: two actions sharing a param read
+  // each other's work as their own, so dialling one left the others showing a
+  // spurious value instead of dropping to 0.
+  //
+  // Plain getValue(), same extrapolation as the pose params the guide
+  // describes: both hold the first key backwards and the last one forwards, so
+  // the slider agrees with the character at every frame.
+  return act->m_guide->getValue(frame);
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::Imp::writePoseStrength(int idx,
+                                                        double strength,
+                                                        double frame) {
+  if (idx < 0 || idx >= (int)m_poseActions.size()) return;
+  PoseAction &act = m_poseActions[idx];
+  if (act.m_guide) act.m_guide->setValue(frame, strength);
+
+  // Whose record is now a lie depends on how much of the skeleton was claimed:
+  //   ADD    - nothing, it only pushed its own params on top of the others;
+  //   POSE   - everything, it rewrote every pose param of the skeleton;
+  //   PART   - only the actions it collided with, param by param.
+  if (act.m_mode == PoseAction::ADD) return;
+
+  for (size_t a = 0; a < m_poseActions.size(); ++a) {
+    if ((int)a == idx) continue;
+    // Leave other skeletons' actions alone: they never wrote anything here, and
+    // zeroing them would rewrite their curve from a frame they do not own.
+    if (!m_back->poseActionAppliesAt((int)a, frame)) continue;
+    if (act.isPartial() && !overlaps(act, m_poseActions[a])) continue;
+
+    TDoubleParamP &g = m_poseActions[a].m_guide;
+    // Only if it had something to clear: keying 0 on an action that already
+    // reads 0 would litter every curve with keys the artist never asked for.
+    if (g && fabs(g->getValue(frame)) > 1e-9) g->setValue(frame, 0.0);
   }
-  if (bestParam < 0 || fabs(bestDelta) < 1e-9) return 0.0;
+}
 
-  SkVDSet::const_iterator vt = m_imp->m_vds.find(bestV);
-  if (vt == m_imp->m_vds.end() || !vt->m_vd.m_params[bestParam]) return 0.0;
+//------------------------------------------------------------------
 
-  const double neutral = poseParamNeutral(bestParam);
-  const double value   = vt->m_vd.m_params[bestParam]->getValue(frame);
-  return (value - neutral) / bestDelta;
+bool PlasticSkeletonDeformation::Imp::overlaps(const PoseAction &a,
+                                               const PoseAction &b) {
+  // Do the two actions drive any of the same (vertex, param)? Only then does
+  // one stamping over the other invalidate it.
+  for (std::map<QString, std::vector<double>>::const_iterator at =
+           a.m_deltas.begin();
+       at != a.m_deltas.end(); ++at) {
+    std::map<QString, std::vector<double>>::const_iterator bt =
+        b.m_deltas.find(at->first);
+    if (bt == b.m_deltas.end()) continue;
+    const size_t n = std::min(at->second.size(), bt->second.size());
+    for (size_t s = 0; s < n; ++s)
+      if (at->second[s] != 0.0 && bt->second[s] != 0.0) return true;
+  }
+  return false;
 }
 
 //------------------------------------------------------------------
@@ -2189,7 +2154,7 @@ void PlasticSkeletonDeformation::beginPoseDrag(int idx, double frame) {
   m_imp->m_poseDragBase.clear();
   m_imp->m_poseDragIdx = idx;
   PoseAction *act      = poseAction(idx);
-  if (!act || act->m_absolute) return;  // only an Offset reads the live base
+  if (!act || act->isAbsolute()) return;  // only an Add reads the live base
 
   for (std::map<QString, std::vector<double>>::const_iterator it =
            act->m_deltas.begin();
@@ -2219,6 +2184,10 @@ void PlasticSkeletonDeformation::applyPoseStrength(int idx, double strength,
                                                    double frame) {
   PoseAction *act = poseAction(idx);
   if (!act) return;
+  // Belt and braces: the panel disables foreign actions, but the deformation
+  // owns the rule — a stray call must not stamp a pose authored for another
+  // skeleton onto this one.
+  if (!poseActionAppliesAt(idx, frame)) return;
 
   // Precompute targets before writing (an Offset reads the live base, which a
   // just-written key would perturb).
@@ -2229,24 +2198,51 @@ void PlasticSkeletonDeformation::applyPoseStrength(int idx, double strength,
   };
   std::vector<Target> targets;
 
-  if (act->m_absolute) {
+  if (act->isAbsolute()) {
     // A Pose is EXCLUSIVE and covers the WHOLE skeleton: iterate every vertex
     // param, not just the ones the pose moved. Params it leaves at rest write
     // neutral (delta 0 -> neutral + s*0), so they OVERRIDE whatever another pose
     // left there — otherwise switching from a pose that bent the torso back to
     // one that does not would keep the torso bent (delta absent = untouched).
-    SkVDSet::iterator vt, vEnd(m_imp->m_vds.end());
-    for (vt = m_imp->m_vds.begin(); vt != vEnd; ++vt) {
-      for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
-        const int p = SkVD::POSE_PARAMS[i];
-        if (!vt->m_vd.m_params[p]) continue;
-        const double neutral = poseParamNeutral(p);
-        const double delta   = act->delta(vt->m_name, p);  // 0 if untouched
-        targets.push_back({vt->m_name, p, neutral + strength * delta});
+    // Strength 0 is the skeleton's BASE pose, which is its real rest only when
+    // no action was marked Base — on an exploded rig that rest is the scattered
+    // layout, and dialling to 0 would take the character apart.
+    const int skelId = skeletonId(frame);
+
+    // Both recall modes lerp base -> recorded; they differ only in HOW MUCH of
+    // the skeleton they claim. A POSE claims all of it, so params it never
+    // moved are driven to the base and no other pose can survive underneath.
+    // A PART claims only the params it recorded, so a mouth shape lands exactly
+    // as authored while the eyes keep whatever is driving them.
+    auto stamp = [&](const QString &vname, int p) {
+      const double base = poseBaseValue(vname, p, skelId);
+      const double full = poseParamNeutral(p) + act->delta(vname, p);
+      targets.push_back({vname, p, base + strength * (full - base)});
+    };
+
+    if (act->isPartial()) {
+      for (std::map<QString, std::vector<double>>::const_iterator it =
+               act->m_deltas.begin();
+           it != act->m_deltas.end(); ++it) {
+        SkVDSet::iterator vt = m_imp->m_vds.find(it->first);
+        if (vt == m_imp->m_vds.end()) continue;
+        for (int i = 0; i < SkVD::POSE_PARAMS_COUNT && i < (int)it->second.size();
+             ++i) {
+          if (it->second[i] == 0.0) continue;  // not one of its params
+          const int p = SkVD::POSE_PARAMS[i];
+          if (vt->m_vd.m_params[p]) stamp(it->first, p);
+        }
       }
+    } else {
+      SkVDSet::iterator vt, vEnd(m_imp->m_vds.end());
+      for (vt = m_imp->m_vds.begin(); vt != vEnd; ++vt)
+        for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
+          const int p = SkVD::POSE_PARAMS[i];
+          if (vt->m_vd.m_params[p]) stamp(vt->m_name, p);
+        }
     }
   } else {
-    // An Offset is partial: only the params it moved, added on the current base,
+    // An Add is partial: only the params it moved, pushed onto the current base,
     // so independent controllers stack without wiping one another.
     for (std::map<QString, std::vector<double>>::const_iterator it =
              act->m_deltas.begin();
@@ -2279,6 +2275,10 @@ void PlasticSkeletonDeformation::applyPoseStrength(int idx, double strength,
     if (vt != m_imp->m_vds.end() && vt->m_vd.m_params[t.m_param])
       vt->m_vd.m_params[t.m_param]->setValue(frame, t.m_value);
   }
+
+  // Record how much of the action is now applied, so the slider can be read
+  // back at any frame instead of guessed from the params.
+  m_imp->writePoseStrength(idx, strength, frame);
 }
 
 //------------------------------------------------------------------
@@ -2398,7 +2398,15 @@ void PlasticSkeletonDeformation::saveData(TOStream &os) {
 
       os.openChild("Action");
       os.child("Name") << act.m_name;
-      if (act.m_absolute) os.child("Absolute") << 1;  // tag only when true
+      // Written only when not the default, so rigs that never left Offset
+      // round-trip byte-identical. The legacy "Absolute" tag is still READ.
+      if (act.m_mode != PoseAction::ADD) os.child("Mode") << act.m_mode;
+      // One tag per skeleton; none at all means "applies everywhere", which is
+      // also what scenes written before this keep.
+      for (std::set<int>::const_iterator st = act.m_skelIds.begin();
+           st != act.m_skelIds.end(); ++st)
+        os.child("Skel") << *st;
+      if (act.m_isBase) os.child("Base") << 1;  // tag only when true
       os.child("Guide") << *act.m_guide;
 
       std::map<QString, std::vector<double>>::const_iterator dt;
@@ -2490,10 +2498,29 @@ void PlasticSkeletonDeformation::loadData(TIStream &is) {
           while (is.openChild(tagName)) {
             if (tagName == "Name")
               is >> act.m_name, is.matchEndTag();
-            else if (tagName == "Absolute") {
+            else if (tagName == "Mode") {
+              int m = PoseAction::ADD;
+              is >> m, is.matchEndTag();
+              if (m >= PoseAction::ADD && m <= PoseAction::PART)
+                act.m_mode = m;
+            } else if (tagName == "Absolute") {
+              // Pre-PART scenes: the flag only ever meant whole-skeleton Pose.
               int abs = 0;
               is >> abs, is.matchEndTag();
-              act.m_absolute = (abs != 0);
+              if (abs != 0) act.m_mode = PoseAction::POSE;
+            } else if (tagName == "Base") {
+              int b = 0;
+              is >> b, is.matchEndTag();
+              act.m_isBase = (b != 0);
+            } else if (tagName == "Skel") {
+              int sid = -1;
+              is >> sid, is.matchEndTag();
+              if (sid >= 0) act.m_skelIds.insert(sid);
+            } else if (tagName == "SkelId") {
+              // Short-lived single-skeleton form, before sets.
+              int sid = -1;
+              is >> sid, is.matchEndTag();
+              if (sid >= 0) act.m_skelIds.insert(sid);
             } else if (tagName == "Guide")
               is >> *act.m_guide, is.matchEndTag();
             else if (tagName == "Delta") {
