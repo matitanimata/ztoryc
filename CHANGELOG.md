@@ -1,3 +1,33 @@
+## [2026-07-26b] — ZtoRig: Offset risolto, due difetti aperti (LAVORO IN CORSO)
+
+> ⚠️ **ZtoRig vive nel worktree `tahoma2d-superplastic`, branch
+> `feature/ztorig-pose-blend`, bundle `Ztoryc-SP.app`** — NON `Ztoryc.app`, che è
+> master e non contiene nulla di ZtoRig. Se gli slider "fanno cose strane",
+> **primo controllo: quale bundle stai aprendo.**
+
+### Fixed
+- **L'Offset non si accumula più su se stesso** (`422461463`, verificato da Franco).
+  `applyPoseStrength` faceva `valore corrente + forza*delta`, ma lo slider la chiama
+  a OGNI movimento: ogni passo rileggeva il proprio risultato e ci risommava il
+  delta (0.3 in tre passi = base + 0.6*delta) → il personaggio partiva per la
+  tangente. Ora la base è congelata a inizio gesto (`beginPoseDrag`/`endPoseDrag`),
+  stessa idea della baseline press-time dei pin.
+
+### Da fare — diagnosticato, non ancora corretto
+- **Gli altri slider non si azzerano** quando una Posa esclusiva prende il
+  controllo. `poseStrengthAt` non memorizza la forza: la *deduce* dal parametro più
+  mosso con `(valore−riposo)/delta`, corretto solo se le azioni sono disgiunte.
+  Fix proposto: memorizzare la forza nel campo *guida* per azione (già nel dato,
+  inutilizzato dopo il rework) e azzerare le guide delle altre azioni.
+- **Il personaggio scivola registrando pose con i pin** — autorità del planting.
+- Correttive di giuntura: milestone 2 (authoring) e 3 (UI).
+
+### Nota di metodo
+Il sospetto iniziale "ho perso una versione" era infondato: il commit `98e99b3bc`
+è delle 16:18, lo stesso minuto del binario SP, e **si compila dal working tree**,
+quindi quella build lo conteneva già. Prima di incolpare il bundle, confrontare
+l'orario dei commit col timestamp del binario.
+
 ## [2026-07-26] — Task 63: import da carta (stampa + import file + cattura webcam)
 
 > **Riepilogo**: feature completa sul branch `feature/paper-import`. Nuovi moduli

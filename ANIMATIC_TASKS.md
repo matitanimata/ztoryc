@@ -359,13 +359,32 @@ nella sub-scene corretta.
 
 ### 🆕 DA FARE (giugno 2026) — in cima per priorità
 
-**🆕🆕 PROSSIMO — Import da carta nella Thumbnail room (task 63)
-[richiesto dagli utenti, brainstorming 2026-07-24].**
-Stampa la griglia della thumb room su A4 → disegni a matita → fotografi/acquisisci →
-i pannelli tornano dentro la thumb room raddrizzati e ritagliati, pronti per *Send to
-Board*. Stessa idea del worksheet di Storyboarder. Fattibilità verificata: OpenCV,
-QPdfWriter e la webcam ci sono già. **Dettaglio completo: task 63 più sotto.**
-Franco (2026-07-24): questa viene **prima** di ZtoRig pose-blend.
+**🔧 IN LAVORAZIONE — ZtoRig pose-blend (task 59 + correttive di giuntura).**
+⚠️ **Worktree separato**: `/Volumes/ZioSam/tahoma2d-workspace/tahoma2d-superplastic`,
+branch `feature/ztorig-pose-blend`. **Il bundle da lanciare e deployare è
+`Ztoryc-SP.app`, NON `Ztoryc.app`** (quello è master e NON contiene ZtoRig).
+Master resta releasabile: il lavoro non va lì.
+
+Stato al 2026-07-26 — il motore c'è (pose assolute/offset, stamping delle chiavi
+plastic sull'xsheet, correttive di giuntura milestone 1/3). Franco ha collaudato
+il rework finale dello slider auto-keying (l'unica parte mai verificata a mano):
+
+- ✅ **Offset che schizzava via — RISOLTO** (`422461463`, verificato).
+- ⬜ **Gli altri slider non si azzerano.** Causa trovata: `poseStrengthAt` NON
+  memorizza la forza, la *deduce* dal parametro più mosso con
+  `(valore−riposo)/delta` → corretto solo se le azioni sono disgiunte; se due pose
+  toccano lo stesso parametro la lettura è spuria. **Fix proposto**: memorizzare la
+  forza usando il campo *guida* per azione, già nel dato e inutilizzato dopo il
+  rework (`m_guide`); e azzerare le guide delle altre azioni quando una Posa
+  assoluta prende il controllo.
+- ⬜ **Il personaggio scivola registrando pose con i PIN.** Da indagare, tocca
+  l'autorità del planting (zona che ha già avuto un bug di oscillazione multi-pin).
+- ⬜ Correttive di giuntura: milestone 2 (authoring) e 3 (UI).
+
+**✅ FATTO — Import da carta nella Thumbnail room (task 63)**, completo e mergiato su
+master il 2026-07-26 (`d7b7ff283`). Stampa foglio A4 (vuoto fotocopiabile o con i
+thumbs), import da file multi-foglio e cattura da webcam, tutto verificato da Franco.
+Dettagli nel CHANGELOG del 2026-07-26.
 
 **🆕🆕 POI — M5: Integrazione Kitsu [brainstorming 2026-06-26/27].**
 Il prossimo grande filone. Tracking/review della pipeline via Kitsu (CGWire).
