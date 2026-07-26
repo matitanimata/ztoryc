@@ -14,6 +14,10 @@
 // tcg includes
 #include "tcg/tcg_misc.h"
 
+// Qt includes
+#include <QDebug>
+#include <QString>
+
 // STL includes
 #include <atomic>
 #include <memory>
@@ -1073,6 +1077,27 @@ bool solveSuspendEnabled() {
   static const bool enabled = ::getenv("ZTORYC_SUSPEND_PLANT") != nullptr;
   return enabled;
 }
+
+// DIAGNOSTIC (2026-07-26, opt-in via ZTORYC_PIN_DIAG) — why do pins still shift
+// slightly? Two candidates with opposite fixes: a pin genuinely out of reach, so
+// the balancing loop spreads the error across every pin BY DESIGN; or the CCD
+// simply not converging in the sweeps it is given. This reports which.
+bool pinDiagEnabled() {
+  static const bool enabled = ::getenv("ZTORYC_PIN_DIAG") != nullptr;
+  return enabled;
+}
+
+// The drag's feasibility probe runs this same planter several times per mouse
+// move, on candidate poses most of which are MEANT to fail. Logging those
+// drowned the real evaluation in rejected hypotheses and made the numbers
+// uncomparable with earlier runs. Only the real one reports.
+thread_local bool l_pinDiagMuted = false;
+
+struct PinDiagMute {
+  bool m_prev;
+  PinDiagMute() : m_prev(l_pinDiagMuted) { l_pinDiagMuted = true; }
+  ~PinDiagMute() { l_pinDiagMuted = m_prev; }
+};
 }  // namespace
 
 void PlasticPinSolver::setSolveSuspended(bool on) {
@@ -1164,47 +1189,62 @@ void PlasticPinSolver::plant(const std::vector<Joint> &joints,
 
       const int SWEEPS  = 24;
       const double tol2 = 1e-9;
-      for (int sweep = 0; sweep < SWEEPS; ++sweep) {
-        if (norm2(target - pos[pinJ]) < tol2) break;
-        // Nearest-to-pin pivot first: classic CCD sweep order. The anchor itself
-        // (k == aIdx) is a valid LAST pivot: rotating only path[k+1]'s subtree
-        // about it bends this limb's attachment bone too — without it, a pose
-        // that puts the divergence point out of the limb's reach would tear the
-        // pin off with no joint able to compensate.
-        for (int k = (int)path.size() - 2; k >= aIdx; --k) {
-          const TPointD pivot = pos[path[k]];
-          TPointD cur         = pos[pinJ] - pivot;
-          TPointD tgt         = target - pivot;
-          if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
-          double ang = atan2(cross(cur, tgt), cur * tgt);
 
-          // This rotation changes exactly the relative angle of joint path[k+1],
-          // so clamp it within that joint's limits: a stiff limb stops at its
-          // bound instead of hyper-extending, even when it is the pin PLANTING
-          // that bends it. The pin may then simply not reach on this limb.
-          const Joint &jvx = joints[path[k + 1]];
-          if (jvx.minAngle > -1e9 || jvx.maxAngle < 1e9) {
-            double curRel =
-                solverRelAngleDeg(joints, pos, rest, path[k + 1]);
-            double lo = (jvx.minAngle - curRel) * (M_PI / 180.0);
-            double hi = (jvx.maxAngle - curRel) * (M_PI / 180.0);
-            ang       = std::min(std::max(ang, lo), hi);
-          }
+      auto sweepToTarget = [&](bool respectLimits) {
+        for (int sweep = 0; sweep < SWEEPS; ++sweep) {
+          if (norm2(target - pos[pinJ]) < tol2) break;
+          // Nearest-to-pin pivot first: classic CCD sweep order. The anchor
+          // itself (k == aIdx) is a valid LAST pivot: rotating only path[k+1]'s
+          // subtree about it bends this limb's attachment bone too — without it,
+          // a pose that puts the divergence point out of the limb's reach would
+          // tear the pin off with no joint able to compensate.
+          for (int k = (int)path.size() - 2; k >= aIdx; --k) {
+            const TPointD pivot = pos[path[k]];
+            TPointD cur         = pos[pinJ] - pivot;
+            TPointD tgt         = target - pivot;
+            if (norm2(cur) < 1e-8 || norm2(tgt) < 1e-8) continue;
+            double ang = atan2(cross(cur, tgt), cur * tgt);
 
-          // Damped CCD (see the header): spread the bend along the chain
-          // instead of letting the nearest pivot whip toward the target.
-          if (maxStepRad > 0.0)
-            ang = std::min(std::max(ang, -maxStepRad), maxStepRad);
+            // This rotation changes exactly the relative angle of joint
+            // path[k+1], so clamp it within that joint's limits: a stiff limb
+            // bends within its bound rather than hyper-extending.
+            const Joint &jvx = joints[path[k + 1]];
+            if (respectLimits && (jvx.minAngle > -1e9 || jvx.maxAngle < 1e9)) {
+              double curRel = solverRelAngleDeg(joints, pos, rest, path[k + 1]);
+              double lo     = (jvx.minAngle - curRel) * (M_PI / 180.0);
+              double hi     = (jvx.maxAngle - curRel) * (M_PI / 180.0);
+              ang           = std::min(std::max(ang, lo), hi);
+            }
 
-          double c = cos(ang), s = sin(ang);
-          std::vector<int> sub;
-          solverCollectSubtree(children, path[k + 1], sub);
-          for (int v : sub) {
-            TPointD d = pos[v] - pivot;
-            pos[v] = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+            // Damped CCD (see the header): spread the bend along the chain
+            // instead of letting the nearest pivot whip toward the target.
+            if (maxStepRad > 0.0)
+              ang = std::min(std::max(ang, -maxStepRad), maxStepRad);
+
+            double c = cos(ang), s = sin(ang);
+            std::vector<int> sub;
+            solverCollectSubtree(children, path[k + 1], sub);
+            for (int v : sub) {
+              TPointD d = pos[v] - pivot;
+              pos[v] = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
+            }
           }
         }
-      }
+      };
+
+      // Reach the pin within the joint limits if possible, and let the limits
+      // yield only when the pin would otherwise be left behind. MEASURED
+      // (2026-07-26): hard limits here put the evaluation into its balancing
+      // loop on 81% of frames with a worst miss of 7% of the rig, against 47%
+      // and 2.3% when they yield — a pin that cannot be reached is a pin whose
+      // error gets spread over ALL of them, primary included.
+      //
+      // Not the last word: writeBackAngles_animate still clamps hard when it
+      // stores the pose, so the two disagree. Making THAT yield as well is the
+      // open question, and it needs the drag path actually in use to be
+      // identified first.
+      sweepToTarget(true);
+      if (norm2(target - pos[pinJ]) >= tol2) sweepToTarget(false);
 
       planted.insert(path.begin(), path.end());
     }
@@ -1236,6 +1276,7 @@ void PlasticPinSolver::plant(const std::vector<Joint> &joints,
   // ~planted and the motion is naturally limited (the support resists), instead
   // of one of them detaching. Damped, so it converges without over-shooting the
   // primary. No-op when all pins reach → the exact primary planting survives.
+  int balancePasses = 0;
   for (int pass = 0; pass < 10; ++pass) {
     TPointD resid(0.0, 0.0);
     double maxr2 = 0.0;
@@ -1249,6 +1290,25 @@ void PlasticPinSolver::plant(const std::vector<Joint> &joints,
     if (norm2(resid) < reachTol2 * 0.01) break;
     for (int j = 0; j < n; ++j) pos[j] += resid;
     plantSecondaries();
+    ++balancePasses;
+  }
+
+  if (pinDiagEnabled() && !l_pinDiagMuted) {
+    // Per-pin residual as a FRACTION of the rig diagonal, so the numbers mean
+    // the same thing on any rig. balancePasses > 0 means the balancing loop
+    // ran, i.e. at least one pin could not be reached and the error was shared.
+    const double diag = sqrt(std::max(diag2, 1e-12));
+    QString msg = QString("[PIN_DIAG] pins=%1 balancePasses=%2 residuals(%% diag):")
+                      .arg(pins.size())
+                      .arg(balancePasses);
+    for (size_t i = 0; i < pins.size(); ++i) {
+      const double r = norm(pins[i].target - pos[pins[i].joint]);
+      msg += QString(" p%1(since=%2)=%3")
+                 .arg(i)
+                 .arg(pins[i].since, 0, 'f', 0)
+                 .arg(100.0 * r / diag, 0, 'f', 3);
+    }
+    qDebug().noquote() << msg;
   }
 }
 
@@ -1344,6 +1404,36 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
   // disagreed about who owns the pinned chain, and the rig came apart until the
   // next click forced a re-solve.
   if (!m_imp->m_pinsEnabled) return;
+
+  plantPins(skelId, frame, skeleton, nullptr);
+}
+
+//------------------------------------------------------------------
+
+double PlasticSkeletonDeformation::pinResidualForPose(
+    int skelId, double frame, const PlasticSkeleton &posed) const {
+  // The question the DRAG needs answered: if the character were posed like
+  // this, would the pins still hold once evaluation has had its say?
+  //
+  // It runs the very same plant() the evaluation runs, on the very same inputs,
+  // because anything else re-opens the fault this rig keeps falling into — the
+  // drag deciding with one solver while another one decides the result. The
+  // caller throws the posed skeleton away and keeps only the number.
+  PlasticSkeleton scratch = posed;
+  double worst2           = 0.0;
+  PinDiagMute mute;  // a probe, not a result: keep it out of the log
+  plantPins(skelId, frame, scratch, &worst2);
+  return sqrt(worst2);
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::plantPins(int skelId, double frame,
+                                           PlasticSkeleton &skeleton,
+                                           double *worstResidual2) const {
+  const PlasticSkeletonP &origSkel = this->skeleton(skelId);
+  if (!origSkel) return;
+  if (worstResidual2) *worstResidual2 = 0.0;
 
   // SuperPlastic pin constraints (per-frame). The OLDEST active pin is planted
   // by rigidly translating the whole skeleton onto its target (PINTX,PINTY):
@@ -1527,6 +1617,11 @@ void PlasticSkeletonDeformation::storeDeformedSkeleton(
     for (int sv : stagePinned) preplanted.push_back(denseOf[sv]);
 
     PlasticPinSolver::plant(joints, spins, pos, preplanted);
+
+    if (worstResidual2)
+      for (const PlasticPinSolver::Pin &sp : spins)
+        *worstResidual2 =
+            std::max(*worstResidual2, norm2(sp.target - pos[sp.joint]));
 
     for (int j = 0; j < n; ++j) skeleton.vertex(idxOf[j]).P() = pos[j];
   }

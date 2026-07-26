@@ -2,6 +2,8 @@
 
 // TnzCore includes
 #include "tundo.h"
+
+#include <QDebug>
 #include "tgl.h"
 
 // TnzLib includes
@@ -486,9 +488,15 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
       // graph (STEP A): re-root at the pin so the foot holds while the body
       // articulates. If it doesn't apply, FK posing (no pins) also runs on the
       // unified graph; otherwise fall back to the single-level pin path.
-      if (!crossLevelIK_animate(frame, m_svSel, pos) &&
-          !crossLevelFK_animate(frame, m_svSel, pos))
+      const bool diag = ::getenv("ZTORYC_PIN_DIAG") != nullptr;
+      if (crossLevelIK_animate(frame, m_svSel, pos)) {
+        if (diag) qDebug().noquote() << "[PIN_PATH] crossLevelIK";
+      } else if (crossLevelFK_animate(frame, m_svSel, pos)) {
+        if (diag) qDebug().noquote() << "[PIN_PATH] crossLevelFK";
+      } else {
+        if (diag) qDebug().noquote() << "[PIN_PATH] moveVertexIK";
         moveVertexIK_animate(frame, m_svSel, pos);
+      }
     } else if (m_keepDistance.getValue()) {
       ::setKeyframe(vd->m_params[SkVD::ANGLE],
                     frame);  // Set a keyframe for it. It must be done
@@ -1678,6 +1686,9 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
     return std::make_pair(resid2, desired);
   };
 
+  if (::getenv("ZTORYC_PIN_DIAG"))
+    qDebug().noquote() << "[PIN_PATH] rotateAboutPin pins=" << (int)pins.size();
+
   // Hard pins: if the full rotation tears some pin off (its limb can't reach
   // the target anymore), bisect down to the widest rotation that still keeps
   // every pin planted — the drag stiffens at end-of-range instead of escaping.
@@ -1719,7 +1730,9 @@ void PlasticTool::moveVertexMultiAnchor_animate(
   std::map<int, TPointD> anchor =
       pinTargetsAtFrame(m_sd, ::skeletonId(), frame, pins, curPos);
 
-  // Clamp the mouse target inside every pin's reach (alternating projection).
+  // First cut: clamp the mouse target inside every pin's straight-line reach
+  // (alternating projection). Cheap, and it removes the grossly impossible
+  // targets before the solve.
   TPointD t = pos;
   for (int it = 0; it < 4; ++it)
     for (int p : pins) {
@@ -1731,8 +1744,69 @@ void PlasticTool::moveVertexMultiAnchor_animate(
       if (n > L) t = anchor[p] + d * (L / n);
     }
 
-  std::map<int, TPointD> P = curPos;
-  solveMultiAnchor(orig, T, anchor, t, P);
+  // Solve at a candidate target and report how far the WORST pin would end up
+  // from where it must stay — as judged by the EVALUATION'S OWN planter, not by
+  // the solver that produced the candidate.
+  //
+  // That distinction is the whole point. Straight-line reach is optimistic (the
+  // chains toward the pins share bones, so a target inside every pin's radius
+  // can still be one no configuration satisfies at once), but the deeper
+  // problem was subtler: asking FABRIK whether FABRIK's own answer holds always
+  // says yes. The drag then stopped where FABRIK was happy, plant() re-solved
+  // it and was not, and the leftover error got spread over every pin — the
+  // primary included, which is the one that had been exact.
+  if (::getenv("ZTORYC_PIN_DIAG"))
+    qDebug().noquote() << "[PIN_PATH] moveVertexMultiAnchor pins=" << (int)pins.size();
+
+  PlasticSkeleton probe = deformedSkeleton();
+  auto poseAt           = [&](const TPointD &tt) {
+    std::map<int, TPointD> P = curPos;
+    solveMultiAnchor(orig, T, anchor, tt, P);
+
+    std::map<int, TPointD> full = curPos;
+    for (const auto &kv : T.parentT) full[kv.first] = P[kv.first];
+    rigidFollowOffTree(orig, curPos, full, T.parentT);
+
+    for (const auto &kv : full) probe.vertex(kv.first).P() = kv.second;
+    const double r = m_sd->pinResidualForPose(::skeletonId(), frame, probe);
+    return std::make_pair(r * r, P);
+  };
+
+  // The body RESISTS. Where the pins cannot follow, the drag stiffens at
+  // end-of-range instead of dragging them along: bisect between where the
+  // vertex is now (feasible by construction) and where the mouse asks it to go,
+  // and keep the farthest point that still holds every pin.
+  //
+  // Without this the pins were left unreachable, and the evaluation-time
+  // balancing loop then shared that error across ALL of them — including the
+  // primary, whose exact planting is the one thing that never used to move.
+  // That is the slight drift: not a solver defect, the drag simply asked for a
+  // pose that does not exist.
+  //
+  // Same shape as the bisection the rotate-about-a-pin path already uses; the
+  // tolerance is a pixel, so "held" means held as far as the eye can tell.
+  const double tol  = getPixelSize();
+  const double tol2 = tol * tol;
+
+  auto attempt = poseAt(t);
+  std::map<int, TPointD> P;
+  if (attempt.first <= tol2)
+    P = std::move(attempt.second);
+  else {
+    const TPointD from = curPos.at(v);
+    double lo = 0.0, hi = 1.0;
+    P         = poseAt(from).second;  // the standing pose always holds
+    for (int i = 0; i < 8; ++i) {
+      const double mid = 0.5 * (lo + hi);
+      auto r           = poseAt(from + (t - from) * mid);
+      if (r.first <= tol2) {
+        lo = mid;
+        P  = std::move(r.second);
+      } else
+        hi = mid;
+    }
+
+  }
 
   std::map<int, TPointD> desired = curPos;
   for (const auto &kv : T.parentT) desired[kv.first] = P[kv.first];

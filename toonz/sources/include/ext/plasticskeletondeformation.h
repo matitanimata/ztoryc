@@ -622,6 +622,18 @@ public:
   // Interface methods using a deformed copy of the original skeleton (which is
   // owned by this class)
 
+  //! How far the worst pin would end up from its target if the skeleton were
+  //! posed as \p posed at \p frame — measured by running the EVALUATION's own
+  //! plant on it.
+  /*!
+    This exists so the drag can ask the question it actually needs answered:
+    "if I move the body here, do the pins still hold?" — and get the answer from
+    the solver that will really decide, not from a second one that agrees only
+    approximately. Every time those two have differed, the pins have slipped.
+  */
+  double pinResidualForPose(int skeletonId, double frame,
+                            const PlasticSkeleton &posed) const;
+
   void storeDeformedSkeleton(int skeletonId, double frame,
                              PlasticSkeleton &skeleton) const;
 
@@ -769,6 +781,14 @@ protected:
 
 private:
   friend class PlasticSkeleton;
+
+  //! Collects this column's active pins and hands them to the solver, moving
+  //! \p skeleton in place. The single place that knows how a pin becomes a
+  //! solver constraint — storeDeformedSkeleton and pinResidualForPose both go
+  //! through here, so the drag and the evaluation cannot drift apart.
+  //! \p worstResidual2, when given, receives the worst squared miss.
+  void plantPins(int skelId, double frame, PlasticSkeleton &skeleton,
+                 double *worstResidual2) const;
 
   void addVertex(
       PlasticSkeleton *sk,
