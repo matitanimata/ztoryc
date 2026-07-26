@@ -64,6 +64,21 @@
   quadratini del codice formavano falsi marker), risoluzione di lavoro della
   preview alzata a 1280 px (a 640 si perdeva un marker su 4; costo 4 ms/frame).
 
+### Fixed — ZtoRig (branch `feature/ztorig-pose-blend`, bundle Ztoryc-SP.app)
+- **L'Offset non si accumula piu' su se stesso** (`422461463`, verificato da
+  Franco). `applyPoseStrength` calcolava l'offset come `valore corrente +
+  forza*delta`, ma lo slider la chiama a OGNI movimento: ogni passo rileggeva il
+  proprio risultato precedente e ci risommava il delta (0.3 in tre passi =
+  base + 0.6*delta), e il personaggio partiva per la tangente. Ora la base e'
+  congelata a inizio gesto (`beginPoseDrag`/`endPoseDrag`), stessa idea della
+  baseline press-time gia' usata per i pin.
+- Restano due difetti diagnosticati ma non corretti, dal collaudo del rework
+  dello slider (l'unica parte mai verificata a mano): gli **altri slider non si
+  azzerano** (poseStrengthAt *deduce* la forza dal parametro piu' mosso invece di
+  memorizzarla → valore spurio quando due azioni condividono un parametro) e il
+  personaggio **scivola registrando pose con i pin** (autorita' del planting).
+  Dettagli e fix proposti in memoria.
+
 ### Fixed — Board, dopo "Send to Board" dalla Thumbnail room
 - **Pannelli e anteprime non comparivano** finche' non si entrava nello shot:
   `addShotFromRasters` costruisce gia' un `PanelData` per ogni raster (start
