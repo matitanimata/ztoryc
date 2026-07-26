@@ -1,3 +1,117 @@
+## [2026-07-26d] — Multi-pin: i limiti d'angolo, il corpo che resiste, lo slider IK. E tre lezioni di metodo pagate care
+
+> Worktree SP, branch `feature/ztorig-pose-blend`, bundle **Ztoryc-SP.app**.
+> Sessione lunga e con parecchi passi falsi: sono annotati tutti, perche' sono
+> la parte piu' utile.
+
+### Fixed — perche' il multi-pin cedeva: due solver in disaccordo sui limiti
+`solveMultiAnchor` (drag) **non clampa** ai limiti d'angolo; `plant()`
+(valutazione) **sì**. Il drag inchiodava entrambi i pin, la valutazione
+ri-risolveva sotto un vincolo che il drag non aveva mai visto, e il pin
+secondario mollava. Il primario non lo mostrava mai: e' una traslazione rigida,
+senza giunti da clampare.
+
+Ora il CCD prova dentro i limiti e li fa cedere solo se il pin resterebbe
+indietro. **Misurato**: bilanciamento sul 47% dei frame, residuo peggiore 2.3%
+della diagonale — contro 81% e 7.0% con i limiti duri. Confermato da Franco
+(«con gli angle bound larghi regge molto di piu'»).
+
+### Refactor — un solo posto che sa piantare
+`storeDeformedSkeleton` spezzato: `plantPins()` e' l'unico punto che trasforma
+un pin in vincolo per il solver, e `pinResidualForPose()` espone la domanda che
+serve al drag — *«se posassi cosi', i pin reggerebbero?»* — facendola decidere
+allo stesso `plant()` che poi giudica davvero.
+
+### Added — «il corpo resiste» + slider IK Max Step
+Bisezione/scansione di fattibilita' nel percorso multi-anchor: il drag si
+irrigidisce a fine corsa invece di trascinare via i pin. Caso peggiore da
+**10.4% a ~1.5%** della diagonale nell'arco della giornata.
+
+Nuovo slider **IK Max Step** nella toolbar del Plastic tool (Animate), 1-90
+**gradi per evento del mouse**, default 15 (valore scelto da Franco provando).
+Applicato in tre punti: rotazione diretta, CCD multi-anchor, `replantOtherPins`.
+
+Diagnostiche opt-in aggiunte, sullo schema di `ZTORYC_SUSPEND_PLANT`:
+`ZTORYC_PIN_DIAG` (residuo per pin + passate di bilanciamento + percorso di drag
++ guadagno) e `ZTORYC_PIN_NORESIST`.
+
+### Fixed — il personaggio che «camminava in avanti» (regressione mia, stessa sera)
+Quando il bersaglio era infattibile ripiegavo su `poseAt(from)`, che **non e'**
+la posa corrente: rifa' girare il solver, ri-inchioda i pin e molla le ossa
+verso il riposo. Con la baseline ricatturata a ogni gesto quella spinta si
+sommava drag dopo drag. Ora se niente e' fattibile la risposta e' `curPos`:
+**non si muove nulla**.
+
+### Aperto — anche e spalle «partono», e non e' smorzabile
+Diagnosi condivisa con Franco: trascinare significa oggi *«porta questo giunto
+sotto il cursore»*, un obiettivo di **posizione**. Per l'anca, a due centimetri
+dal bacino, seguire un cursore lontano richiede rotazioni enormi: la risoluzione
+del controllo e' proporzionale alla distanza del giunto dal suo pivot, quindi i
+giunti vicini al pivot sono **incontrollabili per costruzione**.
+
+Lo smorzamento non risolve, **converte**: a 1 il personaggio scatta in ginocchio
+(limite raggiunto subito), a 15 e' usabile ma nervoso. Franco: «non so se questa
+cosa ha soluzione».
+
+**Ce l'ha, ma non nel solver**: la leva dev'essere il **cursore**, non il
+giunto — interpretare il drag come l'angolo che il cursore spazza attorno al
+pivot (il ramo `rotateAboutPin` lo fa gia'; e' `multiAnchor`, dove passano le
+anche, a usare un obiettivo posizionale). Forma completa: un **controller** con
+leva vera, cioe' il master controller gia' in piano.
+
+Nota: con tallone **e** punta pinnati su entrambi i piedi il piede e' bloccato
+in posizione *e* orientamento — il sistema e' sovravincolato e «inginocchiarsi»
+e' spesso l'unica soluzione geometrica disponibile. I rig veri lo gestiscono
+rendendo il pin della punta vincolante solo in orientamento, o con priorita' fra
+i pin.
+
+### Aperto — angle bounds che risentono della rotazione del padre (multi-colonna)
+Segnalato da Franco: un braccio non ha lo stesso range col corpo piegato avanti
+o indietro. Succede **solo quando il padre sta su un'altra colonna**.
+
+Causa: `limitDisplay_animate` (`dirFromGrand(1,0)`) e `writeBackAnglesFor_animate`
+(`if (pp < 0) return 0.0;`) ripiegano sull'**asse X del mondo** quando il vertice
+non ha un nonno nel proprio scheletro — che e' il caso di ogni giuntura vicina
+alla radice di una colonna figlia. Il riferimento resta inchiodato allo schermo
+mentre il corpo ruota.
+
+Scritto `parentColumnRefDirs_animate()`: via `crossLevelLinks_animate()` trova
+colonna e vertice di aggancio, prende l'osso del padre (riposo + deformato) e lo
+porta in questa colonna con la parte lineare di `toCur`. **Misurato funzionante**:
+trovato su 890/997 campioni, ruota da -4.5° a 51° piegando il corpo.
+
+**NON collegato**: cablarlo nel clamp non ha cambiato il range effettivo, e non
+lascio una modifica non verificata sul codice che decide quanto si muove ogni
+giuntura. L'helper resta, documentato.
+
+**Decisione presa da Franco**: il limite va ancorato al **padre**, come nel
+single level. **Prossimo passo**: strumentare `writeBackAnglesFor_animate` PRIMA
+di ritoccare il riferimento — `columnOfDeformation_animate` risolve la colonna?
+il ramo del clamp viene raggiunto per quel giunto? Il sintomo si giudica sul
+range, e il range si decide li'.
+
+### Lezioni di metodo (le tre che sono costate di piu')
+1. **Non dedurre quale codice gira: misurarlo.** Ho passato mezza serata a
+   correggere e rimisurare `moveVertexMultiAnchor_animate`, che sul rig di Franco
+   **non viene mai eseguito** — il drag passa da `crossLevelIK`. Una riga di
+   `qDebug` all'inizio sarebbe costata una build. Stessa forma, tre volte in un
+   giorno: il clock che «diverge sul multilevel» (dipendeva da Cycle), i pin
+   dedotti dal frame di attivazione, e questo.
+2. **Misurare la cosa che l'utente giudica.** Ho misurato `limitDisplay_animate`
+   (il ventaglio) mentre Franco giudicava il range effettivo — che e' deciso
+   altrove. Il ventaglio non lo aveva nemmeno acceso.
+3. **Diffidare di ogni baseline non congelata.** Tre bug distinti oggi, stessa
+   radice: l'Offset che si risommava, il personaggio che camminava in avanti, e
+   il sospetto sulla root. Se una cosa «parte», cercare cosa rilegge il proprio
+   risultato precedente.
+
+Piu' una quarta, gia' in memoria: **niente percentuali di contesto inventate**
+(annunciato 60-70% quando il pannello segnava 31%).
+
+### Upstream candidates
+Nessuno. I file core toccati (`plastictool*.cpp`, `plasticskeletondeformation.cpp`)
+lo sono per funzionalita' SuperPlastic/ZtoRig, che upstream non ha.
+
 ## [2026-07-26c] — ZtoRig: azioni di personaggio, posa Base, modalita' Part, IK che spegne davvero i pin
 
 > ⚠️ Tutto su **worktree SP**, branch `feature/ztorig-pose-blend`, bundle

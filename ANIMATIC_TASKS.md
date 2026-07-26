@@ -365,7 +365,7 @@ branch `feature/ztorig-pose-blend`. **Il bundle da lanciare e deployare è
 `Ztoryc-SP.app`, NON `Ztoryc.app`** (quello è master e NON contiene ZtoRig).
 Master resta releasabile: il lavoro non va lì.
 
-Stato al 2026-07-26c — il motore c'è (pose assolute/offset, stamping delle chiavi
+Stato al 2026-07-26d — il motore c'è (pose assolute/offset, stamping delle chiavi
 plastic sull'xsheet, correttive di giuntura milestone 1/3). Franco ha collaudato
 il rework finale dello slider auto-keying (l'unica parte mai verificata a mano):
 
@@ -386,9 +386,26 @@ il rework finale dello slider auto-keying (l'unica parte mai verificata a mano):
   guardato da NESSUNA parte nella valutazione.
 - ✅ **Angle bounds: il gizmo non creava mai la prima chiave** (2026-07-26c). Il ramo
   animato era irraggiungibile. Ora chiavia sempre → i bound seguono anche i livelli.
-- ⬜ **Multi-pin «non regge granché»** (segnalato 2026-07-26c). Con IK acceso il percorso
-  è identico a prima delle modifiche, quindi *sulla carta* è preesistente. **Verificare
-  con un A/B vero** (compilare `422461463`, stesso rig), NON dedurlo.
+- ✅ **Multi-pin — MIGLIORATO molto** (2026-07-26d). A/B fatto: non era una regressione,
+  era preesistente. Causa vera: `solveMultiAnchor` (drag) non clampa ai limiti d'angolo,
+  `plant()` (valutazione) sì → il pin secondario mollava appena un arto aveva bound. Ora
+  i limiti cedono al pin; più «il corpo resiste» (bisezione di fattibilità nel drag).
+  Residuo peggiore da 10.4% a ~1.5% della diagonale del rig. Nuovo slider **IK Max Step**
+  (1-90 gradi/evento, default 15).
+- ⬜ **Anche e spalle «partono» — NON smorzabile, serve cambiare la manipolazione.**
+  Trascinare significa oggi «porta il giunto sotto il cursore»: per un giunto vicino al
+  suo pivot la risoluzione del controllo è proporzionale alla distanza dal pivot, quindi
+  è incontrollabile per costruzione. Lo smorzamento converte il nervosismo in un muro
+  (a 1 scatta in ginocchio). **Soluzione: la leva dev'essere il CURSORE** — interpretare
+  il drag come l'angolo spazzato attorno al pivot (`rotateAboutPin` lo fa già, è
+  `multiAnchor` a usare un obiettivo posizionale). Forma completa = master controller.
+- ⬜ **Angle bounds che risentono della rotazione del padre** (solo multi-colonna).
+  `limitDisplay_animate` e `writeBackAnglesFor_animate` ripiegano sull'asse X del MONDO
+  quando il vertice non ha un nonno nel proprio scheletro. `parentColumnRefDirs_animate()`
+  è scritto e **misurato funzionante** (890/997, ruota -4.5°→51°) ma NON collegato:
+  cablarlo nel clamp non ha cambiato il range. Franco ha deciso la semantica: **ancorato
+  al padre, come nel single level**. Prossimo passo: strumentare
+  `writeBackAnglesFor_animate` PRIMA di ritoccare il riferimento.
 - ⬜ **Pin legati allo scheletro.** I parametri `PIN` sono condivisi per nome tra gli
   scheletri della colonna. Tentato il 2026-07-26c deducendo lo scheletro dal frame di
   attivazione: **sbagliato**, rompeva il multi-pin e non spegneva il ciano (cambiando
