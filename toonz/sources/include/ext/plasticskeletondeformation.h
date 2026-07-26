@@ -661,6 +661,16 @@ public:
   //! of vertex params it wrote (for the caller's undo snapshot / updateKeyframes).
   void applyPoseStrength(int idx, double strength, double frame);
 
+  //! Open/close an Offset drag. An Offset is <TT>base + strength*delta</TT>, and
+  //! the slider calls applyPoseStrength on EVERY move: without a base frozen at
+  //! the start of the gesture each move would read back its own previous write
+  //! and add to it, so the offset compounds and the character shoots away after
+  //! a few pixels of slider travel. beginPoseDrag() snapshots that base once;
+  //! endPoseDrag() drops it. Harmless for an absolute Pose, which never reads
+  //! the live value.
+  void beginPoseDrag(int idx, double frame);
+  void endPoseDrag();
+
   //! Sum of every active action's contribution to \p param on \p vertexName
   //! at \p frame — the "blend" term alone, WITHOUT the authored base value.
   /*!

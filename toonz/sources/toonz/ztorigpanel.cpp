@@ -554,6 +554,13 @@ void ZtoRigPanel::onGuideBegin(int index) {
     m_dragXformHadKey = o->isKeyframe(m_dragXformFrame);
     if (m_dragXformHadKey) m_dragXformOldKey = o->getKeyframe(m_dragXformFrame);
   }
+  // Freeze the base an Offset adds onto: without this the slider reads back its
+  // own previous write on every move and the offset compounds (see beginPoseDrag).
+  {
+    TStageObject *o2 = currentStageObject();
+    const double f   = o2 ? o2->paramsTime(currentFrame()) : currentFrame();
+    sd->beginPoseDrag(index, f);
+  }
   m_dragActive = true;
 }
 
@@ -587,6 +594,7 @@ void ZtoRigPanel::onGuideCommit(int index) {
     return;
   }
   m_dragActive = false;
+  sd->endPoseDrag();
 
   // Respect the Plastic tool's Global Key scope: with All (or Stage) a pose
   // also drops a TRANSFORM key on the column, exactly like posing by hand.

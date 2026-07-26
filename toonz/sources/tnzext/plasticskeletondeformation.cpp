@@ -264,6 +264,11 @@ public:
   //! default, serialize-only-when-used discipline as the pose actions.
   std::vector<MeshCorrective> m_meshCorrectives;
 
+  // Base values frozen at the start of an Offset drag, keyed by vertex name and
+  // param index. Empty when no drag is running. See beginPoseDrag().
+  std::map<std::pair<QString, int>, double> m_poseDragBase;
+  int m_poseDragIdx = -1;
+
   //! ZtoRig: blend term for one param. See the public wrapper for the sign
   //! convention and the recursion rule.
   double poseBlendOffset(const QString &vertexName, int param,
@@ -2180,6 +2185,36 @@ double PlasticSkeletonDeformation::poseStrengthAt(int idx, double frame) const {
 
 //------------------------------------------------------------------
 
+void PlasticSkeletonDeformation::beginPoseDrag(int idx, double frame) {
+  m_imp->m_poseDragBase.clear();
+  m_imp->m_poseDragIdx = idx;
+  PoseAction *act      = poseAction(idx);
+  if (!act || act->m_absolute) return;  // only an Offset reads the live base
+
+  for (std::map<QString, std::vector<double>>::const_iterator it =
+           act->m_deltas.begin();
+       it != act->m_deltas.end(); ++it) {
+    SkVDSet::iterator vt = m_imp->m_vds.find(it->first);
+    if (vt == m_imp->m_vds.end()) continue;
+    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT && i < (int)it->second.size();
+         ++i) {
+      const int p = SkVD::POSE_PARAMS[i];
+      if (!vt->m_vd.m_params[p]) continue;
+      m_imp->m_poseDragBase[std::make_pair(it->first, p)] =
+          vt->m_vd.m_params[p]->getValue(frame);
+    }
+  }
+}
+
+//------------------------------------------------------------------
+
+void PlasticSkeletonDeformation::endPoseDrag() {
+  m_imp->m_poseDragBase.clear();
+  m_imp->m_poseDragIdx = -1;
+}
+
+//------------------------------------------------------------------
+
 void PlasticSkeletonDeformation::applyPoseStrength(int idx, double strength,
                                                    double frame) {
   PoseAction *act = poseAction(idx);
@@ -2224,8 +2259,17 @@ void PlasticSkeletonDeformation::applyPoseStrength(int idx, double strength,
         if (delta == 0.0) continue;
         const int p = SkVD::POSE_PARAMS[i];
         if (!vt->m_vd.m_params[p]) continue;
-        targets.push_back(
-            {it->first, p, vt->m_vd.m_params[p]->getValue(frame) + strength * delta});
+        // Base frozen at the start of the gesture when one is running: reading
+        // the live value here would add the previous move's own result back in,
+        // compounding the offset on every slider step.
+        double base;
+        std::map<std::pair<QString, int>, double>::const_iterator bt =
+            m_imp->m_poseDragBase.find(std::make_pair(it->first, p));
+        if (m_imp->m_poseDragIdx == idx && bt != m_imp->m_poseDragBase.end())
+          base = bt->second;
+        else
+          base = vt->m_vd.m_params[p]->getValue(frame);
+        targets.push_back({it->first, p, base + strength * delta});
       }
     }
   }
