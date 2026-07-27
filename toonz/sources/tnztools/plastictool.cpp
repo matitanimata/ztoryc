@@ -1060,6 +1060,7 @@ PlasticTool::PlasticTool()
     , m_interpolate("interpolate", false)
     , m_snapToMesh("snapToMesh", false)
     , m_thickness("Thickness", 1, 100, 5)
+    , m_ikDamping("IKDamping", 1, 90, 15)
     , m_rigidValue("rigidValue")
     , m_globalKey("globalKeyframe", true)
     , m_globalKeyScope("Key:")  // Ztoryc: portata della chiave globale
@@ -1099,6 +1100,7 @@ PlasticTool::PlasticTool()
   m_propGroup[MODES_COUNT].bind(m_vertexName);
 
   m_propGroup[RIGIDITY_IDX].bind(m_thickness);
+  m_propGroup[ANIMATE_IDX].bind(m_ikDamping);
   m_propGroup[RIGIDITY_IDX].bind(m_rigidValue);
 
   m_propGroup[BUILD_IDX].bind(m_interpolate);
@@ -1128,6 +1130,7 @@ PlasticTool::PlasticTool()
   m_interpolate.setId("Interpolate");
   m_snapToMesh.setId("SnapToMesh");
   m_thickness.setId("Thickness");
+  m_ikDamping.setId("IKDamping");
   m_rigidValue.setId("RigidValue");
   m_globalKey.setId("GlobalKey");
   m_globalKeyScope.addValue(L"Stage");
@@ -1191,6 +1194,7 @@ void PlasticTool::updateTranslation() {
   m_interpolate.setQStringName(tr("Allow Stretching"));
   m_snapToMesh.setQStringName(tr("Snap To Mesh"));
   m_thickness.setQStringName(tr("Thickness"));
+  m_ikDamping.setQStringName(tr("IK Max Step"));
 
   m_rigidValue.setQStringName("");
   m_rigidValue.deleteAllValues();
@@ -1961,8 +1965,94 @@ void PlasticTool::setRestKey_undo() { keyFunc_undo(&PlasticTool::setRestKey); }
 
 //------------------------------------------------------------------------
 
+//------------------------------------------------------------------------
+// ZtoRig: "rest" must mean rest of the WHOLE rig, so Set Global Rest Key also
+// zeroes the pose-action dials. The stage-param reset already has its own undo
+// (AnimateValuesUndo); the dials need their own, or Undo would restore the
+// skeleton but leave the dials at 0. Snapshot each guide's full keyframe list
+// so undo/redo is exact.
+
+namespace {
+
+struct GuideState {
+  std::vector<TDoubleKeyframe> m_keys;
+  double m_def = 0.0;
+};
+
+std::vector<GuideState> ztorigCaptureGuides(
+    const PlasticSkeletonDeformationP &sd) {
+  std::vector<GuideState> out;
+  const int n = sd->poseActionsCount();
+  out.reserve(n);
+  for (int i = 0; i < n; ++i) {
+    GuideState gs;
+    PoseAction *act = sd->poseAction(i);
+    if (act && act->m_guide) {
+      TDoubleParam *g    = act->m_guide.getPointer();
+      const int keyCount = g->getKeyframeCount();
+      for (int k = 0; k < keyCount; ++k) gs.m_keys.push_back(g->getKeyframe(k));
+      gs.m_def = g->getDefaultValue();
+    }
+    out.push_back(gs);
+  }
+  return out;
+}
+
+void ztorigRestoreGuides(const PlasticSkeletonDeformationP &sd,
+                         const std::vector<GuideState> &states) {
+  const int n = sd->poseActionsCount();
+  for (int i = 0; i < n && i < (int)states.size(); ++i) {
+    PoseAction *act = sd->poseAction(i);
+    if (!act || !act->m_guide) continue;
+    TDoubleParam *g = act->m_guide.getPointer();
+    g->clearKeyframes();
+    for (const TDoubleKeyframe &k : states[i].m_keys) g->setKeyframe(k);
+    g->setDefaultValue(states[i].m_def);
+  }
+  if (TTool::getApplication() && TTool::getApplication()->getCurrentXsheet())
+    TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+}
+
+class UndoRestGuides final : public TUndo {
+  PlasticSkeletonDeformationP m_sd;
+  std::vector<GuideState> m_before, m_after;
+
+public:
+  UndoRestGuides(const PlasticSkeletonDeformationP &sd,
+                 const std::vector<GuideState> &before,
+                 const std::vector<GuideState> &after)
+      : m_sd(sd), m_before(before), m_after(after) {}
+  void undo() const override { ztorigRestoreGuides(m_sd, m_before); }
+  void redo() const override { ztorigRestoreGuides(m_sd, m_after); }
+  int getSize() const override { return 128; }
+  QString getHistoryString() override {
+    return QObject::tr("Set Global Rest Key");
+  }
+};
+
+}  // namespace
+
 void PlasticTool::setGlobalRestKey_undo() {
-  keyFunc_undo(&PlasticTool::setGlobalRestKey);
+  TUndoManager *manager = TUndoManager::manager();
+  manager->beginBlock();
+
+  keyFunc_undo(&PlasticTool::setGlobalRestKey);  // stage params (existing undo)
+
+  // Then zero the ZtoRig pose-action dials, in the same undo block.
+  if (m_sd && m_sd->poseActionsCount() > 0) {
+    std::vector<GuideState> before = ztorigCaptureGuides(m_sd);
+    const double f                 = ::frame();
+    for (int i = 0; i < m_sd->poseActionsCount(); ++i) {
+      PoseAction *act = m_sd->poseAction(i);
+      if (act && act->m_guide) act->m_guide->setValue(f, 0.0);
+    }
+    std::vector<GuideState> after = ztorigCaptureGuides(m_sd);
+    manager->add(new UndoRestGuides(m_sd, before, after));
+    if (TTool::getApplication() && TTool::getApplication()->getCurrentXsheet())
+      TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+
+  manager->endBlock();
 }
 
 //------------------------------------------------------------------------
@@ -2387,6 +2477,20 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
       if (m_mode.getIndex() == ANIMATE_IDX)
         deformedSkeleton().vertex(m_svSel).m_minAngle = value;
 
+      // Mirror it into the keyable param, which is where the bound has to live
+      // to be visible in the function editor and to be shared by vertex name
+      // across the skeletons of a multilevel rig. Clearing the field (no valid
+      // number = no bound) drops the keys instead of keying an infinity.
+      if (SkVD *vd = m_sd->vertexDeformation(skelId, m_svSel)) {
+        if (TDoubleParamP par = vd->m_params[SkVD::MINANGLE]) {
+          if (ok) {
+            ::setKeyframe(par, ::frame());
+            par->setValue(::frame(), value);
+          } else
+            par->clearKeyframes();
+        }
+      }
+
       m_minAngle.notifyListeners();  // NOTE: This should NOT invoke this
                                      // function recursively
     }
@@ -2404,6 +2508,20 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
       m_sd->skeleton(skelId)->vertex(m_svSel).m_maxAngle = value;
       if (m_mode.getIndex() == ANIMATE_IDX)
         deformedSkeleton().vertex(m_svSel).m_maxAngle = value;
+
+      // Mirror it into the keyable param, which is where the bound has to live
+      // to be visible in the function editor and to be shared by vertex name
+      // across the skeletons of a multilevel rig. Clearing the field (no valid
+      // number = no bound) drops the keys instead of keying an infinity.
+      if (SkVD *vd = m_sd->vertexDeformation(skelId, m_svSel)) {
+        if (TDoubleParamP par = vd->m_params[SkVD::MAXANGLE]) {
+          if (ok) {
+            ::setKeyframe(par, ::frame());
+            par->setValue(::frame(), value);
+          } else
+            par->clearKeyframes();
+        }
+      }
 
       m_maxAngle.notifyListeners();  // NOTE: This should NOT invoke this
                                      // function recursively
@@ -2837,6 +2955,15 @@ void PlasticTool::drawAngleLimits(const SkDP &sd, int skelId, int v,
       // Convert to radians
       double currentBranchAngle_rad =
           tcg::point_ops::rad(dirFromDeformedGrandParent);
+
+      // No grandparent here means the reference above is the world X axis, a
+      // constant: on a multi-column rig this overlay then draws the bound where
+      // it was before the body turned. It must take the SAME shift the clamp and
+      // the Animate gizmo take, or the three disagree — and this one draws lines
+      // 1e4 long, so the disagreement is impossible to miss on screen.
+      if (vGrandParent < 0)
+        currentBranchAngle_rad +=
+            m_this->parentBoneRefDeg_animate() * M_PI_180;
 
       double currentAngle_rad =
           currentBranchAngle_rad + (angleShift + defaultAngleValue) * M_PI_180;

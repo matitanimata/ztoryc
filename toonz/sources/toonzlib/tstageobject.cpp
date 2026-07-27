@@ -1077,15 +1077,10 @@ for(int p=0; p<SkVD::PARAMS_COUNT; ++p)
 //     every joint limit at its current value.
 // Only genuine pose channels below: skeleton pose, free-root offset, and the
 // squash & stretch controller.
-namespace {
-// The POSE parameters, and only those — the explicit list both key and unkey
-// share. See the comment above setPlasticPoseKeyframe for why pins and
-// joint-limit overrides must never appear here.
-static const int l_plasticPoseParams[] = {
-    SkVD::ANGLE,  SkVD::DISTANCE, SkVD::SO,     SkVD::ROOTX,  SkVD::ROOTY,
-    SkVD::SCALEX, SkVD::SCALEY,   SkVD::PIVOTX, SkVD::PIVOTY, SkVD::TRANSX,
-    SkVD::TRANSY, SkVD::ROT,      SkVD::SHEARX, SkVD::SHEARY};
-}
+// The POSE parameters live in SkVD::POSE_PARAMS — one definition shared with
+// pose blending, so key, unkey and blend can never disagree on what a pose is.
+// Indexed loop, not range-for: the array is declared without a bound in the
+// header, so its size is not visible here.
 
 void TStageObject::setPlasticPoseKeyframe(double frame) {
   const PlasticSkeletonDeformationP &sd = getPlasticSkeletonDeformation();
@@ -1101,8 +1096,10 @@ void TStageObject::setPlasticPoseKeyframe(double frame) {
   for (; vdt != vdEnd; ++vdt) {
     SkVD *vd = (*vdt).second;
     if (!vd) continue;
-    for (int p : l_plasticPoseParams)
+    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
+      int p = SkVD::POSE_PARAMS[i];
       if (vd->m_params[p]) setkey(vd->m_params[p], (int)frame);
+    }
   }
 }
 
@@ -1125,8 +1122,10 @@ void TStageObject::removePlasticPoseKeyframe(double frame) {
   for (; vdt != vdEnd; ++vdt) {
     SkVD *vd = (*vdt).second;
     if (!vd) continue;
-    for (int p : l_plasticPoseParams)
+    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
+      int p = SkVD::POSE_PARAMS[i];
       if (vd->m_params[p]) vd->m_params[p]->deleteKeyframe((int)frame);
+    }
   }
 }
 
@@ -1641,6 +1640,16 @@ void TStageObject::solvePlasticCharacter(double t, const TAffine &baseLocal) {
     }
   }
 
+  // IK off: no solve, exactly as on a single-level rig where the per-column
+  // plant is skipped too. It matters that this sits AFTER the clean slate
+  // above — returning before it would leave the skeletons solved under the
+  // previous pin state, which is the state the rig looked broken in.
+  //
+  // The flag is a property of the character: PlasticTool::enablePinsOnCharacter
+  // sets it on every column, so this object's own copy answers for all of them.
+  if (const PlasticSkeletonDeformationP &mine = getPlasticSkeletonDeformation())
+    if (!mine->pinsEnabled()) return;
+
   std::vector<Col> cols;
   std::vector<PlasticPinSolver::Joint> joints;
   std::vector<TPointD> pos;
@@ -1875,7 +1884,66 @@ TAffine TStageObject::computeLocalPlacement(double frame) {
     if (m_parent) pos += m_parent->getHandlePos(m_parentHandle, (int)frame);
     pos = pos * Stage::inch + position;
 
-    m_localPlacement = TTranslation(pos) * makeRotation(ang) * shear *
+    // Parenting to a hook has always carried the hook's POSITION and nothing
+    // else. For a plastic character split over several columns that is not
+    // enough: bend the torso and the arm column keeps its old orientation,
+    // because a mesh vertex handed over as a bare point cannot say which way
+    // the bone through it is pointing. The arm then sits outside joint limits
+    // that DID follow the body, and the next manipulation snaps it back.
+    //
+    // So a child hooked to a vertex of a parent PLASTIC mesh also inherits how
+    // far that vertex's bone has turned from its rest pose. Deliberately narrow:
+    // an ordinary hook on a plain drawing has no bone and no deformation, hits
+    // the guard below, and behaves exactly as before.
+    //
+    // Rotating by (ang + hookAng) pivots about `center`, which for a rigged
+    // child is its own attachment handle — the joint it hangs from, which is
+    // the only pivot that keeps the limb attached.
+    //
+    // ONLY WHEN THE PLASTIC IK IS OFF (measured with Franco, 2026-07-27).
+    // With the kinematics on, the limb ALREADY turns with its parent:
+    // solvePlasticCharacter stitches the child column's root onto the parent's
+    // attachment vertex and treats it as a real bone. Turning the placement too
+    // applies the rotation TWICE, and the second one lands where the cross-level
+    // write-back cannot see it — crossLevelIK_animate computes each column's
+    // angles in the placement snapshot frozen at press (cc.world), so a
+    // placement that turns mid-drag makes the pose that gets written differ from
+    // the pose that was solved. Measured symptom: posing a pinned leg went from
+    // "exactly like a single-level rig" to barely controllable, the joint
+    // travelling a quarter of what was asked.
+    //
+    // With the kinematics OFF none of that runs, and nothing else turns the limb
+    // — so a hooked child would keep its old orientation while the body bends,
+    // which is not how a single-level rig behaves. That is this branch's job.
+    // The two cases never overlap, which is why the gate is the whole fix.
+    double hookAng = 0.0;
+    static const bool noHookRot = ::getenv("ZTORYC_NO_HOOK_ROT") != nullptr;
+    if (!noHookRot && m_parent && m_parentHandle.size() > 1 &&
+        m_parentHandle[0] == 'H') {
+      const PlasticSkeletonDeformationP &pdef =
+          m_parent->getPlasticSkeletonDeformation();
+      // The IK flag is a property of the whole character (it is set on every
+      // column), so the parent's copy answers for all of them.
+      if (pdef && !pdef->pinsEnabled()) {
+        const int pSkelId = pdef->skeletonId(frame);
+        const int hv = pdef->vertexIndex(atoi(m_parentHandle.c_str() + 1), pSkelId);
+        PlasticSkeletonP pRest = pdef->skeleton(pSkelId);
+        if (hv >= 0 && pRest && hv < (int)pRest->vertices().size()) {
+          const int hp = pRest->vertex(hv).parent();
+          // The parent's own root has no bone through it: nothing to inherit.
+          if (hp >= 0) {
+            PlasticSkeleton pDef;
+            pdef->storeDeformedSkeleton(pSkelId, frame, pDef);
+            const TPointD r = pRest->vertex(hv).P() - pRest->vertex(hp).P();
+            const TPointD d = pDef.vertex(hv).P() - pDef.vertex(hp).P();
+            if (norm2(r) > 1e-8 && norm2(d) > 1e-8)
+              hookAng = rad2degree(atan2(d.y, d.x) - atan2(r.y, r.x));
+          }
+        }
+      }
+    }
+
+    m_localPlacement = TTranslation(pos) * makeRotation(ang + hookAng) * shear *
                        TScale(sx, sy) * TTranslation(-center);
 
     // SuperPlastic cross-column pin hold: pre-translate the top column of a

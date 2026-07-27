@@ -132,6 +132,12 @@ private:
       m_ikDrag;  //!< Whether animation editing solves the whole chain with IK
                  //!< (SuperPlastic CCD solver) instead of single-vertex FK
 
+  //! Largest rotation, in DEGREES, that one mouse event may apply to a joint.
+  //! Low = calm and deliberate, high = free (and, near the root, twitchy).
+  //! Bounds the angle rather than the travel of the pinned end: the sweep of
+  //! the body hanging off a joint is proportional to the angle alone.
+  TDoubleProperty m_ikDamping;
+
   TEnumProperty m_scaleConstraint;  //!< Squash & stretch constraint, like the
                                     //!< Animate tool: None / Aspect Ratio /
                                     //!< Mass (V = 1/H, area preserved)
@@ -552,6 +558,35 @@ private:
     TPointD childPos, parentPos;  // in current tool draw space
   };
   std::vector<CrossLevelLink> crossLevelLinks_animate();
+
+  //! Reference direction for a joint whose parent is its column's ROOT: the
+  //! bone of the PARENT COLUMN it hangs from, at rest and deformed, expressed
+  //! in \p column's own space.
+  /*!
+    A joint angle is meaningful only against its parent bone. Inside one column
+    that bone is always there; a column ROOT has no parent bone in its own
+    skeleton, and the code fell back to the world X axis. That is a constant, so
+    the joint limits of an arm on its own column stopped following the body:
+    bend the torso and the arm's usable range slid by exactly the torso's
+    rotation — the wedge stayed put against the SCREEN.
+
+    Returns false when there is no parent column, where the caller's old
+    behaviour (world X) is the right answer.
+  */
+  //! How far the parent COLUMN's anchoring bone has turned from rest, in
+  //! degrees, for the current column — what the angular limits of a joint
+  //! hanging off this skeleton's root must follow so a shoulder's usable range
+  //! bends with the torso. Returns 0 unless ZTORYC_BOUND_REF is set: the sign
+  //! convention was never established experimentally, so the variable selects
+  //! it (1 or -1) and 0/unset keeps the limits as they are today.
+  double parentBoneRefDeg_animate() const;
+  //! Same, for an explicit column: the cross-level write-back walks several
+  //! columns in one go, so it cannot use the current one.
+  double parentBoneRefDegFor_animate(int column) const;
+  bool parentColumnRefDirs_animate(int column, TPointD &restDir,
+                                   TPointD &defDir) const;
+  //! The column whose plastic deformation is \p def, or -1.
+  int columnOfDeformation_animate(const SkDP &def) const;
   void drawCrossLevelLinks_animate(double pixelSize);
 
   // ---- SuperPlastic cross-level IK (pins spanning several columns) ----

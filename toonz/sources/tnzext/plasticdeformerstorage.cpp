@@ -370,6 +370,21 @@ void processMesh(DataGroup *group, double frame, const TMeshImage *meshImage,
     for (m = 0; m != mCount; ++m) {
       PlasticDeformerData &data = group->m_datas[m];
       data.m_deformer.deform(dstHandlePos, data.m_output.get());
+
+      // ZtoRig joint correctives: pose-space deformation on top of the ARAP
+      // result. Reads the driving joint's base angle at this frame, so it
+      // recomputes whenever the deform does (both keyed off `frame`). No-op
+      // and cheap when the deformation has no correctives.
+      if (sd->meshCorrectivesCount() > 0) {
+        const TTextureMeshP &mesh = meshImage->meshes()[m];
+        const int vCount          = mesh->verticesCount();
+        double *out               = data.m_output.get();
+        for (int v = 0; v < vCount; ++v) {
+          const TPointD off = sd->meshCorrectiveOffset(m, v, frame);
+          out[2 * v]     += off.x;
+          out[2 * v + 1] += off.y;
+        }
+      }
     }
 
     group->m_upToDate |= PlasticDeformerStorage::MESH;
