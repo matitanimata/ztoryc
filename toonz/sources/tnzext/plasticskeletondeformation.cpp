@@ -1812,6 +1812,21 @@ void PlasticSkeletonDeformation::updateAngle(
 
   vd.m_params[SkVD::ANGLE]->setValue(frame, a);
 
+  // Probe for the cross-column angle-limit report (2026-07-27). This is the
+  // clamp that actually governs a plain (non-IK) joint drag — the twin in
+  // writeBackAnglesFor_animate is NOT reached for it, measured. Everything
+  // here is in the COLUMN'S OWN local space, so bending the torso (which
+  // rotates the whole arm column through its placement) should cancel out and
+  // leave the range identical. If `a` stops at the same hi/lo in both torso
+  // poses, the geometry is already right and only the drawn wedge is wrong.
+  if (::getenv("ZTORYC_LIMIT_DIAG"))
+    qDebug().noquote()
+        << QString("[UPDANG] v=%1 par=%2 cur=%3 aDelta=%4 a=%5 lo=%6 hi=%7 %8")
+               .arg(v).arg(vParent)
+               .arg(cur, 0, 'f', 2).arg(aDelta, 0, 'f', 2).arg(a, 0, 'f', 2)
+               .arg(loLim, 0, 'f', 2).arg(hiLim, 0, 'f', 2)
+               .arg(fabs((cur + aDelta) - a) > 1e-6 ? "CLAMPED" : "free");
+
   m_imp->updateBranchPositions(originalSkeleton, deformedSkeleton, frame, v);
 }
 

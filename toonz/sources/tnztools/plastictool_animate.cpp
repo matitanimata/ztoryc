@@ -556,8 +556,7 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
       ::setKeyframe(vd->m_params[SkVD::DISTANCE],
                     frame);  // vd directly due to SkVD::SO
 
-      m_sd->updatePosition(*skeleton(), deformedSkeleton(), frame, m_svSel,
-                           pos);
+      m_sd->updatePosition(*skeleton(), deformedSkeleton(), frame, m_svSel, pos);
     }
 
     l_suspendParamsObservation = false;
@@ -1916,6 +1915,7 @@ void PlasticTool::moveVertexMultiAnchor_animate(
   // the baseline is recaptured per drag, so it compounded across drags and the
   // character slowly walked away with no way to stand it back up.
   std::map<int, TPointD> P = curPos;
+  double accepted          = 1.0;  // frazione del passo richiesto che ha retto
   auto attempt             = poseAt(t);
   if (attempt.first <= tol2)
     P = std::move(attempt.second);
@@ -1931,8 +1931,21 @@ void PlasticTool::moveVertexMultiAnchor_animate(
       } else
         hi = mid;
     }
-
+    accepted = lo;
   }
+
+  // How much of the requested step survived the feasibility bisection. The
+  // suspicion this measures (2026-07-27): the nervous snap when posing hips is
+  // this fraction jumping between events -- a rig with NO angle limits has
+  // nothing to negotiate and drags smoothly, one with limits on most joints
+  // re-negotiates on every mouse move.
+  if (::getenv("ZTORYC_PIN_DIAG"))
+    qDebug().noquote()
+        << QString("[IK_FEASIBLE] v=%1 pins=%2 accepted=%3 askedLen=%4")
+               .arg(v)
+               .arg((int)pins.size())
+               .arg(accepted, 0, 'f', 3)
+               .arg(norm(t - curPos.at(v)), 0, 'f', 2);
 
   std::map<int, TPointD> desired = curPos;
   for (const auto &kv : T.parentT) desired[kv.first] = P[kv.first];
@@ -1967,6 +1980,14 @@ void PlasticTool::writeBackAnglesFor_animate(
     const std::map<int, TPointD> &desired, bool clampToLimits,
     bool writeRootOffset) {
   if (!def) return;
+  static const bool noAngleClamp = ::getenv("ZTORYC_NO_ANGLE_CLAMP") != nullptr;
+  // Probe for the cross-column angle-limit bug (2026-07-27), placed HERE and
+  // not at the wedge: the symptom Franco judges is the usable RANGE, and the
+  // range is decided in this function. Answers the two questions the TODO in
+  // limitDisplay_animate left open — does the column resolve, and is the clamp
+  // branch even reached for this joint.
+  static const bool limDiag = ::getenv("ZTORYC_LIMIT_DIAG") != nullptr;
+  const int diagCol = limDiag ? columnOfDeformation_animate(def) : -1;
 
   auto parentDir = [&](const std::function<TPointD(int)> &posFn, int vx) {
     for (int p = vx; p >= 0;) {
@@ -2026,7 +2047,17 @@ void PlasticTool::writeBackAnglesFor_animate(
     // Children hold RELATIVE deltas, so a clamped joint rotates its whole
     // subtree rigidly: the limb stiffens at the limit instead of tearing.
     // The unpin bake opts out — it must reproduce the planted pose exactly.
-    if (clampToLimits) {
+    //
+    // ZTORYC_NO_ANGLE_CLAMP disables the clamp entirely, for A/B-ing the
+    // nervous snap when posing hips (2026-07-27). Deleting the keyed
+    // MIN/MAXANGLE is NOT the same experiment: with no keys the lines below
+    // fall back to the vertex's STATIC limit, which on the rigs we measured
+    // holds nearly identical values, so the limits would still be enforced.
+    const double preClamp = newDelta;
+    double loLimDiag = 0.0, hiLimDiag = 0.0;
+    bool clampReached = false;
+    if (clampToLimits && !noAngleClamp) {
+      clampReached = true;
       // Keyed MINANGLE/MAXANGLE override the vertex's static limit (limits can
       // change over time); no keys → the static limit.
       double loLim = orig.vertex(w).m_minAngle;
@@ -2041,8 +2072,32 @@ void PlasticTool::writeBackAnglesFor_animate(
       // sit outside [lo, hi] (unpin bake writes unclamped; wrapped writers can
       // store 185 as -175). Never yank past the current value — out of range
       // you can only come back IN; inside, the full limits apply.
+      loLimDiag = loLim;
+      hiLimDiag = hiLim;
       newDelta =
           tcrop(newDelta, std::min(loLim, oldDelta), std::max(hiLim, oldDelta));
+    }
+
+    if (limDiag) {
+      // parentDir falls back to 0 (world X) when `op` has no parent of its own,
+      // which is precisely the cross-column case: the joint's reference is then
+      // a CONSTANT instead of the parent bone. Logging it raw shows whether it
+      // actually moves when the torso bends.
+      const double pdRef = parentDir(desFn, op) * M_180_PI;
+      qDebug().noquote()
+          << QString("[LIMIT] col=%1 v=%2 par=%3 grand=%4 parentDirDeg=%5 "
+                     "rest=%6 pre=%7 post=%8 old=%9 lo=%10 hi=%11 clamp=%12")
+                 .arg(diagCol).arg(w).arg(op)
+                 .arg(orig.vertex(op).parent())
+                 .arg(pdRef, 0, 'f', 2)
+                 .arg(rest * M_180_PI, 0, 'f', 2)
+                 .arg(preClamp, 0, 'f', 2)
+                 .arg(newDelta, 0, 'f', 2)
+                 .arg(oldDelta, 0, 'f', 2)
+                 .arg(loLimDiag, 0, 'f', 2)
+                 .arg(hiLimDiag, 0, 'f', 2)
+                 .arg(clampReached ? (fabs(preClamp - newDelta) > 1e-6 ? "BIT" : "reached")
+                                   : "SKIPPED");
     }
 
     if (fabs(newDelta - oldDelta) < 1e-4) continue;  // unchanged joint
@@ -2215,27 +2270,28 @@ bool PlasticTool::limitDisplay_animate(int v, TPointD &pp, double &branch,
     dirFromGrand    = vxParent.P() - skel.vertex(vGrand).P();
     dirFromDefGrand = defSkel.vertex(vParent).P() - defSkel.vertex(vGrand).P();
   }
-  // TODO (2026-07-26): when vGrand < 0 the reference is the world X axis, a
-  // CONSTANT — the reported bug where an arm on its own column has a different
-  // usable range with the torso bent forward or back.
-  // parentColumnRefDirs_animate() supplies the parent column's bone instead,
-  // and was MEASURED working here: found on 890 of 997 samples, turning from
-  // -4.5 to 51 degrees as the body bends. It is not wired in because feeding it
-  // to this spot did not change the symptom, and the reason is a distinction
-  // never established: bending the torso rotates the arm's whole COLUMN via its
-  // placement (which cancels in local space), whereas this reference tracks the
-  // parent BONE bending inside the parent's skeleton. Two different rotations.
-  // DECIDED by Franco (2026-07-26): the limit must be anchored to the PARENT
-  // BONE, exactly as it already is on a single-level rig — whichever column
-  // that bone happens to live on. So the reference above is the right one.
+  // RESOLVED 2026-07-27 — the old TODO here proposed feeding
+  // parentColumnRefDirs_animate() in when vGrand < 0, to stop the reference
+  // being the world X axis. Measured, that is the WRONG cure, and the note is
+  // kept because the wrong turn is easy to take twice:
   //
-  // What is NOT understood, and is the first thing to measure next time:
-  // wiring it into writeBackAnglesFor_animate did not change the effective
-  // range (the arm still reaches the nose in one torso pose and the ears in
-  // another). Instrument THAT function first — is columnOfDeformation_animate
-  // resolving the column, is the clamp branch even reached for this joint —
-  // before touching the reference again. The symptom is judged on the range,
-  // and the range is decided there, not by the wedge drawn here.
+  //  - The two questions it asked are answered. The clamp that governs a plain
+  //    joint drag is NOT here and NOT in writeBackAnglesFor_animate (probed:
+  //    zero calls across 52 drag events) — it is PlasticSkeletonDeformation::
+  //    updateAngle. And the effective range measured IDENTICAL with the torso
+  //    upright and bent (arm stopped at -95.38 both times), so the range was
+  //    never the defect: the drawn wedge was, and so was the arm.
+  //  - The real defect was one level down, in the PLACEMENT: parenting to a
+  //    hook carried the vertex's position but not its bone's orientation, so
+  //    the arm column simply did not turn with the torso. Fixed in
+  //    TStageObject::computeLocalPlacement.
+  //  - With that in place the local frame rotates with the body, so bone,
+  //    bounds and wedge all follow for free. Shifting the limits HERE as well
+  //    was tried and reverted the same day: it counts the rotation twice and
+  //    the bounds drift out from under the gizmo.
+  //
+  // So world X stays as the fallback on purpose. If it ever looks wrong again,
+  // the thing to check is whether the column is rotating, not this reference.
   TPointD dirFromParent = vx.P() - vxParent.P();
   defAng = atan2(cross(dirFromGrand, dirFromParent),
                  dirFromGrand * dirFromParent) *

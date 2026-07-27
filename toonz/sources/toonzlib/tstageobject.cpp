@@ -1884,7 +1884,46 @@ TAffine TStageObject::computeLocalPlacement(double frame) {
     if (m_parent) pos += m_parent->getHandlePos(m_parentHandle, (int)frame);
     pos = pos * Stage::inch + position;
 
-    m_localPlacement = TTranslation(pos) * makeRotation(ang) * shear *
+    // Parenting to a hook has always carried the hook's POSITION and nothing
+    // else. For a plastic character split over several columns that is not
+    // enough: bend the torso and the arm column keeps its old orientation,
+    // because a mesh vertex handed over as a bare point cannot say which way
+    // the bone through it is pointing. The arm then sits outside joint limits
+    // that DID follow the body, and the next manipulation snaps it back.
+    //
+    // So a child hooked to a vertex of a parent PLASTIC mesh also inherits how
+    // far that vertex's bone has turned from its rest pose. Deliberately narrow:
+    // an ordinary hook on a plain drawing has no bone and no deformation, hits
+    // the guard below, and behaves exactly as before.
+    //
+    // Rotating by (ang + hookAng) pivots about `center`, which for a rigged
+    // child is its own attachment handle — the joint it hangs from, which is
+    // the only pivot that keeps the limb attached.
+    double hookAng = 0.0;
+    static const bool noHookRot = ::getenv("ZTORYC_NO_HOOK_ROT") != nullptr;
+    if (!noHookRot && m_parent && m_parentHandle.size() > 1 &&
+        m_parentHandle[0] == 'H') {
+      if (const PlasticSkeletonDeformationP &pdef =
+              m_parent->getPlasticSkeletonDeformation()) {
+        const int pSkelId = pdef->skeletonId(frame);
+        const int hv = pdef->vertexIndex(atoi(m_parentHandle.c_str() + 1), pSkelId);
+        PlasticSkeletonP pRest = pdef->skeleton(pSkelId);
+        if (hv >= 0 && pRest && hv < (int)pRest->vertices().size()) {
+          const int hp = pRest->vertex(hv).parent();
+          // The parent's own root has no bone through it: nothing to inherit.
+          if (hp >= 0) {
+            PlasticSkeleton pDef;
+            pdef->storeDeformedSkeleton(pSkelId, frame, pDef);
+            const TPointD r = pRest->vertex(hv).P() - pRest->vertex(hp).P();
+            const TPointD d = pDef.vertex(hv).P() - pDef.vertex(hp).P();
+            if (norm2(r) > 1e-8 && norm2(d) > 1e-8)
+              hookAng = rad2degree(atan2(d.y, d.x) - atan2(r.y, r.x));
+          }
+        }
+      }
+    }
+
+    m_localPlacement = TTranslation(pos) * makeRotation(ang + hookAng) * shear *
                        TScale(sx, sy) * TTranslation(-center);
 
     // SuperPlastic cross-column pin hold: pre-translate the top column of a
