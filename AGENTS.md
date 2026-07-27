@@ -307,24 +307,28 @@ This keeps startup token cost low. Do NOT read full ANIMATIC_TASKS.md upfront.
 > e la sezione "Priority Order" di ~/ZtorYc/ANIMATIC_TASKS.md. Poi fammi un recap.
 > ```
 
-### Context window — avviso token
+### Chi decide quando fermarsi — REGOLA (Franco, 2026-07-27)
 
-⚠️ **CRITICO: avvisare PRESTO, non tardi.**
+**Vai avanti finché non ti ferma Franco.** Non proporre di chiudere, non
+suggerire di rimandare a domani, non fermarti «perché è tardi» o «perché la
+cosa è delicata». Le sue parole: *«sono io quello che si stanca essendo umano,
+per cui vai tranquillo finché non ti dico io basta»*.
 
-Monitor context window usage continuously. When you estimate that roughly
-**40% of the context window remains** (i.e. ~60% used), stop immediately
-and warn the user:
+Questo **non** significa lavorare alla cieca:
+- Se una modifica è rischiosa, **dillo e proponi come ridurre il rischio** —
+  ma poi procedi, non usarlo come motivo per fermarti.
+- Se servono decisioni che solo lui può prendere (semantica, priorità, quale
+  comportamento è quello giusto), **chiedi** — quello resta giusto.
+- Se hai un dubbio sui **margini di contesto**, **chiediglielo**: lui guarda il
+  pannello e ti dice i numeri veri. Non dedurli e non annunciare percentuali
+  inventate (già successo: annunciato 60-70% mentre il pannello segnava 31%).
 
-> ⚠️ **Token in esaurimento** — siamo al ~60% del contesto. Suggerisco di
-> chiudere la sessione ora con "sessione chiusa" così aggiorno CHANGELOG e faccio
-> il commit prima di perdere il contesto.
+La finestra è da **1M token**: le vecchie soglie tarate su 200k non valgono più.
+Nessun allarme prima di **700-800k**, e comunque la decisione di chiudere è sua.
 
-Do this **before** starting any new task or tool call. The "sessione chiusa"
-procedure itself (CHANGELOG write + git add + commit + push + rsync + cp 3 docs)
-consumes ~15–20% of context. You need that margin.
-
-**Non aspettare che sia troppo tardi.** Se stai per iniziare un task lungo
-e sei già al 50% del contesto, avvisa prima di iniziare.
+Vale anche la sua indicazione complementare: **se controlli una cosa e non trovi
+errori evidenti, non intervenire** — riferire e fermare la modifica, non «già che
+ci sono» sistemare.
 
 ---
 
