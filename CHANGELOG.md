@@ -1,3 +1,89 @@
+## [2026-07-27b] — ZtoRig su master, 0.11.0. E i limiti d'angolo che finalmente seguono il corpo
+
+> Sessione lunga, quasi tutta di **misura**. Delle sette ipotesi formulate ne sono
+> cadute sei, e ogni volta a ucciderle è stato un numero, non un ragionamento.
+> Le trappole sono annotate perché sono la parte riutilizzabile.
+
+### Added — ZtoRig entra in master (merge di `feature/ztorig-pose-blend`)
+Nessun conflitto. Entrano pannello ZtoRig, pose di personaggio, posa Base, modi
+Pose/Add/Part, stamping delle chiavi plastic, IK multi-pin con «il corpo
+resiste», slider IK Max Step, motore delle correttive di giuntura (1/3).
+Versione **0.11.0**: MINOR e non PATCH perché chi aggiorna deve sapere che ci
+trova dentro un sistema di rigging, non una correzione.
+
+### Fixed — i limiti d'angolo seguono la rotazione del corpo anche fra colonne
+Su rig multi-colonna il bound di una spalla restava fermo mentre il busto si
+piegava: un giunto appeso alla **radice** del proprio scheletro non ha un osso
+padre lì, e il riferimento ripiegava sull'**asse X del mondo** — una costante.
+Nel single level non succede perché l'osso padre è nello stesso scheletro.
+
+Ora il limite viene spostato di quanto ha ruotato l'osso di attacco sulla colonna
+**padre** (`parentColumnRefDirs_animate`, che era già scritto e misurato da giorni
+ma non collegato). Lo scostamento serve in **quattro** posti, e se anche uno solo
+resta indietro si vede a schermo:
+`updateAngle`/`updatePosition`, `writeBackAnglesFor_animate` (il gemello del clamp,
+quello che governa il caso cross-colonna e che era sfuggito), il ventaglio azzurro
+e l'overlay a linee lunghe `1e4` — le «due righe lunghissime» disallineate.
+`ZTORYC_BOUND_REF=0` torna indietro, `-1` inverte il verso.
+
+### Fixed — il figlio eredita l'orientamento dell'osso-hook, ma solo a IK spenta
+Il parenting a un hook portava la **posizione** del vertice e non l'orientamento
+del suo osso: piegando il busto la colonna del braccio non ruotava. Aggiungerlo
+sembrava perfetto — e **ha peggiorato molto la cinematica**: posare una gamba col
+pin passava da «identico al single level» a quasi ingestibile, col giunto che
+percorreva **un quarto** di quanto richiesto (`gain=0.24`).
+
+Causa: con l'IK attiva l'arto ruota **già**, perché `solvePlasticCharacter` cuce la
+radice della colonna figlia sul vertice di attacco del padre e la tratta come un
+osso vero. Farlo anche nel piazzamento applica la rotazione **due volte**, e la
+seconda finisce dove il write-back cross-level non può vederla: calcola gli angoli
+nel piazzamento **congelato al press**. I due casi non si sovrappongono mai —
+`crossLevelIK` gira solo con l'IK accesa — quindi **la condizione è l'intero fix**.
+
+### Changed — la posa vettoriale non compare più di default
+Due bottoni che sovrascrivono il disegno corrente senza undo e senza persistenza
+non vanno in una release pubblica. Si riattiva con `ZTORYC_VECPOSE`.
+
+### Notes — cosa NON era un bug (chiuso con misure)
+- **Le due anche che si comportano diversamente**: pin su entrambi i talloni,
+  gamba sinistra accorciata quando è stata riposizionata → meno gioco, meno
+  discesa. Comportamento corretto. Cadute per strada tre ipotesi: la chiave sul
+  Distance (tutti i 22 vertici ce l'hanno identica), il bound semiaperto che
+  bloccherebbe a zero (il codice ripiega sul limite statico, `plastictool_animate.cpp:2034`),
+  e i limiti d'angolo (v1, quella ferma, non ne ha; v5, che scende bene, ne ha di
+  stretti — l'opposto di quanto predirebbe l'ipotesi).
+- **Il «single pin regredito» rispetto alla 0.10.1**: non riprodotto. Controllato
+  l'unica differenza reale nel percorso (il cap `ikMaxStep`, che su master non
+  esiste proprio): misurato inattivo, 9 eventi su 461, rotazione media richiesta
+  2.0° contro un cap di 15°. Nessun intervento.
+
+### Notes — lo scatto in ginocchio, ricaratterizzato
+Il controllo delle anche è **buono** e va conservato: la riscrittura «leva =
+cursore» è annullata. Resta che «a volte basta poco e il personaggio scatta».
+**Non** è la bisezione di fattibilità né i limiti: `accepted` medio 0.995, 45
+eventi su 46 al valore pieno. L'amplificazione è **fra il bersaglio e la posa
+risolta**: bersagli vicini danno pose lontane (90 → 16, 87 → 359). Firma di un
+solver con più bacini di convergenza dentro `solveMultiAnchor`. Prossimo passo
+scritto nel task.
+
+### Lezioni di metodo
+1. **«Mi pare perfetto» non è un collaudo.** La rotazione del piazzamento è stata
+   approvata a caldo e un'ora dopo si è scoperto che rovinava la gamba. È emerso
+   solo perché Franco ha chiesto un A/B su un caso diverso da quello guardato.
+2. **Un log che cresce è un bersaglio in movimento.** Percentuali calcolate a
+   3576 eventi confrontate con numeri presi a 9719: l'app era ancora aperta.
+   Marcare la posizione nel log prima di ogni misura.
+3. **Il valore identico può essere il bug, non la prova.** Bound uguali a busto
+   eretto e piegato letti come «funziona»; erano il sintomo.
+4. **Chiedere quale interruttore spegne cosa PRIMA di dedurlo.** «Esploso» per
+   Franco è il single level; per me era il multi-colonna. Un test intero fatto
+   sulla domanda sbagliata.
+
+### Upstream candidates
+Aggiornato `UPSTREAM_PR_CANDIDATES.md`: il parenting a hook che non eredita
+l'orientamento dell'osso, insieme al fix gemello sui limiti d'angolo. Non è un
+bug di Tahoma2D ma comportamento storico, quindi va proposto come **opzione**.
+
 ## [2026-07-27] — Posa vettoriale: il primo test funziona. E il crash della 0.10.1 portato su master
 
 > Codice su branch `feature/ztorig-pose-blend` (`139f43082`), bundle Ztoryc-SP.app.

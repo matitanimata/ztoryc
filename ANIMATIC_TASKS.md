@@ -392,20 +392,63 @@ il rework finale dello slider auto-keying (l'unica parte mai verificata a mano):
   i limiti cedono al pin; più «il corpo resiste» (bisezione di fattibilità nel drag).
   Residuo peggiore da 10.4% a ~1.5% della diagonale del rig. Nuovo slider **IK Max Step**
   (1-90 gradi/evento, default 15).
-- ⬜ **Anche e spalle «partono» — NON smorzabile, serve cambiare la manipolazione.**
-  Trascinare significa oggi «porta il giunto sotto il cursore»: per un giunto vicino al
-  suo pivot la risoluzione del controllo è proporzionale alla distanza dal pivot, quindi
-  è incontrollabile per costruzione. Lo smorzamento converte il nervosismo in un muro
-  (a 1 scatta in ginocchio). **Soluzione: la leva dev'essere il CURSORE** — interpretare
-  il drag come l'angolo spazzato attorno al pivot (`rotateAboutPin` lo fa già, è
-  `multiAnchor` a usare un obiettivo posizionale). Forma completa = master controller.
-- ⬜ **Angle bounds che risentono della rotazione del padre** (solo multi-colonna).
-  `limitDisplay_animate` e `writeBackAnglesFor_animate` ripiegano sull'asse X del MONDO
-  quando il vertice non ha un nonno nel proprio scheletro. `parentColumnRefDirs_animate()`
-  è scritto e **misurato funzionante** (890/997, ruota -4.5°→51°) ma NON collegato:
-  cablarlo nel clamp non ha cambiato il range. Franco ha deciso la semantica: **ancorato
-  al padre, come nel single level**. Prossimo passo: strumentare
-  `writeBackAnglesFor_animate` PRIMA di ritoccare il riferimento.
+- ⬜ **Anche e spalle: il solver salta bacino di convergenza.** — RICARATTERIZZATO
+  2026-07-27 **con misure**, la diagnosi precedente era sbagliata. Franco: il controllo
+  delle anche è ORA BUONO (dopo «il corpo resiste» + IK Max Step del 26d) e va
+  **conservato**: NON fare la riscrittura «leva = cursore» a tappeto. Resta che
+  «a volte basta poco e il personaggio scatta di colpo».
+
+  **Misura** (build con `[IK_FEASIBLE]`, `lib_gino` rig single level, frame 23, pin sui
+  due talloni, anca sx = `v=1`, anca dx = `v=5`, ramo `multiAnchor`):
+
+  | | bersaglio | mouse | movimento |
+  |---|---|---|---|
+  | v=1, 1° evento | 9.93 | 9.93 | **204.77** (20x), poi il giunto si PIANTA |
+  | v=5, metà corsa | 114 | 164 | **360** |
+  | v=5, metà corsa | 87 | 486 | **359** — ma 90 → 16 |
+
+  **ESCLUSO con misura** (non per deduzione): NON è la bisezione di fattibilità né i
+  limiti d'angolo — `accepted` medio 0.995, 45 eventi su 46 al valore pieno, nessuno
+  sotto 0.1: la bisezione non contratta quasi mai. Non è il Distance, non sono i bound
+  semiaperti (il codice ripiega correttamente sul limite statico, `plastictool_animate.cpp:2034`).
+
+  **Dove sta**: l'amplificazione è FRA il bersaglio e la posa risolta, con il vincolo
+  pienamente soddisfatto. **La posa risolta non è funzione continua del bersaglio**:
+  bersagli vicini → pose lontane (90→16, 87→359). Firma di un solver con più bacini di
+  convergenza (FABRIK dentro `solveMultiAnchor`), non di un anello di retroazione.
+
+  **Prossimo passo**: strumentare DENTRO `solveMultiAnchor`/`poseAt` — confrontare il
+  bersaglio `t` con `P[v]` risolto e vedere se passate FABRIK vicine convergono a
+  configurazioni diverse. Serve una build.
+
+  **Strumenti già in codice** (non sono fix, non vanno in release): `ZTORYC_NO_ANGLE_CLAMP`
+  spegne il clamp dei limiti (keyed E statici) per A/B; `[IK_FEASIBLE]` logga quanta parte
+  del passo sopravvive alla bisezione. Cinque membri `m_ikSweep*` in `plastictool.h` sono
+  **inutilizzati**: o servono al fix vero, o vanno tolti prima del merge.
+- ✅ **Angle bounds che risentono della rotazione del padre** (solo multi-colonna) —
+  **RISOLTO 2026-07-27, verificato da Franco** («ora questa cosa è perfetta»).
+  **Non era un problema di limiti: era il PIAZZAMENTO.** Il parenting a un hook portava
+  la POSIZIONE del vertice ma non l'orientamento del suo osso, quindi piegando il busto
+  la colonna del braccio non ruotava — e il braccio finiva fuori da bound che invece
+  seguivano il corpo. Fix in `TStageObject::computeLocalPlacement` (`tstageobject.cpp`
+  ~1884): un figlio agganciato a un vertice di mesh **plastica** eredita anche di quanto
+  l'osso di quel vertice ha ruotato dal riposo → `makeRotation(ang + hookAng)`. Guardia
+  stretta: un hook ordinario su un disegno normale non ha osso né deformazione e si
+  comporta esattamente come prima. Interruttore A/B: `ZTORYC_NO_HOOK_ROT`.
+  **Candidato upstream** (è comportamento storico di Toonz, non un bug): vedi
+  UPSTREAM_PR_CANDIDATES.md, sezione feature request.
+
+  **Due vicoli ciechi, annotati perché costano ore a chi li ripercorre:**
+  1. `parentColumnRefDirs_animate()` cablato nel clamp — il vecchio TODO lo indicava come
+     la cura. È la cura sbagliata: una volta che la colonna ruota, lo spazio locale ruota
+     con lei e osso/bound/ventaglio seguono da soli. Sommare anche uno scostamento ai
+     limiti **conta la rotazione due volte** (sintomo: i bound «si modificano leggermente»
+     e compaiono linee con valori diversi da quelli del gizmo). Scritto e ritirato in
+     giornata.
+  2. Il TODO diceva di strumentare `writeBackAnglesFor_animate`. Misurato: per il drag di
+     un giunto non-IK **non viene mai chiamata** (0 righe su 52 eventi). Il clamp che conta
+     è `PlasticSkeletonDeformation::updateAngle`. E il range misurato era **identico** nelle
+     due pose del busto (-95.38 in entrambe): il range non è mai stato il difetto.
 - ⬜ **Pin legati allo scheletro.** I parametri `PIN` sono condivisi per nome tra gli
   scheletri della colonna. Tentato il 2026-07-26c deducendo lo scheletro dal frame di
   attivazione: **sbagliato**, rompeva il multi-pin e non spegneva il ciano (cambiando
@@ -413,6 +456,18 @@ il rework finale dello slider auto-keying (l'unica parte mai verificata a mano):
   campo esplicito in `SkVD`, come `m_skelIds` per le pose, con «pin vecchi = ovunque».
 - ⬜ **Il personaggio scivola registrando pose con i PIN.** Da indagare, tocca
   l'autorità del planting (zona che ha già avuto un bug di oscillazione multi-pin).
+- ⬜ **Riattivando l'IK il personaggio salta.** Un pin preesistente si riattiva e al
+  primo clic il personaggio si sposta. È figlio del gating del 26c: uscire dall'IK fa
+  il bake e conserva la posa, rientrare fa ripartire il planting verso un bersaglio
+  **catturato prima** dell'uscita. Semantica decisa da Franco: **disattivazione e
+  riattivazione devono comportarsi come nel single level**. Fix: **ri-catturare i target
+  all'accensione** invece di riusare i vecchi. Mai toccato finora.
+- ⬜ **Residuo multi-pin ~1.5%** (era 10.4%, vedi sopra): migliorato molto, non chiuso.
+  Cosa a sé rispetto al drag anche/spalle. Causa: la **bisezione del drag giudica con
+  `solveMultiAnchor`**, ma l'ultima parola ce l'ha il **solve di personaggio in
+  `TStageObject`**. Finché i due non coincidono il drag si ferma *quasi* nel punto giusto.
+  Fix: esporre anche il solve di personaggio **come query**, esattamente come
+  `plantPins()` / `pinResidualForPose()` per la singola colonna.
 - ⬜ Correttive di giuntura: milestone 2 (authoring) e 3 (UI).
 
 **✅ FATTO — Import da carta nella Thumbnail room (task 63)**, completo e mergiato su
