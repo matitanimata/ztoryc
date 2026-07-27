@@ -1899,12 +1899,32 @@ TAffine TStageObject::computeLocalPlacement(double frame) {
     // Rotating by (ang + hookAng) pivots about `center`, which for a rigged
     // child is its own attachment handle — the joint it hangs from, which is
     // the only pivot that keeps the limb attached.
+    //
+    // ONLY WHEN THE PLASTIC IK IS OFF (measured with Franco, 2026-07-27).
+    // With the kinematics on, the limb ALREADY turns with its parent:
+    // solvePlasticCharacter stitches the child column's root onto the parent's
+    // attachment vertex and treats it as a real bone. Turning the placement too
+    // applies the rotation TWICE, and the second one lands where the cross-level
+    // write-back cannot see it — crossLevelIK_animate computes each column's
+    // angles in the placement snapshot frozen at press (cc.world), so a
+    // placement that turns mid-drag makes the pose that gets written differ from
+    // the pose that was solved. Measured symptom: posing a pinned leg went from
+    // "exactly like a single-level rig" to barely controllable, the joint
+    // travelling a quarter of what was asked.
+    //
+    // With the kinematics OFF none of that runs, and nothing else turns the limb
+    // — so a hooked child would keep its old orientation while the body bends,
+    // which is not how a single-level rig behaves. That is this branch's job.
+    // The two cases never overlap, which is why the gate is the whole fix.
     double hookAng = 0.0;
     static const bool noHookRot = ::getenv("ZTORYC_NO_HOOK_ROT") != nullptr;
     if (!noHookRot && m_parent && m_parentHandle.size() > 1 &&
         m_parentHandle[0] == 'H') {
-      if (const PlasticSkeletonDeformationP &pdef =
-              m_parent->getPlasticSkeletonDeformation()) {
+      const PlasticSkeletonDeformationP &pdef =
+          m_parent->getPlasticSkeletonDeformation();
+      // The IK flag is a property of the whole character (it is set on every
+      // column), so the parent's copy answers for all of them.
+      if (pdef && !pdef->pinsEnabled()) {
         const int pSkelId = pdef->skeletonId(frame);
         const int hv = pdef->vertexIndex(atoi(m_parentHandle.c_str() + 1), pSkelId);
         PlasticSkeletonP pRest = pdef->skeleton(pSkelId);

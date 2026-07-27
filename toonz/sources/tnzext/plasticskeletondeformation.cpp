@@ -1746,9 +1746,25 @@ bool PlasticSkeletonDeformation::pinsEnabled() const {
 
 //------------------------------------------------------------------
 
+namespace {
+
+// Shift a joint's angular limits by the parent BONE's rotation, but only for a
+// joint hanging directly off the skeleton's ROOT: those have no parent bone of
+// their own, so their limits would be measured against a constant and would not
+// follow the body. Every other joint already has a real parent bone here.
+inline void shiftLimitsForRootChild(const PlasticSkeleton &skel, int vParent,
+                                    double refDeg, double &lo, double &hi) {
+  if (refDeg == 0.0) return;
+  if (vParent < 0 || skel.vertex(vParent).parent() >= 0) return;
+  lo += refDeg;
+  hi += refDeg;
+}
+
+}  // namespace
+
 void PlasticSkeletonDeformation::updatePosition(
     const PlasticSkeleton &originalSkeleton, PlasticSkeleton &deformedSkeleton,
-    double frame, int v, const TPointD &pos) {
+    double frame, int v, const TPointD &pos, double rootChildRefDeg) {
   const PlasticSkeletonVertex &vx = deformedSkeleton.vertex(v);
   int vParent                     = vx.parent();
 
@@ -1763,6 +1779,7 @@ void PlasticSkeletonDeformation::updatePosition(
 
   double loLim, hiLim;
   effAngleLimits(&vd, vx, frame, loLim, hiLim);
+  shiftLimitsForRootChild(deformedSkeleton, vParent, rootChildRefDeg, loLim, hiLim);
 
   double aDelta = tcg::point_ops::angle(vPos - vParentPos, pos - vParentPos) *
                   M_180_PI,
@@ -1783,7 +1800,7 @@ void PlasticSkeletonDeformation::updatePosition(
 
 void PlasticSkeletonDeformation::updateAngle(
     const PlasticSkeleton &originalSkeleton, PlasticSkeleton &deformedSkeleton,
-    double frame, int v, const TPointD &pos) {
+    double frame, int v, const TPointD &pos, double rootChildRefDeg) {
   const PlasticSkeletonVertex &vx = deformedSkeleton.vertex(v);
   int vParent                     = vx.parent();
 
@@ -1796,6 +1813,7 @@ void PlasticSkeletonDeformation::updateAngle(
 
   double loLim, hiLim;
   effAngleLimits(&vd, vx, frame, loLim, hiLim);
+  shiftLimitsForRootChild(deformedSkeleton, vParent, rootChildRefDeg, loLim, hiLim);
 
   // Continuity-first clamp: the stored angle can sit OUTSIDE [lo, hi] for
   // legitimate reasons — the unpin bake writes the planted pose unclamped, and

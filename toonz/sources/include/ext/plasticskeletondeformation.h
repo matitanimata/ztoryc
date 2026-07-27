@@ -653,12 +653,18 @@ public:
   void enablePins(bool on);
   bool pinsEnabled() const;
 
+  //! \param rootChildRefDeg for a joint whose parent is the skeleton's ROOT,
+  //! how far the anchoring bone on the PARENT COLUMN has turned from rest. Such
+  //! a joint has no parent bone inside its own skeleton, so its limits are
+  //! otherwise measured against a constant and do not follow the body. The
+  //! anchoring bone lives on another column, which this layer cannot see, so the
+  //! caller passes it in. Zero (the default) reproduces the old behaviour.
   void updatePosition(const PlasticSkeleton &originalSkeleton,
                       PlasticSkeleton &deformedSkeleton, double frame, int v,
-                      const TPointD &pos);
+                      const TPointD &pos, double rootChildRefDeg = 0.0);
   void updateAngle(const PlasticSkeleton &originalSkeleton,
                    PlasticSkeleton &deformedSkeleton, double frame, int v,
-                   const TPointD &pos);
+                   const TPointD &pos, double rootChildRefDeg = 0.0);
 
   //! \name ZtoRig pose actions
   //@{

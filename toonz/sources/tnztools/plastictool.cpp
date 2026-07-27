@@ -2956,6 +2956,15 @@ void PlasticTool::drawAngleLimits(const SkDP &sd, int skelId, int v,
       double currentBranchAngle_rad =
           tcg::point_ops::rad(dirFromDeformedGrandParent);
 
+      // No grandparent here means the reference above is the world X axis, a
+      // constant: on a multi-column rig this overlay then draws the bound where
+      // it was before the body turned. It must take the SAME shift the clamp and
+      // the Animate gizmo take, or the three disagree — and this one draws lines
+      // 1e4 long, so the disagreement is impossible to miss on screen.
+      if (vGrandParent < 0)
+        currentBranchAngle_rad +=
+            m_this->parentBoneRefDeg_animate() * M_PI_180;
+
       double currentAngle_rad =
           currentBranchAngle_rad + (angleShift + defaultAngleValue) * M_PI_180;
       double limitDirection_rad =

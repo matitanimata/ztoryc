@@ -573,6 +573,16 @@ private:
     Returns false when there is no parent column, where the caller's old
     behaviour (world X) is the right answer.
   */
+  //! How far the parent COLUMN's anchoring bone has turned from rest, in
+  //! degrees, for the current column — what the angular limits of a joint
+  //! hanging off this skeleton's root must follow so a shoulder's usable range
+  //! bends with the torso. Returns 0 unless ZTORYC_BOUND_REF is set: the sign
+  //! convention was never established experimentally, so the variable selects
+  //! it (1 or -1) and 0/unset keeps the limits as they are today.
+  double parentBoneRefDeg_animate() const;
+  //! Same, for an explicit column: the cross-level write-back walks several
+  //! columns in one go, so it cannot use the current one.
+  double parentBoneRefDegFor_animate(int column) const;
   bool parentColumnRefDirs_animate(int column, TPointD &restDir,
                                    TPointD &defDir) const;
   //! The column whose plastic deformation is \p def, or -1.

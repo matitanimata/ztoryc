@@ -549,14 +549,16 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
                     frame);  // Set a keyframe for it. It must be done
                              // to set the correct function interpolation
                              // type and other stuff.
-      m_sd->updateAngle(*skeleton(), deformedSkeleton(), frame, m_svSel, pos);
+      m_sd->updateAngle(*skeleton(), deformedSkeleton(), frame, m_svSel, pos,
+                           parentBoneRefDeg_animate());
     } else {
       ::setKeyframe(vd->m_params[SkVD::ANGLE],
                     frame);  // Same here. NOTE: Not setting a frame on
       ::setKeyframe(vd->m_params[SkVD::DISTANCE],
                     frame);  // vd directly due to SkVD::SO
 
-      m_sd->updatePosition(*skeleton(), deformedSkeleton(), frame, m_svSel, pos);
+      m_sd->updatePosition(*skeleton(), deformedSkeleton(), frame, m_svSel, pos,
+                           parentBoneRefDeg_animate());
     }
 
     l_suspendParamsObservation = false;
@@ -1628,10 +1630,12 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
     if (!vd) return;
     ::setKeyframe(vd->m_params[SkVD::ANGLE], frame);
     if (m_keepDistance.getValue()) {
-      m_sd->updateAngle(*skeleton(), deformedSkeleton(), frame, v, pos);
+      m_sd->updateAngle(*skeleton(), deformedSkeleton(), frame, v, pos,
+                        parentBoneRefDeg_animate());
     } else {
       ::setKeyframe(vd->m_params[SkVD::DISTANCE], frame);
-      m_sd->updatePosition(*skeleton(), deformedSkeleton(), frame, v, pos);
+      m_sd->updatePosition(*skeleton(), deformedSkeleton(), frame, v, pos,
+                           parentBoneRefDeg_animate());
     }
     return;
   }
@@ -1987,7 +1991,13 @@ void PlasticTool::writeBackAnglesFor_animate(
   // limitDisplay_animate left open — does the column resolve, and is the clamp
   // branch even reached for this joint.
   static const bool limDiag = ::getenv("ZTORYC_LIMIT_DIAG") != nullptr;
-  const int diagCol = limDiag ? columnOfDeformation_animate(def) : -1;
+  const int thisCol = columnOfDeformation_animate(def);
+  const int diagCol = limDiag ? thisCol : -1;
+  // Shift for joints hanging off THIS column's root, resolved for this column
+  // and not the current one: the cross-level write-back walks several columns
+  // in a single drag. Must match what the wedge and the long-line overlay draw,
+  // or the joint stops somewhere the bound is not.
+  const double refDeg = parentBoneRefDegFor_animate(thisCol);
 
   auto parentDir = [&](const std::function<TPointD(int)> &posFn, int vx) {
     for (int p = vx; p >= 0;) {
@@ -2072,6 +2082,10 @@ void PlasticTool::writeBackAnglesFor_animate(
       // sit outside [lo, hi] (unpin bake writes unclamped; wrapped writers can
       // store 185 as -175). Never yank past the current value — out of range
       // you can only come back IN; inside, the full limits apply.
+      if (orig.vertex(op).parent() < 0) {
+        loLim += refDeg;
+        hiLim += refDeg;
+      }
       loLimDiag = loLim;
       hiLimDiag = hiLim;
       newDelta =
@@ -2297,6 +2311,10 @@ bool PlasticTool::limitDisplay_animate(int v, TPointD &pp, double &branch,
                  dirFromGrand * dirFromParent) *
            M_180_PI;
   branch = atan2(dirFromDefGrand.y, dirFromDefGrand.x);
+  // Same shift the clamp applies, so the wedge can never show a limit where the
+  // joint does not actually stop. Only meaningful when there is no grandparent
+  // here — that is the case whose reference is otherwise a constant.
+  if (vGrand < 0) branch += parentBoneRefDeg_animate() * (M_PI / 180.0);
   pp     = defSkel.vertex(vParent).P();
 
   double bone = norm(defSkel.vertex(v).P() - pp);
@@ -3190,6 +3208,34 @@ int PlasticTool::columnOfDeformation_animate(const SkDP &def) const {
 
 //------------------------------------------------------------------------
 
+// See the declaration. ZTORYC_BOUND_REF picks the sign (or 0/unset = disabled)
+// because which way the shift goes was never settled by measurement: the limb
+// ALREADY turns with its parent through the IK evaluation, so the limits have
+// to move with it — but a shift the wrong way puts the joint outside its own
+// bound by twice the angle, which is exactly what the first attempt looked like.
+double PlasticTool::parentBoneRefDegFor_animate(int column) const {
+  // ON by default since 2026-07-27 (verified by Franco on a real multi-column
+  // rig, with the kinematics on and off). ZTORYC_BOUND_REF=0 restores the old
+  // behaviour, -1 flips the direction — kept because the sign convention was
+  // settled by experiment, not derived.
+  static const int sign = ::getenv("ZTORYC_BOUND_REF")
+                              ? atoi(::getenv("ZTORYC_BOUND_REF"))
+                              : 1;
+  if (sign == 0 || column < 0) return 0.0;
+  TPointD restDir, defDir;
+  if (!parentColumnRefDirs_animate(column, restDir, defDir)) return 0.0;
+  return sign * wrapPi(atan2(defDir.y, defDir.x) - atan2(restDir.y, restDir.x)) *
+         M_180_PI;
+}
+
+//------------------------------------------------------------------------
+
+double PlasticTool::parentBoneRefDeg_animate() const {
+  return parentBoneRefDegFor_animate(::column());
+}
+
+//------------------------------------------------------------------------
+
 bool PlasticTool::parentColumnRefDirs_animate(int column, TPointD &restDir,
                                               TPointD &defDir) const {
   TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
@@ -3965,6 +4011,44 @@ bool PlasticTool::crossLevelIK_animate(double frame, int vDragged,
           q.push(w);
         }
     }
+  }
+
+  // Probe for the reported difference against a single-level rig (2026-07-27):
+  // there, posing stops at the next joint toward the pin. Here the glued
+  // cross-link walk-up above can push the pivot one real joint further — split
+  // the leg at the knee and the knee's two coincident nodes travel with the
+  // dragged set, so the rotation looks like it pivots at the calf. `glued` > 0
+  // with a pivot that is not the joint under the hand is that case.
+  if (::getenv("ZTORYC_PIN_DIAG"))
+    qDebug().noquote()
+        << QString("[XLEVEL] dragged=(%1,%2) pivot=(%3,%4) glued=%5 moved=%6 "
+                   "pin=(%7,%8) thetaDeg=%9 lever=%10")
+               .arg(dragged.col).arg(dragged.vtx)
+               .arg(rp.col).arg(rp.vtx)
+               .arg((int)gluedExtra.size())
+               .arg((int)moved.size())
+               .arg(pin.col).arg(pin.vtx)
+               .arg(theta * M_180_PI, 0, 'f', 1)
+               .arg(norm(oldD), 0, 'f', 2);
+
+  // The whole re-rooted chain from the dragged node down to the pin, with the
+  // segment lengths: that is what says which joint the pivot actually landed
+  // on, and whether one segment too many travels with the drag. '<' marks the
+  // pivot, '*' a node that moves.
+  if (::getenv("ZTORYC_PIN_DIAG")) {
+    QString chain;
+    for (UNode u = dragged;;) {
+      chain += QString("(%1,%2)%3%4")
+                   .arg(u.col).arg(u.vtx)
+                   .arg(u == rp ? "<" : "")
+                   .arg(moved.count(u) ? "*" : "");
+      auto it = reParent.find(u);
+      if (it == reParent.end() || it->second.col < 0) break;
+      chain += QString(" --%1-- ")
+                   .arg(norm(g.world[u] - g.world[it->second]), 0, 'f', 1);
+      u = it->second;
+    }
+    qDebug().noquote() << "[XCHAIN] " << chain;
   }
 
   std::map<UNode, TPointD> desired = g.world;
