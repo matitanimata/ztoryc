@@ -394,7 +394,13 @@ ZtoRigPanel::ZtoRigPanel(QWidget *parent) : TPanel(parent) {
   lay->addWidget(m_recordBt);
 
   // ---- Vector pose, FIRST TEST ----
-  {
+  //
+  // HIDDEN unless ZTORYC_VECPOSE is set (Franco, 2026-07-27). This is the first
+  // experiment, not a feature: the slider OVERWRITES the current frame's drawing
+  // in place, with no undo and nothing saved. Shipping two buttons that can
+  // destroy a drawing to someone who cannot know that is not a fair trade for
+  // letting them try it early. Set the variable to get the box back.
+  if (::getenv("ZTORYC_VECPOSE")) {
     auto *vecBox = new QWidget(root);
     auto *vl     = new QHBoxLayout(vecBox);
     vl->setContentsMargins(0, 2, 0, 2);
