@@ -2,7 +2,10 @@
 sudo apt-get update
 sudo apt-get install -y cmake liblzo2-dev liblz4-dev libpng-dev libegl1-mesa-dev libgles2-mesa-dev libglew-dev freeglut3-dev libsuperlu-dev wget libboost-all-dev liblzma-dev libjson-c-dev libjpeg8-dev libjpeg-turbo8-dev libturbojpeg0-dev libglib2.0-dev
 
-sudo apt-get install -y qtscript5-dev libqt5svg5-dev qtmultimedia5-dev libqt5serialport5-dev qttools5-dev libqt5multimedia5-plugins qtwayland5 qtdeclarative5-dev libqt5waylandclient5-dev libqt5waylandcompositor5-dev
+# qtbase5-private-dev: QXlsx includes <private/qzipreader_p.h>. Its CMakeLists
+# asks for ${Qt5Gui_PRIVATE_INCLUDE_DIRS}, but on Ubuntu that variable is empty
+# unless the Qt private headers are installed — they ship in a separate package.
+sudo apt-get install -y qtscript5-dev libqt5svg5-dev qtmultimedia5-dev libqt5serialport5-dev qttools5-dev libqt5multimedia5-plugins qtwayland5 qtdeclarative5-dev libqt5waylandclient5-dev libqt5waylandcompositor5-dev qtbase5-private-dev
 
 # Removed: libopenjpeg-dev 
 sudo apt-get install -y nasm yasm libgnutls28-dev libunistring-dev libass-dev libbluray-dev libmp3lame-dev libopus-dev libsnappy-dev libtheora-dev libvorbis-dev libvpx-dev libwebp-dev libxml2-dev libfontconfig1-dev libopencore-amrnb-dev libopencore-amrwb-dev libspeex-dev libsoxr-dev libopenjp2-7-dev
