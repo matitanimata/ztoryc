@@ -15,6 +15,8 @@
 #include "toonz/stage.h"  // Stage::inch (column X/Y are in inches)
 
 #include "plastictool.h"
+#include "ext/plasticdeformerstorage.h"
+#include "tmeshimage.h"
 #include <cstdio>
 
 #include <algorithm>
@@ -259,6 +261,12 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
   // Track mouse position
   m_pressedPos = m_pos = pos;
 
+  // Corrective sculpt owns the drag entirely: no skeleton posing while brushing.
+  if (m_correctiveSculpt.getValue()) {
+    beginCorrectiveStroke_animate();
+    return;
+  }
+
   // DIAGNOSTIC (2026-07-20, opt-in via ZTORYC_SUSPEND_PLANT): for the duration
   // of the drag, let FABRIK alone own the pose. See plasticskeletondeformation.h.
   PlasticPinSolver::setSolveSuspended(true);
@@ -450,6 +458,13 @@ static double ikMaxStep() { return l_ikDampPercent * (M_PI / 180.0); }
 
 void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
                                          const TMouseEvent &me) {
+  if (m_correctiveSculpt.getValue()) {
+    const TPointD prev = m_pos;
+    m_pos              = pos;
+    applyCorrectiveBrush_animate(prev, pos);
+    return;
+  }
+
   // Track mouse position
   m_pos = pos;
 
@@ -2814,6 +2829,11 @@ void PlasticTool::setAttachmentPin_animate(bool on, double frame) {
 
 void PlasticTool::leftButtonUp_animate(const TPointD &pos,
                                        const TMouseEvent &me) {
+  if (m_correctiveSculpt.getValue()) {
+    endCorrectiveStroke_animate();
+    return;
+  }
+
   // Track mouse position
   m_pos = pos;
 
@@ -4431,6 +4451,200 @@ void PlasticTool::finishCrossLevelUndo_animate(double frame) {
 
 //------------------------------------------------------------------------
 
+
+//------------------------------------------------------------------------
+
+// The mesh AFTER the ARAP solve — the space a MeshCorrective's offsets live in,
+// and the only positions the corrective brush can sensibly hit-test against.
+// The identity affine is deliberate: in Build mode the tool draws raw mesh
+// vertices in its own space, so mesh space and tool space are the same thing.
+// If the overlay ever lands off the drawing, THIS is the assumption to revisit.
+std::vector<std::pair<PlasticTool::MeshIndex, TPointD>>
+PlasticTool::deformedMeshVertices_animate() {
+  std::vector<std::pair<MeshIndex, TPointD>> out;
+  if (!m_sd) return out;
+
+  TMeshImageP mi = TImageP(getImage(false));
+  if (!mi) return out;
+
+  TStageObject *obj = ::stageObject();
+  if (!obj) return out;
+
+  const double sdFrame = obj->paramsTime(::frame());
+  const int skelId     = m_sd->skeletonId(sdFrame);
+
+  const PlasticDeformerDataGroup *dg =
+      PlasticDeformerStorage::instance()->process(
+          sdFrame, mi.getPointer(), m_sd.getPointer(), skelId, TAffine(),
+          PlasticDeformerStorage::MESH);
+  if (!dg) return out;
+
+  const int meshCount = (int)mi->meshes().size();
+  for (int m = 0; m < meshCount; ++m) {
+    const double *o = dg->m_datas[m].m_output.get();
+    if (!o) continue;
+    const int vCount = (int)mi->meshes()[m]->verticesCount();
+    for (int v = 0; v < vCount; ++v)
+      out.push_back(std::make_pair(MeshIndex(m, v), TPointD(o[2 * v], o[2 * v + 1])));
+  }
+  return out;
+}
+
+//------------------------------------------------------------------------
+
+// Verification overlay for the corrective brush (milestone 2, step 1). Draws
+// nothing but the deformed mesh vertices and the brush circle: if the dots sit
+// on the drawing, the whole coordinate chain from cursor to post-solve mesh is
+// right, and everything else is arithmetic.
+void PlasticTool::drawCorrectiveSculpt_animate(double pixelSize) {
+  if (!m_correctiveSculpt.getValue()) return;
+
+  const std::vector<std::pair<MeshIndex, TPointD>> verts =
+      deformedMeshVertices_animate();
+
+  const double r = 1.6 * pixelSize;
+  glColor4ub(60, 130, 255, 200);
+  glBegin(GL_QUADS);
+  for (size_t i = 0; i < verts.size(); ++i) {
+    const TPointD &p = verts[i].second;
+    glVertex2d(p.x - r, p.y - r);
+    glVertex2d(p.x + r, p.y - r);
+    glVertex2d(p.x + r, p.y + r);
+    glVertex2d(p.x - r, p.y + r);
+  }
+  glEnd();
+
+  const double br = m_correctiveRadius.getValue();
+  glColor4ub(255, 160, 0, 220);
+  glLineWidth(1.5f);
+  glBegin(GL_LINE_LOOP);
+  for (int i = 0; i < 48; ++i) {
+    const double a = i * (2.0 * M_PI / 48);
+    glVertex2d(m_pos.x + br * cos(a), m_pos.y + br * sin(a));
+  }
+  glEnd();
+  glLineWidth(1.0f);
+}
+
+
+//------------------------------------------------------------------------
+
+namespace {
+
+// Undo for one brush stroke: the corrective list is small and sculpting is not
+// a per-event operation, so a whole-list snapshot is both simplest and exact.
+class CorrectiveStrokeUndo final : public TUndo {
+  SkDP m_sd;
+  std::vector<MeshCorrective> m_before, m_after;
+
+public:
+  CorrectiveStrokeUndo(const SkDP &sd, const std::vector<MeshCorrective> &before,
+                       const std::vector<MeshCorrective> &after)
+      : m_sd(sd), m_before(before), m_after(after) {}
+
+  void undo() const override {
+    if (m_sd) m_sd->setMeshCorrectives(m_before);
+    PlasticDeformerStorage::instance()->invalidateDeformation(m_sd.getPointer());
+    TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+  void redo() const override {
+    if (m_sd) m_sd->setMeshCorrectives(m_after);
+    PlasticDeformerStorage::instance()->invalidateDeformation(m_sd.getPointer());
+    TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override { return "ZtoRig: sculpt joint corrective"; }
+};
+
+}  // namespace
+
+// Pick (or create) the corrective this stroke writes into, and snapshot for undo.
+//
+// The name carries the angle — "elbow_dx_95" — so sculpting the same joint at a
+// second bend makes a SECOND corrective instead of overwriting the first, which
+// is what a joint needs: one shape at 45 and another at 95 read very differently.
+// The new one starts fading in where the previous one finished (restAngle), and
+// since the brush records the delta against WHAT IS ON SCREEN — which already
+// includes the lower correctives — the layers add up instead of double-counting.
+bool PlasticTool::beginCorrectiveStroke_animate() {
+  if (!m_sd) return false;
+  if (!m_svSel.hasSingleObject()) return false;  // no driver joint picked
+
+  PlasticSkeletonP skel = m_sd->skeleton(::skeletonId());
+  if (!skel) return false;
+  const int v = (int)m_svSel;
+  const QString driver = skel->vertex(v).name();
+
+  SkVD *vd = m_sd->vertexDeformation(::skeletonId(), v);
+  if (!vd || !vd->m_params[SkVD::ANGLE]) return false;
+  const double angle = vd->m_params[SkVD::ANGLE]->getValue(::frame());
+  if (fabs(angle) < 1.0) return false;  // sculpting at rest would fade to nothing
+
+  m_correctiveUndoBefore = m_sd->getMeshCorrectives();
+
+  const QString name = driver + "_" + QString::number((int)qRound(fabs(angle)));
+  if (!m_sd->meshCorrective(name)) {
+    const int idx = m_sd->addMeshCorrective(name);
+    MeshCorrective *mc = m_sd->meshCorrective(idx);
+    if (!mc) return false;
+    mc->m_driverVertexName = driver;
+    mc->m_fullAngle        = angle;
+    // Start where the closest lower corrective on this same joint finished.
+    double rest = 0.0;
+    for (int i = 0; i < m_sd->meshCorrectivesCount(); ++i) {
+      const MeshCorrective *o = m_sd->meshCorrective(i);
+      if (!o || o == mc || o->m_driverVertexName != driver) continue;
+      if (fabs(o->m_fullAngle) < fabs(angle) && fabs(o->m_fullAngle) > fabs(rest))
+        rest = o->m_fullAngle;
+    }
+    mc->m_restAngle = rest;
+  }
+  m_correctiveName = name;
+  return true;
+}
+
+// One brush step. Offsets are stored in mesh OUTPUT space, the same space the
+// vertices come back in, so the drag vector needs no conversion.
+void PlasticTool::applyCorrectiveBrush_animate(const TPointD &from,
+                                               const TPointD &to) {
+  if (m_correctiveName.isEmpty() || !m_sd) return;
+  MeshCorrective *mc = m_sd->meshCorrective(m_correctiveName);
+  if (!mc) return;
+
+  const TPointD d = to - from;
+  if (norm2(d) < 1e-12) return;
+
+  const double R = m_correctiveRadius.getValue();
+  if (R <= 0.0) return;
+
+  const std::vector<std::pair<MeshIndex, TPointD>> verts =
+      deformedMeshVertices_animate();
+
+  for (size_t i = 0; i < verts.size(); ++i) {
+    const double dist = norm(verts[i].second - from);
+    if (dist >= R) continue;
+    // Smoothstep falloff: full at the centre, zero at the rim, and flat at both
+    // ends so repeated strokes do not leave a ridge at the brush edge.
+    const double t = dist / R;
+    const double w = 1.0 - t * t * (3.0 - 2.0 * t);
+    const MeshIndex &mi = verts[i].first;
+    TPointD &off = mc->m_deltas[mi.m_meshIdx][mi.m_idx];
+    off = off + d * w;
+  }
+
+  PlasticDeformerStorage::instance()->invalidateDeformation(m_sd.getPointer());
+  invalidate();
+}
+
+void PlasticTool::endCorrectiveStroke_animate() {
+  if (m_correctiveName.isEmpty() || !m_sd) return;
+  TUndoManager::manager()->add(new CorrectiveStrokeUndo(
+      m_sd, m_correctiveUndoBefore, m_sd->getMeshCorrectives()));
+  m_correctiveName.clear();
+  m_correctiveUndoBefore.clear();
+  TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
+}
+
 void PlasticTool::draw_animate() {
   double pixelSize = getPixelSize();
 
@@ -4457,6 +4671,7 @@ void PlasticTool::draw_animate() {
     // attachment vertex) that stitch the per-level skeletons into one graph.
     // Drawn ON TOP of the skeletons so the thick bone edges don't cover it.
     drawCrossLevelLinks_animate(pixelSize);
+    drawCorrectiveSculpt_animate(pixelSize);
     drawSelections(m_sd, deformedSkeleton, pixelSize);
     drawAngleLimits(m_sd, m_skelId, m_svSel, pixelSize);
 

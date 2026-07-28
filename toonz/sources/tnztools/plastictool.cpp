@@ -1067,6 +1067,8 @@ PlasticTool::PlasticTool()
     , m_keepDistance("keepDistance", true)
     , m_ikDrag("inverseKinematics", false)
     , m_scaleConstraint("scaleConstraint")
+    , m_correctiveSculpt("correctiveSculpt", false)
+    , m_correctiveRadius("correctiveRadius", 4, 400, 60)
     , m_showAngleLimits("showAngleLimits", false)
     , m_showController("showController", true)
     , m_minAngle("minAngle", L"")
@@ -1101,6 +1103,8 @@ PlasticTool::PlasticTool()
 
   m_propGroup[RIGIDITY_IDX].bind(m_thickness);
   m_propGroup[ANIMATE_IDX].bind(m_ikDamping);
+  m_propGroup[ANIMATE_IDX].bind(m_correctiveSculpt);
+  m_propGroup[ANIMATE_IDX].bind(m_correctiveRadius);
   m_propGroup[RIGIDITY_IDX].bind(m_rigidValue);
 
   m_propGroup[BUILD_IDX].bind(m_interpolate);
@@ -1131,6 +1135,8 @@ PlasticTool::PlasticTool()
   m_snapToMesh.setId("SnapToMesh");
   m_thickness.setId("Thickness");
   m_ikDamping.setId("IKDamping");
+  m_correctiveSculpt.setId("PlasticCorrectiveSculpt");
+  m_correctiveRadius.setId("PlasticCorrectiveRadius");
   m_rigidValue.setId("RigidValue");
   m_globalKey.setId("GlobalKey");
   m_globalKeyScope.addValue(L"Stage");
@@ -1195,6 +1201,8 @@ void PlasticTool::updateTranslation() {
   m_snapToMesh.setQStringName(tr("Snap To Mesh"));
   m_thickness.setQStringName(tr("Thickness"));
   m_ikDamping.setQStringName(tr("IK Max Step"));
+  m_correctiveSculpt.setQStringName(tr("Sculpt"));
+  m_correctiveRadius.setQStringName(tr("Brush"));
 
   m_rigidValue.setQStringName("");
   m_rigidValue.deleteAllValues();

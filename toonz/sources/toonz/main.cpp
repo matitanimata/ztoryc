@@ -454,7 +454,14 @@ int main(int argc, char *argv[]) {
 #endif
     QString userName = qgetenv("USER");
     if (userName.isEmpty()) userName = qgetenv("USERNAME");
-    QString lockPath = lockDir + "/ztoryc_" + userName + ".lock";
+    // Key the lock on the BUNDLE, not just the user: two different builds — a
+    // release Ztoryc.app and a work-in-progress one — have to be able to run
+    // side by side, which is how you compare them at all. Two copies of the SAME
+    // build still block each other, which is the case the guard exists for.
+    const QString appKey =
+        QString::number(qHash(QCoreApplication::applicationFilePath()), 16);
+    QString lockPath =
+        lockDir + "/ztoryc_" + userName + "_" + appKey + ".lock";
 
     static QLockFile lockFile(lockPath);  // static: stays alive for process lifetime
     // 5 s: treat lock as stale if the previous instance crashed and left the file.

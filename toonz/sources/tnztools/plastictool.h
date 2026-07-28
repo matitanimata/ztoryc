@@ -142,6 +142,12 @@ private:
                                     //!< Animate tool: None / Aspect Ratio /
                                     //!< Mass (V = 1/H, area preserved)
 
+  //! ZtoRig joint correctives, authoring (milestone 2). Sculpting happens on
+  //! the POSED character, so it lives in Animate: bend the joint until the mesh
+  //! pinches, then brush the shape back. m_correctiveSculpt turns the overlay
+  //! and the brush on; the radius is in world units, matched to the drawing.
+  TBoolProperty   m_correctiveSculpt;
+  TDoubleProperty m_correctiveRadius;
   TBoolProperty m_showAngleLimits;  //!< Show the draggable angle-limit gizmo
                                     //!< (off by default to keep the skeleton
                                     //!< clean)
@@ -583,6 +589,21 @@ private:
   //! Same, for an explicit column: the cross-level write-back walks several
   //! columns in one go, so it cannot use the current one.
   double parentBoneRefDegFor_animate(int column) const;
+  //! Deformed mesh vertices of the current column at the current frame, in the
+  //! space the tool draws in. Empty when there is no mesh or no deformation.
+  //! This is the data the corrective brush acts on: the positions AFTER the
+  //! ARAP solve, which is where a MeshCorrective's offsets live too.
+  std::vector<std::pair<MeshIndex, TPointD>> deformedMeshVertices_animate();
+  //! Begin/continue/end one brush stroke on the active joint corrective.
+  bool beginCorrectiveStroke_animate();
+  void applyCorrectiveBrush_animate(const TPointD &from, const TPointD &to);
+  void endCorrectiveStroke_animate();
+
+  QString m_correctiveName;   //!< corrective being sculpted, empty = no stroke
+  std::vector<MeshCorrective> m_correctiveUndoBefore;  //!< snapshot per stroke
+  //! Overlay for the corrective sculpt: the mesh vertices plus the brush.
+  void drawCorrectiveSculpt_animate(double pixelSize);
+
   bool parentColumnRefDirs_animate(int column, TPointD &restDir,
                                    TPointD &defDir) const;
   //! The column whose plastic deformation is \p def, or -1.
