@@ -148,6 +148,10 @@ private:
   //! and the brush on; the radius is in world units, matched to the drawing.
   TBoolProperty   m_correctiveSculpt;
   TDoubleProperty m_correctiveRadius;
+  //! What the brush does: shape (move vertices) or stacking order (declare
+  //! which joint a vertex belongs to). The order brush has NO falloff — a soft
+  //! edge would recreate the very blend that makes a clean cut impossible.
+  TBoolProperty   m_correctiveOrder;
   TBoolProperty m_showAngleLimits;  //!< Show the draggable angle-limit gizmo
                                     //!< (off by default to keep the skeleton
                                     //!< clean)
@@ -597,9 +601,39 @@ private:
   //! Begin/continue/end one brush stroke on the active joint corrective.
   bool beginCorrectiveStroke_animate();
   void applyCorrectiveBrush_animate(const TPointD &from, const TPointD &to);
+  //! Vertices under the brush centred at \p c, ON THE SURFACE it is touching.
+  /*!
+    Both a screen-space and an along-the-mesh test. The first keeps the brush
+    round; the second is what makes a folded limb workable: with the elbow bent,
+    forearm and upper arm sit on top of each other in space but are far apart
+    across the mesh, because getting from one to the other means going round the
+    joint. Distance is a BFS over the mesh graph (buildDistances), so a piece
+    that merely overlaps on screen is excluded without any authoring.
+  */
+  std::vector<std::pair<MeshIndex, TPointD>> brushedVertices_animate(
+      const TPointD &c, double radius);
+  //! For each vertex of \p meshIdx, the skeleton vertex nearest ALONG THE MESH.
+  /*!
+    This is what "belongs to" means for a mesh vertex, and it is the same walk
+    the SO interpolation already does — a point of the forearm has the elbow or
+    the wrist as its nearest joint, one of the upper arm has the shoulder, and
+    that stays true however the limb folds, because the distance goes round the
+    joint instead of straight across the gap.
+  */
+  std::map<int, int> nearestJointPerVertex_animate(int meshIdx);
+
+  std::map<int, int> m_correctiveOwnerJoint;  //!< cached for the stroke
+  int m_correctiveOwnerMesh = -1;             //!< which mesh it refers to
   void endCorrectiveStroke_animate();
 
   QString m_correctiveName;   //!< corrective being sculpted, empty = no stroke
+  bool    m_correctiveOrderStroke = false;  //!< this stroke assigns ownership
+  bool    m_correctiveErase       = false;  //!< Alt held: take ownership away
+  //! Mesh the ownership stroke is confined to — the one the selected joint sits
+  //! on. Without it, an arm crossing in front of the body has both sets of
+  //! vertices under the same brush and you cannot tell them apart on screen.
+  int     m_correctiveMeshIdx     = -1;
+  std::map<int, std::map<int, QString>> m_soOwnersBefore;  //!< undo snapshot
   std::vector<MeshCorrective> m_correctiveUndoBefore;  //!< snapshot per stroke
   //! Overlay for the corrective sculpt: the mesh vertices plus the brush.
   void drawCorrectiveSculpt_animate(double pixelSize);

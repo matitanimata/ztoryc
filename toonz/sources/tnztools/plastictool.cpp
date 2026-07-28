@@ -1069,6 +1069,7 @@ PlasticTool::PlasticTool()
     , m_scaleConstraint("scaleConstraint")
     , m_correctiveSculpt("correctiveSculpt", false)
     , m_correctiveRadius("correctiveRadius", 4, 400, 60)
+    , m_correctiveOrder("correctiveOrder", false)
     , m_showAngleLimits("showAngleLimits", false)
     , m_showController("showController", true)
     , m_minAngle("minAngle", L"")
@@ -1105,6 +1106,7 @@ PlasticTool::PlasticTool()
   m_propGroup[ANIMATE_IDX].bind(m_ikDamping);
   m_propGroup[ANIMATE_IDX].bind(m_correctiveSculpt);
   m_propGroup[ANIMATE_IDX].bind(m_correctiveRadius);
+  m_propGroup[ANIMATE_IDX].bind(m_correctiveOrder);
   m_propGroup[RIGIDITY_IDX].bind(m_rigidValue);
 
   m_propGroup[BUILD_IDX].bind(m_interpolate);
@@ -1137,6 +1139,7 @@ PlasticTool::PlasticTool()
   m_ikDamping.setId("IKDamping");
   m_correctiveSculpt.setId("PlasticCorrectiveSculpt");
   m_correctiveRadius.setId("PlasticCorrectiveRadius");
+  m_correctiveOrder.setId("PlasticCorrectiveOrder");
   m_rigidValue.setId("RigidValue");
   m_globalKey.setId("GlobalKey");
   m_globalKeyScope.addValue(L"Stage");
@@ -1203,6 +1206,7 @@ void PlasticTool::updateTranslation() {
   m_ikDamping.setQStringName(tr("IK Max Step"));
   m_correctiveSculpt.setQStringName(tr("Sculpt"));
   m_correctiveRadius.setQStringName(tr("Brush"));
+  m_correctiveOrder.setQStringName(tr("Order"));
 
   m_rigidValue.setQStringName("");
   m_rigidValue.deleteAllValues();
@@ -2354,6 +2358,17 @@ public:
 //------------------------------------------------------------------------
 
 bool PlasticTool::onPropertyChanged(std::string propertyName) {
+  // Assigning stacking order without seeing it is guesswork: turn the SO
+  // display on with the mode. Left on when the mode goes off — it is a display
+  // preference, and silently undoing the user's view is worse than a stale one.
+  if (propertyName == m_correctiveOrder.getName()) {
+    if (m_correctiveOrder.getValue() && !m_pvs.m_drawSO) {
+      m_pvs.m_drawSO = true;
+      invalidate();
+    }
+    return true;
+  }
+
   if (propertyName == m_globalKeyScope.getName()) {
     Preferences::instance()->setValue(GlobalKeyScope,
                                       m_globalKeyScope.getIndex());

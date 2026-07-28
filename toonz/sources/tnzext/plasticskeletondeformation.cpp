@@ -267,6 +267,7 @@ public:
   //! ZtoRig: joint correctives (mesh pose-space deformation). Same empty-by-
   //! default, serialize-only-when-used discipline as the pose actions.
   std::vector<MeshCorrective> m_meshCorrectives;
+  std::map<int, std::map<int, QString>> m_soOwners;  //!< SO ownership
 
   // Base values frozen at the start of an Offset drag, keyed by vertex name and
   // param index. Empty when no drag is running. See beginPoseDrag().
@@ -2446,6 +2447,51 @@ void PlasticSkeletonDeformation::removeMeshCorrective(int idx) {
   m_imp->m_meshCorrectives.erase(m_imp->m_meshCorrectives.begin() + idx);
 }
 
+bool PlasticSkeletonDeformation::hasSOOwners() const {
+  return !m_imp->m_soOwners.empty();
+}
+
+void PlasticSkeletonDeformation::setSOOwner(int meshIdx, int v,
+                                            const QString &name) {
+  if (name.isEmpty())
+    clearSOOwner(meshIdx, v);
+  else
+    m_imp->m_soOwners[meshIdx][v] = name;
+}
+
+void PlasticSkeletonDeformation::clearSOOwner(int meshIdx, int v) {
+  std::map<int, std::map<int, QString>>::iterator mt =
+      m_imp->m_soOwners.find(meshIdx);
+  if (mt == m_imp->m_soOwners.end()) return;
+  mt->second.erase(v);
+  if (mt->second.empty()) m_imp->m_soOwners.erase(mt);
+}
+
+void PlasticSkeletonDeformation::clearSOOwners() { m_imp->m_soOwners.clear(); }
+
+bool PlasticSkeletonDeformation::soOwner(int meshIdx, int v,
+                                         QString &name) const {
+  std::map<int, std::map<int, QString>>::const_iterator mt =
+      m_imp->m_soOwners.find(meshIdx);
+  if (mt == m_imp->m_soOwners.end()) return false;
+  std::map<int, QString>::const_iterator vt = mt->second.find(v);
+  if (vt == mt->second.end()) return false;
+  name = vt->second;
+  return true;
+}
+
+std::map<int, std::map<int, QString>>
+PlasticSkeletonDeformation::getSOOwners() const {
+  return m_imp->m_soOwners;
+}
+
+void PlasticSkeletonDeformation::setSOOwners(
+    const std::map<int, std::map<int, QString>> &owners) {
+  m_imp->m_soOwners = owners;
+}
+
+//------------------------------------------------------------------
+
 std::vector<MeshCorrective> PlasticSkeletonDeformation::getMeshCorrectives()
     const {
   return m_imp->m_meshCorrectives;
@@ -2577,6 +2623,22 @@ void PlasticSkeletonDeformation::saveData(TOStream &os) {
         }
       }
       os.closeChild();
+    }
+    os.closeChild();
+  }
+
+  if (!m_imp->m_soOwners.empty()) {
+    os.openChild("SOOwners");
+    std::map<int, std::map<int, QString>>::const_iterator mt;
+    for (mt = m_imp->m_soOwners.begin(); mt != m_imp->m_soOwners.end(); ++mt) {
+      std::map<int, QString>::const_iterator vt;
+      for (vt = mt->second.begin(); vt != mt->second.end(); ++vt) {
+        os.openChild("S");
+        os.child("m") << mt->first;
+        os.child("v") << vt->first;
+        os.child("n") << vt->second;
+        os.closeChild();
+      }
     }
     os.closeChild();
   }
@@ -2719,6 +2781,27 @@ void PlasticSkeletonDeformation::loadData(TIStream &is) {
           }
           is.matchEndTag();
           if (!mc.m_name.isEmpty()) m_imp->m_meshCorrectives.push_back(mc);
+        } else
+          is.skipCurrentTag();
+      }
+      is.matchEndTag();
+    } else if (tagName == "SOOwners") {
+      while (is.openChild(tagName)) {
+        if (tagName == "S") {
+          int m = 0, v = 0;
+          QString n;
+          while (is.openChild(tagName)) {
+            if (tagName == "m")
+              is >> m, is.matchEndTag();
+            else if (tagName == "v")
+              is >> v, is.matchEndTag();
+            else if (tagName == "n")
+              is >> n, is.matchEndTag();
+            else
+              is.skipCurrentTag();
+          }
+          is.matchEndTag();
+          if (!n.isEmpty()) m_imp->m_soOwners[m][v] = n;
         } else
           is.skipCurrentTag();
       }

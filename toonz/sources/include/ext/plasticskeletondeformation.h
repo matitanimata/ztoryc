@@ -759,6 +759,37 @@ public:
   //! the ARAP result by the deformer. (0,0) when no corrective touches it.
   TPointD meshCorrectiveOffset(int meshIdx, int v, double frame) const;
 
+  //! \name ZtoRig stacking-order ownership
+  //@{
+  //! Which skeleton vertex a mesh vertex takes its stacking order FROM.
+  /*!
+    The handle-driven SO is smooth by construction: buildSO() spreads each
+    handle's value over the mesh with a distance falloff. Near a joint the two
+    limbs' handles sit almost on top of each other, so their values blend, and
+    no setting on the handles can put a forearm cleanly over an upper arm.
+
+    The fix is deliberately NOT a second SO value competing with the first —
+    two numbers describing the same thing eventually contradict each other, and
+    an SO keyframed on the handles would silently drift past a frozen override.
+    Instead a vertex can be declared to BELONG to a joint: it then takes that
+    joint's SO exactly, with no blending. Keyframe the arm's SO to send it
+    behind the body and the whole owned region follows, because it follows the
+    joint, not a copy of its value.
+
+    Sparse and opt-in: vertices with no owner keep today's smooth interpolation,
+    so a hard cut and a soft falloff coexist in the same mesh. Keyed by vertex
+    NAME, like every other cross-reference here, because indices shift.
+  */
+  bool hasSOOwners() const;
+  void setSOOwner(int meshIdx, int v, const QString &skeletonVertexName);
+  void clearSOOwner(int meshIdx, int v);
+  void clearSOOwners();
+  //! \return true when \p v is owned, writing the owner's name into \p name.
+  bool soOwner(int meshIdx, int v, QString &name) const;
+  std::map<int, std::map<int, QString>> getSOOwners() const;
+  void setSOOwners(const std::map<int, std::map<int, QString>> &owners);
+  //@}
+
   //@}
 
   //! Records the pose authored at \p frame as an action named \p name,
