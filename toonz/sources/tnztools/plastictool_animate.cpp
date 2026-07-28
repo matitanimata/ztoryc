@@ -2564,6 +2564,52 @@ std::vector<int> PlasticTool::pinnedVerticesAtFrame(double frame) const {
 
 //------------------------------------------------------------------------
 
+void PlasticTool::recapturePinTargets_animate() {
+  if (!m_sd) return;
+
+  TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet();
+  TStageObject *obj =
+      xsh ? xsh->getStageObject(TStageObjectId::ColumnId(::column())) : nullptr;
+  if (!obj) return;
+
+  const double frame    = ::frame();
+  const int rawFrame    = (int)frame;
+  const int skelId      = ::skeletonId();
+  PlasticSkeletonP skel = m_sd->skeleton(skelId);
+  if (!skel) return;
+
+  m_deformedSkeleton.invalidate();
+
+  bool any = false;
+  for (auto vt = skel->vertices().begin(); vt != skel->vertices().end(); ++vt) {
+    const int v = (int)vt.m_idx;
+    SkVD *vd    = m_sd->vertexDeformation(skelId, v);
+    if (!vd || !vd->m_params[SkVD::PIN]) continue;
+    if (vd->m_params[SkVD::PIN]->getValue(frame) < 0.5) continue;
+    if (!vd->m_params[SkVD::PINWX] || !vd->m_params[SkVD::PINWY]) continue;
+
+    // Same capture as pinning does — deformed vertex through the controller,
+    // then through the column placement into scene space.
+    const TPointD vp =
+        m_sd->getSquashControllerAffine(skelId, frame) *
+        deformedSkeleton().vertex(v).P();
+    const TPointD W = obj->getPlacement(rawFrame) * vp;
+    for (int cc : {(int)SkVD::PINWX, (int)SkVD::PINWY}) {
+      TDoubleKeyframe tk(frame, cc == SkVD::PINWX ? W.x : W.y);
+      tk.m_type = tk.m_prevType = TDoubleKeyframe::Constant;
+      vd->m_params[cc]->setKeyframe(tk);
+    }
+    any = true;
+  }
+
+  if (any) {
+    m_deformedSkeleton.invalidate();
+    invalidate();
+  }
+}
+
+//------------------------------------------------------------------------
+
 void PlasticTool::togglePinAtCurrentFrame() {
   if (!m_sd || !m_svSel.hasSingleObject()) return;
   // Pins are read by the evaluation at paramsTime (identity, except past the

@@ -2618,6 +2618,10 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
     if (m_sd) {
       if (!m_ikDrag.getValue()) bakePinsToFK_animate();
       enablePinsOnCharacter(m_ikDrag.getValue());
+      // Coming back IN: re-plant the surviving pins where the character stands
+      // now. Their old scene targets describe a pose that was baked away, and
+      // the first solve would drag the character back onto it.
+      if (m_ikDrag.getValue()) recapturePinTargets_animate();
       m_deformedSkeleton.invalidate();
       invalidate();
     }

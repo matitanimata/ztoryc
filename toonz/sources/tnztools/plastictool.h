@@ -497,7 +497,17 @@ protected:
   //! Leaving IK mode: bake the whole pinned animation into FK + controller so
   //! every keyframe stays exactly in place, then drop the pins (not undoable)
   void bakePinsToFK_animate();
-  void togglePinAtCurrentFrame();               //!< pin/unpin selected vertex
+  void togglePinAtCurrentFrame();
+  //! Re-plant every active pin where the character stands RIGHT NOW.
+  /*!
+    Leaving IK bakes the pose into FK and drops the pins; the scene targets
+    (PINWX/PINWY) captured before that stay behind, describing where the foot
+    was when it was pinned. Coming back into IK with those still in place makes
+    the first solve haul the character back to a stale target — the visible jump
+    on the first click. Re-capturing on the way IN makes switching the mode off
+    and on again a no-op, which is how it behaves on a single-level rig.
+  */
+  void recapturePinTargets_animate();               //!< pin/unpin selected vertex
   void switchPinAtCurrentFrame();  //!< pin selected, release others at f+1
 
 public:
