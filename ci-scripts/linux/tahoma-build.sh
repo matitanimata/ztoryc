@@ -38,6 +38,7 @@ export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 cmake ../sources  $CANON_FLAG \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DWITH_GPHOTO2:BOOL=ON \
-    -DWITH_SYSTEM_SUPERLU=ON
+    -DWITH_SYSTEM_SUPERLU=ON \
+    -DWITH_TRANSLATION=OFF
 
 make -j "$parallel"
