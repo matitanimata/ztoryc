@@ -265,7 +265,7 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
   if (m_correctiveSculpt.getValue()) {
     // Ctrl picks a joint without leaving the mode: you need two of them to say
     // "this bone", and going out to Animate and back to do it is absurd.
-    if (me.isCtrlPressed()) {
+    if (me.isCtrlPressed() || me.isShiftPressed()) {
       if (m_svHigh >= 0) {
         if (me.isShiftPressed()) {
           std::vector<int> objs = m_svSel.objects();
@@ -437,10 +437,10 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
     TTool::getApplication()->getCurrentColumn()->setColumnIndex(selCol);
     updateMatrix();
     setSkeletonSelection(selV);
-  } else if (me.isCtrlPressed() && m_svHigh >= 0) {
-    // Cmd adds to the selection instead of replacing it: several joints at once
-    // is how you address a whole bone — and how you change their stacking order
-    // together instead of one at a time.
+  } else if (me.isShiftPressed() && m_svHigh >= 0) {
+    // Shift adds to the selection instead of replacing it — the usual
+    // convention. Several joints at once is how you address a whole bone, and
+    // how you set their stacking order together instead of one at a time.
     std::vector<int> objs = m_svSel.objects();
     std::vector<int>::iterator it =
         std::find(objs.begin(), objs.end(), m_svHigh);

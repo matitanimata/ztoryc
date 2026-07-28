@@ -1506,7 +1506,58 @@ void PlasticTool::onChange() {
 void PlasticTool::onChange(const TParamChange &pc) {
   if (l_suspendParamsObservation) return;
 
+  propagateSOToSelection(pc.m_param);
+
   onChange();
+}
+
+//------------------------------------------------------------------------
+
+// The SO field edits ONE vertex's parameter — the one the relay is bound to.
+// With several joints selected that is not what the field appears to promise,
+// and setting a limb's stacking order one joint at a time is busywork. So when
+// the edited parameter IS the current vertex's SO, the same value goes to every
+// other selected joint.
+//
+// Only SO: the other relayed parameters (angle, distance) are per-joint by
+// nature, and copying an angle across a selection would silently flatten a pose.
+void PlasticTool::propagateSOToSelection(TParam *changed) {
+  if (m_propagatingSO || !changed || !m_sd) return;
+  if (m_svSel.objects().size() < 2) return;
+
+  const int skelId = m_skelId;
+  const int cur    = m_svSel.hasSingleObject() ? (int)m_svSel : -1;
+
+  // Find which selected vertex owns the parameter that just changed, and check
+  // it really is its SO before touching anything else.
+  int sourceV = -1;
+  const std::vector<int> objs = m_svSel.objects();
+  for (size_t i = 0; i < objs.size(); ++i) {
+    SkVD *vd = m_sd->vertexDeformation(skelId, objs[i]);
+    if (vd && vd->m_params[SkVD::SO].getPointer() == changed) {
+      sourceV = objs[i];
+      break;
+    }
+  }
+  if (sourceV < 0) return;
+
+  SkVD *src = m_sd->vertexDeformation(skelId, sourceV);
+  if (!src || !src->m_params[SkVD::SO]) return;
+  const double so = src->m_params[SkVD::SO]->getValue(frame());
+
+  m_propagatingSO = true;
+  {
+    TUndoScopedBlock undoBlock;
+    for (size_t i = 0; i < objs.size(); ++i) {
+      if (objs[i] == sourceV) continue;
+      SkVD *vd = m_sd->vertexDeformation(skelId, objs[i]);
+      if (!vd || !vd->m_params[SkVD::SO]) continue;
+      if (vd->m_params[SkVD::SO]->getValue(frame()) == so) continue;
+      vd->m_params[SkVD::SO]->setValue(frame(), so);
+    }
+  }
+  m_propagatingSO = false;
+  (void)cur;
 }
 
 //------------------------------------------------------------------------
@@ -1670,8 +1721,17 @@ void PlasticTool::onSelectionChanged() {
     m_maxAngle.setValue(L"");
   }
 
-  // Attach or detach relays depending on selected vertex's parameters
-  m_soRelay.setParam(vd ? vd->m_params[SkVD::SO] : TDoubleParamP());
+  // Attach or detach relays depending on selected vertex's parameters.
+  //
+  // SO is the exception: it stays editable with SEVERAL joints selected, bound
+  // to the first of them, because editing it there is the point — the value is
+  // mirrored onto the rest of the selection (propagateSOToSelection). The other
+  // relays stay single-vertex: an angle or a distance copied across a selection
+  // would quietly flatten a pose.
+  SkVD *soVd = vd;
+  if (!soVd && m_sd && !m_svSel.isEmpty())
+    soVd = m_sd->vertexDeformation(::skeletonId(), m_svSel.objects().front());
+  m_soRelay.setParam(soVd ? soVd->m_params[SkVD::SO] : TDoubleParamP());
 
   if (vd && m_svSel.hasSingleObject() && m_svSel.objects().front() > 0) {
     m_distanceRelay.setParam(vd->m_params[SkVD::DISTANCE]);

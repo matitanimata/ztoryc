@@ -759,6 +759,9 @@ private:
   // Parameter Observation methods
 
   void onChange(const TParamChange &) override;
+  //! Mirror an edited SO onto every other selected joint. See the definition.
+  void propagateSOToSelection(TParam *changed);
+  bool m_propagatingSO = false;  //!< guards the write-back from re-entering
 
 private slots:
 
