@@ -424,6 +424,33 @@ nella sub-scene corretta.
 
 ### 🆕 DA FARE (giugno 2026) — in cima per priorità
 
+**✅ FATTO — Function Editor (2026-08-02/03), su master.** Aggancio allo xsheet,
+ricerca, filtro animati globale, multi-selezione albero e grafico, visibilita' e
+interpolazione in blocco, selezione multipla di **segmenti**, spostamento e
+scalatura nel tempo su piu' curve, tratteggio per colonna, hint contestuali.
+Collaudato da Franco. Testo inglese per la proposta upstream (a **Tahoma2D e
+OpenToonz**) in Drive → `FUNCTION_EDITOR_UPSTREAM_EN.md`, con la traccia del video.
+
+⬜ **Restano le tre voci escluse dalla prima fase.** Nessuna e' bloccata dal
+modello dati — verificato leggendo il codice, la nota iniziale che diceva il
+contrario era sbagliata:
+- **Speed graph** — vista della derivata, dove gli errori di spacing si vedono
+  (nel valore no). In **sola lettura** e' contenuto e vale il 90% del beneficio;
+  renderlo editabile e' un progetto a se', perche' un punto spostato nello spazio
+  della velocita' va reintegrato in quello del valore.
+- **Funzioni linkate** — una curva che pilota piu' parametri con un offset.
+  **Gia' possibile oggi**: `TDoubleKeyframe::Expression` + grammatica che
+  referenzia altre colonne + rilevamento dei riferimenti circolari, e
+  `Channel::getExprRefName()` e' gia' il payload del trascinamento col tasto
+  centrale dall'albero. Manca solo la UI: un gesto invece di sintassi digitata.
+- **Preset di easing** — si sdoppia. Le **forme di ease** sono valori di
+  `m_speedIn`/`m_speedOut` su un segmento e viaggiano sulla macchina di
+  applicazione in blocco gia' costruita: poche ore. **Overshoot e bounce no**:
+  richiedono di GENERARE keyframe, ed e' una feature diversa e piu' grande.
+
+Ordine consigliato per valore/rischio: preset di ease, speed graph in sola
+lettura, funzioni linkate.
+
 **🔧 IN LAVORAZIONE — ZtoRig pose-blend (task 59 + correttive di giuntura).**
 ⚠️ **Worktree separato**: `/Volumes/ZioSam/tahoma2d-workspace/tahoma2d-superplastic`,
 branch `feature/ztorig-pose-blend`. **Il bundle da lanciare e deployare è

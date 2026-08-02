@@ -1,3 +1,57 @@
+## [2026-08-03b] — Il Function Editor sta in piedi da solo, senza una curva corrente
+
+Coda della giornata: due ricadute del «click nel vuoto deseleziona» chiesto da
+Franco, piu' la risposta tecnica alla community. Commit `387d67fe7`.
+
+### Fixed — due percorsi davano per scontata una curva corrente
+Da quel gesto in poi una curva corrente **non c'e'**, ed era il presupposto di:
+- **`openContextMenu`**, che usciva subito su `if (!curve) return;` — prima del
+  blocco che sceglie la curva fra quelle coi segmenti selezionati. Tasto destro
+  su un gruppo di segmenti preso col rettangolo: non compariva **l'intero
+  menu**, non solo la voce dell'interpolazione. Ora la curva si decide prima di
+  rinunciare: la corrente, poi quella con un segmento selezionato sotto il
+  cursore, poi la piu' vicina al puntatore.
+- **`mousePressEvent`**, dove tutta la gestione del click sta dentro
+  `if (currentChannel)`: senza corrente non veniva eseguito niente, ne' la
+  deselezione ne' l'avvio del rettangolo. **Si auto-alimentava**, perche' e'
+  proprio il click a vuoto ad azzerare la corrente — l'unico modo per uscirne
+  era selezionare una curva.
+
+Collaudato da Franco: «ora è perfetto».
+
+### Notes — la lezione, che e' la stessa di ieri con un vestito nuovo
+Tre giri di correzioni sulla **stessa** modifica, ogni volta sul sintomo appena
+segnalato. Cercare **tutti i dipendenti di `currentChannel`** al primo giro li
+avrebbe chiusi insieme, e sarebbe costato una grep. Ieri era «dedurre invece di
+misurare»; oggi e' «correggere dove me lo dicono invece di dove sta».
+
+### Notes — risposta alla community (OpenToonz/Tahoma2D)
+Hanno chiesto i riferimenti al codice «spento» e hanno segnalato che la
+scalatura nel tempo somigliava a lavoro recente di Shun. **Hanno ragione**:
+`StretchPointDragTool` e' `fcfdb2c85` di shun-iwasawa (2023-02-10), ed e'
+**gia' in Tahoma2D** — verificato con `git merge-base --is-ancestor` contro
+`upstream/master`, quindi non c'e' nessun port da fare. Il nostro contributo e'
+solo il **multi-curva**: il suo impacchettamento sui frame interi non e' stato
+riscritto, solo separato in "decidi l'intervallo" / "applicalo", con un pivot e
+un rapporto unici presi dagli estremi dell'intera selezione.
+
+Riferimenti dati (righe **prima** delle nostre modifiche, cosi' corrispondono al
+loro albero): `functiontreeviewer.cpp:1401` (`setSelectionMode(NoSelection)`)
+contro `treemodel.cpp:391` e `studiopaletteviewer.cpp:159`;
+`functiontreeviewer.h:248` (`setCurrentStageObject`, salva e basta);
+`functionselection.h:47` (keyframe gia' per-curva) contro
+`functionpanel.cpp:1269` (`selectNone()` incondizionata);
+`functionselection.h:50` (`m_selectedSegment` singolo int) e
+`functionpanel.cpp:1570-1572` (il menu **azzera** la selezione prima di
+applicare).
+
+### Notes — stato
+Franco considera il Function Editor **completo** per questa fase. Le tre voci
+escluse sono ora in `ANIMATIC_TASKS.md` con la valutazione di fattibilita':
+speed graph, funzioni linkate, preset di easing. Nessuna e' bloccata dal
+modello dati — la nota iniziale che diceva il contrario per le funzioni linkate
+era **sbagliata** e va corretta ovunque compaia: le espressioni ci sono gia'.
+
 ## [2026-08-03] — Giro sistematico sui crash: 19 dereferenziamenti non guardati
 
 Rilettura dei crash log utente del 28-31 luglio, e poi il giro su **tutti** i
