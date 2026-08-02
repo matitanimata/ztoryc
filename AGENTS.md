@@ -425,12 +425,37 @@ git diff <last-tag>..HEAD --stat
 toonz/cmake/ZtorycVersion.cmake  # incrementa ZTORYC_VERSION_PATCH (o MINOR)
 ```
 
-### 3. Release note — SEMPRE bilingue (🇮🇹 IT + 🇬🇧 EN) + istruzioni macOS
+### 3. Ringraziamento agli sponsor — OBBLIGATORIO, si controlla ogni volta
+
+> Saltato nella **0.11.0** (primo rilascio dopo l'arrivo del primo sponsor):
+> nessun ringraziamento, né nell'app né nelle note. Era saltato perché questa
+> voce non esisteva in checklist. Ora esiste: non si salta più.
+
+Prima di scrivere le note, aprire la
+[dashboard sponsor](https://github.com/sponsors/matitanimata/dashboard) e
+confrontarla con `SUPPORTERS.md`. Il token `gh` di questa macchina **non** ha lo
+scope `read:user`, quindi da CLI gli sponsor non si leggono: va guardata a mano.
+
+Per ogni sponsor **nuovo** dall'ultimo rilascio:
+1. È in `SUPPORTERS.md`, nel tier giusto? (solo se la sponsorizzazione è
+   **pubblica** su GitHub — e solo dopo avergli chiesto il permesso)
+2. Ha dato il **consenso esplicito** a comparire **dentro l'app**? Essere sponsor
+   pubblico su GitHub non è un consenso a essere messo nella schermata About:
+   sono due cose diverse e va chiesto a parte.
+3. Se sì → ringraziamento in-app (About / startup page), dove lo vedono anche
+   quelli che su GitHub non ci vanno mai.
+4. Riga di ringraziamento nelle note di rilascio, in **entrambe** le lingue.
+
+Controllare anche le promesse di tier ancora scoperte (canale di discussione per
+i Backer, voto sulle feature per i Pro, logo per Studio/Sponsor): sono manuali,
+non c'è nessun automatismo che le onori.
+
+### 4. Release note — SEMPRE bilingue (🇬🇧 EN + 🇮🇹 IT) + istruzioni per i tre OS
 
 **Regola obbligatoria:** le release note GitHub devono essere **bilingue** —
-sezioni Novità/Fix sia in **Italiano** che in **English** (es. blocchi
-`### 🇮🇹 Italiano` e `### 🇬🇧 English`). Anche le note macOS e Windows sotto
-vanno in entrambe le lingue.
+sezioni Novità/Fix sia in **English** che in **Italiano** (es. blocchi
+`### 🇬🇧 English` e `### 🇮🇹 Italiano`, **inglese per primo**). Anche le note
+macOS, Windows e Linux sotto vanno in entrambe le lingue.
 
 > Il workflow CI pubblica la release con **body vuoto**: le note vanno scritte/
 > aggiornate a mano con `gh release edit v0.X.Y --notes-file <file>` dopo che la
@@ -452,16 +477,37 @@ Poi aprire dall'app o doppio clic → Tasto destro → Apri la prima volta.
 Si raccomanda un'**installazione pulita**: disinstallare eventuali versioni precedenti prima di installare (installare sopra una vecchia versione può lasciare file/layout stale e causare instabilità).
 
 *A **clean install** is recommended: uninstall any previous version before installing (installing over an old version may leave stale files/layout and cause instability).*
+
+**Linux — installazione / installation:**
+Su Debian/Ubuntu usare il pacchetto `.deb`; altrove il `.tar.gz` portatile.
+Delle due build, prendere la **gcc**: la `clang` è la stessa applicazione compilata
+con l'altro compilatore, utile solo se la gcc dà problemi.
+
+*On Debian/Ubuntu use the `.deb` package; elsewhere the portable `.tar.gz`. Of the two builds, take the **gcc** one — `clang` is the same application built with the other compiler, useful only if the gcc build misbehaves.*
 ```
 
-### 4. Trigger CI
+### 5. Trigger CI
 
 ```bash
 git tag v0.X.Y
 git push origin v0.X.Y
 ```
 
-Il workflow CI si attiva automaticamente sul tag e pubblica i binari su GitHub Releases.
+Il workflow CI si attiva automaticamente sul tag e pubblica i binari macOS e
+Windows su GitHub Releases.
+
+**Linux va lanciato a parte** (dal 2026-07-27 il workflow ha il job
+`publish-release`, ma `linux_build.yml` è `workflow_dispatch` — sul tag **non**
+parte da solo):
+
+```bash
+gh workflow run linux_build.yml -f publish_release=true -f release_tag=v0.X.Y
+```
+
+Produce quattro asset: `Ztoryc-linux-{gcc,clang}.{tar.gz,deb}`. Verificare che
+siano davvero comparsi nella release (`gh release view v0.X.Y`) prima di
+annunciarla: la **0.11.0** è uscita senza binari Linux perché il job è arrivato
+otto ore dopo la pubblicazione.
 
 -----
 

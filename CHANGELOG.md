@@ -1,3 +1,79 @@
+## [2026-08-02] — I thumbnail smettono di sconfinare fra scene. E ZtoRig: pennello delle correttive e stacking order
+
+> Il fix dei thumbnail e' su **master** (`a23416446`). Tutto il resto e' sul branch
+> `feature/ztorig-pose-blend`, **non collaudato**: scritto e compilato, mai visto
+> funzionare se non dove indicato.
+
+### Fixed — il canvas dei thumbnail e' della scena, non del progetto (master)
+Aprendo una scena nuova si trovavano griglia, disegni e riquadri uniti della
+scena precedente. Il canvas veniva salvato risolvendo la cartella dei **livelli**
+(`+drawings`, che appartiene al **progetto**) e il nome del file portava solo la
+dimensione della griglia: tutte le scene di un progetto leggevano e scrivevano
+lo stesso `_ztorythumbs_<cols>x<rows>.png`, con le fusioni per le panoramiche
+nello stesso posto.
+
+Ora sta in **`+extras/<scena>/thumbs`**, con la stessa risoluzione dell'import
+della sceneggiatura: rispetta `useScenePath` dei project settings invece di
+indovinare. I canvas salvati col percorso vecchio non vengono piu' trovati —
+verificato con Franco che erano tutti di prova.
+
+**Terza volta** che compare questa forma di difetto (stato o file condivisi fra
+scene, dopo la contaminazione dei testi e quella cross-progetto): da trattare
+come categoria da controllare ogni volta che si aggiunge qualcosa che persiste.
+
+### Added — il pennello delle correttive di giuntura (branch, milestone 2/3)
+Selezioni il giunto, lo pieghi fin dove la maglia si strozza, accendi `Sculpt` e
+trascini: i vertici sotto il cerchio si spostano con ricaduta smoothstep e la
+maglia si aggiorna mentre disegni. Un tratto un undo. **Approvato da Franco**
+(«e' meraviglioso»).
+
+Le correttive **multiple** vengono da se': il nome se lo prende dall'angolo
+(`gomito_dx_95`), quindi lo stesso giunto scolpito a 45 ne crea un'altra che
+copre 0-45, e quella a 95 riparte da 45. Gli strati si sommano invece di
+contarsi due volte perche' il pennello registra il delta rispetto a **cio' che e'
+a schermo**, che include gia' le correttive piu' basse.
+
+**Il pennello sente la superficie, non lo schermo.** Col gomito piegato,
+avambraccio e braccio si sovrappongono nello spazio ma sono lontani sulla maglia:
+il filtro usa `buildDistances` (BFS sul grafo) e prende solo cio' che tocchi.
+
+### Added — stacking order assegnabile, e la sua riprogettazione
+Prima versione: un valore di SO per vertice di maglia. **Franco l'ha rifatta
+meglio** — l'SO resta **uno solo**, animabile sui vertici dello scheletro, e
+quello che si modifica e' **quanto ogni vertice influenza ogni punto**. Non un
+secondo dato accanto al primo (due numeri sulla stessa cosa prima o poi si
+contraddicono, e un SO chiavato scavalcherebbe in silenzio un valore congelato),
+ma rendere editabile cio' che `buildSO` gia' calcola. Progetto completo nel task;
+quello che c'e' ora (appartenenza per-vertice) e' un passaggio, non la meta.
+
+Piu': Shift aggiunge alla selezione dei giunti (Animate e sculpt), e l'SO scritto
+nel campo va su **tutti** i giunti selezionati in un solo undo — con la trappola
+che il campo, con piu' selezionati, era **vuoto**, perche' il relay si legava solo
+con `hasSingleObject()`.
+
+### Fixed — riaccendendo l'IK il personaggio non salta piu' (branch)
+Uscire dall'IK fa il bake in FK e molla i pin, ma i target di scena catturati
+prima restavano indietro: rientrando, il primo solve trascinava il personaggio su
+un bersaglio che il bake aveva gia' assorbito. Ora rientrando si ri-piantano i
+pin **attivi** dove il personaggio sta in quel momento, con lo stesso calcolo che
+usa il pin quando lo pianti.
+
+### Notes — il bug che e' costato due diagnosi sbagliate
+`buildDistances` scrive **solo** i vertici che la sua BFS visita. Con l'array
+inizializzato a **zero**, le isole staccate della maglia — braccia, gambe —
+restavano a distanza 0, cioe' piu' vicine di qualunque cosa: pennellando la testa
+si assegnavano le gambe. Non raggiunto deve voler dire **lontano**, non vicino.
+
+Ha prodotto due diagnosi sbagliate, **entrambe sostenute da misure vere** — prese
+pero' dove le isole non c'erano. L'ha trovato Franco selezionando il vertice in
+cima alla testa.
+
+### Notes — aperto, con il discriminatore
+Il personaggio che «parte» manipolando le anche succede su animazioni
+**rimaneggiate** e non su **chiavi fresche**. Sposta il sospetto dal solver al
+dato gia' in scena. Primo test quando si riprende: stessa scena vecchia su 0.11.0
+contro branch — se il sintomo c'e' su entrambe, la ri-cattura dei pin e' innocente.
+
 ## [2026-07-27b] — ZtoRig su master, 0.11.0. E i limiti d'angolo che finalmente seguono il corpo
 
 > Sessione lunga, quasi tutta di **misura**. Delle sette ipotesi formulate ne sono
