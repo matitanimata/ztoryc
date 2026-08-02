@@ -12,6 +12,7 @@
 
 // Qt includes
 #include <QScrollBar>
+#include <QSet>
 
 #undef DVAPI
 #undef DVVAR
@@ -99,6 +100,10 @@ to
   private:
     QString m_name;
     ShowFilter m_showFilter;
+    //! Long names of the channels that were on screen the last time this
+    //! column had any. Kept so that turning a column back on restores what it
+    //! was showing instead of every curve it owns.
+    QSet<QString> m_shownChannelNames;
 
   public:
     ChannelGroup(const QString &name = "");
@@ -118,12 +123,29 @@ to
 
     void applyShowFilter();  // call this method when a channel changes
                              // its animation status
+
+    //! Whether this group or anything under it matches the search string.
+    //! Decides whether the group's row is shown at all.
+    bool matchesSearch(const QString &searchString) const;
+
+    //! Whether this group -- or one of the groups above it -- matches by name.
+    //! When it does, the whole content is shown without testing it: you
+    //! searched for the column, not for one of its channels.
+    bool nameMatchesSearch(const QString &searchString) const;
+
     QVariant data(int role) const override;
 
     // used in FunctionTreeView::onActivated
     void setChildrenAllActive(bool active);
 
     void displayAnimatedChannels();
+
+    //! Snapshots which of this group's channels are on screen. Does nothing
+    //! when none are: the memory has to survive being hidden.
+    void rememberShownChannels();
+    //! Puts back what rememberShownChannels() saw. With nothing remembered --
+    //! a column never shown -- falls back to the channels that carry keys.
+    void restoreShownChannels();
   };
 
   //----------------------------------------------------------------------------------
@@ -218,6 +240,11 @@ private:
 
   bool m_paramsChanged;
 
+  //! Name filter typed in the search box; empty means "show everything", which
+  //! is the behaviour the editor had before the box existed.
+  QString m_searchFilter;
+
+
   TFxHandle *m_fxHandle;
   TObjectHandle *m_objectHandle;
 
@@ -244,6 +271,51 @@ public:
   void resetAll();
 
   void applyShowFilters();
+
+  //! Applies one animated/all filter to EVERY column and fx at once. The
+  //! per-folder menu is unusable on a rig with twenty columns.
+  void setAllShowFilters(ChannelGroup::ShowFilter showFilter);
+
+  //! Restricts the tree to the channels whose name contains \p searchString.
+  //! Goes through the same show-filter machinery as the animated-channels
+  //! filter, so the two compose instead of undoing each other on the next
+  //! updateAll().
+  void setSearchFilter(const QString &searchString);
+  const QString &getSearchFilter() const { return m_searchFilter; }
+
+  //! The group holding \p obj's channels, or null. Used to follow the xsheet
+  //! selection into the tree.
+  ChannelGroup *getStageObjectChannelGroup(TStageObject *obj) const;
+  ChannelGroup *getFxChannelGroup(TFx *fx) const;
+
+  //! Curve visibility, mirroring the xsheet's column visibility menu. "Shown"
+  //! here means active, i.e. drawn in the graph; an item stands for every
+  //! channel under it, so the same commands read as columns on a folder and as
+  //! curves on a parameter.
+  //! \p scope bounds what may be switched OFF: the column a parameter belongs
+  //! to when the command was aimed at a parameter, the whole tree when it was
+  //! aimed at a column. Null means the whole tree.
+  void showOnlyItems(const QList<TreeModel::Item *> &items,
+                     TreeModel::Item *scope);
+  void setItemsShown(const QList<TreeModel::Item *> &items, bool shown);
+  void setScopeShown(TreeModel::Item *scope, bool shown);
+  void setAllChannelsActive(bool active);
+
+  //! Sets the interpolation of EVERY segment of every curve under \p items,
+  //! in one undo. The last keyframe of each curve is skipped: it has no
+  //! segment after it, so its type is only a placeholder.
+  void setInterpolationOfItems(const QList<TreeModel::Item *> &items,
+                               int keyframeType);
+  //! Turns on the channels of \p scope that actually carry keyframes. Used
+  //! when opening a column is meant to bring it on screen as well.
+  void showAnimatedChannelsOf(TreeModel::Item *scope);
+  //! The column (or fx) \p item belongs to -- the group at tree depth 2 --
+  //! or \p item itself when it already is one.
+  static TreeModel::Item *columnScopeOf(TreeModel::Item *item);
+
+  //! Every channel under \p item, or \p item itself when it is a channel.
+  static void collectChannels(TreeModel::Item *item,
+                              std::vector<Channel *> &channels);
 
   void setCurrentStageObject(TStageObject *obj) { m_currentStageObject = obj; }
   TStageObject *getCurrentStageObject() const { return m_currentStageObject; }
@@ -378,6 +450,11 @@ class FunctionTreeView final : public TreeView {
   FunctionTreeModel::Channel *m_clickedItem;
 
   FunctionTreeModel::Channel *m_draggingChannel;
+  //! Whether the press that started a drag landed on the visibility icon.
+  //! Dragging across the icons paints the on/off state over a run of curves;
+  //! dragging across the NAMES sweeps out a selection instead. Without the
+  //! distinction one gesture would do both at once.
+  bool m_clickedOnIcon = false;
   QPoint m_dragStartPosition;
   FunctionViewer *m_viewer;
   //---
@@ -388,8 +465,20 @@ class FunctionTreeView final : public TreeView {
 
   TXsheetHandle *m_xshHandle;
 
+  //! When on, following the xsheet selection opens that column and closes the
+  //! others. Off by default: with several columns picked on purpose -- which
+  //! is the point of the multi-selection -- closing them at every click of a
+  //! column would undo the setup under the user's hands.
+  bool m_openSelectedColumnOnly = false;
+
 public:
   FunctionTreeView(FunctionViewer *parent);
+
+  bool isOpenSelectedColumnOnly() const { return m_openSelectedColumnOnly; }
+  void setOpenSelectedColumnOnly(bool on) { m_openSelectedColumnOnly = on; }
+
+  //! Items highlighted in the tree, each appearing once.
+  QList<TreeModel::Item *> selectedItems() const;
 
   void setCurrentScenePath(TFilePath scenePath) { m_scenePath = scenePath; }
 
@@ -401,6 +490,15 @@ public:
 
   void setXsheetHandle(TXsheetHandle *xshHandle) { m_xshHandle = xshHandle; }
   TXsheetHandle *getXsheetHandle() { return m_xshHandle; }
+
+  //! Opens the item's ancestors and scrolls it into view. Expanding a node
+  //! whose parent is still closed leaves it unreachable, so the ancestors are
+  //! opened from the top down before scrolling.
+  void scrollToItem(TreeModel::Item *item, bool expandItem = false);
+
+  //! Collapses every group sitting at the same level as \p item, so that
+  //! following the xsheet selection leaves one object open, not all of them.
+  void collapseSiblingsOf(TreeModel::Item *item);
 
 protected:
   void onClick(TreeModel::Item *item, const QPoint &itemPos,

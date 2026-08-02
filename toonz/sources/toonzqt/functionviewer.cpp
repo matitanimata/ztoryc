@@ -39,11 +39,15 @@
 // Qt includes
 #include <QPainter>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QWheelEvent>
 #include <QBoxLayout>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QLabel>
+#include <QLineEdit>
+#include <QCheckBox>
+#include <QShortcut>
 #include <QToolBar>
 #include <QAction>
 
@@ -88,6 +92,32 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
     m_numericalColumns = new FunctionSheet(this);
   }
   m_treeView = new FunctionTreeView(this);
+
+  m_searchField = new QLineEdit(this);
+  m_searchField->setObjectName("FunctionEditorSearchField");
+  m_searchField->setPlaceholderText(tr("Search parameter..."));
+  m_searchField->setClearButtonEnabled(true);
+  // The tree itself takes no focus (see FunctionTreeView's constructor), but
+  // the search box has to, or there is nothing to type into.
+  m_searchField->setFocusPolicy(Qt::ClickFocus);
+  m_searchField->installEventFilter(this);
+
+  // Ctrl+Shift+F, because plain Ctrl+F is the FX Browser application-wide and
+  // two actions on one sequence resolve unpredictably. Scoped to this panel:
+  // it does nothing while you are working anywhere else.
+  QShortcut *searchShortcut =
+      new QShortcut(QKeySequence("Ctrl+Shift+F"), this);
+  searchShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  connect(searchShortcut, &QShortcut::activated, this, [this]() {
+    m_searchField->setFocus(Qt::ShortcutFocusReason);
+    m_searchField->selectAll();
+  });
+
+  m_animatedOnlyBox = new QCheckBox(tr("Animated only"), this);
+  m_animatedOnlyBox->setObjectName("FunctionEditorAnimatedOnly");
+  m_animatedOnlyBox->setToolTip(
+      tr("List only the parameters that carry keyframes, in every column"));
+  m_animatedOnlyBox->setFocusPolicy(Qt::NoFocus);
 
   m_toolbar = new FunctionToolbar;
   m_segmentViewer =
@@ -161,6 +191,8 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
   rightLayout->setContentsMargins(0, 0, 0, 0);
   rightLayout->setSpacing(5);
   {
+    rightLayout->addWidget(m_searchField, 0);
+    rightLayout->addWidget(m_animatedOnlyBox, 0);
     rightLayout->addWidget(m_treeView, 1);
     rightLayout->addWidget(m_segmentViewer, 0);
   }
@@ -217,6 +249,15 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
   ret = ret && connect(m_numericalColumns, SIGNAL(syncHeaderBtnToggled(bool)),
                        this,
                        SLOT(onSyncHeaderBtnToggled(bool)));
+
+  ret = ret && connect(m_searchField, SIGNAL(textChanged(const QString &)),
+                       this, SLOT(onSearchFilterChanged(const QString &)));
+
+  ret = ret && connect(m_functionGraph, SIGNAL(hintChanged(const QString &)),
+                       this, SIGNAL(hintChanged(const QString &)));
+
+  ret = ret && connect(m_animatedOnlyBox, SIGNAL(toggled(bool)), this,
+                       SLOT(onAnimatedOnlyToggled(bool)));
 
   assert(ret);
   if (m_toggleStart ==
@@ -488,6 +529,45 @@ void FunctionViewer::setColumnHandle(TColumnHandle *columnHandle) {
 
 //-----------------------------------------------------------------------------
 
+bool FunctionViewer::eventFilter(QObject *watched, QEvent *event) {
+  if (watched == m_searchField && event->type() == QEvent::KeyPress &&
+      static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+    // First Escape clears a filter still in place, second one lets go of the
+    // keyboard: clearing and unfocusing at once would lose whichever of the
+    // two the user meant.
+    if (m_searchField->text().isEmpty())
+      m_searchField->clearFocus();
+    else
+      m_searchField->clear();
+    return true;
+  }
+  return QSplitter::eventFilter(watched, event);
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionViewer::onAnimatedOnlyToggled(bool on) {
+  FunctionTreeModel *model =
+      static_cast<FunctionTreeModel *>(m_treeView->model());
+  if (!model) return;
+  model->setAllShowFilters(
+      on ? FunctionTreeModel::ChannelGroup::ShowAnimatedChannels
+         : FunctionTreeModel::ChannelGroup::ShowAllChannels);
+  m_treeView->update();
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionViewer::onSearchFilterChanged(const QString &text) {
+  FunctionTreeModel *model =
+      static_cast<FunctionTreeModel *>(m_treeView->model());
+  if (!model) return;
+  model->setSearchFilter(text);
+  m_treeView->update();
+}
+
+//-----------------------------------------------------------------------------
+
 void FunctionViewer::onFrameSwitched() {
   int frame = m_localFrame.getFrame();
   m_segmentViewer->setSegmentByFrame(m_curve, frame);
@@ -587,10 +667,30 @@ void FunctionViewer::onStageObjectSwitched() {
                                     ? (TStageObject *)0
                                     : xsh->getStageObject(objId);
 
-  static_cast<FunctionTreeModel *>(m_treeView->model())
-      ->setCurrentStageObject(obj);
+  FunctionTreeModel *model =
+      static_cast<FunctionTreeModel *>(m_treeView->model());
+  model->setCurrentStageObject(obj);
 
   m_treeView->updateAll();
+
+  // Follow the xsheet selection into the tree. The current object was already
+  // drawn in the highlight colour, but left wherever it happened to be —
+  // folded away or scrolled off — which is no help when the whole reason you
+  // clicked the column is to reach its curves. Only when the panel is on
+  // screen: scrolling a hidden view is work nobody sees.
+  if (obj && isVisible()) {
+    FunctionTreeModel::ChannelGroup *group =
+        model->getStageObjectChannelGroup(obj);
+    if (m_treeView->isOpenSelectedColumnOnly()) {
+      m_treeView->collapseSiblingsOf(group);
+      // Opening the column also brings it on screen: a folder that opens onto
+      // a graph where none of its curves are drawn has answered half the
+      // question. Adds only -- the other columns keep whatever you set.
+      model->showAnimatedChannelsOf(group);
+    }
+    m_treeView->scrollToItem(group, true);
+  }
+
   m_functionGraph->update();
 }
 
@@ -621,8 +721,20 @@ void FunctionViewer::onFxSwitched() {
   TFx *fx              = m_fxHandle->getFx();
   TZeraryColumnFx *zfx = dynamic_cast<TZeraryColumnFx *>(fx);
   if (zfx) fx = zfx->getZeraryFx();
-  static_cast<FunctionTreeModel *>(m_treeView->model())->setCurrentFx(fx);
+  FunctionTreeModel *model =
+      static_cast<FunctionTreeModel *>(m_treeView->model());
+  model->setCurrentFx(fx);
   m_treeView->updateAll();
+
+  // Same as onStageObjectSwitched: selecting the fx should bring its
+  // parameters into view, not just recolour a row you cannot see.
+  if (fx && isVisible()) {
+    FunctionTreeModel::ChannelGroup *group = model->getFxChannelGroup(fx);
+    if (m_treeView->isOpenSelectedColumnOnly())
+      m_treeView->collapseSiblingsOf(group);
+    m_treeView->scrollToItem(group, true);
+  }
+
   m_functionGraph->update();
 }
 
@@ -793,6 +905,8 @@ void FunctionViewer::save(QSettings &settings, bool forPopupIni) const {
                     m_numericalColumns->isIbtwnValueVisible());
   settings.setValue("syncHeader", m_syncHeader);
   settings.setValue("syncSize", m_numericalColumns->isSyncSize());
+  settings.setValue("openSelectedColumnOnly",
+                    m_treeView->isOpenSelectedColumnOnly());
 }
 
 //----------------------------------------------------------------------------
@@ -816,6 +930,12 @@ void FunctionViewer::load(QSettings &settings) {
   bool syncSize =
       settings.value("syncSize", m_numericalColumns->isSyncSize()).toBool();
   m_numericalColumns->setSyncSize(syncSize);
+
+  m_treeView->setOpenSelectedColumnOnly(
+      settings
+          .value("openSelectedColumnOnly",
+                 m_treeView->isOpenSelectedColumnOnly())
+          .toBool());
 }
 
 //-----------------------------------------------------------------------------

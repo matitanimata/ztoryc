@@ -423,6 +423,77 @@ TDoubleParam *FunctionPanel::findClosestCurve(const QPoint &winPos,
 //-----------------------------------------------------------------------------
 
 // return the gadget index (-1 if no gadget is close enough)
+QVector<qreal> FunctionPanel::columnDashPattern(
+    FunctionTreeModel::Channel *channel) const {
+  if (!channel || !m_functionTreeModel) return QVector<qreal>();
+
+  FunctionTreeModel::ChannelGroup *group = channel->getChannelGroup();
+  TreeModel::Item *column = FunctionTreeModel::columnScopeOf(group);
+  if (!column) return QVector<qreal>();
+
+  // Which column this is among those currently drawn -- not its position in
+  // the tree. Show two columns and they get the first two patterns, whichever
+  // columns they happen to be, so the distinction is always the clearest
+  // available instead of depending on where they sit in the scene.
+  int index = 0;
+  for (int c = 0; c < m_functionTreeModel->getActiveChannelCount(); c++) {
+    FunctionTreeModel::Channel *other = m_functionTreeModel->getActiveChannel(c);
+    if (!other) continue;
+    TreeModel::Item *otherColumn =
+        FunctionTreeModel::columnScopeOf(other->getChannelGroup());
+    if (!otherColumn || otherColumn == column) break;
+    // count each distinct column once, in drawing order
+    bool alreadySeen = false;
+    for (int p = 0; p < c; p++) {
+      FunctionTreeModel::Channel *prev = m_functionTreeModel->getActiveChannel(p);
+      if (prev && FunctionTreeModel::columnScopeOf(prev->getChannelGroup()) ==
+                      otherColumn) {
+        alreadySeen = true;
+        break;
+      }
+    }
+    if (!alreadySeen) index++;
+  }
+
+  static const QVector<qreal> patterns[] = {
+      QVector<qreal>(),                          // solid
+      QVector<qreal>() << 6 << 3,                // dashed
+      QVector<qreal>() << 1 << 3,                // dotted
+      QVector<qreal>() << 6 << 3 << 1 << 3,      // dash-dot
+      QVector<qreal>() << 6 << 3 << 1 << 3 << 1 << 3};  // dash-dot-dot
+  const int patternCount = (int)(sizeof(patterns) / sizeof(patterns[0]));
+  return patterns[index % patternCount];
+}
+
+//-----------------------------------------------------------------------------
+
+FunctionTreeModel::Channel *FunctionPanel::findChannelWithKeyframeAt(
+    const QPoint &winPos, int maxDistance) {
+  if (!m_functionTreeModel) return 0;
+
+  FunctionTreeModel::Channel *best = 0;
+  double bestDistance              = maxDistance;
+
+  for (int c = 0; c < m_functionTreeModel->getActiveChannelCount(); c++) {
+    FunctionTreeModel::Channel *channel =
+        m_functionTreeModel->getActiveChannel(c);
+    TDoubleParam *curve = channel ? channel->getParam() : 0;
+    if (!curve) continue;
+
+    for (int i = 0; i < curve->getKeyframeCount(); i++) {
+      const QPointF p = getWinPos(curve, curve->getKeyframe(i));
+      const double d  = (p - QPointF(winPos)).manhattanLength();
+      if (d < bestDistance) {
+        bestDistance = d;
+        best         = channel;
+      }
+    }
+  }
+  return best;
+}
+
+//-----------------------------------------------------------------------------
+
 int FunctionPanel::findClosestGadget(const QPoint &winPos, Handle &handle,
                                      int maxDistance) {
   // search only handles close enough (i.e. distance<maxDistance)
@@ -655,6 +726,18 @@ void FunctionPanel::drawOtherCurves(QPainter &painter) {
         curve == m_curveLabel.curve ? m_selectedColor : getOtherCurvesColor();
     solidPen.setColor(getChannelColor(channel->getShortName(), false));
     dashedPen.setColor(getChannelColor(channel->getShortName(), false));
+
+    // Colour says WHICH channel, dash pattern says WHICH COLUMN. The palette
+    // is per channel name -- every X is firebrick -- so with two columns
+    // overlaid their X curves were the same line twice. The pattern comes from
+    // the owning group, so a column's curves all share one and the eye can
+    // follow a column across the graph.
+    solidPen.setStyle(Qt::SolidLine);
+    solidPen.setDashPattern(QVector<qreal>());
+    if (const QVector<qreal> pattern = columnDashPattern(channel);
+        !pattern.isEmpty())
+      solidPen.setDashPattern(pattern);
+
     painter.setBrush(Qt::NoBrush);
 
     int kCount = curve->getKeyframeCount();
@@ -666,7 +749,16 @@ void FunctionPanel::drawOtherCurves(QPainter &painter) {
     // draw control points and handles
     else {
       for (int k = -1; k < kCount; k++) {
-        painter.setPen((k < 0 || k >= kCount - 1) ? dashedPen : solidPen);
+        if (k < 0 || k >= kCount - 1)
+          painter.setPen(dashedPen);
+        else {
+          // A picked segment is drawn heavy on the other curves too, or a
+          // selection spanning several curves would only be visible on the
+          // current one -- and you could not tell what the interpolation
+          // command is about to hit.
+          solidPen.setWidth(getSelection()->isSegmentSelected(curve, k) ? 3 : 0);
+          painter.setPen(solidPen);
+        }
         painter.drawPath(getSegmentPainterPath(curve, k, x0, x1));
       }
       painter.setPen(m_textColor);
@@ -674,6 +766,15 @@ void FunctionPanel::drawOtherCurves(QPainter &painter) {
       for (int k = 0; k < kCount; k++) {
         double frame = curve->keyframeIndexToFrame(k);
         QPointF p    = getWinPos(curve, frame, curve->getValue(frame));
+
+        // Selected keys are marked HERE too. Only the current curve drew its
+        // keys through the gadgets, which carry the selection colour, so keys
+        // picked on any other curve stayed plain white -- a selection that was
+        // being made and could not be seen, which reads exactly like
+        // multi-selection not working at all.
+        const bool isSelected = getSelection()->isSelected(curve, k);
+        painter.setBrush(isSelected ? QColor(255, 126, 0) : m_subColor);
+
         painter.drawRect(p.x() - 2, p.y() - 2, 5, 5);
         QPointF p2 = getWinPos(curve, frame, curve->getValue(frame, true));
         if (p2.y() != p.y()) {
@@ -683,6 +784,7 @@ void FunctionPanel::drawOtherCurves(QPainter &painter) {
           painter.setPen(m_textColor);
         }
       }
+      painter.setBrush(m_subColor);
     }
   }
   painter.setBrush(Qt::NoBrush);
@@ -934,10 +1036,14 @@ void FunctionPanel::drawCurrentCurve(QPainter &painter) {
             segmentType == TDoubleKeyframe::File)
           color = QColor(185, 0, 0);
         color   = getChannelColor(channel->getShortName(), true);
+        // The current curve is drawn heavier than the others (which stay at
+        // hairline width in drawOtherCurves): with several columns overlaid
+        // the colours repeat -- every X is firebrick -- and thickness is what
+        // says which one the handles belong to.
         if (getSelection()->isSegmentSelected(curve, k))
-          solidPen.setWidth(2);
+          solidPen.setWidth(3);
         else
-          solidPen.setWidth(0);
+          solidPen.setWidth(2);
         solidPen.setColor(color);
         painter.setPen(solidPen);
         painter.drawPath(getSegmentPainterPath(curve, k, x0, x1));
@@ -1217,7 +1323,7 @@ void FunctionPanel::mousePressEvent(QMouseEvent *e) {
   int closestGadgetId   = findClosestGadget(e->pos(), handle, maxDistance);
 
   if (e->pos().x() > m_valueAxisX && e->pos().y() < m_frameAxisY &&
-      closestGadgetId < 0 && (e->modifiers() & Qt::ControlModifier) == 0) {
+      closestGadgetId < 0 && (e->modifiers() & Qt::AltModifier) == 0) {
     // click on topbar => frame zoom
     m_dragTool = new ZoomDragTool(this, ZoomDragTool::FrameZoom);
   } else if (e->pos().x() < m_valueAxisX && e->pos().y() > m_graphViewportY) {
@@ -1233,7 +1339,10 @@ void FunctionPanel::mousePressEvent(QMouseEvent *e) {
   if (0 <= closestGadgetId && closestGadgetId < (int)m_gadgets.size()) {
     if (handle == 100)  // group move gadget
     {
-      MovePointDragTool *dragTool = new MovePointDragTool(this, 0);
+      // Null CURVE: the group-handle mode, which takes every active channel.
+      // Spelled out because the selection constructor would swallow a bare 0.
+      MovePointDragTool *dragTool =
+          new MovePointDragTool(this, (TDoubleParam *)0);
       dragTool->selectKeyframes(m_gadgets[closestGadgetId].m_keyframePosition);
       m_dragTool = dragTool;
     } else if (handle == 101 || handle == 102) {
@@ -1249,6 +1358,29 @@ void FunctionPanel::mousePressEvent(QMouseEvent *e) {
 
   FunctionTreeModel::Channel *currentChannel =
       m_functionTreeModel ? m_functionTreeModel->getCurrentChannel() : 0;
+
+  // Shift on a keyframe of ANOTHER curve: aim at the keyframe, not at the
+  // nearest line. The branch below only switches curve when the current one is
+  // far from the cursor, so with two curves crossing -- the ordinary case in a
+  // graph showing several columns -- a Shift-click on the other one's key
+  // never reached it, and picking keys across curves looked broken.
+  if ((e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
+      closestGadgetId < 0) {
+    FunctionTreeModel::Channel *keyChannel =
+        findChannelWithKeyframeAt(winPos, maxDistance);
+    if (keyChannel && keyChannel != currentChannel) {
+      keyChannel->setIsCurrent(true);
+      FunctionTreeModel::ChannelGroup *keyGroup = keyChannel->getChannelGroup();
+      if (keyGroup && !keyGroup->isOpen())
+        keyGroup->getModel()->setExpandedItem(keyGroup->createIndex(), true);
+      currentChannel = keyChannel;
+      // Gadgets belong to whichever curve was current, so rebuild them before
+      // looking for the keyframe this very click landed on.
+      updateGadgets(keyChannel->getParam());
+      closestGadgetId = findClosestGadget(winPos, handle, maxDistance);
+    }
+  }
+
   if (!currentChannel ||
       (getCurveDistance(currentChannel->getParam(), winPos) > maxDistance &&
        closestGadgetId < 0)) {
@@ -1266,7 +1398,20 @@ void FunctionPanel::mousePressEvent(QMouseEvent *e) {
         channelGroup->getModel()->setExpandedItem(channelGroup->createIndex(),
                                                   true);
       currentChannel = channel;
-      getSelection()->selectNone();
+      // Shift means "add to what I already picked", so switching curve must
+      // not throw the selection away. A plain click still clears, exactly as
+      // before.
+      if (0 == (e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)))
+        getSelection()->selectNone();
+      else {
+        // ...and the gadgets still describe the curve that WAS current, so
+        // this click has not yet seen the keyframe it landed on -- it would
+        // fall through to "nothing clicked" and start a rubber band instead.
+        // Rebuild them for the curve just switched to and look again, so one
+        // Shift-click both switches curve and adds its key.
+        updateGadgets(channel->getParam());
+        closestGadgetId = findClosestGadget(winPos, handle, maxDistance);
+      }
     }
   }
 
@@ -1280,8 +1425,9 @@ void FunctionPanel::mousePressEvent(QMouseEvent *e) {
         if (handle == FunctionPanel::Point) {
           // select point (if needed)
           if (!getSelection()->isSelected(currentCurve, kIndex)) {
-            // shift-click => add to selection
-            if (0 == (e->modifiers() & Qt::ShiftModifier))
+            // shift- or ctrl-click => add to selection
+            if (0 == (e->modifiers() &
+                      (Qt::ShiftModifier | Qt::ControlModifier)))
               getSelection()->deselectAllKeyframes();
             getSelection()->select(currentCurve, kIndex);
           }
@@ -1294,9 +1440,28 @@ void FunctionPanel::mousePressEvent(QMouseEvent *e) {
           if (e->modifiers() & Qt::AltModifier) {
             QList<int> selectedIndices =
                 getSelection()->getSelectedKeyIndices(currentCurve);
-            if (selectedIndices.count() >= 3 &&
+            // Only from an END of the picked run: the opposite end is the
+            // pivot the block scales about, so grabbing a key in the middle
+            // has no sensible reading -- and used to scale anyway, about
+            // whichever end the code happened to pick.
+            const bool grabbedAnEnd =
+                !selectedIndices.isEmpty() &&
                 (selectedIndices.first() == kIndex ||
-                 selectedIndices.last() == kIndex) &&
+                 selectedIndices.last() == kIndex);
+
+            // Keys picked on several curves: stretch them all by one ratio
+            // about one pivot. Tried first, because the single-curve branch
+            // below would silently scale only the current curve and leave the
+            // rest of the selection where it was.
+            if (grabbedAnEnd && getSelection()->getSelectedCurves().count() > 1) {
+              MultiStretchDragTool *multi = new MultiStretchDragTool(
+                  this, getSelection(), selectedIndices.first() == kIndex);
+              if (multi->isValid())
+                m_dragTool = multi;
+              else
+                delete multi;
+            }
+            if (!m_dragTool && selectedIndices.count() >= 3 && grabbedAnEnd &&
                 (selectedIndices.last() - selectedIndices.first()) ==
                     selectedIndices.count() - 1) {
               bool moveLeft = selectedIndices.first() == kIndex;
@@ -1308,15 +1473,23 @@ void FunctionPanel::mousePressEvent(QMouseEvent *e) {
 
           if (!m_dragTool) {
             // move selected point(s)
-            MovePointDragTool *dragTool =
-                new MovePointDragTool(this, currentCurve);
-            if (getSelection()->getSelectedSegment().first != 0) {
-              // if a segment is selected then move only the clicked point
-              dragTool->addKeyframe2(kIndex);
+            if (getSelection()->getSelectedSegment().first == 0 &&
+                getSelection()->getSelectedCurves().count() > 1) {
+              // Keys picked on more than one curve: drag them together, in
+              // time and in value. The single-curve tool below can only hold
+              // one setter and would silently leave the other curves behind.
+              m_dragTool = new MovePointDragTool(this, getSelection());
             } else {
-              dragTool->setSelection(getSelection());
+              MovePointDragTool *dragTool =
+                  new MovePointDragTool(this, currentCurve);
+              if (getSelection()->getSelectedSegment().first != 0) {
+                // if a segment is selected then move only the clicked point
+                dragTool->addKeyframe2(kIndex);
+              } else {
+                dragTool->setSelection(getSelection());
+              }
+              m_dragTool = dragTool;
             }
-            m_dragTool = dragTool;
           }
         } else {
           m_dragTool =
@@ -1328,9 +1501,10 @@ void FunctionPanel::mousePressEvent(QMouseEvent *e) {
             getCurveDistance(currentChannel->getParam(), winPos);
         bool isKeyframeable = true;
         bool isGroup        = abs(winPos.y() - (m_graphViewportY - 5)) < 5;
-        if (0 != (e->modifiers() & Qt::ControlModifier) &&
+        if (0 != (e->modifiers() & Qt::AltModifier) &&
             (curveDistance < maxDistance || isGroup) && isKeyframeable) {
-          // ctrl-clicked near curve => create a new keyframe
+          // ALT-clicked near curve => create a new keyframe. It used to be
+          // Ctrl, which Ctrl/Cmd-clicking to build up a selection needs.
           double frame = tround(xToFrame(winPos.x()));
           MovePointDragTool *dragTool =
               new MovePointDragTool(this, isGroup ? 0 : currentCurve);
@@ -1353,10 +1527,21 @@ int kIndex = dragTool->createKeyframe(frame);
           // assert(0);
         } else if (curveDistance < maxDistance) {
           // clicked near curve (but far from keyframes)
+          double frame  = xToFrame(winPos.x());
+          int shiftK0   = currentCurve->getPrevKeyframe(frame);
+          int shiftK1   = currentCurve->getNextKeyframe(frame);
+          // Shift on a segment ADDS it to the ones already picked, so that one
+          // interpolation command can retype a whole run of them. No drag tool:
+          // building up a selection is not the start of a move.
+          if ((e->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)) &&
+              shiftK0 >= 0 && shiftK1 == shiftK0 + 1) {
+            getSelection()->addSegment(currentCurve, shiftK0);
+            update();
+            return;
+          }
           getSelection()->deselectAllKeyframes();
-          double frame = xToFrame(winPos.x());
-          int k0       = currentCurve->getPrevKeyframe(frame);
-          int k1       = currentCurve->getNextKeyframe(frame);
+          int k0 = shiftK0;
+          int k1 = shiftK1;
           if (k0 >= 0 && k1 == k0 + 1) {
             // select and move the segment
             getSelection()->selectSegment(currentCurve, k0);
@@ -1423,6 +1608,8 @@ void FunctionPanel::mouseMoveEvent(QMouseEvent *e) {
     else
       m_currentFrameStatus = 0;
 
+    updateHint(e->pos());
+
     FunctionTreeModel::Channel *closestChannel =
         findClosestChannel(e->pos(), 20);
     if (closestChannel && m_highlighted.handle == None) {
@@ -1466,6 +1653,61 @@ void FunctionPanel::keyPressEvent(QKeyEvent *e) {
 
 //-----------------------------------------------------------------------------
 
+namespace {
+
+//! Spelled for the platform: on macOS the key is labelled Option.
+static const QString kAltName =
+#ifdef Q_OS_MAC
+    QStringLiteral("\u2325 Option");
+#else
+    QStringLiteral("Alt");
+#endif
+static const QString kCtrlName =
+#ifdef Q_OS_MAC
+    QStringLiteral("\u2318 Cmd");
+#else
+    QStringLiteral("Ctrl");
+#endif
+
+}  // namespace
+
+void FunctionPanel::updateHint(const QPoint &winPos) {
+  // What the modifiers do depends on what is under the pointer, so the hint
+  // is rebuilt as it moves. Sent only when the text changes: it is a status
+  // bar, not a log.
+  QString hint;
+
+  Handle handle       = None;
+  const int maxDist   = 20;
+  const int gadgetId  = findClosestGadget(winPos, handle, maxDist);
+  TDoubleParam *curve = getCurrentCurve();
+  const int curveDist =
+      curve ? getCurveDistance(curve, winPos) : maxDist + 1;
+
+  if (gadgetId >= 0 && handle == Point)
+    hint = tr("Drag to move  |  %1-click: add to selection  |  "
+              "%2-drag on an end key: scale the block in time")
+               .arg(kCtrlName)
+               .arg(kAltName);
+  else if (curveDist <= maxDist)
+    hint = tr("%1-click: add the segment to the selection  |  "
+              "%2-click: create a keyframe  |  "
+              "Right-click: interpolation of every selected segment")
+               .arg(kCtrlName)
+               .arg(kAltName);
+  else
+    hint = tr("Drag a box: select the segments and keyframes inside it");
+
+  if (hint == m_lastHint) return;
+  m_lastHint = hint;
+  // Emitted rather than pushed to the status bar directly: the hint bar is in
+  // the application layer, which toonzqt cannot reach. Whoever builds the
+  // panel wires this up.
+  emit hintChanged(hint);
+}
+
+//-----------------------------------------------------------------------------
+
 void FunctionPanel::enterEvent(QEvent *) {
   m_cursor.visible = true;
   m_panningArmed   = false;
@@ -1478,6 +1720,8 @@ void FunctionPanel::leaveEvent(QEvent *) {
   m_cursor.visible = false;
   m_panningArmed   = false;
   setCursor(Qt::ArrowCursor);
+  m_lastHint.clear();
+  emit hintChanged(QString());
   update();
 }
 
@@ -1569,6 +1813,14 @@ void FunctionPanel::fitRegion(double f0, double v0, double f1, double v1) {}
 
 static void setSegmentType(FunctionSelection *selection, TDoubleParam *curve,
                            int segmentIndex, TDoubleKeyframe::Type type) {
+  // Several segments picked with Shift, and the one right-clicked among them:
+  // retype the lot in one undo. Note the old line below DISCARDS the selection
+  // before applying -- which is why picking several used to change nothing.
+  if (selection->getSelectedSegmentCount() > 1 &&
+      selection->isSegmentSelected(curve, segmentIndex)) {
+    selection->setSelectedSegmentsType(type);
+    return;
+  }
   selection->selectSegment(curve, segmentIndex);
   KeyframeSetter setter(curve, segmentIndex);
   setter.setType(type);
@@ -1606,6 +1858,31 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
   TDoubleKeyframe kf;
   double frame = xToFrame(e->pos().x());
 
+  // Prefer the curve whose SELECTED segment lies under the cursor. This menu
+  // has always worked on the current curve, which was fine while only one
+  // segment could be picked; with several picked across curves that overlap,
+  // right-clicking one of them would open the menu for whichever curve
+  // happened to be current and act on the wrong line. Only overrides when a
+  // picked segment really is under the cursor -- otherwise nothing changes.
+  if (m_functionTreeModel && getSelection()->getSelectedSegmentCount() > 0) {
+    const int maxDistance = 20;
+    int bestDistance      = maxDistance + 1;
+    for (int i = 0; i < m_functionTreeModel->getActiveChannelCount(); i++) {
+      FunctionTreeModel::Channel *channel =
+          m_functionTreeModel->getActiveChannel(i);
+      TDoubleParam *other = channel ? channel->getParam() : 0;
+      if (!other) continue;
+      const int k = other->getPrevKeyframe(frame);
+      if (k < 0 || k >= other->getKeyframeCount() - 1) continue;
+      if (!getSelection()->isSegmentSelected(other, k)) continue;
+      const int distance = getCurveDistance(other, e->pos());
+      if (distance <= maxDistance && distance < bestDistance) {
+        bestDistance = distance;
+        curve        = other;
+      }
+    }
+  }
+
   // build menu
   QMenu menu(0);
   if (m_highlighted.handle == Point && m_highlighted.gIndex >= 0 &&
@@ -1632,31 +1909,42 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
       menu.addSeparator();
       segmentIndex = k0;
       kf           = curve->getKeyframe(k0);
+      // Which type to grey out. With ONE segment it is the type that segment
+      // already has. With several picked it is the one they ALL have -- and
+      // when they differ, none: every entry is then a real change for at least
+      // one of them, so greying any out would put a working choice out of
+      // reach.
+      int shownType = (int)kf.m_type;
+      if (getSelection()->getSelectedSegmentCount() > 1 &&
+          getSelection()->isSegmentSelected(curve, segmentIndex))
+        shownType = getSelection()->getCommonSelectedSegmentsType();
+
       menu.addAction(&setLinearAction);
-      if (kf.m_type == TDoubleKeyframe::Linear)
+      if (shownType == (int)TDoubleKeyframe::Linear)
         setLinearAction.setEnabled(false);
       menu.addAction(&setSpeedInOutAction);
-      if (kf.m_type == TDoubleKeyframe::SpeedInOut)
+      if (shownType == (int)TDoubleKeyframe::SpeedInOut)
         setSpeedInOutAction.setEnabled(false);
       menu.addAction(&setEaseInOutAction);
-      if (kf.m_type == TDoubleKeyframe::EaseInOut)
+      if (shownType == (int)TDoubleKeyframe::EaseInOut)
         setEaseInOutAction.setEnabled(false);
       menu.addAction(&setEaseInOut2Action);
-      if (kf.m_type == TDoubleKeyframe::EaseInOutPercentage)
+      if (shownType == (int)TDoubleKeyframe::EaseInOutPercentage)
         setEaseInOut2Action.setEnabled(false);
       menu.addAction(&setExponentialAction);
-      if (kf.m_type == TDoubleKeyframe::Exponential)
+      if (shownType == (int)TDoubleKeyframe::Exponential)
         setExponentialAction.setEnabled(false);
       menu.addAction(&setExpressionAction);
-      if (kf.m_type == TDoubleKeyframe::Expression)
+      if (shownType == (int)TDoubleKeyframe::Expression)
         setExpressionAction.setEnabled(false);
       menu.addAction(&setSimilarShapeAction);
-      if (kf.m_type == TDoubleKeyframe::SimilarShape)
+      if (shownType == (int)TDoubleKeyframe::SimilarShape)
         setSimilarShapeAction.setEnabled(false);
       menu.addAction(&setFileAction);
-      if (kf.m_type == TDoubleKeyframe::File) setFileAction.setEnabled(false);
+      if (shownType == (int)TDoubleKeyframe::File)
+        setFileAction.setEnabled(false);
       menu.addAction(&setConstantAction);
-      if (kf.m_type == TDoubleKeyframe::Constant)
+      if (shownType == (int)TDoubleKeyframe::Constant)
         setConstantAction.setEnabled(false);
       menu.addSeparator();
       if (kf.m_step != 1) menu.addAction(&setStep1Action);
