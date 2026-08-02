@@ -150,6 +150,39 @@ int skeletonId() {
 
 //------------------------------------------------------------------------
 
+double sdFrame(double frame) {
+  TStageObject *obj = stageObject();
+  return obj ? obj->paramsTime(frame) : frame;
+}
+
+//------------------------------------------------------------------------
+
+void invalidateStageObject() {
+  if (TStageObject *obj = stageObject()) obj->invalidate();
+}
+
+//------------------------------------------------------------------------
+
+void updateStageObjectKeyframes() {
+  if (TStageObject *obj = stageObject()) obj->updateKeyframes();
+}
+
+//------------------------------------------------------------------------
+
+PlasticSkeletonDeformationP currentDeformation() {
+  TStageObject *obj = stageObject();
+  return obj ? obj->getPlasticSkeletonDeformation()
+             : PlasticSkeletonDeformationP();
+}
+
+//------------------------------------------------------------------------
+
+void setCurrentDeformation(const PlasticSkeletonDeformationP &sd) {
+  if (TStageObject *obj = stageObject()) obj->setPlasticSkeletonDeformation(sd);
+}
+
+//------------------------------------------------------------------------
+
 double sdFrame() {
   // Null-safe: during room/shot switches (onEditShot) frameSwitched fires
   // while no column is current — the raw frame is the only sane answer, and
@@ -355,20 +388,20 @@ class PasteDeformationUndo final : public TUndo {
 public:
   PasteDeformationUndo(const SkDP &newSd)
       : m_col(column())
-      , m_oldSd(stageObject()->getPlasticSkeletonDeformation())
+      , m_oldSd(::currentDeformation())
       , m_newSd(newSd) {}
 
   int getSize() const override { return 1 << 20; }
 
   void redo() const override {
     TTool::getApplication()->getCurrentColumn()->setColumnIndex(m_col);
-    stageObject()->setPlasticSkeletonDeformation(m_newSd);
+    ::setCurrentDeformation(m_newSd);
     ::invalidateXsheet();
   }
 
   void undo() const override {
     TTool::getApplication()->getCurrentColumn()->setColumnIndex(m_col);
-    stageObject()->setPlasticSkeletonDeformation(m_oldSd);
+    ::setCurrentDeformation(m_oldSd);
     ::invalidateXsheet();
   }
 };
@@ -1860,6 +1893,7 @@ void PlasticTool::pasteDeformation_undo() {
   // Given a skeleton, attempt to assign it to the current stage object
   TStageObject *obj = ::stageObject();
   assert(obj);
+  if (!obj) return;  // the assert is stripped in release; this is the guard
 
   const PlasticSkeletonDeformationP &oldSd =
       obj->getPlasticSkeletonDeformation();
@@ -2826,6 +2860,7 @@ void PlasticTool::drawOnionSkinSkeletons_build(double pixelSize) {
             TTool::getApplication()->getCurrentColumn()->getColumnIndex());
 
   TStageObject *obj = ::stageObject();
+  if (!obj) return;
 
   // Sieve osRows' associated skeleton ids first
   std::map<int, UCHAR> skelAlphas;
@@ -2867,6 +2902,7 @@ void PlasticTool::drawOnionSkinSkeletons_animate(double pixelSize) {
             TTool::getApplication()->getCurrentColumn()->getColumnIndex());
 
   TStageObject *obj = ::stageObject();
+  if (!obj) return;
 
   int r, rCount = int(osRows.size());
   for (r = 0; r != rCount; ++r) {

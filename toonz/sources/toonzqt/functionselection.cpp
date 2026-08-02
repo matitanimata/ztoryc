@@ -145,27 +145,46 @@ public:
     TDoubleParam *m_param;
     QSet<int> m_keyframes;
   };
+  //! The stage object owning \p param, or null. Resolved FROM THE CURVE and
+  //! at call time, never from the position in m_columns: doDelete() skips
+  //! entries it cannot use, so that vector is compacted and its indices no
+  //! longer line up with the sheet's columns -- passing one as the other read
+  //! the wrong object, and past the end of the active channels returned null
+  //! and was dereferenced. Resolving late also survives the column being
+  //! removed while this undo sits in the stack.
+  TStageObject *stageObjectOf(TDoubleParam *param) const {
+    if (!m_sheet || !param) return 0;
+    const int column = m_sheet->getColumnIndexByCurve(param);
+    if (column < 0) return 0;
+    return m_sheet->getStageObject(column);  // null for an fx parameter
+  }
+
   KeyframesDeleteUndo(const std::vector<Column> &columns, FunctionSheet *sheet)
-      : m_sheet(sheet) {
+      : m_columns(), m_xsheetHandle(0), m_sheet(sheet) {
     m_columns.resize(columns.size());
     for (int col = 0; col < (int)m_columns.size(); col++) {
       TDoubleParam *param    = columns[col].m_param;
       m_columns[col].m_param = param;
       if (!param) continue;
       param->addRef();
-      const QSet<int> &keyframes = columns[col].m_keyframes;
-      for (QSet<int>::const_iterator it = keyframes.begin();
-           it != keyframes.end(); ++it) {
-        m_columns[col].m_keyframes[*it] = param->getKeyframe(*it);
-        TStageObject *stgObj            = m_sheet->getStageObject(col);
+
+      // Once per column, not once per keyframe: it wrote the same two members
+      // over and over with the same values.
+      if (TStageObject *stgObj = stageObjectOf(param))
         stgObj->getCenterAndOffset(m_columns[col].m_center,
                                    m_columns[col].m_offset);
-      }
+
+      const QSet<int> &keyframes = columns[col].m_keyframes;
+      for (QSet<int>::const_iterator it = keyframes.begin();
+           it != keyframes.end(); ++it)
+        m_columns[col].m_keyframes[*it] = param->getKeyframe(*it);
     }
   }
   ~KeyframesDeleteUndo() {
     for (int col = 0; col < (int)m_columns.size(); col++)
-      m_columns[col].m_param->release();
+      // The constructor leaves m_param null (and un-addRef'd) for an entry it
+      // could not use, so releasing it blindly is one crash further along.
+      if (m_columns[col].m_param) m_columns[col].m_param->release();
   }
 
   void setXsheetHandle(TXsheetHandle *xsheetHandle) {
@@ -177,10 +196,11 @@ public:
       std::map<int, TDoubleKeyframe>::const_iterator it,
           itEnd(m_columns[col].m_keyframes.cend());
       for (it = m_columns[col].m_keyframes.cbegin(); it != itEnd; ++it) {
+        if (!m_columns[col].m_param) continue;
         m_columns[col].m_param->setKeyframe(it->second);
-        double frame = it->second.m_frame;
-        TStageObject *stgObj = m_sheet->getStageObject(col);
-        if (m_columns[col].m_center != TPointD())
+        double frame         = it->second.m_frame;
+        TStageObject *stgObj = stageObjectOf(m_columns[col].m_param);
+        if (stgObj && m_columns[col].m_center != TPointD())
           stgObj->setCenterAndOffset(m_columns[col].m_center,
                                      m_columns[col].m_offset);
       }
@@ -192,10 +212,12 @@ public:
       std::map<int, TDoubleKeyframe>::const_iterator it,
           itEnd(m_columns[col].m_keyframes.cend());
       for (it = m_columns[col].m_keyframes.cbegin(); it != itEnd; ++it) {
+        if (!m_columns[col].m_param) continue;
         double frame = it->second.m_frame;
         m_columns[col].m_param->deleteKeyframe(frame);
-        TStageObject *stgObj = m_sheet->getStageObject(col);
-        if (m_columns[col].m_center != TPointD() && !stgObj->isKeyframe(frame))
+        TStageObject *stgObj = stageObjectOf(m_columns[col].m_param);
+        if (stgObj && m_columns[col].m_center != TPointD() &&
+            !stgObj->isKeyframe(frame))
           stgObj->setCenter(frame, m_columns[col].m_center, true);
       }
     }
@@ -624,9 +646,14 @@ void FunctionSelection::doPaste() {
   if (hasDrawingKeys) {
     TUndoManager::manager()->beginBlock();
     foreach (auto param, params) {
-      int c = m_sheet->getColumnIndexByCurve(param);
-      m_xsheetHandle->getXsheet()->addUndoDrawingNumberChange(
-          frame, m_sheet->getStageObject(c)->getId());
+      // getColumnIndexByCurve answers -1 for a curve that is not among the
+      // active channels, and getStageObject is null for an fx parameter --
+      // both were dereferenced here without a check.
+      int c               = m_sheet->getColumnIndexByCurve(param);
+      TStageObject *stObj = m_sheet->getStageObject(c);
+      if (!stObj) continue;
+      m_xsheetHandle->getXsheet()->addUndoDrawingNumberChange(frame,
+                                                             stObj->getId());
     }
   }
   KeyframesPasteUndo *undo = new KeyframesPasteUndo(params, data, frame);
@@ -658,8 +685,9 @@ void FunctionSelection::doCut() {
     if (curve->getName() == "W_DrawingNumber" &&
         topRow < curve->getKeyframe(0).m_frame) {
       int c = m_sheet->getColumnIndexByCurve(curve);
-      m_xsheetHandle->getXsheet()->addUndoDrawingNumberChange(
-          topRow, m_sheet->getStageObject(c)->getId());
+      if (TStageObject *stObj = m_sheet->getStageObject(c))
+        m_xsheetHandle->getXsheet()->addUndoDrawingNumberChange(topRow,
+                                                                stObj->getId());
     }
 
     for (int i = 0; i < n; i++) {
@@ -728,8 +756,9 @@ void FunctionSelection::insertCells() {
           TUndoManager::manager()->beginBlock();
         }
         int newLastFrame = param->keyframeIndexToFrame(k) + frameDelta;
-        m_xsheetHandle->getXsheet()->addUndoDrawingNumberChange(
-            newLastFrame, m_sheet->getStageObject(c)->getId());
+        if (TStageObject *stObj = m_sheet->getStageObject(c))
+          m_xsheetHandle->getXsheet()->addUndoDrawingNumberChange(
+              newLastFrame, stObj->getId());
       }
       for (; k >= 0 && param->keyframeIndexToFrame(k) >= row; --k)
         undo->addMovement(param, k, frameDelta);

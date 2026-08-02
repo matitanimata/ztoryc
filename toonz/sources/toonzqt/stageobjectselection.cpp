@@ -293,11 +293,11 @@ void StageObjectSelection::ungroupSelection() {
   QSet<int> idSet;
   int i;
   for (i = 0; i < m_selectedObjects.size(); i++) {
-    int groupId =
-        objTree->getStageObject(m_selectedObjects[i], false)->getGroupId();
-    if (groupId > 0)
-      idSet.insert(
-          objTree->getStageObject(m_selectedObjects[i], false)->getGroupId());
+    // Same "do not create" call, twice, both dereferenced unchecked.
+    TStageObject *obj = objTree->getStageObject(m_selectedObjects[i], false);
+    if (!obj) continue;
+    int groupId = obj->getGroupId();
+    if (groupId > 0) idSet.insert(groupId);
   }
 
   TUndoManager::manager()->beginBlock();

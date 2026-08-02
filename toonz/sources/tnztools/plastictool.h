@@ -818,6 +818,17 @@ void setCell(
 
 int skeletonId();  //!< Returns current skeleton id.
 double sdFrame();  //!< Returns current stage object's <I>parameters time</I>
+
+// Null-safe wrappers over the current stage object. stageObject() returns 0
+// whenever no COLUMN is current -- the camera column (column() == -1), and
+// transiently while the xsheet is swapped under the tool -- and every one of
+// these was being called on it without a check. Three separate crashes have
+// come out of that, so the guard lives here once instead of at each call.
+double sdFrame(double frame);      //!< paramsTime(frame), or frame itself.
+void invalidateStageObject();      //!< invalidate() the placement cache.
+void updateStageObjectKeyframes(); //!< rebuild the keyframes table.
+PlasticSkeletonDeformationP currentDeformation();  //!< or an empty pointer.
+void setCurrentDeformation(const PlasticSkeletonDeformationP &sd);
 //!  (ie the frame value to be used with function editor curves,
 //!  which takes cyclicity into consideration).
 

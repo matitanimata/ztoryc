@@ -2046,12 +2046,14 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
     int frameId         = -1;
     if (hasDrawingKeys) {
       TUndoManager::manager()->beginBlock();
-      int col      = m_sheet->getColumnIndexByCurve(curve);
-      int xcol     = m_sheet->getStageObject(col)->getId().getIndex();
-      TXsheet *xsh = m_xsheetHandle->getXsheet();
-      xsh->addUndoDrawingNumberChange(tround(frame),
-                                      m_sheet->getStageObject(col)->getId());
-      TXshCell cell = xsh->getCell(tround(frame), xcol);
+      int col             = m_sheet->getColumnIndexByCurve(curve);
+      TStageObject *stObj = m_sheet->getStageObject(col);
+      int xcol            = stObj ? stObj->getId().getIndex() : -1;
+      TXsheet *xsh        = m_xsheetHandle->getXsheet();
+      if (stObj)
+        xsh->addUndoDrawingNumberChange(tround(frame), stObj->getId());
+      TXshCell cell =
+          (xcol < 0) ? TXshCell() : xsh->getCell(tround(frame), xcol);
       frameId       = cell.getFrameId().getNumber();
     }
     KeyframeSetter setter(curve, m_xsheetHandle);

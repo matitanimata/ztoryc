@@ -183,8 +183,10 @@ public:
       TDoubleParam *curve    = setter->getCurve();
 
       if (curve->getName() == "W_DrawingNumber") {
-        int c    = m_sheet->getColumnIndexByCurve(curve);
-        int xcol = m_sheet->getStageObject(c)->getId().getIndex();
+        int c               = m_sheet->getColumnIndexByCurve(curve);
+        TStageObject *stObj = m_sheet->getStageObject(c);
+        if (!stObj) continue;
+        int xcol = stObj->getId().getIndex();
 
         int kCount = curve->getKeyframeCount();
         for (int j = 0; j < kCount; j++) {
@@ -942,10 +944,12 @@ void FunctionSheetCellViewer::drawCells(QPainter &painter, int r0, int c0,
           painter.fillRect(cellRect, cellColor);
         }
         if (curve->getName() == "W_DrawingNumber") {
-          TXsheet *xsh  = m_sheet->getViewer()->getXsheetHandle()->getXsheet();
-          int col       = m_sheet->getColumnIndexByCurve(curve);
-          int xcol      = m_sheet->getStageObject(col)->getId().getIndex();
-          TXshCell cell = xsh->getCell(row, xcol, true, true);
+          TXsheet *xsh = m_sheet->getViewer()->getXsheetHandle()->getXsheet();
+          int col             = m_sheet->getColumnIndexByCurve(curve);
+          TStageObject *stObj = m_sheet->getStageObject(col);
+          int xcol            = stObj ? stObj->getId().getIndex() : -1;
+          TXshCell cell =
+              (xcol < 0) ? TXshCell() : xsh->getCell(row, xcol, true, true);
           if (!cell.isEmpty() && !cell.getFrameId().isStopFrame() &&
               !cell.getFrameId().isNoFrame()) {
             drawXsheetFrameId = true;
@@ -1081,8 +1085,9 @@ void FunctionSheetCellViewer::onCellEditorEditingFinished() {
     if (curve && (curve->getName() != "W_DrawingNumber" || value >= 0)) {
       if (curve->getName() == "W_DrawingNumber") {
         TUndoManager::manager()->beginBlock();
-        m_sheet->getXsheetHandle()->getXsheet()->addUndoDrawingNumberChange(
-            m_editRow, m_sheet->getStageObject(m_editCol)->getId());
+        if (TStageObject *stObj = m_sheet->getStageObject(m_editCol))
+          m_sheet->getXsheetHandle()->getXsheet()->addUndoDrawingNumberChange(
+              m_editRow, stObj->getId());
       }
       TMeasure *measure = curve->getMeasure();
       const TUnit *unit = measure ? measure->getCurrentUnit() : 0;
@@ -1285,12 +1290,12 @@ void FunctionSheetCellViewer::openContextMenu(QMouseEvent *e) {
     int frameId        = -1;
     if (hasDrawingKeys) {
       TUndoManager::manager()->beginBlock();
-      int col = m_sheet->getColumnIndexByCurve(curve);
-      int xcol = m_sheet->getStageObject(col)->getId().getIndex();
+      int col             = m_sheet->getColumnIndexByCurve(curve);
+      TStageObject *stObj = m_sheet->getStageObject(col);
+      int xcol            = stObj ? stObj->getId().getIndex() : -1;
       TXsheet *xsh = m_sheet->getViewer()->getXsheetHandle()->getXsheet();
-      xsh->addUndoDrawingNumberChange(row,
-                                      m_sheet->getStageObject(col)->getId());
-      TXshCell cell = xsh->getCell(row, xcol);
+      if (stObj) xsh->addUndoDrawingNumberChange(row, stObj->getId());
+      TXshCell cell = (xcol < 0) ? TXshCell() : xsh->getCell(row, xcol);
       frameId       = cell.getFrameId().getNumber();
     }
     KeyframeSetter setter(curve);

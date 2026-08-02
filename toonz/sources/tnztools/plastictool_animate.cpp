@@ -2494,7 +2494,7 @@ std::vector<int> PlasticTool::pinnedVerticesAtFrame(double frame) const {
   // Pins are keyed in the column's param domain (see togglePinAtCurrentFrame),
   // so read them there. paramsTime is idempotent: callers may pass either the
   // raw xsheet frame or an already-converted one.
-  frame = ::stageObject()->paramsTime(frame);
+  frame = ::sdFrame(frame);
   // Pins off (IK mode off): no diamonds drawn, no pin-aware manipulation. The
   // KEYS stay untouched, so turning IK back on restores them exactly; the
   // evaluation stops planting them too, and the pose stays where it is because
@@ -2936,7 +2936,7 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
     if (doFullPlastic)
       ::setKeyframe(m_sd, ::frame());  // Already invokes keyframes rebuild
     else
-      stageObject()->updateKeyframes();  // Otherwise, must be explicit
+      ::updateStageObjectKeyframes();  // Otherwise, must be explicit
 
     // Add a corresponding undo
     AnimateValuesUndo *undo = new AnimateValuesUndo(m_svSel);
@@ -3418,7 +3418,7 @@ PlasticTool::crossColumns_animate(double frame) {
     // Param-time, like the connected columns below get: paramFrame is used to
     // READ and WRITE SkVD params, and those live in the column's own param
     // domain (identity, except past the last stage key with Cycle on).
-    cc.paramFrame  = ::stageObject()->paramsTime(frame);
+    cc.paramFrame  = ::sdFrame(frame);
     if (PlasticSkeletonP rs = skeleton()) cc.rest = *rs;
     cc.deformed = deformedSkeleton();
     cc.world    = getMatrix();

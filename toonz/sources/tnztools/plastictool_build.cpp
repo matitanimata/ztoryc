@@ -470,8 +470,7 @@ public:
     l_plasticTool.setSkeletonSelection(m_vIdxs);
     l_plasticTool.moveVertex_build(m_origVxsPos, m_posShift);
 
-    ::stageObject()
-        ->invalidate();  // Should be a TStageObject's implementation detail ...
+    ::invalidateStageObject();  // a TStageObject implementation detail ...
     l_plasticTool.invalidate();
   }
 
@@ -481,8 +480,7 @@ public:
     l_plasticTool.setSkeletonSelection(m_vIdxs);
     l_plasticTool.moveVertex_build(m_origVxsPos, TPointD());
 
-    ::stageObject()
-        ->invalidate();  // Should be a TStageObject's implementation detail ...
+    ::invalidateStageObject();  // a TStageObject implementation detail ...
     l_plasticTool.invalidate();
   }
 
@@ -642,8 +640,7 @@ void PlasticTool::leftButtonUp_build(const TPointD &pos,
 
     m_dragged = false;  // Turn this off now so toolbar updates
 
-    ::stageObject()
-        ->invalidate();  // Should be a TStageObject's implementation detail ...
+    ::invalidateStageObject();  // a TStageObject implementation detail ...
     invalidate();        // .. it's that it caches placement data and we must
   }                      // invalidate it. Gross. Can't we do anything about it?
 }
@@ -774,7 +771,7 @@ void PlasticTool::removeVertex() {
       ->notifyXsheetChanged();  // NOTE: This COULD invoke invalidate()...
 
   // Rebuild the stage object's keyframes table
-  stageObject()->updateKeyframes();
+  ::updateStageObjectKeyframes();
 }
 
 //------------------------------------------------------------------------
@@ -822,11 +819,10 @@ void PlasticTool::removeSkeleton(int skelId) {
   if (m_sd) {
     // in order to solve the crash issue #1967, try releasing deformer data here
     PlasticDeformerStorage::instance()->releaseSkeletonData(
-        stageObject()->getPlasticSkeletonDeformation().getPointer(), skelId);
+        ::currentDeformation().getPointer(), skelId);
     m_sd->detach(skelId);
     if (m_sd->empty())
-      stageObject()->setPlasticSkeletonDeformation(
-          PlasticSkeletonDeformationP());
+      ::setCurrentDeformation(PlasticSkeletonDeformationP());
 
     ::invalidateXsheet();  // Updates m_sd
     emit skelIdsListChanged();

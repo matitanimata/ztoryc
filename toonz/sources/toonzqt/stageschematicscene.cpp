@@ -1065,8 +1065,11 @@ void StageSchematicScene::onLoadSpline() {
     TStageObjectId id = m_objHandle->getObjectId();
     TXsheet *xsh      = m_xshHandle->getXsheet();
 
-    TStageObjectSpline *spline =
-        xsh->getStageObjectTree()->getStageObject(id, false)->getSpline();
+    // getStageObject(id, false) means "do not create": null is its documented
+    // answer for an object that is not there, and it was dereferenced anyway.
+    TStageObject *obj = xsh->getStageObjectTree()->getStageObject(id, false);
+    if (!obj) return;
+    TStageObjectSpline *spline = obj->getSpline();
     if (!spline) return;
 
     TIStream is(fp);

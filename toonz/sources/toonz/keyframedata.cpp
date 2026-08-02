@@ -122,8 +122,17 @@ bool TKeyframeData::getKeyframes(std::set<Position> &positions,
       continue;
     TStageObject *pegbar = xsh->getStageObject(col >= 0 ? xsh->getColumnObjectId(col) : cameraId);
     if (xsh->getColumn(col) && xsh->getColumn(col)->isLocked()) continue;
-    keyFrameChanged = true;
+
+    // A real guard, not an assert: asserts are compiled out of the release
+    // build, so a null pegbar went straight into getKeyframeRange() below.
+    // It CAN be null -- the id above falls back to the camera when col is
+    // negative, and CameraId(-1) on an xsheet with no camera column is an
+    // invalid id that the stage object tree refuses to create (deliberately:
+    // creating it is how the "BadPegbar" zombies got written into scenes).
     assert(pegbar);
+    if (!pegbar) continue;
+
+    keyFrameChanged = true;
 
     int kF, kL, kP, kN;
     double e0, e1;
