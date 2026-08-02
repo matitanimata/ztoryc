@@ -1,3 +1,56 @@
+## [2026-08-03] — Giro sistematico sui crash: 19 dereferenziamenti non guardati
+
+Rilettura dei crash log utente del 28-31 luglio, e poi il giro su **tutti** i
+chiamanti invece di aspettare che si presentassero uno alla volta. Commit
+`6bbc75d25`, 19 siti corretti su 27 esaminati, 10 file.
+
+### Fixed — dai crash log
+- **`KeyframesDeleteUndo`** (SIGSEGV, 30 lug, **due volte in 20 minuti** sulla
+  stessa scena): `doDelete()` **compatta** il vettore delle colonne saltando
+  quelle inutilizzabili, e quell'indice veniva poi passato a
+  `FunctionSheet::getStageObject()`, che si aspetta un indice di colonna del
+  foglio. Nel caso buono leggeva l'oggetto sbagliato; oltre il limite tornava
+  null, dereferenziato. In **tre punti** — costruttore, `undo()`, `redo()` —
+  piu' un `release()` su un `m_param` che il costruttore poteva aver lasciato
+  null. Ora lo stage object si risolve **dalla curva** e al momento in cui
+  serve, cosi' sopravvive alla colonna eliminata mentre l'undo e' nello stack.
+- **`TKeyframeData::setKeyframes`** (SIGSEGV, 29 lug, incollando keyframe):
+  `assert(pegbar)` seguito dal dereferenziamento, e **in release l'assert non
+  esiste**. Puo' essere null davvero: con `col` negativo l'id ripiega sulla
+  camera, e `CameraId(-1)` su un xsheet senza colonna camera e' invalido.
+
+### Fixed — il giro
+- **Plastic tool, 15 siti su 23.** Invece di quindici guardie sparse, cinque
+  wrapper null-safe accanto a `sdFrame()`, dove la guardia gia' viveva.
+  Fra i corretti, `PasteDeformationUndo` chiamava `stageObject()` nel
+  costruttore **e** in `undo()`/`redo()`: bastava cancellare la colonna e
+  premere Ctrl+Z.
+- **Function Editor, 10 siti.** Tutti sul percorso `W_DrawingNumber`, dove una
+  colonna sembra scontata: non lo e', perche' `getColumnIndexByCurve` risponde
+  **-1** per una curva che non e' fra i canali attivi.
+- **Schematic, 2 siti.** `getStageObject(id, false)` — l'argomento significa
+  *"non creare, torna null se non c'e'"* — dereferenziato lo stesso.
+
+### Notes — il filo comune, da ricordare
+Quando a luglio abbiamo insegnato all'albero degli stage object a **rifiutare**
+gli id invalidi invece di creare zombie `BadPegbar`, ogni chiamante che non
+controllava e' passato da corruzione silenziosa a **crash immediato**. Era il
+prezzo giusto — ma andava pagato **subito su tutti i chiamanti**, non uno per
+crash. Tre crash in tre settimane erano lo stesso difetto visto da tre lati.
+
+Upstream ha ancora il comportamento vecchio: li' questi siti producono
+**zombie invece di crash**. E' l'argomento per la PR — non «ci crasha», ma
+«vi sta scrivendo oggetti spazzatura nelle scene, in silenzio».
+
+### Notes — crash ancora aperti
+- **Gomma sul vettoriale** (29 lug 10:42, `TVectorImage::Imp::computeRegions`
+  durante `EraserTool::erase`). Non toccato di proposito: su quel codice i
+  rattoppi locali sono gia' falliti cinque volte. Serve la repro.
+- **Render con TimeShuffleFx** (29 lug 11:33, `doGetBBox`). Serve sapere se in
+  `sh100` c'e' un Time Shuffle e com'e' cablato.
+- Il crash Windows di **Pietro** (31 lug, Plastic tool) era **gia' corretto** in
+  v0.11.0 (`ccdd2ca89`, 25 lug): la sua 0.10.1 e' di tre giorni prima del fix.
+
 ## [2026-08-02b] — Il Function Editor sapeva gia' quasi tutto: mancava accenderlo
 
 Sessione intera sul Function Editor, piu' due bug fix nel core. Tutto su
