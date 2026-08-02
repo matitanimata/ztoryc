@@ -7,6 +7,7 @@
 #include "toonzqt/functionsegmentviewer.h"
 #include "toonzqt/imageutils.h"
 #include "functionpaneltools.h"
+#include "toonz/tstageobject.h"
 #include "toonzqt/gutil.h"
 #include "toonzqt/functionsheet.h"
 
@@ -427,14 +428,32 @@ QVector<qreal> FunctionPanel::columnDashPattern(
     FunctionTreeModel::Channel *channel) const {
   if (!channel || !m_functionTreeModel) return QVector<qreal>();
 
-  FunctionTreeModel::ChannelGroup *group = channel->getChannelGroup();
-  TreeModel::Item *column = FunctionTreeModel::columnScopeOf(group);
+  TreeModel::Item *column =
+      FunctionTreeModel::columnScopeOf(channel->getChannelGroup());
   if (!column) return QVector<qreal>();
 
-  // Which column this is among those currently drawn -- not its position in
-  // the tree. Show two columns and they get the first two patterns, whichever
-  // columns they happen to be, so the distinction is always the clearest
-  // available instead of depending on where they sit in the scene.
+  // The CURRENT column is drawn solid throughout. Seeing at a glance which
+  // curves belong to the column being worked on matters more than telling the
+  // other columns apart from one another -- and it makes the rule sayable
+  // without an exception: colour is the channel, dash is a column that is not
+  // the current one, weight is the current curve.
+  // The stage object comes FIRST, because it is the one that follows the
+  // xsheet: picking a column there is how you say which column you are working
+  // on. The current channel only moves when a curve is clicked in the tree or
+  // the graph, so reading it alone left the column just picked dashed.
+  TreeModel::Item *currentColumn = 0;
+  if (TStageObject *currentObject = m_functionTreeModel->getCurrentStageObject())
+    currentColumn = m_functionTreeModel->getStageObjectChannelGroup(currentObject);
+  if (!currentColumn)
+    if (FunctionTreeModel::Channel *current =
+            m_functionTreeModel->getCurrentChannel())
+      currentColumn =
+          FunctionTreeModel::columnScopeOf(current->getChannelGroup());
+  if (currentColumn && column == currentColumn) return QVector<qreal>();
+
+  // Position among the OTHER columns currently drawn, so that with two of them
+  // on screen they take the two most distinct patterns whichever columns they
+  // are. Solid is not among the choices: it belongs to the current column.
   int index = 0;
   for (int c = 0; c < m_functionTreeModel->getActiveChannelCount(); c++) {
     FunctionTreeModel::Channel *other = m_functionTreeModel->getActiveChannel(c);
@@ -442,10 +461,12 @@ QVector<qreal> FunctionPanel::columnDashPattern(
     TreeModel::Item *otherColumn =
         FunctionTreeModel::columnScopeOf(other->getChannelGroup());
     if (!otherColumn || otherColumn == column) break;
-    // count each distinct column once, in drawing order
+    if (otherColumn == currentColumn) continue;  // takes no pattern
+
     bool alreadySeen = false;
     for (int p = 0; p < c; p++) {
-      FunctionTreeModel::Channel *prev = m_functionTreeModel->getActiveChannel(p);
+      FunctionTreeModel::Channel *prev =
+          m_functionTreeModel->getActiveChannel(p);
       if (prev && FunctionTreeModel::columnScopeOf(prev->getChannelGroup()) ==
                       otherColumn) {
         alreadySeen = true;
@@ -456,11 +477,10 @@ QVector<qreal> FunctionPanel::columnDashPattern(
   }
 
   static const QVector<qreal> patterns[] = {
-      QVector<qreal>(),                          // solid
-      QVector<qreal>() << 6 << 3,                // dashed
-      QVector<qreal>() << 1 << 3,                // dotted
-      QVector<qreal>() << 6 << 3 << 1 << 3,      // dash-dot
-      QVector<qreal>() << 6 << 3 << 1 << 3 << 1 << 3};  // dash-dot-dot
+      QVector<qreal>() << 6 << 3,                        // dashed
+      QVector<qreal>() << 1 << 3,                        // dotted
+      QVector<qreal>() << 6 << 3 << 1 << 3,              // dash-dot
+      QVector<qreal>() << 6 << 3 << 1 << 3 << 1 << 3};   // dash-dot-dot
   const int patternCount = (int)(sizeof(patterns) / sizeof(patterns[0]));
   return patterns[index % patternCount];
 }
@@ -1014,6 +1034,13 @@ void FunctionPanel::drawCurrentCurve(QPainter &painter) {
   dashedPen.setDashPattern(dashes);
   painter.setBrush(Qt::NoBrush);
 
+  // The current curve carries its COLUMN's pattern like any other. Drawing it
+  // solid whatever column it belonged to broke the rule exactly where it is
+  // read most: with a curve of column 2 current and column 3 picked in the
+  // xsheet, two different columns appeared solid at once. Weight still marks
+  // it as the current one -- that is what weight is for.
+  const QVector<qreal> columnDashes = columnDashPattern(channel);
+
   int x0 = m_valueAxisX;
   int x1 = width();
 
@@ -1045,6 +1072,10 @@ void FunctionPanel::drawCurrentCurve(QPainter &painter) {
         else
           solidPen.setWidth(2);
         solidPen.setColor(color);
+        if (columnDashes.isEmpty())
+          solidPen.setStyle(Qt::SolidLine);
+        else
+          solidPen.setDashPattern(columnDashes);
         painter.setPen(solidPen);
         painter.drawPath(getSegmentPainterPath(curve, k, x0, x1));
       }
@@ -1420,6 +1451,17 @@ void FunctionPanel::mousePressEvent(QMouseEvent *e) {
     if (currentCurve) {
       int kIndex =
           closestGadgetId >= 0 ? m_gadgets[closestGadgetId].m_kIndex : -1;
+
+      // The click landed on the curve that is ALREADY the current one. That
+      // makes the branch above skip itself -- its condition is "the current
+      // curve is far away" -- and with it the line that brings the channel's
+      // column forward. So ask for it here: the current column may have moved
+      // on in the meantime (picking another column in the xsheet does exactly
+      // that), and clicking the curve is how one says "back to mine".
+      // setIsCurrent is a no-op when there is nothing left to change.
+      if (kIndex >= 0 || getCurveDistance(currentCurve, winPos) <= maxDistance)
+        currentChannel->setIsCurrent(true);
+
       if (kIndex >= 0) {
         // keyframe clicked
         if (handle == FunctionPanel::Point) {
@@ -1555,7 +1597,11 @@ int kIndex = dragTool->createKeyframe(frame);
             m_dragTool = new RectSelectTool(this, currentCurve);
           }
         } else {
-          // nothing clicked: start a rectangular selection
+          // nothing clicked: drop the current curve and start a rectangular
+          // selection. Without this there is always one curve drawn as
+          // current, with its handles out, even after clicking away from
+          // everything -- and no gesture to say "none".
+          currentChannel->setIsCurrent(false);
           getSelection()->deselectAllKeyframes();
           m_dragTool = new RectSelectTool(this, currentCurve);
         }

@@ -831,9 +831,14 @@ bool FunctionTreeModel::Channel::isCurrent() const {
 void FunctionTreeModel::Channel::setIsCurrent(bool current) {
   Channel *oldCurrent = m_model->m_currentChannel;
   if (current) {
-    // this channel must become the current
-    if (oldCurrent == this) return;  // already it is: nothing to do
-    m_model->m_currentChannel = this;
+    // Point the fx / object handle at this channel's group. BEFORE the early
+    // return below, and deliberately: this channel can already be the current
+    // one while the current COLUMN has moved on -- picking another column in
+    // the xsheet does exactly that. Clicking the curve again is how you bring
+    // its column back, and with the sync below the return it never happened:
+    // the curve stayed thick but dashed, its column never coming forward.
+    // Both handles ignore a set to the value they already hold, so this costs
+    // nothing when there is nothing to change.
 
     // change the current fx if the FxChannelGroup is clicked
     FxChannelGroup *fxGroup = dynamic_cast<FxChannelGroup *>(m_group);
@@ -849,6 +854,10 @@ void FunctionTreeModel::Channel::setIsCurrent(bool current) {
             stageObjectGroup->getStageObject()->getId());
       }
     }
+
+    // this channel must become the current
+    if (oldCurrent == this) return;  // already it is: nothing else to do
+    m_model->m_currentChannel = this;
 
     // the current channel must be active
     if (!m_isActive) {
@@ -868,6 +877,9 @@ void FunctionTreeModel::Channel::setIsCurrent(bool current) {
     m_model->m_currentChannel = 0;
     // refresh the channel
     m_model->emitDataChanged(this);
+    // ...and say so, or the toolbar and the segment editor keep showing a
+    // curve that is no longer current. setIsActive already pairs these two.
+    m_model->emitCurveSelected(0);
   }
 }
 

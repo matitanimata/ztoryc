@@ -201,9 +201,10 @@ public:
   FunctionTreeModel::Channel *findChannelWithKeyframeAt(const QPoint &winPos,
                                                         int maxWinDistance);
 
-  //! Dash pattern identifying the column \p channel belongs to, empty for the
-  //! first column drawn (which stays a solid line). Colour tells channels
-  //! apart, the pattern tells columns apart.
+  //! Dash pattern for the column \p channel belongs to; empty -- a solid line
+  //! -- for the CURRENT column, whose curves are all drawn solid so they read
+  //! as one group. Colour tells channels apart, the dash tells the other
+  //! columns apart, weight marks the current curve.
   QVector<qreal> columnDashPattern(FunctionTreeModel::Channel *channel) const;
 
   // creates a QPainterPath representing a curve segment, limited in [x0,x1]

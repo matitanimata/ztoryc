@@ -13,6 +13,7 @@
 
 // TnzQt includes
 #include "toonzqt/treemodel.h"
+#include "toonzqt/functiontreeviewer.h"
 
 // Qt includes
 #include <QSplitter>
@@ -158,6 +159,10 @@ public slots:
   void onCurveSelected(TDoubleParam *);
   void onSelectionChanged();
   void onPreferenceChanged(const QString &);
+
+  //! The current curve changed (clicked in the graph, or in the tree): reveal
+  //! it in the tree -- open its column, select the row, scroll to it.
+  void onCurrentChannelChanged(FunctionTreeModel::Channel *channel);
 
   void doSwitchCurrentObject(TStageObject *obj);
   void doSwitchCurrentFx(TFx *fx);

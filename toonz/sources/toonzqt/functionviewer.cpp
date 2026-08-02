@@ -48,6 +48,7 @@
 #include <QLineEdit>
 #include <QCheckBox>
 #include <QShortcut>
+#include <QItemSelectionModel>
 #include <QToolBar>
 #include <QAction>
 
@@ -255,6 +256,12 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
 
   ret = ret && connect(m_functionGraph, SIGNAL(hintChanged(const QString &)),
                        this, SIGNAL(hintChanged(const QString &)));
+
+  ret = ret &&
+        connect(ftModel,
+                SIGNAL(currentChannelChanged(FunctionTreeModel::Channel *)),
+                this,
+                SLOT(onCurrentChannelChanged(FunctionTreeModel::Channel *)));
 
   ret = ret && connect(m_animatedOnlyBox, SIGNAL(toggled(bool)), this,
                        SLOT(onAnimatedOnlyToggled(bool)));
@@ -558,6 +565,26 @@ void FunctionViewer::onAnimatedOnlyToggled(bool on) {
 
 //-----------------------------------------------------------------------------
 
+void FunctionViewer::onCurrentChannelChanged(
+    FunctionTreeModel::Channel *channel) {
+  if (!channel || !isVisible()) return;
+
+  // Clicking a curve in the graph has to show WHICH one it is. The comment in
+  // Channel::setIsCurrent already said "scroll to ensure visible", and the
+  // spreadsheet was told; the tree never was.
+  m_treeView->scrollToItem(channel);
+
+  if (!m_treeView->selectionModel()) return;
+  const QModelIndex index = channel->createIndex();
+  if (!index.isValid()) return;
+  m_treeView->selectionModel()->select(
+      index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+  m_treeView->selectionModel()->setCurrentIndex(index,
+                                                QItemSelectionModel::NoUpdate);
+}
+
+//-----------------------------------------------------------------------------
+
 void FunctionViewer::onSearchFilterChanged(const QString &text) {
   FunctionTreeModel *model =
       static_cast<FunctionTreeModel *>(m_treeView->model());
@@ -681,6 +708,21 @@ void FunctionViewer::onStageObjectSwitched() {
   if (obj && isVisible()) {
     FunctionTreeModel::ChannelGroup *group =
         model->getStageObjectChannelGroup(obj);
+    // Selected in the tree as well: picking a column in the xsheet has to make
+    // it the column the Function Editor is working on, which means the
+    // visibility and interpolation commands find it already picked instead of
+    // acting on whatever was highlighted before.
+    if (group && m_treeView->selectionModel()) {
+      const QModelIndex index = group->createIndex();
+      if (index.isValid()) {
+        m_treeView->selectionModel()->select(
+            index,
+            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        m_treeView->selectionModel()->setCurrentIndex(
+            index, QItemSelectionModel::NoUpdate);
+      }
+    }
+
     if (m_treeView->isOpenSelectedColumnOnly()) {
       m_treeView->collapseSiblingsOf(group);
       // Opening the column also brings it on screen: a folder that opens onto
