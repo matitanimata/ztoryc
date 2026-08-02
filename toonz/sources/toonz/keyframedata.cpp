@@ -158,8 +158,16 @@ bool TKeyframeData::getKeyframes(std::set<Position> &positions,
         TStageObject::Keyframe prevKey = pegbar->getKeyframe(kP);
         for (int i = 0; i < TStageObject::T_ChannelCount; i++) {
           if (newKey.m_channels[i].m_isKeyframe &&
-              prevKey.m_channels[i].m_isKeyframe)
+              prevKey.m_channels[i].m_isKeyframe) {
             newKey.m_channels[i].m_prevType = prevKey.m_channels[i].m_type;
+            // ...and the segment AFTER the pasted key takes the type of the
+            // segment it was dropped into, the same rule KeyframeSetter uses
+            // when a key is inserted in a span. Without this the key kept the
+            // type it had in the clipboard -- and a key copied from the END of
+            // a curve carries the Linear placeholder that stands in for "no
+            // segment here", which then became a real Linear segment.
+            newKey.m_channels[i].m_type = prevKey.m_channels[i].m_type;
+          }
         }
         pegbar->setKeyframeWithoutUndo(row, newKey);
       }

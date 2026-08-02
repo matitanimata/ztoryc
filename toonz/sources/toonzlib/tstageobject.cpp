@@ -1164,7 +1164,31 @@ void TStageObject::removeKeyframeWithoutUndo(int frame) {
 bool TStageObject::moveKeyframe(int dst, int src) {
   assert(dst != src);
   if (isKeyframe(dst) || !isKeyframe(src)) return false;
-  setKeyframeWithoutUndo(dst, getKeyframe(src));
+
+  Keyframe k = getKeyframe(src);
+
+  // The type of a keyframe describes the segment that FOLLOWS it, so the last
+  // keyframe of a curve has no real type: TDoubleParam parks a Linear there as
+  // a placeholder (see setKeyframe / deleteKeyframe / loadData). Moving that
+  // keyframe anywhere earlier hands the placeholder a segment to govern, and
+  // an ease the animator never asked for turns into a straight line -- with
+  // the Default Interpolation preference silently overruled.
+  //
+  // Only those channels are touched: a keyframe that was NOT last carries a
+  // type its author chose, and it travels with it unchanged.
+  for (int i = 0; i < T_ChannelCount; ++i) {
+    if (!k.m_channels[i].m_isKeyframe) continue;
+    TDoubleParam *param = getParam((Channel)i);
+    if (!param) continue;
+    const int count = param->getKeyframeCount();
+    if (count <= 0) continue;
+    if (param->getKeyframe(count - 1).m_frame != (double)src) continue;
+
+    k.m_channels[i].m_type =
+        TDoubleKeyframe::Type(Preferences::instance()->getKeyframeType());
+  }
+
+  setKeyframeWithoutUndo(dst, k);
   removeKeyframeWithoutUndo(src);
   assert(isKeyframe(dst));
   assert(!isKeyframe(src));
