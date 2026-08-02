@@ -1609,6 +1609,16 @@ int kIndex = dragTool->createKeyframe(frame);
     }
   }
 
+  // Everything above hangs off there being a CURRENT channel, and there need
+  // not be one: a band dragged in empty space clears it, which is how one says
+  // "select nothing". Without this, the click after that did nothing at all --
+  // no deselect, and no new band either, so the only way back was to pick a
+  // curve first. Self-perpetuating, since the empty click is what cleared it.
+  if (!m_dragTool && !currentChannel) {
+    getSelection()->deselectAllKeyframes();
+    m_dragTool = new RectSelectTool(this, 0);
+  }
+
   if (m_dragTool) m_dragTool->click(e);
   update();
 }
@@ -1900,16 +1910,20 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
 
   TDoubleParam *curve = getCurrentCurve();
   int segmentIndex    = -1;
-  if (!curve) return;
   TDoubleKeyframe kf;
   double frame = xToFrame(e->pos().x());
 
+  // Which curve this menu is about is decided BEFORE giving up for the want of
+  // a current one. There need not be a current curve at all: a band dragged in
+  // empty space clears it (that is how one says "select nothing"), and the
+  // menu bailing out here is why right-clicking a set of segments picked that
+  // way opened nothing.
+  //
   // Prefer the curve whose SELECTED segment lies under the cursor. This menu
   // has always worked on the current curve, which was fine while only one
   // segment could be picked; with several picked across curves that overlap,
   // right-clicking one of them would open the menu for whichever curve
-  // happened to be current and act on the wrong line. Only overrides when a
-  // picked segment really is under the cursor -- otherwise nothing changes.
+  // happened to be current and act on the wrong line.
   if (m_functionTreeModel && getSelection()->getSelectedSegmentCount() > 0) {
     const int maxDistance = 20;
     int bestDistance      = maxDistance + 1;
@@ -1928,6 +1942,14 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
       }
     }
   }
+
+  // Still nothing: fall back to whichever drawn curve runs nearest the cursor,
+  // so the menu opens on what was pointed at rather than not at all.
+  if (!curve) {
+    if (FunctionTreeModel::Channel *channel = findClosestChannel(e->pos(), 20))
+      curve = channel->getParam();
+  }
+  if (!curve) return;
 
   // build menu
   QMenu menu(0);
