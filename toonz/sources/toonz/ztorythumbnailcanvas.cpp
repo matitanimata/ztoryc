@@ -590,11 +590,25 @@ QString ZtoryThumbnailCanvas::sceneKey() const {
 TFilePath ZtoryThumbnailCanvas::persistDir() const {
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   if (!scene) return TFilePath();
-  // Reuse the export-to-board folder resolution so canvas + exported shots live
-  // together: decode a dummy OVL level path and take its parent directory.
-  return scene
-      ->decodeFilePath(scene->getDefaultLevelPath(OVL_XSHLEVEL, L"_ztorythumbs"))
-      .getParentDir();
+
+  // PER-SCENE, in extras. This used to resolve to the level folder so the canvas
+  // would sit next to the shots exported to the board — but that folder belongs
+  // to the PROJECT, and the file name carries only the grid size, so every scene
+  // in a project read and wrote the same canvas: opening a fresh scene showed
+  // the previous one's thumbnails, merged panorama frames included.
+  //
+  // Same resolution the screenplay import uses (ztoryscriptpanel.cpp), which
+  // mirrors ToonzScene::getDefaultLevelPath: +extras + getSavePath() + subdir.
+  // It honours <folder name="extras" useScenePath="yes"/> instead of guessing.
+  const TFilePath savePath = scene->getSavePath();
+  // Ztoryc does not let you work in an unsaved scene, precisely to avoid this
+  // family of problems, so this should never be empty. Kept as a guard for the
+  // instant during scene creation when the path is not set yet: writing then
+  // would land in a shared folder, which is the bug this fixes.
+  if (savePath.isEmpty()) return TFilePath();
+
+  return scene->decodeFilePath(TFilePath("+extras")) + savePath +
+         TFilePath("thumbs");
 }
 
 void ZtoryThumbnailCanvas::schedulePersistSave() {
