@@ -355,6 +355,71 @@ nella sub-scene corretta.
 
 ---
 
+## Aperti al 2026-08-02 (travasati dalla lista di sessione)
+
+> Diagnosi raccolte nelle sessioni del 27/7 e del 2/8. Scritte qui perche' la
+> lista di lavoro vive nella sessione e sparisce con la chat.
+
+**ZtoRig / IK**
+
+- ⬜ **Il personaggio «parte» manipolando le anche — solo su animazioni VECCHIE.**
+  Su chiavi fresche non succede (Franco, 2/8). Sposta il sospetto dal solver al
+  DATO GIA' IN SCENA: bersagli dei pin catturati con regole diverse, o chiavi
+  scritte quando il write-back aveva un'altra semantica. **Primo test**: stessa
+  scena vecchia su 0.11.0 contro branch — se il sintomo c'e' su entrambe, la
+  ri-cattura dei pin (`fbafaeee5`) e' innocente. Misurato in precedenza su scene
+  nuove: non e' la bisezione (`accepted` medio 0.995) ne' i limiti d'angolo;
+  l'amplificazione sta fra bersaglio e posa risolta, firma di piu' bacini di
+  convergenza dentro `solveMultiAnchor`.
+- ⬜ **Pin legati allo scheletro.** I parametri PIN sono condivisi per nome fra
+  gli scheletri della colonna. Serve un campo esplicito in `SkVD` (come
+  `m_skelIds` per le pose), con «pin vecchi = ovunque». Tentativo di dedurre lo
+  scheletro dal frame di attivazione: ritirato, sbagliato.
+- ⬜ **Il personaggio scivola registrando pose con i PIN.** Da indagare, zona
+  dell'autorita' del planting. Diagnostica: `ZTORYC_PIN_DIAG`.
+- ⬜ **Residuo multi-pin ~1.5%.** La bisezione del drag giudica con
+  `solveMultiAnchor`, ma l'ultima parola ce l'ha il solve di personaggio in
+  `TStageObject`. Esporre anche quello come query, come `plantPins()` /
+  `pinResidualForPose()` per la singola colonna.
+- ⬜ **Chiudere un loop di camminata.** `SkVD::POSE_PARAMS`
+  (`plasticskeletondeformation.cpp:111`) mescola FORMA (ANGLE, DISTANCE, SO) e
+  PIAZZAMENTO (ROOTX/Y, TRANS, ROT, SCALE, PIVOT, SHEAR): copiare «la posa»
+  riporta indietro il personaggio. Con i pin il piazzamento non va copiato
+  affatto — il pin porta la posizione, gli angoli la forma. **Da provare prima**:
+  la modalita' `Part` richiama «solo i parametri registrati»; se Record cattura
+  solo cio' che e' cambiato dal riposo, potrebbe bastare. Altrimenti serve un
+  comando che copi ANGLE/DISTANCE/SO fra due frame lasciando il piazzamento.
+- ⬜ **Template di scheletri riusabili + registrazione di animazioni.**
+  **DA CONFERMARE**: ricostruito a memoria, non era scritto da nessuna parte.
+  Aperto: cosa contiene il template (topologia? limiti? rigidity? SO?); le
+  correttive NON sono trasferibili (delta per indice di vertice della MAGLIA);
+  riapplicazione per nome (unica chiave stabile) o per indice; dove vivono i
+  template. Le azioni di posa ZtoRig sono il precedente piu' vicino.
+
+**Altro**
+
+- ⬜ **Save and Render fa partire DUE render** — candidato upstream. ESCLUSI: la
+  tavoletta (succede anche col mouse) e l'handler (`onSaveAndRender` fa un solo
+  `doRender`). **Biforcazione da risolvere**: il comando parte due volte, oppure
+  una esecuzione produce due render? Un contatore all'ingresso di
+  `RenderCommand::onSaveAndRender` e uno in `doRender` lo dicono in un clic.
+  A parte: i bottoni di `outputsettingspopup.cpp` usano `pressed()` invece di
+  `clicked()` — sbagliato comunque, non e' la causa qui.
+- ⬜ **CRASH 0.11.0 chiudendo la finestra di cattura — NON riproducibile.**
+  Log `Crash-20260727-222814.log`. Backtrace (simbolicazione approssimata, i
+  frame 1 e 2 sono identici): `onSelectionChanged` → `storeDeformation` →
+  `onColumnSwitched` → `onXsheetChanged` → `saveSceneIfNeeded` → `closeEvent`.
+  GIA' ESCLUSI leggendo, tutti guardati: `storeDeformation`, `onSelectionChanged`,
+  `rootVd_animate`, `skeletonId()`. **Discrepanza da tirare**: il backtrace dice
+  `MainWindow::closeEvent` ma Franco aveva chiuso solo la finestra di cattura.
+- ⬜ **Ringraziamento sponsor DENTRO l'app** — generico, senza nomi (deciso da
+  Franco 2/8; vuole prima vedere come lo fa Tahoma2D). Se un giorno si passa ai
+  nomi, il consenso esplicito va chiesto: essere sponsor pubblico su GitHub non
+  e' consenso a comparire nell'About.
+- ⬜ **Script di shake camera** con lo scripting di Toonz — chiesto e mai fatto.
+
+---
+
 ## Priority Order
 
 ### 🆕 DA FARE (giugno 2026) — in cima per priorità
