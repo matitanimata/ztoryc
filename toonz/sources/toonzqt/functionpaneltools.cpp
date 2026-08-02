@@ -80,14 +80,80 @@ void RectSelectTool::click(QMouseEvent *e) {
   m_rect     = QRect();
 }
 
+namespace {
+
+//! Adds every KEYFRAME of \p curve inside the band. Runs alongside the
+//! segment pass rather than instead of it: the two together mean the box takes
+//! what is inside it, full stop. On its own the segment pass would miss a key
+//! whose segments fall outside the box, and skip a one-keyframe curve
+//! entirely -- it has no segments to find.
+void selectKeyframesUnderBand(FunctionPanel *panel, TDoubleParam *curve,
+                              const QRect &rect) {
+  if (!curve) return;
+  for (int i = 0; i < curve->getKeyframeCount(); i++) {
+    const QPointF p = panel->getWinPos(curve, curve->getKeyframe(i));
+    if (rect.contains(tround(p.x()), tround(p.y())))
+      panel->getSelection()->select(curve, i);
+  }
+}
+
+//! Adds every SEGMENT the band passes over. The band is walked column of
+//! pixels by column of pixels: wherever the curve runs inside it, the segment
+//! that stretch belongs to is taken. Segments -- not keyframes -- because that
+//! is what the interpolation commands act on; the two keyframes bounding each
+//! segment come along on their own, so moving and deleting still have
+//! something to work with.
+void selectSegmentsUnderBand(FunctionPanel *panel, TDoubleParam *curve,
+                             const QRect &rect) {
+  if (!curve) return;
+  const int kCount = curve->getKeyframeCount();
+  if (kCount < 2) return;
+
+  int lastAdded = -1;
+  for (int x = rect.left(); x <= rect.right(); ++x) {
+    const double frame = panel->xToFrame(x);
+    const QPointF p =
+        panel->getWinPos(curve, frame, curve->getValue(frame));
+    if (!rect.contains(x, tround(p.y()))) continue;
+
+    const int k = curve->getPrevKeyframe(frame);
+    // Before the first keyframe, or past the last one, there is no segment.
+    if (k < 0 || k >= kCount - 1 || k == lastAdded) continue;
+    panel->getSelection()->addSegment(curve, k);
+    lastAdded = k;
+  }
+}
+
+}  // namespace
+
 void RectSelectTool::drag(QMouseEvent *e) {
   m_rect = QRect(m_startPos, e->pos()).normalized();
   m_panel->getSelection()->deselectAllKeyframes();
-  for (int i = 0; i < m_curve->getKeyframeCount(); i++) {
-    QPointF p = m_panel->getWinPos(m_curve, m_curve->getKeyframe(i));
-    if (m_rect.contains(tround(p.x()), tround(p.y())))
-      m_panel->getSelection()->select(m_curve, i);
+
+  // Across every curve the graph is drawing, not just the current one: a band
+  // dragged over a spot catches what is visibly under it. Curves you do not
+  // want caught are the ones to hide -- which is what the tree's visibility
+  // commands are for.
+  FunctionTreeModel *model = m_panel->getModel();
+  bool anyChannel          = false;
+  if (model) {
+    for (int c = 0; c < model->getActiveChannelCount(); c++) {
+      FunctionTreeModel::Channel *channel = model->getActiveChannel(c);
+      TDoubleParam *curve = channel ? channel->getParam() : 0;
+      if (!curve) continue;
+      anyChannel = true;
+      selectSegmentsUnderBand(m_panel, curve, m_rect);
+      selectKeyframesUnderBand(m_panel, curve, m_rect);
+    }
   }
+
+  // No model or nothing active: fall back to the curve the band was started
+  // on, so the band never comes up empty for want of plumbing.
+  if (!anyChannel) {
+    selectSegmentsUnderBand(m_panel, m_curve, m_rect);
+    selectKeyframesUnderBand(m_panel, m_curve, m_rect);
+  }
+
   m_panel->update();
 }
 
@@ -128,6 +194,38 @@ MovePointDragTool::MovePointDragTool(FunctionPanel *panel, TDoubleParam *curve)
         m_setters.push_back(setter);
       }
     }
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+MovePointDragTool::MovePointDragTool(FunctionPanel *panel,
+                                     FunctionSelection *selection)
+    : m_panel(panel)
+    , m_deltaFrame(0)
+    , m_speed0Length(0)
+    , m_speed0Index(-1)
+    , m_speed1Length(0)
+    , m_speed1Index(-1)
+    , m_groupEnabled(false)
+    , m_selection(selection) {
+  // This undo block is closed in the destructor
+  TUndoManager::manager()->beginBlock();
+
+  if (!selection) return;
+
+  // Only the curves the user actually picked keys on -- NOT every active
+  // channel, which is what the group-handle mode does. Dragging a selection
+  // must move what is selected and nothing else, even when a dozen other
+  // curves are on screen.
+  const QList<TDoubleParam *> curves = selection->getSelectedCurves();
+  for (TDoubleParam *curve : curves) {
+    if (!curve) continue;
+    KeyframeSetter *setter =
+        new KeyframeSetter(curve, m_panel->getXsheetHandle());
+    const QList<int> indices = selection->getSelectedKeyIndices(curve);
+    for (int kIndex : indices) setter->selectKeyframe(kIndex);
+    m_setters.push_back(setter);
   }
 }
 
@@ -306,11 +404,20 @@ void MovePointDragTool::drag(QMouseEvent *e) {
     int c               = sheet->getColumnIndexByCurve(setter->getCurve());
     TStageObject *stObj = sheet->getStageObject(c);
     int colId           = stObj ? stObj->getId().getIndex() : -1;
-    if (dFrame && colId >= 0 &&
+    // Only the drawing-number curve, and only if click() really recorded its
+    // frames. The test used to be on the COLUMN, while click() fills
+    // m_startFrames only for W_DrawingNumber -- so every other curve of a
+    // column that happened to have drawing keys walked an EMPTY set kCount
+    // times and ran off the end of it. Rare before, because only one curve was
+    // ever dragged at a time; picking keys on several curves of such a column
+    // hits it immediately.
+    if (dFrame && colId >= 0 && curve->getName() == "W_DrawingNumber" &&
+        i < (int)m_startFrames.size() && !m_startFrames[i].empty() &&
         m_undoDrawings.find(colId) != m_undoDrawings.end()) {
       int kCount   = setter->getCurve()->getKeyframeCount();
       std::set<double>::iterator sit(m_startFrames[i].begin());
-      for (int j = 0; j < kCount; j++, sit++) {
+      const std::set<double>::iterator sEnd(m_startFrames[i].end());
+      for (int j = 0; j < kCount && sit != sEnd; j++, sit++) {
         if (!setter->isSelected(j)) continue;
         int r = setter->getCurve()->getKeyframe(j).m_frame;
         if (dFrame > 0 && (r - dFrame) < *sit) {
@@ -326,12 +433,17 @@ void MovePointDragTool::drag(QMouseEvent *e) {
 
   m_deltaFrame = totalDFrame;
 
-  if (m_selection != 0 && m_setters.size() == 1) {
-    KeyframeSetter *setter = m_setters[0];
-
+  // Keep the selection on the keys as they move. Every setter, not just the
+  // first: with a selection spanning several curves, rebuilding from one of
+  // them would drop the others the moment the drag started.
+  if (m_selection != 0 && !m_setters.empty()) {
     m_selection->deselectAllKeyframes();
-    for (int i = 0; i < setter->getCurve()->getKeyframeCount(); i++)
-      if (setter->isSelected(i)) m_selection->select(setter->getCurve(), i);
+    for (int s = 0; s < (int)m_setters.size(); s++) {
+      KeyframeSetter *setter = m_setters[s];
+      TDoubleParam *curve    = setter->getCurve();
+      for (int i = 0; i < curve->getKeyframeCount(); i++)
+        if (setter->isSelected(i)) m_selection->select(curve, i);
+    }
   }
 
   m_panel->update();
@@ -347,8 +459,14 @@ void MovePointDragTool::release(QMouseEvent *e) {
     TDoubleParam *curve    = setter->getCurve();
 
     if (curve->getName() != "W_DrawingNumber") continue;
-    int c    = sheet->getColumnIndexByCurve(curve);
-    int xcol = sheet->getStageObject(c)->getId().getIndex();
+    int c = sheet->getColumnIndexByCurve(curve);
+    // getStageObject returns null for an fx parameter, and for the -1 that
+    // getColumnIndexByCurve gives back when the curve is not among the active
+    // channels -- both of which reach here now that a drag can carry curves
+    // the user picked rather than the single one under the cursor.
+    TStageObject *stObj = sheet->getStageObject(c);
+    if (!stObj || i >= (int)m_startFrames.size()) continue;
+    int xcol = stObj->getId().getIndex();
 
     int kCount = curve->getKeyframeCount();
     for (int j = 0; j < kCount; j++) {
@@ -672,6 +790,20 @@ StretchPointDragTool::~StretchPointDragTool() {
 void StretchPointDragTool::click(QMouseEvent *e) {
   m_clickedFrame = m_panel->xToFrame(e->pos().x());
 }
+double StretchPointDragTool::maxAllowedRange() const {
+  const double noLimit = 1.0e9;
+  if (m_moveLeft) {
+    if (m_keys.first().kIndex <= 0) return noLimit;
+    return m_keys.last().orgFramePos -
+           m_curve->getKeyframe(m_keys.first().kIndex - 1).m_frame - 1.;
+  }
+  if (m_keys.last().kIndex >= m_curve->getKeyframeCount() - 1) return noLimit;
+  return m_curve->getKeyframe(m_keys.last().kIndex + 1).m_frame -
+         m_keys.first().orgFramePos - 1.;
+}
+
+//-----------------------------------------------------------------------------
+
 void StretchPointDragTool::drag(QMouseEvent *e) {
   double currentPosFrame = m_panel->xToFrame(e->pos().x());
 
@@ -684,19 +816,19 @@ void StretchPointDragTool::drag(QMouseEvent *e) {
   // the frame range should not be smaller than [selected key amount] - 1.
   stretchedRange = std::max(stretchedRange, (double)m_keys.size() - 1.);
   // selection should not extend the neighbor unselected key
-  if (m_moveLeft && m_keys.first().kIndex > 0) {
-    double maxRange = m_keys.last().orgFramePos -
-                      m_curve->getKeyframe(m_keys.first().kIndex - 1).m_frame -
-                      1.;
-    stretchedRange = std::min(stretchedRange, maxRange);
-  } else if (!m_moveLeft &&
-             m_keys.last().kIndex < m_curve->getKeyframeCount() - 1) {
-    double maxRange = m_curve->getKeyframe(m_keys.last().kIndex + 1).m_frame -
-                      m_keys.first().orgFramePos - 1.;
-    stretchedRange = std::min(stretchedRange, maxRange);
-  }
+  stretchedRange = std::min(stretchedRange, maxAllowedRange());
 
+  applyStretch(
+      (m_moveLeft) ? m_keys.last().orgFramePos : m_keys.first().orgFramePos,
+      orgRange, stretchedRange);
+}
+
+//-----------------------------------------------------------------------------
+
+void StretchPointDragTool::applyStretch(double pivot, double orgRange,
+                                        double stretchedRange) {
   if (stretchedRange == m_previousRange) return;
+  if (orgRange <= 0.) return;
 
   // compute the key frame positions (int) after stretching
   QMultiMap<int, int> keyPlacement;  // frame(int) - kIndex multimap
@@ -704,8 +836,7 @@ void StretchPointDragTool::drag(QMouseEvent *e) {
   // if the frame range is equal to [selected key amount] - 1, keys will be
   // "packed" in every frames.
   if ((int)std::round(stretchedRange) == m_keys.size() - 1) {
-    int f = (m_moveLeft) ? (int)(m_keys.last().orgFramePos - stretchedRange)
-                         : (int)m_keys.first().orgFramePos;
+    int f = (m_moveLeft) ? (int)(pivot - stretchedRange) : (int)pivot;
     for (auto keyInfo : m_keys) {
       keyPlacement.insert(f, keyInfo.kIndex);
       f++;
@@ -713,8 +844,6 @@ void StretchPointDragTool::drag(QMouseEvent *e) {
   } else {  // other cases
     // stretch ratio
     double stretchRatio = stretchedRange / orgRange;
-    double pivot =
-        (m_moveLeft) ? m_keys.last().orgFramePos : m_keys.first().orgFramePos;
     // compute preferable key frame positions (double) after stretching
     QMap<int, double> stretchedKeyPlacement;  // kIndex - frame(double)
     for (auto keyInfo : m_keys) {
@@ -876,6 +1005,107 @@ void StretchPointDragTool::drag(QMouseEvent *e) {
   m_previousRange = stretchedRange;
   m_panel->update();
 }
+
+//=============================================================================
+
+MultiStretchDragTool::MultiStretchDragTool(FunctionPanel *panel,
+                                           FunctionSelection *selection,
+                                           bool moveLeft)
+    : m_panel(panel)
+    , m_moveLeft(moveLeft)
+    , m_clickedFrame(0)
+    , m_pivot(0)
+    , m_orgRange(0)
+    , m_previousRange(0) {
+  if (!selection) return;
+
+  double first = 0, last = 0;
+  bool haveBounds = false;
+
+  for (TDoubleParam *curve : selection->getSelectedCurves()) {
+    if (!curve) continue;
+    QList<int> indices = selection->getSelectedKeyIndices(curve);
+    // Each curve needs at least two keys, and they must be consecutive: the
+    // stretch redistributes a run of keys, and a run with holes in it is not
+    // something the packing below can place.
+    if (indices.count() < 2) continue;
+    if (indices.last() - indices.first() != indices.count() - 1) continue;
+
+    StretchPointDragTool *tool = new StretchPointDragTool(
+        panel, curve, indices.first(), indices.last(), moveLeft);
+    m_tools.append(tool);
+
+    if (!haveBounds) {
+      first      = tool->firstOrgFrame();
+      last       = tool->lastOrgFrame();
+      haveBounds = true;
+    } else {
+      first = std::min(first, tool->firstOrgFrame());
+      last  = std::max(last, tool->lastOrgFrame());
+    }
+  }
+
+  if (!haveBounds) return;
+
+  // ONE pivot and ONE original range for the lot, taken from the outermost
+  // keys of the whole selection. Letting each curve use its own ends would
+  // scale each about a different point, and curves that started together
+  // would come apart.
+  m_pivot         = moveLeft ? last : first;
+  m_orgRange      = last - first;
+  m_previousRange = m_orgRange;
+}
+
+//-----------------------------------------------------------------------------
+
+MultiStretchDragTool::~MultiStretchDragTool() {
+  for (StretchPointDragTool *tool : m_tools) delete tool;
+  m_tools.clear();
+}
+
+//-----------------------------------------------------------------------------
+
+void MultiStretchDragTool::click(QMouseEvent *e) {
+  m_clickedFrame = m_panel->xToFrame(e->pos().x());
+  for (StretchPointDragTool *tool : m_tools) tool->click(e);
+}
+
+//-----------------------------------------------------------------------------
+
+void MultiStretchDragTool::drag(QMouseEvent *e) {
+  const double dFrame = m_panel->xToFrame(e->pos().x()) - m_clickedFrame;
+
+  double stretchedRange = m_moveLeft ? m_orgRange - dFrame : m_orgRange + dFrame;
+
+  // The floor is the widest curve's key count: pack tighter than that and two
+  // of its keys would want the same frame. The ceiling is the tightest of the
+  // curves' own neighbour limits, so no curve runs over the key just outside
+  // its selection.
+  double minRange = 0.0;
+  double maxRange = 1.0e9;
+  for (StretchPointDragTool *tool : m_tools) {
+    minRange = std::max(minRange, (double)tool->keyCount() - 1.);
+    maxRange = std::min(maxRange, tool->maxAllowedRange());
+  }
+  stretchedRange = std::max(stretchedRange, minRange);
+  stretchedRange = std::min(stretchedRange, maxRange);
+
+  if (stretchedRange == m_previousRange) return;
+
+  for (StretchPointDragTool *tool : m_tools)
+    tool->applyStretch(m_pivot, m_orgRange, stretchedRange);
+
+  m_previousRange = stretchedRange;
+  m_panel->update();
+}
+
+//-----------------------------------------------------------------------------
+
+void MultiStretchDragTool::release(QMouseEvent *e) {
+  for (StretchPointDragTool *tool : m_tools) tool->release(e);
+}
+
+//=============================================================================
 
 void StretchPointDragTool::release(QMouseEvent *e) {
   for (int i = 0; i < (int)m_keys.size(); i++) delete m_keys[i].setter;

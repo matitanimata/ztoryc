@@ -51,6 +51,8 @@ class FunctionToolbar;
 class FunctionSelection;
 
 class QStackedWidget;
+class QLineEdit;
+class QCheckBox;
 class QAction;
 class QScrollArea;
 class QSplitter;
@@ -135,6 +137,10 @@ signals:
   void curveChanged();
   void curveIo(int type, TDoubleParam *curve, const std::string &name);
   void editObject();
+  //! Relayed from the graph: what the modifiers do where the pointer is,
+  //! empty when it leaves. The application layer puts it in the hint bar --
+  //! toonzqt cannot reach that itself.
+  void hintChanged(const QString &hint);
 
 public slots:
 
@@ -178,6 +184,8 @@ private:
   // Widgets
 
   FunctionTreeView *m_treeView;  //!< Tree view on the left side of the viewer.
+  QLineEdit *m_searchField;      //!< Name filter above the tree view.
+  QCheckBox *m_animatedOnlyBox;  //!< One animated-only filter for every column.
   FunctionToolbar *m_toolbar;    //!< Central area's toolbar
   FunctionPanel *m_functionGraph;     //!< The function graph view widget.
   FunctionSheet *m_numericalColumns;  //!< The numerical columns view widget.
@@ -193,6 +201,11 @@ private:
 private:
   void showEvent(QShowEvent *) override;
   void hideEvent(QHideEvent *) override;
+
+  //! Watches the search field so Escape gives the keyboard back: this app has
+  //! single-key shortcuts, and a text box that keeps the focus reads as "the
+  //! keyboard stopped working".
+  bool eventFilter(QObject *watched, QEvent *event) override;
 
 public:  //  :(
   void emitCurveChanged() {
@@ -210,6 +223,11 @@ private slots:
                                      //! invocations to m_localFrame.
 
   void onSyncHeaderBtnToggled(bool);
+
+  //! Name filter typed above the tree.
+  void onSearchFilterChanged(const QString &text);
+  //! Animated-only filter, applied to every column at once.
+  void onAnimatedOnlyToggled(bool on);
 };
 
 #endif  // FUNCTIONEDITORVIEWER_H

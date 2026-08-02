@@ -194,6 +194,18 @@ public:
   int findClosestGadget(const QPoint &winPos, Handle &handle,
                         int maxWinDistance);
 
+  //! The active channel having a KEYFRAME under \p winPos, nearest first, or
+  //! null. Distinct from findClosestChannel, which answers "whose line passes
+  //! closest": when curves cross, the line nearest the cursor is often not the
+  //! one whose keyframe was aimed at.
+  FunctionTreeModel::Channel *findChannelWithKeyframeAt(const QPoint &winPos,
+                                                        int maxWinDistance);
+
+  //! Dash pattern identifying the column \p channel belongs to, empty for the
+  //! first column drawn (which stays a solid line). Colour tells channels
+  //! apart, the pattern tells columns apart.
+  QVector<qreal> columnDashPattern(FunctionTreeModel::Channel *channel) const;
+
   // creates a QPainterPath representing a curve segment, limited in [x0,x1]
   // segmentIndex = -1 => ]-inf,first keyframe]
   // segmentIndex = segmentCount => [last keyframe, inf[
@@ -203,6 +215,13 @@ public:
   TDoubleParam *getCurrentCurve() const;
 
   void emitKeyframeSelected(double frame) { emit keyframeSelected(frame); }
+
+signals:
+  //! What the modifiers do where the pointer is; empty when the pointer
+  //! leaves. Connected to the hint bar by the application layer.
+  void hintChanged(const QString &hint);
+
+public:
 
   void setBGColor(const QColor &color) { m_bgColor = color; }
   QColor getBGColor() const { return m_bgColor; }
@@ -243,6 +262,10 @@ protected:
   void keyPressEvent(QKeyEvent *e) override;
   void enterEvent(QEvent *) override;
   void leaveEvent(QEvent *) override;
+
+  //! Shows in the hint bar what the modifiers do where the pointer is.
+  void updateHint(const QPoint &winPos);
+  QString m_lastHint;
 
   void showEvent(QShowEvent *) override;
   void hideEvent(QHideEvent *) override;

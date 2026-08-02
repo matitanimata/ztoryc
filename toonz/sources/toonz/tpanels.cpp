@@ -489,6 +489,16 @@ FunctionViewerPanel::FunctionViewerPanel(QWidget *parent)
   ret &&connect(m_functionViewer, SIGNAL(editObject()), this,
                 SLOT(onEditObject()));
 
+  // The graph says what the modifiers do where the pointer is; only here, in
+  // the application, is the hint bar reachable.
+  ret &&connect(m_functionViewer, &FunctionViewer::hintChanged,
+                [](const QString &hint) {
+                  if (hint.isEmpty())
+                    TApp::instance()->clearZtoryHint();
+                  else
+                    TApp::instance()->showZtoryHint(hint);
+                });
+
   assert(ret);
 }
 

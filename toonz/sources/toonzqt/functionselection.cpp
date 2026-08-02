@@ -307,7 +307,17 @@ void FunctionSelection::selectCurve(TDoubleParam *curve) {
 }
 
 void FunctionSelection::deselectAllKeyframes() {
-  if (getSelectedKeyframeCount() == 0) return;
+  // Segments go too, and BEFORE the early return: a band dragged over the
+  // graph clears through here on every mouse move, and segments left behind
+  // would pile up instead of following the band.
+  const bool hadSegments = !m_selectedSegments.isEmpty();
+  m_selectedSegments.clear();
+  m_selectedSegment = -1;
+
+  if (getSelectedKeyframeCount() == 0) {
+    if (hadSegments) emit selectionChanged();
+    return;
+  }
   for (int i = 0; i < m_selectedKeyframes.size(); i++)
     m_selectedKeyframes[i].second.clear();
   emit selectionChanged();
@@ -334,6 +344,7 @@ void FunctionSelection::selectNone() {
     if (m_selectedKeyframes[i].first) m_selectedKeyframes[i].first->release();
   m_selectedKeyframes.clear();
   m_selectedSegment = -1;
+  m_selectedSegments.clear();
   m_selectedCells   = QRect();
   emit selectionChanged();
 }
@@ -387,6 +398,10 @@ void FunctionSelection::selectCells(const QRect &selectedCells,
       m_selectedSegment = k0;
   }
 
+  m_selectedSegments.clear();
+  if (m_selectedSegment >= 0 && !curves.isEmpty() && curves[0])
+    m_selectedSegments.append(qMakePair(curves[0], m_selectedSegment));
+
   m_selectedCells = selectedCells;
   makeCurrent();
   emit selectionChanged();
@@ -413,7 +428,10 @@ void FunctionSelection::select(TDoubleParam *curve, int k) {
           || m_selectedSegment != k ||
           m_selectedSegment + 1 != k))  // or the new selected keyframe
                                         // is not a selected segment end
+  {
     m_selectedSegment = -1;             // then clear the segment selection
+    m_selectedSegments.clear();
+  }
   makeCurrent();
   emit selectionChanged();
   m_selectedCells = QRect();
@@ -469,14 +487,56 @@ void FunctionSelection::selectSegment(TDoubleParam *curve, int k,
   m_selectedKeyframes[0].second.insert(k);  // k is keyframe id
   m_selectedKeyframes[0].second.insert(k + 1);
   m_selectedSegment = k;
+  // The list always mirrors the single pick, so isSegmentSelected() has one
+  // place to look whether one segment or several were chosen.
+  m_selectedSegments.clear();
+  m_selectedSegments.append(qMakePair(curve, k));
   m_selectedCells   = selectedCells;
   makeCurrent();
   emit selectionChanged();
 }
 
 bool FunctionSelection::isSegmentSelected(TDoubleParam *curve, int k) const {
-  return m_selectedKeyframes.size() == 1 &&
-         m_selectedKeyframes[0].first == curve && m_selectedSegment == k;
+  return m_selectedSegments.contains(qMakePair(curve, k));
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionSelection::addSegment(TDoubleParam *curve, int k) {
+  if (!curve || k < 0) return;
+
+  const QPair<TDoubleParam *, int> segment(curve, k);
+  if (!m_selectedSegments.contains(segment)) m_selectedSegments.append(segment);
+
+  // A segment is bounded by its two keyframes, and everything else here --
+  // copy, delete, the spreadsheet -- reads keyframes, so they are kept in step.
+  int i = touchCurveIndex(curve);
+  m_selectedKeyframes[i].second.insert(k);
+  m_selectedKeyframes[i].second.insert(k + 1);
+
+  // The single-segment answer only exists while there IS a single one.
+  m_selectedSegment = (m_selectedSegments.size() == 1) ? k : -1;
+
+  makeCurrent();
+  emit selectionChanged();
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionSelection::setSelectedSegmentsType(TDoubleKeyframe::Type type) {
+  if (m_selectedSegments.isEmpty()) return;
+
+  TUndoManager::manager()->beginBlock();
+  for (const QPair<TDoubleParam *, int> &segment : m_selectedSegments) {
+    TDoubleParam *curve = segment.first;
+    if (!curve) continue;
+    // The last keyframe governs no segment; retyping it would only park a type
+    // there for a later move to turn into a real one.
+    if (segment.second < 0 || segment.second >= curve->getKeyframeCount() - 1)
+      continue;
+    KeyframeSetter(curve, segment.second).setType(type);
+  }
+  TUndoManager::manager()->endBlock();
 }
 
 QPair<TDoubleParam *, int> FunctionSelection::getSelectedSegment() const {
@@ -799,6 +859,34 @@ int FunctionSelection::getCommonSegmentType(bool inclusive) {
   }
   return type;
 }
+
+int FunctionSelection::getCommonSelectedSegmentsType() const {
+  int type = -1;
+  for (const QPair<TDoubleParam *, int> &segment : m_selectedSegments) {
+    TDoubleParam *curve = segment.first;
+    if (!curve || segment.second < 0 ||
+        segment.second >= curve->getKeyframeCount() - 1)
+      continue;
+    const int t = (int)curve->getKeyframe(segment.second).m_type;
+    if (type == -1)
+      type = t;
+    else if (type != t)
+      return -1;  // mixed: no type is "the one they already have"
+  }
+  return type;
+}
+
+//-----------------------------------------------------------------------------
+
+QList<TDoubleParam *> FunctionSelection::getSelectedCurves() const {
+  QList<TDoubleParam *> curves;
+  for (int i = 0; i < m_selectedKeyframes.size(); i++)
+    if (m_selectedKeyframes[i].first && !m_selectedKeyframes[i].second.isEmpty())
+      curves.append(m_selectedKeyframes[i].first);
+  return curves;
+}
+
+//-----------------------------------------------------------------------------
 
 QList<int> FunctionSelection::getSelectedKeyIndices(TDoubleParam *curve) {
   for (auto selectedParam : m_selectedKeyframes) {

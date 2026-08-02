@@ -25,6 +25,7 @@
 #include "toonz/tcolumnfx.h"
 #include "toonz/tfxhandle.h"
 #include "toonz/tobjecthandle.h"
+#include "toonz/doubleparamcmd.h"
 
 // TnzQt includes
 #include "toonzqt/functionviewer.h"
@@ -36,6 +37,7 @@
 // Qt includes
 #include <QMenu>
 #include <QAction>
+#include <QItemSelectionModel>
 #include <QFileDialog>
 #include <QMouseEvent>
 #include <QMetaObject>
@@ -179,7 +181,59 @@ QVariant FunctionTreeModel::ChannelGroup::data(int role) const {
 //-----------------------------------------------------------------------------
 
 //! \todo     This is \a not recursive - I guess it should be...?
+bool FunctionTreeModel::ChannelGroup::nameMatchesSearch(
+    const QString &searchString) const {
+  if (searchString.isEmpty()) return true;
+
+  // Also the groups ABOVE this one: a hit on the column has to reach the
+  // channels of its nested groups, whose long names carry only their own group
+  // ("Plastic Skeleton Angle") and never the column's. Tested one by one they
+  // would all fail, and the subgroup would sit there looking empty.
+  //
+  // The walk stops above depth 2 — at the stage object / fx — so that the two
+  // fixed roots are left out: searching "FX" should not mean "every parameter
+  // of every effect".
+  for (const TreeModel::Item *item = this; item && item->getDepth() >= 2;
+       item = item->getParent()) {
+    const ChannelGroup *group = dynamic_cast<const ChannelGroup *>(item);
+    if (group && group->getLongName().contains(searchString, Qt::CaseInsensitive))
+      return true;
+  }
+  return false;
+}
+
+//-----------------------------------------------------------------------------
+
+bool FunctionTreeModel::ChannelGroup::matchesSearch(
+    const QString &searchString) const {
+  if (searchString.isEmpty()) return true;
+  if (getLongName().contains(searchString, Qt::CaseInsensitive)) return true;
+
+  int i, itemCount = getChildCount();
+  for (i = 0; i < itemCount; i++) {
+    const FunctionTreeModel::Channel *channel =
+        dynamic_cast<const FunctionTreeModel::Channel *>(getChild(i));
+    if (channel) {
+      if (channel->getLongName().contains(searchString, Qt::CaseInsensitive))
+        return true;
+      continue;
+    }
+    const FunctionTreeModel::ChannelGroup *channelGroup =
+        dynamic_cast<const FunctionTreeModel::ChannelGroup *>(getChild(i));
+    if (channelGroup && channelGroup->matchesSearch(searchString)) return true;
+  }
+  return false;
+}
+
+//-----------------------------------------------------------------------------
+
 void FunctionTreeModel::ChannelGroup::applyShowFilter() {
+  FunctionTreeModel *model = dynamic_cast<FunctionTreeModel *>(getModel());
+  const QString search     = model ? model->getSearchFilter() : QString();
+  // A group matched by name — its own, or that of a group above it — shows
+  // everything it contains, so the channels below need no test of their own.
+  const bool groupMatches = nameMatchesSearch(search);
+
   int i, itemCount = getChildCount();
   for (i = 0; i < itemCount; i++) {
     FunctionTreeModel::Channel *channel =
@@ -191,16 +245,24 @@ void FunctionTreeModel::ChannelGroup::applyShowFilter() {
       if (!channelGroup) continue;
 
       channelGroup->setShowFilter(m_showFilter);
+      getModel()->setRowHidden(
+          i, createIndex(),
+          !(groupMatches || channelGroup->matchesSearch(search)));
       continue;
     }
 
     bool showItem = (m_showFilter == ShowAllChannels) ||
                     channel->getParam()->hasKeyframes();
 
+    // The animated-channels filter turns what it hides OFF; the search filter
+    // must NOT — you would come back from a search with your curves gone.
+    if (!showItem) channel->setIsActive(false);
+
+    if (showItem && !groupMatches)
+      showItem = channel->getLongName().contains(search, Qt::CaseInsensitive);
+
     QModelIndex modelIndex = createIndex();
     getModel()->setRowHidden(i, modelIndex, !showItem);
-
-    if (!showItem) channel->setIsActive(false);
   }
 }
 
@@ -1307,16 +1369,256 @@ void FunctionTreeModel::applyShowFilters() {
   //          This means that these show filters are presumably applied only to
   //          the FIRST LEVEL OF PARAMETERS...!
 
+  // Every group row is decided on every pass, never left as the last search
+  // put it: the tree is rebuilt under us on scene and column changes, so
+  // un-hiding by index at the moment the search is cleared would strand any
+  // row whose position moved in between.
+  const bool searching = !m_searchFilter.isEmpty();
+
   if (m_stageObjects) {
     int so, soCount = m_stageObjects->getChildCount();
-    for (so = 0; so != soCount; ++so)
-      getStageObjectChannel(so)->applyShowFilter();
+    for (so = 0; so != soCount; ++so) {
+      ChannelGroup *group = getStageObjectChannel(so);
+      group->applyShowFilter();
+      const bool matches = !searching || group->matchesSearch(m_searchFilter);
+      setRowHidden(so, m_stageObjects->createIndex(), !matches);
+      // Open what matched: a hit on a channel is invisible while its object is
+      // still folded, which reads as "the search found nothing".
+      if (searching && matches) setExpandedItem(group->createIndex(), true);
+    }
   }
 
   if (m_fxs) {
     int fx, fxCount = m_fxs->getChildCount();
-    for (fx = 0; fx != fxCount; ++fx) getFxChannel(fx)->applyShowFilter();
+    for (fx = 0; fx != fxCount; ++fx) {
+      ChannelGroup *group = getFxChannel(fx);
+      group->applyShowFilter();
+      const bool matches = !searching || group->matchesSearch(m_searchFilter);
+      setRowHidden(fx, m_fxs->createIndex(), !matches);
+      if (searching && matches) setExpandedItem(group->createIndex(), true);
+    }
   }
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::setAllShowFilters(
+    ChannelGroup::ShowFilter showFilter) {
+  if (m_stageObjects)
+    for (int i = 0; i < m_stageObjects->getChildCount(); ++i)
+      getStageObjectChannel(i)->setShowFilter(showFilter);
+
+  if (m_fxs)
+    for (int i = 0; i < m_fxs->getChildCount(); ++i)
+      getFxChannel(i)->setShowFilter(showFilter);
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::setSearchFilter(const QString &searchString) {
+  const QString trimmed = searchString.trimmed();
+  if (trimmed == m_searchFilter) return;
+
+  m_searchFilter = trimmed;
+  applyShowFilters();
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::ChannelGroup::rememberShownChannels() {
+  std::vector<FunctionTreeModel::Channel *> channels;
+  FunctionTreeModel::collectChannels(this, channels);
+
+  QSet<QString> shown;
+  for (FunctionTreeModel::Channel *channel : channels)
+    if (channel->isActive()) shown.insert(channel->getLongName());
+
+  // Nothing on screen means there is nothing to learn -- and overwriting here
+  // would erase the memory the moment a column is hidden, which is exactly
+  // when it has to survive.
+  if (!shown.isEmpty()) m_shownChannelNames = shown;
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::ChannelGroup::restoreShownChannels() {
+  std::vector<FunctionTreeModel::Channel *> channels;
+  FunctionTreeModel::collectChannels(this, channels);
+
+  if (m_shownChannelNames.isEmpty()) {
+    // Never shown: the curves that carry keys are the sensible opening move.
+    // Switching on all dozen channels of a column would bury them.
+    for (FunctionTreeModel::Channel *channel : channels)
+      if (channel->getParam() && channel->getParam()->hasKeyframes())
+        channel->setIsActive(true);
+    return;
+  }
+
+  for (FunctionTreeModel::Channel *channel : channels)
+    if (m_shownChannelNames.contains(channel->getLongName()))
+      channel->setIsActive(true);
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::setAllChannelsActive(bool active) {
+  // Turning everything ON means bringing each column back to what it was
+  // showing, not switching on every curve it owns: a rig has hundreds, and
+  // "Show All Columns" is about the columns, not about their contents.
+  if (active) {
+    if (m_stageObjects)
+      for (int i = 0; i < m_stageObjects->getChildCount(); ++i)
+        getStageObjectChannel(i)->restoreShownChannels();
+    if (m_fxs)
+      for (int i = 0; i < m_fxs->getChildCount(); ++i)
+        getFxChannel(i)->restoreShownChannels();
+    return;
+  }
+
+  // Turning them off: remember first, so the trip back is possible.
+  if (m_stageObjects)
+    for (int i = 0; i < m_stageObjects->getChildCount(); ++i)
+      getStageObjectChannel(i)->rememberShownChannels();
+  if (m_fxs)
+    for (int i = 0; i < m_fxs->getChildCount(); ++i)
+      getFxChannel(i)->rememberShownChannels();
+
+  if (m_stageObjects) m_stageObjects->setChildrenAllActive(false);
+  if (m_fxs) m_fxs->setChildrenAllActive(false);
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::collectChannels(TreeModel::Item *item,
+                                        std::vector<Channel *> &channels) {
+  if (!item) return;
+
+  if (Channel *channel = dynamic_cast<Channel *>(item)) {
+    channels.push_back(channel);
+    return;
+  }
+  // A folder stands for everything under it, nested groups included: picking a
+  // column has to mean the column, not the handful of channels that happen to
+  // sit at its first level.
+  for (int i = 0; i < item->getChildCount(); ++i)
+    collectChannels(item->getChild(i), channels);
+}
+
+//-----------------------------------------------------------------------------
+
+TreeModel::Item *FunctionTreeModel::columnScopeOf(TreeModel::Item *item) {
+  // Depth 2 is the stage object / fx level: Root(0) > Stage(1) > Col1(2) >
+  // channels, with nested groups such as Plastic Skeleton sitting below.
+  while (item && item->getDepth() > 2) item = item->getParent();
+  return (item && item->getDepth() == 2) ? item : 0;
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::showOnlyItems(const QList<TreeModel::Item *> &items,
+                                      TreeModel::Item *scope) {
+  if (items.isEmpty()) return;
+
+  // Gather first, clear second: a channel that is both inside the scope and in
+  // the selection would be switched off again if we cleared as we went.
+  std::vector<Channel *> channels;
+  for (TreeModel::Item *item : items) collectChannels(item, channels);
+
+  setScopeShown(scope, false);
+  for (Channel *channel : channels) channel->setIsActive(true);
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::setScopeShown(TreeModel::Item *scope, bool shown) {
+  if (!scope) {
+    setAllChannelsActive(shown);
+    return;
+  }
+  // Aimed at ONE column, "show all" means all of its curves -- that is what
+  // the entry says. The remembering-and-restoring is for "Show All Columns",
+  // which is about columns and must not decide their contents for them.
+  if (!shown)
+    if (ChannelGroup *group = dynamic_cast<ChannelGroup *>(scope))
+      group->rememberShownChannels();
+
+  std::vector<Channel *> channels;
+  collectChannels(scope, channels);
+  for (Channel *channel : channels) channel->setIsActive(shown);
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::setInterpolationOfItems(
+    const QList<TreeModel::Item *> &items, int keyframeType) {
+  std::vector<Channel *> channels;
+  for (TreeModel::Item *item : items) collectChannels(item, channels);
+  if (channels.empty()) return;
+
+  // One block for the lot: retyping six curves is one decision, and it has to
+  // come back with one undo.
+  TUndoManager::manager()->beginBlock();
+  for (Channel *channel : channels) {
+    TDoubleParam *curve = channel ? channel->getParam() : 0;
+    if (!curve) continue;
+    const int count = curve->getKeyframeCount();
+    // Every segment, i.e. every keyframe but the last: the last one governs
+    // nothing, and writing a type there would only park it for a later move to
+    // turn into a real segment.
+    for (int k = 0; k < count - 1; ++k)
+      KeyframeSetter(curve, k).setType((TDoubleKeyframe::Type)keyframeType);
+  }
+  TUndoManager::manager()->endBlock();
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::showAnimatedChannelsOf(TreeModel::Item *scope) {
+  if (!scope) return;
+  std::vector<Channel *> channels;
+  collectChannels(scope, channels);
+  // Only what has keyframes: a column carries a dozen channels and most of
+  // them are flat, so switching all of them on would bury the two curves you
+  // opened the column to look at.
+  for (Channel *channel : channels)
+    if (channel->getParam() && channel->getParam()->hasKeyframes())
+      channel->setIsActive(true);
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::setItemsShown(const QList<TreeModel::Item *> &items,
+                                      bool shown) {
+  std::vector<Channel *> channels;
+  for (TreeModel::Item *item : items) collectChannels(item, channels);
+  for (Channel *channel : channels) channel->setIsActive(shown);
+}
+
+//-----------------------------------------------------------------------------
+
+FunctionTreeModel::ChannelGroup *
+FunctionTreeModel::getStageObjectChannelGroup(TStageObject *obj) const {
+  if (!obj || !m_stageObjects) return 0;
+  int so, soCount = m_stageObjects->getChildCount();
+  for (so = 0; so != soCount; ++so) {
+    StageObjectChannelGroup *group =
+        dynamic_cast<StageObjectChannelGroup *>(getStageObjectChannel(so));
+    if (group && group->getStageObject() == obj) return group;
+  }
+  return 0;
+}
+
+//-----------------------------------------------------------------------------
+
+FunctionTreeModel::ChannelGroup *FunctionTreeModel::getFxChannelGroup(
+    TFx *fx) const {
+  if (!fx || !m_fxs) return 0;
+  int i, count = m_fxs->getChildCount();
+  for (i = 0; i != count; ++i) {
+    FxChannelGroup *group = dynamic_cast<FxChannelGroup *>(getFxChannel(i));
+    if (group && group->getFx() == fx) return group;
+  }
+  return 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -1398,7 +1700,11 @@ FunctionTreeView::FunctionTreeView(FunctionViewer *parent)
   setModel(new FunctionTreeModel(this));
 
   setObjectName("FunctionEditorTree");
-  setSelectionMode(QAbstractItemView::NoSelection);
+  // Multi-selection: pick several columns with Shift/Ctrl and the visibility
+  // commands act on all of them. TreeView::mousePressEvent already forwards to
+  // QTreeView and already has an ExtendedSelection branch, so Qt does the
+  // Shift/Ctrl arithmetic and the highlighting for us.
+  setSelectionMode(QAbstractItemView::ExtendedSelection);
 
   connect(this, SIGNAL(pressed(const QModelIndex &)), this,
           SLOT(onActivated(const QModelIndex &)));
@@ -1494,6 +1800,22 @@ void FunctionTreeView::mouseDoubleClickEvent(QMouseEvent *event) {
 void FunctionTreeView::onClick(TreeModel::Item *item, const QPoint &itemPos,
                                QMouseEvent *e) {
   m_draggingChannel = 0;
+
+  // Right-clicking outside the selection makes that row the selection, as
+  // everywhere else: otherwise the menu would act on rows the user cannot see
+  // highlighted from where they clicked.
+  if (e->button() == Qt::RightButton && item && selectionModel()) {
+    const QModelIndex index = item->createIndex();
+    if (index.isValid() && !selectionModel()->isSelected(index))
+      selectionModel()->select(index, QItemSelectionModel::ClearAndSelect |
+                                          QItemSelectionModel::Rows);
+  }
+
+  // With Ctrl or Shift down the click is a SELECTION gesture and nothing else.
+  // Qt has already done the selecting; going on from here would switch the
+  // application's current column on the way to picking a second one, and
+  // toggle a curve off just because the pointer landed on its icon.
+  if (e->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) return;
   FunctionTreeModel::Channel *channel =
       dynamic_cast<FunctionTreeModel::Channel *>(item);
   FxChannelGroup *fxChannelGroup = dynamic_cast<FxChannelGroup *>(item);
@@ -1507,7 +1829,8 @@ void FunctionTreeView::onClick(TreeModel::Item *item, const QPoint &itemPos,
     stageObjectChannelGroup =
         dynamic_cast<StageObjectChannelGroup *>(channel->getParent());
 
-    int x = itemPos.x();
+    int x           = itemPos.x();
+    m_clickedOnIcon = (0 <= x && x < 20);
     if (x >= 20)
       channel->setIsCurrent(true);
     else if (0 <= x && x < 20) {
@@ -1563,6 +1886,12 @@ void FunctionTreeView::onDrag(TreeModel::Item *item, const QPoint &itemPos,
       dynamic_cast<FunctionTreeModel::Channel *>(item);
   if (!channel || !m_clickedItem) return;
 
+  // Only when the gesture started on the visibility icon. Started on the name,
+  // the drag belongs to the selection -- QTreeView is already sweeping one out
+  // underneath -- and painting the on/off state at the same time would make
+  // one gesture do two things.
+  if (!m_clickedOnIcon) return;
+
   // i0: item under the current cursor position
   // i1: clicked item
   QModelIndex i0 = channel->createIndex(), i1 = m_clickedItem->createIndex();
@@ -1593,7 +1922,10 @@ void FunctionTreeView::onDrag(TreeModel::Item *item, const QPoint &itemPos,
 
 //-----------------------------------------------------------------------------
 
-void FunctionTreeView::onRelease() { m_clickedItem = 0; }
+void FunctionTreeView::onRelease() {
+  m_clickedItem   = 0;
+  m_clickedOnIcon = false;
+}
 
 //-----------------------------------------------------------------------------
 
@@ -1609,6 +1941,156 @@ void FunctionTreeView::openContextMenu(TreeModel::Item *item,
 
 //-----------------------------------------------------------------------------
 
+QList<TreeModel::Item *> FunctionTreeView::selectedItems() const {
+  QList<TreeModel::Item *> items;
+  if (!selectionModel()) return items;
+  for (const QModelIndex &index : selectionModel()->selectedIndexes()) {
+    if (!index.isValid()) continue;
+    TreeModel::Item *item =
+        static_cast<TreeModel::Item *>(index.internalPointer());
+    if (item && !items.contains(item)) items.append(item);
+  }
+  return items;
+}
+
+//-----------------------------------------------------------------------------
+
+namespace {
+
+//! The six visibility commands of the xsheet's column menu, reused here.
+//! "Shown" means drawn in the graph; an item stands for every channel under
+//! it, so on a folder these read as columns and on a parameter as curves --
+//! which is also how they are worded.
+class VisibilityActions {
+  FunctionTreeView *m_view;
+  TreeModel::Item *m_item;
+  //! What these commands may switch off. Aimed at a parameter they stay inside
+  //! its column, so tidying up one column never disturbs how the others are
+  //! displayed; aimed at a column they range over the whole tree. Null = whole
+  //! tree.
+  TreeModel::Item *m_scope;
+  QList<TreeModel::Item *> m_selection;
+
+  QAction m_showThisOnly, m_showSelected, m_showAll;
+  QAction m_hideAll, m_hideSelected;
+
+public:
+  VisibilityActions(FunctionTreeView *view, TreeModel::Item *item,
+                    bool isColumn)
+      : m_view(view)
+      , m_item(item)
+      , m_scope(isColumn ? 0 : FunctionTreeModel::columnScopeOf(item))
+      , m_selection(view->selectedItems())
+      , m_showThisOnly(isColumn ? FunctionTreeView::tr("Show This Column Only")
+                                : FunctionTreeView::tr("Show This Curve Only"),
+                       0)
+      , m_showSelected(FunctionTreeView::tr("Show Selected"), 0)
+      , m_showAll(isColumn ? FunctionTreeView::tr("Show All Columns")
+                           : FunctionTreeView::tr("Show All Curves of This Column"),
+                  0)
+      , m_hideAll(isColumn ? FunctionTreeView::tr("Hide All Columns")
+                           : FunctionTreeView::tr("Hide All Curves of This Column"),
+                  0)
+      , m_hideSelected(FunctionTreeView::tr("Hide Selected"), 0) {
+    // The two selection commands would silently do nothing on their own with
+    // one row picked, and reading them greyed out says why.
+    const bool haveSelection = m_selection.count() > 1;
+    m_showSelected.setEnabled(haveSelection);
+    m_hideSelected.setEnabled(haveSelection);
+  }
+
+  void addTo(QMenu &menu) {
+    menu.addAction(&m_showThisOnly);
+    menu.addAction(&m_showSelected);
+    menu.addAction(&m_showAll);
+    menu.addAction(&m_hideAll);
+    menu.addAction(&m_hideSelected);
+  }
+
+  //! Returns true when \p action was one of ours and has been carried out.
+  bool handle(QAction *action) {
+    FunctionTreeModel *model =
+        dynamic_cast<FunctionTreeModel *>(m_view->model());
+    if (!model || !action) return false;
+
+    // "This" is the row under the cursor even when several are selected: it is
+    // what the user pointed at, and it is the only reading that makes the
+    // command different from "Show Selected" sitting right below it.
+    QList<TreeModel::Item *> thisItem;
+    thisItem.append(m_item);
+
+    if (action == &m_showThisOnly)
+      model->showOnlyItems(thisItem, m_scope);
+    else if (action == &m_showSelected)
+      model->setItemsShown(m_selection, true);
+    else if (action == &m_showAll)
+      model->setScopeShown(m_scope, true);
+    else if (action == &m_hideAll)
+      model->setScopeShown(m_scope, false);
+    else if (action == &m_hideSelected)
+      model->setItemsShown(m_selection, false);
+    else
+      return false;
+
+    m_view->update();
+    return true;
+  }
+};
+
+//! "Interpolation >" submenu: retypes every segment of every selected curve at
+//! once. Expression, File and Similar Shape are left out on purpose -- each
+//! needs parameters of its own per segment, and stamping them wholesale would
+//! leave a trail of half-defined segments.
+class InterpolationActions {
+  FunctionTreeView *m_view;
+  QList<QAction *> m_actions;
+
+public:
+  InterpolationActions(FunctionTreeView *view) : m_view(view) {}
+
+  void addTo(QMenu &menu) {
+    QMenu *sub = menu.addMenu(FunctionTreeView::tr("Interpolation"));
+
+    struct Entry {
+      const char *label;
+      TDoubleKeyframe::Type type;
+    };
+    const Entry entries[] = {
+        {QT_TR_NOOP("Constant"), TDoubleKeyframe::Constant},
+        {QT_TR_NOOP("Linear"), TDoubleKeyframe::Linear},
+        {QT_TR_NOOP("Speed In / Speed Out"), TDoubleKeyframe::SpeedInOut},
+        {QT_TR_NOOP("Ease In / Ease Out"), TDoubleKeyframe::EaseInOut},
+        {QT_TR_NOOP("Ease In / Ease Out %"),
+         TDoubleKeyframe::EaseInOutPercentage},
+        {QT_TR_NOOP("Exponential"), TDoubleKeyframe::Exponential}};
+
+    for (const Entry &entry : entries) {
+      QAction *action = sub->addAction(FunctionTreeView::tr(entry.label));
+      action->setData((int)entry.type);
+      m_actions.append(action);
+    }
+  }
+
+  //! Returns true when \p action was one of ours and has been carried out.
+  bool handle(QAction *action) {
+    if (!action || !m_actions.contains(action)) return false;
+    FunctionTreeModel *model =
+        dynamic_cast<FunctionTreeModel *>(m_view->model());
+    if (!model) return false;
+
+    // The selection always holds the row that was right-clicked: a right-click
+    // outside it makes it the selection (see onClick).
+    model->setInterpolationOfItems(m_view->selectedItems(),
+                                   action->data().toInt());
+    m_view->update();
+    return true;
+  }
+};
+
+}  // namespace
+
+//-----------------------------------------------------------------------------
+
 void FunctionTreeView::openContextMenu(FunctionTreeModel::Channel *channel,
                                        const QPoint &globalPos) {
   assert(channel);
@@ -1616,6 +2098,14 @@ void FunctionTreeView::openContextMenu(FunctionTreeModel::Channel *channel,
   if (!m_viewer) return;
 
   QMenu menu;
+
+  VisibilityActions visibility(this, channel, false);
+  visibility.addTo(menu);
+  menu.addSeparator();
+
+  InterpolationActions interpolation(this);
+  interpolation.addTo(menu);
+  menu.addSeparator();
 
   QAction saveCurveAction(tr("Save Curve"), 0);
   QAction loadCurveAction(tr("Load Curve"), 0);
@@ -1627,6 +2117,9 @@ void FunctionTreeView::openContextMenu(FunctionTreeModel::Channel *channel,
   QAction *action = menu.exec(globalPos);
 
   TDoubleParam *curve = channel->getParam();
+
+  if (visibility.handle(action)) return;
+  if (interpolation.handle(action)) return;
 
   if (action == &saveCurveAction)
     m_viewer->emitIoCurve((int)FunctionViewer::eSaveCurve, curve, "");
@@ -1645,13 +2138,40 @@ void FunctionTreeView::openContextMenu(FunctionTreeModel::ChannelGroup *group,
 
   QMenu menu;
 
-  QAction showAnimateOnly(tr("Show Animated Only"), 0);
-  QAction showAll(tr("Show All"), 0);
+  // What the GRAPH draws comes first, and is the same set of commands as the
+  // xsheet's column visibility menu.
+  VisibilityActions visibility(this, group, true);
+  visibility.addTo(menu);
+  menu.addSeparator();
+
+  InterpolationActions interpolation(this);
+  interpolation.addTo(menu);
+  menu.addSeparator();
+
+  // Below the line: what the TREE lists, which is a different question. Worded
+  // as "list" so that "show" never means two things in one menu -- it used to
+  // say "Show All" here, right next to a "Show All" that means curves.
+  QAction showAnimateOnly(tr("List Animated Parameters Only"), 0);
+  QAction showAll(tr("List All Parameters"), 0);
   menu.addAction(&showAnimateOnly);
   menu.addAction(&showAll);
 
+  menu.addSeparator();
+  QAction openSelectedOnly(tr("Open Selected Column Only"), 0);
+  openSelectedOnly.setCheckable(true);
+  openSelectedOnly.setChecked(m_openSelectedColumnOnly);
+  menu.addAction(&openSelectedOnly);
+
   // execute menu
   QAction *action = menu.exec(globalPos);
+
+  if (visibility.handle(action)) return;
+  if (interpolation.handle(action)) return;
+
+  if (action == &openSelectedOnly) {
+    m_openSelectedColumnOnly = openSelectedOnly.isChecked();
+    return;
+  }
 
   if (action != &showAll && action != &showAnimateOnly) return;
 
@@ -1662,6 +2182,47 @@ void FunctionTreeView::openContextMenu(FunctionTreeModel::ChannelGroup *group,
 
   expand(group->createIndex());
   group->setShowFilter(showFilter);
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeView::collapseSiblingsOf(TreeModel::Item *item) {
+  if (!item) return;
+
+  // Close every group at the same level, so following the xsheet selection
+  // leaves ONE object open instead of stacking a new one onto everything
+  // opened before it. Only the siblings: the branch above stays open, or the
+  // item we are about to show would be folded away with them.
+  TreeModel::Item *parent = item->getParent();
+  if (!parent) return;
+
+  for (int i = 0; i < parent->getChildCount(); ++i) {
+    TreeModel::Item *sibling = parent->getChild(i);
+    if (!sibling || sibling == item) continue;
+    const QModelIndex index = sibling->createIndex();
+    if (index.isValid()) setExpanded(index, false);
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeView::scrollToItem(TreeModel::Item *item, bool expandItem) {
+  if (!item) return;
+
+  // Top down: setExpanded on a node whose parent is still closed does nothing,
+  // and QTreeView cannot scroll to an index that is not laid out.
+  QList<TreeModel::Item *> ancestors;
+  for (TreeModel::Item *p = item->getParent(); p; p = p->getParent())
+    ancestors.prepend(p);
+  for (TreeModel::Item *p : ancestors) {
+    const QModelIndex idx = p->createIndex();
+    if (idx.isValid()) setExpanded(idx, true);
+  }
+
+  const QModelIndex index = item->createIndex();
+  if (!index.isValid()) return;
+  if (expandItem) setExpanded(index, true);
+  scrollTo(index, QAbstractItemView::EnsureVisible);
 }
 
 //-----------------------------------------------------------------------------

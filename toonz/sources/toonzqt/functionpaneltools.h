@@ -96,6 +96,12 @@ class MovePointDragTool final : public FunctionPanel::DragTool {
 
 public:
   MovePointDragTool(FunctionPanel *panel, TDoubleParam *curve);
+  //! Moves the keyframes of a selection spanning SEVERAL curves as one block:
+  //! one setter per curve that has selected keys, each holding exactly those
+  //! keys. Unlike the group-handle mode this moves in value as well as in
+  //! time -- each curve converting the same pixel drag through its own scale,
+  //! so degrees and pixels both come out right.
+  MovePointDragTool(FunctionPanel *panel, FunctionSelection *selection);
   ~MovePointDragTool();
 
   void addKeyframe2(int kIndex);
@@ -179,6 +185,44 @@ public:
   StretchPointDragTool(FunctionPanel *panel, TDoubleParam *curve, int leftId,
                        int rightId, bool moveLeft);
   ~StretchPointDragTool();
+
+  void click(QMouseEvent *e) override;
+  void drag(QMouseEvent *e) override;
+  void release(QMouseEvent *e) override;
+
+  // --- driving several curves as one -------------------------------------
+  // A stretch across curves has to share ONE pivot and ONE ratio, or each
+  // curve would scale around its own end keys and they would drift apart.
+  // MultiStretchDragTool works those out from the whole selection and then
+  // hands the same numbers to each curve, which still does its own integer
+  // packing -- the delicate part, left untouched.
+  double firstOrgFrame() const { return m_keys.first().orgFramePos; }
+  double lastOrgFrame() const { return m_keys.last().orgFramePos; }
+  int keyCount() const { return m_keys.size(); }
+  //! Widest range this curve may take without running over the neighbouring
+  //! unselected keyframe, or a huge number when there is none in the way.
+  double maxAllowedRange() const;
+  //! Applies a range decided elsewhere. \p orgRange is the range the ratio is
+  //! measured against, also decided elsewhere.
+  void applyStretch(double pivot, double orgRange, double stretchedRange);
+  void setPreviousRange(double range) { m_previousRange = range; }
+};
+
+//! Stretches in time a selection spanning several curves, all by the same
+//! ratio about the same pivot.
+class MultiStretchDragTool final : public FunctionPanel::DragTool {
+  FunctionPanel *m_panel;
+  QList<StretchPointDragTool *> m_tools;
+  bool m_moveLeft;
+  double m_clickedFrame;
+  double m_pivot, m_orgRange, m_previousRange;
+
+public:
+  MultiStretchDragTool(FunctionPanel *panel, FunctionSelection *selection,
+                       bool moveLeft);
+  ~MultiStretchDragTool();
+
+  bool isValid() const { return m_tools.size() > 1 && m_orgRange > 0.0; }
 
   void click(QMouseEvent *e) override;
   void drag(QMouseEvent *e) override;
