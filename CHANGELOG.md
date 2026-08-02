@@ -1,3 +1,85 @@
+## [2026-08-02b] — Il Function Editor sapeva gia' quasi tutto: mancava accenderlo
+
+Sessione intera sul Function Editor, piu' due bug fix nel core. Tutto su
+**master**, mergiato e pushato. Il filo che tiene insieme la giornata: quasi
+niente qui e' codice nuovo. `setSelectionMode(NoSelection)` in un costruttore
+mentre la classe base ha gia' il ramo per `ExtendedSelection`;
+`setCurrentStageObject()` che salva un puntatore e non lo usa;
+`FunctionSelection` che tiene gia' i keyframe di **piu' curve** mentre il
+grafico azzerava la selezione a ogni cambio di curva; `m_selectedSegment` come
+singolo `int`, col menu che per giunta chiama `selectSegment()` — cioe'
+**azzera la selezione** — prima di applicare l'interpolazione.
+
+### Added — albero
+Aggancio allo xsheet: scegliendo una colonna, il nodo si apre, ci si scrolla
+sopra e la riga viene selezionata. Casella di ricerca per nome (`Ctrl+Shift+F`;
+`Ctrl+F` e' l'FX Browser) che passa dallo **stesso** `applyShowFilter` del
+filtro animati, cosi' i due si compongono, e che **nasconde senza spegnere** —
+il filtro animati chiama `setIsActive(false)`, e riusare quella strada avrebbe
+restituito il grafico vuoto a fine ricerca. Filtro "Animated only" globale.
+Selezione multipla (Shift/Cmd e trascinamento sui nomi; il trascinamento che
+parte sulle **icone** resta quello che accende e spegne una fila). Menu di
+visibilita' come quello delle colonne dello xsheet, con l'ambito scritto
+nell'etichetta. Sottomenu Interpolation che ricambia ogni segmento di tutte le
+curve selezionate in un solo undo. Toggle "Open Selected Column Only".
+
+### Added — grafico
+Selezione di keyframe **e di segmenti** su piu' curve. Il rettangolo prende
+quello che ci sta dentro. Trascinamento in blocco in tempo e in valore, ogni
+curva convertendo lo stesso spostamento in pixel attraverso la propria scala.
+Scalatura nel tempo su piu' curve con **un solo pivot e un solo rapporto**,
+presi dagli estremi dell'intera selezione: l'impacchettamento sui frame interi
+non e' stato riscritto, solo separato in "decidi l'intervallo" e "applicalo".
+Il tasto destro segue il segmento selezionato sotto il cursore invece della
+curva corrente. Hint contestuali nella barra di stato, coi nomi dei tasti della
+piattaforma — emessi come segnale e cablati in `tpanels.cpp`, perche' toonzqt
+**non puo' linkare TApp** (scoperto sbattendoci: `flipconsole.cpp` include
+quell'header ma non ne usa i simboli).
+
+### Added — leggere un grafico con piu' colonne dentro
+Una regola sola: **il colore e' il canale, il tratto e' una colonna che non e'
+quella corrente, lo spessore e' la curva su cui stai lavorando.** La colonna
+corrente e' tutta continua. Prima versione mia sbagliata (continua = prima
+colonna disegnata) e **rifatta da Franco**: quel che serve e' vedere subito
+quali curve sono di quella colonna, non distinguere fra loro le altre.
+
+### Fixed — il Linear che ricompariva al posto della Default Interpolation
+Il tipo di una chiave descrive il segmento che la **segue**, quindi l'ultima
+chiave non ne governa nessuno: `TDoubleParam` le mette `Linear` come
+**segnaposto**, e lo riscrive **a ogni caricamento di scena** — per questo il
+difetto sembrava capriccioso. Diventa un segmento vero quando quella chiave
+smette di essere l'ultima passando da una strada che la **copia** invece di
+crearla: `moveKeyframe` e l'incolla in mezzo. La creazione normale era gia'
+corretta. Corretto per entrambe, toccando solo i canali in cui la chiave
+**era** l'ultima. Non verificato su repro: Franco lo collaudera'.
+
+### Fixed — SIGSEGV trascinando keyframe su piu' curve
+Il ripristino dei drawing number era guardato dalla **colonna**, mentre
+`click()` riempie `m_startFrames[i]` solo per `W_DrawingNumber`: per ogni altra
+curva di quella colonna il set e' **vuoto**, e il ciclo lo percorreva `kCount`
+volte senza confrontare l'iteratore con `end()`. Latente da prima (la modalita'
+group lo espone gia'), reso immediato dalla selezione multi-curva. Stessa
+famiglia in `release()`, dove `getStageObject()` puo' tornare null.
+
+> **Lezione sul crash log:** il backtrace della release nominava solo
+> `MovePointDragTool::drag`. L'offset `+1356` e' l'indirizzo di **ritorno di una
+> `bl`**, non l'istruzione che fallisce: e' stato il **disassemblato** a quell'
+> offset a dare il punto vero. Cfr. la nota su lldb vs crash log.
+
+### Notes — due volte ho corretto senza avere la repro
+Il primo fix allo Shift-click e' stato **incompleto** (tolta la distruzione
+della selezione, ma l'aggiunta non avveniva comunque: i gadget descrivono solo
+la curva corrente), e il primo fix al "riclicca la curva e torna continua" era
+**nella funzione giusta ma mai chiamata** in quel percorso. Entrambe le volte
+la diagnosi era dedotta invece che misurata. Cfr.
+`feedback_instrument_before_optimizing`.
+
+### Upstream
+Registrati in `UPSTREAM_PR_CANDIDATES.md`: la feature request (da proporre
+**sia a Tahoma2D sia a OpenToonz**, decisione di Franco) piu' i due bug fix,
+proponibili da soli. Testo inglese pronto in **Drive → Ztoryc →
+`FUNCTION_EDITOR_UPSTREAM_EN.md`**, con la traccia del video in coda.
+
 ## [2026-08-02] — I thumbnail smettono di sconfinare fra scene. E ZtoRig: pennello delle correttive e stacking order
 
 > Il fix dei thumbnail e' su **master** (`a23416446`). Tutto il resto e' sul branch
