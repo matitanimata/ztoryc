@@ -273,6 +273,13 @@ protected:
 
   QColor getChannelColor(QString name, bool active);
 
+  //! getChannelColor() plus the fade that marks a curve driving nothing in the
+  //! object's present state -- x and y while it is on a motion path, posPath
+  //! while it is not (FunctionTreeModel::Channel::isInert). Drawing such a
+  //! curve at full strength is how one ends up editing a trajectory that
+  //! stopped meaning anything.
+  QColor getChannelColor(FunctionTreeModel::Channel *channel, bool active);
+
 public slots:
   void onFrameSwitched();
   void onFitCalled();

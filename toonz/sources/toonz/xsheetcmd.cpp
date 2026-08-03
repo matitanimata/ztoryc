@@ -2122,6 +2122,87 @@ public:
 
 //-----------------------------------------------------------------------------
 
+//! Turns an object's x/y keys into a motion path that runs through them.
+//!
+//! Works on the keyframe selection when there is one -- several objects at
+//! once, each getting its own path -- and otherwise on the whole of the
+//! current object's keys, so the command is also usable straight from the
+//! viewer with the Animate tool, where no key selection exists.
+class GeneratePathFromKeysCommand final : public MenuItemHandler {
+public:
+  GeneratePathFromKeysCommand() : MenuItemHandler(MI_GeneratePathFromKeys) {}
+
+  void execute() override {
+    TApp *app    = TApp::instance();
+    TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+    if (!xsh) return;
+
+    const TStageObjectId cameraId =
+        TStageObjectId::CameraId(xsh->getCameraColumnIndex());
+
+    std::map<TStageObjectId, std::set<int>> byObject;
+
+    TKeyframeSelection *keySel = dynamic_cast<TKeyframeSelection *>(
+        app->getCurrentSelection()->getSelection());
+    if (keySel && !keySel->isEmpty()) {
+      const std::set<TKeyframeSelection::Position> &positions =
+          keySel->getSelection();
+      for (std::set<TKeyframeSelection::Position>::const_iterator it =
+               positions.begin();
+           it != positions.end(); ++it) {
+        const TStageObjectId id = (it->second < 0)
+                                      ? cameraId
+                                      : xsh->getColumnObjectId(it->second);
+        byObject[id].insert(it->first);
+      }
+    } else {
+      const TStageObjectId id = app->getCurrentObject()->getObjectId();
+      TStageObject *obj       = xsh->getStageObject(id);
+      if (!obj) return;
+      TStageObject::KeyframeMap keyframes;
+      obj->getKeyframes(keyframes);
+      for (TStageObject::KeyframeMap::const_iterator it = keyframes.begin();
+           it != keyframes.end(); ++it)
+        byObject[id].insert(it->first);
+    }
+
+    QString error;
+    int done = 0;
+    // The per-object command opens a block of its own; this outer one exists
+    // only to make several objects a single undo, so with one object it would
+    // just be an empty wrapper.
+    const bool group = byObject.size() > 1;
+    if (group) TUndoManager::manager()->beginBlock();
+    for (std::map<TStageObjectId, std::set<int>>::const_iterator it =
+             byObject.begin();
+         it != byObject.end(); ++it) {
+      QString objError;
+      if (TStageObjectCmd::generatePathFromKeys(
+              it->first, it->second, app->getCurrentXsheet(), &objError))
+        done++;
+      else if (error.isEmpty())
+        error = objError;
+    }
+    if (group) TUndoManager::manager()->endBlock();
+
+    if (done == 0) {
+      if (!error.isEmpty()) DVGui::warning(error);
+      return;
+    }
+
+    app->getCurrentScene()->setDirtyFlag(true);
+    app->getCurrentObject()->notifyObjectIdChanged(false);
+    // If a path was being EDITED when this ran, the object handle is still
+    // holding the one that just got detached. objectSwitched is what makes it
+    // read the object's spline again.
+    if (app->getCurrentObject()->isSpline())
+      app->getCurrentObject()->notifyObjectIdSwitched();
+  }
+
+} generatePathFromKeysCommand;
+
+//-----------------------------------------------------------------------------
+
 class SetAccelerationCommand final : public MenuItemHandler {
 public:
   SetAccelerationCommand() : MenuItemHandler(MI_SetAcceleration) {}

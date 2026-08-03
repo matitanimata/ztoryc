@@ -5390,6 +5390,14 @@ void CellArea::createKeyMenu(QMenu &menu) {
   }
   menu.addMenu(editCelsKeysMenu);
 
+  // Deliberately here and not in the graph's context menu, where the other
+  // curve tools live: the keys of a trajectory get picked in this column, or
+  // in the viewer with the Animate tool -- where the movement is visible. And
+  // the command takes an OBJECT and changes how it moves; it does not touch a
+  // single curve.
+  menu.addSeparator();
+  menu.addAction(cmdManager->getAction(MI_GeneratePathFromKeys));
+
   menu.addSeparator();
   menu.addAction(cmdManager->getAction(MI_OpenFunctionEditor));
 }

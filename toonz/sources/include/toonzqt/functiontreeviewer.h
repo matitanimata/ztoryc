@@ -216,6 +216,14 @@ color, which
     bool isAnimated() const override;
     bool isIgnored() const override;
 
+    //! Whether this channel is not read at all in the object's present state:
+    //! x and y while it is on a motion path, posPath while it is not. Such a
+    //! curve keeps its keyframes and draws like any other, so without saying
+    //! so the tree invites editing a trajectory that has stopped meaning
+    //! anything. Distinct from isIgnored(), which is about expressions having
+    //! lost their reference.
+    bool isInert() const;
+
     bool isCurrent() const;
     void setIsCurrent(bool current);
 

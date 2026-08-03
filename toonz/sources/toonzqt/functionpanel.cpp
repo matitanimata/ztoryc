@@ -725,6 +725,20 @@ void FunctionPanel::drawValueGrid(QPainter &painter) {
 
 //-----------------------------------------------------------------------------
 
+namespace {
+
+//! A channel that drives nothing is drawn faded, the same thing the tree says
+//! about it in the list. Kept a little stronger than the tree's text: a
+//! hairline curve vanishes at an alpha a glyph still survives.
+QColor fadeIfInert(QColor color, const FunctionTreeModel::Channel *channel) {
+  if (channel && channel->isInert()) color.setAlpha(100);
+  return color;
+}
+
+}  // namespace
+
+//-----------------------------------------------------------------------------
+
 void FunctionPanel::drawOtherCurves(QPainter &painter) {
   painter.setRenderHint(QPainter::Antialiasing, false);
   painter.setBrush(Qt::NoBrush);
@@ -744,8 +758,8 @@ void FunctionPanel::drawOtherCurves(QPainter &painter) {
     TDoubleParam *curve = channel->getParam();
     QColor color =
         curve == m_curveLabel.curve ? m_selectedColor : getOtherCurvesColor();
-    solidPen.setColor(getChannelColor(channel->getShortName(), false));
-    dashedPen.setColor(getChannelColor(channel->getShortName(), false));
+    solidPen.setColor(getChannelColor(channel, false));
+    dashedPen.setColor(getChannelColor(channel, false));
 
     // Colour says WHICH channel, dash pattern says WHICH COLUMN. The palette
     // is per channel name -- every X is firebrick -- so with two columns
@@ -1026,7 +1040,7 @@ void FunctionPanel::drawCurrentCurve(QPainter &painter) {
 
   painter.setRenderHint(QPainter::Antialiasing, true);
   QColor color = Qt::red;
-  color        = getChannelColor(channel->getShortName(), true);
+  color        = getChannelColor(channel, true);
   QPen solidPen(color);
   QPen dashedPen(color);
   QVector<qreal> dashes;
@@ -1062,7 +1076,7 @@ void FunctionPanel::drawCurrentCurve(QPainter &painter) {
             segmentType == TDoubleKeyframe::SimilarShape ||
             segmentType == TDoubleKeyframe::File)
           color = QColor(185, 0, 0);
-        color   = getChannelColor(channel->getShortName(), true);
+        color   = getChannelColor(channel, true);
         // The current curve is drawn heavier than the others (which stay at
         // hairline width in drawOtherCurves): with several columns overlaid
         // the colours repeat -- every X is firebrick -- and thickness is what
@@ -2244,6 +2258,18 @@ QColor FunctionPanel::getChannelColor(QString name, bool active) {
   else
     color = QColor("darkcyan");
   if (!active) color.setAlpha(180);
+  return color;
+}
+
+//-----------------------------------------------------------------------------
+
+QColor FunctionPanel::getChannelColor(FunctionTreeModel::Channel *channel,
+                                      bool active) {
+  QColor color = getChannelColor(channel->getShortName(), active);
+  // Multiplied, not assigned: the "not the current curve" fade above has to
+  // survive, or an inert curve would come out BRIGHTER than the live ones
+  // around it.
+  if (channel->isInert()) color.setAlpha(int(color.alpha() * 0.35));
   return color;
 }
 

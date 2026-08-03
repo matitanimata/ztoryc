@@ -624,6 +624,29 @@ bool FunctionTreeModel::Channel::isIgnored() const {
 
 //-----------------------------------------------------------------------------
 
+//! On a motion path the placement comes from posPath alone and x and y are
+//! never read; off one, the reverse. TStageObject::computeLocalPlacement
+//! switches on the status, and TStageObject::updateKeyframes uses the very same
+//! test to decide which channel owns the object's keyframes -- so asking it
+//! here means the tree and the evaluation cannot disagree.
+bool FunctionTreeModel::Channel::isInert() const {
+  StageObjectChannelGroup *group =
+      dynamic_cast<StageObjectChannelGroup *>(m_group);
+  if (!group) return false;
+  TStageObject *obj = group->getStageObject();
+  if (!obj) return false;
+
+  // By pointer and not by name: the names in this tree are translated for
+  // display, and a channel is identified by which parameter it wraps.
+  TDoubleParam *param = getParam();
+  if (obj->isPathEnabled())
+    return param == obj->getParam(TStageObject::T_X) ||
+           param == obj->getParam(TStageObject::T_Y);
+  return param == obj->getParam(TStageObject::T_Path);
+}
+
+//-----------------------------------------------------------------------------
+
 QVariant FunctionTreeModel::Channel::data(int role) const {
   if (role == Qt::DecorationRole) {
     static QIcon paramIgnoredOn(":Resources/paramignored_on.svg");
@@ -683,9 +706,27 @@ QVariant FunctionTreeModel::Channel::data(int role) const {
     // 130221 iwasawa
     FunctionTreeView *view = dynamic_cast<FunctionTreeView *>(m_model->m_view);
     if (!view) return QColor(Qt::black);
-    return (isCurrent()) ? view->getViewer()->getCurrentTextColor()
-                         : view->getTextColor();
+    QColor color = (isCurrent()) ? view->getViewer()->getCurrentTextColor()
+                                 : view->getTextColor();
+    // Faded: the ordinary way of saying "there, but not in effect". The colour
+    // SWATCH is left alone on purpose -- it already greys out to mean "not
+    // shown in the graph", which is a different question and would collide.
+    if (isInert()) color.setAlpha(90);
+    return color;
   } else if (role == Qt::ToolTipRole) {
+    StageObjectChannelGroup *group =
+        dynamic_cast<StageObjectChannelGroup *>(m_group);
+    if (isInert() && group && group->getStageObject()) {
+      TStageObject *obj = group->getStageObject();
+      return obj->isPathEnabled()
+                 ? tr("Not in use: the object follows a motion path, so its "
+                      "position comes from posPath and this curve is not "
+                      "read.\nIt still holds its keys -- detaching the path "
+                      "brings the movement back.")
+                 : tr("Not in use: the object is not on a motion path, so its "
+                      "position comes from X and Y and this curve is not "
+                      "read.");
+    }
     if (m_param->hasKeyframes()) {
       TDoubleParam *dp = dynamic_cast<TDoubleParam *>(m_param.getPointer());
       FunctionTreeView *view =

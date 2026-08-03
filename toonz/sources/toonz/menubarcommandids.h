@@ -319,6 +319,8 @@
 #define MI_ShiftKeyframesDown "MI_ShiftKeyframesDown"
 #define MI_ShiftKeyframesUp "MI_ShiftKeyframesUp"
 
+#define MI_GeneratePathFromKeys "MI_GeneratePathFromKeys"
+
 #define MI_SetAcceleration "MI_SetAcceleration"
 #define MI_SetDeceleration "MI_SetDeceleration"
 #define MI_SetConstantSpeed "MI_SetConstantSpeed"

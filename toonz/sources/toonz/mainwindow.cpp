@@ -3213,6 +3213,8 @@ void MainWindow::defineActions() {
                              "");
   createRightClickMenuAction(MI_InvertKeyframeSelection,
                              QT_TR_NOOP("Invert Key Selection"), "");
+  createRightClickMenuAction(MI_GeneratePathFromKeys,
+                             QT_TR_NOOP("Generate Path from Keys"), "");
   createRightClickMenuAction(MI_SetAcceleration, QT_TR_NOOP("Set Acceleration"),
                              "");
   createRightClickMenuAction(MI_SetDeceleration, QT_TR_NOOP("Set Deceleration"),

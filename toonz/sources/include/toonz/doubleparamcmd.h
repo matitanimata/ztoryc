@@ -169,6 +169,11 @@ public:
   //! stage object a keyframe belongs to every channel at once and moving the
   //! posPath one alone splits it in two -- the xsheet then shows a key at the
   //! old frame (the other channels) and one at the new (posPath).
+  //!
+  //! The caller must also make the roved span LINEAR. These frames come from a
+  //! straight line between the bracketing keys, so anything else leaves the
+  //! keys in the right places with the movement between them still eased --
+  //! the promise kept at the keys and broken everywhere else.
   static std::map<int, int> computeRovedFrames(TDoubleParam *curve,
                                                const std::set<int> &kIndices);
 

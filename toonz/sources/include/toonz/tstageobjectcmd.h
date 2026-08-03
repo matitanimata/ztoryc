@@ -6,6 +6,8 @@
 #include "tcommon.h"
 #include <QPair>
 #include <QPointF>
+#include <QString>
+#include <set>
 
 #undef DVAPI
 #undef DVVAR
@@ -42,6 +44,33 @@ DVAPI void setParent(const TStageObjectId &id, TStageObjectId parentId,
                      bool doUndo = true);
 DVAPI void setSplineParent(TStageObjectSpline *spline, TStageObject *parentObj,
                            TXsheetHandle *xshHandle);
+
+//! Draws a motion path through the object's positions at \e frames and puts
+//! the object on it, turning those keys into posPath keys at the same frames.
+//!
+//! Three x/y keys make a movement that goes right, then up, then down again --
+//! and it arrives at the middle key one way and leaves it another, so the
+//! trajectory has a CORNER there. What one wanted was an arc. Drawing the
+//! spline by hand to get it is awkward enough that motion paths go unused.
+//!
+//! So: the same Catmull-Rom the Auto Bezier tangents use, in space instead of
+//! in time. The curve passes exactly through every key position, the timing is
+//! preserved key by key (each key keeps its frame, and its posPath value is the
+//! percentage of length where its point sits), and what changes is only the
+//! shape of the movement BETWEEN the keys. Spreading the intermediate keys for
+//! constant speed is a separate question, answered by Even Speed Along Path.
+//!
+//! The x and y curves are left untouched: on a path they are simply not read
+//! (see TStageObject::computeLocalPlacement), so detaching the spline brings
+//! the original movement back.
+//!
+//! An object can only carry one path, so an existing one is detached and stays
+//! in the schematic as a free spline node.
+//! Returns false and fills \e error when the request makes no sense.
+DVAPI bool generatePathFromKeys(const TStageObjectId &id,
+                                const std::set<int> &frames,
+                                TXsheetHandle *xshHandle,
+                                QString *error = 0);
 
 DVAPI void addNewCamera(TXsheetHandle *xshHandle, TObjectHandle *objHandle,
                         QPointF initialPos = QPointF());

@@ -742,6 +742,32 @@ void FunctionSelection::distributeSelectedEvenly() {
 
     stObj->updateKeyframes();
 
+    // Constant speed IS a straight line in the graph, so the span the keys were
+    // just spread over has to BE one. Placing them on the line and leaving the
+    // easing alone kept the promise AT the keys and broke it between them:
+    // moveKeyframe copies the handles verbatim (TDoubleParam::setKeyframe does
+    // not renormalise them), so they still described the OLD spacing and the
+    // curve wandered off the line it had just been fitted to.
+    //
+    // Linear rather than auto bezier, even though with every key on the line
+    // auto bezier would reproduce that same line: this way BOTH readings stay
+    // reachable. Rove alone gives even speed outright; rove and then Auto
+    // Bezier gives even speed with an ease at the two ends -- After Effects'
+    // roving keys with easy ease. Were the rove to apply tangents itself, the
+    // un-eased reading could not be had at all.
+    //
+    // Exact only to within half a frame, and unavoidably so: keys live on whole
+    // frames, and computeRovedFrames rounds to them.
+    //
+    // This curve only. The rove speaks about speed along the PATH, and the ease
+    // an animator put on rotation or zoom at those same keys is not its
+    // business. (The command is enabled on posPath selections alone anyway --
+    // see isSelectionOnPosPath.)
+    const int firstSeg = target.begin()->first - 1;
+    const int lastSeg  = target.rbegin()->first;
+    for (int s = firstSeg; s <= lastSeg; s++)
+      KeyframeSetter(curve, s, false).setType(s, TDoubleKeyframe::Linear);
+
     TStageObject::KeyframeMap after;
     stObj->getKeyframes(after);
     TUndoManager::manager()->add(

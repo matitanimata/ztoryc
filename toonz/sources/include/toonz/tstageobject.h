@@ -320,6 +320,12 @@ object.
   //! Returns the center of the \e frame.
   TPointD getCenter(double frame) const;
 
+  //! The point of the object that a motion path carries. On a path the
+  //! placement is spline point - frameCenter (see computeLocalPlacement), so
+  //! anything that builds a path meant to leave the object where it already is
+  //! has to offset the curve by this.
+  TPointD getFrameCenter() const { return m_frameCenter; }
+
   //! Returns the offset of the object. \sa  setOffset().
   TPointD getOffset() const;
 

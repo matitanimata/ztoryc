@@ -14,14 +14,19 @@
 #include "toonz/tcolumnfxset.h"
 #include "toonz/fxdag.h"
 #include "toonz/txshpegbarcolumn.h"
+#include "toonz/tstageobject.h"
+#include "toonz/doubleparamcmd.h"
+#include "toonz/stage.h"
 
 // TnzBase includes
 #include "tdoublekeyframe.h"
+#include "tdoubleparam.h"
 #include "tfx.h"
 
 // TnzCore includes
 #include "tundo.h"
 #include "tconvert.h"
+#include "tstroke.h"
 
 #include "historytypes.h"
 
@@ -1500,6 +1505,261 @@ TStageObjectSpline *TStageObjectCmd::addNewSpline(TXsheetHandle *xshHandle,
   }
   xshHandle->notifyXsheetChanged();
   return spline;
+}
+
+//===================================================================
+//
+// generatePathFromKeys
+//
+//-------------------------------------------------------------------
+
+namespace {
+
+//! Builds a stroke running smoothly through every point of \e cps, in order.
+//!
+//! A Toonz stroke is a chain of QUADRATIC pieces, and a spline control point is
+//! every fourth raw point: one segment between two control points is two
+//! quadratics, [P, H0, M, H1, P'], joined at M. Laying the points out that way
+//! is what makes the result an ordinary spline afterwards -- the Control Point
+//! Editor reads it back with its handles where one expects them, and Franco's
+//! requirement was a curve he can still edit by hand.
+//!
+//! The shape comes from the same Catmull-Rom as the Auto Bezier tangents, in
+//! space instead of in time: the direction at a point is decided by its
+//! NEIGHBOURS, so the curve runs through it instead of turning a corner there.
+//! And, as in time, the handle is clamped -- to a third of the SHORTER of the
+//! two adjacent chords, so a short segment next to a long one cannot make the
+//! curve bulge past the points it is supposed to interpolate.
+TStroke *buildSmoothStroke(const std::vector<TPointD> &cps) {
+  const int n = (int)cps.size();
+  assert(n >= 2);
+
+  std::vector<double> chord(n - 1);
+  for (int i = 0; i + 1 < n; i++) chord[i] = tdistance(cps[i], cps[i + 1]);
+
+  // Unit tangent on each side of a point. They differ only where the movement
+  // doubles back on itself -- there is no smooth direction through such a
+  // point, and inventing one would draw a loop where the motion simply
+  // reverses.
+  std::vector<TPointD> tIn(n), tOut(n);
+  for (int i = 0; i < n; i++) {
+    TPointD d;
+    if (i == 0)
+      d = cps[1] - cps[0];
+    else if (i == n - 1)
+      d = cps[n - 1] - cps[n - 2];
+    else {
+      d = cps[i + 1] - cps[i - 1];
+      if (norm(d) < 1e-4 * (chord[i - 1] + chord[i])) {
+        tIn[i]  = normalize(cps[i] - cps[i - 1]);
+        tOut[i] = normalize(cps[i + 1] - cps[i]);
+        continue;
+      }
+    }
+    tIn[i] = tOut[i] = (norm(d) > 0.0) ? normalize(d) : TPointD(1, 0);
+  }
+
+  // Handle length at each point: a third of the shorter adjacent chord. For
+  // evenly spaced points this is the plain chord/3 of a Catmull-Rom.
+  std::vector<double> hLen(n);
+  for (int i = 0; i < n; i++) {
+    const double a = (i > 0) ? chord[i - 1] : chord[0];
+    const double b = (i < n - 1) ? chord[i] : chord[n - 2];
+    hLen[i]        = std::min(a, b) / 3.0;
+  }
+
+  std::vector<TThickPoint> raw;
+  raw.reserve(4 * (n - 1) + 1);
+  raw.push_back(TThickPoint(cps[0]));
+  for (int i = 0; i + 1 < n; i++) {
+    // The cubic this segment would be is (P, P + m0/3, P' - m1/3, P'); two
+    // quadratics reproduce its midpoint exactly when the handles sit at m/4.
+    const TPointD h0 = cps[i] + tOut[i] * (hLen[i] * 0.75);
+    const TPointD h1 = cps[i + 1] - tIn[i + 1] * (hLen[i + 1] * 0.75);
+    raw.push_back(TThickPoint(h0));
+    raw.push_back(TThickPoint((h0 + h1) * 0.5));
+    raw.push_back(TThickPoint(h1));
+    raw.push_back(TThickPoint(cps[i + 1]));
+  }
+
+  return new TStroke(raw);
+}
+
+//! Attaches (redo) and detaches (undo) the generated path. The keyframe values
+//! are deliberately NOT in here: KeyframeSetter registers its own undo for
+//! those and the whole command runs inside one undo block, so they come back in
+//! the right order on their own.
+class GeneratePathUndo final : public TUndo {
+  TStageObjectId m_id;
+  TStageObjectSpline *m_oldSpline, *m_newSpline;
+  TStageObject::Status m_oldStatus;
+  TXsheetHandle *m_xshHandle;
+
+public:
+  GeneratePathUndo(const TStageObjectId &id, TStageObjectSpline *oldSpline,
+                   TStageObject::Status oldStatus,
+                   TStageObjectSpline *newSpline, TXsheetHandle *xshHandle)
+      : m_id(id)
+      , m_oldSpline(oldSpline)
+      , m_newSpline(newSpline)
+      , m_oldStatus(oldStatus)
+      , m_xshHandle(xshHandle) {
+    if (m_oldSpline) m_oldSpline->addRef();
+    m_newSpline->addRef();
+  }
+
+  ~GeneratePathUndo() {
+    if (m_oldSpline) m_oldSpline->release();
+    m_newSpline->release();
+  }
+
+  void undo() const override {
+    TXsheet *xsh      = m_xshHandle->getXsheet();
+    TStageObject *obj = xsh->getStageObject(m_id);
+    if (!obj) return;
+    obj->setSpline(m_oldSpline);
+    // setSpline() can only say PATH; an object that was AIMing along its old
+    // path has to be told so again.
+    if (m_oldSpline) obj->setStatus(m_oldStatus);
+    xsh->getStageObjectTree()->removeSpline(m_newSpline);
+    obj->updateKeyframes();
+    m_xshHandle->notifyXsheetChanged();
+  }
+
+  void redo() const override {
+    TXsheet *xsh      = m_xshHandle->getXsheet();
+    TStageObject *obj = xsh->getStageObject(m_id);
+    if (!obj) return;
+    xsh->getStageObjectTree()->insertSpline(m_newSpline);
+    obj->setSpline(m_newSpline);
+    obj->updateKeyframes();
+    m_xshHandle->notifyXsheetChanged();
+  }
+
+  int getSize() const override {
+    return sizeof *this + sizeof(TStageObjectSpline);
+  }
+
+  QString getHistoryString() override {
+    return QObject::tr("Generate Path from Keys : %1")
+        .arg(QString::fromStdString(m_id.toString()));
+  }
+  int getHistoryType() override { return HistoryType::Xsheet; }
+};
+
+}  // namespace
+
+bool TStageObjectCmd::generatePathFromKeys(const TStageObjectId &id,
+                                           const std::set<int> &frames,
+                                           TXsheetHandle *xshHandle,
+                                           QString *error) {
+  if (!xshHandle) return false;
+  TXsheet *xsh      = xshHandle->getXsheet();
+  TStageObject *obj = xsh->getStageObject(id);
+  if (!obj) return false;
+
+  if (frames.size() < 3) {
+    if (error)
+      *error = QObject::tr(
+          "Select at least three keyframes: two of them describe nothing but a "
+          "straight line.");
+    return false;
+  }
+
+  const TStageObject::Status oldStatus = obj->getStatus();
+  const int kind = oldStatus & TStageObject::STATUS_MASK;
+  if (kind == TStageObject::IK) {
+    if (error)
+      *error = QObject::tr(
+          "The object is driven by inverse kinematics: its position does not "
+          "come from its keys.");
+    return false;
+  }
+
+  TStageObjectSpline *oldSpline = obj->getSpline();
+  const TStroke *oldStroke      = oldSpline ? oldSpline->getStroke() : 0;
+  if (kind != TStageObject::XY && (!oldStroke || oldStroke->getLength() <= 0)) {
+    if (error)
+      *error = QObject::tr("The object is on a motion path with no length.");
+    return false;
+  }
+
+  // Where the object sits at each key, read the way computeLocalPlacement
+  // reads it -- so an object already on a path is RESAMPLED rather than
+  // misread through x and y, which on a path are not what places it.
+  const TPointD frameCenter = obj->getFrameCenter() * Stage::inch;
+  TDoubleParam *xParam      = obj->getParam(TStageObject::T_X);
+  TDoubleParam *yParam      = obj->getParam(TStageObject::T_Y);
+  TDoubleParam *posPath     = obj->getParam(TStageObject::T_Path);
+
+  std::vector<TPointD> pos;
+  pos.reserve(frames.size());
+  for (std::set<int>::const_iterator it = frames.begin(); it != frames.end();
+       ++it) {
+    const double f = *it;
+    if (kind == TStageObject::XY)
+      pos.push_back(
+          TPointD(xParam->getValue(f), yParam->getValue(f)) * Stage::inch +
+          frameCenter);
+    else
+      pos.push_back(oldStroke->getPointAtLength(oldStroke->getLength() *
+                                                posPath->getValue(f) * 0.01));
+  }
+
+  // Two keys at the same spot are a HOLD, not two control points: a repeated
+  // point would make a zero-length piece of curve. They share one control
+  // point, and so end up sharing one posPath value -- which is exactly a hold.
+  std::vector<TPointD> cps;
+  std::vector<int> cpOfKey(pos.size());
+  const double eps = 1e-3 * Stage::inch;
+  for (int i = 0; i < (int)pos.size(); i++) {
+    if (cps.empty() || tdistance(pos[i], cps.back()) > eps) cps.push_back(pos[i]);
+    cpOfKey[i] = (int)cps.size() - 1;
+  }
+  if (cps.size() < 2) {
+    if (error)
+      *error = QObject::tr(
+          "The object does not move between the selected keys: there is no "
+          "path to draw.");
+    return false;
+  }
+
+  TUndoManager::manager()->beginBlock();
+
+  TStageObjectSpline *spline = xsh->getStageObjectTree()->createSpline();
+  spline->setStroke(buildSmoothStroke(cps));
+  // Shape first, attach second: with Update Pos Path Keyframes on, a stroke
+  // handed to a spline that already owns the posPath channel would drag the
+  // keyframes about as it changed.
+  TUndoManager::manager()->add(
+      new GeneratePathUndo(id, oldSpline, oldStatus, spline, xshHandle));
+  obj->setSpline(spline);
+
+  const TStroke *stroke = spline->getStroke();
+  const double total    = stroke->getLength();
+  int i                 = 0;
+  for (std::set<int>::const_iterator it = frames.begin(); it != frames.end();
+       ++it, ++i) {
+    // Control point 4*k: one spline control point every four raw ones.
+    const double len = stroke->getLengthAtControlPoint(4 * cpOfKey[i]);
+    KeyframeSetter::setValue(posPath, *it,
+                             (total > 0.0) ? 100.0 * len / total : 0.0);
+  }
+
+  // posPath is a percentage of the length, so a curve that overshoots between
+  // two keys runs the object off the END of its path. Auto Bezier is the one
+  // that cannot: it is clamped precisely against overshooting.
+  std::set<int> kIndices;
+  for (int k = 0; k < posPath->getKeyframeCount(); k++)
+    if (frames.count((int)posPath->keyframeIndexToFrame(k)) > 0)
+      kIndices.insert(k);
+  KeyframeSetter::setAutoBezier(posPath, kIndices);
+
+  obj->updateKeyframes();
+
+  TUndoManager::manager()->endBlock();
+  xshHandle->notifyXsheetChanged();
+  return true;
 }
 
 //===================================================================

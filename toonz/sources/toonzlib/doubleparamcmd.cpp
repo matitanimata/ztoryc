@@ -584,10 +584,20 @@ void KeyframeSetter::setTangents(TDoubleParam *curve,
     double m = 0.0;
     if (flat)
       m = 0.0;  // horizontal on both sides: the movement stops here
-    else if (i == 0)
-      m = d[0];  // no neighbour behind: follow the segment ahead
-    else if (i == n - 1)
-      m = d[n - 2];
+    else if (i == 0 || i == n - 1)
+      // The FIRST and LAST keys are flat too, and for this rule's own reason:
+      // outside them the value is HELD, so the slope arriving at the first key
+      // is zero and the slope leaving the last one is zero. Giving them the
+      // slope of the adjoining segment instead would put a step in the speed
+      // exactly where it is largest -- from standing still to full speed --
+      // which is the defect auto bezier exists to remove. Flat also makes the
+      // movement start and stop of its own accord, and matches Blender's Auto
+      // Clamped and Maya's Auto.
+      //
+      // Known exception, deliberately not handled: on a CYCLED curve the value
+      // does not stop at the last key, it wraps to the first, and there the
+      // right tangent would have to be read from the other end.
+      m = 0.0;
     else {
       const double a = d[i - 1], b = d[i];
       if (a * b <= 0.0)
