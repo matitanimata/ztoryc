@@ -648,6 +648,47 @@ void FunctionSelection::pasteTangents() {
 
 //-----------------------------------------------------------------------------
 
+//! Undo for Rove Keys. A snapshot of the object's whole keyframe table before
+//! and after, restored wholesale: TStageObject::moveKeyframe belongs to the
+//! *WithoutUndo* family and registers nothing on its own, so wrapping it in an
+//! undo block left the stack and the scene disagreeing -- and a later undo,
+//! replayed against a state it did not expect, crashed.
+class RoveKeysUndo final : public TUndo {
+  TStageObject *m_obj;
+  TStageObject::KeyframeMap m_before, m_after;
+  TXsheetHandle *m_xsheetHandle;
+
+  void restore(const TStageObject::KeyframeMap &keys) const {
+    if (!m_obj) return;
+    TStageObject::KeyframeMap current;
+    m_obj->getKeyframes(current);
+    for (TStageObject::KeyframeMap::const_iterator it = current.begin();
+         it != current.end(); ++it)
+      m_obj->removeKeyframeWithoutUndo(it->first);
+    for (TStageObject::KeyframeMap::const_iterator it = keys.begin();
+         it != keys.end(); ++it)
+      m_obj->setKeyframeWithoutUndo(it->first, it->second);
+    m_obj->updateKeyframes();
+    if (m_xsheetHandle) m_xsheetHandle->notifyXsheetChanged();
+  }
+
+public:
+  RoveKeysUndo(TStageObject *obj, const TStageObject::KeyframeMap &before,
+               const TStageObject::KeyframeMap &after,
+               TXsheetHandle *xsheetHandle)
+      : m_obj(obj)
+      , m_before(before)
+      , m_after(after)
+      , m_xsheetHandle(xsheetHandle) {}
+
+  void undo() const override { restore(m_before); }
+  void redo() const override { restore(m_after); }
+  int getSize() const override { return sizeof(*this); }
+  QString getHistoryString() override { return QObject::tr("Rove Keys"); }
+};
+
+//-----------------------------------------------------------------------------
+
 bool FunctionSelection::isSelectionOnPosPath() const {
   if (m_selectedKeyframes.isEmpty()) return false;
   for (const auto &col : m_selectedKeyframes) {
@@ -682,6 +723,9 @@ void FunctionSelection::distributeSelectedEvenly() {
         m_sheet->getStageObject(m_sheet->getColumnIndexByCurve(curve));
     if (!stObj) continue;
 
+    TStageObject::KeyframeMap before;
+    stObj->getKeyframes(before);
+
     // Order matters: a key must never be asked to land on one that has not
     // moved out of the way yet.
     std::vector<std::pair<int, int>> moves;  // src frame -> dst frame
@@ -697,6 +741,11 @@ void FunctionSelection::distributeSelectedEvenly() {
         stObj->moveKeyframe(moves[i].second, moves[i].first);
 
     stObj->updateKeyframes();
+
+    TStageObject::KeyframeMap after;
+    stObj->getKeyframes(after);
+    TUndoManager::manager()->add(
+        new RoveKeysUndo(stObj, before, after, m_xsheetHandle));
   }
   if (m_xsheetHandle) m_xsheetHandle->notifyXsheetChanged();
   TUndoManager::manager()->endBlock();
