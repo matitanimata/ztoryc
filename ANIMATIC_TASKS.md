@@ -357,6 +357,12 @@ nella sub-scene corretta.
 
 ## Aperti al 2026-08-02 (travasati dalla lista di sessione)
 
+> ⭐ **QUESTA E' L'UNICA LISTA DI STATO.** Unificata il 2026-08-03: le stesse voci
+> ZtoRig vivevano anche dentro Priority Order e le due copie avevano gia' cominciato a
+> divergere (una diceva aperto cio' che l'altra dava per chiuso). Li' sono rimaste solo
+> **le prove e le misure**, che e' a cosa serve quella sezione; qui c'e' cosa e' aperto.
+> Chi chiude una voce la chiude **qui**.
+>
 > Diagnosi raccolte nelle sessioni del 27/7 e del 2/8. Scritte qui perche' la
 > lista di lavoro vive nella sessione e sparisce con la chat.
 
@@ -390,11 +396,35 @@ nella sub-scene corretta.
   solo cio' che e' cambiato dal riposo, potrebbe bastare. Altrimenti serve un
   comando che copi ANGLE/DISTANCE/SO fra due frame lasciando il piazzamento.
 - ⬜ **Template di scheletri riusabili + registrazione di animazioni.**
-  **DA CONFERMARE**: ricostruito a memoria, non era scritto da nessuna parte.
-  Aperto: cosa contiene il template (topologia? limiti? rigidity? SO?); le
-  correttive NON sono trasferibili (delta per indice di vertice della MAGLIA);
-  riapplicazione per nome (unica chiave stabile) o per indice; dove vivono i
-  template. Le azioni di posa ZtoRig sono il precedente piu' vicino.
+  ✅ **CONFERMATO da Franco il 2026-08-03** — era ricostruito a memoria, ora e' una voce
+  vera. Restano aperte le domande di progetto: cosa contiene il template (topologia?
+  limiti d'angolo? rigidity? SO?); le correttive **NON sono trasferibili** (sono delta
+  per indice di vertice della MAGLIA, che cambia da disegno a disegno); riapplicazione
+  **per nome** (unica chiave stabile fra scheletri diversi) o per indice; dove vivono i
+  template (accanto alla scena? nella libreria di progetto?). Le azioni di posa ZtoRig
+  sono il precedente piu' vicino e vanno guardate per prime.
+- 💡 **Colore della linea come chiave di corrispondenza** (idea di Franco,
+  2026-08-03, da valutare). Se l'animatore disegna la linea del naso con uno
+  STILE dedicato, quella linea si riconosce in tutte le viste senza pickerare
+  niente e senza indovinare dalla geometria. Il suo esempio e' preciso: la linea
+  del naso a volte cade a sinistra e a volte a destra, e nessun criterio
+  posizionale la segue.
+
+  **Perche' e' forte**: lo stile e' **gia' nel formato file** — ogni `TStroke`
+  porta il suo `getStyle()` e il PLI lo salva, a differenza di `getId()` che e'
+  un contatore a runtime (`++maxStrokeId`) e si riassegna al caricamento. Quindi
+  non chiede niente al formato, che era il vincolo peggiore. Ed e' un gesto che
+  gli animatori gia' fanno: le palette di lavorazione esistono.
+
+  **Limiti da guardare in faccia**: uno stile identifica una CLASSE, non
+  un'istanza — con due occhi dello stesso colore non si distingue destro da
+  sinistro (o due stili, o una regola sul lato). Ed e' opt-in: vale solo se
+  qualcuno ha colorato apposta. Come **ripiego** invece che come obbligo e'
+  perfetto: dove il colore c'e' lo si usa, dove non c'e' si ricade sull'indice
+  e sul picker.
+
+- ⬜ **Correttive di giuntura, milestone 3 (UI).** La milestone 2 (authoring, il
+  pennello) e' entrata su master il 2026-08-03.
 
 **Altro**
 
@@ -560,7 +590,12 @@ il rework finale dello slider auto-keying (l'unica parte mai verificata a mano):
   i limiti cedono al pin; più «il corpo resiste» (bisezione di fattibilità nel drag).
   Residuo peggiore da 10.4% a ~1.5% della diagonale del rig. Nuovo slider **IK Max Step**
   (1-90 gradi/evento, default 15).
-- ⬜ **Anche e spalle: il solver salta bacino di convergenza.** — RICARATTERIZZATO
+- 📐 **Anche e spalle — LE MISURE.** Lo *stato* di questa voce sta in «Aperti al
+  2026-08-02», dove il 2/8 Franco l'ha ricaratterizzata ancora: succede **solo su
+  animazioni vecchie**, il che sposta il sospetto dal solver al dato già in scena. Qui
+  sotto restano le misure del 27/7, che valgono comunque e che nessuno deve rifare.
+
+  RICARATTERIZZATO
   2026-07-27 **con misure**, la diagnosi precedente era sbagliata. Franco: il controllo
   delle anche è ORA BUONO (dopo «il corpo resiste» + IK Max Step del 26d) e va
   **conservato**: NON fare la riscrittura «leva = cursore» a tappeto. Resta che
@@ -591,8 +626,11 @@ il rework finale dello slider auto-keying (l'unica parte mai verificata a mano):
 
   **Strumenti già in codice** (non sono fix, non vanno in release): `ZTORYC_NO_ANGLE_CLAMP`
   spegne il clamp dei limiti (keyed E statici) per A/B; `[IK_FEASIBLE]` logga quanta parte
-  del passo sopravvive alla bisezione. Cinque membri `m_ikSweep*` in `plastictool.h` sono
-  **inutilizzati**: o servono al fix vero, o vanno tolti prima del merge.
+  del passo sopravvive alla bisezione. **Sono su master** (ci sono arrivati con il merge
+  di ZtoRig, non col merge del 3/8): innocui a variabile spenta, ma restano due
+  interruttori di debug in una build che si rilascia — da togliere quando la voce si
+  chiude. I cinque membri `m_ikSweep*` che erano segnati come inutilizzati **non ci sono
+  più**: verificato il 2026-08-03, quella pulizia è già stata fatta.
 - ✅ **Angle bounds che risentono della rotazione del padre** (solo multi-colonna) —
   **RISOLTO 2026-07-27, verificato da Franco** («ora questa cosa è perfetta»).
   **Non era un problema di limiti: era il PIAZZAMENTO.** Il parenting a un hook portava
@@ -617,26 +655,28 @@ il rework finale dello slider auto-keying (l'unica parte mai verificata a mano):
      un giunto non-IK **non viene mai chiamata** (0 righe su 52 eventi). Il clamp che conta
      è `PlasticSkeletonDeformation::updateAngle`. E il range misurato era **identico** nelle
      due pose del busto (-95.38 in entrambe): il range non è mai stato il difetto.
-- ⬜ **Pin legati allo scheletro.** I parametri `PIN` sono condivisi per nome tra gli
-  scheletri della colonna. Tentato il 2026-07-26c deducendo lo scheletro dal frame di
-  attivazione: **sbagliato**, rompeva il multi-pin e non spegneva il ciano (cambiando
-  disegno allo stesso frame il frame di attivazione non cambia). Ritirato. Serve un
-  campo esplicito in `SkVD`, come `m_skelIds` per le pose, con «pin vecchi = ovunque».
-- ⬜ **Il personaggio scivola registrando pose con i PIN.** Da indagare, tocca
-  l'autorità del planting (zona che ha già avuto un bug di oscillazione multi-pin).
-- ⬜ **Riattivando l'IK il personaggio salta.** Un pin preesistente si riattiva e al
-  primo clic il personaggio si sposta. È figlio del gating del 26c: uscire dall'IK fa
-  il bake e conserva la posa, rientrare fa ripartire il planting verso un bersaglio
-  **catturato prima** dell'uscita. Semantica decisa da Franco: **disattivazione e
-  riattivazione devono comportarsi come nel single level**. Fix: **ri-catturare i target
-  all'accensione** invece di riusare i vecchi. Mai toccato finora.
-- ⬜ **Residuo multi-pin ~1.5%** (era 10.4%, vedi sopra): migliorato molto, non chiuso.
-  Cosa a sé rispetto al drag anche/spalle. Causa: la **bisezione del drag giudica con
-  `solveMultiAnchor`**, ma l'ultima parola ce l'ha il **solve di personaggio in
-  `TStageObject`**. Finché i due non coincidono il drag si ferma *quasi* nel punto giusto.
-  Fix: esporre anche il solve di personaggio **come query**, esattamente come
-  `plantPins()` / `pinResidualForPose()` per la singola colonna.
-- ⬜ Correttive di giuntura: milestone 2 (authoring) e 3 (UI).
+- ✅ **Riattivando l'IK il personaggio salta — RISOLTO** (`fbafaeee5`, mergiato su master
+  il 2026-08-03). Uscire dall'IK fa il bake in FK e molla i pin, ma i target di scena
+  (PINWX/PINWY) catturati prima restavano indietro: descrivevano dove stava il piede
+  quando venne piantato, cioè una posa che il bake aveva già assorbito. Rientrando, il
+  primo solve trascinava il personaggio su quel bersaglio stantio. Ora rientrando si
+  **ri-piantano i pin ATTIVI dove il personaggio sta in quel momento**, con lo stesso
+  identico calcolo di `togglePinAtCurrentFrame` (per non avere due modi di catturare un
+  bersaglio che un giorno divergono) e solo per i pin già attivi al frame corrente
+  (riaccendere l'IK non deve inventare vincoli che non c'erano).
+- ✅ **Correttive di giuntura, milestone 2 (authoring) — FATTA** (`d32e6c5ea` +
+  `a9263e0a2` + `960a856e9`, mergiati il 2026-08-03). Il pennello misura la distanza
+  **lungo la maglia** (BFS su `buildDistances`) e non a schermo, così col gomito piegato
+  lavora su ciò che tocca invece che su ciò che copre; selezione multipla dei giunti con
+  shift+clic; lo stacking order si assegna a tutta la selezione in un solo undo.
+  ⚠️ Trappola pagata due volte: `buildDistances` scrive **solo** i vertici che la BFS
+  visita, quindi con l'array a zero le isole staccate (braccia, gambe) restavano a
+  distanza 0 — cioè più vicine di tutto. **Non raggiunto deve voler dire lontano.**
+
+> **Le voci ancora aperte di ZtoRig non stanno più qui.** Vivevano in due posti che
+> avevano già cominciato a divergere. Stanno tutte in **«Aperti al 2026-08-02»**, che è
+> l'unica lista di stato; qui restano solo le prove e le misure, che è ciò per cui
+> questa sezione serve.
 
 **✅ FATTO — Import da carta nella Thumbnail room (task 63)**, completo e mergiato su
 master il 2026-07-26 (`d7b7ff283`). Stampa foglio A4 (vuoto fotocopiabile o con i

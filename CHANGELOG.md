@@ -1,3 +1,114 @@
+## [2026-08-03d] — Il percorso dalle chiavi, e una testa che gira attorno a un ovale
+
+Giornata lunga e in tre tempi: chiuso il Function Editor, mergiato ZtoRig su
+master, e poi una deviazione che è diventata la cosa più interessante.
+
+### Added — Function Editor: il percorso dalle chiavi
+- **Generate Path from Keys** (menu della colonna keyframe dell'xsheet, non del
+  grafico: prende un OGGETTO e ne cambia il modo di muoversi). Tre chiavi x/y
+  fanno un movimento con un ANGOLO alla chiave centrale quando si voleva un
+  arco; il comando costruisce la spline che passa per le posizioni delle chiavi,
+  ci aggancia l'oggetto e converte le chiavi in `posPath` alla percentuale di
+  lunghezza di ciascun punto. Stessa matematica dell'Auto Bezier, **nello spazio
+  invece che nel tempo**.
+- x e y **restano intatte**: su un percorso non vengono lette affatto
+  (`computeLocalPlacement` fa uno switch sullo stato), quindi staccare la spline
+  riporta il movimento originale. Verificato leggendo il codice, non dedotto.
+- Uno stroke Toonz è a QUADRATICHE e un punto di controllo utente è ogni quarto
+  punto grezzo: rispettare quel layout è ciò che rende la spline generata
+  **modificabile a mano** col Control Point Editor, che era il requisito.
+
+### Modified — due comportamenti di ieri, cambiati con motivo
+- **Auto Bezier: prima e ultima chiave ora PIATTE.** Fuori da esse il valore è
+  tenuto, quindi la pendenza in arrivo alla prima è zero: darle quella del
+  segmento metteva uno scalino di velocità — da fermo a pieno regime — proprio
+  dove è più grosso, cioè il difetto per cui l'Auto Bezier esiste. Effetto
+  collaterale voluto: su **due sole chiavi** ora dà un ease invece di una retta.
+- **Even Speed Along Path porta a Linear** i segmenti dello span rovato. Metteva
+  le chiavi nei frame giusti e lasciava l'interpolazione com'era: manteneva la
+  promessa **sulle chiavi e non fra le chiavi**. Linear e non auto bezier di
+  proposito, così restano raggiungibili entrambe le letture — Rove da solo =
+  velocità costante netta, Rove *poi* Auto Bezier = costante con ease alle due
+  estremità (il roving-con-easy-ease di After Effects).
+
+### Added — canali INERTI segnalati nel Function Editor
+Nato da un incaglio reale: Franco ha guardato la curva X di un oggetto appena
+messo su un percorso, l'ha trovata malfatta e ha segnalato un difetto delle
+tangenti **che non c'era**. Su un percorso x e y non vengono lette, ma le loro
+curve restano in lista identiche alle vive. Ora sono sbiadite nell'albero (col
+perché nel tooltip) e nel grafico. Il criterio chiede `isPathEnabled()`
+all'oggetto — lo stesso test di `computeLocalPlacement` e `updateKeyframes` —
+così albero e motore non possono divergere.
+
+### Merged — ZtoRig su master (`f67e807c7`)
+Scoperto che **ZtoRig era già su master** da `3a26c2562`: l'appunto che diceva
+il contrario era vecchio e l'ho ripetuto senza verificarlo. Il branch conteneva
+solo l'ultimo scaglione, 5 commit e 8 file. Merge pulito, zero conflitti.
+- pennello delle correttive di giuntura (milestone 2): distanza **lungo la
+  maglia**, non a schermo
+- stacking order su selezione multipla di giunti, un solo undo
+- **riaccendere l'IK non fa più saltare il personaggio**
+- canvas dei thumbnail per SCENA e non per progetto
+- lock di istanza singola **per bundle**, così master e SP girano affiancate
+
+### Fixed — bear: due scene che non si aprivano
+Scene AI ricevute da terzi. I `.tnz` chiedono `$scenefolder/../levels/`, cioè
+una cartella sorella mai consegnata; e **le due scene puntano alla stessa
+cartella** chiedendo `torso`/`head` da viste diverse, che non possono
+coesistere. Ricostruito il layout in `scenes_fixed/`, una cartella per scena,
+senza toccare gli originali.
+
+### Notes — cosa hanno fatto davvero con l'AI
+**Non hanno generato immagini: hanno generato codice.** Sei viste di turnaround
+più cinque pose di gesto sono l'unico ingresso disegnato; tutto il resto è
+Python. Due strade: ritagliare i pezzi dalle tavole (12.000 colori = inchiostro
+vero) oppure **ridisegnare l'orso a colpi di ellissi** (4 colori, zero
+antialiasing, coordinate battute a mano validate per IoU contro il model sheet).
+L'animazione è `math.sin(...)` valutato a ogni frame e **bakeato**: 64 chiavi su
+64 frame, tutte Linear. Su `bear_run`, dieci chiavi ne riproducono la curva
+entro il 2%.
+
+### Notes — studio: VPaint/VAC, LayerInbetween, e cosa ha già Tahoma
+- **`TInbetween` non è un lerp**: 1574 righe con individuazione degli spigoli,
+  accoppiamento del sottoinsieme migliore, **affine propria per sotto-tratto** e
+  reiezione degli outlier a 2.5σ. Ma **accoppia i tratti per INDICE e tronca al
+  più corto** → candidato upstream.
+- **Il disegno guidato lo aggira già**: passa a `TInbetween` due immagini da un
+  tratto ciascuna, con la coppia scelta dall'utente via stroke picker. Ma la
+  scelta è transitoria (due `int` sul viewer) e il risultato è bakeato.
+- **Il VAC** (Apache 2.0) dice che il nostro piano era sbagliato: chiama
+  *sequential keyframing* il modello a ID persistenti sui punti e mostra che
+  fallisce per costruzione quando i tratti nascono, muoiono, si uniscono. La
+  corrispondenza è **un oggetto fra due chiavi**. Codice non montabile (28k
+  righe, `Cell` si disegna da solo in OpenGL, geometria a polilinea contro le
+  nostre Bézier).
+- **LayerInbetween** fuori portata: GPL, PyTorch + SAM2 + due reti esterne, e
+  fallisce sui cicli di camminata e i giri di testa. La sua interpolazione, però,
+  è **lineare**: il contributo è tutto nel trovare la corrispondenza.
+
+### Notes — proxy 3D per il giro di testa (esperimenti, su ZioSam)
+Idea di Franco: un ovale 3D che guidi l'intercalazione. È il limite che
+**entrambi i paper dichiarano** e non sanno superare.
+- errore del 2D contro la geometria: 1.6% a 30°, 5.5% a 60°, **13.2% a 90°**
+- **l'occlusione esce dalla sola normale** e a angoli sensati
+- le **correttive** vanno espresse in coordinate di SUPERFICIE, non di schermo:
+  a beccheggio 0 coincidono, a ±28 divergono del 5.2%
+- e lì la **corrispondenza sparisce**: una correttiva è un *edit* della base,
+  stessi punti spostati — come le blend shape in 3D
+- **sul disegno vero di Franco** (tre viste, comando di dump nuovo):
+  **occlusione 5 su 5** — ogni tratto che ha tolto, la geometria lo dichiara
+  nascosto da sola; **piazzamento sotto il 5%** con un ovale piazzato a occhio;
+  il **naso al 27%** perché di profilo non è il naso ruotato, è un tratto NUOVO
+- l'imbardata stimata come unico parametro libero è uscita **44.8°** e **80.6°**:
+  il turnaround è geometricamente coerente
+- la ricostruzione completa del controller è **buona da −45 a +45 e sporca agli
+  estremi**: tre bug in fila, tutti trovati guardando l'immagine e nessuno
+  visibile dai numeri. Segnale che la cosa va vista dal vivo, dentro Tahoma.
+
+### Added — comando di dump dei tratti (strumento, non feature)
+`File > Export > Ztoryc > Dump Vector Level (debug)`. Trappola dei **due
+menubar.xml** ignorata benché annotata in memoria: costata un giro a vuoto.
+
 ## [2026-08-03c] — Le curve ondivaghe: Auto Bezier, Flat, tangenti, Rove
 
 Partiti da un problema di Franco: si mettono le chiavi principali, poi i
