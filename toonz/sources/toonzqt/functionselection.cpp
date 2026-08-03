@@ -545,6 +545,183 @@ void FunctionSelection::addSegment(TDoubleParam *curve, int k) {
 
 //-----------------------------------------------------------------------------
 
+void FunctionSelection::setSelectedKeyframesAutoBezier() {
+  applyTangentsToSelection(false);
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionSelection::setSelectedKeyframesFlat() {
+  applyTangentsToSelection(true);
+}
+
+//-----------------------------------------------------------------------------
+
+FunctionSelection::TangentClip FunctionSelection::m_tangentClip;
+
+//-----------------------------------------------------------------------------
+
+void FunctionSelection::copyTangents() {
+  // Exactly one keyframe: copying "the shape" of several would have to average
+  // them, and an averaged ease is nobody's ease.
+  if (getSelectedKeyframeCount() != 1) return;
+  const QPair<TDoubleParam *, int> sel = getSelectedKeyframe(0);
+  TDoubleParam *curve                  = sel.first;
+  const int k                          = sel.second;
+  if (!curve || k < 0) return;
+
+  const int n = curve->getKeyframeCount();
+  const TDoubleKeyframe kf = curve->getKeyframe(k);
+
+  TangentClip clip;
+  if (k < n - 1) {
+    const double w = curve->keyframeIndexToFrame(k + 1) -
+                     curve->keyframeIndexToFrame(k);
+    const double h = curve->getValue(curve->keyframeIndexToFrame(k + 1)) -
+                     curve->getValue(curve->keyframeIndexToFrame(k));
+    clip.m_outXFrac = (w != 0.0) ? kf.m_speedOut.x / w : 0.0;
+    clip.m_outYFrac = (h != 0.0) ? kf.m_speedOut.y / h : 0.0;
+    clip.m_hasOut   = true;
+  }
+  if (k > 0) {
+    const double w = curve->keyframeIndexToFrame(k) -
+                     curve->keyframeIndexToFrame(k - 1);
+    const double h = curve->getValue(curve->keyframeIndexToFrame(k)) -
+                     curve->getValue(curve->keyframeIndexToFrame(k - 1));
+    clip.m_inXFrac = (w != 0.0) ? kf.m_speedIn.x / w : 0.0;
+    clip.m_inYFrac = (h != 0.0) ? kf.m_speedIn.y / h : 0.0;
+    clip.m_hasIn   = true;
+  }
+  clip.m_full    = clip.m_hasOut || clip.m_hasIn;
+  m_tangentClip  = clip;
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionSelection::pasteTangents() {
+  if (!m_tangentClip.m_full || isEmpty()) return;
+
+  TUndoManager::manager()->beginBlock();
+  for (const auto &col : m_selectedKeyframes) {
+    TDoubleParam *curve = col.first;
+    if (!curve || col.second.isEmpty()) continue;
+    if (curve->getName() == "W_DrawingNumber") continue;
+    const int n = curve->getKeyframeCount();
+
+    std::set<int> indices(col.second.begin(), col.second.end());
+
+    // The shape only fits a Bezier segment, so convert first -- same reason
+    // Auto Bezier does.
+    std::set<int> segments;
+    for (int k : indices) {
+      if (k < n - 1 && m_tangentClip.m_hasOut) segments.insert(k);
+      if (k > 0 && m_tangentClip.m_hasIn) segments.insert(k - 1);
+    }
+    for (int s : segments) {
+      KeyframeSetter setter(curve, s);
+      setter.setType(s, TDoubleKeyframe::SpeedInOut);
+    }
+
+    for (int k : indices) {
+      if (k < 0 || k >= n) continue;
+      KeyframeSetter setter(curve, k);
+      if (m_tangentClip.m_hasOut && k < n - 1) {
+        const double w = curve->keyframeIndexToFrame(k + 1) -
+                         curve->keyframeIndexToFrame(k);
+        const double h = curve->getValue(curve->keyframeIndexToFrame(k + 1)) -
+                         curve->getValue(curve->keyframeIndexToFrame(k));
+        setter.setSpeedOut(TPointD(m_tangentClip.m_outXFrac * w,
+                                   m_tangentClip.m_outYFrac * h));
+      }
+      if (m_tangentClip.m_hasIn && k > 0) {
+        const double w = curve->keyframeIndexToFrame(k) -
+                         curve->keyframeIndexToFrame(k - 1);
+        const double h = curve->getValue(curve->keyframeIndexToFrame(k)) -
+                         curve->getValue(curve->keyframeIndexToFrame(k - 1));
+        setter.setSpeedIn(TPointD(m_tangentClip.m_inXFrac * w,
+                                  m_tangentClip.m_inYFrac * h));
+      }
+    }
+  }
+  TUndoManager::manager()->endBlock();
+}
+
+//-----------------------------------------------------------------------------
+
+bool FunctionSelection::isSelectionOnPosPath() const {
+  if (m_selectedKeyframes.isEmpty()) return false;
+  for (const auto &col : m_selectedKeyframes) {
+    if (!col.first || col.second.isEmpty()) continue;
+    if (col.first->getName() != "posPath") return false;
+  }
+  return true;
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionSelection::distributeSelectedEvenly() {
+  if (isEmpty() || !m_sheet) return;
+
+  TUndoManager::manager()->beginBlock();
+  for (const auto &col : m_selectedKeyframes) {
+    TDoubleParam *curve = col.first;
+    if (!curve || col.second.isEmpty()) continue;
+
+    std::set<int> indices(col.second.begin(), col.second.end());
+    const std::map<int, int> target =
+        KeyframeSetter::computeRovedFrames(curve, indices);
+    if (target.empty()) continue;
+
+    // The WHOLE stage keyframe moves, not just posPath. On a stage object a
+    // keyframe belongs to every channel at once, and the xsheet's keyframe
+    // column shows it at object level: moving posPath alone left the other
+    // channels behind and the key appeared to have been duplicated. On a
+    // camera following a path that is also what one wants -- a zoom keyed at
+    // that point should travel with the point, not stay where it was.
+    TStageObject *stObj =
+        m_sheet->getStageObject(m_sheet->getColumnIndexByCurve(curve));
+    if (!stObj) continue;
+
+    // Order matters: a key must never be asked to land on one that has not
+    // moved out of the way yet.
+    std::vector<std::pair<int, int>> moves;  // src frame -> dst frame
+    for (std::map<int, int>::const_iterator it = target.begin();
+         it != target.end(); ++it)
+      moves.push_back(std::make_pair(
+          (int)curve->keyframeIndexToFrame(it->first), it->second));
+    bool movingRight = !moves.empty() && moves.back().second > moves.back().first;
+    if (movingRight) std::reverse(moves.begin(), moves.end());
+
+    for (size_t i = 0; i < moves.size(); i++)
+      if (moves[i].first != moves[i].second)
+        stObj->moveKeyframe(moves[i].second, moves[i].first);
+
+    stObj->updateKeyframes();
+  }
+  if (m_xsheetHandle) m_xsheetHandle->notifyXsheetChanged();
+  TUndoManager::manager()->endBlock();
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionSelection::applyTangentsToSelection(bool flat) {
+  if (isEmpty()) return;
+
+  TUndoManager::manager()->beginBlock();
+  for (const auto &col : m_selectedKeyframes) {
+    TDoubleParam *curve = col.first;
+    if (!curve || col.second.isEmpty()) continue;
+    std::set<int> indices(col.second.begin(), col.second.end());
+    if (flat)
+      KeyframeSetter::setFlatTangents(curve, indices);
+    else
+      KeyframeSetter::setAutoBezier(curve, indices);
+  }
+  TUndoManager::manager()->endBlock();
+}
+
+//-----------------------------------------------------------------------------
+
 void FunctionSelection::setSelectedSegmentsType(TDoubleKeyframe::Type type) {
   if (m_selectedSegments.isEmpty()) return;
 

@@ -718,6 +718,7 @@ void Preferences::definePreferenceItems() {
   define(keyframeType, "keyframeType", QMetaType::Int,
          4);  // Ease In / Ease Out — Ztoryc default (Linear=2 rarely useful for
               // 2D animation; the value persists once the user changes the combo)
+  define(autoBezierKeys, "autoBezierKeys", QMetaType::Bool, false);
   define(animationStep, "animationStep", QMetaType::Int, 1, 1, 500);
   define(modifyExpressionOnMovingReferences,
          "modifyExpressionOnMovingReferences", QMetaType::Bool, false);

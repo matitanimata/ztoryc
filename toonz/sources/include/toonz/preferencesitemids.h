@@ -164,6 +164,7 @@ enum PreferencesItemId {
   //----------
   // Animation
   keyframeType,
+  autoBezierKeys,
   animationStep,
   modifyExpressionOnMovingReferences,
 

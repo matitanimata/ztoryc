@@ -153,6 +153,11 @@ int KeyframeSetter::createKeyframe(double frame) {
   m_kIndex   = kIndex;
   m_keyframe = m_param->getKeyframe(m_kIndex);
 
+  // Remembered before the branches below decide the new key's type: with the
+  // option on, the tangents get recomputed at the end and the type they chose
+  // is replaced by SpeedInOut anyway.
+  const bool autoBezier = Preferences::instance()->isAutoBezierKeysEnabled();
+
   setStep(Preferences::instance()->getAnimationStep());
 
   int kCount = m_param->getKeyframeCount();
@@ -219,6 +224,23 @@ int KeyframeSetter::createKeyframe(double frame) {
         setType(ka.m_type);
     }
   }
+
+  // With the option on, give the new key an auto bezier tangent. Its two
+  // NEIGHBOURS as well: a tangent is worked out from the keys on either side,
+  // so inserting a key changes the shape they should have too -- which is the
+  // whole reason a curve goes wavy when breakdowns are added.
+  //
+  // The undo the caller is already building covers it: this is inside the same
+  // KeyframeSetter, and setAutoBezier opens its own block.
+  if (autoBezier) {
+    std::set<int> around;
+    around.insert(m_kIndex);
+    if (m_kIndex > 0) around.insert(m_kIndex - 1);
+    if (m_kIndex + 1 < m_param->getKeyframeCount())
+      around.insert(m_kIndex + 1);
+    setAutoBezier(m_param.getPointer(), around, false);
+  }
+
   return kIndex;
 }
 
@@ -438,6 +460,162 @@ m_param->setKeyframe(kf);
 }
 */
 }
+
+void KeyframeSetter::setAutoBezier(TDoubleParam *curve,
+                                   const std::set<int> &kIndices,
+                                   bool enableUndo) {
+  setTangents(curve, kIndices, false, enableUndo);
+}
+
+//-----------------------------------------------------------------------------
+
+void KeyframeSetter::setFlatTangents(TDoubleParam *curve,
+                                     const std::set<int> &kIndices,
+                                     bool enableUndo) {
+  setTangents(curve, kIndices, true, enableUndo);
+}
+
+//-----------------------------------------------------------------------------
+
+std::map<int, int> KeyframeSetter::computeRovedFrames(
+    TDoubleParam *curve, const std::set<int> &kIndices) {
+  std::map<int, int> target;
+  if (!curve) return target;
+  const int n = curve->getKeyframeCount();
+  if (n < 3) return target;  // two ends and at least one key between them
+
+  std::set<int> keys;
+  for (std::set<int>::const_iterator it = kIndices.begin();
+       it != kIndices.end(); ++it)
+    if (*it > 0 && *it < n - 1) keys.insert(*it);  // never the outer keys
+  if (keys.empty()) return target;
+
+  // One run only: spreading two separate groups over a single span would be
+  // two different questions answered as if they were one.
+  const int first = *keys.begin(), last = *keys.rbegin();
+  if (last - first != (int)keys.size() - 1) return target;
+
+  const int a = first - 1, b = last + 1;  // the fixed ends
+  const double fA = curve->keyframeIndexToFrame(a);
+  const double fB = curve->keyframeIndexToFrame(b);
+  const double vA = curve->getValue(fA);
+  const double vB = curve->getValue(fB);
+  if (fB - fA <= 0.0 || vB - vA == 0.0) return target;
+
+  for (std::set<int>::const_iterator it = keys.begin(); it != keys.end();
+       ++it) {
+    const double v = curve->getValue(curve->keyframeIndexToFrame(*it));
+    const double t = (v - vA) / (vB - vA);
+    if (t <= 0.0 || t >= 1.0) return std::map<int, int>();
+    int f = (int)std::round(fA + t * (fB - fA));
+    if (f <= (int)fA) f = (int)fA + 1;
+    if (f >= (int)fB) f = (int)fB - 1;
+    target[*it] = f;
+  }
+
+  // Room for everyone, in order.
+  int prev = (int)fA;
+  for (std::map<int, int>::iterator it = target.begin(); it != target.end();
+       ++it) {
+    if (it->second <= prev) it->second = prev + 1;
+    prev = it->second;
+  }
+  if (prev >= (int)fB) return std::map<int, int>();
+
+  return target;
+}
+
+//-----------------------------------------------------------------------------
+
+void KeyframeSetter::setTangents(TDoubleParam *curve,
+                                 const std::set<int> &kIndices, bool flat,
+                                 bool enableUndo) {
+  if (!curve) return;
+  // Drawing numbers are integers picked from a level: a smooth curve through
+  // them means nothing.
+  if (curve->getName() == "W_DrawingNumber") return;
+
+  const int n = curve->getKeyframeCount();
+  if (n < 2) return;
+
+  std::set<int> keys;
+  for (std::set<int>::const_iterator it = kIndices.begin();
+       it != kIndices.end(); ++it)
+    if (*it >= 0 && *it < n) keys.insert(*it);
+  if (keys.empty()) return;
+
+  // Both sides of every key are written, so both adjoining segments have to be
+  // able to carry a slope.
+  std::set<int> segments;
+  for (std::set<int>::const_iterator it = keys.begin(); it != keys.end();
+       ++it) {
+    if (*it < n - 1) segments.insert(*it);
+    if (*it > 0) segments.insert(*it - 1);
+  }
+
+  TUndoManager::manager()->beginBlock();
+
+  for (std::set<int>::const_iterator it = segments.begin();
+       it != segments.end(); ++it) {
+    KeyframeSetter setter(curve, *it, enableUndo);
+    setter.setType(*it, TDoubleKeyframe::SpeedInOut);
+  }
+
+  std::vector<double> f(n), v(n);
+  for (int i = 0; i < n; i++) {
+    f[i] = curve->keyframeIndexToFrame(i);
+    // Asked of the curve, not of the keyframe: with an expression the stored
+    // value is not what the curve actually passes through.
+    v[i] = curve->getValue(f[i]);
+  }
+
+  // Slope of each straight segment -- the reference the tangents are measured
+  // against and clamped by.
+  std::vector<double> d(n > 1 ? n - 1 : 0, 0.0);
+  for (int i = 0; i + 1 < n; i++) {
+    const double df = f[i + 1] - f[i];
+    d[i]            = (df > 0.0) ? (v[i + 1] - v[i]) / df : 0.0;
+  }
+
+  for (std::set<int>::const_iterator it = keys.begin(); it != keys.end();
+       ++it) {
+    const int i = *it;
+
+    double m = 0.0;
+    if (flat)
+      m = 0.0;  // horizontal on both sides: the movement stops here
+    else if (i == 0)
+      m = d[0];  // no neighbour behind: follow the segment ahead
+    else if (i == n - 1)
+      m = d[n - 2];
+    else {
+      const double a = d[i - 1], b = d[i];
+      if (a * b <= 0.0)
+        // The key is a peak or a trough (or one side is flat). A flat tangent
+        // is the only one that cannot send the curve past it.
+        m = 0.0;
+      else {
+        m                = (a + b) * 0.5;
+        const double lim = 3.0 * std::min(fabs(a), fabs(b));
+        if (fabs(m) > lim) m = (m > 0.0) ? lim : -lim;
+      }
+    }
+
+    KeyframeSetter setter(curve, i, enableUndo);
+    if (i < n - 1) {
+      const double dx = (f[i + 1] - f[i]) / 3.0;
+      setter.setSpeedOut(TPointD(dx, dx * m));
+    }
+    if (i > 0) {
+      const double dx = (f[i] - f[i - 1]) / 3.0;
+      setter.setSpeedIn(TPointD(-dx, -dx * m));
+    }
+  }
+
+  TUndoManager::manager()->endBlock();
+}
+
+//-----------------------------------------------------------------------------
 
 void KeyframeSetter::setType(int kIndex, TDoubleKeyframe::Type type) {
   assert(0 <= kIndex && kIndex < m_param->getKeyframeCount());

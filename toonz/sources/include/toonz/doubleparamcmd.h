@@ -114,6 +114,68 @@ public:
 
   static void enableCycle(TDoubleParam *curve, bool enabled,
                           TSceneHandle *sceneHandle = nullptr);
+
+  //! Gives \p kIndices AUTO BEZIER tangents: the slope at each key is decided
+  //! from its neighbours instead of segment by segment, so the curve runs
+  //! smoothly through them instead of wandering between them.
+  //!
+  //! Named as After Effects names it. Deliberately NOT "smooth": in Blender
+  //! that word is a filter that averages VALUES and moves the animation, which
+  //! is not this.
+  //!
+  //! Two things go wrong when breakdowns are added between main keys, and this
+  //! addresses both. The handles of each segment are worked out independently
+  //! (segmentWidth/3), so at a key the incoming and outgoing slopes differ and
+  //! the curve arrives one way and leaves another -- barely visible in value,
+  //! a spike in speed. And handles longer than the local rise make the curve
+  //! leave the interval between two keys altogether: it climbs, falls back,
+  //! climbs again.
+  //!
+  //! So: the tangent at a key comes from its NEIGHBOURS (Catmull-Rom), which
+  //! makes it continuous by construction, and is then clamped so the curve
+  //! cannot overshoot between two keys (Fritsch-Carlson -- a key that is a
+  //! local extremum gets a flat tangent). The affected segments become
+  //! SpeedInOut, the only type that can carry a slope at all: EaseInOut stores
+  //! an ease AMOUNT with an implicit direction.
+  //!
+  //! Keyframes are never moved: the timing is the animator's.
+  static void setAutoBezier(TDoubleParam *curve, const std::set<int> &kIndices,
+                            bool enableUndo = true);
+
+  //! Flattens the tangent at each of \p kIndices: the curve arrives and leaves
+  //! horizontally. That is how an EXTREME is marked -- the contact, the apex,
+  //! the point where the movement stops and starts again -- and it is also the
+  //! way to undo an auto bezier that guessed wrong.
+  static void setFlatTangents(TDoubleParam *curve,
+                              const std::set<int> &kIndices,
+                              bool enableUndo = true);
+
+  //! Repositions \p kIndices IN TIME so the value runs at constant speed
+  //! between the keys bracketing them. Their values are untouched: only when
+  //! each one is reached changes.
+  //!
+  //! Meant for the "posPath" channel, which holds a position along a spline as
+  //! a PERCENTAGE OF ITS LENGTH -- so on that channel constant speed in the
+  //! value really is constant speed along the path, exactly and not by
+  //! approximation. It is the same idea as After Effects' roving keys, done as
+  //! a one-shot command: no flag on the keyframe, so nothing enters the file
+  //! format and nothing has to recompute itself later. Move an end key and you
+  //! run it again.
+  //!
+  //! Does nothing unless the keys are bracketed on BOTH sides: without two
+  //! fixed ends there is no span to spread them over.
+  //! Returns kIndex -> target frame; empty when the request makes no sense.
+  //! It only WORKS OUT the frames: the caller moves the keys, because on a
+  //! stage object a keyframe belongs to every channel at once and moving the
+  //! posPath one alone splits it in two -- the xsheet then shows a key at the
+  //! old frame (the other channels) and one at the new (posPath).
+  static std::map<int, int> computeRovedFrames(TDoubleParam *curve,
+                                               const std::set<int> &kIndices);
+
+private:
+  //! The two above: identical except for where the slope comes from.
+  static void setTangents(TDoubleParam *curve, const std::set<int> &kIndices,
+                          bool flat, bool enableUndo);
 };
 
 #endif

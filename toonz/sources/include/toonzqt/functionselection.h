@@ -65,6 +65,18 @@ class FunctionSelection final : public QObject, public TSelection {
   ColumnToCurveMapper *m_columnToCurveMapper;
   FunctionSheet *m_sheet;
 
+  void applyTangentsToSelection(bool flat);
+
+  //! One keyframe's tangents, kept between a copy and a paste.
+  struct TangentClip {
+    bool m_full = false;
+    //! Handle length as a fraction of the segment width, and rise as a
+    //! fraction of the segment's value change. Zero segments keep zero.
+    double m_outXFrac = 0, m_outYFrac = 0;
+    double m_inXFrac = 0, m_inYFrac = 0;
+    bool m_hasOut = false, m_hasIn = false;
+  };
+  static TangentClip m_tangentClip;
   int getCurveIndex(TDoubleParam *curve) const;
   // finds i : m_selectedKeyframes[i].first == curve
   //-1 if curve not found
@@ -106,6 +118,29 @@ public:
   //! Adds one segment to the picked ones, keeping those already there.
   void addSegment(TDoubleParam *curve, int k);
   int getSelectedSegmentCount() const { return m_selectedSegments.size(); }
+  //! Gives every selected keyframe an auto bezier tangent. Acts on the
+  //! SELECTION only: applied to a whole curve it would flatten the held frames
+  //! and hard stops that were put there on purpose.
+  void setSelectedKeyframesAutoBezier();
+  //! Flattens the tangent of every selected keyframe.
+  void setSelectedKeyframesFlat();
+
+  //! Copies the SHAPE of a keyframe's tangents -- not its value. Stored as
+  //! fractions of the segment it came from (of its width, and of its value
+  //! rise), so pasting it onto a segment of another length or another height
+  //! reproduces the same character rather than the same numbers.
+  void copyTangents();
+  //! Applies the copied shape to every selected keyframe.
+  void pasteTangents();
+  bool hasCopiedTangents() const { return m_tangentClip.m_full; }
+
+  //! Spreads the selected keys evenly in time so the value runs at constant
+  //! speed between the keys bracketing them -- roving, on the channel where it
+  //! has an exact meaning.
+  void distributeSelectedEvenly();
+  //! Whether the selection is all on the "posPath" channel, the one where
+  //! constant speed in the value is constant speed along the path.
+  bool isSelectionOnPosPath() const;
   //! Retypes every picked segment, in one undo.
   void setSelectedSegmentsType(TDoubleKeyframe::Type type);
   //! The interpolation ALL the picked segments already share, or -1 when they

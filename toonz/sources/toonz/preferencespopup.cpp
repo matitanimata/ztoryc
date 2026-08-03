@@ -1484,6 +1484,7 @@ QString PreferencesPopup::getUIString(PreferencesItemId id) {
 
       // Animation
       {keyframeType, tr("Default Interpolation:")},
+      {autoBezierKeys, tr("Auto Bezier Tangents While Setting Keys")},
       {animationStep, tr("Animation Step:")},
       {modifyExpressionOnMovingReferences,
        tr("[Experimental Feature] ") +
@@ -2380,6 +2381,7 @@ QGridLayout* PreferencesPopup::createAnimationLayout() {
   setupLayout(lay);
 
   insertUI(keyframeType, lay, getComboItemList(keyframeType));
+  insertUI(autoBezierKeys, lay);
   insertUI(animationStep, lay);
   insertUI(modifyExpressionOnMovingReferences, lay);
 

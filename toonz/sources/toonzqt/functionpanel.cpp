@@ -1901,6 +1901,11 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
   QAction setFileAction(tr("File Interpolation"), 0);
   QAction setConstantAction(tr("Constant Interpolation"), 0);
   QAction setSimilarShapeAction(tr("Similar Shape Interpolation"), 0);
+  QAction autoBezierAction(tr("Auto Bezier"), 0);
+  QAction flatAction(tr("Flat"), 0);
+  QAction copyTangentsAction(tr("Copy Tangents"), 0);
+  QAction pasteTangentsAction(tr("Paste Tangents"), 0);
+  QAction roveAction(tr("Rove Keys"), 0);
   QAction fitSelectedAction(tr("Fit Selection"), 0);
   QAction fitAllAction(tr("Fit"), 0);
   QAction setStep1Action(tr("Step 1"), 0);
@@ -2022,6 +2027,31 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
       menu.addSeparator();
     }
   }
+  if (!getSelection()->isEmpty()) {
+    menu.addSeparator();
+    menu.addAction(&autoBezierAction);
+    menu.addAction(&flatAction);
+
+    // Shown always, greyed when they do not apply, rather than hidden. Copy
+    // needs exactly one keyframe and Paste needs something already copied --
+    // so hiding them meant Copy could not be found while several keys were
+    // picked, and Paste could never be found at all.
+    menu.addAction(&copyTangentsAction);
+    copyTangentsAction.setEnabled(getSelection()->getSelectedKeyframeCount() ==
+                                  1);
+    menu.addAction(&pasteTangentsAction);
+    pasteTangentsAction.setEnabled(getSelection()->hasCopiedTangents());
+
+    // Only meaningful on posPath: elsewhere "constant speed" would be the
+    // constant speed of one channel on its own, which for an X used together
+    // with a Y is not a speed at all. Greyed rather than absent, so that it
+    // can be found before there is a path to use it on.
+    menu.addAction(&roveAction);
+    roveAction.setEnabled(getSelection()->isSelectionOnPosPath());
+
+    // The tangent commands change the animation; Fit only changes the view.
+    menu.addSeparator();
+  }
   if (!getSelection()->isEmpty()) menu.addAction(&fitSelectedAction);
   menu.addAction(&fitAllAction);
 
@@ -2115,6 +2145,16 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
   else if (action == &setConstantAction)
     setSegmentType(getSelection(), curve, segmentIndex,
                    TDoubleKeyframe::Constant);
+  else if (action == &autoBezierAction)
+    getSelection()->setSelectedKeyframesAutoBezier();
+  else if (action == &flatAction)
+    getSelection()->setSelectedKeyframesFlat();
+  else if (action == &copyTangentsAction)
+    getSelection()->copyTangents();
+  else if (action == &pasteTangentsAction)
+    getSelection()->pasteTangents();
+  else if (action == &roveAction)
+    getSelection()->distributeSelectedEvenly();
   else if (action == &fitSelectedAction)
     fitSelectedPoints();
   else if (action == &fitAllAction)

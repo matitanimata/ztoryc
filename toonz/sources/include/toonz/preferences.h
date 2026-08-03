@@ -485,6 +485,7 @@ public:
 
   // Animation  tab
   int getKeyframeType() const { return getIntValue(keyframeType); }
+  bool isAutoBezierKeysEnabled() const { return getBoolValue(autoBezierKeys); }
   int getAnimationStep() const { return getIntValue(animationStep); }
   bool isModifyExpressionOnMovingReferencesEnabled() const {
     return getBoolValue(modifyExpressionOnMovingReferences);
