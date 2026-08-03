@@ -1100,6 +1100,9 @@ PlasticTool::PlasticTool()
     , m_keepDistance("keepDistance", true)
     , m_ikDrag("inverseKinematics", false)
     , m_scaleConstraint("scaleConstraint")
+    , m_correctiveSculpt("correctiveSculpt", false)
+    , m_correctiveRadius("correctiveRadius", 4, 400, 60)
+    , m_correctiveOrder("correctiveOrder", false)
     , m_showAngleLimits("showAngleLimits", false)
     , m_showController("showController", true)
     , m_minAngle("minAngle", L"")
@@ -1134,6 +1137,9 @@ PlasticTool::PlasticTool()
 
   m_propGroup[RIGIDITY_IDX].bind(m_thickness);
   m_propGroup[ANIMATE_IDX].bind(m_ikDamping);
+  m_propGroup[ANIMATE_IDX].bind(m_correctiveSculpt);
+  m_propGroup[ANIMATE_IDX].bind(m_correctiveRadius);
+  m_propGroup[ANIMATE_IDX].bind(m_correctiveOrder);
   m_propGroup[RIGIDITY_IDX].bind(m_rigidValue);
 
   m_propGroup[BUILD_IDX].bind(m_interpolate);
@@ -1164,6 +1170,9 @@ PlasticTool::PlasticTool()
   m_snapToMesh.setId("SnapToMesh");
   m_thickness.setId("Thickness");
   m_ikDamping.setId("IKDamping");
+  m_correctiveSculpt.setId("PlasticCorrectiveSculpt");
+  m_correctiveRadius.setId("PlasticCorrectiveRadius");
+  m_correctiveOrder.setId("PlasticCorrectiveOrder");
   m_rigidValue.setId("RigidValue");
   m_globalKey.setId("GlobalKey");
   m_globalKeyScope.addValue(L"Stage");
@@ -1228,6 +1237,9 @@ void PlasticTool::updateTranslation() {
   m_snapToMesh.setQStringName(tr("Snap To Mesh"));
   m_thickness.setQStringName(tr("Thickness"));
   m_ikDamping.setQStringName(tr("IK Max Step"));
+  m_correctiveSculpt.setQStringName(tr("Sculpt"));
+  m_correctiveRadius.setQStringName(tr("Brush"));
+  m_correctiveOrder.setQStringName(tr("Order"));
 
   m_rigidValue.setQStringName("");
   m_rigidValue.deleteAllValues();
@@ -1527,7 +1539,58 @@ void PlasticTool::onChange() {
 void PlasticTool::onChange(const TParamChange &pc) {
   if (l_suspendParamsObservation) return;
 
+  propagateSOToSelection(pc.m_param);
+
   onChange();
+}
+
+//------------------------------------------------------------------------
+
+// The SO field edits ONE vertex's parameter — the one the relay is bound to.
+// With several joints selected that is not what the field appears to promise,
+// and setting a limb's stacking order one joint at a time is busywork. So when
+// the edited parameter IS the current vertex's SO, the same value goes to every
+// other selected joint.
+//
+// Only SO: the other relayed parameters (angle, distance) are per-joint by
+// nature, and copying an angle across a selection would silently flatten a pose.
+void PlasticTool::propagateSOToSelection(TParam *changed) {
+  if (m_propagatingSO || !changed || !m_sd) return;
+  if (m_svSel.objects().size() < 2) return;
+
+  const int skelId = m_skelId;
+  const int cur    = m_svSel.hasSingleObject() ? (int)m_svSel : -1;
+
+  // Find which selected vertex owns the parameter that just changed, and check
+  // it really is its SO before touching anything else.
+  int sourceV = -1;
+  const std::vector<int> objs = m_svSel.objects();
+  for (size_t i = 0; i < objs.size(); ++i) {
+    SkVD *vd = m_sd->vertexDeformation(skelId, objs[i]);
+    if (vd && vd->m_params[SkVD::SO].getPointer() == changed) {
+      sourceV = objs[i];
+      break;
+    }
+  }
+  if (sourceV < 0) return;
+
+  SkVD *src = m_sd->vertexDeformation(skelId, sourceV);
+  if (!src || !src->m_params[SkVD::SO]) return;
+  const double so = src->m_params[SkVD::SO]->getValue(frame());
+
+  m_propagatingSO = true;
+  {
+    TUndoScopedBlock undoBlock;
+    for (size_t i = 0; i < objs.size(); ++i) {
+      if (objs[i] == sourceV) continue;
+      SkVD *vd = m_sd->vertexDeformation(skelId, objs[i]);
+      if (!vd || !vd->m_params[SkVD::SO]) continue;
+      if (vd->m_params[SkVD::SO]->getValue(frame()) == so) continue;
+      vd->m_params[SkVD::SO]->setValue(frame(), so);
+    }
+  }
+  m_propagatingSO = false;
+  (void)cur;
 }
 
 //------------------------------------------------------------------------
@@ -1691,8 +1754,17 @@ void PlasticTool::onSelectionChanged() {
     m_maxAngle.setValue(L"");
   }
 
-  // Attach or detach relays depending on selected vertex's parameters
-  m_soRelay.setParam(vd ? vd->m_params[SkVD::SO] : TDoubleParamP());
+  // Attach or detach relays depending on selected vertex's parameters.
+  //
+  // SO is the exception: it stays editable with SEVERAL joints selected, bound
+  // to the first of them, because editing it there is the point — the value is
+  // mirrored onto the rest of the selection (propagateSOToSelection). The other
+  // relays stay single-vertex: an angle or a distance copied across a selection
+  // would quietly flatten a pose.
+  SkVD *soVd = vd;
+  if (!soVd && m_sd && !m_svSel.isEmpty())
+    soVd = m_sd->vertexDeformation(::skeletonId(), m_svSel.objects().front());
+  m_soRelay.setParam(soVd ? soVd->m_params[SkVD::SO] : TDoubleParamP());
 
   if (vd && m_svSel.hasSingleObject() && m_svSel.objects().front() > 0) {
     m_distanceRelay.setParam(vd->m_params[SkVD::DISTANCE]);
@@ -2380,6 +2452,17 @@ public:
 //------------------------------------------------------------------------
 
 bool PlasticTool::onPropertyChanged(std::string propertyName) {
+  // Assigning stacking order without seeing it is guesswork: turn the SO
+  // display on with the mode. Left on when the mode goes off — it is a display
+  // preference, and silently undoing the user's view is worse than a stale one.
+  if (propertyName == m_correctiveOrder.getName()) {
+    if (m_correctiveOrder.getValue() && !m_pvs.m_drawSO) {
+      m_pvs.m_drawSO = true;
+      invalidate();
+    }
+    return true;
+  }
+
   if (propertyName == m_globalKeyScope.getName()) {
     Preferences::instance()->setValue(GlobalKeyScope,
                                       m_globalKeyScope.getIndex());
@@ -2569,6 +2652,10 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
     if (m_sd) {
       if (!m_ikDrag.getValue()) bakePinsToFK_animate();
       enablePinsOnCharacter(m_ikDrag.getValue());
+      // Coming back IN: re-plant the surviving pins where the character stands
+      // now. Their old scene targets describe a pose that was baked away, and
+      // the first solve would drag the character back onto it.
+      if (m_ikDrag.getValue()) recapturePinTargets_animate();
       m_deformedSkeleton.invalidate();
       invalidate();
     }

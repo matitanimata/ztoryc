@@ -142,6 +142,16 @@ private:
                                     //!< Animate tool: None / Aspect Ratio /
                                     //!< Mass (V = 1/H, area preserved)
 
+  //! ZtoRig joint correctives, authoring (milestone 2). Sculpting happens on
+  //! the POSED character, so it lives in Animate: bend the joint until the mesh
+  //! pinches, then brush the shape back. m_correctiveSculpt turns the overlay
+  //! and the brush on; the radius is in world units, matched to the drawing.
+  TBoolProperty   m_correctiveSculpt;
+  TDoubleProperty m_correctiveRadius;
+  //! What the brush does: shape (move vertices) or stacking order (declare
+  //! which joint a vertex belongs to). The order brush has NO falloff — a soft
+  //! edge would recreate the very blend that makes a clean cut impossible.
+  TBoolProperty   m_correctiveOrder;
   TBoolProperty m_showAngleLimits;  //!< Show the draggable angle-limit gizmo
                                     //!< (off by default to keep the skeleton
                                     //!< clean)
@@ -487,7 +497,17 @@ protected:
   //! Leaving IK mode: bake the whole pinned animation into FK + controller so
   //! every keyframe stays exactly in place, then drop the pins (not undoable)
   void bakePinsToFK_animate();
-  void togglePinAtCurrentFrame();               //!< pin/unpin selected vertex
+  void togglePinAtCurrentFrame();
+  //! Re-plant every active pin where the character stands RIGHT NOW.
+  /*!
+    Leaving IK bakes the pose into FK and drops the pins; the scene targets
+    (PINWX/PINWY) captured before that stay behind, describing where the foot
+    was when it was pinned. Coming back into IK with those still in place makes
+    the first solve haul the character back to a stale target — the visible jump
+    on the first click. Re-capturing on the way IN makes switching the mode off
+    and on again a no-op, which is how it behaves on a single-level rig.
+  */
+  void recapturePinTargets_animate();               //!< pin/unpin selected vertex
   void switchPinAtCurrentFrame();  //!< pin selected, release others at f+1
 
 public:
@@ -583,6 +603,51 @@ private:
   //! Same, for an explicit column: the cross-level write-back walks several
   //! columns in one go, so it cannot use the current one.
   double parentBoneRefDegFor_animate(int column) const;
+  //! Deformed mesh vertices of the current column at the current frame, in the
+  //! space the tool draws in. Empty when there is no mesh or no deformation.
+  //! This is the data the corrective brush acts on: the positions AFTER the
+  //! ARAP solve, which is where a MeshCorrective's offsets live too.
+  std::vector<std::pair<MeshIndex, TPointD>> deformedMeshVertices_animate();
+  //! Begin/continue/end one brush stroke on the active joint corrective.
+  bool beginCorrectiveStroke_animate();
+  void applyCorrectiveBrush_animate(const TPointD &from, const TPointD &to);
+  //! Vertices under the brush centred at \p c, ON THE SURFACE it is touching.
+  /*!
+    Both a screen-space and an along-the-mesh test. The first keeps the brush
+    round; the second is what makes a folded limb workable: with the elbow bent,
+    forearm and upper arm sit on top of each other in space but are far apart
+    across the mesh, because getting from one to the other means going round the
+    joint. Distance is a BFS over the mesh graph (buildDistances), so a piece
+    that merely overlaps on screen is excluded without any authoring.
+  */
+  std::vector<std::pair<MeshIndex, TPointD>> brushedVertices_animate(
+      const TPointD &c, double radius);
+  //! For each vertex of \p meshIdx, the skeleton vertex nearest ALONG THE MESH.
+  /*!
+    This is what "belongs to" means for a mesh vertex, and it is the same walk
+    the SO interpolation already does — a point of the forearm has the elbow or
+    the wrist as its nearest joint, one of the upper arm has the shoulder, and
+    that stays true however the limb folds, because the distance goes round the
+    joint instead of straight across the gap.
+  */
+  std::map<int, int> nearestJointPerVertex_animate(int meshIdx);
+
+  std::map<int, int> m_correctiveOwnerJoint;  //!< cached for the stroke
+  int m_correctiveOwnerMesh = -1;             //!< which mesh it refers to
+  void endCorrectiveStroke_animate();
+
+  QString m_correctiveName;   //!< corrective being sculpted, empty = no stroke
+  bool    m_correctiveOrderStroke = false;  //!< this stroke assigns ownership
+  bool    m_correctiveErase       = false;  //!< Alt held: take ownership away
+  //! Mesh the ownership stroke is confined to — the one the selected joint sits
+  //! on. Without it, an arm crossing in front of the body has both sets of
+  //! vertices under the same brush and you cannot tell them apart on screen.
+  int     m_correctiveMeshIdx     = -1;
+  std::map<int, std::map<int, QString>> m_soOwnersBefore;  //!< undo snapshot
+  std::vector<MeshCorrective> m_correctiveUndoBefore;  //!< snapshot per stroke
+  //! Overlay for the corrective sculpt: the mesh vertices plus the brush.
+  void drawCorrectiveSculpt_animate(double pixelSize);
+
   bool parentColumnRefDirs_animate(int column, TPointD &restDir,
                                    TPointD &defDir) const;
   //! The column whose plastic deformation is \p def, or -1.
@@ -704,6 +769,9 @@ private:
   // Parameter Observation methods
 
   void onChange(const TParamChange &) override;
+  //! Mirror an edited SO onto every other selected joint. See the definition.
+  void propagateSOToSelection(TParam *changed);
+  bool m_propagatingSO = false;  //!< guards the write-back from re-entering
 
 private slots:
 

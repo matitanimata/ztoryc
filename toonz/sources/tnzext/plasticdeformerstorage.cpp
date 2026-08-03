@@ -251,7 +251,13 @@ bool updateHandlesSO(DataGroup *group, const SkD *sd, int skelId,
 
 //----------------------------------------------------------------------------------
 
-void interpolateSO(DataGroup *group, const TMeshImage *meshImage) {
+// \p sd and \p skelId are here for the ZtoRig SO ownership: a mesh vertex can
+// be declared to belong to a joint, and then takes that joint's SO exactly
+// instead of the distance-blended value. That is what makes a clean cut at a
+// bend possible at all — the blend is smooth by construction, so near a joint
+// the two limbs' values always mix.
+void interpolateSO(DataGroup *group, const TMeshImage *meshImage, const SkD *sd,
+                   int skelId) {
   int m, mCount = meshImage->meshes().size();
 
   if (group->m_handles.size() == 0) {
@@ -277,6 +283,31 @@ void interpolateSO(DataGroup *group, const TMeshImage *meshImage) {
 
     ::buildSO(verticesSO.get(), mesh, group->m_handles,
               &data.m_faceHints.front());
+
+    // Ownership wins over the blend, applied BEFORE faces average their
+    // vertices so the edge stays as hard as the mesh allows.
+    if (sd && sd->hasSOOwners()) {
+      const PlasticSkeletonP &skel = sd->skeleton(skelId);
+      if (skel) {
+        std::map<QString, int> handleOfName;
+        {
+          int h = 0;
+          for (tcg::list<PlasticSkeletonVertex>::iterator vt =
+                   skel->vertices().begin();
+               vt != skel->vertices().end(); ++vt, ++h)
+            handleOfName[vt->name()] = h;
+        }
+        const int vCount = mesh.verticesCount();
+        for (int v = 0; v != vCount; ++v) {
+          QString owner;
+          if (!sd->soOwner(m, v, owner)) continue;
+          std::map<QString, int>::const_iterator ht = handleOfName.find(owner);
+          if (ht == handleOfName.end()) continue;  // joint gone: keep the blend
+          if (ht->second < (int)group->m_handles.size())
+            verticesSO[v] = group->m_handles[ht->second].m_so;
+        }
+      }
+    }
 
     // Make the mean of each face's vertex values and store that
     int f, fCount = mesh.facesCount();
@@ -327,7 +358,7 @@ void processSO(DataGroup *group, double frame, const TMeshImage *meshImage,
                   interpolate;  // Order is IMPORTANT
 
     if (interpolate) {
-      interpolateSO(group, meshImage);
+      interpolateSO(group, meshImage, sd, skelId);
       updateSortedFaces(group);
     }
 
