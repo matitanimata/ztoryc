@@ -29,6 +29,10 @@
 #include "tconvert.h"
 #include "tlevel_io.h"
 #include "ttoonzimage.h"
+#include "tvectorimage.h"
+#include "tstroke.h"
+#include <QFile>
+#include <QTextStream>
 #include "tsystem.h"
 
 #include "toonzqt/gutil.h"
@@ -634,3 +638,95 @@ void LevelCmd::addMissingLevelsToCast(std::set<TXshLevel *> &levels) {
 
   if (castChanged) TApp::instance()->getCurrentScene()->notifyCastChange();
 }
+
+//=============================================================================
+//
+// ZtoryDumpVectorLevelCommand — STRUMENTO DI LAVORO, non una feature
+//
+// Scrive i tratti del livello vettoriale corrente in un JSON accanto al file
+// del livello. Serve all'esperimento del proxy 3D: per agganciare un disegno
+// vero a un ovale servono i punti di controllo nelle coordinate ESATTE di
+// Toonz, e ricostruirle da fuori vorrebbe dire scrivere un lettore PLI e
+// inventarsi il formato.
+//
+// Butta fuori TUTTI i frame del livello in un colpo: un turnaround sta su piu'
+// frame dello stesso livello, e chiederli uno per uno sarebbe una tortura.
+//
+// Un punto di controllo ogni 4 e' un punto di controllo UTENTE (uno stroke
+// Toonz e' una catena di quadratiche, vedi ControlPointEditorStroke), quindi il
+// JSON riporta sia i punti grezzi sia quali indici sono quelli maneggiabili.
+//
+//-----------------------------------------------------------------------------
+
+class ZtoryDumpVectorLevelCommand final : public MenuItemHandler {
+public:
+  ZtoryDumpVectorLevelCommand() : MenuItemHandler(MI_ZtoryDumpVectorLevel) {}
+
+  void execute() override {
+    TApp *app           = TApp::instance();
+    TXshLevel *xl       = app->getCurrentLevel()->getLevel();
+    TXshSimpleLevel *sl = xl ? xl->getSimpleLevel() : 0;
+    if (!sl || sl->getType() != PLI_XSHLEVEL) {
+      DVGui::warning(tr("Select a vector level first."));
+      return;
+    }
+
+    std::vector<TFrameId> fids;
+    sl->getFids(fids);
+    if (fids.empty()) {
+      DVGui::warning(tr("The level has no drawings."));
+      return;
+    }
+
+    TFilePath lp = sl->getScene()->decodeFilePath(sl->getPath());
+    TFilePath out =
+        lp.getParentDir() + TFilePath(lp.getWideName() + L".strokes.json");
+
+    QFile f(QString::fromStdWString(out.getWideString()));
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      DVGui::warning(tr("Cannot write %1")
+                         .arg(QString::fromStdWString(out.getWideString())));
+      return;
+    }
+    QTextStream o(&f);
+
+    o << "{\n  \"level\": \""
+      << QString::fromStdWString(sl->getName()).replace("\"", "'") << "\",\n";
+    o << "  \"note\": \"coordinate Toonz, unita' di stage. Un punto di "
+         "controllo ogni 4 e' un punto UTENTE.\",\n";
+    o << "  \"frames\": [\n";
+
+    int nStrokes = 0;
+    for (int i = 0; i < (int)fids.size(); i++) {
+      TVectorImageP vi = sl->getFrame(fids[i], false);
+      o << "    { \"fid\": " << fids[i].getNumber() << ", \"strokes\": [\n";
+      const int sc = vi ? (int)vi->getStrokeCount() : 0;
+      for (int s = 0; s < sc; s++) {
+        const TStroke *st = vi->getStroke(s);
+        const int n       = st->getControlPointCount();
+        nStrokes++;
+        o << "      { \"index\": " << s << ", \"selfLoop\": "
+          << (st->isSelfLoop() ? "true" : "false")
+          << ", \"style\": " << st->getStyle()
+          << ", \"userPointIndexes\": [";
+        for (int k = 0; k < n; k += 4) o << (k ? ", " : "") << k;
+        o << "],\n        \"cp\": [";
+        for (int k = 0; k < n; k++) {
+          TThickPoint p = st->getControlPoint(k);
+          o << (k ? ", " : "") << "[" << p.x << ", " << p.y << ", " << p.thick
+            << "]";
+        }
+        o << "] }" << (s + 1 < sc ? "," : "") << "\n";
+      }
+      o << "    ] }" << (i + 1 < (int)fids.size() ? "," : "") << "\n";
+    }
+    o << "  ]\n}\n";
+    f.close();
+
+    DVGui::info(tr("%1 drawing(s), %2 stroke(s) written to\n%3")
+                    .arg(fids.size())
+                    .arg(nStrokes)
+                    .arg(QString::fromStdWString(out.getWideString())));
+  }
+
+} ztoryDumpVectorLevelCommand;

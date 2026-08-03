@@ -580,6 +580,7 @@
 #define MI_OpenCrashReportFolder "MI_OpenCrashReportFolder"
 
 #define MI_ZtoryNewShotAfter "MI_ZtoryNewShotAfter"
+#define MI_ZtoryDumpVectorLevel "MI_ZtoryDumpVectorLevel"
 #define MI_ZtoryExportPdf "MI_ZtoryExportPdf"
 #define MI_ZtoryExportSpreadsheetXlsx "MI_ZtoryExportSpreadsheetXlsx"
 #define MI_ZtoryExportSpreadsheetCsv "MI_ZtoryExportSpreadsheetCsv"

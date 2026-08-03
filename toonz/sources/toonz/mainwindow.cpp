@@ -2597,6 +2597,8 @@ void MainWindow::defineActions() {
   createMenuXsheetAction(MI_ZtoryNewShotAfter,
                          QT_TR_NOOP("New Shot After Current"), "Shift+N",
                          "sub_enter");
+  createMenuFileAction(MI_ZtoryDumpVectorLevel,
+                       QT_TR_NOOP("Dump Vector Level (debug)..."), "");
   createMenuFileAction(MI_ZtoryExportPdf,
                        QT_TR_NOOP("Storyboard PDF..."), "");
   createMenuFileAction(MI_ZtoryExportSpreadsheetXlsx,
