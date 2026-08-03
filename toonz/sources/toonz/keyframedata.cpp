@@ -11,8 +11,10 @@
 #include "toonz/tstageobjectkeyframe.h"
 #include "toonz/txshcolumn.h"
 #include "toonz/preferences.h"
+#include "toonz/doubleparamcmd.h"
 
 #include <assert.h>
+#include <QDebug>
 
 //=============================================================================
 // TKeyframeData
@@ -144,6 +146,36 @@ bool TKeyframeData::getKeyframes(std::set<Position> &positions,
     std::map<int, int>::iterator itF = firstRowCol.find(col);
     std::map<int, int>::iterator itL = lastRowCol.find(col);
     TStageObject::Keyframe newKey = pegbar->getKeyframe(row);
+
+    TDoubleKeyframe::Type wantType[TStageObject::T_ChannelCount];
+    bool wantTypeSet[TStageObject::T_ChannelCount] = {false};
+
+    // Diagnostic, ZTORYC_KEYPASTE_DIAG=1. Which branch a paste takes decides
+    // whether the pasted key's interpolation gets fixed up; deducing it from
+    // the code has already been wrong once.
+    const bool keyPasteDiag = ::getenv("ZTORYC_KEYPASTE_DIAG") != 0;
+    // Every KEYED channel, not one picked in advance: reading only T_Angle
+    // said "prev.isKey=N" on a column where the rotation simply is not
+    // animated, which answers nothing.
+    static const char *chName[] = {"Angle", "X",      "Y",      "Z",
+                                   "SO",    "ScaleX", "ScaleY", "Scale",
+                                   "Path",  "ShearX", "ShearY", "?"};
+    if (keyPasteDiag) {
+      QString keyed;
+      for (int i = 0; i < TStageObject::T_ChannelCount; i++)
+        if (newKey.m_channels[i].m_isKeyframe)
+          keyed += QString(" %1=t%2/p%3")
+                       .arg(chName[i < 11 ? i : 11])
+                       .arg((int)newKey.m_channels[i].m_type)
+                       .arg((int)newKey.m_channels[i].m_prevType);
+      qDebug().noquote()
+          << QString("[KEYPASTE] row=%1 col=%2 kF=%3 kL=%4 | firstBlock=%5 "
+                     "lastBlock=%6 | keyed:%7")
+                 .arg(row).arg(col).arg(kF).arg(kL)
+                 .arg(itF != firstRowCol.end() && itF->second == row ? "Y" : "N")
+                 .arg(itL != lastRowCol.end() && itL->second == row ? "Y" : "N")
+                 .arg(keyed.isEmpty() ? QString(" NONE") : keyed);
+    }
     // Process 1st key added in column
     if (itF != firstRowCol.end() && itF->second == row) {
       if (row > kL) {
@@ -169,14 +201,44 @@ bool TKeyframeData::getKeyframes(std::set<Position> &positions,
           if (newKey.m_channels[i].m_isKeyframe &&
               prevKey.m_channels[i].m_isKeyframe) {
             newKey.m_channels[i].m_prevType = prevKey.m_channels[i].m_type;
-            // ...and the segment AFTER the pasted key takes the type of the
-            // segment it was dropped into, the same rule KeyframeSetter uses
-            // when a key is inserted in a span. Without this the key kept the
-            // type it had in the clipboard -- and a key copied from the END of
-            // a curve carries the Linear placeholder that stands in for "no
-            // segment here", which then became a real Linear segment.
-            newKey.m_channels[i].m_type = prevKey.m_channels[i].m_type;
           }
+
+          // The segment AFTER the pasted key wants the type of the span it was
+          // dropped into. Asked of the CHANNEL, not of the stage object: a
+          // keyframe can be partial, and getKeyframeSpan answers at object
+          // level. With only Y keyed at the previous row, every other channel
+          // read prevKey.m_isKeyframe == false and kept the clipboard's type
+          // -- the Linear placeholder of a key copied from the end of a curve.
+          // Their real previous key simply lies further back.
+          //
+          // Recorded here, applied below through KeyframeSetter: the key still
+          // carries the clipboard's ease handles, at zero when it came from
+          // the end of a curve, and a segment of the right NAME with no easing
+          // is drawn perfectly straight.
+          if (!newKey.m_channels[i].m_isKeyframe) continue;
+          TDoubleParam *chParam = pegbar->getParam((TStageObject::Channel)i);
+          if (!chParam) continue;
+          const int prevIdx = chParam->getPrevKeyframe((double)row);
+          if (prevIdx >= 0)
+            wantType[i] = chParam->getKeyframe(prevIdx).m_type;
+          else
+            // First key of this channel: no span to continue, so the
+            // preference decides -- same as upstream's "before the 1st" case.
+            wantType[i] =
+                TDoubleKeyframe::Type(Preferences::instance()->getKeyframeType());
+          wantTypeSet[i] = true;
+        }
+        if (keyPasteDiag) {
+          QString per;
+          for (int i = 0; i < TStageObject::T_ChannelCount; i++) {
+            if (!newKey.m_channels[i].m_isKeyframe) continue;
+            per += QString(" %1:objPrevKey=%2 want=%3")
+                       .arg(chName[i < 11 ? i : 11])
+                       .arg(prevKey.m_channels[i].m_isKeyframe ? "Y" : "N")
+                       .arg(wantTypeSet[i] ? (int)wantType[i] : -1);
+          }
+          qDebug().noquote()
+              << QString("[KEYPASTE]   between-first: kP=%1 |%2").arg(kP).arg(per);
         }
         pegbar->setKeyframeWithoutUndo(row, newKey);
       }
@@ -208,8 +270,40 @@ bool TKeyframeData::getKeyframes(std::set<Position> &positions,
             nextKey.m_channels[i].m_prevType = newKey.m_channels[i].m_type;
           }
         }
+        if (keyPasteDiag)
+          qDebug().noquote()
+              << QString("[KEYPASTE]   between-last: kN=%1").arg(kN);
         pegbar->setKeyframeWithoutUndo(row, newKey);
       }
+    }
+    // Now that the key is on the pegbar, give the segment its handles.
+    // setType writes speedOut here and speedIn on the FOLLOWING keyframe, both
+    // from segmentWidth/3 -- and it returns early when the type already
+    // matches, which is why nothing above assigns m_type.
+    for (int i = 0; i < TStageObject::T_ChannelCount; i++) {
+      if (!wantTypeSet[i]) continue;
+      TDoubleParam *param = pegbar->getParam((TStageObject::Channel)i);
+      if (!param) continue;
+      const int kIndex = param->getClosestKeyframe((double)row);
+      if (kIndex < 0 || param->keyframeIndexToFrame(kIndex) != (double)row)
+        continue;
+      if (kIndex >= param->getKeyframeCount() - 1) continue;  // still last
+      KeyframeSetter(param, kIndex, false).setType(kIndex, wantType[i]);
+    }
+
+    if (keyPasteDiag) {
+      TStageObject::Keyframe after = pegbar->getKeyframe(row);
+      QString per;
+      for (int i = 0; i < TStageObject::T_ChannelCount; i++)
+        if (after.m_channels[i].m_isKeyframe)
+          per += QString(" %1=t%2/p%3 out=%4 in=%5")
+                     .arg(chName[i < 11 ? i : 11])
+                     .arg((int)after.m_channels[i].m_type)
+                     .arg((int)after.m_channels[i].m_prevType)
+                     .arg(after.m_channels[i].m_speedOut.x, 0, 'f', 2)
+                     .arg(after.m_channels[i].m_speedIn.x, 0, 'f', 2);
+      qDebug().noquote() << QString("[KEYPASTE]   AFTER:%1")
+                                .arg(per.isEmpty() ? QString(" NONE") : per);
     }
   }
   if (!keyFrameChanged) return false;

@@ -1174,22 +1174,41 @@ bool TStageObject::moveKeyframe(int dst, int src) {
   // an ease the animator never asked for turns into a straight line -- with
   // the Default Interpolation preference silently overruled.
   //
-  // Only those channels are touched: a keyframe that was NOT last carries a
-  // type its author chose, and it travels with it unchanged.
+  // Note WHICH channels were last, before the move destroys the evidence.
+  // Only those: a keyframe that was NOT last carries a type its author chose,
+  // and it travels with it unchanged.
+  bool wasLast[T_ChannelCount] = {false};
   for (int i = 0; i < T_ChannelCount; ++i) {
     if (!k.m_channels[i].m_isKeyframe) continue;
     TDoubleParam *param = getParam((Channel)i);
     if (!param) continue;
     const int count = param->getKeyframeCount();
     if (count <= 0) continue;
-    if (param->getKeyframe(count - 1).m_frame != (double)src) continue;
-
-    k.m_channels[i].m_type =
-        TDoubleKeyframe::Type(Preferences::instance()->getKeyframeType());
+    wasLast[i] = (param->getKeyframe(count - 1).m_frame == (double)src);
   }
 
   setKeyframeWithoutUndo(dst, k);
   removeKeyframeWithoutUndo(src);
+
+  // Retype AFTER the move, and through KeyframeSetter rather than by assigning
+  // m_type. Assigning it gave a segment of the right NAME with no easing at
+  // all: setType is what works out the handles from the segment's real width
+  // (segmentWidth/3) and writes m_speedIn on the FOLLOWING keyframe too --
+  // neither of which a bare assignment does. It also returns early when the
+  // type is already the one asked for, so pre-assigning made it a no-op.
+  const TDoubleKeyframe::Type prefType =
+      TDoubleKeyframe::Type(Preferences::instance()->getKeyframeType());
+  for (int i = 0; i < T_ChannelCount; ++i) {
+    if (!wasLast[i]) continue;
+    TDoubleParam *param = getParam((Channel)i);
+    if (!param) continue;
+    const int kIndex = param->getClosestKeyframe((double)dst);
+    if (kIndex < 0 || param->keyframeIndexToFrame(kIndex) != (double)dst)
+      continue;
+    // Still the last one after the move? Then it still governs nothing.
+    if (kIndex >= param->getKeyframeCount() - 1) continue;
+    KeyframeSetter(param, kIndex, false).setType(kIndex, prefType);
+  }
   assert(isKeyframe(dst));
   assert(!isKeyframe(src));
   invalidate();
