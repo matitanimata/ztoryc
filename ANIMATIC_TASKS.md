@@ -424,6 +424,82 @@ nella sub-scene corretta.
 
 ### 🆕 DA FARE (giugno 2026) — in cima per priorità
 
+**🆕 DA FARE — "Generate Path from Keys": crea la spline dalle chiavi**
+(idea di Franco, 2026-08-03). *Feasibility verificata sul codice, non ancora
+scritta.*
+
+⚠️ **DUE COMANDI SEPARATI, non uno.** Nato come "Path & Roving" unico, **diviso
+su decisione di Franco** e ha ragione: rispondono a due domande diverse (la
+forma della traiettoria / il timing), si compongono meglio (percorso senza
+ridistribuire, oppure roving su una spline disegnata a mano), e **meta' e' gia'
+fatta** — `Even Speed Along Path` funziona su qualsiasi `posPath`, comunque sia
+nata la spline. Resta da scrivere **solo** la generazione del percorso.
+
+**Dove sta il comando:** NON nel menu del grafico come gli altri, perche' le
+chiavi del percorso si selezionano nella colonna keyframe dell'xsheet o nel
+viewer con l'Animate tool — dove il movimento si vede. E ha senso: prende un
+OGGETTO e ne cambia il modo di muoversi, non tocca una curva sola.
+
+**Il problema.** Un movimento di camera che va a destra, sale stringendosi, poi
+ridiscende allargandosi. A mano si fanno tre chiavi X/Y e il movimento viene
+**segmentato**: angolo alla chiave centrale. Disegnare la spline a mano per
+avere l'arco è scomodo, ed è il motivo per cui Franco non usa quasi mai le
+spline (e quindi nemmeno `posPath`).
+
+**L'idea.** Selezioni le chiavi, un comando **Path & Roving**: crea la spline
+che ci passa attraverso, aggancia l'oggetto, converte le chiavi in `posPath` e
+mette quelle intermedie **dove devono stare** nel tempo.
+
+Perché e' la strada giusta: la spline **e' gia'** l'accoppiamento X/Y che
+serviva, collaudato. Rovingare X e Y separatamente li desincronizza e deforma
+la traiettoria — il roving accoppiato multi-canale (l'opzione "C" scartata)
+diventa **inutile** se la traiettoria e' una spline.
+
+**API verificate, ci sono tutte:**
+- `TStageObjectTree::createSpline()` (`tstageobjecttree.cpp:672`) — id,
+  registrazione e addRef gia' fatti
+- `TStageObject::setSpline()` (`tstageobject.h:235`)
+- `TStroke::getLength()`, `getParameterAtLength()`, `getLengthAtControlPoint()`
+- **`T_Path` e' documentato come «position along the spline, as a PERCENTAGE OF
+  THE LENGTH»** — quindi «velocita' costante» = «posPath lineare nel tempo»,
+  esatto e non approssimato. La spline generata e' una spline normale,
+  editabile a mano dopo: era il requisito di Franco.
+
+**I passi:** leggere X/Y alle chiavi selezionate → costruire una `TStroke`
+Catmull-Rom→Bezier che ci passi (la **stessa matematica dell'Auto Bezier**, ma
+nello spazio invece che nel tempo) → `createSpline` + `setSpline` → convertire
+le chiavi in `posPath` alla percentuale di lunghezza di ogni punto → distribuire
+le intermedie con `KeyframeSetter::distributeEvenly` (**gia' scritta**).
+
+⚠️ **Da verificare PRIMA di scrivere:** quando un oggetto ha una spline, cosa
+fanno X e Y? Se restano attive come scostamento dal punto sul percorso vanno
+azzerate, o il movimento raddoppia. Mezz'ora di lettura del codice di placement.
+
+**Avvertenze:** operazione trasformativa (da due curve a spline+posPath, l'undo
+copre ma non e' un ritocco); decidere cosa fare se l'oggetto ha **gia'** una
+spline; abilitare da **tre** chiavi in su (con due genera una retta); con molte
+chiavi la spline ondeggia e va clampata come le curve.
+
+**✅ FATTO — Tangenti e distribuzione (2026-08-03), nel menu del grafico:**
+**Auto Bezier** (tangente dai vicini + clamp anti-sorpasso, come l'Auto Clamped
+di Blender / Auto di Maya; nome preso da AE perche' "Smooth" in Blender e' un
+filtro che sposta i VALORI), con opzione in Preferences → Animation per
+applicarlo mentre si mettono le chiavi; **Flat** (tangente orizzontale: marca un
+estremo, e disfa un Auto Bezier che ha indovinato male); **Copy/Paste Tangents**
+(copia la FORMA — maniglie come frazione della larghezza e del dislivello del
+segmento — quindi incollata altrove da lo stesso carattere con ampiezza
+diversa); **Even Speed Along Path**, il roving one-shot su `posPath`.
+
+Il roving e' **one-shot di proposito**: nessun flag sul keyframe, quindi niente
+tocca il formato file e niente deve ricalcolarsi da solo. Sposti una chiave
+d'estremita' e rilanci. La versione persistente stile AE (chiave che si
+riposiziona da sola) e' la stessa cosa piu' un flag serializzato: da valutare
+solo se l'uso lo chiede davvero.
+
+Scartate perche' **gia' presenti**: time reverse (c'e' nel revert di edit
+cels/keys) e ghosting delle curve (le curve non correnti si vedono gia', ora
+anche col tratteggio per colonna).
+
 **✅ FATTO — Function Editor (2026-08-02/03), su master.** Aggancio allo xsheet,
 ricerca, filtro animati globale, multi-selezione albero e grafico, visibilita' e
 interpolazione in blocco, selezione multipla di **segmenti**, spostamento e

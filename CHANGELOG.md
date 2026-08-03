@@ -1,3 +1,73 @@
+## [2026-08-03c] — Le curve ondivaghe: Auto Bezier, Flat, tangenti, Rove
+
+Partiti da un problema di Franco: si mettono le chiavi principali, poi i
+breakdown per drag/lead/follow, e le curve diventano «ondivaghe». Sono **due**
+difetti che arrivano insieme — le maniglie di ogni segmento sono calcolate da
+sole (`segmentWidth/3`), quindi a una chiave la pendenza in entrata e quella in
+uscita non coincidono e la curva ci arriva in un modo e riparte in un altro; e
+maniglie piu' lunghe del dislivello locale fanno **uscire** la curva
+dall'intervallo fra due chiavi.
+
+### Added — strumenti sulle tangenti (menu tasto destro del grafico)
+- **Auto Bezier** — tangente dai **vicini** (Catmull-Rom), quindi continua per
+  costruzione, poi clampata perche' la curva non possa sorpassare
+  (Fritsch-Carlson). E' l'Auto Clamped di Blender / l'Auto di Maya.
+- **Flat** — tangente orizzontale: marca un estremo, e disfa un Auto Bezier che
+  ha indovinato male.
+- **Copy / Paste Tangents** — copia la **forma**, non i numeri: maniglia come
+  frazione della larghezza del segmento e della sua salita, quindi incollata
+  altrove da lo stesso carattere con ampiezza diversa.
+- **Rove Keys** — sposta le chiavi **nel tempo** per velocita' costante fra le
+  due che le racchiudono. Solo su `posPath`, documentato come «percentuale
+  della lunghezza della spline»: li' velocita' costante del valore **e'**
+  velocita' costante lungo il percorso, esatta.
+- Opzione **Auto Bezier Tangents While Setting Keys** (Preferences → Animation),
+  agganciata a `createKeyframe`, che ricalcola anche le **due chiavi vicine**.
+
+### Notes — il nome, che e' costato la collisione giusta
+Franco ha chiesto se «smooth» fosse il termine corretto. Non lo era: in Blender
+`Smooth Keys` e' un filtro che media i **valori** e sposta l'animazione — e
+c'era **gia' una voce "Smooth"** in quello stesso menu contestuale, a cinque
+righe di distanza (la Curve Shape di OpenToonz, dal primo commit del 2016).
+Il suo dubbio ha evitato due voci uguali con significati opposti.
+
+### Notes — due decisioni di Franco migliori delle mie
+- **Rove sposta la chiave INTERA** dello stage object, non il solo posPath.
+  La mia motivazione era debole («altrimenti nell'xsheet sembra sdoppiata»);
+  la sua e' sostanziale: **lo zoom e la rotazione a quella chiave esistono
+  perche' la camera e' in quel punto del percorso**. Sono una cosa sola.
+- **Path e Roving sono due comandi separati**, non uno. Rispondono a due
+  domande diverse (forma / tempo), si compongono meglio, e **meta' era gia'
+  fatta**.
+
+### Fixed — il Linear, chiuso per davvero
+Seguito di `d2dc6bd88`, che correggeva il tipo ma non l'easing. Due difetti in
+fila, trovati **con una diagnostica** e non per deduzione: (1) sostituivo
+`m_type` ma non le maniglie, a zero perche' la chiave copiata da ultima non
+governava niente — un ease di ampiezza zero e' indistinguibile da una retta;
+(2) l'incolla chiedeva la chiave precedente allo **stage object**, ma una chiave
+puo' essere **parziale**: con solo Y chiavato alla riga prima, ogni altro canale
+veniva scartato e teneva il Linear degli appunti. Ora la domanda va al
+**canale**. La diagnostica e' stata **tolta** a fine giornata.
+
+### Fixed — Rove Keys non registrava alcun undo (SIGSEGV)
+`TStageObject::moveKeyframe` e' della famiglia *WithoutUndo*. L'avevo avvolta in
+`beginBlock`/`endBlock`, ma un blocco e' solo un contenitore: dentro non c'era
+niente. Stack e scena divergevano, e il Ctrl+Z successivo rigiocava
+`UndoStageObjectMove` contro uno stato che non si aspettava. Aggiunto
+`RoveKeysUndo`, fotografia della tabella chiavi prima/dopo.
+
+> **Lo schema, terza volta in due giorni:** una convenzione che sta **un livello
+> piu' sotto del nome che leggi**. `moveKeyframe` non dice che non fa l'undo: lo
+> dicono i metodi che chiama. Come `getStageObject(id, false)` non dice che puo'
+> tornare null: lo dice l'argomento.
+
+### Notes — DA FARE, progetto pronto in ANIMATIC_TASKS
+**Generate Path from Keys**: crea la spline dalle chiavi selezionate. Feasibility
+verificata (`createSpline()`, `setSpline()`, l'arc-length di `TStroke`), i passi
+elencati, e in cima la cosa da controllare **prima** di scrivere una riga: cosa
+fanno X e Y quando l'oggetto ha gia' una spline.
+
 ## [2026-08-03b] — Il Function Editor sta in piedi da solo, senza una curva corrente
 
 Coda della giornata: due ricadute del «click nel vuoto deseleziona» chiesto da

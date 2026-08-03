@@ -14,7 +14,6 @@
 #include "toonz/doubleparamcmd.h"
 
 #include <assert.h>
-#include <QDebug>
 
 //=============================================================================
 // TKeyframeData
@@ -150,32 +149,6 @@ bool TKeyframeData::getKeyframes(std::set<Position> &positions,
     TDoubleKeyframe::Type wantType[TStageObject::T_ChannelCount];
     bool wantTypeSet[TStageObject::T_ChannelCount] = {false};
 
-    // Diagnostic, ZTORYC_KEYPASTE_DIAG=1. Which branch a paste takes decides
-    // whether the pasted key's interpolation gets fixed up; deducing it from
-    // the code has already been wrong once.
-    const bool keyPasteDiag = ::getenv("ZTORYC_KEYPASTE_DIAG") != 0;
-    // Every KEYED channel, not one picked in advance: reading only T_Angle
-    // said "prev.isKey=N" on a column where the rotation simply is not
-    // animated, which answers nothing.
-    static const char *chName[] = {"Angle", "X",      "Y",      "Z",
-                                   "SO",    "ScaleX", "ScaleY", "Scale",
-                                   "Path",  "ShearX", "ShearY", "?"};
-    if (keyPasteDiag) {
-      QString keyed;
-      for (int i = 0; i < TStageObject::T_ChannelCount; i++)
-        if (newKey.m_channels[i].m_isKeyframe)
-          keyed += QString(" %1=t%2/p%3")
-                       .arg(chName[i < 11 ? i : 11])
-                       .arg((int)newKey.m_channels[i].m_type)
-                       .arg((int)newKey.m_channels[i].m_prevType);
-      qDebug().noquote()
-          << QString("[KEYPASTE] row=%1 col=%2 kF=%3 kL=%4 | firstBlock=%5 "
-                     "lastBlock=%6 | keyed:%7")
-                 .arg(row).arg(col).arg(kF).arg(kL)
-                 .arg(itF != firstRowCol.end() && itF->second == row ? "Y" : "N")
-                 .arg(itL != lastRowCol.end() && itL->second == row ? "Y" : "N")
-                 .arg(keyed.isEmpty() ? QString(" NONE") : keyed);
-    }
     // Process 1st key added in column
     if (itF != firstRowCol.end() && itF->second == row) {
       if (row > kL) {
@@ -228,18 +201,6 @@ bool TKeyframeData::getKeyframes(std::set<Position> &positions,
                 TDoubleKeyframe::Type(Preferences::instance()->getKeyframeType());
           wantTypeSet[i] = true;
         }
-        if (keyPasteDiag) {
-          QString per;
-          for (int i = 0; i < TStageObject::T_ChannelCount; i++) {
-            if (!newKey.m_channels[i].m_isKeyframe) continue;
-            per += QString(" %1:objPrevKey=%2 want=%3")
-                       .arg(chName[i < 11 ? i : 11])
-                       .arg(prevKey.m_channels[i].m_isKeyframe ? "Y" : "N")
-                       .arg(wantTypeSet[i] ? (int)wantType[i] : -1);
-          }
-          qDebug().noquote()
-              << QString("[KEYPASTE]   between-first: kP=%1 |%2").arg(kP).arg(per);
-        }
         pegbar->setKeyframeWithoutUndo(row, newKey);
       }
     }
@@ -270,9 +231,6 @@ bool TKeyframeData::getKeyframes(std::set<Position> &positions,
             nextKey.m_channels[i].m_prevType = newKey.m_channels[i].m_type;
           }
         }
-        if (keyPasteDiag)
-          qDebug().noquote()
-              << QString("[KEYPASTE]   between-last: kN=%1").arg(kN);
         pegbar->setKeyframeWithoutUndo(row, newKey);
       }
     }
@@ -291,20 +249,6 @@ bool TKeyframeData::getKeyframes(std::set<Position> &positions,
       KeyframeSetter(param, kIndex, false).setType(kIndex, wantType[i]);
     }
 
-    if (keyPasteDiag) {
-      TStageObject::Keyframe after = pegbar->getKeyframe(row);
-      QString per;
-      for (int i = 0; i < TStageObject::T_ChannelCount; i++)
-        if (after.m_channels[i].m_isKeyframe)
-          per += QString(" %1=t%2/p%3 out=%4 in=%5")
-                     .arg(chName[i < 11 ? i : 11])
-                     .arg((int)after.m_channels[i].m_type)
-                     .arg((int)after.m_channels[i].m_prevType)
-                     .arg(after.m_channels[i].m_speedOut.x, 0, 'f', 2)
-                     .arg(after.m_channels[i].m_speedIn.x, 0, 'f', 2);
-      qDebug().noquote() << QString("[KEYPASTE]   AFTER:%1")
-                                .arg(per.isEmpty() ? QString(" NONE") : per);
-    }
   }
   if (!keyFrameChanged) return false;
 
