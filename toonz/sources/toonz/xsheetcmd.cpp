@@ -583,9 +583,7 @@ void GlobalKeyframeUndo::doRemoveGlobalKeyframes(
 
     TStageObject *obj = xsh->getStageObject(objectId);
     obj->removeKeyframeWithoutUndo(frame);
-    // Move frame center back to origin
-    TPointD center = obj->getCenter(frame);
-    if (center != TPointD()) obj->setCenter(frame, center, true);
+    obj->resetFrameCenterIfUnanimated(frame);
   }
 }
 

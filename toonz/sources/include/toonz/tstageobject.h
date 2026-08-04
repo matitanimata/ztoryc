@@ -317,6 +317,23 @@ object.
     setCenter(frame, center, center, resetOrigin);
   }
 
+  //! Puts the centre/offset bookkeeping back to the origin after a keyframe
+  //! has been removed -- but only once the object has NO keyframes left.
+  //!
+  //! Neither m_frameCenter nor m_offset is a keyed channel, and both feed the
+  //! placement directly: on a path `position = splinePoint - m_frameCenter`,
+  //! and in every case `pos = m_offset + position`. Resetting them while
+  //! keyframes remain therefore MOVES the object although every channel value
+  //! is unchanged, which reads as the animation drifting on its own. Deleting
+  //! the leading keys of a run to start from the last key's position is enough
+  //! to show it, with and without a spline.
+  //!
+  //! The reset is worth keeping for the case it was written for -- the object
+  //! has no animation left, so the bookkeeping should go back to the origin.
+  //! Every command that removes keyframes should call this instead of
+  //! open-coding the reset, so the rule lives in one place.
+  void resetFrameCenterIfUnanimated(double frame);
+
   //! Returns the center of the \e frame.
   TPointD getCenter(double frame) const;
 

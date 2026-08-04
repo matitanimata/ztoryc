@@ -121,9 +121,29 @@ bool deleteKeyframesWithoutUndo(
     areAllColumnLocked = false;
     assert(pegbar);
     pegbar->removeKeyframeWithoutUndo(row);
-    // Move frame center back to origin
-    TPointD center = pegbar->getCenter(row);
-    if (center != TPointD()) pegbar->setCenter(row, center, true);
+
+    // Move frame center back to origin -- but ONLY once the object has no
+    // keyframes left. Doing it after every single deleted key MOVES THE OBJECT
+    // while its channel values stay exactly the same, which reads as the
+    // animation silently drifting.
+    //
+    // setCenter(frame, center, resetOrigin) forwards to the four-argument form
+    // as setCenter(frame, center, CENTER, resetOrigin), so it writes
+    // m_frameCenter = center -- a different value from the one it held -- and
+    // then recomputes m_offset from a placement it has just zeroed. Neither is
+    // a keyframed channel, and both feed the placement directly: on a path
+    // `position = splinePoint - m_frameCenter`, and everywhere `pos = m_offset
+    // + position`. That is why the object shifts with a spline AND without one.
+    //
+    // Reported by Franco 2026-08-04 on MaggiolataZombie/sh260: deleting the
+    // leading keys of a run to start from the last key's position dropped the
+    // object, with identical values at the surviving key.
+    //
+    // The reset itself is upstream's (baecf7504, "Fix resetting center and
+    // offset on key delete"): keeping it for the case it was written for --
+    // the object has no animation left, so the bookkeeping should go back to
+    // the origin -- and not running it while keys remain.
+    pegbar->resetFrameCenterIfUnanimated(row);
   }
   if (areAllColumnLocked) return false;
 
@@ -368,10 +388,9 @@ void TKeyframeSelection::setKeyframes() {
 
     pegbar->removeKeyframeWithoutUndo(row);
 
-    // Move frame center back to origin
     TPointD center, offset;
     pegbar->getCenterAndOffset(center, offset);
-    if (center != TPointD()) pegbar->setCenter(row, center, true);
+    pegbar->resetFrameCenterIfUnanimated(row);
 
     UndoRemoveKeyFrame *undo =
         new UndoRemoveKeyFrame(id, row, key, center, offset, xsheetHandle);

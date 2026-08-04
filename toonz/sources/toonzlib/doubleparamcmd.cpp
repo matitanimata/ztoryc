@@ -1129,9 +1129,7 @@ public:
   }
   void redo() const override {
     m_param->deleteKeyframe(m_keyframe.m_frame);
-    if (m_stageObj && m_center != TPointD() &&
-        !m_stageObj->isKeyframe(m_keyframe.m_frame))
-      m_stageObj->setCenter(m_keyframe.m_frame, m_center, true);
+    if (m_stageObj) m_stageObj->resetFrameCenterIfUnanimated(m_keyframe.m_frame);
     if (m_xsheetHandle) m_xsheetHandle->notifyXsheetChanged();
   }
   int getSize() const override { return sizeof(*this); }
@@ -1162,12 +1160,7 @@ void KeyframeSetter::removeKeyframeAt(TDoubleParam *curve, double frame,
   TUndoManager::manager()->add(
       new RemoveKeyframeUndo(curve, kIndex, stageObj, xsheetHandle));
   curve->deleteKeyframe(frame);
-  if (stageObj) {
-    TPointD center, offset;
-    stageObj->getCenterAndOffset(center, offset);
-    if (center != TPointD() && !stageObj->isKeyframe(frame))
-      stageObj->setCenter(frame, center, true);
-  }
+  if (stageObj) stageObj->resetFrameCenterIfUnanimated(frame);
 
   if (xsheetHandle) xsheetHandle->notifyXsheetChanged();
 }

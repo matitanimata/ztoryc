@@ -216,9 +216,7 @@ public:
         double frame = it->second.m_frame;
         m_columns[col].m_param->deleteKeyframe(frame);
         TStageObject *stgObj = stageObjectOf(m_columns[col].m_param);
-        if (stgObj && m_columns[col].m_center != TPointD() &&
-            !stgObj->isKeyframe(frame))
-          stgObj->setCenter(frame, m_columns[col].m_center, true);
+        if (stgObj) stgObj->resetFrameCenterIfUnanimated(frame);
       }
     }
     if (m_xsheetHandle) m_xsheetHandle->notifyXsheetChanged();

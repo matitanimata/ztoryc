@@ -794,6 +794,17 @@ void TStageObject::setCenter(double frame, const TPointD &centerPoint,
 
 //-----------------------------------------------------------------------------
 
+void TStageObject::resetFrameCenterIfUnanimated(double frame) {
+  KeyframeMap keyframes;
+  getKeyframes(keyframes);
+  if (!keyframes.empty()) return;
+
+  const TPointD center = getCenter(frame);
+  if (center != TPointD()) setCenter(frame, center, true);
+}
+
+//-----------------------------------------------------------------------------
+
 TPointD TStageObject::getCenter(double frame) const {
   return m_center + getHandlePos(m_handle, (int)frame);
 }

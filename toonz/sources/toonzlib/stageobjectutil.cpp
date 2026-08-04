@@ -366,8 +366,7 @@ void UndoRemoveKeyFrame::redo() const {
 
   if (TStageObject *obj = xsh->getStageObject(m_objId)) {
     obj->removeKeyframeWithoutUndo(m_frame);
-    // Move frame center back to origin
-    if (m_center != TPointD()) obj->setCenter(m_frame, m_center, true);
+    obj->resetFrameCenterIfUnanimated(m_frame);
 
     // Removing a "full" key removes the pose it captured, too — otherwise the
     // gold diamond's plastic half would linger invisibly after the stage half
@@ -509,8 +508,7 @@ void UndoChannelDelete::redo() const {
   int frame              = m_frameHandle->getFrameIndex();
 
   stageObj->getParam(m_actionId)->deleteKeyframe(frame);
-  if (m_center != TPointD() && !stageObj->isKeyframe(frame))
-    stageObj->setCenter(frame, m_center, true);
+  stageObj->resetFrameCenterIfUnanimated(frame);
 
   m_xsheetHandle->notifyXsheetChanged();
   m_objectHandle->notifyObjectIdChanged(false);
