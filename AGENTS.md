@@ -439,11 +439,16 @@ scope `read:user`, quindi da CLI gli sponsor non si leggono: va guardata a mano.
 Per ogni sponsor **nuovo** dall'ultimo rilascio:
 1. È in `SUPPORTERS.md`, nel tier giusto? (solo se la sponsorizzazione è
    **pubblica** su GitHub — e solo dopo avergli chiesto il permesso)
-2. Ha dato il **consenso esplicito** a comparire **dentro l'app**? Essere sponsor
-   pubblico su GitHub non è un consenso a essere messo nella schermata About:
-   sono due cose diverse e va chiesto a parte.
-3. Se sì → ringraziamento in-app (About / startup page), dove lo vedono anche
-   quelli che su GitHub non ci vanno mai.
+2. **Il consenso c'è già: i tier dicono che il nome compare nei ringraziamenti.**
+   Non richiederlo a parte — è nell'accordo (correzione di Franco, 2026-08-04:
+   la versione precedente di questa regola diceva il contrario ed era sbagliata).
+   L'unico filtro che resta è che la sponsorizzazione sia **pubblica** su GitHub.
+3. → ringraziamento in-app nella schermata About, dove lo vedono anche quelli
+   che su GitHub non ci vanno mai. Il blocco esiste (`aboutpopup.cpp`, modellato
+   su quello di Tahoma2D: una riga di introduzione, «Special thanks to:», i nomi
+   in corsivo, l'invito a sponsorizzare). **Va aggiornato a mano**: il token `gh`
+   di questa macchina non ha lo scope `read:user`, quindi la lista non si può
+   leggere da script e non si aggiorna da sola.
 4. Riga di ringraziamento nelle note di rilascio, in **entrambe** le lingue.
 
 Controllare anche le promesse di tier ancora scoperte (canale di discussione per

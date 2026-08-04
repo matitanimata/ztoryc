@@ -107,6 +107,36 @@ AboutPopup::AboutPopup(QWidget* parent)
   thanksLabel->setWordWrap(true);
   mainLayout->addWidget(thanksLabel);
 
+  mainLayout->addSpacerItem(new QSpacerItem(0, 10));
+
+  // The people who fund the work. The sponsorship tiers state that the name
+  // appears in the credits, so being listed here is part of what was agreed --
+  // it does not need asking again. Only PUBLIC sponsorships go in, and the list
+  // is kept by hand: the gh token on the dev machine has no read:user scope, so
+  // the dashboard cannot be read from a script and this cannot self-update.
+  // Checked against SUPPORTERS.md at every release.
+  QLabel* patronsLabel = new QLabel(
+      tr("Ztoryc is made possible by the people who fund it.\n"
+         "Special thanks to:"), this);
+  patronsLabel->setAlignment(Qt::AlignHCenter);
+  mainLayout->addWidget(patronsLabel);
+
+  QLabel* patronNames = new QLabel(tr("Slam Rockwell"), this);
+  patronNames->setAlignment(Qt::AlignHCenter);
+  patronNames->setWordWrap(true);
+  {
+    QFont f = patronNames->font();
+    f.setItalic(true);
+    patronNames->setFont(f);
+  }
+  mainLayout->addWidget(patronNames);
+
+  QLabel* sponsorInvite = new QLabel(
+      tr("Please consider sponsoring Ztoryc's development on GitHub."), this);
+  sponsorInvite->setAlignment(Qt::AlignHCenter);
+  sponsorInvite->setWordWrap(true);
+  mainLayout->addWidget(sponsorInvite);
+
   mainLayout->addStretch();
 
   QFrame* mainFrame = new QFrame(this);
