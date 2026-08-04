@@ -573,7 +573,55 @@ scalatura nel tempo su piu' curve, tratteggio per colonna, hint contestuali.
 Collaudato da Franco. Testo inglese per la proposta upstream (a **Tahoma2D e
 OpenToonz**) in Drive → `FUNCTION_EDITOR_UPSTREAM_EN.md`, con la traccia del video.
 
-⬜ **Restano DUE voci** delle tre escluse dalla prima fase (i **preset di easing** sono ✅ **FATTI e collaudati il 2026-08-04**, commit `07e6528f7`: quindici curve nominate Sine/Quad/Cubic/Quart/Expo x In/Out/In-Out nel menu contestuale del grafico). Nessuna e' bloccata dal
+**DECISIONE DI FRANCO (2026-08-04): nessuna fretta di rilasciare, si vuole il
+Function Editor DEFINITIVO.** Speed graph e curve linkate si fanno subito;
+l'agente aveva proposto di rilasciare prima e la proposta e' stata scartata.
+
+### 🔮 Famiglia futura: GENERATORI di keyframe (overshoot, bounce, shake cam)
+Idea di Franco, 2026-08-04. Sono **una feature a se'**, non dei preset:
+- **Overshoot** — il valore supera il bersaglio e ci rientra (una posa che non
+  si raggiunge ma si oltrepassa: e' la differenza fra meccanico e con peso).
+- **Bounce** — la stessa cosa ripetuta e **smorzata**: supera, torna, risupera
+  di meno, si posa.
+- **Shake cam** — aggiunta da Franco: tremolio di camera.
+
+**Perche' non sono preset**: un segmento fra due chiavi e' una singola bezier
+cubica, puo' fare UNA gobba. Un'oscillazione smorzata richiede **piu' chiavi con
+ampiezza calante**, cioe' vanno GENERATE. Gli altri preset scrivono due numeri su
+un segmento che esiste gia'; questi cambiano quante chiavi ci sono.
+
+**Avranno dei settings** (intuizione di Franco, ed e' giusta): durata, ampiezza,
+numero di oscillazioni, smorzamento. Quindi servono un dialogo e delle scelte:
+dove finisce l'oscillazione se dopo c'e' un'altra chiave? spostando la chiave
+finale, le chiavi generate seguono o restano? il Rove che fa su chiavi non messe
+dall'utente? Probabilmente la risposta e' la stessa data al Rove — **one-shot**,
+nessun flag serializzato — ma va deciso e collaudato a parte.
+
+✅ **FUNCTION EDITOR COMPLETO — 2026-08-04** (commit `9b8e73921`). Tutte e tre
+le voci escluse dalla prima fase sono chiuse e collaudate da Franco: preset di
+easing, **speed graph** in sola lettura, **curve linkate**.
+
+Decisioni di progetto prese con Franco, da non ribaltare senza motivo:
+- **Speed graph**: riquadro sotto ad asse tempo condiviso (non sovrapposto — lo
+  screenshot di una scena vera con sei curve ciano ha mostrato che sovrapporre
+  le derivate sarebbe stato illeggibile); **solo curve selezionate**, come
+  «only show selected» di Blender; nessun asse verticale etichettato.
+- **Curve linkate**: il flusso parte dalle **guide**, non dalla curva da
+  pilotare — quella spesso non esiste ancora e non si potrebbe selezionare
+  (difetto trovato da Franco al primo collaudo). Canali abbinati **per nome**,
+  bersaglio = elenco di **colonne** a scelta multipla. L'intervallo lo decide la
+  **selezione**, perche' guidare un tratto e animare a mano il resto e'
+  legittimo.
+- **Niente trascinamento** dall'albero: e' un gesto uno-a-uno e il modello e'
+  molti-a-molti. Scartato da Franco: «per come funziona non avrebbe senso».
+- **Niente dialogo di modifica** del collegamento: l'espressione e' gia'
+  visibile e modificabile selezionando la curva guidata. Sarebbe stata una
+  seconda strada peggiore per la stessa cosa.
+- **Marcatori nell'albero**: freccia + colore + corsivo. La freccia perche' un
+  canale puo' essere guida E guidato insieme (catena) e il caso misto si mostra
+  da se'; il colore serve a trovare la riga scorrendo, non a dire cosa fa.
+
+⬜ ~~Restano DUE voci~~ **(storico, ora chiuse)** delle tre escluse dalla prima fase (i **preset di easing** sono ✅ **FATTI e collaudati il 2026-08-04**, commit `07e6528f7`: quindici curve nominate Sine/Quad/Cubic/Quart/Expo x In/Out/In-Out nel menu contestuale del grafico). Nessuna e' bloccata dal
 modello dati — verificato leggendo il codice, la nota iniziale che diceva il
 contrario era sbagliata:
 - **Speed graph** — vista della derivata, dove gli errori di spacing si vedono
