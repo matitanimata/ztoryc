@@ -573,7 +573,7 @@ scalatura nel tempo su piu' curve, tratteggio per colonna, hint contestuali.
 Collaudato da Franco. Testo inglese per la proposta upstream (a **Tahoma2D e
 OpenToonz**) in Drive → `FUNCTION_EDITOR_UPSTREAM_EN.md`, con la traccia del video.
 
-⬜ **Restano le tre voci escluse dalla prima fase.** Nessuna e' bloccata dal
+⬜ **Restano DUE voci** delle tre escluse dalla prima fase (i **preset di easing** sono ✅ **FATTI e collaudati il 2026-08-04**, commit `07e6528f7`: quindici curve nominate Sine/Quad/Cubic/Quart/Expo x In/Out/In-Out nel menu contestuale del grafico). Nessuna e' bloccata dal
 modello dati — verificato leggendo il codice, la nota iniziale che diceva il
 contrario era sbagliata:
 - **Speed graph** — vista della derivata, dove gli errori di spacing si vedono
@@ -585,7 +585,7 @@ contrario era sbagliata:
   referenzia altre colonne + rilevamento dei riferimenti circolari, e
   `Channel::getExprRefName()` e' gia' il payload del trascinamento col tasto
   centrale dall'albero. Manca solo la UI: un gesto invece di sintassi digitata.
-- **Preset di easing** — si sdoppia. Le **forme di ease** sono valori di
+- ✅ **Preset di easing — FATTO 2026-08-04.** Si sdoppiava, e infatti e' stata fatta solo la meta' facile. Le **forme di ease** sono valori di
   `m_speedIn`/`m_speedOut` su un segmento e viaggiano sulla macchina di
   applicazione in blocco gia' costruita: poche ore. **Overshoot e bounce no**:
   richiedono di GENERARE keyframe, ed e' una feature diversa e piu' grande.
