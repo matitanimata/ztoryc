@@ -452,34 +452,48 @@ nella sub-scene corretta.
 
 ## Priority Order
 
-### 🔴 BUG — curve abnormi fra due chiavi quasi uguali (2026-08-04)
+### 🔴 BUG — sussulto fra due chiavi sui vertici plastici (2026-08-04)
 
-Segnalato da Franco su `MaggiolataZombie/sh330`, dentro la sotto-scena
-**lib_armando**, fra i frame 9 e 21. **Ricorrente**: «ogni tanto succede».
-Screenshot: il grafico mostra escursioni enormi fra chiavi praticamente allo
-stesso valore.
+Segnalato da Franco, **ricorrente** («ogni tanto succede»). Fra due chiavi il
+valore fa un'escursione che non dovrebbe esserci: visto su
+`MaggiolataZombie/sh330` → sotto-scena **lib_armando** → sotto-scena **col1**,
+sulle curve dei **vertici dello skeleton plastico** (colonna `Angle`), frames
+9-21. A schermo: due chiavi a 0 e in mezzo l'angolo sale a **132** e torna.
 
-**MISURATO SUL `.tnz` (XML in chiaro) — tre ipotesi, tutte NEGATIVE.** Non
-rifarle:
-1. maniglie sproporzionate alla **lunghezza** del segmento (handle rimasti da
-   una spaziatura precedente) → **0 casi**
-2. **salti di valore** anomali fra chiavi consecutive nel range → **0 casi**
-3. maniglie sproporzionate al **dislivello** (`speedOut.y` >> `dv`, il caso che
-   fa uscire la curva dall'intervallo) → **0 casi**
+**CAUSA (confermata dal rimedio)**: tangenti **non clampate** sulle chiavi dei
+vertici. Chiave trovata nel `.tnz`:
+```
+S  frame 27   valore 55.017   maniglia.x 2.667   maniglia.y +21.69      (VD > Angle)
+```
+`maniglia.x = 2.667` e' un terzo di 8 frame, cioe' la maniglia standard: la
+lunghezza e' giusta, e' la **pendenza** a essere fuori scala — oltre 8 unita'
+per frame su un tratto che non deve muoversi.
 
-Inventario dei tipi di segmento nel file: `L`=1125, `E`=547, `S`=291, `C`=7.
-La maggioranza e' **Linear**, che per costruzione non puo' sforare.
+✅ **Franco conferma che applicando Auto Bezier il problema sparisce**, il che
+CONFERMA la diagnosi: il clamp di `KeyframeSetter::setAutoBezier`
+(Fritsch-Carlson, tangente limitata a 3x la pendenza del segmento piu' piatto,
+piatta sugli estremi locali) e' esattamente cio' che manca.
 
-**Conclusione provvisoria**: i dati salvati sono puliti, quindi il difetto e'
-nella **valutazione o nel disegno**, non nel contenuto del file. Da guardare
-per primi: `getSegmentPainterPath` (campionamento del grafico) e la valutazione
-`E`/EaseInOut, dove le maniglie portano una QUANTITA' di ease e non una
-pendenza — un'interpretazione sbagliata li' darebbe esattamente punte fra chiavi
-uguali senza che nel file ci sia nulla di strano.
+**Dove si scrive quella chiave** — catena tracciata:
+`plastictool_animate.cpp` → `::setKeyframe(vd->m_params[SkVD::ANGLE], ...)` →
+`plastictool.cpp:196 setKeyframe(TDoubleParamP&, double)` → `createKeyframe()`.
+⚠️ Ma `createKeyframe` NON puo' produrre quella pendenza: con Auto Bezier acceso
+clampa, spento assegna maniglie **orizzontali** (`segmentWidth/3, 0`). **Quindi
+qualcosa RUOTA le maniglie dopo la creazione.** Due candidati, nessuno
+verificato: le **maniglie linkate** (forzano i due lati di una chiave a restare
+allineati e possono importare la pendenza del segmento vicino) oppure una
+riscrittura successiva dello stamping delle pose.
 
-**DA CHIEDERE A FRANCO**: quale curva e' — un canale dell'oggetto (x/y/rot) o
-una curva di **deformazione plastica**? `lib_armando` e' un rig, e le due cose
-stanno in strutture diverse. Senza questo si cerca alla cieca.
+**DA QUI SI RIPARTE**: trovare chi ruota le maniglie, e applicare li' il clamp
+gia' esistente. Rimedio nel frattempo: Auto Bezier sul segmento (o Linear).
+
+⚠️ **QUATTRO misure sbagliate prima di arrivarci, non rifarle**: (1) maniglie vs
+lunghezza del segmento; (2) salti di valore; (3) maniglie vs dislivello **con
+una soglia assoluta** che scartava i valori piccoli dei vertici plastici;
+(4) segmenti **piatti** con tangenti non nulle — e il caso vero non e' piatto
+(la chiave vale 55, non 0), quindi cadeva fuori da ogni filtro. Il parser dei
+`.tnz` copriva tutto (7349 tag su 7349): non era un problema di copertura ma di
+**criterio**. Vedi [[feedback_instrument_before_optimizing]].
 
 ### 🔴 BUG — Production Tracker legge la scena sbagliata (2026-08-04)
 
