@@ -1926,6 +1926,8 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
   QAction setStep2Action(tr("Step 2"), 0);
   QAction setStep3Action(tr("Step 3"), 0);
   QAction setStep4Action(tr("Step 4"), 0);
+  // Filled in menu order below, so an entry's position IS its preset index.
+  QVector<QAction *> easePresetActions;
 
   TDoubleParam *curve = getCurrentCurve();
   int segmentIndex    = -1;
@@ -2046,6 +2048,46 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
     menu.addAction(&autoBezierAction);
     menu.addAction(&flatAction);
 
+    // The named easing curves. Auto Bezier decides a shape FROM the animation
+    // -- it is the answer to "make this pass through smoothly". These are the
+    // other request: a shape chosen because it is that shape, imposed on the
+    // segment whatever the neighbours are doing.
+    //
+    // Submenus by family rather than fifteen entries in a row: the choice is
+    // really two, which curve and which way round, and nesting asks them in
+    // that order.
+    QMenu *easeMenu = menu.addMenu(tr("Ease Presets"));
+    {
+      int presetCount           = 0;
+      const EasePreset *presets = KeyframeSetter::getEasePresets(presetCount);
+      QMenu *familyMenu         = 0;
+      QString family;
+      for (int i = 0; i < presetCount; i++) {
+        const QString presetFamily = QString::fromLatin1(presets[i].m_family);
+        if (!familyMenu || family != presetFamily) {
+          family     = presetFamily;
+          familyMenu = easeMenu->addMenu(family);
+        }
+        // What the entry DOES, next to what it is called. "In" and "Out" are
+        // the motion-design words, where In is a slow START -- and the segment
+        // editor two panels away uses the same two words the other way round,
+        // so leaving them to speak for themselves would be leaving a coin toss.
+        QString label;
+        switch (presets[i].m_variant) {
+        case EasePreset::In:
+          label = tr("In (slow start)");
+          break;
+        case EasePreset::Out:
+          label = tr("Out (slow end)");
+          break;
+        default:
+          label = tr("In-Out (slow both ends)");
+          break;
+        }
+        easePresetActions.append(familyMenu->addAction(label));
+      }
+    }
+
     // Shown always, greyed when they do not apply, rather than hidden. Copy
     // needs exactly one keyframe and Paste needs something already copied --
     // so hiding them meant Copy could not be found while several keys were
@@ -2163,7 +2205,12 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
     getSelection()->setSelectedKeyframesAutoBezier();
   else if (action == &flatAction)
     getSelection()->setSelectedKeyframesFlat();
-  else if (action == &copyTangentsAction)
+  else if (easePresetActions.contains(action)) {
+    int presetCount           = 0;
+    const EasePreset *presets = KeyframeSetter::getEasePresets(presetCount);
+    const int i               = easePresetActions.indexOf(action);
+    if (i >= 0 && i < presetCount) getSelection()->applyEasePreset(presets[i]);
+  } else if (action == &copyTangentsAction)
     getSelection()->copyTangents();
   else if (action == &pasteTangentsAction)
     getSelection()->pasteTangents();

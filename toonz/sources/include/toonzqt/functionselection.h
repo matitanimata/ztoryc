@@ -30,6 +30,7 @@
 class TDoubleParam;
 class TFrameHandle;
 class FunctionSheet;
+struct EasePreset;
 
 //-----------------------------------------------------------------------------
 
@@ -133,6 +134,17 @@ public:
   //! Applies the copied shape to every selected keyframe.
   void pasteTangents();
   bool hasCopiedTangents() const { return m_tangentClip.m_full; }
+
+  //! Gives \p preset's shape to every segment the selection covers.
+  //!
+  //! An ease is a segment's shape, but a selection can be made of either, so
+  //! both readings are answered: SEGMENTS picked say it outright and are taken
+  //! at their word; KEYS picked are read the way Auto Bezier and Flat already
+  //! read them -- both sides of every key chosen -- so no two commands in the
+  //! same menu can disagree about what "the selection" is. One key selected
+  //! therefore eases the movement into it and out of it, which is what asking
+  //! for an ease at a key means.
+  void applyEasePreset(const EasePreset &preset);
 
   //! Spreads the selected keys evenly in time so the value runs at constant
   //! speed between the keys bracketing them -- roving, on the channel where it

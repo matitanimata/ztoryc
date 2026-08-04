@@ -527,6 +527,100 @@ std::map<int, int> KeyframeSetter::computeRovedFrames(
 
 //-----------------------------------------------------------------------------
 
+const EasePreset *KeyframeSetter::getEasePresets(int &count) {
+  // The published cubic-bezier approximations of the classic easing functions
+  // (easings.net, and the same numbers CSS ships). Taken as they are rather
+  // than derived: they are what every other tool draws, and an animator who
+  // knows what "ease out cubic" looks like has to find it looking like that.
+  //
+  // Sine is the gentlest and Expo the fiercest; the order below is that ramp,
+  // so the menu reads as a scale of strength instead of an alphabet.
+  static const EasePreset presets[] = {
+      {"Sine", EasePreset::In, 0.12, 0.0, 0.39, 0.0},
+      {"Sine", EasePreset::Out, 0.61, 1.0, 0.88, 1.0},
+      {"Sine", EasePreset::InOut, 0.37, 0.0, 0.63, 1.0},
+
+      {"Quad", EasePreset::In, 0.11, 0.0, 0.50, 0.0},
+      {"Quad", EasePreset::Out, 0.50, 1.0, 0.89, 1.0},
+      {"Quad", EasePreset::InOut, 0.45, 0.0, 0.55, 1.0},
+
+      {"Cubic", EasePreset::In, 0.32, 0.0, 0.67, 0.0},
+      {"Cubic", EasePreset::Out, 0.33, 1.0, 0.68, 1.0},
+      {"Cubic", EasePreset::InOut, 0.65, 0.0, 0.35, 1.0},
+
+      {"Quart", EasePreset::In, 0.50, 0.0, 0.75, 0.0},
+      {"Quart", EasePreset::Out, 0.25, 1.0, 0.50, 1.0},
+      {"Quart", EasePreset::InOut, 0.76, 0.0, 0.24, 1.0},
+
+      {"Expo", EasePreset::In, 0.70, 0.0, 0.84, 0.0},
+      {"Expo", EasePreset::Out, 0.16, 1.0, 0.30, 1.0},
+      {"Expo", EasePreset::InOut, 0.87, 0.0, 0.13, 1.0}};
+
+  count = (int)(sizeof(presets) / sizeof(presets[0]));
+  return presets;
+}
+
+//-----------------------------------------------------------------------------
+
+void KeyframeSetter::setEasePreset(TDoubleParam *curve,
+                                   const std::set<int> &segmentIndices,
+                                   const EasePreset &preset, bool enableUndo) {
+  if (!curve) return;
+  // Drawing numbers are integers picked from a level: an eased ramp between
+  // two of them means nothing. Same reason as setTangents.
+  if (curve->getName() == "W_DrawingNumber") return;
+
+  const int n = curve->getKeyframeCount();
+  if (n < 2) return;
+
+  std::set<int> segments;
+  for (std::set<int>::const_iterator it = segmentIndices.begin();
+       it != segmentIndices.end(); ++it)
+    // The last keyframe governs no segment.
+    if (*it >= 0 && *it < n - 1) segments.insert(*it);
+  if (segments.empty()) return;
+
+  TUndoManager::manager()->beginBlock();
+
+  for (std::set<int>::const_iterator it = segments.begin();
+       it != segments.end(); ++it) {
+    KeyframeSetter setter(curve, *it, enableUndo);
+    setter.setType(*it, TDoubleKeyframe::SpeedInOut);
+  }
+
+  for (std::set<int>::const_iterator it = segments.begin();
+       it != segments.end(); ++it) {
+    const int s     = *it;
+    const double f0 = curve->keyframeIndexToFrame(s);
+    const double f1 = curve->keyframeIndexToFrame(s + 1);
+    const double dt = f1 - f0;
+    if (dt <= 0.0) continue;
+    // Asked of the curve, not of the keyframe: with an expression the stored
+    // value is not what the curve actually passes through.
+    const double dv = curve->getValue(f1) - curve->getValue(f0);
+
+    {
+      KeyframeSetter setter(curve, s, enableUndo);
+      setter.unlinkHandles();
+      setter.setSpeedOut(TPointD(preset.m_x1 * dt, preset.m_y1 * dv));
+    }
+    {
+      // P2 is measured from the ORIGIN of the unit square while the handle is
+      // measured from the key it hangs off, which is the far corner: hence the
+      // shift by one on both axes, and hence x staying negative -- the handle
+      // reaches back into the segment.
+      KeyframeSetter setter(curve, s + 1, enableUndo);
+      setter.unlinkHandles();
+      setter.setSpeedIn(
+          TPointD((preset.m_x2 - 1.0) * dt, (preset.m_y2 - 1.0) * dv));
+    }
+  }
+
+  TUndoManager::manager()->endBlock();
+}
+
+//-----------------------------------------------------------------------------
+
 void KeyframeSetter::setTangents(TDoubleParam *curve,
                                  const std::set<int> &kIndices, bool flat,
                                  bool enableUndo) {

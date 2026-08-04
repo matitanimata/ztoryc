@@ -23,6 +23,34 @@ class TXsheetHandle;
 class TObjectHandle;
 class TStageObject;
 
+//! One named easing curve out of the motion-design vocabulary -- the family
+//! CSS and easings.net publish -- stored the way they are published: a cubic
+//! Bezier in the unit square, with P0=(0,0) and P3=(1,1) understood, so that
+//! only the two inner control points need saying.
+//!
+//! Being fractions of the segment rather than numbers of frames is what makes
+//! a preset a preset: the same entry gives the same CHARACTER on a six frame
+//! move and on a sixty frame one.
+//!
+//! A preset describes a SEGMENT, never one side of a keyframe. Its two handles
+//! are not independent -- "slow start" is a long flat handle leaving the first
+//! key AND a short one arriving at the second -- so half of one is not half an
+//! ease, it is nothing.
+//!
+//! \note "In" here means SLOW START, the motion-design reading, which is the
+//! opposite of what Ease In means in the segment editor two panels away (there
+//! the movement eases OUT of the first key and IN to the second). The names
+//! carry the ambiguity with them, so the menu spells the effect out.
+struct EasePreset {
+  enum Variant { In, Out, InOut };
+  //! "Quad", "Cubic", ... deliberately untranslated: these are the names the
+  //! vocabulary uses, in every language it is spoken in.
+  const char *m_family;
+  Variant m_variant;
+  //! P1 and P2 of the unit-square cubic.
+  double m_x1, m_y1, m_x2, m_y2;
+};
+
 class DVAPI KeyframeSetter {
   TDoubleParamP m_param;
   int m_kIndex;
@@ -176,6 +204,31 @@ public:
   //! the promise kept at the keys and broken everywhere else.
   static std::map<int, int> computeRovedFrames(TDoubleParam *curve,
                                                const std::set<int> &kIndices);
+
+  //! The table of named easing curves, in menu order: the families outermost,
+  //! In / Out / In-Out within each.
+  static const EasePreset *getEasePresets(int &count);
+
+  //! Gives each segment in \p segmentIndices the shape of \p preset -- its
+  //! keyframes are neither moved nor revalued, only the way the movement gets
+  //! from one to the next changes.
+  //!
+  //! The published numbers are fractions of the segment, so they are scaled by
+  //! its width and by its rise. A segment whose two keys hold the same value
+  //! has no rise: the handles come out horizontal, which is right -- there is
+  //! no movement there to ease.
+  //!
+  //! The segments become SpeedInOut, the only type with two free handles.
+  //! EaseInOut cannot hold a named curve at all: it stores an ease AMOUNT and
+  //! decides the shape itself.
+  //!
+  //! Linked handles are undone at the keys written. The link forces the two
+  //! sides of a key to stay collinear, and a per-segment shape is exactly the
+  //! request that they need not be -- kept, it would silently reshape the
+  //! NEIGHBOURING segment every time a preset was applied to this one.
+  static void setEasePreset(TDoubleParam *curve,
+                            const std::set<int> &segmentIndices,
+                            const EasePreset &preset, bool enableUndo = true);
 
 private:
   //! The two above: identical except for where the slope comes from.

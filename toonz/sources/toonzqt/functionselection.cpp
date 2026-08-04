@@ -797,6 +797,39 @@ void FunctionSelection::applyTangentsToSelection(bool flat) {
 
 //-----------------------------------------------------------------------------
 
+void FunctionSelection::applyEasePreset(const EasePreset &preset) {
+  if (isEmpty()) return;
+
+  std::map<TDoubleParam *, std::set<int>> segments;
+
+  if (!m_selectedSegments.isEmpty()) {
+    // Asked for by segment. Note this cannot be folded into the branch below
+    // by reading the keyframes instead: picking a segment also selects its two
+    // ends, and reading those back would spread the ease onto the segments on
+    // the far side of them -- the opposite of what pointing at one was for.
+    for (const QPair<TDoubleParam *, int> &segment : m_selectedSegments)
+      if (segment.first) segments[segment.first].insert(segment.second);
+  } else {
+    for (const auto &col : m_selectedKeyframes) {
+      TDoubleParam *curve = col.first;
+      if (!curve || col.second.isEmpty()) continue;
+      const int n = curve->getKeyframeCount();
+      for (int k : col.second) {
+        if (k < n - 1) segments[curve].insert(k);
+        if (k > 0) segments[curve].insert(k - 1);
+      }
+    }
+  }
+  if (segments.empty()) return;
+
+  TUndoManager::manager()->beginBlock();
+  for (const auto &it : segments)
+    KeyframeSetter::setEasePreset(it.first, it.second, preset);
+  TUndoManager::manager()->endBlock();
+}
+
+//-----------------------------------------------------------------------------
+
 void FunctionSelection::setSelectedSegmentsType(TDoubleKeyframe::Type type) {
   if (m_selectedSegments.isEmpty()) return;
 
