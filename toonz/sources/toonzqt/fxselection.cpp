@@ -378,7 +378,18 @@ bool FxSelection::replacePasteSelection() {
       emit columnPasted(columns);
     }
 
-    TFx *inFx = m_selectedFxs[i].getPointer();
+    // The COPY, not the live selection. The loop is bounded by
+    // selectedFxs.size() but indexed m_selectedFxs, and the two do not stay the
+    // same length: replacePasteFxs below and the columnPasted handlers above
+    // both touch the selection. Once it is shorter than it was, QList's
+    // operator[] is read out of range -- undefined, and in practice it yields a
+    // garbage TFxP whose pointer was 1, which the undo's constructor
+    // dereferenced straight away (SIGSEGV in TFx::getInputPortCount, address
+    // 0x21, reproduced on the second paste in a row).
+    //
+    // The copy is made three lines above and, before this, was used for nothing
+    // but its size: iterating it is what it was there for.
+    TFx *inFx = selectedFxs[i].getPointer();
     TFxCommand::replacePasteFxs(
         inFx, std::list<TFxP>(fxs.begin(), fxs.end()),
         zeraryFxColumnSize.toStdMap(),

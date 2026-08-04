@@ -73,22 +73,19 @@ l'aveva presa su una dimensione diversa.
   **Il blocco è copiaincollato in OTTO punti** (sette upstream + uno nostro nel Function Editor), che è il motivo per cui il primo tentativo sembrava non funzionare: il toggle della chiave non passa da `keyframeselection.cpp` ma da `UndoRemoveKeyFrame::redo()`. Due dei sette avevano già una guardia parziale (`!isKeyframe(frame)`), insufficiente. **Gli `undo()` che ripristinano il centro salvato sono corretti e NON vanno toccati** — il difetto sta solo nei percorsi che *eseguono* la rimozione.
   **Fix**: un metodo solo su `TStageObject`, `resetFrameCenterIfUnanimated(double frame)`, che azzera **solo quando non resta nessuna chiave** — cioè il caso per cui il reset era stato scritto — e tutti i siti che lo chiamano al posto delle tre righe ripetute. **STATO: collaudato da Franco su entrambi i gesti** (cancellazione di una selezione di chiavi, e toggle della singola chiave) il 2026-08-04. ⚠️ Non ancora riprodotto sul worktree `tahoma-stock`: le funzioni in gioco (`setCenter`, `computeLocalPlacement`, i call site) sono **identiche riga per riga** a upstream, il che è un argomento forte ma non è la stessa cosa — da dire apertamente nella descrizione della PR se si invia prima di averlo fatto.
 
-- [ ] 🆕 **CRASH incollando effetti da una sotto-scena al main, al SECONDO paste** (`toonzqt/fxselection.cpp`, `FxSelection::replacePasteSelection()` ~riga 343) — **NON DIAGNOSTICATO**, solo registrato. Segnalato da Franco il 2026-08-04 alle 10:55 su `MaggiolataZombie/sh260`, log `Crash-20260804-105543.log`. SIGSEGV in `FxSelection::replacePasteSelection() + 396`, chiamata da `pasteSelection()` (voce di menu, quindi via `QAction::activate`).
-  **Repro riferita**: copiare degli effetti da una sotto-scena, incollarli nel main xsheet, e **incollarli una seconda volta** per averne due copie → crash al secondo paste.
-  **Il file e' IDENTICO a upstream** (zero righe di differenza da `upstream/master`): e' un difetto loro, non nostro. Da verificare se OpenToonz ha lo stesso file — molto probabile, e in quel caso e' un candidato **doppio**.
-  ⚠️ Prima di scriverne la causa, riprodurre sotto lldb come si e' fatto per il crash dell'Explode: quel giorno tre diagnosi «per lettura del codice» sono risultate sbagliate di fila. Punto di partenza: `replacePasteSelection` cicla su `m_selectedFxs` e per ogni elemento richiama `fxsData->getFxs(...)`, quindi il secondo giro lavora su uno stato gia' modificato dal primo.
-  ✅ **REPLICABILE, confermato da Franco** il 2026-08-04: crash sistematico al **secondo** paste.
-  🎯 **Cattura riuscita, ecco il punto**: `EXC_BAD_ACCESS (code=1, address=0x21)`, frame #0 = `TFx::getInputPortCount() const` in `libtnzbase`, che fa `ldr x8, [x0, #0x20]` — quindi **`this` non e' un TFx valido** (0x21 = 0x1 + 0x20: il puntatore vale 1, non 0). Un valore cosi' non e' un null-deref: e' **memoria liberata o un puntatore sovrascritto**, il che rende plausibile che il primo paste distrugga o invalidi qualcosa che il secondo riusa. Prima ipotesi da verificare (NON confermata): `fxsData->getFxs(...)` richiamato a ogni giro su un clipboard il cui contenuto e' gia' stato consumato.
-  📄 **Cattura lldb gia' fatta** (il repro richiede Franco, l'analisi no — quindi e' stata presa mentre era presente): `/Volumes/ZioSam/tahoma2d-workspace/lldb_paste_crash.txt` — contiene backtrace, registri e disassemblato dei frame 0 e 1. **Partire da li', non rifare il repro.**
-
-  **DA QUI SI RIPARTE** (priorita' massima — i crash vengono prima di tutto):
-  ```bash
-  cd /Volumes/ZioSam/tahoma2d-workspace/tahoma2d
-  pkill -9 -f "Ztoryc.app/Contents/MacOS/Ztoryc"; sleep 1
-  lldb -b -o run -k "bt 6" -k "register read" -k "disassemble --frame --count 20" \
-       -k quit -- toonz/Ztoryc.app/Contents/MacOS/Ztoryc > /tmp/lldb_paste.txt 2>&1
+- [ ] 🆕🎯 **CRASH incollando effetti al SECONDO paste — RISOLTO, e sta in ENTRAMBI i progetti** (`toonzqt/fxselection.cpp`, `FxSelection::replacePasteSelection()` ~riga 381). **Il candidato doppio piu' adatto da mandare per primo**: piccolo, autocontenuto, riga **identica in Tahoma2D e in OpenToonz**, nessuna divergenza nel nostro fork.
+  **Causa — un errore di una parola**: il ciclo prende il limite dalla COPIA e indicizza l'ORIGINALE.
+  ```cpp
+  QList<TFxP> selectedFxs(m_selectedFxs);   // copia
+  int i, size = selectedFxs.size();         // limite dalla copia
+  for (i = 0; i < size; ++i) {
+      ...
+      TFx *inFx = m_selectedFxs[i].getPointer();   // <-- indicizza la lista VIVA
   ```
-  Poi Franco ripete: copia effetti da una sotto-scena, incolla nel main, **incolla di nuovo**. Catturare su FILE, mai `| tail` (taglia via lo stderr diagnostico).
+  La copia era li' **solo** per leggerne la dimensione, non usata altrove: era stata fatta proprio per iterare in sicurezza. Durante il ciclo la selezione si accorcia (`replacePasteFxs` sostituisce nodi, e i gestori di `columnPasted` la ricostruiscono), quindi `m_selectedFxs[i]` viene letto **fuori dai limiti** — UB in `QList` — e ne esce un `TFxP` spazzatura che il costruttore dell'undo dereferenzia subito.
+  **Fix**: `selectedFxs[i]` invece di `m_selectedFxs[i]`. **Collaudato da Franco il 2026-08-04.**
+  **Nota diagnostica riutilizzabile**: `this` valeva **1** (`EXC_BAD_ACCESS address=0x21`, cioe' `[this+0x20]`). Un puntatore che vale 1 **non e' memoria liberata** — quella da valori sporchi ma plausibili, o zero. E' la firma di una **lettura fuori dai limiti** di un contenitore. Riconoscerlo ha portato al call site in un colpo, senza strumentare.
+  Resta **non confermato** (e reso irrilevante dal fix) il perche' esatto scatti al SECONDO paste e non al primo. Segnalato da Franco il 2026-08-04 alle 10:55 su `MaggiolataZombie/sh260`, log `Crash-20260804-105543.log`. SIGSEGV in `FxSelection::replacePasteSelection() + 396`, chiamata da `pasteSelection()` (voce di menu, quindi via `QAction::activate`).
 
 - [ ] 🆕 **Un effetto su una colonna si applica al RESTO DELLA SCENA dove la colonna finisce** — **NON DIAGNOSTICATO**, solo registrato. Segnalato da Franco il 2026-08-04 a fine sessione: ha un effetto di **trasparenza** su una colonna; **quando la colonna finisce** (oltre l'ultima cella) l'effetto «va a finire sulle altre colonne», applicandosi al resto della scena.
   **Perche' e' verosimilmente un difetto di composizione e non di UI**: oltre l'ultima cella la colonna non ha immagine da dare in ingresso all'fx, e il nodo — se e' collegato al terminale dello xsheet — continua comunque a partecipare al compositing. Da guardare per primi: la gestione dei **terminal fx** (`FxDag::getTerminalFxs`) e cosa restituisce l'fx quando il suo input e' vuoto. **Ipotesi, non diagnosi.**
