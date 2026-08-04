@@ -454,9 +454,23 @@ nella sub-scene corretta.
 
 ### 🆕 DA FARE (giugno 2026) — in cima per priorità
 
-**🆕 DA FARE — "Generate Path from Keys": crea la spline dalle chiavi**
-(idea di Franco, 2026-08-03). *Feasibility verificata sul codice, non ancora
-scritta.*
+**✅ FATTO — "Generate Path from Keys": crea la spline dalle chiavi**
+(idea di Franco, 2026-08-03). **Scritto, collaudato e su master** lo stesso
+giorno, commit `703397712`. Il progetto qui sotto e' stato seguito quasi alla
+lettera; le due cose che sono cambiate strada facendo:
+
+- la domanda «cosa fanno x e y quando c'e' una spline» aveva una risposta
+  migliore del previsto: **non vengono lette affatto** (`computeLocalPlacement`
+  fa uno switch sullo stato), quindi non c'era niente da azzerare e staccare la
+  spline riporta il movimento originale;
+- serviva un getter `TStageObject::getFrameCenter()`, che non c'era: su un
+  percorso il piazzamento e' `puntoSpline - frameCenter`, quindi la curva va
+  traslata di quello o l'oggetto si sposta.
+
+Dettagli e verifiche nel CHANGELOG 2026-08-03d e in UPSTREAM_PR_CANDIDATES.
+
+*(Il testo che segue e' il progetto originale, tenuto perche' spiega il PERCHE'
+delle scelte. Non e' piu' una cosa da fare.)*
 
 ⚠️ **DUE COMANDI SEPARATI, non uno.** Nato come "Path & Roving" unico, **diviso
 su decisione di Franco** e ha ragione: rispondono a due domande diverse (la
