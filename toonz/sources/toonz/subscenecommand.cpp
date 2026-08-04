@@ -845,8 +845,31 @@ std::set<int> explodeStageObjects(
   // setting column parents
   for (i = 0; i < subXsh->getColumnCount() && !onlyColumn; i++) {
     TStageObjectId innerId = TStageObjectId::ColumnId(i);
+
+    // Not every column got brought out: the loop above SKIPS pegbar columns,
+    // so they have no entry here. Asking for one with QMap::operator[] does
+    // not report that -- it INSERTS a default TStageObjectId, which is NoneId,
+    // and hands it on as the id of a column to reparent. That was already
+    // wrong, and it turned into a crash the day the tree started refusing to
+    // create objects for invalid ids: setStageObjectParent asks the tree for
+    // NoneId, gets 0 where it used to get a zombie, and dereferences it. Its
+    // own assert says the id must not be None -- and asserts are not compiled
+    // in release, which is where this crashed.
+    //
+    // Reproduced under lldb 2026-08-04 on MaggiolataZombie/sh260 (Explode from
+    // the column header menu), with "refusing to create object with invalid id
+    // code=0" printed immediately before the SIGSEGV.
+    if (!ids.contains(innerId)) continue;
+
     TStageObject *innerCol = innerTree->getStageObject(innerId, false);
-    xsh->setStageObjectParent(ids[innerId], ids[innerCol->getParent()]);
+    if (!innerCol) continue;
+
+    // value(), not operator[]: a parent that was not brought out is a real
+    // possibility and reads as NoneId, which setParent already means "hang it
+    // on the table". operator[] would additionally INSERT that entry into ids,
+    // and ids is walked twice below to work out the group's centre.
+    xsh->setStageObjectParent(ids.value(innerId),
+                              ids.value(innerCol->getParent()));
   }
 
   TPointD middlePoint;
