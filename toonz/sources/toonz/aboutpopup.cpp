@@ -131,8 +131,15 @@ AboutPopup::AboutPopup(QWidget* parent)
   }
   mainLayout->addWidget(patronNames);
 
-  QLabel* sponsorInvite = new QLabel(
-      tr("Please consider sponsoring Ztoryc's development on GitHub."), this);
+  // Clickable: telling someone to go to GitHub without taking them there is
+  // half an invitation.
+  QLabel* sponsorInvite = new QLabel(this);
+  sponsorInvite->setText(
+      tr("Please consider <a href=\"https://github.com/sponsors/matitanimata\">"
+         "sponsoring Ztoryc's development</a> on GitHub."));
+  sponsorInvite->setTextFormat(Qt::RichText);
+  sponsorInvite->setTextInteractionFlags(Qt::TextBrowserInteraction);
+  sponsorInvite->setOpenExternalLinks(true);
   sponsorInvite->setAlignment(Qt::AlignHCenter);
   sponsorInvite->setWordWrap(true);
   mainLayout->addWidget(sponsorInvite);
