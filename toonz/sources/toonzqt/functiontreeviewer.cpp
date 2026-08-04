@@ -48,6 +48,8 @@
 #include <QBitmap>
 
 #include "toonzqt/functiontreeviewer.h"
+#include "toonz/txsheetexpr.h"
+#include "texpression.h"
 
 //*************************************************************************************
 //    ChannelGroup specialization  definition
@@ -629,6 +631,44 @@ bool FunctionTreeModel::Channel::isIgnored() const {
 //! switches on the status, and TStageObject::updateKeyframes uses the very same
 //! test to decide which channel owns the object's keyframes -- so asking it
 //! here means the tree and the evaluation cannot disagree.
+bool FunctionTreeModel::Channel::isDriver() const {
+  TDoubleParam *dp = dynamic_cast<TDoubleParam *>(m_param.getPointer());
+  return dp && m_model && m_model->isDriverParam(dp);
+}
+
+//-----------------------------------------------------------------------------
+
+bool FunctionTreeModel::Channel::isDriven() const {
+  TDoubleParam *dp = dynamic_cast<TDoubleParam *>(m_param.getPointer());
+  if (!dp) return false;
+  const int n = dp->getKeyframeCount();
+  // n - 1: the last keyframe's type governs no segment.
+  for (int i = 0; i + 1 < n; i++)
+    if (dp->getKeyframe(i).m_type == TDoubleKeyframe::Expression) return true;
+  return false;
+}
+
+//-----------------------------------------------------------------------------
+
+QString FunctionTreeModel::Channel::drivenDescription() const {
+  TDoubleParam *dp = dynamic_cast<TDoubleParam *>(m_param.getPointer());
+  if (!dp) return QString();
+  QStringList rows;
+  const int n = dp->getKeyframeCount();
+  for (int i = 0; i + 1 < n; i++) {
+    const TDoubleKeyframe kf = dp->getKeyframe(i);
+    if (kf.m_type != TDoubleKeyframe::Expression) continue;
+    // Frames as the interface numbers them, from 1.
+    rows.append(QObject::tr("frames %1-%2:  %3")
+                    .arg((int)kf.m_frame + 1)
+                    .arg((int)dp->keyframeIndexToFrame(i + 1) + 1)
+                    .arg(QString::fromStdString(kf.m_expressionText)));
+  }
+  return rows.join("\n");
+}
+
+//-----------------------------------------------------------------------------
+
 bool FunctionTreeModel::Channel::isInert() const {
   StageObjectChannelGroup *group =
       dynamic_cast<StageObjectChannelGroup *>(m_group);
@@ -694,14 +734,36 @@ QVariant FunctionTreeModel::Channel::data(int role) const {
     return param;
 
   } else if (role == Qt::DisplayRole) {
-    if (m_param->hasUILabel()) {
-      return QString::fromStdString(m_param->getUILabel());
+    QString label;
+    if (m_param->hasUILabel())
+      label = QString::fromStdString(m_param->getUILabel());
+    else {
+      std::string name            = m_paramNamePref + m_param->getName();
+      std::wstring translatedName = TStringTable::translate(name);
+      if (m_fxId.size() > 0)
+        label = QString::fromStdWString(translatedName + L" (" + m_fxId + L")");
+      else
+        label = QString::fromStdWString(translatedName);
     }
-    std::string name            = m_paramNamePref + m_param->getName();
-    std::wstring translatedName = TStringTable::translate(name);
-    if (m_fxId.size() > 0)
-      return QString::fromStdWString(translatedName + L" (" + m_fxId + L")");
-    return QString::fromStdWString(translatedName);
+
+    // The link arrows. A channel can be BOTH -- driven by one curve and the
+    // guide of another, a chain -- and with a symbol that case shows itself,
+    // where a colour scheme would have needed a third colour just for it.
+    QString arrows;
+    if (isDriver()) arrows += QString::fromUtf8(" \u2192");
+    if (isDriven()) arrows += QString::fromUtf8(" \u2190");
+    return label + arrows;
+  } else if (role == Qt::FontRole) {
+    // Italic: "this value is computed, not keyed by hand". A different signal
+    // from the fade (which means "not in effect") and from the colour swatch
+    // (which means "not shown in the graph") -- three states that have to stay
+    // distinguishable at a glance.
+    if (isDriven()) {
+      QFont font;
+      font.setItalic(true);
+      return font;
+    }
+    return QVariant();
   } else if (role == Qt::ForegroundRole) {
     // 130221 iwasawa
     FunctionTreeView *view = dynamic_cast<FunctionTreeView *>(m_model->m_view);
@@ -712,6 +774,13 @@ QVariant FunctionTreeModel::Channel::data(int role) const {
     // SWATCH is left alone on purpose -- it already greys out to mean "not
     // shown in the graph", which is a different question and would collide.
     if (isInert()) color.setAlpha(90);
+    // A tint on top of the arrow, not instead of it: the arrow carries the
+    // meaning, the colour just makes the row findable while scanning. Kept
+    // desaturated so it cannot be mistaken for the current-channel colour.
+    else if (isDriver())
+      color = QColor(120, 180, 235);
+    else if (isDriven())
+      color = QColor(150, 200, 150);
     return color;
   } else if (role == Qt::ToolTipRole) {
     StageObjectChannelGroup *group =
@@ -726,6 +795,13 @@ QVariant FunctionTreeModel::Channel::data(int role) const {
                  : tr("Not in use: the object is not on a motion path, so its "
                       "position comes from X and Y and this curve is not "
                       "read.");
+    }
+    if (isDriven()) {
+      const QString desc = drivenDescription();
+      if (!desc.isEmpty())
+        return tr("Driven by an expression:\n%1\n\nEdit it from the segment "
+                  "editor, or run Link Curves again to change it.")
+            .arg(desc);
     }
     if (m_param->hasKeyframes()) {
       TDoubleParam *dp = dynamic_cast<TDoubleParam *>(m_param.getPointer());
@@ -992,6 +1068,11 @@ void FunctionTreeModel::refreshData(TXsheet *xsh) {
     refreshActiveChannels();
   }
   endRefresh();
+
+  // AFTER the tree is up to date, not before: m_stageObjects and m_fxs are
+  // created inside this very function, so asking them anything on the way in
+  // dereferenced null on the first show.
+  updateDriverParams();
 
   if (m_currentChannel != currentChannel) emit curveSelected(0);
 }
@@ -1284,6 +1365,49 @@ void FunctionTreeModel::addActiveChannels(TreeModel::Item *item) {
   } else
     for (int i = 0; i < item->getChildCount(); i++)
       addActiveChannels(item->getChild(i));
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionTreeModel::updateDriverParams() {
+  m_driverParams.clear();
+
+  // Walk every channel, not just the shown ones: a guide is a guide whether or
+  // not its curve happens to be displayed at the moment.
+  // The groups exist only once the tree has been built at least once.
+  if (!m_stageObjects || !m_fxs) return;
+
+  std::vector<ChannelGroup *> groups;
+  for (int i = 0; i < getStageObjectsChannelCount(); i++)
+    if (ChannelGroup *g = getStageObjectChannel(i)) groups.push_back(g);
+  for (int i = 0; i < getFxsChannelCount(); i++)
+    if (ChannelGroup *g = getFxChannel(i)) groups.push_back(g);
+
+  for (ChannelGroup *g : groups) {
+    for (int c = 0; c < g->getChildCount(); c++) {
+      Channel *ch = dynamic_cast<Channel *>(g->getChild(c));
+      if (!ch) continue;
+      TDoubleParam *dp = dynamic_cast<TDoubleParam *>(ch->getParam());
+      if (!dp) continue;
+      const int n = dp->getKeyframeCount();
+      // n - 1: the last keyframe's type governs no segment.
+      for (int k = 0; k + 1 < n; k++) {
+        const TDoubleKeyframe kf = dp->getKeyframe(k);
+        if (kf.m_type != TDoubleKeyframe::Expression) continue;
+        TExpression expr;
+        expr.setGrammar(dp->getGrammar());
+        expr.setText(kf.m_expressionText);
+        QSet<int> cols;
+        QSet<TDoubleParam *> params;
+        referenceParams(expr, cols, params);
+        // Whoever this expression names is a guide -- except itself, which a
+        // hand-written formula may legitimately do (a curve offset from its own
+        // past) without that making it anybody's guide.
+        for (TDoubleParam *p : params)
+          if (p && p != dp) m_driverParams.insert(p);
+      }
+    }
+  }
 }
 
 //-----------------------------------------------------------------------------

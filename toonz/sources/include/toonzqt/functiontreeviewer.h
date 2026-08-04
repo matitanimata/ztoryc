@@ -224,6 +224,26 @@ color, which
     //! lost their reference.
     bool isInert() const;
 
+    //! Whether any SEGMENT of this channel is driven by an expression -- a
+    //! link to another curve, or a hand-written formula.
+    //!
+    //! Deliberately not phrased as "this channel is driven": a link can cover
+    //! one stretch and leave the rest hand-animated, which is a legitimate
+    //! thing to want. The marker says "there is driven material in here", and
+    //! the tooltip says by what and between which frames.
+    //!
+    //! The LAST keyframe is skipped: a keyframe's type describes the segment
+    //! that FOLLOWS it, so the last one carries a placeholder governing nothing.
+    bool isDriven() const;
+    //! Whether some OTHER channel's expression names this one -- i.e. this
+    //! channel is a guide. Answered from a set the model keeps, because the
+    //! question is a reverse lookup: finding who names you means reading
+    //! everybody else's expressions, and doing that per row per repaint would
+    //! be quadratic.
+    bool isDriver() const;
+    //! Per-segment account of the links, for the tooltip. Empty when none.
+    QString drivenDescription() const;
+
     bool isCurrent() const;
     void setIsCurrent(bool current);
 
@@ -274,6 +294,15 @@ public:
   Channel *getClosestChannel(double frame, double value) const;
 
   void refreshActiveChannels();
+
+  //! Rebuilds the set of channels that DRIVE others. Cheap: only the driven
+  //! channels carry expressions, and each one names its guides directly
+  //! (referenceParams), so this is linear in the links, not in the channels
+  //! squared.
+  void updateDriverParams();
+  bool isDriverParam(TDoubleParam *param) const {
+    return param && m_driverParams.contains(param);
+  }
   void refreshData(TXsheet *xsh);  // call this method when the stageObject/Fx
                                    // structure has been modified
   void resetAll();
@@ -385,6 +414,7 @@ private:
   void refreshFxs(TXsheet *xsh);
   void refreshPlasticDeformations();
   void addActiveChannels(TreeModel::Item *item);
+  QSet<TDoubleParam *> m_driverParams;
 
 public:
   ChannelGroup *getStageObjectChannel(int index) const;

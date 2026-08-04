@@ -36,6 +36,18 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QMenu>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QGridLayout>
+#include <QListWidget>
+#include <QMap>
+#include <QLabel>
+#include "toonzqt/doublefield.h"
+#include "toonzqt/intfield.h"
+#include "toonzqt/dvdialog.h"
+#include "toonz/txsheetexpr.h"
+#include "toonz/doubleparamcmd.h"
+#include "texpression.h"
 #include <QSettings>
 
 #include <cmath>
@@ -257,6 +269,8 @@ FunctionPanel::FunctionPanel(QWidget *parent, bool isFloating)
     , m_currentFrameStatus(0)
     , m_selection(0)
     , m_curveShape(SMOOTH)
+    , m_speedGraphVisible(false)
+    , m_speedGraphHeight(110)
     , m_isFloating(isFloating) {
   setWindowTitle(tr("Function Curves"));
 
@@ -1233,6 +1247,355 @@ void FunctionPanel::drawGroupKeyframes(QPainter &painter) {
 
 //-----------------------------------------------------------------------------
 
+//=============================================================================
+//    Link Curves
+//-----------------------------------------------------------------------------
+
+namespace {
+
+//! Which columns should follow the selection, and how.
+//!
+//! The flow starts from the DRIVING curves -- the ones already selected in the
+//! graph -- because those always exist. Starting from the driven curve was the
+//! first design and it could not work: a curve with no keyframes is not drawn,
+//! so there was nothing to select, and the command asked the animator to create
+//! by hand the very thing it was meant to create.
+//!
+//! Channels pair up BY NAME (x with x, rot with rot), so selecting x and y of
+//! one column and ticking another links both at once -- which is what "make
+//! this follow that" means to an animator. Delay, multiplier and offset apply
+//! to every channel involved: a tail that lags by six frames lags on all axes.
+class LinkCurvesDialog final : public QDialog {
+public:
+  QListWidget *m_targetList;
+  DVGui::IntLineEdit *m_delayFld;
+  DVGui::DoubleLineEdit *m_multFld, *m_offsetFld;
+
+  LinkCurvesDialog(QWidget *parent, const QString &sourceDesc,
+                   const QStringList &groupNames)
+      : QDialog(parent) {
+    setWindowTitle(tr("Link Curves"));
+
+    QLabel *src = new QLabel(tr("Driven by: %1").arg(sourceDesc), this);
+    src->setWordWrap(true);
+
+    m_targetList = new QListWidget(this);
+    for (const QString &n : groupNames) {
+      QListWidgetItem *it = new QListWidgetItem(n, m_targetList);
+      it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+      it->setCheckState(Qt::Unchecked);
+    }
+    m_targetList->setMinimumHeight(160);
+
+    m_delayFld  = new DVGui::IntLineEdit(this, 0, -9999, 9999);
+    m_multFld   = new DVGui::DoubleLineEdit(this, 1.0);
+    m_offsetFld = new DVGui::DoubleLineEdit(this, 0.0);
+
+    QGridLayout *lay = new QGridLayout();
+    lay->setContentsMargins(10, 10, 10, 10);
+    lay->setSpacing(8);
+    lay->addWidget(src, 0, 0, 1, 2);
+    lay->addWidget(new QLabel(tr("Columns to drive:"), this), 1, 0, 1, 2);
+    lay->addWidget(m_targetList, 2, 0, 1, 2);
+    lay->addWidget(new QLabel(tr("Delay (frames):"), this), 3, 0);
+    lay->addWidget(m_delayFld, 3, 1);
+    lay->addWidget(new QLabel(tr("Multiply by:"), this), 4, 0);
+    lay->addWidget(m_multFld, 4, 1);
+    lay->addWidget(new QLabel(tr("Add:"), this), 5, 0);
+    lay->addWidget(m_offsetFld, 5, 1);
+
+    QDialogButtonBox *bb =
+        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(bb, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    lay->addWidget(bb, 6, 0, 1, 2);
+    setLayout(lay);
+  }
+};
+
+//! The channel part of a reference: "col1.x" -> "x", "fx.blur1.value" ->
+//! "value". Pairing targets to sources by this is what makes x follow x.
+QString channelKeyOf(const QString &exprRefName) {
+  const int dot = exprRefName.lastIndexOf('.');
+  return (dot < 0) ? exprRefName : exprRefName.mid(dot + 1);
+}
+
+}  // namespace
+
+//-----------------------------------------------------------------------------
+
+void FunctionPanel::linkSelectedCurves() {
+  if (!m_functionTreeModel || !getSelection()) return;
+
+  // The driving curves: the selection, or the current curve when nothing is
+  // selected.
+  QList<TDoubleParam *> sources = getSelection()->getSelectedCurves();
+  if (sources.isEmpty()) {
+    if (TDoubleParam *cur = getCurrentCurve()) sources.append(cur);
+  }
+  if (sources.isEmpty()) {
+    DVGui::warning(tr("Select the curve (or curves) that should DRIVE, then "
+                      "choose which columns follow it."));
+    return;
+  }
+
+  // Their reference names, matched by pointer among the shown channels.
+  QMap<TDoubleParam *, QString> sourceRef;
+  QStringList sourceDesc;
+  for (int i = 0; i < m_functionTreeModel->getActiveChannelCount(); i++) {
+    FunctionTreeModel::Channel *ch = m_functionTreeModel->getActiveChannel(i);
+    if (!ch || !ch->getParam()) continue;
+    if (!sources.contains(ch->getParam())) continue;
+    sourceRef[ch->getParam()] = ch->getExprRefName();
+    sourceDesc.append(ch->getExprRefName());
+  }
+  if (sourceRef.isEmpty()) {
+    DVGui::warning(tr("The driving curves must be shown in the graph."));
+    return;
+  }
+
+  // Candidate targets: the stage object groups, whether animated or not -- the
+  // whole point is to drive channels that have no curve yet.
+  QList<FunctionTreeModel::ChannelGroup *> groups;
+  QStringList groupNames;
+  for (int i = 0; i < m_functionTreeModel->getStageObjectsChannelCount(); i++) {
+    FunctionTreeModel::ChannelGroup *g =
+        m_functionTreeModel->getStageObjectChannel(i);
+    if (!g) continue;
+    groups.append(g);
+    groupNames.append(g->getIdName());
+  }
+  if (groups.isEmpty()) {
+    DVGui::warning(tr("There are no columns to drive."));
+    return;
+  }
+
+  LinkCurvesDialog dlg(this, sourceDesc.join(", "), groupNames);
+  if (dlg.exec() != QDialog::Accepted) return;
+
+  const int delay     = dlg.m_delayFld->getValue();
+  const double mult   = dlg.m_multFld->getValue();
+  const double offset = dlg.m_offsetFld->getValue();
+
+  int linked = 0, refused = 0;
+  TUndoManager::manager()->beginBlock();
+
+  for (int gi = 0; gi < groups.size(); gi++) {
+    if (dlg.m_targetList->item(gi)->checkState() != Qt::Checked) continue;
+    FunctionTreeModel::ChannelGroup *group = groups[gi];
+
+    for (QMap<TDoubleParam *, QString>::const_iterator it = sourceRef.begin();
+         it != sourceRef.end(); ++it) {
+      TDoubleParam *source  = it.key();
+      const QString refName = it.value();
+      const QString key     = channelKeyOf(refName);
+
+      // The channel of the same name inside the target column.
+      TDoubleParam *target = 0;
+      for (int c = 0; c < group->getChildCount(); c++) {
+        FunctionTreeModel::Channel *ch =
+            dynamic_cast<FunctionTreeModel::Channel *>(group->getChild(c));
+        if (!ch || !ch->getParam()) continue;
+        if (channelKeyOf(ch->getExprRefName()) == key) {
+          target = ch->getParam();
+          break;
+        }
+      }
+      if (!target || target == source) continue;
+
+      // Where the link applies: the SELECTION when several keys are picked --
+      // linking a stretch and hand-animating the rest is a legitimate thing to
+      // want -- otherwise the whole extent of the driving curve.
+      int f0 = 0, f1 = 0;
+      QList<int> sel = getSelection()->getSelectedKeyIndices(source);
+      if (sel.size() >= 2) {
+        std::sort(sel.begin(), sel.end());
+        f0 = (int)source->keyframeIndexToFrame(sel.first());
+        f1 = (int)source->keyframeIndexToFrame(sel.last());
+      } else if (source->getKeyframeCount() >= 2) {
+        f0 = (int)source->keyframeIndexToFrame(0);
+        f1 = (int)source->keyframeIndexToFrame(
+            source->getKeyframeCount() - 1);
+      } else
+        continue;
+      if (delay > 0) f1 += delay;
+      if (f1 <= f0) f1 = f0 + 1;
+
+      // Compose the expression. The frame inside a reference is 1-based, as in
+      // the interface: ParamCalculatorNode subtracts the 1 itself, so writing a
+      // 0-based frame here would be a silent one-frame slip.
+      QString expr = refName;
+      if (delay != 0)
+        expr += QString("(frame %1 %2)")
+                    .arg(delay > 0 ? "-" : "+")
+                    .arg(std::abs(delay));
+      if (mult != 1.0) expr += QString(" * %1").arg(mult);
+      if (offset != 0.0)
+        expr +=
+            QString(" %1 %2").arg(offset > 0 ? "+" : "-").arg(std::abs(offset));
+
+      // Refuse a cycle rather than write it: A driven by B driven by A would
+      // spin forever at evaluation time, and the dialog would have been a
+      // convenient way to hang the application.
+      TExpression check;
+      check.setGrammar(target->getGrammar());
+      check.setText(expr.toStdString());
+      if (dependsOn(check, target)) {
+        refused++;
+        continue;
+      }
+
+      // BOTH keys first, the expression LAST. createKeyframe() retypes segment
+      // 0 with the default interpolation the moment a curve reaches two
+      // keyframes -- writing the expression before that second key silently
+      // threw it away. One setter per creation, too: createKeyframe is
+      // documented to be called with no other keyframe selected on the setter.
+      { KeyframeSetter s(target, m_xsheetHandle); s.createKeyframe(f0); }
+      { KeyframeSetter s(target, m_xsheetHandle); s.createKeyframe(f1); }
+
+      const int k = target->getClosestKeyframe(f0);
+      if (k < 0 || target->keyframeIndexToFrame(k) != f0) continue;
+      KeyframeSetter setter(target, m_xsheetHandle, k);
+      setter.setExpression(expr.toStdString());
+      linked++;
+    }
+  }
+  TUndoManager::manager()->endBlock();
+
+  if (refused > 0)
+    DVGui::warning(
+        tr("%1 channel(s) were left alone: linking them would have created a "
+           "circular reference.")
+            .arg(refused));
+  else if (linked == 0)
+    DVGui::warning(tr("Nothing was linked: the chosen columns have no channel "
+                      "matching the selected ones."));
+
+  if (m_xsheetHandle) m_xsheetHandle->notifyXsheetChanged();
+  update();
+}
+
+//-----------------------------------------------------------------------------
+
+int FunctionPanel::speedGraphTop() const {
+  if (!m_speedGraphVisible) return height();
+  // Never eat more than half the panel: on a short panel the value graph has
+  // to stay the readable one -- the speed is the companion view, not the point.
+  const int h = std::min(m_speedGraphHeight, height() / 2);
+  return height() - h;
+}
+
+//-----------------------------------------------------------------------------
+
+QList<TDoubleParam *> FunctionPanel::speedGraphCurves() const {
+  QList<TDoubleParam *> curves;
+  if (getSelection()) curves = getSelection()->getSelectedCurves();
+  if (curves.isEmpty()) {
+    FunctionTreeModel::Channel *channel =
+        m_functionTreeModel ? m_functionTreeModel->getCurrentChannel() : 0;
+    if (channel && channel->getParam()) curves.append(channel->getParam());
+  }
+  return curves;
+}
+
+//-----------------------------------------------------------------------------
+
+void FunctionPanel::drawSpeedGraph(QPainter &painter) {
+  if (!m_speedGraphVisible) return;
+
+  const int ox = m_valueAxisX;
+  const int y0 = speedGraphTop();
+  const int h  = height() - y0;
+  if (h < 20) return;
+
+  // Opaque: this covers the bottom of the value graph rather than the value
+  // transform being rescaled, which would have meant touching every clip rect
+  // in paintEvent and re-deriving the whole layout.
+  painter.setClipping(false);
+  painter.fillRect(0, y0, width(), h, getBGColor().darker(115));
+  painter.setPen(m_textColor);
+  painter.drawLine(0, y0, width(), y0);
+
+  const QList<TDoubleParam *> curves = speedGraphCurves();
+  if (curves.isEmpty()) return;
+
+  // Sample one column of pixels at a time, and take the derivative from the
+  // CURVE rather than from the keyframes: with an expression or a file the
+  // stored keyframe values are not what the curve actually passes through.
+  const double dFrame = xToFrame(1) - xToFrame(0);
+  if (dFrame <= 0.0) return;
+  const double hStep = std::max(0.05, dFrame * 0.5);
+
+  std::vector<std::vector<double>> speeds(curves.size());
+  double maxAbs = 0.0;
+  for (int c = 0; c < curves.size(); c++) {
+    TDoubleParam *curve = curves[c];
+    if (!curve) continue;
+    speeds[c].reserve(width() - ox + 1);
+    for (int x = ox; x <= width(); x++) {
+      const double f = xToFrame(x);
+      const double v =
+          (curve->getValue(f + hStep) - curve->getValue(f - hStep)) /
+          (2.0 * hStep);
+      speeds[c].push_back(v);
+      maxAbs = std::max(maxAbs, fabs(v));
+    }
+  }
+  if (maxAbs <= 0.0) {
+    // A flat selection is a real answer, not an empty panel: draw the zero line
+    // so it reads as "no movement" instead of "nothing here".
+    painter.setPen(QPen(m_textColor, 0, Qt::DotLine));
+    painter.drawLine(ox, y0 + h / 2, width(), y0 + h / 2);
+    return;
+  }
+
+  // Own vertical scale, auto-fitted, with no labelled axis: what matters here
+  // is the SHAPE -- where the speed jumps, dips or reverses -- and a number of
+  // units-per-frame would only invite reading it as an absolute.
+  const double pad   = 0.92;
+  const int zeroY    = y0 + h / 2;
+  const double scale = (h / 2.0) * pad / maxAbs;
+
+  painter.setClipRect(ox + 1, y0 + 1, width() - ox - 1, h - 1);
+  painter.setPen(QPen(m_textColor, 0, Qt::DotLine));
+  painter.drawLine(ox, zeroY, width(), zeroY);
+
+  for (int c = 0; c < curves.size(); c++) {
+    if (speeds[c].empty()) continue;
+    QPainterPath path;
+    for (size_t i = 0; i < speeds[c].size(); i++) {
+      const double px = ox + (double)i;
+      const double py = zeroY - speeds[c][i] * scale;
+      if (i == 0)
+        path.moveTo(px, py);
+      else
+        path.lineTo(px, py);
+    }
+    // Same colour the curve has above, so the two halves of the split read as
+    // one thing. Matched by POINTER through the active channels: there is no
+    // curve->channel lookup, and matching by name would break on translation.
+    QColor color = Qt::gray;
+    if (m_functionTreeModel) {
+      for (int i = 0; i < m_functionTreeModel->getActiveChannelCount(); i++) {
+        FunctionTreeModel::Channel *ch =
+            m_functionTreeModel->getActiveChannel(i);
+        if (ch && ch->getParam() == curves[c]) {
+          color = getChannelColor(ch, true);
+          break;
+        }
+      }
+    }
+    painter.setPen(QPen(color, 1.2));
+    painter.drawPath(path);
+  }
+
+  painter.setClipping(false);
+  painter.setPen(m_textColor);
+  painter.drawText(ox + 6, y0 + 14, tr("speed"));
+}
+
+//-----------------------------------------------------------------------------
+
 void FunctionPanel::paintEvent(QPaintEvent *e) {
   m_gadgets.clear();
 
@@ -1333,12 +1696,21 @@ void FunctionPanel::paintEvent(QPaintEvent *e) {
   // painter.setPen(Qt::black);
   // painter.setBrush(Qt::NoBrush);
   // painter.drawRect(ox+10,oy+10,width()-ox-20,height()-oy-20);
+
+  // Last: it paints OVER the bottom of the value graph.
+  drawSpeedGraph(painter);
 }
 
 //-----------------------------------------------------------------------------
 
 void FunctionPanel::mousePressEvent(QMouseEvent *e) {
   m_cursor.visible = false;
+
+  // The speed strip is painted OVER the value graph, so without this a click
+  // in it would grab whatever keyframe happens to lie underneath -- invisible
+  // to the user, and a drag they never asked for. The strip is read-only, so
+  // swallowing the press outright is the whole of the interaction.
+  if (m_speedGraphVisible && e->pos().y() >= speedGraphTop()) return;
 
   // m_dragTool can be non-zero when both the left and the mid buttons are
   // pressed
@@ -2112,6 +2484,15 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
   menu.addAction(&fitAllAction);
 
   // curve shape type
+  QAction linkCurvesAction(tr("Link Curves..."), 0);
+  menu.addAction(&linkCurvesAction);
+  linkCurvesAction.setEnabled(!getSelection()->isEmpty() || getCurrentCurve());
+
+  QAction speedGraphAction(tr("Show Speed Graph"), 0);
+  speedGraphAction.setCheckable(true);
+  speedGraphAction.setChecked(m_speedGraphVisible);
+  menu.addAction(&speedGraphAction);
+
   QAction curveShapeSmoothAction(tr("Smooth"), 0);
   QAction curveShapeFrameBasedAction(tr("Frame Based"), 0);
   QMenu curveShapeSubmenu(tr("Curve Shape"), 0);
@@ -2229,6 +2610,10 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
   else if (action == &setStep4Action)
     KeyframeSetter(curve, segmentIndex).setStep(4);
 
+  else if (action == &linkCurvesAction)
+    linkSelectedCurves();
+  else if (action == &speedGraphAction)
+    m_speedGraphVisible = !m_speedGraphVisible;
   else if (action == &curveShapeSmoothAction)
     m_curveShape = SMOOTH;
   else if (action == &curveShapeFrameBasedAction)

@@ -124,6 +124,17 @@ private:
     FRAME_BASED  // curves with the connected polylines of integer frames
   } m_curveShape;
 
+  //! The read-only speed graph: a strip along the bottom showing the DERIVATIVE
+  //! of the curves, sharing the time axis with the value graph above it.
+  //!
+  //! Spacing errors live in the speed, not in the value: a curve can pass
+  //! through every key correctly and still lurch between them, and that is
+  //! invisible in the value plot. Read-only on purpose -- moving a point in
+  //! speed space has to be integrated back into value space, which is a
+  //! different project; reading it is where nearly all the benefit is.
+  bool m_speedGraphVisible;
+  int m_speedGraphHeight;
+
 public:
   FunctionPanel(QWidget *parent, bool isFloating = true);
   ~FunctionPanel();
@@ -250,6 +261,21 @@ protected:
   void drawOtherCurves(QPainter &);
   void drawCurrentCurve(QPainter &);
   void drawGroupKeyframes(QPainter &);
+  //! Makes the selected curves follow another one, via an Expression segment.
+  //! The animator never types the expression: a dialog composes it from delay,
+  //! multiplier and offset, and what comes out stays an ordinary expression,
+  //! editable by hand afterwards.
+  void linkSelectedCurves();
+  //! Draws the speed strip. Called LAST, opaque, over the bottom of the value
+  //! graph: a split view without having to rescale the value transform.
+  void drawSpeedGraph(QPainter &);
+  //! Top edge of the speed strip, or height() when it is hidden. Anything that
+  //! must not be reachable under the strip compares against this.
+  int speedGraphTop() const;
+  //! The curves the speed strip draws: the SELECTED ones, as Blender's "only
+  //! show selected" does. With nothing selected it falls back to the current
+  //! curve, so the strip is never inexplicably blank.
+  QList<TDoubleParam *> speedGraphCurves() const;
 
   bool event(QEvent *e) override;
   void paintEvent(QPaintEvent *e) override;
