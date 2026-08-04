@@ -6,6 +6,20 @@
 // TnzCore includes
 #include "tgeometry.h"
 
+// The export macros this header was missing entirely. Without them the free
+// functions below are declared bare: on macOS and Linux symbols are exported by
+// default and everything links, on Windows they are not, and tnztools fails at
+// link time with LNK2019 -- which is why this only ever broke the CI build.
+#undef DVAPI
+#undef DVVAR
+#ifdef TNZEXT_EXPORTS
+#define DVAPI DV_EXPORT_API
+#define DVVAR DV_EXPORT_VAR
+#else
+#define DVAPI DV_IMPORT_API
+#define DVVAR DV_IMPORT_VAR
+#endif
+
 //============================================================
 
 //    Forward declarations
@@ -63,8 +77,8 @@ public:
   case, the
   distances array remains untouched.
 */
-bool buildDistances(float *distances, const TTextureMesh &mesh,
-                    const TPointD &pos, int *faceHint = 0);
+DVAPI bool buildDistances(float *distances, const TTextureMesh &mesh,
+                          const TPointD &pos, int *faceHint = 0);
 
 //---------------------------------------------------------------------------------
 
