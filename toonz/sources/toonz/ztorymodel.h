@@ -381,6 +381,12 @@ public:
   // B3d — Naming convention
   // Resolve m_namingPattern substituting token map. Tokens: PROD, SEASON, EP,
   // SEQ, SHOT, TASK, VER. Optional format suffix: {VER:02} → zero-padded.
+  //! Pattern used when the project has none of its own: uses {CODE}, or
+  //! {PROD} when no code was filled in.
+  //! The code to use in names: the one set, or derived from the production
+  //! name when never filled in. Never written to the project.
+  QString effectiveCode() const;
+  QString defaultNamingPattern() const;
   QString resolveNamingPattern(const QMap<QString,QString> &tokens) const;
   // Resolve an arbitrary pattern string (same token grammar). Lets callers use
   // a derived pattern, e.g. the project pattern with the {TASK} token removed.

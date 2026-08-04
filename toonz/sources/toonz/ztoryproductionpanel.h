@@ -55,6 +55,10 @@ class ZtoryProductionPanel final : public TPanel {
   bool          m_projLoading = false;
   // M5 — Kitsu sync controls, gated behind the project's opt-in flag (useKitsu):
   // the whole group is hidden unless the project enables Kitsu.
+  //! Turns the Kitsu integration on for this project, at any time. It used to
+  //! be an opt-in taken only when the project was created, and never
+  //! revisitable.
+  QCheckBox    *m_useKitsuCheck   = nullptr;
   QGroupBox    *m_kitsuGroup      = nullptr;
   QPushButton  *m_kitsuPushBtn   = nullptr;
   QPushButton  *m_kitsuPullBtn   = nullptr;

@@ -110,7 +110,7 @@ ZtoryModel::ZtoryModel() : m_fps(24) {
   m_shotSidePanels     = QStringList{ "Xsheet", "ZtoryScriptPanel" };
   // Default naming pattern (B3d). Follows NABA convention with separate
   // PROD and SEASON tokens — can be overridden per-project in Project tab.
-  m_namingPattern = "{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
+  m_namingPattern = defaultNamingPattern();
   seedDefaultTechniques();
   seedDefaultAssetTypes();
   // Room-independent shot auto-WIP (the StoryboardPanel version only runs when a
@@ -1018,10 +1018,44 @@ QString ZtoryModel::taskShortCode(const QString &taskType) {
   return taskType.toUpper().remove(' ').left(4);
 }
 
+//! The pattern used when the project has not set one of its own.
+//!
+//! {CODE} and not {PROD}: production naming uses the short code -- MGZ_, not
+//! MaggiolataZombie_ -- because the full name makes file names unwieldy the
+//! moment they are joined into a path. {PROD} is kept as the fallback for a
+//! project whose code was never filled in: a long name beats a missing one.
+//! The short code to use in names: the one the user set, or one derived from
+//! the production name when the field was never filled in.
+//!
+//! Derived rather than left empty because {CODE} is now the head of the default
+//! naming pattern: an empty code would have silently fallen back to the full
+//! production name, which is the very thing the code exists to avoid.
+//! CamelCase gives its capitals (MaggiolataZombie -> MZ); otherwise the first
+//! three letters. Nothing is written to the project: type your own and that
+//! wins.
+QString ZtoryModel::effectiveCode() const {
+  const QString set = m_code.trimmed();
+  if (!set.isEmpty()) return set;
+
+  const QString prod = m_production.trimmed();
+  if (prod.isEmpty()) return QString();
+
+  QString caps;
+  for (const QChar &c : prod)
+    if (c.isUpper()) caps += c;
+  if (caps.size() >= 2) return caps.left(4);
+
+  return prod.left(3).toUpper();
+}
+
+QString ZtoryModel::defaultNamingPattern() const {
+  const QString head = effectiveCode().isEmpty() ? "{PROD}" : "{CODE}";
+  return head + "_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
+}
+
 QString ZtoryModel::resolveNamingPattern(const QMap<QString,QString> &tokens) const {
   QString pat = m_namingPattern;
-  if (pat.isEmpty())
-    pat = "{PROD}_{SEASON}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}";
+  if (pat.isEmpty()) pat = defaultNamingPattern();
   return resolvePattern(pat, tokens);
 }
 
@@ -1048,6 +1082,15 @@ QString ZtoryModel::resolvePattern(const QString &pattern,
   // Sanitize: replace spaces with _, strip characters invalid in filenames.
   result.replace(' ', '_');
   result.remove(QRegularExpression(R"([\\/:*?"<>|])"));
+
+  // An empty field leaves nothing behind, separators included. Without this an
+  // unset season turned "{CODE}_{SEASON}_{EP}" into "MZ__EP01" -- the gap shows
+  // where a field ISN'T, which is the opposite of what leaving it blank means.
+  // Runs of the same separator collapse to one, and any left at the ends go.
+  result.replace(QRegularExpression(R"(_{2,})"), "_");
+  result.replace(QRegularExpression(R"(-{2,})"), "-");
+  result.replace(QRegularExpression(R"(\.{2,})"), ".");
+  result.remove(QRegularExpression(R"(^[_\-.]+|[_\-.]+$)"));
   return result;
 }
 
@@ -1076,7 +1119,25 @@ QStringList ZtoryModel::spreadsheetTaskColumns() const {
   // user set in the Workflows tab — NOT a fixed canonical list. Reordering a
   // workflow's tasks must reflect immediately in the shot matrix. Walk each
   // technique in order and append its task types as first seen.
+  // Only the workflows the shots ACTUALLY use, in project order. Walking every
+  // technique instead let a workflow nobody uses dictate the order for one that
+  // is used: with shots on Cut-out, Tradigital (listed first) placed Storyboard,
+  // Layout, VFX, Render and Compositing, and "Animation" -- which only Cut-out
+  // names -- was appended after all of them, landing last. Reordering it inside
+  // its own workflow could not help, because its position was decided by WHICH
+  // workflow mentioned it first, not by where it sits within one.
+  std::set<QString> usedTechs;
+  for (int si = 0; si < (int)m_shots.size(); si++)
+    usedTechs.insert(techniqueForShot(si));
+  for (const ProjectShot &ps : m_projectShots) usedTechs.insert(ps.technique);
+
   QStringList cols;
+  for (const Technique &t : m_techniques) {
+    if (!usedTechs.count(t.name)) continue;
+    for (const QString &tt : t.taskTypes)
+      if (used.count(tt)) { cols << tt; used.erase(tt); }
+  }
+  // Then the unused workflows, for any task type they alone own.
   for (const Technique &t : m_techniques)
     for (const QString &tt : t.taskTypes)
       if (used.count(tt)) { cols << tt; used.erase(tt); }

@@ -5618,7 +5618,7 @@ void StoryboardPanel::onExportShots() {
       if (seq.uuid == sd.sequenceId) { seqLabel = seq.label; break; }
     QMap<QString,QString> tok;
     tok["PROD"]   = model->production();
-    tok["CODE"]   = model->code();
+    tok["CODE"]   = model->effectiveCode();  // derived when never filled in
     tok["SEASON"] = model->season();
     tok["EP"]     = model->episode();
     tok["SEQ"]    = seqLabel;
@@ -8083,20 +8083,49 @@ void StoryboardPanel::onStoryboardSettings() {
   dlg.setWindowTitle(tr("Storyboard Settings"));
   QVBoxLayout *lay = new QVBoxLayout(&dlg);
 
-  QFormLayout *form    = new QFormLayout();
-  QLineEdit *prodEdit  = new QLineEdit(model->production(), &dlg);
-  QLineEdit *titleEdit = new QLineEdit(model->title(), &dlg);
-  QLineEdit *epEdit    = new QLineEdit(model->episode(), &dlg);
-  QComboBox *techCombo = new QComboBox(&dlg);
+  // Same set and same order as the Production Tracker's Project page --
+  // Production / Code / Season / Episode / Title / Default technique / Naming
+  // pattern -- so the three places that edit this metadata cannot drift apart.
+  // They all write the same singleton; only the window around them differs.
+  QFormLayout *form      = new QFormLayout();
+  QLineEdit *prodEdit    = new QLineEdit(model->production(), &dlg);
+  QLineEdit *codeEdit    = new QLineEdit(model->effectiveCode(), &dlg);
+  QLineEdit *seasonEdit  = new QLineEdit(model->season(), &dlg);
+  QLineEdit *epEdit      = new QLineEdit(model->episode(), &dlg);
+  QLineEdit *titleEdit   = new QLineEdit(model->title(), &dlg);
+  QComboBox *techCombo   = new QComboBox(&dlg);
+  QLineEdit *patternEdit = new QLineEdit(&dlg);
+  patternEdit->setText(model->namingPattern().isEmpty()
+                           ? model->defaultNamingPattern()
+                           : model->namingPattern());
+  patternEdit->setToolTip(
+      tr("Tokens: {PROD} {CODE} {SEASON} {EP} {SEQ} {SHOT} {TASK} {VER}\n"
+         "A field left empty leaves nothing behind, separators included."));
+  codeEdit->setMaxLength(16);
+
+  // Production and Code belong to Kitsu once the project is linked: editing
+  // them locally would let the two copies diverge in silence.
+  const bool kitsuOwned = model->isKitsuLinked();
+  prodEdit->setReadOnly(kitsuOwned);
+  codeEdit->setReadOnly(kitsuOwned);
+  if (kitsuOwned) {
+    const QString why = tr("Managed in Kitsu while the project is linked.");
+    prodEdit->setToolTip(why);
+    codeEdit->setToolTip(why);
+  }
+
   for (const Technique &t : model->techniques()) techCombo->addItem(t.name);
   {
     int di = techCombo->findText(model->defaultTechnique());
     if (di >= 0) techCombo->setCurrentIndex(di);
   }
   form->addRow(tr("Production:"),        prodEdit);
-  form->addRow(tr("Title:"),            titleEdit);
-  form->addRow(tr("Episode:"),          epEdit);
+  form->addRow(tr("Code:"),              codeEdit);
+  form->addRow(tr("Season:"),            seasonEdit);
+  form->addRow(tr("Episode:"),           epEdit);
+  form->addRow(tr("Title:"),             titleEdit);
   form->addRow(tr("Default technique:"), techCombo);
+  form->addRow(tr("Naming pattern:"),    patternEdit);
   lay->addLayout(form);
 
   QPushButton *numBtn = new QPushButton(tr("Shot Numbering…"), &dlg);
@@ -8111,9 +8140,14 @@ void StoryboardPanel::onStoryboardSettings() {
   lay->addWidget(bb);
 
   if (dlg.exec() != QDialog::Accepted) return;
-  model->setProduction(prodEdit->text().trimmed());
+  if (!kitsuOwned) {
+    model->setProduction(prodEdit->text().trimmed());
+    model->setCode(codeEdit->text().trimmed());
+  }
+  model->setSeason(seasonEdit->text().trimmed());
   model->setTitle(titleEdit->text().trimmed());
   model->setEpisode(epEdit->text().trimmed());
+  model->setNamingPattern(patternEdit->text().trimmed());
   if (!techCombo->currentText().isEmpty())
     model->setDefaultTechnique(techCombo->currentText());
   saveZtoryc();                 // numbering / scene-level

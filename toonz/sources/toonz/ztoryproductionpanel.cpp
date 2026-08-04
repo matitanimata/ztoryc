@@ -1166,6 +1166,17 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   form->addRow(QObject::tr("Default technique:"), m_techCombo);
   form->addRow(QObject::tr("Naming pattern:"),    m_patternEdit);
 
+  // Kitsu was an opt-in taken at project creation and never revisitable: the
+  // whole integration stayed hidden for a project made before you knew you
+  // wanted it, with no way to turn it on short of recreating the project.
+  // The decision belongs where it can be changed.
+  m_useKitsuCheck = new QCheckBox(QObject::tr("Use Kitsu for this project"), w);
+  m_useKitsuCheck->setToolTip(
+      QObject::tr("Shows the Kitsu integration below. Can be turned on at any "
+                  "time -- it does not have to be chosen when the project is "
+                  "created."));
+  form->addRow(QString(), m_useKitsuCheck);
+
   // M5 — Kitsu integration, gated behind the project's opt-in flag: the whole
   // group is hidden unless the project enables Kitsu (chosen at creation).
   m_kitsuGroup = new QGroupBox(QObject::tr("Kitsu integration"), w);
@@ -1239,6 +1250,11 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
             [this] { applyProjectFromFields(); });
   connect(m_techCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
           [this](int) { applyProjectFromFields(); });
+  connect(m_useKitsuCheck, &QCheckBox::toggled, this, [this](bool on) {
+    if (m_projLoading) return;
+    ZtoryModel::instance()->setUseKitsu(on);
+    if (m_kitsuGroup) m_kitsuGroup->setVisible(on);
+  });
   return w;
 }
 
@@ -1247,7 +1263,10 @@ void ZtoryProductionPanel::reloadProjectTab() {
   m_projLoading = true;
   ZtoryModel *m = ZtoryModel::instance();
   m_prodEdit->setText(m->production());
-  if (m_codeEdit) m_codeEdit->setText(m->code());
+  if (m_useKitsuCheck) m_useKitsuCheck->setChecked(m->useKitsu());
+  // The effective code, shown as a real value. Empty, the field showed grey
+  // hint text and read as disabled -- the same trap as the naming pattern.
+  if (m_codeEdit) m_codeEdit->setText(m->effectiveCode());
   m_seasonEdit->setText(m->season());
   m_titleEdit->setText(m->title());
   m_epEdit->setText(m->episode());
@@ -1255,7 +1274,14 @@ void ZtoryProductionPanel::reloadProjectTab() {
   for (const Technique &t : m->techniques()) m_techCombo->addItem(t.name);
   int di = m_techCombo->findText(m->defaultTechnique());
   if (di >= 0) m_techCombo->setCurrentIndex(di);
-  if (m_patternEdit) m_patternEdit->setText(m->namingPattern());
+  // The EFFECTIVE pattern, not a placeholder. Left empty the field showed grey
+  // hint text, which reads as "disabled" -- Franco reported it as not editable
+  // when it always was. A field should show what it will do, not what you could
+  // type into it.
+  if (m_patternEdit) {
+    const QString pat = m->namingPattern();
+    m_patternEdit->setText(pat.isEmpty() ? m->defaultNamingPattern() : pat);
+  }
 
   // M5 — when linked to Kitsu, that instance owns the project metadata: mirror
   // it and make the synced fields read-only ("managed in Kitsu").

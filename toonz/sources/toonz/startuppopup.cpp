@@ -446,21 +446,39 @@ StartupPopup::StartupPopup(Mode mode)
       m_productionFld->setPlaceholderText(tr("e.g. Studio Name"));
       numLay->addWidget(m_productionFld, 5, 1, 1, 5);
 
-      numLay->addWidget(new QLabel(tr("Title:")), 6, 0,
+      // Same set and same order as the Production Tracker's Project page:
+      // Production / Code / Season / Episode / Title / Technique / Naming
+      // pattern. Anything skipped here can be filled in later from the tracker
+      // or from Storyboard Settings -- but wanting to fill it all in at
+      // creation has to be possible.
+      numLay->addWidget(new QLabel(tr("Code:")), 6, 0,
+                        Qt::AlignRight | Qt::AlignVCenter);
+      m_codeFld = new QLineEdit(m_numberingBox);
+      m_codeFld->setPlaceholderText(tr("e.g. MGZ — short code used in {CODE}"));
+      m_codeFld->setMaxLength(16);
+      numLay->addWidget(m_codeFld, 6, 1, 1, 5);
+
+      numLay->addWidget(new QLabel(tr("Season:")), 7, 0,
+                        Qt::AlignRight | Qt::AlignVCenter);
+      m_seasonFld = new QLineEdit(m_numberingBox);
+      m_seasonFld->setPlaceholderText(tr("e.g. S01"));
+      numLay->addWidget(m_seasonFld, 7, 1, 1, 5);
+
+      numLay->addWidget(new QLabel(tr("Title:")), 9, 0,
                         Qt::AlignRight | Qt::AlignVCenter);
       m_titleFld = new QLineEdit(m_numberingBox);
       m_titleFld->setPlaceholderText(tr("e.g. Sequence or Project Title"));
-      numLay->addWidget(m_titleFld, 6, 1, 1, 5);
+      numLay->addWidget(m_titleFld, 9, 1, 1, 5);
 
-      numLay->addWidget(new QLabel(tr("Episode:")), 7, 0,
+      numLay->addWidget(new QLabel(tr("Episode:")), 8, 0,
                         Qt::AlignRight | Qt::AlignVCenter);
       m_episodeFld = new QLineEdit(m_numberingBox);
       m_episodeFld->setPlaceholderText(tr("e.g. EP01"));
-      numLay->addWidget(m_episodeFld, 7, 1, 1, 5);
+      numLay->addWidget(m_episodeFld, 8, 1, 1, 5);
 
       // Default production technique: new shots inherit it (so the spreadsheet
       // export already shows the right tasks per shot).
-      numLay->addWidget(new QLabel(tr("Technique:")), 8, 0,
+      numLay->addWidget(new QLabel(tr("Technique:")), 10, 0,
                         Qt::AlignRight | Qt::AlignVCenter);
       m_techniqueFld = new QComboBox(m_numberingBox);
       for (const Technique &t : ZtoryModel::instance()->techniques())
@@ -470,7 +488,16 @@ StartupPopup::StartupPopup(Mode mode)
             ZtoryModel::instance()->defaultTechnique());
         if (di >= 0) m_techniqueFld->setCurrentIndex(di);
       }
-      numLay->addWidget(m_techniqueFld, 8, 1, 1, 5);
+      numLay->addWidget(m_techniqueFld, 10, 1, 1, 5);
+
+      numLay->addWidget(new QLabel(tr("Naming pattern:")), 11, 0,
+                        Qt::AlignRight | Qt::AlignVCenter);
+      m_patternFld = new QLineEdit(m_numberingBox);
+      m_patternFld->setText(ZtoryModel::instance()->defaultNamingPattern());
+      m_patternFld->setToolTip(
+          tr("Tokens: {PROD} {CODE} {SEASON} {EP} {SEQ} {SHOT} {TASK} {VER}\n"
+             "A field left empty leaves nothing behind, separators included."));
+      numLay->addWidget(m_patternFld, 11, 1, 1, 5);
 
       newSceneLay->addWidget(m_numberingBox, 8, 0, 1, 6);
 
@@ -1178,6 +1205,10 @@ void StartupPopup::onCreateButton() {
     numCfg.resetOnSeqChange = m_resetOnSeqChangeCB->isChecked();
     ZtoryModel::instance()->setNumberingConfig(numCfg);
     ZtoryModel::instance()->setProduction(m_productionFld->text().trimmed());
+    if (m_codeFld)   ZtoryModel::instance()->setCode(m_codeFld->text().trimmed());
+    if (m_seasonFld) ZtoryModel::instance()->setSeason(m_seasonFld->text().trimmed());
+    if (m_patternFld)
+      ZtoryModel::instance()->setNamingPattern(m_patternFld->text().trimmed());
     ZtoryModel::instance()->setTitle(m_titleFld->text().trimmed());
     ZtoryModel::instance()->setEpisode(m_episodeFld->text().trimmed());
     if (m_techniqueFld && !m_techniqueFld->currentText().isEmpty())

@@ -1583,7 +1583,7 @@ void OutputSettingsPopup::onNameFromPattern() {
   auto buildName = [&]() -> QString {
     QMap<QString, QString> tok;
     tok["PROD"]   = model->production();
-    tok["CODE"]   = model->code();
+    tok["CODE"]   = model->effectiveCode();  // derived when never filled in
     tok["SEASON"] = model->season();
     tok["EP"]     = model->episode();
     tok["SEQ"]    = seqFld->text().trimmed();

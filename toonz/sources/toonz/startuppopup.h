@@ -87,6 +87,10 @@ public:
   QCheckBox *m_resetOnSeqChangeCB;
   QLabel *m_seqPrefixLabel;
   QLineEdit *m_productionFld;
+  //! Same set and order as the tracker's Project page.
+  QLineEdit *m_codeFld    = nullptr;
+  QLineEdit *m_seasonFld  = nullptr;
+  QLineEdit *m_patternFld = nullptr;
   QLineEdit *m_titleFld;
   QLineEdit *m_episodeFld;
   QComboBox *m_techniqueFld;
