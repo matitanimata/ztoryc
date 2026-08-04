@@ -452,6 +452,35 @@ nella sub-scene corretta.
 
 ## Priority Order
 
+### 🔴 BUG — curve abnormi fra due chiavi quasi uguali (2026-08-04)
+
+Segnalato da Franco su `MaggiolataZombie/sh330`, dentro la sotto-scena
+**lib_armando**, fra i frame 9 e 21. **Ricorrente**: «ogni tanto succede».
+Screenshot: il grafico mostra escursioni enormi fra chiavi praticamente allo
+stesso valore.
+
+**MISURATO SUL `.tnz` (XML in chiaro) — tre ipotesi, tutte NEGATIVE.** Non
+rifarle:
+1. maniglie sproporzionate alla **lunghezza** del segmento (handle rimasti da
+   una spaziatura precedente) → **0 casi**
+2. **salti di valore** anomali fra chiavi consecutive nel range → **0 casi**
+3. maniglie sproporzionate al **dislivello** (`speedOut.y` >> `dv`, il caso che
+   fa uscire la curva dall'intervallo) → **0 casi**
+
+Inventario dei tipi di segmento nel file: `L`=1125, `E`=547, `S`=291, `C`=7.
+La maggioranza e' **Linear**, che per costruzione non puo' sforare.
+
+**Conclusione provvisoria**: i dati salvati sono puliti, quindi il difetto e'
+nella **valutazione o nel disegno**, non nel contenuto del file. Da guardare
+per primi: `getSegmentPainterPath` (campionamento del grafico) e la valutazione
+`E`/EaseInOut, dove le maniglie portano una QUANTITA' di ease e non una
+pendenza — un'interpretazione sbagliata li' darebbe esattamente punte fra chiavi
+uguali senza che nel file ci sia nulla di strano.
+
+**DA CHIEDERE A FRANCO**: quale curva e' — un canale dell'oggetto (x/y/rot) o
+una curva di **deformazione plastica**? `lib_armando` e' un rig, e le due cose
+stanno in strutture diverse. Senza questo si cerca alla cieca.
+
 ### 🔴 BUG — Production Tracker legge la scena sbagliata (2026-08-04)
 
 **Segnalato da Franco, NON diagnosticato.** Nel progetto **MaggiolataZombie** il
