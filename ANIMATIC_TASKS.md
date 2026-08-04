@@ -452,6 +452,28 @@ nella sub-scene corretta.
 
 ## Priority Order
 
+### 🔴 BUG — Production Tracker legge la scena sbagliata (2026-08-04)
+
+**Segnalato da Franco, NON diagnosticato.** Nel progetto **MaggiolataZombie** il
+Production Tracker non legge gli shot del file giusto: **ha caricato come
+storyboard una scena che non lo è**.
+
+**Precedente da leggere prima di indagare** — non è il primo caso di questa
+famiglia: la «cross-project contamination» risolta col commit `84cba915e`
+(`m_shots` del modello non troncato → `setShotsFrom` prima del publish, più un
+firewall meno aggressivo, preservando il multi-storyboard). Da verificare
+subito se questa è una **regressione** di quel fix, un caso che quel fix non
+copriva, oppure un problema diverso di **individuazione** della scena
+storyboard — cioè con quale criterio il tracker decide che una scena *è* uno
+storyboard. Se il criterio è euristico (nome, presenza di sotto-scene, conteggio
+colonne) è lì che va guardato per primo.
+
+**Da chiedere a Franco quando si riprende**: quale scena si aspettava e quale ha
+caricato — i due nomi sono il dato che discrimina fra le tre ipotesi.
+
+Priorità: **dopo i crash aperti** (regola: i crash vengono prima di tutto), ma
+prima delle feature — è un dato di produzione sbagliato, non un fastidio.
+
 ### 🆕 DA FARE (giugno 2026) — in cima per priorità
 
 **✅ FATTO — "Generate Path from Keys": crea la spline dalle chiavi**
