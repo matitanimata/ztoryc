@@ -1,3 +1,78 @@
+## [2026-08-04] — Tre crash, quindici curve, e due Tahoma puliti da cui guardare
+
+### Fixed — il crash dell'Explode, per davvero (`80097adef`)
+Un fix del mattino (`c9cd8d137`, altra sessione) era compilato e dentro il
+binario, e **il crash restava identico**. Ripreso da capo sotto lldb: SIGSEGV in
+`TStageObject::setParent` su `ldr x0, [x19, #0x70]`, `address=0x70` — cioe'
+**`this` nullo**, non l'argomento.
+- La catena: il ciclo che porta fuori le colonne **salta le colonne pegbar**,
+  quindi per quelle `ids` non ha voce; il ciclo del parenting scorre TUTTE le
+  colonne e `QMap::operator[]` su chiave assente **inserisce in silenzio** un
+  `TStageObjectId` di default, che e' `NoneId`. `setStageObjectParent` ha
+  `assert(id != NoneId)` e subito dopo un deref **senza guardia**: l'assert non
+  e' compilato in release. L'albero rifiuta `NoneId` (guardia anti-BadPegbar del
+  21/7) e restituisce 0.
+- Fix alla causa, **un file solo**: `ids.contains()` + `ids.value()` invece di
+  `operator[]`.
+- **Tre diagnosi sbagliate prima di questa**, tutte per lettura del codice. Le
+  ha smontate lldb. La piu' istruttiva: «`setDagNodePos` avrebbe crashato prima»
+  non regge, perche' in build ottimizzata uno store inline su `this` nullo e' UB
+  e il compilatore lo puo' spostare o eliminare — **il crash affiora alla prima
+  chiamata VERA, non al primo deref**.
+
+### Fixed — l'oggetto che si spostava cancellando una chiave (`6876cf4e5`)
+Segnalato da Franco: si cancellano le prime chiavi per ripartire dalla posizione
+dell'ultima, e l'oggetto si sposta — **con i valori alle chiavi identici**.
+- Causa: dopo ogni chiave rimossa si azzeravano e ricalcolavano `m_frameCenter`
+  e `m_offset`. Nessuno dei due e' un canale chiavato, ed **entrambi entrano nel
+  piazzamento** (`position = puntoSpline - m_frameCenter`, `pos = m_offset +
+  position`): ecco perche' si vedeva con la spline **e senza**.
+- Il blocco era copiaincollato in **otto** punti — motivo per cui il primo
+  tentativo sembrava non funzionare: il toggle della chiave non passa da
+  `keyframeselection.cpp` ma da `UndoRemoveKeyFrame::redo()`. Gli `undo()` che
+  ripristinano il centro salvato sono corretti e non sono stati toccati.
+- Fix: **un metodo solo**, `TStageObject::resetFrameCenterIfUnanimated(frame)`,
+  che azzera solo quando non resta nessuna chiave — il caso per cui il reset era
+  stato scritto. Collaudato da Franco su **entrambi** i gesti.
+
+### Added — preset di easing (`07e6528f7`)
+Le quindici curve nominate del vocabolario motion design (Sine/Quad/Cubic/Quart/
+Expo x In/Out/In-Out) nel menu contestuale del grafico, in submenu per famiglia.
+Numeri **pubblicati** da easings.net/CSS, non riderivati. Maniglie come frazioni
+del segmento, quindi stesso carattere su sei frame e su sessanta; il conto
+combacia con la costruzione dell'evaluator, percio' e' la definizione CSS esatta.
+- «In» e «Out» vogliono dire **il contrario** nelle due tradizioni: le voci
+  dicono l'effetto accanto al nome — *In (slow start)*, *Out (slow end)*.
+- Overshoot e bounce **fuori di proposito**: richiedono di generare keyframe.
+- Collaudato da Franco su Expo In.
+
+### Added — infrastruttura per le PR upstream
+- Worktree **`tahoma-stock`** (da `upstream/master`) e **`opentoonz-stock`**
+  (da `opentoonz/master`), remote `opentoonz` con push DISABLED.
+- **Tahoma2D stock NON si compila** su Apple Silicon con toolchain corrente:
+  quattro aggiramenti (CMake 4 x2, `libsuperlu_4.1.a` senza arm64,
+  `TIFFReadRGBATile_64`) piu' `SystemVar.ini` completo o crasha all'avvio in
+  `StartupPopup::loadPresetList`. Ora compila. Candidato PR a se'.
+- Workflow scritto in `UPSTREAM_PR_CANDIDATES.md`: bersaglio verificato con
+  `git show <remote>/master:<file>`, poi `/code-review ultra`, poi **revisione
+  umana di Rodney** (manutentore OpenToonz) aprendo la PR **sul fork**, poi invio.
+
+### Notes — bersagli verificati
+Il difetto delle chiavi e' **solo Tahoma2D** (nasce da `baecf7504` del 19/4/2026;
+OT non ce l'ha). Crash Explode, corruzione heap di `xshcellmover` e l'assert di
+`getEaseHandles` sono invece in **entrambi**.
+
+### Aperti
+- 🔴 **Crash incollando effetti da una sotto-scena al main, al SECONDO paste** —
+  `FxSelection::replacePasteSelection()`, file **identico a upstream**.
+  Replicabile. Cattura lldb gia' presa in
+  `/Volumes/ZioSam/tahoma2d-workspace/lldb_paste_crash.txt`: **da li' si riparte**.
+- Verifica su `tahoma-stock` del fix chiavi (l'app stock ora parte).
+- Feature request In/Out per sotto-scena — taglio deciso: serve **animando**,
+  non solo per l'animatic; isolare la parte generale dal fallback Ztoryc.
+- Speed graph: deciso riquadro sotto ad asse condiviso, **solo curve
+  selezionate** (come *Only Show Selected* di Blender). Non iniziato.
+
 ## [2026-08-03d] — Il percorso dalle chiavi, e una testa che gira attorno a un ovale
 
 Giornata lunga e in tre tempi: chiuso il Function Editor, mergiato ZtoRig su
