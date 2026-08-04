@@ -25,9 +25,9 @@ private:
      "10" was already lost before any formatting happened. That is how 0.10.0
      reached the splash screen as "0.1.0". The floats stay only because
      getAppVersion()/getAppRevision() are public API used elsewhere. */
-  const char *applicationVersionStr  = "0.11";
+  const char *applicationVersionStr  = "0.12";
   const char *applicationRevisionStr = "0";
-  const float applicationVersion  = 0.11f;
+  const float applicationVersion  = 0.12f;
   /* PATCH.0f — never use bare f (PATCH 0 becomes illegal token "0f"). */
   const float applicationRevision = 0.0f;
   const char *applicationNote     = "";
