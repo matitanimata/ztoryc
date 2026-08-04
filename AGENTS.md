@@ -493,13 +493,21 @@ con l'altro compilatore, utile solo se la gcc dà problemi.
 
 ### 5. Trigger CI
 
+⚠️ **Il tag NON pubblica niente.** I workflow hanno solo `workflow_dispatch`:
+pushare un tag fa partire la CI ordinaria, non una release. Verificato il
+2026-08-04 — questa sezione diceva il contrario ed era sbagliata.
+
+**Tutti e tre insieme**, Linux compreso (prima era descritto come un passo a
+parte, ed e' il motivo per cui la 0.11.0 e' uscita senza binari Linux):
+
 ```bash
-git tag v0.X.Y
-git push origin v0.X.Y
+for w in macOS_build.yml windows_build.yml linux_build.yml; do
+  gh workflow run $w -f publish_release=true -f release_tag=v0.X.Y
+done
 ```
 
-Il workflow CI si attiva automaticamente sul tag e pubblica i binari macOS e
-Windows su GitHub Releases.
+Il tag git si puo' comunque creare, come segnalibro nella storia, ma non e' cio'
+che pubblica.
 
 **Linux va lanciato a parte** (dal 2026-07-27 il workflow ha il job
 `publish-release`, ma `linux_build.yml` è `workflow_dispatch` — sul tag **non**
