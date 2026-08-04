@@ -762,26 +762,46 @@ std::set<int> explodeStageObjects(
         outerDag->getTerminalFxs()->removeFx(outerColumn->getFx());
     }
 
-    TStageObjectId innerId     = TStageObjectId::ColumnId(i);
-    TStageObjectId outerId     = TStageObjectId::ColumnId(index);
-    TStageObject *innerCol     = innerTree->getStageObject(innerId, false);
-    TStageObject *outerCol     = outerTree->getStageObject(outerId, false);
-    TStageObjectParams *params = innerCol->getParams();
-    if (params->m_spline) {
-      if (splines.contains(params->m_spline))
-        params->m_spline = splines[params->m_spline];
-      else {
-        TStageObjectSpline *spline = params->m_spline->clone();
-        splines[params->m_spline]  = spline;
-        outerTree->assignUniqueSplineId(spline);
-        outerTree->insertSpline(spline);
-        params->m_spline = spline;
+    TStageObjectId innerId = TStageObjectId::ColumnId(i);
+    TStageObjectId outerId = TStageObjectId::ColumnId(index);
+
+    // Entrambi erano chiesti con create=false e poi dereferenziati subito, con
+    // l'assert che li controlla DOPO quattro usi -- e in release l'assert non
+    // viene nemmeno compilato. SIGSEGV riprodotto due volte da Franco
+    // (2026-08-04, log Crash-20260804-081728) esplodendo una scena importata
+    // come sotto-scena.
+    //
+    // innerCol puo' mancare per davvero: gli stage object si creano su
+    // richiesta, e una scena LETTA DA FILE porta solo quelli che erano stati
+    // serializzati. Una colonna mai trasformata non ne ha nessuno — cosa
+    // normalissima in una scena importata, dove l'xsheet figlio arriva
+    // dall'esterno invece di essere stato costruito qui a furia di click.
+    // Senza parametri da travasare non c'e' niente da fare: la colonna si
+    // porta fuori lo stesso e resta ai suoi valori di default.
+    //
+    // outerCol invece lo vogliamo davvero: e' l'albero nostro e la colonna e'
+    // appena stata inserita, quindi si chiede con create=true.
+    TStageObject *innerCol = innerTree->getStageObject(innerId, false);
+    TStageObject *outerCol = outerTree->getStageObject(outerId, true);
+    if (!outerCol) continue;  // id invalido: non c'e' colonna da portare fuori
+
+    if (innerCol) {
+      TStageObjectParams *params = innerCol->getParams();
+      if (params->m_spline) {
+        if (splines.contains(params->m_spline))
+          params->m_spline = splines[params->m_spline];
+        else {
+          TStageObjectSpline *spline = params->m_spline->clone();
+          splines[params->m_spline]  = spline;
+          outerTree->assignUniqueSplineId(spline);
+          outerTree->insertSpline(spline);
+          params->m_spline = spline;
+        }
       }
+      outerCol->assignParams(params);
+      outerCol->setDagNodePos(innerCol->getDagNodePos());
+      delete params;
     }
-    outerCol->assignParams(params);
-    outerCol->setDagNodePos(innerCol->getDagNodePos());
-    delete params;
-    assert(outerCol && innerCol);
     ids[innerId] = outerId;
     outerCol->removeFromAllGroup();
     if (groupId != -1) {
@@ -1003,6 +1023,11 @@ std::set<int> explode(TXsheet *xsh, TXsheet *subXsh, int index,
   TSyntax::Grammar *grammer = xsh->getStageObjectTree()->getGrammar();
   for (auto id : objIds.values()) {
     TStageObject *obj = xsh->getStageObject(id);
+    // Da quando l'albero RIFIUTA di creare oggetti con id di tipo invalido
+    // (guardia contro i pegbar zombie "BadPegbar", 2026-07-21) questa puo'
+    // tornare 0 dove prima restituiva uno zombie: il difetto silenzioso e'
+    // diventato un crash, ed e' bene, ma va guardato.
+    if (!obj) continue;
     for (int c = 0; c != TStageObject::T_ChannelCount; ++c)
       obj->getParam((TStageObject::Channel)c)->setGrammar(grammer);
     if (const PlasticSkeletonDeformationP &sd =
