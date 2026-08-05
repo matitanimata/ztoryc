@@ -452,6 +452,40 @@ nella sub-scene corretta.
 
 ## Priority Order
 
+### 🚨 BLOCCANTE — la build macOS non produce piu' i DMG (2026-08-05)
+
+**La 0.12.0 e' uscita senza DMG.** Windows e Linux a posto (6 asset), macOS
+fallita su ENTRAMBE le architetture:
+```
+gphotocam.h:7:10: fatal error: 'gphoto2/gphoto2.h' file not found
+```
+
+**PERCHE' PROPRIO ORA — e non e' una regressione nostra.** Le cache di GitHub
+Actions scadono dopo **7 giorni** senza accessi. L'ultima release macOS e' del
+2026-07-27: otto giorni fa. Finche' si rilasciava spesso, la cache di
+`libgphoto2` si rinnovava da sola e il passo di build veniva **sempre saltato**.
+Scaduta la cache, per la prima volta dopo mesi `tahoma-buildlibgphoto2.sh` e'
+stato eseguito davvero — e quella strada e' rotta. Il difetto c'era gia', era
+mascherato.
+
+**Gia' fatto** (commit `8a28b46ee`): il passo non e' piu' condizionato su
+`cache-hit` ma controlla l'header vero e ricompila se manca. **Il controllo
+funziona** — nel log si legge `libgphoto2 headers missing — building` — ma dopo
+la compilazione l'header ancora non c'e'.
+⚠️ Il messaggio di quel commit dice «cache ripristinata senza gli header»: e'
+**impreciso**, molto probabilmente la cache era semplicemente **scaduta**.
+
+**DA QUI SI RIPARTE**: `ci-scripts/osx/tahoma-buildlibgphoto2.sh` — dove
+installa, e se quel prefisso e' nell'include path del compilatore. Due sospetti:
+installa in un prefisso diverso da `BREW_PREFIX`, oppure **fallisce senza far
+fallire il passo** (nessun `set -e`, o un errore ingoiato).
+⚠️ **NON spegnere `WITH_GPHOTO2`**: Franco usa la cattura da fotocamera per lo
+stop-motion **e** per acquisire i thumbnail. La funzione deve restare.
+
+**Come rilanciare**: `gh workflow run macOS_build.yml -f publish_release=true -f release_tag=v0.12.0`
+La release v0.12.0 esiste gia' con le note applicate: i DMG si aggiungono a
+quella, non serve rifarla.
+
 ### 🔴 BUG — sussulto fra due chiavi sui vertici plastici (2026-08-04)
 
 Segnalato da Franco, **ricorrente** («ogni tanto succede»). Fra due chiavi il
