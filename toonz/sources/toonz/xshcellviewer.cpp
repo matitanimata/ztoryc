@@ -1589,8 +1589,7 @@ void CellArea::drawExtenderHandles(QPainter &p) {
   if (cellSelection->isEmpty() || m_viewer->areSoundCellsSelected()) return;
 
   // if the drag move is disabled, the extender handles won't appear
-// Disabled until OT officially releases it
-//  if (Preferences::instance()->getDragCellsBehaviour() == 2) return;
+  if (Preferences::instance()->getDragCellsBehaviour() == 2) return;
 
   int selRow0, selCol0, selRow1, selCol1;
   cellSelection->getSelectedCells(selRow0, selCol0, selRow1, selCol1);
@@ -2442,10 +2441,8 @@ void CellArea::drawLevelCell(QPainter &p, int row, int col, bool isReference,
     bool isStart = row == 0 || prevCell.isEmpty() || prevIsImplicit ||
                    prevCell.m_level.getPointer() != cell.m_level.getPointer() ||
                    prevCell.getFrameId() != cell.getFrameId();
-    bool isLastRow =
-        nextCell.isEmpty() || isImplicitCellNext ||
-        cell.m_level.getPointer() != nextCell.m_level.getPointer() ||
-        cell.getFrameId() != nextCell.getFrameId();
+  bool isLastRow = nextCell.isEmpty() || isImplicitCellNext ||
+                   cell.m_level.getPointer() != nextCell.m_level.getPointer();
 
     if (cell.m_level && cell.m_level->getSimpleLevel() &&
         !cell.getFrameId().isStopFrame() && isStart) {
@@ -4356,7 +4353,7 @@ void CellArea::mousePressEvent(QMouseEvent *event) {
         if (TCellKeyframeSelection *cellKeyframeSelection =
                 dynamic_cast<TCellKeyframeSelection *>(selection))
           setDragTool(XsheetGUI::DragTool::makeCellKeyframeMoverTool(m_viewer));
-        else //if (Preferences::instance()->getDragCellsBehaviour() != 2)    //Disabled until OT officially releases iteleas
+        else if (Preferences::instance()->getDragCellsBehaviour() != 2)
           setDragTool(XsheetGUI::DragTool::makeLevelMoverTool(m_viewer));
       } else {
         m_viewer->getKeyframeSelection()->selectNone();

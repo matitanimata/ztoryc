@@ -1505,9 +1505,9 @@ void IoCmd::newScene() {
   app->getCurrentObject()->setIsSpline(false);
   app->getCurrentColumn()->setColumnIndex(0);
 
-  //CleanupParameters *cp = scene->getProperties()->getCleanupParameters();
-  //CleanupParameters::GlobalParameters.assign(cp);
-  //CleanupSettingsModel::onSceneSwitched()
+  CleanupParameters *cp = scene->getProperties()->getCleanupParameters();
+  CleanupParameters::GlobalParameters.assign(cp);
+  // CleanupSettingsModel::onSceneSwitched()
 
   // updateCleanupSettingsPopup();
 
@@ -1649,11 +1649,14 @@ bool IoCmd::saveScene(const TFilePath &path, int flags) {
 #endif
   }
 
-  // Don't store current cleanup parameters to scene's parameters' cache if autosave
-  // (would save to scene file) .
+  // Don't store current cleanup parameters to scene's parameters' cache if
+  // autosave (would save to scene file) .
+  CleanupParameters *cp = scene->getProperties()->getCleanupParameters();
+  CleanupParameters keepCP(*cp);
   if (!isAutosave) {
-    CleanupParameters::GlobalParameters.assign(
-        scene->getProperties()->getCleanupParameters());
+    // In case of a .cln file be loaded into GlobalParemeters,
+    // we should also write these info into .tnz (scene file)
+    cp->assign(&CleanupParameters::GlobalParameters, false);
   }
 
   // Persist the live play range into the CURRENT xsheet's In/Out markers before
@@ -1687,6 +1690,13 @@ bool IoCmd::saveScene(const TFilePath &path, int flags) {
     DVGui::error(QObject::tr("Couldn't save %1").arg(toQString(scenePath)));
   }
   TApp::instance()->setSaveInProgress(false);
+
+  cp->assign(&keepCP);
+  // Make sure that the current cleanup palette is set to currentParams' palette
+  TApp::instance()
+      ->getPaletteController()
+      ->getCurrentCleanupPalette()
+      ->setPalette(cp->m_cleanupPalette.getPointer());
 
   // in case of saving subxsheet, revert the level paths after saving
   revertOrgLevelPaths();
@@ -2202,9 +2212,9 @@ bool IoCmd::loadScene(const TFilePath &path, bool updateRecentFile,
   Previewer::clearAll();
   PreviewFxManager::instance()->reset();
   // updateCleanupSettingsPopup();
-  /*- CleanupParameterの更新 -*/ //CleanupSettingsModel::onSceneSwitched()
-  //CleanupParameters *cp = scene->getProperties()->getCleanupParameters();
-  //CleanupParameters::GlobalParameters.assign(cp);
+  /*- CleanupParameterの更新 -*/  // CleanupSettingsModel::onSceneSwitched()
+  CleanupParameters *cp = scene->getProperties()->getCleanupParameters();
+  CleanupParameters::GlobalParameters.assign(cp);
   CacheFxCommand::instance()->onSceneLoaded();
 
 #ifdef USE_SQLITE_HDPOOL

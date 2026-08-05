@@ -25,7 +25,7 @@ fi
 
 cd libgphoto2_src
 
-git checkout tahoma2d-version
+git checkout tahoma2d-version-2.5.34
 
 echo ">>> Configuring libgphoto2"
 autoreconf --install --symlink

@@ -1639,8 +1639,7 @@ QList<ComboBoxItem> PreferencesPopup::getComboItemList(
       {DragCellsBehaviour,
        {{tr("Cells Only"), 0},
         {tr("Cells and Column Data"), 1},
-// Disabled until OT officially releases it
-//        {tr("Disable Dragging Cells"), 2}
+        {tr("Disable Dragging Cells"), 2}
        }},
       {pasteCellsBehavior,
        {{tr("Insert Paste Whole Data"), 0},
@@ -2340,8 +2339,7 @@ QGridLayout* PreferencesPopup::createXsheetLayout() {
   }
   insertUI(showColumnNumbers, lay);
   insertUI(showColumnParents, lay);
-// Disabled until OT officially releases it
-//  insertUI(unifyColumnVisibilityToggles, lay);
+  insertUI(unifyColumnVisibilityToggles, lay);
   insertUI(parentColorsInXsheetColumn, lay);
   insertUI(highlightLineEverySecond, lay);
   if (Preferences::instance()->isShowAdvancedOptionsEnabled()) {
@@ -2737,12 +2735,25 @@ void PreferencesPopup::onImport() {
     return;
   }
 
-  // New portable builds bundle the stuff folder as 'ztorycstuff'; older ones
-  // (and Tahoma2D installs) used 'tahomastuff'.  Accept either.
-  TFilePath oldStuffPath =
-      TFilePath(m_importPrefpath->getPath() + "/ztorycstuff");
-  if (!TFileStatus(oldStuffPath).doesExist())
-    oldStuffPath = TFilePath(m_importPrefpath->getPath() + "/tahomastuff");
+  // Portable builds bundle the stuff folder as 'ztorycstuff'; older ones (and
+  // Tahoma2D installs) used 'tahomastuff'. On macOS the user picks the .app
+  // itself, and current bundles keep the folder under Contents/Resources
+  // (upstream 1.6.2) while older portable builds left it at the bundle root.
+  // Try every combination and keep the first that exists; when none does the
+  // loop leaves the last candidate, so the error below still names a path the
+  // user recognises.
+  const QString importRoot      = m_importPrefpath->getPath();
+  const char *stuffCandidates[] = {
+#ifdef MACOSX
+      "/Contents/Resources/ztorycstuff", "/Contents/Resources/tahomastuff",
+#endif
+      "/ztorycstuff", "/tahomastuff"};
+
+  TFilePath oldStuffPath;
+  for (const char *candidate : stuffCandidates) {
+    oldStuffPath = TFilePath(importRoot + candidate);
+    if (TFileStatus(oldStuffPath).doesExist()) break;
+  }
   if (!TFileStatus(oldStuffPath).doesExist()) {
     DVGui::error("Unable to find the 'ztorycstuff' (or 'tahomastuff') folder "
                  "in " +

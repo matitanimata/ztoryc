@@ -490,7 +490,7 @@ void UndoChannelDelete::undo() const {
     TStageObjectId objId   = m_objectHandle->getObjectId();
     TStageObject *stageObj = m_xsheetHandle->getXsheet()->getStageObject(objId);
     int frame              = m_frameHandle->getFrameIndex();
-    stageObj->setCenterAndOffset(m_center, m_offset);
+    if (stageObj) stageObj->setCenterAndOffset(m_center, m_offset);
   }
 
   m_objectHandle->notifyObjectIdChanged(false);
@@ -507,8 +507,16 @@ void UndoChannelDelete::redo() const {
   TStageObject *stageObj = m_xsheetHandle->getXsheet()->getStageObject(objId);
   int frame              = m_frameHandle->getFrameIndex();
 
-  stageObj->getParam(m_actionId)->deleteKeyframe(frame);
-  stageObj->resetFrameCenterIfUnanimated(frame);
+  // Upstream restores the saved center here instead; that is a competing fix
+  // for the same defect and the two cancel each other out, so only one can
+  // stand. resetFrameCenterIfUnanimated() is kept: m_frameCenter and m_offset
+  // are not animated channels, yet both take part in placement, so rebuilding
+  // them on every removed key is what moved the object. The null guard is
+  // taken from upstream -- it is an improvement on its own.
+  if (stageObj) {
+    stageObj->getParam(m_actionId)->deleteKeyframe(frame);
+    stageObj->resetFrameCenterIfUnanimated(frame);
+  }
 
   m_xsheetHandle->notifyXsheetChanged();
   m_objectHandle->notifyObjectIdChanged(false);

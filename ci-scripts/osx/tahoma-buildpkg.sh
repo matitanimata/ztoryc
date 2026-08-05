@@ -184,6 +184,9 @@ $QTDIR/bin/macdeployqt $TOONZDIR/Ztoryc.app -verbose=0 -always-overwrite \
    -executable=$TOONZDIR/Ztoryc.app/Contents/MacOS/tfarmcontroller \
    -executable=$TOONZDIR/Ztoryc.app/Contents/MacOS/tfarmserver 
 
+###
+### Add additional frameworks
+###
 for FW in `echo "QtDBus QtPdf QtQml QtQmlModels QtQuick QtVirtualKeyboard"`
 do
    if [ ! -d $TOONZDIR/Ztoryc.app/Contents/Frameworks/$FW.framework ]
@@ -244,6 +247,22 @@ function checkLibFile() {
                fi
                echo ">>> trovata: $SRC"
             fi
+            echo ">>>Checking for $SRC"
+            if [ ! -f $SRC ]
+            then
+               echo ">>>NOT Found...Searching /usr"
+               local SRC=`find /usr -name $Y | head -1`
+               if [ "$SRC" = "" ]
+               then
+                  echo ">>>NOT Found...Searching /opt"
+                  local SRC=`find /opt -name $Y | head -1`
+                  if [ "$SRC" = "" ]
+                  then
+                     echo "Error: Unable to find dependency $Y"
+                     exit 1
+                  fi
+               fi
+            fi
             echo "Copying $SRC to Frameworks"
             if ! cp "$SRC" $TOONZDIR/Ztoryc.app/Contents/Frameworks
             then
@@ -266,20 +285,18 @@ function checkLibFile() {
          esac
          if [ "$Y" != "$W" ]
          then
-            echo "Fixing $DEPFILE in $LIBFILE"
             if [ "$X" != "" ]
             then
                local Y=`echo $DEPFILE | sed -e"s/^.*\/\.\.\///" -e"s/@rpath.//"`
-               install_name_tool -change $DEPFILE @executable_path/../Frameworks/$Y $LIBFILE
-            else
-               install_name_tool -change $DEPFILE @executable_path/../Frameworks/$Y $LIBFILE
             fi
+            echo "Fixing $DEPFILE in $LIBFILE"
+            install_name_tool -change $DEPFILE @executable_path/../Frameworks/$Y $LIBFILE
          fi
          FIXCHECK=`otool -D $LIBFILE | grep -v ":" | grep -F "$BREW_PREFIX"`
          if [ "$FIXCHECK" == "$DEPFILE" ]
          then
             echo "   Fixed ID!"
-            install_name_tool -id @executable_path/../Frameworks/$Y $LIBFILE
+            install_name_tool -id @rpath/$Y $LIBFILE
          fi
       fi
    done
