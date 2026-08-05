@@ -1,6 +1,8 @@
 #pragma once
 
 #ifndef PLASTICVISUALSETTINGS_H
+
+#include "tcommon.h"
 #define PLASTICVISUALSETTINGS_H
 
 //===========================================================
@@ -14,6 +16,16 @@ class TXshColumn;
 //*********************************************************************************************
 //    PlasticVisualSettings  definition
 //*********************************************************************************************
+
+#undef DVAPI
+#undef DVVAR
+#ifdef TNZEXT_EXPORTS
+#define DVAPI DV_EXPORT_API
+#define DVVAR DV_EXPORT_VAR
+#else
+#define DVAPI DV_IMPORT_API
+#define DVVAR DV_IMPORT_VAR
+#endif
 
 //! The PlasticVisualSettings class stores the fundamental visualization options
 //! that need
@@ -33,6 +45,15 @@ struct PlasticVisualSettings {
   bool m_drawSO;               //!< Whether mesh vertices' stacking order should
                                //!< be displayed
 public:
+  //! Global, persistent mesh-wireframe visibility.
+  /*! m_drawMeshesWireframe above is per-painter and, in practice, was only
+      ever set while the Plastic tool was active: the setting could not be
+      reached from anywhere else and did not survive a restart. This is the
+      single source of truth -- the viewer reads it on every draw, the Show
+      Mesh command writes it (and persists it), and the Plastic tool's own
+      menu entry writes it too, so the two are views of one setting. */
+  static DVVAR bool s_showMeshWireframe;
+
   PlasticVisualSettings()
       : m_applyPlasticDeformation(true)
       , m_showOriginalColumn()
