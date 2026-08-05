@@ -494,6 +494,47 @@ sta nella cache e una entry parziale faceva morire `git clone`.
 e' preso da Tahoma2D e a monte ha lo stesso difetto — nessun `set -e`, nessun
 `--disable-nls`. La loro CI macOS ci sbattera' contro appena la cache scade.
 
+### 🔐 DA FARE — la password Kitsu e' salvata IN CHIARO
+
+Trovato il 2026-08-04 leggendo le preferenze per capire perche' l'integrazione
+non compariva. In `~/Library/Preferences/com.ztoryc.Ztoryc.plist`:
+```
+Ztoryc.Kitsu.BaseUrl / Email / Password / PasswordSaved
+```
+La password e' **testo in chiaro**, leggibile con un `defaults read`. Il codice
+la scrive con `QSettings` (`kitsuclient.cpp`, chiavi `Ztoryc/Kitsu/...`).
+
+Su una macchina personale con un Kitsu in docker e' poco grave; diventa serio il
+giorno che si punta a un **Kitsu remoto di produzione**, perche' a quel punto e'
+la credenziale di un servizio vero, non di un container locale.
+
+**Fix**: usare il **Portachiavi** di macOS invece del plist (e l'equivalente su
+Windows/Linux). Contenuto: e' un solo punto di lettura e uno di scrittura.
+⚠️ Franco e' stato avvisato che la password gli e' comparsa nell'output di un
+comando durante la diagnosi: se la riusa altrove, valutare di cambiarla.
+
+### 🎥 VALUTATO E RIMANDATO — AV1 e l'ffmpeg del 2020
+
+Franco ha chiesto (2026-08-04) se dalle specifiche AV1 di aomedia esca qualcosa
+di utile. **Dalla pagina no**: sono definizioni di codec (bitstream, binding
+ISOBMFF, payload RTP, HDR10+), roba per chi scrive encoder.
+
+L'unica idea sensata sarebbe **AV1 come formato di uscita** per gli animatic
+(30-50% piu' leggeri a parita' di qualita', royalty-free). Ma:
+**l'ffmpeg che distribuiamo e' del 2020** (`N-99076`, copyright fino al 2020) e
+**non ha alcun encoder AV1** — verificato con `ffmpeg -encoders`, l'unica
+corrispondenza e' `wmav1`, che e' audio.
+
+Quindi il costo non e' nel nostro codice (una voce in piu' nella lista formati)
+ma nel **sostituire il binario ffmpeg in tre bundle**, e quel binario legge e
+scrive TUTTI i video, importazione compresa.
+
+**Decisione: non ora.** Se un giorno si aggiorna ffmpeg, la modifica che si
+ripaga non e' AV1 ma [[project_video_import_slow]] — l'importazione che estrae
+tutti i frame su disco nel thread dell'interfaccia. Quella fa perdere tempo a
+ogni import; AV1 farebbe risparmiare megabyte una volta a consegna. Aggiornando
+ffmpeg, AV1 arriva quasi gratis nello stesso giro.
+
 ### 🔧 DA FARE — ripristinare le bucature (peg) nello stage schematic
 
 **Due righe, analisi gia' completa.** Nei nodi dello schematic si puo' ciclare
