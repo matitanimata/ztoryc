@@ -452,39 +452,90 @@ nella sub-scene corretta.
 
 ## Priority Order
 
-### 🚨 BLOCCANTE — la build macOS non produce piu' i DMG (2026-08-05)
+### ✅ RISOLTO — i DMG macOS mancanti (2026-08-05)
 
-**La 0.12.0 e' uscita senza DMG.** Windows e Linux a posto (6 asset), macOS
-fallita su ENTRAMBE le architetture:
+**La 0.12.0 e' completa**: `Ztoryc-0.12.0-portable-osx-silicon.dmg` (163 MB) e
+`Ztoryc-0.12.0-portable-osx-mactel.dmg` (186 MB) sono sulla release, insieme ai
+sei asset Windows/Linux gia' presenti. Run `30978752717`, entrambi i job verdi.
+
+**La causa non era la cache.** Nel log della run fallita (`30958746904`) c'e'
+scritto `Cache not found for input keys` — la cache era **scaduta**, e lo script
+e' stato eseguito davvero per la prima volta dopo mesi. E' fallito cosi', su
+ARM64 e su x86_64 allo stesso modo:
 ```
-gphotocam.h:7:10: fatal error: 'gphoto2/gphoto2.h' file not found
+Undefined symbols for architecture arm64:
+  "_libintl_dgettext", referenced from: _camera_summary in la-library.o
+make[3]: *** [ax203.la] Error 1
 ```
 
-**PERCHE' PROPRIO ORA — e non e' una regressione nostra.** Le cache di GitHub
-Actions scadono dopo **7 giorni** senza accessi. L'ultima release macOS e' del
-2026-07-27: otto giorni fa. Finche' si rilasciava spesso, la cache di
-`libgphoto2` si rinnovava da sola e il passo di build veniva **sempre saltato**.
-Scaduta la cache, per la prima volta dopo mesi `tahoma-buildlibgphoto2.sh` e'
-stato eseguito davvero — e quella strada e' rotta. Il difetto c'era gia', era
-mascherato.
+Tre cose impilate, commit `52ff4c16e`:
+1. `camlibs/Makefile.am` del fork tahoma2d linka ogni camlib solo contro
+   `libgphoto2.la` e `libgphoto2_port.la`, **mai contro `$(INTLLIBS)`** che
+   invece `libgphoto2/Makefile.am` aggiunge (riga 70). Su glibc non si vede,
+   `dgettext` sta nella libc; su macOS il `libintl.h` di Homebrew — installato
+   da `tahoma-install.sh`, ultima riga — lo riscrive in `libintl_dgettext` e il
+   simbolo non c'e' sulla riga di link dei camlib.
+2. **Le intestazioni pubbliche si installano in un SUBDIR che viene DOPO
+   `camlibs`**: ecco perche' il sintomo era `gphoto2/gphoto2.h` introvabile,
+   dieci minuti dopo, in un punto che con gettext non c'entra niente.
+3. Lo script **non aveva `set -e`**: dopo il `make` fallito partiva comunque
+   `sudo make install` e il passo tornava zero. Per questo il difetto e' potuto
+   restare li' per mesi, mascherato da una cache che si rinnovava a ogni
+   rilascio.
 
-**Gia' fatto** (commit `8a28b46ee`): il passo non e' piu' condizionato su
-`cache-hit` ma controlla l'header vero e ricompila se manca. **Il controllo
-funziona** — nel log si legge `libgphoto2 headers missing — building` — ma dopo
-la compilazione l'header ancora non c'e'.
-⚠️ Il messaggio di quel commit dice «cache ripristinata senza gli header»: e'
-**impreciso**, molto probabilmente la cache era semplicemente **scaduta**.
+Fix: `--disable-nls` (con NLS spento `i18n.h` rende identita' tutte le chiamate
+gettext e libintl non viene piu' referenziato — si perdono solo le traduzioni
+interne di libgphoto2, che Ztoryc non mostra), `set -euo pipefail`, controllo
+dell'header dopo l'install, e clone idempotente perche' `thirdparty/libgphoto2_src`
+sta nella cache e una entry parziale faceva morire `git clone`.
+**`WITH_GPHOTO2` resta ON**: la cattura da fotocamera non e' stata toccata.
 
-**DA QUI SI RIPARTE**: `ci-scripts/osx/tahoma-buildlibgphoto2.sh` — dove
-installa, e se quel prefisso e' nell'include path del compilatore. Due sospetti:
-installa in un prefisso diverso da `BREW_PREFIX`, oppure **fallisce senza far
-fallire il passo** (nessun `set -e`, o un errore ingoiato).
-⚠️ **NON spegnere `WITH_GPHOTO2`**: Franco usa la cattura da fotocamera per lo
-stop-motion **e** per acquisire i thumbnail. La funzione deve restare.
+⚠️ **Candidato PR upstream, gia' annotato**: `ci-scripts/osx/tahoma-buildlibgphoto2.sh`
+e' preso da Tahoma2D e a monte ha lo stesso difetto — nessun `set -e`, nessun
+`--disable-nls`. La loro CI macOS ci sbattera' contro appena la cache scade.
 
-**Come rilanciare**: `gh workflow run macOS_build.yml -f publish_release=true -f release_tag=v0.12.0`
-La release v0.12.0 esiste gia' con le note applicate: i DMG si aggiungono a
-quella, non serve rifarla.
+### 🔧 DA FARE — ripristinare le bucature (peg) nello stage schematic
+
+**Due righe, analisi gia' completa.** Nei nodi dello schematic si puo' ciclare
+solo fra **B** e gli hook numerici: le altre bucature — **A, C, D…** — sono
+sparite. Franco le vuole indietro.
+
+**Cosa sono** (confermato da Franco e dal codice): sono le **bucature del foglio
+di animazione**. `B` e' quella centrale, il default; `A` e' una bucatura alla sua
+sinistra, `C`, `D`… alla sua destra. In `TStageObject::getHandlePos` sono
+scostamenti puramente orizzontali, `unit * (handle[0] - 'B')` con `unit = 8`.
+Le **minuscole** sono gli stessi punti a **mezzo passo** (`0.5 * unit`).
+
+**Perche' sono sparite** — `toonzqt/stageschematicnode.cpp`, ciclo della porta:
+
+| | OpenToonz | Tahoma2D (e quindi noi) |
+|---|---|---|
+| ancoraggio | `index = handle[0] - 'A'` | `index = handle[0] - 'B'` |
+| indice positivo | `handle = 'A' + index` → **la lettera** | `handle = "B"` → **sempre B** |
+
+Spostando l'ancoraggio da A a B, la A e' finita a indice −1 — dove stanno gia'
+gli hook (`H1` = −1) — e per uscire dalla collisione che si erano creati hanno
+schiacciato **tutto** il positivo su `B`, perdendo anche C e D. E' un danno
+collaterale di un refactoring, non una scelta.
+
+**Il fix**: tornare allo schema di OpenToonz, quelle due righe. Con l'ancoraggio
+ad `'A'` le lettere stanno tutte negli indici positivi e non collidono con gli
+hook, che sono negativi. Sequenza risultante, verificata da Franco nell'app:
+```
+… H2  H1  A  [B]  C  D  E …
+              ↑ default, invariato
+```
+⚠️ **Il default resta "B"** (`setHandle("B")` alla creazione della porta): non
+si tocca. L'ancoraggio ad `'A'` e' **solo aritmetica interna** del ciclo.
+⚠️ **La geometria non cambia**: `getHandlePos` continua a misurare da B, che
+resta lo zero degli scostamenti. Indice del ciclo e offset geometrico sono due
+cose separate.
+⚠️ `tcrop(index, min, 25)` va gia' bene: `min` e' negativo solo per le colonne
+(gli hook), zero per i pegbar.
+
+**E' anche un candidato PR upstream**: Tahoma ha perso le lettere per un
+incidente di refactoring, e OpenToonz accanto mostra il comportamento originale
+— il confronto e' la dimostrazione.
 
 ### 🔴 BUG — sussulto fra due chiavi sui vertici plastici (2026-08-04)
 
