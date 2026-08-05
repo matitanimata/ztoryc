@@ -240,13 +240,13 @@ jobs:
             test -f "$OPENCV_CFG"
           fi
       - name: Build libgphoto2 (skipped when the headers are actually there)
-        # Deliberately NOT gated on cache-hit. The 0.12.0 macOS build failed with
-        # "'gphoto2/gphoto2.h' file not found" on BOTH architectures while the
-        # cache reported a hit: the entry had been restored without the headers.
-        # Since the key is the hash of two scripts that rarely change, that bad
-        # entry would have been served forever. Checking the header itself is
-        # checking the thing that matters -- a cache that claims a hit but
-        # cannot satisfy the include has not hit anything useful.
+        # Deliberately NOT gated on cache-hit, but on the header itself: the
+        # thing the Ztoryc compile actually needs. GitHub Actions caches expire
+        # after 7 days without a hit, and the script that rebuilds them had been
+        # broken for months behind an always-warm cache -- 0.12.0 was the first
+        # release far enough from the previous one to find out, and it shipped
+        # without macOS DMGs. Checking the header keeps that failure mode from
+        # ever being silent again.
         env:
           CC: clang
           CXX: clang++
@@ -256,7 +256,7 @@ jobs:
             echo "libgphoto2 headers present — skipping rebuild"
             exit 0
           fi
-          echo "libgphoto2 headers missing (cache incomplete) — building"
+          echo "libgphoto2 headers missing — building"
           ci-scripts/osx/tahoma-buildlibgphoto2.sh
       - name: ccache stats (before Ztoryc)
         run: ccache -sv || true
