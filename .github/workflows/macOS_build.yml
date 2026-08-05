@@ -89,7 +89,11 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 1
-      - name: Set portable DMG name from ZtorycVersion.cmake (semver)
+      # GitHub sorts release assets alphabetically by filename and offers no
+      # manual ordering, so the name IS the order on the release page. Naming
+      # every asset platform-first (-linux-, -osx-, -win-) keeps each platform
+      # in one block instead of scattering it around its neighbours.
+      - name: Set DMG name from ZtorycVersion.cmake (semver)
         run: |
           set -euo pipefail
           F="toonz/cmake/ZtorycVersion.cmake"
@@ -98,8 +102,8 @@ jobs:
           PATCH=$(sed -n 's/^set(ZTORYC_VERSION_PATCH \([0-9]*\)).*/\1/p' "$F")
           SEMVER="${MAJOR}.${MINOR}.${PATCH}"
           echo "ZTORYC_RELEASE_SEMVER=${SEMVER}" >> $GITHUB_ENV
-          echo "ZTORYC_DMG_BASENAME=Ztoryc-${SEMVER}-portable-osx-${{ matrix.suffix }}.dmg" >> $GITHUB_ENV
-          echo "DMG output: Ztoryc-${SEMVER}-portable-osx-${{ matrix.suffix }}.dmg (from $F)"
+          echo "ZTORYC_DMG_BASENAME=Ztoryc-${SEMVER}-osx-${{ matrix.suffix }}.dmg" >> $GITHUB_ENV
+          echo "DMG output: Ztoryc-${SEMVER}-osx-${{ matrix.suffix }}.dmg (from $F)"
       - name: Homebrew prefix (cache paths + deps)
         run: echo "BREW_PREFIX=$(brew --prefix)" >> $GITHUB_ENV
       - name: Setup CMake
@@ -292,7 +296,7 @@ jobs:
           key: ${{ runner.arch }}-${{ runner.os }}-dmgbuild-venv-${{ hashFiles('ci-scripts/osx/requirements-dmgbuild.txt', 'ci-scripts/osx/ztoryc_dmg_settings.py') }}
       - uses: actions/upload-artifact@v4
         with:
-          name: Ztoryc-${{ env.ZTORYC_RELEASE_SEMVER }}-portable-osx-${{ matrix.suffix }}
+          name: Ztoryc-${{ env.ZTORYC_RELEASE_SEMVER }}-osx-${{ matrix.suffix }}
           path: toonz/build/${{ env.ZTORYC_DMG_BASENAME }}
           compression-level: 1
       - name: Get Nightly Release Date
@@ -438,7 +442,7 @@ jobs:
           fetch-depth: 1
       - uses: actions/download-artifact@v4
         with:
-          pattern: Ztoryc-*-portable-osx-*
+          pattern: Ztoryc-*-osx-*
           merge-multiple: true
           path: release-files
       - name: Resolve release version from ZtorycVersion.cmake
@@ -462,15 +466,15 @@ jobs:
         id: release_dmgs
         run: |
           set -euo pipefail
-          MACTEL=$(find release-files -type f -name 'Ztoryc-*-portable-osx-mactel.dmg' | head -1)
-          SILICON=$(find release-files -type f -name 'Ztoryc-*-portable-osx-silicon.dmg' | head -1)
+          MACTEL=$(find release-files -type f -name 'Ztoryc-*-osx-mactel.dmg' | head -1)
+          SILICON=$(find release-files -type f -name 'Ztoryc-*-osx-silicon.dmg' | head -1)
           if [ -z "${MACTEL:-}" ] || [ ! -f "$MACTEL" ]; then
-            echo "::error::Intel DMG (*-portable-osx-mactel.dmg) not found under release-files"
+            echo "::error::Intel DMG (*-osx-mactel.dmg) not found under release-files"
             find release-files -type f -print || true
             exit 1
           fi
           if [ -z "${SILICON:-}" ] || [ ! -f "$SILICON" ]; then
-            echo "::error::Apple Silicon DMG (*-portable-osx-silicon.dmg) not found under release-files"
+            echo "::error::Apple Silicon DMG (*-osx-silicon.dmg) not found under release-files"
             find release-files -type f -print || true
             exit 1
           fi

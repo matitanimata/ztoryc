@@ -113,19 +113,31 @@ jobs:
           export CC="${{ matrix.cc }}"
           export CXX="${{ matrix.cxx }}"
           ci-scripts/linux/tahoma-build.sh
+      # GitHub sorts release assets alphabetically by filename and offers no
+      # manual ordering, so the name IS the order on the release page. Naming
+      # every asset platform-first (-linux-, -osx-, -win-) keeps each platform
+      # in one block instead of scattering it around its neighbours.
       - name: Create Package
         run: |
+          set -euo pipefail
           ci-scripts/linux/tahoma-buildpkg.sh
-          mv toonz/build/Ztoryc-linux.tar.gz toonz/build/Ztoryc-linux-${{ matrix.compiler }}.tar.gz
-          mv toonz/build/Ztoryc-linux.deb toonz/build/Ztoryc-linux-${{ matrix.compiler }}.deb
+          F="toonz/cmake/ZtorycVersion.cmake"
+          MAJOR=$(sed -n 's/^set(ZTORYC_VERSION_MAJOR \([0-9]*\)).*/\1/p' "$F")
+          MINOR=$(sed -n 's/^set(ZTORYC_VERSION_MINOR \([0-9]*\)).*/\1/p' "$F")
+          PATCH=$(sed -n 's/^set(ZTORYC_VERSION_PATCH \([0-9]*\)).*/\1/p' "$F")
+          BASE="Ztoryc-${MAJOR}.${MINOR}.${PATCH}-linux-${{ matrix.compiler }}"
+          echo "ZTORYC_LINUX_BASENAME=${BASE}" >> $GITHUB_ENV
+          mv toonz/build/Ztoryc-linux.tar.gz "toonz/build/${BASE}.tar.gz"
+          mv toonz/build/Ztoryc-linux.deb "toonz/build/${BASE}.deb"
+          echo "Linux packages: ${BASE}.tar.gz, ${BASE}.deb"
       - uses: actions/upload-artifact@v4
         with:
-          name: Ztoryc-linux-${{ matrix.compiler }}.tar.gz
-          path: toonz/build/Ztoryc-linux-${{ matrix.compiler }}.tar.gz
+          name: ${{ env.ZTORYC_LINUX_BASENAME }}.tar.gz
+          path: toonz/build/${{ env.ZTORYC_LINUX_BASENAME }}.tar.gz
       - uses: actions/upload-artifact@v4
         with:
-          name: Ztoryc-linux-${{ matrix.compiler }}.deb
-          path: toonz/build/Ztoryc-linux-${{ matrix.compiler }}.deb
+          name: ${{ env.ZTORYC_LINUX_BASENAME }}.deb
+          path: toonz/build/${{ env.ZTORYC_LINUX_BASENAME }}.deb
       - name: Get Nightly Release Date
         if: ${{ github.repository_owner == 'tahoma2d' && github.event_name == 'push' && github.ref == 'refs/heads/master' }}
         run: |
@@ -149,7 +161,7 @@ jobs:
         with:
           allowUpdates: true
           artifactErrorsFailBuild: false
-          artifacts: toonz/build/Ztoryc-linux-${{ matrix.compiler }}.tar.gz,toonz/build/Ztoryc-linux-${{ matrix.compiler }}.deb
+          artifacts: toonz/build/${{ env.ZTORYC_LINUX_BASENAME }}.tar.gz,toonz/build/${{ env.ZTORYC_LINUX_BASENAME }}.deb
           artifactContentType: "raw"
           body: ${{ github.event.head_commit.message }}
           name: Latest Nightly ${{ env.NIGHTLYDATE }}
@@ -163,7 +175,7 @@ jobs:
         with:
           allowUpdates: true
           artifactErrorsFailBuild: false
-          artifacts: toonz/build/Ztoryc-linux-${{ matrix.compiler }}.tar.gz,toonz/build/Ztoryc-linux-${{ matrix.compiler }}.deb
+          artifacts: toonz/build/${{ env.ZTORYC_LINUX_BASENAME }}.tar.gz,toonz/build/${{ env.ZTORYC_LINUX_BASENAME }}.deb
           artifactContentType: "raw"
           body: ${{ github.event.head_commit.message }}
           name: ${{ env.NIGHTLYDATETIME }}
@@ -219,7 +231,7 @@ jobs:
           fetch-depth: 1
       - uses: actions/download-artifact@v4
         with:
-          pattern: Ztoryc-linux-*
+          pattern: Ztoryc-*-linux-*
           merge-multiple: true
           path: release-files
       - name: Resolve release version from ZtorycVersion.cmake
@@ -256,7 +268,7 @@ jobs:
         with:
           allowUpdates: true
           artifactErrorsFailBuild: true
-          artifacts: release-files/Ztoryc-linux-gcc.tar.gz,release-files/Ztoryc-linux-gcc.deb,release-files/Ztoryc-linux-clang.tar.gz,release-files/Ztoryc-linux-clang.deb
+          artifacts: release-files/Ztoryc-${{ steps.release_version.outputs.semver }}-linux-gcc.tar.gz,release-files/Ztoryc-${{ steps.release_version.outputs.semver }}-linux-gcc.deb,release-files/Ztoryc-${{ steps.release_version.outputs.semver }}-linux-clang.tar.gz,release-files/Ztoryc-${{ steps.release_version.outputs.semver }}-linux-clang.deb
           artifactContentType: "raw"
           name: Ztoryc ${{ steps.release_version.outputs.tag }}
           omitBodyDuringUpdate: true
