@@ -452,6 +452,79 @@ nella sub-scene corretta.
 
 ## Priority Order
 
+### 🔧 APERTO — richieste di Franco del 2026-08-05 (fine sessione)
+
+**✅ FATTO — bucature (peg) ripristinate nello stage schematic.**
+Era gia' tutto annotato piu' in basso in questo stesso file («ripristinare le
+bucature (peg) nello stage schematic»): analisi completa e fix di due righe.
+Applicato in `toonzqt/stageschematicnode.cpp`: ancoraggio del ciclo riportato ad
+`'A'` come OpenToonz, e sugli indici positivi la porta mostra di nuovo **la
+lettera** invece di sempre `"B"`. Default `"B"` invariato, geometria invariata.
+Compila. **Da collaudare nello schematic**: la sequenza attesa e'
+`… H2 H1 A [B] C D E …`.
+⚠️ **Mio errore da non ripetere**: avevo cercato «A.B.C» nell'**header di
+colonna** e concluso che non fosse annotato niente. Era annotato, e riguardava lo
+**stage schematic**. Prima di dire «non c'e' nulla per iscritto», cercare il
+concetto (bucature/handle/schematic) e non solo le parole dell'ultimo messaggio.
+
+**✅ FATTO — toggle «Show Mesh» globale e persistente.** Comando
+`MI_ZtoryShowMesh` nel menu Xsheet, aggiungibile alla Quick Toolbar, icona
+`ztoryc_show_mesh` (maglia di triangoli con l'occhio della preview sopra, idea di
+Franco). Dettagli nel CHANGELOG. **Non committato: da collaudare.** Se il default
+va invertito (mesh nascosta all'avvio) e' una riga.
+
+### 🔴 APERTO — il controller funziona nel viewer e non nel render
+
+Franco, 2026-08-05: «forse e' il nostro controller (quella specie di animate tool
+legato allo skeleton) che se lo uso per riposizionare un elemento funziona nel
+viewer ma non nel render». **Primo sospetto da verificare** quando si riprende il
+render plastico.
+Appiglio misurato: `getSquashControllerAffine` in un caso valeva
+`[1, 0, 462.308, 0, 1, -2.17253]`, cioe' una **traslazione di 462 unita'**, non
+l'identita'. Il codice lo descrive come «un affine SOPRA il risultato deformato»,
+e viene composto in **due punti diversi** nelle due strade: `stagevisitor.cpp`
+(viewer) fa `... * worldMeshToMeshAff * ctrl * meshToWorldMeshAff`,
+`plasticdeformerfx.cpp` (render) fa `... * meshToWorldMeshAff * worldMeshToMeshAff
+* squashCtrl * meshToWorldMeshAff`. **Verifica diretta**: stampare le due matrici
+finali sullo stesso frame e confrontarle.
+
+### 🔴 APERTO — crash su «Salva sotto-scena come scena», mesh non trovate
+
+Segnalato il 2026-08-05, **mai indagato** (Franco mi ha fermato mentre cercavo il
+log, e poi la giornata e' andata altrove). Salvando una sotto-scena come scena
+non trova le mesh, e poi crasha. Per la regola «i crash vengono prima di tutto»
+questo viene prima delle feature. Il crash handler scrive in
+`QStandardPaths::AppLocalDataLocation + "/crash"`.
+Possibile parentela con i percorsi delle mesh: nei log del render convivono due
+radici diverse, `+extras/sh090/sub_2.0001.mesh` e
+`+scenes/sh110/LIB_ZOMBIE01/extras/...`.
+
+### 🟠 APERTO — doppio render occasionale
+
+Franco: «succede ogni tanto». Parte due volte lo stesso lavoro. Da capire se
+succede lanciando dal Task panel o dal menu — e se due processi scrivono lo
+stesso file di output, e' un difetto a se'. Non e' la causa degli artefatti di
+oggi (troppo ripetibili per una corsa fra processi).
+
+### 🟠 APERTO — uno zombie si smonta in alcuni frame
+
+Dopo aver reimportato la scena e' rimasto **un solo** caso: un personaggio i cui
+pezzi appaiono staccati in un momento. Ipotesi di Franco: il **pin**, che li' sta
+su piu' livelli. Ora e' isolato a un caso solo, quindi trattabile.
+
+### 🟢 PRONTO, DA COLLAUDARE — merge Tahoma2D 1.6.2
+
+Branch `merge/upstream-1.6.2` nel worktree
+`/Volumes/ZioSam/tahoma2d-workspace/merge-1.6.2`, commit `0a430ad42`. 61 commit,
+249 file. **Compila a freddo (ninja rc=0), mai aperto nell'app.** Non portato su
+master di proposito: master resta releasable.
+Zone da provare per prime: **xsheet** (`xshcolumnviewer` ha preso codice loro),
+**file browser** (nodo Scene Folder nuovo), **preferenze**, e la **zona plastica**
+(`plasticskeletondeformation.cpp` toccato da entrambi).
+Quando e' collaudato: `git merge` su master senza conflitti, il lavoro e' gia'
+tutto risolto.
+
+
 ### ✅ RISOLTO — i DMG macOS mancanti (2026-08-05)
 
 **La 0.12.0 e' completa**: `Ztoryc-0.12.0-portable-osx-silicon.dmg` (163 MB) e
