@@ -40,7 +40,7 @@ Want to see your name or studio here? [**Become a sponsor**](https://github.com/
 ## 🖍 Backers
 
 - [**Slam Rockwell**](https://github.com/SlamRockwell)
-- **Rodney Baker**
+- [**Rodney Baker**](https://github.com/RodneyBaker)
 
 ## ☕ Supporters
 *Your name here.*
