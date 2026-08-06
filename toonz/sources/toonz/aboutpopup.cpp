@@ -121,7 +121,8 @@ AboutPopup::AboutPopup(QWidget* parent)
   patronsLabel->setAlignment(Qt::AlignHCenter);
   mainLayout->addWidget(patronsLabel);
 
-  QLabel* patronNames = new QLabel(tr("Slam Rockwell"), this);
+  QLabel* patronNames =
+      new QLabel(tr("Slam Rockwell, Rodney Baker"), this);
   patronNames->setAlignment(Qt::AlignHCenter);
   patronNames->setWordWrap(true);
   {
