@@ -1,5 +1,9 @@
 
 #include "mainwindow.h"
+#include "sceneviewer.h"
+#include "ext/plasticvisualsettings.h"
+
+extern ToggleCommandHandler showMeshToggle;
 #include "startuppopup.h"
 
 // Tnz6 includes
@@ -76,6 +80,7 @@ TEnv::IntVar FieldGuideToggleAction("FieldGuideToggleAction", 0);
 TEnv::IntVar ViewBBoxToggleAction("ViewBBoxToggleAction1", 1);
 TEnv::IntVar EditInPlaceToggleAction("EditInPlaceToggleAction", 0);
 TEnv::IntVar MainAudioToggleAction("MainAudioToggleAction", 1);
+TEnv::IntVar ShowMeshToggleAction("ShowMeshToggleAction", 1);
 TEnv::IntVar RasterizePliToggleAction("RasterizePliToggleAction", 0);
 TEnv::IntVar SafeAreaToggleAction("SafeAreaToggleAction", 0);
 TEnv::IntVar ViewColorcardToggleAction("ViewColorcardToggleAction", 1);
@@ -1730,6 +1735,8 @@ void MainWindow::onMenuCheckboxChanged() {
     EditInPlaceToggleAction = isChecked;
   else if (cm->getAction(MI_ToggleMainAudio) == action)
     MainAudioToggleAction = isChecked;
+  else if (cm->getAction(MI_ZtoryShowMesh) == action)
+    ShowMeshToggleAction = isChecked;
   else if (cm->getAction(MI_ViewBBox) == action)
     ViewBBoxToggleAction = isChecked;
   else if (cm->getAction(MI_ShowSymmetryGuide) == action)
@@ -2640,6 +2647,17 @@ void MainWindow::defineActions() {
   createToggle(MI_ToggleMainAudio, QT_TR_NOOP("&Toggle Main Audio"), "",
                MainAudioToggleAction ? 1 : 0, MenuXsheetCommandType,
                "ztoryc_listen_audio");
+  createToggle(MI_ZtoryShowMesh, QT_TR_NOOP("Show &Mesh"), "",
+               ShowMeshToggleAction ? 1 : 0, MenuXsheetCommandType,
+               "ztoryc_show_mesh");
+  // Allineamento all'avvio. La voce di menu nasce dal valore salvato, ma il
+  // gestore del toggle e' un globale costruito con un valore fisso: senza
+  // questa riga i due partono discordi e l'interruttore risulta INVERTITO
+  // (spunta accesa = mesh spenta). L'ordine di inizializzazione fra globali di
+  // unita' di compilazione diverse non e' garantito, quindi la sincronia va
+  // fatta qui, dove TEnv e' certamente gia' letto.
+  showMeshToggle.setStatus(ShowMeshToggleAction != 0);
+  PlasticVisualSettings::s_showMeshWireframe = (ShowMeshToggleAction != 0);
   createMenuXsheetAction(MI_SaveSubxsheetAs,
                          QT_TR_NOOP("&Save Sub-Scene As..."), "",
                          "sub_xsheet_saveas");

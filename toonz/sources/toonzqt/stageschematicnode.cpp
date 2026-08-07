@@ -1144,7 +1144,13 @@ void StageSchematicNodeDock::onModifyHandle(int increase) {
   if (handle[0] == 'H' && handle.length() > 1)
     index = -(std::stoi(handle.substr(1)));
   else
-    index = handle[0] - 'B';
+    // Ancoraggio ad 'A', come OpenToonz. Tahoma2D lo aveva spostato a 'B',
+    // mandando la A a indice -1 dove stanno gia' gli hook (H1 = -1): per uscire
+    // dalla collisione avevano schiacciato tutto il positivo su "B", perdendo
+    // anche C e D. Danno collaterale di un refactoring, non una scelta.
+    // NB: e' sola aritmetica del ciclo. La geometria non cambia -- getHandlePos
+    // continua a misurare da B, che resta lo zero degli scostamenti.
+    index = handle[0] - 'A';
   index += -increase;  //==1 ? -1 : 1;
 
   int min = (getNode()->getStageObject()->getId().isColumn())
@@ -1153,7 +1159,9 @@ void StageSchematicNodeDock::onModifyHandle(int increase) {
   index = tcrop(index, min, 25);
 
   if (index >= 0)
-    handle = "B";
+    // Le lettere delle bucature del foglio: A e' a sinistra di B, C/D/E a
+    // destra. Il default resta "B" (setHandle("B") alla creazione della porta).
+    handle = std::string(1, static_cast<char>('A' + index));
   else
     handle = "H" + std::to_string(-index);
 

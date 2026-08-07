@@ -94,6 +94,7 @@
 #include <QMainWindow>
 
 #include "sceneviewer.h"
+#include "ext/plasticvisualsettings.h"
 #include "toonzqt/selectioncommandids.h"
 #include "ztoryanimatic.h"
 
@@ -293,6 +294,12 @@ ToggleCommandHandler::ToggleCommandHandler(CommandId id, bool startStatus)
 
 void ToggleCommandHandler::execute() {
   m_status = !m_status;
+  if (std::string(m_id) == MI_ZtoryShowMesh) {
+    // Sorgente unica: il flag globale, che il viewer rilegge a ogni disegno e
+    // che il menu del Plastic tool scrive a sua volta.
+    PlasticVisualSettings::s_showMeshWireframe = m_status;
+    TApp::instance()->getCurrentScene()->notifySceneChanged();
+  }
   if (std::string(m_id) == MI_ToggleMainAudio) {
     // Mirror state to TXsheet so scrub() in libtoonzlib can check it
     // without depending on sceneviewer.h (cross-module constraint).
@@ -321,6 +328,7 @@ ToggleCommandHandler editInPlaceToggle(MI_ToggleEditInPlace, false);
 // matching the QAction's checked=true state. Initializing with true caused
 // the visible inversion bug: icon ON → audio OFF and vice versa.
 ToggleCommandHandler mainAudioToggle(MI_ToggleMainAudio, false);
+ToggleCommandHandler showMeshToggle(MI_ZtoryShowMesh, true);
 ToggleCommandHandler fieldGuideToggle(MI_FieldGuide, false);
 ToggleCommandHandler safeAreaToggle(MI_SafeArea, false);
 ToggleCommandHandler rasterizePliToggle(MI_RasterizePli, false);
@@ -2302,6 +2310,13 @@ void SceneViewer::paintGL() {
 //-----------------------------------------------------------------------------
 
 void SceneViewer::drawScene() {
+  // Visibilita' della mesh: si rilegge dal flag globale a ogni disegno, cosi'
+  // vale anche quando il Plastic tool non e' attivo. Prima l'impostazione
+  // arrivava solo da quel tool, quindi era irraggiungibile altrove e si
+  // perdeva al riavvio.
+  m_visualSettings.m_plasticVisualSettings.m_drawMeshesWireframe =
+      PlasticVisualSettings::s_showMeshWireframe;
+
   TApp *app         = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   // Use dedicated frame handle when set (animatic viewer), else global

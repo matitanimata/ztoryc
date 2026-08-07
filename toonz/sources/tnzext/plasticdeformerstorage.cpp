@@ -19,6 +19,12 @@
 #include <QMutexLocker>
 
 #include "ext/plasticdeformerstorage.h"
+#include "ext/plasticvisualsettings.h"
+
+// Flag globale di visibilita' della mesh. DEVE stare a livello di file: la
+// prima stesura era finita dentro il namespace anonimo qui sotto, quindi con
+// collegamento interno, e il link da tnztools falliva.
+bool PlasticVisualSettings::s_showMeshWireframe = true;
 
 //***********************************************************************************************
 //    Storage multi-index map  definition

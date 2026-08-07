@@ -2677,6 +2677,9 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
 
 void PlasticTool::onShowMeshToggled(bool on) {
   m_pvs.m_drawMeshesWireframe = on;
+  // Stessa impostazione del comando Show Mesh: una sorgente sola, altrimenti
+  // le due si contraddicono a ogni ridisegno.
+  PlasticVisualSettings::s_showMeshWireframe = on;
   invalidate();
 }
 

@@ -823,6 +823,7 @@
 		<file>icons/dark/ztoryc/ztoryc_keys_follow.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_light_arrow.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_listen_audio.svg</file>
+		<file>icons/dark/ztoryc/ztoryc_show_mesh.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_snap.svg</file>
 		<file>icons/dark/ztoryc/ztoryc_snap_on.svg</file>
 	</qresource>

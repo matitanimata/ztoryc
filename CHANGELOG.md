@@ -1,3 +1,110 @@
+## [2026-08-05] — I DMG che non c'erano, il merge 1.6.2, e mezza giornata a cercare nel codice un difetto che era nella scena
+
+### Fixed — i DMG macOS mancanti dalla 0.12.0 (`52ff4c16e`)
+Letto dal log della run, non dedotto: `make` di libgphoto2 si ferma su `ax203.la`
+con «Undefined symbols: `_libintl_dgettext`», identico su ARM64 e x86_64.
+- `camlibs/Makefile.am` del fork linka ogni camlib solo contro `libgphoto2.la` e
+  `libgphoto2_port.la`, **mai contro `$(INTLLIBS)`** che invece
+  `libgphoto2/Makefile.am` aggiunge. Su glibc non si vede (`dgettext` sta nella
+  libc); su macOS il `libintl.h` di Homebrew lo riscrive in `libintl_dgettext`.
+- **Le intestazioni pubbliche si installano in un SUBDIR successivo a `camlibs`**:
+  ecco perche' il sintomo era `'gphoto2/gphoto2.h' file not found`, dieci minuti
+  dopo e lontano dalla causa.
+- Lo script **non aveva `set -e`**: dopo il `make` fallito partiva comunque
+  `sudo make install` e il passo tornava zero. Il difetto c'era da mesi,
+  mascherato dalla cache di Actions che si rinnovava a ogni rilascio; la 0.12.0
+  e' arrivata otto giorni dopo la precedente, la cache era scaduta e lo script e'
+  stato eseguito davvero per la prima volta.
+- Fix: `--disable-nls` (i18n.h rende identita' le chiamate gettext), `set -euo
+  pipefail`, controllo dell'header dopo l'install, clone idempotente.
+  **`WITH_GPHOTO2` resta ON.** Verificato: entrambi i DMG sulla release.
+
+### Changed — nomi degli asset con la piattaforma per prima (`d9dc1dd99`)
+Sulla v0.12.0 i due pacchetti Windows finivano ai due lati di quelli Linux.
+**GitHub ordina gli asset alfabeticamente e non offre ordinamento manuale** —
+verificato sui dati (i DMG caricati per ultimi comparivano per primi). Quindi il
+nome E' l'ordine: `Ztoryc-<ver>-{linux,osx,win}-*`. Linux e Windows non avevano
+la versione nel nome e ora la leggono da `ZtorycVersion.cmake`. Validato su tutte
+e tre le piattaforme. Gli asset della 0.12.0 non sono stati rinominati (scelta di
+Franco: niente link rotti).
+
+### Merged — Tahoma2D 1.6.2 (`0a430ad42`, branch `merge/upstream-1.6.2`)
+61 commit, 249 file, +6689/-3828. Ventuno conflitti, 38 hunk. **Compila a freddo,
+ninja rc=0, NON ancora collaudato dentro l'app.** Non portato su master.
+Risolti quasi tutti tenendo la nostra versione; tre eccezioni e una fusione:
+- `xshcolumnviewer.cpp`: **obbligatoriamente la loro** — il corpo che usa
+  `shiftLeft`/`shiftRight` era gia' entrato dall'auto-merge e le dichiarazioni
+  stavano solo nel loro lato. Tenendo la nostra non compilava.
+- `filebrowsermodel.cpp`: la loro. Upstream ha ristrutturato la funzione e quella
+  struttura era gia' entrata: il nostro lato era un doppione che avrebbe
+  ridichiarato `repositories`. In piu' aggiunge il nodo Scene Folder.
+- `stageobjectutil.cpp` e `functionselection.cpp`: presa la loro **guardia null**,
+  tenuta la NOSTRA correzione al centro (`6876cf4e5`). Le due sono concorrenti
+  sullo stesso difetto: la loro tocca un solo sito e non copre il percorso del
+  toggle di chiave (`RemoveKeyframeUndo::redo()`), la nostra ne copre nove.
+- `preferencespopup.cpp`: fusione a mano — l'import ora cerca lo stuff come
+  `ztorycstuff` e `tahomastuff`, sia alla radice sia in `Contents/Resources`.
+- `tiio_tzl.cpp` sembrava il peggiore (conflitto su 4969 righe) ed era il piu'
+  banale: **upstream ha il file in CRLF e noi in LF**, quindi ogni riga risulta
+  diversa. La loro unica modifica reale era un refuso in un commento.
+
+### Added — toggle «Show Mesh» globale e persistente
+Il flag `m_drawMeshesWireframe` viveva dentro le impostazioni del Plastic tool e
+finiva nel viewer solo mentre quel tool era attivo: irraggiungibile altrove, e
+perso al riavvio (stava in `viewer->visualSettings()`, per-viewer e mai salvato).
+Ora c'e' **una sorgente unica** — `PlasticVisualSettings::s_showMeshWireframe`,
+statico in `include/ext` cosi' lo vedono sia tnztools sia toonz — persistita con
+`TEnv` e riletta dal viewer a ogni disegno. Comando `MI_ZtoryShowMesh` (menu
+Xsheet, aggiungibile alla Quick Toolbar), icona `ztoryc_show_mesh`. Il menu del
+Plastic tool scrive lo stesso flag: due viste, un valore.
+> Trappola pagata al primo link: la variabile globale era finita **dentro il
+> namespace anonimo** di `plasticdeformerstorage.cpp` — collegamento interno,
+> invisibile da tnztools. Un simbolo che attraversa un confine di modulo va
+> esportato **e** deve stare a livello di file.
+
+### Notes — la caccia al render plastic: la causa era nella SCENA
+Segnalato da Franco: renderizzando `sh110` spariscono pezzi di personaggio e
+alcune parti sembrano spostate. Viewer corretto, render no. **Mezza giornata di
+indagine nel codice, e il codice non c'entrava**: reimportare la scena in una
+nuova come sotto-scena ha ricostruito tutto e i pezzi sono tornati.
+
+**Nove ipotesi cadute, tutte su misure e non su ripensamenti** — vale la pena
+averle scritte, per non rifarle:
+1. chiave di render/cache — smentita: 337 alias distinti, **zero** collisioni;
+2. clustering di fotogrammi — i pezzi mancanti erano di un solo personaggio;
+3. concorrenza fra task di render — gia' a CPU singola;
+4. corsa in `PlasticDeformerStorage` — e' protetto da mutex;
+5. sfratto delle texture dalla QCache — con tile Small identico, e la differenza
+   fra tile grandi e piccoli non e' netta;
+6. RAM/scena pesante — **artefatti identici fra render diversi**, quindi
+   deterministico: la pressione di memoria non si ripete al fotogramma;
+7. stacking order (commit `a9263e0a2`) — le facce spariscono, non finiscono
+   dietro; e la 0.11.0, che quel codice non ce l'ha, falliva identica;
+8. pin/IK — spegnendoli il difetto resta;
+9. ramo a 64 bit di `doCompute` — il formato di output era a 8 bit.
+
+**La misura che ha chiuso la caccia, ed e' la lezione**: salvare su PNG la
+**texture in ingresso** alla fx. Dal main arrivava un ritaglio 174x131 con
+**quattro zampette e nient'altro**; da dentro la sotto-scena, stesso personaggio
+e stesso frame, 1114x833 con il cane intero. Il plastic disegnava fedelmente cio'
+che riceveva. **Andava fatta per prima, non per nona.**
+
+Sospetto rimasto, da verificare: il **controller** (l'affine «sopra» il risultato
+deformato, `getSquashControllerAffine`) misurato una volta a
+`[1,0,462.3,0,1,-2.17]`, cioe' una traslazione. Franco: «se lo uso per
+riposizionare un elemento funziona nel viewer ma non nel render».
+
+### Upstream candidates
+Due difetti veri trovati strada facendo, **entrambi di Tahoma2D**, annotati in
+`UPSTREAM_PR_CANDIDATES.md` e **non** applicati (nessuno dei due e' il difetto di
+oggi, e vanno collaudati con calma):
+- `PlasticDeformerFx::getAlias` ignora `m_texPlacement`, la cella di mesh e il
+  dpi: frame diversi possono finire nello stesso `RenderTask`;
+- la texture caricata a ogni tile non viene mai scaricata (`unloadTexture`
+  commentato con un punto interrogativo).
+Piu' quello trovato leggendo i conflitti del merge: `setCenter()` che riceve il
+centro **grezzo** e fa derivare il pivot quando l'handle non e' `B`.
+
 ## [2026-08-04] — Tre crash, quindici curve, e due Tahoma puliti da cui guardare
 
 ### Fixed — il crash dell'Explode, per davvero (`80097adef`)

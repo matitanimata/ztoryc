@@ -452,39 +452,260 @@ nella sub-scene corretta.
 
 ## Priority Order
 
-### 🚨 BLOCCANTE — la build macOS non produce piu' i DMG (2026-08-05)
+### 🔴 MIGLIORATO MA NON RISOLTO — render plastic e configurazione della build (2026-08-07)
 
-**La 0.12.0 e' uscita senza DMG.** Windows e Linux a posto (6 asset), macOS
-fallita su ENTRAMBE le architetture:
+Due giorni di caccia. **Non era la scena, non era il codice, non era Qt, non era
+la RAM, non era l'ottimizzazione**: la nostra build locale non e' mai stata
+configurata come quella che produce i rilasci. Il pacchetto 0.12 scaricato dal
+repo renderizzava bene sulla stessa macchina; la nostra no; il merge 1.6.2 (codice
+piu' recente) sbagliava uguale.
+
+**Differenze trovate** fra `ci-scripts/osx/tahoma-build.sh` e la nostra CMakeCache:
+| | CI | nostra (rotta) |
+|---|---|---|
+| `QT_PATH` | `/opt/homebrew/opt/qt@5/lib/` | **`~/Qt5.9.2/5.9.2/clang_64/lib`** (Qt del 2017) |
+| `TIFF_INCLUDE_DIR` | `thirdparty/tiff-4.2.0/libtiff/` | libtiff44 di Homebrew |
+| `CMAKE_OSX_DEPLOYMENT_TARGET` | `12.0` | vuoto |
+| `WITH_SYSTEM_SUPERLU` | `ON` | non impostato |
+| `WITH_GPHOTO2` | `ON` | spento (libgphoto2 non installata) |
+| CMake | 3.31.6 (fissata dal workflow) | 4.x |
+
+Ricompilando con la configurazione della CI il render torna corretto **su scena
+nuova** (verificato da Franco). La cartella di build nella radice e' stata
+riconfigurata di conseguenza il 2026-08-07.
+
+⛔ **MA NON E\' RISOLTO.** Franco, stesso giorno: «su quel progetto e su **sh110**
+soprattutto continua a dare problemi». Quindi la configurazione della build era
+**una** causa, non **la** causa: spiega perche' il pacchetto CI rendeva bene dove
+la nostra build no, ma non spiega sh110. Restano in piedi le differenze fra
+scene nuove e scene di quel progetto — ed e\' li\' che va guardato, NON di nuovo
+nella configurazione.
+**Dato correlato dello stesso giorno**: su uno shot precedente all\'IK il pin
+finisce sul vertice sbagliato (voce qui sotto). Due sintomi diversi che
+compaiono entrambi su materiale VECCHIO e non su scene nuove: vale la pena
+chiedersi se abbiano la stessa radice, cioe\' una migrazione dati incompleta.
+
+⚠️ **DA FARE perche' non si ripresenti**: `build_and_deploy.sh` non configura, usa
+la cache esistente. Se qualcuno ricrea la build dir a mano torna il problema.
+Andrebbe fatto configurare come la CI, o almeno avvisare quando la cache diverge.
+⚠️ Non sappiamo ancora **quale** delle differenze fosse la causa: si trova
+riaccendendone una per volta. Il sospetto e' `QT_PATH`, che finisce in
+`CMAKE_PREFIX_PATH` e mescolava header di Qt 5.9.2 con librerie 5.15.18.
+
+**Lezione**: quando lo stesso sorgente si comporta diversamente fra il pacchetto
+rilasciato e la build locale, confrontare **tutta** la configurazione di build
+PRIMA di cercare nel codice. Vedi [[feedback_instrument_the_fx_input_first]].
+
+### 🔴 APERTO — su scene vecchie il pin va sul vertice sbagliato (2026-08-07)
+
+Segnalato da Franco subito dopo il fix sopra: aprendo uno shot **precedente
+all'introduzione della cinematica inversa**, mettendo il pin su un vertice lo
+mette su un altro. Su scena nuova funziona bene.
+Ipotesi da verificare per prima: e' un problema di **migrazione dati**. Il canale
+`PIN` e' stato aggiunto a `SkVD` dopo, e se l'enum dei canali e' usato come
+indice nella serializzazione, i file vecchi mappano i valori sugli slot
+sbagliati. Guardare l'ordine di `SkVD::Channel` e come `PlasticSkeletonDeformation`
+legge i vertici dai `.tnz` privi del canale PIN.
+
+
+### 🔧 APERTO — richieste di Franco del 2026-08-05 (fine sessione)
+
+**✅ FATTO — bucature (peg) ripristinate nello stage schematic.**
+Era gia' tutto annotato piu' in basso in questo stesso file («ripristinare le
+bucature (peg) nello stage schematic»): analisi completa e fix di due righe.
+Applicato in `toonzqt/stageschematicnode.cpp`: ancoraggio del ciclo riportato ad
+`'A'` come OpenToonz, e sugli indici positivi la porta mostra di nuovo **la
+lettera** invece di sempre `"B"`. Default `"B"` invariato, geometria invariata.
+Compila. **Da collaudare nello schematic**: la sequenza attesa e'
+`… H2 H1 A [B] C D E …`.
+⚠️ **Mio errore da non ripetere**: avevo cercato «A.B.C» nell'**header di
+colonna** e concluso che non fosse annotato niente. Era annotato, e riguardava lo
+**stage schematic**. Prima di dire «non c'e' nulla per iscritto», cercare il
+concetto (bucature/handle/schematic) e non solo le parole dell'ultimo messaggio.
+
+**✅ FATTO — toggle «Show Mesh» globale e persistente.** Comando
+`MI_ZtoryShowMesh` nel menu Xsheet, aggiungibile alla Quick Toolbar, icona
+`ztoryc_show_mesh` (maglia di triangoli con l'occhio della preview sopra, idea di
+Franco). Dettagli nel CHANGELOG. **Non committato: da collaudare.** Se il default
+va invertito (mesh nascosta all'avvio) e' una riga.
+
+### 🔴 APERTO — il controller funziona nel viewer e non nel render
+
+Franco, 2026-08-05: «forse e' il nostro controller (quella specie di animate tool
+legato allo skeleton) che se lo uso per riposizionare un elemento funziona nel
+viewer ma non nel render». **Primo sospetto da verificare** quando si riprende il
+render plastico.
+Appiglio misurato: `getSquashControllerAffine` in un caso valeva
+`[1, 0, 462.308, 0, 1, -2.17253]`, cioe' una **traslazione di 462 unita'**, non
+l'identita'. Il codice lo descrive come «un affine SOPRA il risultato deformato»,
+e viene composto in **due punti diversi** nelle due strade: `stagevisitor.cpp`
+(viewer) fa `... * worldMeshToMeshAff * ctrl * meshToWorldMeshAff`,
+`plasticdeformerfx.cpp` (render) fa `... * meshToWorldMeshAff * worldMeshToMeshAff
+* squashCtrl * meshToWorldMeshAff`. **Verifica diretta**: stampare le due matrici
+finali sullo stesso frame e confrontarle.
+
+### 🔴 APERTO — crash su «Salva sotto-scena come scena», mesh non trovate
+
+Segnalato il 2026-08-05, **mai indagato** (Franco mi ha fermato mentre cercavo il
+log, e poi la giornata e' andata altrove). Salvando una sotto-scena come scena
+non trova le mesh, e poi crasha. Per la regola «i crash vengono prima di tutto»
+questo viene prima delle feature. Il crash handler scrive in
+`QStandardPaths::AppLocalDataLocation + "/crash"`.
+Possibile parentela con i percorsi delle mesh: nei log del render convivono due
+radici diverse, `+extras/sh090/sub_2.0001.mesh` e
+`+scenes/sh110/LIB_ZOMBIE01/extras/...`.
+
+### 🟠 APERTO — doppio render occasionale
+
+Franco: «succede ogni tanto». Parte due volte lo stesso lavoro. Da capire se
+succede lanciando dal Task panel o dal menu — e se due processi scrivono lo
+stesso file di output, e' un difetto a se'. Non e' la causa degli artefatti di
+oggi (troppo ripetibili per una corsa fra processi).
+
+### 🟠 APERTO — uno zombie si smonta in alcuni frame
+
+Dopo aver reimportato la scena e' rimasto **un solo** caso: un personaggio i cui
+pezzi appaiono staccati in un momento. Ipotesi di Franco: il **pin**, che li' sta
+su piu' livelli. Ora e' isolato a un caso solo, quindi trattabile.
+
+### 🟢 PRONTO, DA COLLAUDARE — merge Tahoma2D 1.6.2
+
+Branch `merge/upstream-1.6.2` nel worktree
+`/Volumes/ZioSam/tahoma2d-workspace/merge-1.6.2`, commit `0a430ad42`. 61 commit,
+249 file. **Compila a freddo (ninja rc=0), mai aperto nell'app.** Non portato su
+master di proposito: master resta releasable.
+Zone da provare per prime: **xsheet** (`xshcolumnviewer` ha preso codice loro),
+**file browser** (nodo Scene Folder nuovo), **preferenze**, e la **zona plastica**
+(`plasticskeletondeformation.cpp` toccato da entrambi).
+Quando e' collaudato: `git merge` su master senza conflitti, il lavoro e' gia'
+tutto risolto.
+
+
+### ✅ RISOLTO — i DMG macOS mancanti (2026-08-05)
+
+**La 0.12.0 e' completa**: `Ztoryc-0.12.0-portable-osx-silicon.dmg` (163 MB) e
+`Ztoryc-0.12.0-portable-osx-mactel.dmg` (186 MB) sono sulla release, insieme ai
+sei asset Windows/Linux gia' presenti. Run `30978752717`, entrambi i job verdi.
+
+**La causa non era la cache.** Nel log della run fallita (`30958746904`) c'e'
+scritto `Cache not found for input keys` — la cache era **scaduta**, e lo script
+e' stato eseguito davvero per la prima volta dopo mesi. E' fallito cosi', su
+ARM64 e su x86_64 allo stesso modo:
 ```
-gphotocam.h:7:10: fatal error: 'gphoto2/gphoto2.h' file not found
+Undefined symbols for architecture arm64:
+  "_libintl_dgettext", referenced from: _camera_summary in la-library.o
+make[3]: *** [ax203.la] Error 1
 ```
 
-**PERCHE' PROPRIO ORA — e non e' una regressione nostra.** Le cache di GitHub
-Actions scadono dopo **7 giorni** senza accessi. L'ultima release macOS e' del
-2026-07-27: otto giorni fa. Finche' si rilasciava spesso, la cache di
-`libgphoto2` si rinnovava da sola e il passo di build veniva **sempre saltato**.
-Scaduta la cache, per la prima volta dopo mesi `tahoma-buildlibgphoto2.sh` e'
-stato eseguito davvero — e quella strada e' rotta. Il difetto c'era gia', era
-mascherato.
+Tre cose impilate, commit `52ff4c16e`:
+1. `camlibs/Makefile.am` del fork tahoma2d linka ogni camlib solo contro
+   `libgphoto2.la` e `libgphoto2_port.la`, **mai contro `$(INTLLIBS)`** che
+   invece `libgphoto2/Makefile.am` aggiunge (riga 70). Su glibc non si vede,
+   `dgettext` sta nella libc; su macOS il `libintl.h` di Homebrew — installato
+   da `tahoma-install.sh`, ultima riga — lo riscrive in `libintl_dgettext` e il
+   simbolo non c'e' sulla riga di link dei camlib.
+2. **Le intestazioni pubbliche si installano in un SUBDIR che viene DOPO
+   `camlibs`**: ecco perche' il sintomo era `gphoto2/gphoto2.h` introvabile,
+   dieci minuti dopo, in un punto che con gettext non c'entra niente.
+3. Lo script **non aveva `set -e`**: dopo il `make` fallito partiva comunque
+   `sudo make install` e il passo tornava zero. Per questo il difetto e' potuto
+   restare li' per mesi, mascherato da una cache che si rinnovava a ogni
+   rilascio.
 
-**Gia' fatto** (commit `8a28b46ee`): il passo non e' piu' condizionato su
-`cache-hit` ma controlla l'header vero e ricompila se manca. **Il controllo
-funziona** — nel log si legge `libgphoto2 headers missing — building` — ma dopo
-la compilazione l'header ancora non c'e'.
-⚠️ Il messaggio di quel commit dice «cache ripristinata senza gli header»: e'
-**impreciso**, molto probabilmente la cache era semplicemente **scaduta**.
+Fix: `--disable-nls` (con NLS spento `i18n.h` rende identita' tutte le chiamate
+gettext e libintl non viene piu' referenziato — si perdono solo le traduzioni
+interne di libgphoto2, che Ztoryc non mostra), `set -euo pipefail`, controllo
+dell'header dopo l'install, e clone idempotente perche' `thirdparty/libgphoto2_src`
+sta nella cache e una entry parziale faceva morire `git clone`.
+**`WITH_GPHOTO2` resta ON**: la cattura da fotocamera non e' stata toccata.
 
-**DA QUI SI RIPARTE**: `ci-scripts/osx/tahoma-buildlibgphoto2.sh` — dove
-installa, e se quel prefisso e' nell'include path del compilatore. Due sospetti:
-installa in un prefisso diverso da `BREW_PREFIX`, oppure **fallisce senza far
-fallire il passo** (nessun `set -e`, o un errore ingoiato).
-⚠️ **NON spegnere `WITH_GPHOTO2`**: Franco usa la cattura da fotocamera per lo
-stop-motion **e** per acquisire i thumbnail. La funzione deve restare.
+⚠️ **Candidato PR upstream, gia' annotato**: `ci-scripts/osx/tahoma-buildlibgphoto2.sh`
+e' preso da Tahoma2D e a monte ha lo stesso difetto — nessun `set -e`, nessun
+`--disable-nls`. La loro CI macOS ci sbattera' contro appena la cache scade.
 
-**Come rilanciare**: `gh workflow run macOS_build.yml -f publish_release=true -f release_tag=v0.12.0`
-La release v0.12.0 esiste gia' con le note applicate: i DMG si aggiungono a
-quella, non serve rifarla.
+### 🔐 DA FARE — la password Kitsu e' salvata IN CHIARO
+
+Trovato il 2026-08-04 leggendo le preferenze per capire perche' l'integrazione
+non compariva. In `~/Library/Preferences/com.ztoryc.Ztoryc.plist`:
+```
+Ztoryc.Kitsu.BaseUrl / Email / Password / PasswordSaved
+```
+La password e' **testo in chiaro**, leggibile con un `defaults read`. Il codice
+la scrive con `QSettings` (`kitsuclient.cpp`, chiavi `Ztoryc/Kitsu/...`).
+
+Su una macchina personale con un Kitsu in docker e' poco grave; diventa serio il
+giorno che si punta a un **Kitsu remoto di produzione**, perche' a quel punto e'
+la credenziale di un servizio vero, non di un container locale.
+
+**Fix**: usare il **Portachiavi** di macOS invece del plist (e l'equivalente su
+Windows/Linux). Contenuto: e' un solo punto di lettura e uno di scrittura.
+⚠️ Franco e' stato avvisato che la password gli e' comparsa nell'output di un
+comando durante la diagnosi: se la riusa altrove, valutare di cambiarla.
+
+### 🎥 VALUTATO E RIMANDATO — AV1 e l'ffmpeg del 2020
+
+Franco ha chiesto (2026-08-04) se dalle specifiche AV1 di aomedia esca qualcosa
+di utile. **Dalla pagina no**: sono definizioni di codec (bitstream, binding
+ISOBMFF, payload RTP, HDR10+), roba per chi scrive encoder.
+
+L'unica idea sensata sarebbe **AV1 come formato di uscita** per gli animatic
+(30-50% piu' leggeri a parita' di qualita', royalty-free). Ma:
+**l'ffmpeg che distribuiamo e' del 2020** (`N-99076`, copyright fino al 2020) e
+**non ha alcun encoder AV1** — verificato con `ffmpeg -encoders`, l'unica
+corrispondenza e' `wmav1`, che e' audio.
+
+Quindi il costo non e' nel nostro codice (una voce in piu' nella lista formati)
+ma nel **sostituire il binario ffmpeg in tre bundle**, e quel binario legge e
+scrive TUTTI i video, importazione compresa.
+
+**Decisione: non ora.** Se un giorno si aggiorna ffmpeg, la modifica che si
+ripaga non e' AV1 ma [[project_video_import_slow]] — l'importazione che estrae
+tutti i frame su disco nel thread dell'interfaccia. Quella fa perdere tempo a
+ogni import; AV1 farebbe risparmiare megabyte una volta a consegna. Aggiornando
+ffmpeg, AV1 arriva quasi gratis nello stesso giro.
+
+### 🔧 DA FARE — ripristinare le bucature (peg) nello stage schematic
+
+**Due righe, analisi gia' completa.** Nei nodi dello schematic si puo' ciclare
+solo fra **B** e gli hook numerici: le altre bucature — **A, C, D…** — sono
+sparite. Franco le vuole indietro.
+
+**Cosa sono** (confermato da Franco e dal codice): sono le **bucature del foglio
+di animazione**. `B` e' quella centrale, il default; `A` e' una bucatura alla sua
+sinistra, `C`, `D`… alla sua destra. In `TStageObject::getHandlePos` sono
+scostamenti puramente orizzontali, `unit * (handle[0] - 'B')` con `unit = 8`.
+Le **minuscole** sono gli stessi punti a **mezzo passo** (`0.5 * unit`).
+
+**Perche' sono sparite** — `toonzqt/stageschematicnode.cpp`, ciclo della porta:
+
+| | OpenToonz | Tahoma2D (e quindi noi) |
+|---|---|---|
+| ancoraggio | `index = handle[0] - 'A'` | `index = handle[0] - 'B'` |
+| indice positivo | `handle = 'A' + index` → **la lettera** | `handle = "B"` → **sempre B** |
+
+Spostando l'ancoraggio da A a B, la A e' finita a indice −1 — dove stanno gia'
+gli hook (`H1` = −1) — e per uscire dalla collisione che si erano creati hanno
+schiacciato **tutto** il positivo su `B`, perdendo anche C e D. E' un danno
+collaterale di un refactoring, non una scelta.
+
+**Il fix**: tornare allo schema di OpenToonz, quelle due righe. Con l'ancoraggio
+ad `'A'` le lettere stanno tutte negli indici positivi e non collidono con gli
+hook, che sono negativi. Sequenza risultante, verificata da Franco nell'app:
+```
+… H2  H1  A  [B]  C  D  E …
+              ↑ default, invariato
+```
+⚠️ **Il default resta "B"** (`setHandle("B")` alla creazione della porta): non
+si tocca. L'ancoraggio ad `'A'` e' **solo aritmetica interna** del ciclo.
+⚠️ **La geometria non cambia**: `getHandlePos` continua a misurare da B, che
+resta lo zero degli scostamenti. Indice del ciclo e offset geometrico sono due
+cose separate.
+⚠️ `tcrop(index, min, 25)` va gia' bene: `min` e' negativo solo per le colonne
+(gli hook), zero per i pegbar.
+
+**E' anche un candidato PR upstream**: Tahoma ha perso le lettere per un
+incidente di refactoring, e OpenToonz accanto mostra il comportamento originale
+— il confronto e' la dimostrazione.
 
 ### 🔴 BUG — sussulto fra due chiavi sui vertici plastici (2026-08-04)
 
