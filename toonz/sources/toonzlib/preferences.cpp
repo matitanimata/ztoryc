@@ -687,6 +687,12 @@ void Preferences::definePreferenceItems() {
   define(expandFunctionHeader, "expandFunctionHeader", QMetaType::Bool, false);
   define(showColumnNumbers, "showColumnNumbers", QMetaType::Bool, false);
   define(showColumnParents, "showColumnParents", QMetaType::Bool, false);
+  // Ztoryc: upstream 1.6.2 lo porta acceso, il che sostituisce i due
+  // interruttori di visibilita' della testa di colonna con uno solo, e
+  // all'attivazione RISCRIVE i flag di tutte le colonne (anche nelle
+  // sotto-scene) per allineare preview e camstand. Su progetti costruiti a
+  // sotto-scene e' un cambiamento invasivo e silenzioso: lo lasciamo spento,
+  // resta comunque attivabile dalle preferenze.
   define(unifyColumnVisibilityToggles, "unifyColumnVisibilityToggles",
          QMetaType::Bool, false);
   define(parentColorsInXsheetColumn, "parentColorsInXsheetColumn",

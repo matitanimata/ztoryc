@@ -2892,8 +2892,9 @@ class SetDrawingMarkCommand final : public MenuItemHandler {
 
 public:
   SetDrawingMarkCommand(int markId)
-      : MenuItemHandler(
-            ((std::string)MI_SetDrawingMark + std::to_string(markId)).c_str())
+      : MenuItemHandler(((std::string)MI_SetDrawingMark +
+                         (markId < 0 ? "None" : std::to_string(markId)))
+                            .c_str())
       , m_markId(markId) {}
 
   void execute() override {
@@ -2941,6 +2942,7 @@ public:
     TUndoManager::manager()->add(undo);
   }
 };
+SetDrawingMarkCommand DrawingMarkCommandNone(-1);
 SetDrawingMarkCommand DrawingMarkCommand0(0);
 SetDrawingMarkCommand DrawingMarkCommand1(1);
 SetDrawingMarkCommand DrawingMarkCommand2(2);
@@ -2961,8 +2963,9 @@ class SetCellMarkCommand final : public MenuItemHandler {
 
 public:
   SetCellMarkCommand(int markId)
-      : MenuItemHandler(
-            ((std::string)MI_SetCellMark + std::to_string(markId)).c_str())
+      : MenuItemHandler(((std::string)MI_SetCellMark +
+                         (markId < 0 ? "None" : std::to_string(markId)))
+                            .c_str())
       , m_markId(markId) {}
 
   void execute() override {
@@ -2979,6 +2982,7 @@ public:
     TUndoManager::manager()->add(undo);
   }
 };
+SetCellMarkCommand CellMarkCommandNone(-1);
 SetCellMarkCommand CellMarkCommand0(0);
 SetCellMarkCommand CellMarkCommand1(1);
 SetCellMarkCommand CellMarkCommand2(2);
