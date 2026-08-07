@@ -32,11 +32,23 @@ fi
 
 # Bundle prodotto da Ninja: toonz/Ztoryc.app (root layout) o toonz/build/toonz/Ztoryc.app (legacy).
 # I worktree di feature usano un bundle rinominato (es. Ztoryc-SP.app per
-# feature/superplastic) per non confonderlo con la build master: se c'e', ha la
-# precedenza. Senza questo il deploy scriveva su Ztoryc.app mentre si lanciava
-# Ztoryc-SP.app, cioe' si testava un binario vecchio senza accorgersene.
-if [[ -d "$WORKSPACE/toonz/Ztoryc-SP.app" ]]; then
-  APP="$WORKSPACE/toonz/Ztoryc-SP.app"
+# feature/superplastic, Ztoryc-162.app per merge/upstream-1.6.2) per non
+# confonderlo con la build master: se c'e', ha la precedenza. Senza questo il
+# deploy scriveva su Ztoryc.app mentre si lanciava Ztoryc-SP.app, cioe' si
+# testava un binario vecchio senza accorgersene.
+# Il match e' su Ztoryc-*.app e non su un nome fisso: chi apre un worktree nuovo
+# gli da' un nome qualsiasi e questo lo trova da solo. Se ce n'e' piu' d'uno la
+# scelta sarebbe arbitraria, quindi in quel caso ci si ferma invece di indovinare.
+setopt nullglob
+_candidates=("$WORKSPACE"/toonz/Ztoryc-*.app)
+unsetopt nullglob
+if (( ${#_candidates} > 1 )); then
+  echo "✗ Piu' di un bundle Ztoryc-*.app in $WORKSPACE/toonz — non so quale aggiornare:"
+  for c in $_candidates; do echo "    ${c:t}"; done
+  echo "  Lasciane uno solo."
+  exit 1
+elif (( ${#_candidates} == 1 )); then
+  APP="$_candidates[1]"
 elif [[ -d "$WORKSPACE/toonz/Ztoryc.app" ]]; then
   APP="$WORKSPACE/toonz/Ztoryc.app"
 else
@@ -44,6 +56,99 @@ else
 fi
 MACOS="$APP/Contents/MacOS"
 echo "→ Bundle di destinazione: $APP"
+
+# ---------------------------------------------------------------------------
+# Controllo di allineamento con la configurazione della CI.
+#
+# Questo script NON configura: usa la cache CMake che trova. Il 2026-08-07 sono
+# andati via due giorni a cercare nel codice un render sbagliato che dipendeva
+# dalla configurazione: la build dir locale era stata creata a mano con QT_PATH
+# su una Qt 5.9.2 del 2017 mentre le librerie erano le 5.15.18 di Homebrew, e
+# TIFF_INCLUDE_DIR sul libtiff di sistema invece che su thirdparty/. Il
+# pacchetto CI rendeva bene sulla stessa macchina, la nostra build no.
+# Chi ricrea la build dir a mano puo' rifare lo stesso danno in silenzio:
+# qui almeno lo si vede prima di compilare.
+#
+# Riferimento: ci-scripts/osx/tahoma-build.sh
+# Per saltare il controllo: export ZTORYC_SKIP_CONFIG_CHECK=1
+# ---------------------------------------------------------------------------
+check_cmake_config() {
+  local cache="$BUILD/CMakeCache.txt"
+  [[ -f "$cache" ]] || { echo "⚠ CMakeCache.txt non trovato in $BUILD — impossibile controllare la configurazione."; return; }
+
+  # Legge una variabile dalla cache ignorandone il tipo (PATH/BOOL/STRING/UNINITIALIZED).
+  cache_get() { sed -n "s|^$1:[^=]*=||p" "$cache" | head -1; }
+
+  local -a drift
+  local qt_expected="$(brew --prefix 2>/dev/null)/opt/qt@5/lib"
+  local tiff_expected="$WORKSPACE/thirdparty/tiff-4.2.0/libtiff"
+  local opencv_expected="$(brew --prefix 2>/dev/null)/lib/cmake/opencv4"
+
+  # QT_PATH e' il sospetto numero uno: finisce in CMAKE_PREFIX_PATH e puo'
+  # mescolare header di una Qt con le librerie di un'altra.
+  local qt_actual="$(cache_get QT_PATH)"
+  [[ "${qt_actual%/}" == "${qt_expected%/}" ]] || \
+    drift+=("QT_PATH: '$qt_actual'  (CI: '$qt_expected')")
+
+  local tiff_actual="$(cache_get TIFF_INCLUDE_DIR)"
+  [[ "${tiff_actual%/}" == "${tiff_expected%/}" ]] || \
+    drift+=("TIFF_INCLUDE_DIR: '$tiff_actual'  (CI: '$tiff_expected')")
+
+  local dep_actual="$(cache_get CMAKE_OSX_DEPLOYMENT_TARGET)"
+  [[ "$dep_actual" == "12.0" ]] || \
+    drift+=("CMAKE_OSX_DEPLOYMENT_TARGET: '$dep_actual'  (CI: '12.0')")
+
+  local superlu_actual="$(cache_get WITH_SYSTEM_SUPERLU)"
+  [[ "$superlu_actual" == "ON" ]] || \
+    drift+=("WITH_SYSTEM_SUPERLU: '$superlu_actual'  (CI: 'ON')")
+
+  local buildtype_actual="$(cache_get CMAKE_BUILD_TYPE)"
+  [[ "$buildtype_actual" == "RelWithDebInfo" ]] || \
+    drift+=("CMAKE_BUILD_TYPE: '$buildtype_actual'  (CI: 'RelWithDebInfo')")
+
+  # OpenCV_DIR: la cache memorizza il path risolto in Cellar, il confronto va
+  # fatto sul realpath o segnala una differenza che non esiste.
+  local opencv_actual="$(cache_get OpenCV_DIR)"
+  if [[ -n "$opencv_expected" && -d "$opencv_expected" ]]; then
+    local opencv_real="$(cd "$opencv_expected" 2>/dev/null && pwd -P)"
+    local opencv_actual_real="$(cd "$opencv_actual" 2>/dev/null && pwd -P)"
+    [[ "$opencv_actual_real" == "$opencv_real" ]] || \
+      drift+=("OpenCV_DIR: '$opencv_actual'  (CI: '$opencv_expected')")
+  fi
+
+  if (( ${#drift} )); then
+    echo ""
+    echo "⚠️⚠️⚠️  LA BUILD DIR NON E' CONFIGURATA COME QUELLA DEI RILASCI  ⚠️⚠️⚠️"
+    echo "    $BUILD/CMakeCache.txt diverge da ci-scripts/osx/tahoma-build.sh:"
+    for d in $drift; do echo "      • $d"; done
+    echo ""
+    echo "    Il binario che ne esce puo' comportarsi diversamente dal pacchetto"
+    echo "    pubblicato — e' gia' costato due giorni (vedi ANIMATIC_TASKS 2026-08-07)."
+    echo "    Per riallineare, dalla build dir:"
+    echo "      cmake $WORKSPACE/toonz/sources -G Ninja \\"
+    echo "        -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \\"
+    echo "        -DWITH_SYSTEM_SUPERLU=ON -DQT_PATH=$qt_expected \\"
+    echo "        -DOpenCV_DIR=$opencv_expected -DTIFF_INCLUDE_DIR=$tiff_expected"
+    echo ""
+  fi
+
+  # Differenze note e accettate: non sono allarmi, ma vanno ricordate perche'
+  # nel 2026-08-07 non si e' ancora stabilito QUALE differenza causasse il
+  # render sbagliato, e queste due restano in piedi.
+  local -a known
+  [[ "$(cache_get WITH_GPHOTO2)" == "ON" ]] || \
+    known+=("WITH_GPHOTO2 spento (la CI compila libgphoto2 dal sorgente, qui non c'e')")
+  local cmake_major="$(sed -n 's|^CMAKE_CACHE_MAJOR_VERSION:INTERNAL=||p' "$cache" | head -1)"
+  [[ "$cmake_major" == "3" ]] || \
+    known+=("CMake $cmake_major.x (il workflow fissa la 3.31.6)")
+  if (( ${#known} )); then
+    echo "ℹ Differenze note dalla CI (accettate): ${(j:; :)known}"
+  fi
+}
+
+if [[ "${ZTORYC_SKIP_CONFIG_CHECK:-0}" != "1" ]]; then
+  check_cmake_config
+fi
 
 if [ -n "$1" ]; then
   echo "→ Touch $1..."
@@ -163,11 +268,28 @@ fi
 # Infine firma il bundle completo (senza --deep per evitare re-firma ricorsiva)
 codesign --force --sign - --entitlements "$WORKSPACE/Ztoryc.entitlements" "$APP"
 
-# Ripristina ztorycstuff dopo la firma
-[[ -n "$ZTORY_STUFF_TMP" && -d "$ZTORY_STUFF_TMP" ]] && mv "$ZTORY_STUFF_TMP" "$APP/ztorycstuff"
+# Ripristina ztorycstuff dopo la firma.
+# ATTENZIONE al caso in cui l'app IN ESECUZIONE ha ricreato la cartella mentre
+# noi la tenevamo da parte: `mv sorgente destinazione` con destinazione gia'
+# esistente NON sostituisce, infila la sorgente DENTRO. Cosi' si erano formate
+# ztorycstuff/ztorycstuff_deploy_52369/ztorycstuff_deploy_44980/... annidate,
+# che poi facevano fallire la firma con «unsealed contents present in the
+# bundle root». In quel caso si fondono i contenuti invece di annidarli.
+if [[ -n "$ZTORY_STUFF_TMP" && -d "$ZTORY_STUFF_TMP" ]]; then
+  if [[ -d "$APP/ztorycstuff" ]]; then
+    rsync -a "$ZTORY_STUFF_TMP/" "$APP/ztorycstuff/" && rm -rf "$ZTORY_STUFF_TMP"
+  else
+    mv "$ZTORY_STUFF_TMP" "$APP/ztorycstuff"
+  fi
+fi
 
 echo "✓ Fatto."
-if ! pgrep -x Ztoryc > /dev/null 2>&1; then
+if [[ "${ZTORYC_NO_OPEN:-0}" == "1" ]]; then
+  # Serve a chi deve solo aggiornare il bundle senza rubare il momento in cui
+  # l'app viene lanciata (p.es. mentre Franco sta lavorando, o quando si vuole
+  # decidere a mano quale dei bundle aprire).
+  echo "→ Non apro l'app (ZTORYC_NO_OPEN=1). Bundle pronto: $APP"
+elif ! pgrep -x Ztoryc > /dev/null 2>&1; then
   echo "→ Apertura app..."
   open "$APP"
 else

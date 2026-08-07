@@ -120,6 +120,21 @@ ZtoryScriptView::ZtoryScriptView(QWidget *parent)
   // guard makes whichever runs second a harmless no-op.
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
           this, &ZtoryScriptView::onSceneSwitched);
+
+  // Allineamento all'apertura.  I due segnali qui sopra arrivano solo QUANDO
+  // qualcosa cambia: un pannello aperto DOPO che la scena e' gia' caricata —
+  // p.es. cambiando workflow e aprendo lo Script da un'altra room — non ne
+  // riceve nessuno, e restava vuoto pur essendoci gia' uno script importato.
+  // Se il modello e' gia' popolato basta rileggerlo; se invece nessuno lo ha
+  // ancora popolato (nessun pannello Script o Board aperto al caricamento),
+  // onSceneSwitched() lo legge dal .ztoryc della scena corrente.
+  // La guardia sull'isEmpty() e' necessaria: chiamare onSceneSwitched() a
+  // modello gia' pieno su una scena non salvata scriverebbe una stringa vuota,
+  // cancellando lo script anche negli altri pannelli aperti.
+  if (ZtoryModel::instance()->scriptFile().isEmpty())
+    onSceneSwitched();
+  else
+    reloadFromModel();
 }
 
 //-----------------------------------------------------------------------------
