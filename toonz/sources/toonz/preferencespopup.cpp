@@ -2583,12 +2583,12 @@ QGridLayout* PreferencesPopup::createImportPrefsLayout() {
 
 #ifdef MACOSX
   QLabel* pathLabel =
-      new QLabel(tr("Select the Tahoma2D application that you want to import "
-                    "preferences from"));
+      new QLabel(tr("Select the Ztoryc or Tahoma2D application that you want to "
+                    "import preferences from"));
 #else
   QLabel* pathLabel =
-      new QLabel(tr("Select the folder of the Tahoma2D application that you "
-                    "want to import preferences from"));
+      new QLabel(tr("Select the folder of the Ztoryc or Tahoma2D application that "
+                    "you want to import preferences from"));
 #endif
 
   lay->addWidget(pathLabel, 1, 1);
@@ -2726,11 +2726,12 @@ void PreferencesPopup::onImportPreferences() {
 void PreferencesPopup::onImport() {
   if (m_importPrefpath->getPath().isEmpty()) {
 #ifdef MACOSX
-    DVGui::error("Please select a Tahoma2D application and try again.");
+    DVGui::error(
+        "Please select a Ztoryc or Tahoma2D application and try again.");
 #else
     DVGui::error(
-        "Please select a folder containing a Tahoma2D application and try "
-        "again.");
+        "Please select a folder containing a Ztoryc or Tahoma2D application "
+        "and try again.");
 #endif
     return;
   }
@@ -2764,7 +2765,7 @@ void PreferencesPopup::onImport() {
 
   if (oldStuffPath == TEnv::getStuffDir()) {
     DVGui::error(
-        "Please choose a different Tahoma2D application and try again.");
+        "Please choose a different Ztoryc or Tahoma2D application and try again.");
     return;
   }
 
