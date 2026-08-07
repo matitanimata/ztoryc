@@ -1,3 +1,115 @@
+## [2026-08-08] — Il merge 1.6.2 entra in master, e una notte a escludere quindici cause senza trovarne una
+
+### Merged — Tahoma2D 1.6.2 su master (`1bfd1c3c1`)
+Il branch `merge/upstream-1.6.2` e' stato prima **riallineato a master**
+(`a1468a00b`, zero conflitti) e poi portato su master, di nuovo **senza un
+conflitto**: il grosso del lavoro era gia' stato pagato il 2026-08-05.
+Collaudato da Franco su tutti i punti a rischio — testa di colonna, apertura e
+salvataggio di MaggiolataZombie, zona plastica, preferenze, file browser,
+pannello Script. Tutto a posto.
+Punto di ritorno nel branch **`backup/pre-merge-162`** (`91efad9dd`): se emerge
+qualcosa, `git reset --hard backup/pre-merge-162` e si torna esattamente
+com'era.
+
+> ⚠️ La build dir del worktree `merge-1.6.2` era configurata **esattamente come
+> quella rotta del 2026-08-07** (Qt 5.9.2 del 2017, libtiff44, `Release`,
+> deployment target vuoto). Riconfigurata come la CI e ricompilata da zero.
+> Questo **invalida** un dato del 2026-08-07: «anche il merge 1.6.2 sbagliava
+> uguale» non era un secondo esperimento, era lo stesso esperimento con codice
+> diverso.
+
+### Fixed — l'interruttore unificato di visibilita' non parte piu' acceso (`20e967339`)
+Franco: «e' sparita l'icona della visibilita' in testa alla colonna». Non era il
+merge: upstream 1.6.2 introduce `unifyColumnVisibilityToggles` **con default
+`true`**, che sostituisce i due interruttori (occhio preview + camstand) con uno
+solo. Peggio del cosmetico: all'attivazione,
+`ColumnCmd::unifyColumnVisibilityToggles()` scorre tutte le colonne **sotto-scene
+comprese**, forza preview = camstand e marca la scena modificata — e spegnere
+la preferenza **non annulla** la riscrittura. Default portato a `false`; la voce
+resta in Preferenze → **Scene** (non «Xsheet»), fra `Show Column Parents` e
+`Show Column Parent's Color`.
+I due interruttori separati servono proprio a chi lavora in produzione: vedere
+in tavola cio' che non deve andare in render.
+
+### Fixed — il pannello Script si allinea al modello anche all'apertura (`e058a5d2b`)
+Aprendo uno Script da un'altra room, a scena gia' caricata, restava vuoto pur
+essendoci uno script importato. Il singleton c'era gia' (`ZtoryModel::scriptFile()`,
+persistito nel `.ztoryc`): mancava che il **costruttore** leggesse lo stato
+corrente. I due segnali a cui era collegato — `scriptFileChanged` e
+`sceneSwitched` — arrivano solo quando qualcosa *cambia*, e un pannello creato
+dopo il caricamento non ne riceve nessuno.
+Guardia necessaria: se il modello e' gia' pieno si rilegge e basta; solo se e'
+vuoto si va a leggere il `.ztoryc`. Su una scena non salvata quella lettura
+rende stringa vuota, e scriverla avrebbe **cancellato lo script anche negli
+altri pannelli aperti**.
+
+### Changed — `build_and_deploy.sh`, tre reti di sicurezza (`e058a5d2b`)
+- **Controllo della configurazione**: confronta la `CMakeCache.txt` con
+  `ci-scripts/osx/tahoma-build.sh` e si lamenta forte quando divergono, col
+  comando di riallineamento gia' scritto. Nasce dai due giorni persi il
+  2026-08-07 su una build dir configurata a mano. `WITH_GPHOTO2` spento e
+  CMake 4.x sono segnalati come differenze **note e accettate**, non allarmi.
+- **Bundle di destinazione** cercato come `Ztoryc-*.app` invece del solo
+  `Ztoryc-SP.app`: un worktree nuovo e' protetto da subito. Con piu' di un
+  candidato si ferma invece di indovinare.
+- **`ZTORYC_NO_OPEN=1`** per aggiornare il bundle senza lanciare l'app. Serviva:
+  due volte in una sera l'app e' partita da sola dopo che avevo detto il
+  contrario.
+- **`ztorycstuff` viene fuso** al ripristino invece che annidato. Se l'app in
+  esecuzione ricrea la cartella, `mv sorgente destinazione` la infila *dentro*:
+  si erano formate tre cartelle `ztorycstuff_deploy_*` annidate, che facevano
+  fallire la firma con «unsealed contents present in the bundle root».
+
+### Notes — render sbagliato su sh110: SOSPESO, quindici cause escluse
+Franco: «lasciamo perdere, vedremo con i prossimi progetti se risuccede».
+**Nessuna causa trovata.** Il valore della nottata e' l'elenco di cosa e'
+escluso **con misura** — dettaglio completo in `ANIMATIC_TASKS.md`, in cima al
+Priority Order:
+configurazione della build, il codice (e quindi il merge 1.6.2), cloud,
+ffmpeg e formato di uscita, multithreading, tiling, flag di visibilita' colonna,
+file mancanti, salti in `doCompute`, allocazione texture, istante di
+valutazione, valore del controller squash, mesh caricate,
+`addPlasticDeformerFx`, deformazione e stacking order (`process` contro
+`processOnce`: scarto **0.000** su 40 pezzi).
+
+**Il dato che regge tutto, ed e' di Franco:** *lo stesso identico binario
+scaricato dal repo prima rendeva bene e poi no*, con preview calda in entrambi i
+casi. Un binario non cambia da solo → il codice e' escluso per costruzione.
+
+**Due mie conclusioni annunciate e poi ritirate**, entrambe smontate da Franco:
+1. *«E' `DefLevelType` nelle preferenze»* — la bisezione scriveva in
+   `merge-1.6.2/stuff/...`, dove punta il `SystemVar.ini`, mentre l'app legge e
+   scrive in `Ztoryc-162.app/ztorycstuff/...`, **dentro il bundle**. Sei render
+   sullo stesso file inerte. Segnale ignorato: **in una bisezione valida deve
+   uscire almeno un «buono»**, e uscivano solo «cattivo».
+2. *«Le texture non sono ancora caricate»* — e' il normale comportamento a
+   quattro tessere del render: un pezzo che sta in un altro quadrante ha
+   legittimamente zero pixel. Franco l'ha demolita in una riga: la preview del
+   fotogramma la fa sempre prima del render.
+
+Trappole di lettura di quella scena, se si riprende: `+extras` =
+`scenes/$scenepath/extras`; le sequenze sono `nome..ext`; nei PSD il `#` separa
+il sotto-livello dal file; i bit di visibilita' colonna sono **invertiti**
+(bit acceso = nascosto, `txshcolumn.cpp:780` e `:828`).
+Prossima misura utile: confrontare il log di un render **buono** con uno
+**cattivo** dello stesso fotogramma — serve prima ottenere un render buono a
+comando.
+
+### Notes — direzione di prodotto: OTTER
+Franco, dopo il default invasivo di upstream: tenere il fork come **software
+professionale pensato per le produzioni reali**, prendendo i loro fix e
+ignorando le loro decisioni di prodotto — che e' esattamente quello che si e'
+fatto stanotte con l'interruttore unificato.
+Nome e mascotte gia' pronti: **OTTER**, doppio senso fra «chi usa OT» e la
+lontra, con Ryc come personaggio. Divisione ipotizzata: **Ztoryc = la parte di
+storyboard** (che continua a esportare verso Tahoma e OpenToonz, e i cui file
+`.ztoryc` restano tali), **OTTER = la parte di animazione**. Da decidere ancora
+se il rinominare tocca anche l'identita' dell'applicazione (`ztorycproject.xml`,
+`ztorycstuff`, chiavi `ZTORYC*`, bundle id) — in quel caso serve **lettura
+all'indietro dei nomi vecchi**, o si rompono le produzioni in corso.
+Primo riscontro esterno entusiasta arrivato lo stesso giorno, e riguardava la
+**parte di animazione** (Plastic tool, Root animabile) — non lo storyboard.
+
 ## [2026-08-05] — I DMG che non c'erano, il merge 1.6.2, e mezza giornata a cercare nel codice un difetto che era nella scena
 
 ### Fixed — i DMG macOS mancanti dalla 0.12.0 (`52ff4c16e`)

@@ -452,13 +452,151 @@ nella sub-scene corretta.
 
 ## Priority Order
 
-### 🔴 MIGLIORATO MA NON RISOLTO — render plastic e configurazione della build (2026-08-07)
+### ⏸️ SOSPESO — render sbagliato su sh110: quindici cause ESCLUSE, nessuna trovata (2026-08-07 notte)
+
+Franco: «lasciamo perdere, vedremo con i prossimi progetti se risuccede».
+Sospeso per decisione sua dopo una nottata di misure. **Il valore di quella
+nottata e' l'elenco qui sotto: sono piste gia' pagate, non riaprirle.**
+
+**Escluse CON MISURA (non per intuizione):**
+1. Configurazione della build — era davvero sbagliata e va tenuta allineata, ma
+   non e' questa causa.
+2. Il codice, e quindi anche il merge 1.6.2 — **dato decisivo di Franco: lo
+   stesso identico binario scaricato dal repo prima rendeva bene e poi no.**
+3. Sincronizzazione cloud — Google Drive messo in pausa, nessun cambiamento.
+4. ffmpeg / formato di uscita — la sequenza PNG ha lo stesso difetto.
+5. Multithreading — `Dedicated CPUs` era gia' su Single.
+6. Tiling — provato a cambiarlo.
+7. Interruttori di visibilita' colonna — nessuna colonna con `status=2`
+   (visibile nel viewer e spenta nel render); la logica dei bit e' **invertita**
+   (bit acceso = nascosto), vedi `txshcolumn.cpp:780` e `:828`.
+8. File mancanti — 89 percorsi su 90 si risolvono; l'unico no e' `+outputs/.tif`,
+   un segnaposto. (Attenzione: `+extras` = `scenes/$scenepath/extras`, le
+   sequenze sono `nome..ext`, e nei PSD il `#` separa il sotto-livello.)
+9. Pezzi saltati in `doCompute` — 280 su 280 disegnati.
+10. Allocazione texture — mai fallita, mai dimezzata.
+11. Istante di valutazione viewer vs render — scarto **0** su 27 matrici.
+12. Valore del controller squash — identico fra le due strade.
+13. Mesh sbagliate — stessi file in entrambe; `row == frame` su 53 coppie.
+14. Perdita di pezzi in `addPlasticDeformerFx` — tutte rinunce legittime
+    (colonne col padre Table, `handle='B'`).
+15. Deformazione e stacking order — `process()` (viewer) contro `processOnce()`
+    (render): scarto **0.000** su 40 pezzi, ordine identico.
+
+**Falso allarme da non ripetere:** le texture in ingresso risultano vuote in
+alcune passate. **E' normale**: il render lavora a quattro tessere e un pezzo
+che sta in un altro quadrante ha legittimamente zero pixel in quella tessera.
+Ci avevo costruito sopra una spiegazione (cache fredda) che Franco ha demolito
+in una riga: lui la preview del fotogramma la fa sempre prima del render.
+
+**L'unica misura che puo' ancora discriminare**, quando ricapitera': confrontare
+il log di un render **buono** con quello di un **cattivo** dello stesso
+fotogramma. Serve prima riuscire a ottenere un render buono a comando.
+
+**Vincolo piu' forte, da tenere fisso:** lo stesso binario, stessa scena,
+preview calda in entrambi i casi, a volte rende bene e a volte no.
+
+### ✅ RISOLTO — 1.6.2: «sparita l'icona della visibilita'» (2026-08-07 notte)
+
+Non era il merge. Upstream 1.6.2 introduce la preferenza
+`unifyColumnVisibilityToggles` **con default `true`**: sostituisce i due
+interruttori della testa di colonna (occhio preview + camstand) con **uno solo**.
+Peggio del cosmetico: quando si attiva, `ColumnCmd::unifyColumnVisibilityToggles()`
+scorre tutte le colonne **anche nelle sotto-scene**, forza preview = camstand e
+marca la scena modificata.
+**Fix applicato** sul branch `merge/upstream-1.6.2`: default portato a `false`
+in `toonzlib/preferences.cpp`, con commento che spiega perche'. Resta
+attivabile a mano dalle preferenze. Ricompilato, rc=0.
+
+
+### ⛔ RITIRATA — «il render dipende da DefLevelType» era SBAGLIATA (2026-08-07 sera)
+
+**La bisezione sulle preferenze non ha provato niente: scriveva nel posto
+sbagliato.** I file venivano copiati in `merge-1.6.2/stuff/profiles/users/
+francobianco/preferences.ini`, che e' dove punta il `SystemVar.ini` del bundle —
+ma l'app legge e scrive in **`Ztoryc-162.app/ztorycstuff/profiles/users/
+francobianco/preferences.ini`**, dentro il bundle. Sei render, sempre lo stesso
+file di preferenze davvero in uso, sempre «cattivo». Il segnale d'allarme c'era
+ed e' stato ignorato: **in una bisezione valida deve uscire almeno un «buono»**.
+
+Il file realmente usato contiene sei voci e **`DefLevelType` non c'e'**: la
+1.6.2 ha sempre girato col tipo di livello al default, prima rendendo bene e poi
+male. Quindi quella conclusione e' falsa, non solo non verificata.
+
+**Cosa resta vero, e non e' poco:**
+- Il difetto **non e' nel codice**: lo stesso binario scaricato dal repo prima
+  rendeva bene e poi no (dato di Franco). Questo regge ancora.
+- Il worktree 1.6.2 ha reso **bene** al primo render di stasera e **male** a
+  tutti i successivi, **con lo stesso identico file di preferenze**. Quindi e'
+  cambiato qualcos'altro, fuori dalle preferenze e fuori dal codice.
+- Le preferenze restano **non testate** come causa: nessuna prova valida.
+
+**Da fare la prossima volta:** cambiare le preferenze **dall'interfaccia**, non
+da file, oppure agire su `Ztoryc-162.app/ztorycstuff/...`. E prima di dimezzare,
+verificare che il metodo funzioni: una prova che deve dare «buono» e una che
+deve dare «cattivo».
+
+**Sospetto principale rimasto:** qualcosa nella scena o nei suoi file cambia fra
+un render e l'altro e non torna indietro. Precedente identico il 2026-08-05
+(«la causa era la SCENA, risolta reimportandola»). Da verificare sulle date di
+modifica dei file del progetto — sh110 non e' stato trovato sui dischi
+scansionati, serve il percorso.
+
+### ~~🟡 CAUSA ISOLATA~~ (VOCE RITIRATA, vedi sopra) — DefLevelType (2026-08-07 sera)
+
+**`DefLevelType=18` (Toonz Raster) invece del default `OVL_XSHLEVEL`=34 (Raster).**
+Con quella riga nel `preferences.ini`, sh110 rende con molti personaggi ridotti a
+pochi pezzi visibili. Senza, rende bene. Isolato per bisezione in sei render,
+partendo dalle 32 voci del file di Franco e dimezzando.
+
+**Rimedio per lavorare:** Preferenze → tipo di livello predefinito su **Raster**.
+
+**Come ci si e' arrivati, e cosa NON era** (due giorni e mezzo di caccia):
+- ❌ **non e' la configurazione della build.** Riconfigurare come la CI ha
+  corretto il render su scene nuove, ma non sh110. Restava un miglioramento
+  vero, non la causa.
+- ❌ **non e' il codice.** Prova decisiva portata da Franco: *lo stesso identico
+  binario scaricato dal repo prima rendeva bene e poi non piu'*. Un binario non
+  cambia da solo → e' stato, non codice. Regge anche il dato del Mac Pro late
+  2013 (stessa scena, codice vecchio, rende bene): macchine diverse hanno
+  preferenze diverse.
+- ❌ **non e' il merge 1.6.2.** Sembrava risolverlo solo perche' quel worktree
+  aveva un `stuff/` vergine, quindi preferenze di default. Copiandogli quelle di
+  Franco, la 1.6.2 sbaglia identica.
+- ❌ ipotesi cadute lungo la strada, tutte verificate e scartate: troncamento
+  `(int)frame` in `plasticdeformerfx.cpp` (upstream `10ffabce0`, applicato e
+  provato: non cambia niente), spazio colore lineare (`362c7010a`), oggetti
+  compilati con configurazioni diverse (falso: 1323 su 1324 ricompilati),
+  implicit hold (escluso da Franco: la scena non e' stata creata con quello).
+
+**DA CAPIRE (il difetto vero):** perche' una preferenza che riguarda la
+*creazione di livelli nuovi* cambia il *render di una scena esistente*.
+Punti dove viene letta: `tnztools/tool.cpp:623`, `toonz/tapp.cpp:309`, `:330`,
+`:444`, `toonzqt/paletteviewer.cpp:770/812/910`, `toonz/iocommand.cpp:3623`.
+In `tapp.cpp:444` decide se la scena riceve la palette full-color — pista
+indebolita dal fatto che `txshsimplelevel.cpp:1226/1290/1449/2120` la carica
+comunque per conto suo. Da guardare a mente fresca.
+⚠️ Quando si trova: e' quasi certamente un **candidato PR upstream** (file core,
+nessuno e' Ztoryc). Registrarlo in `UPSTREAM_PR_CANDIDATES.md`.
+
+### 🔴 ~~MIGLIORATO MA NON RISOLTO~~ SUPERATO DALLA VOCE QUI SOPRA — render plastic e configurazione della build (2026-08-07)
 
 Due giorni di caccia. **Non era la scena, non era il codice, non era Qt, non era
 la RAM, non era l'ottimizzazione**: la nostra build locale non e' mai stata
 configurata come quella che produce i rilasci. Il pacchetto 0.12 scaricato dal
 repo renderizzava bene sulla stessa macchina; la nostra no; il merge 1.6.2 (codice
 piu' recente) sbagliava uguale.
+
+> ⚠️ **AGGIORNAMENTO 2026-08-07 sera — «anche il merge 1.6.2 sbagliava uguale» NON
+> vale come prova.** Controllata la `CMakeCache.txt` del worktree
+> `merge-1.6.2`: era configurata **esattamente come quella rotta** — `QT_PATH`
+> sulla Qt 5.9.2 del 2017, `TIFF_INCLUDE_DIR` su libtiff44, `CMAKE_BUILD_TYPE`
+> `Release`, deployment target vuoto. Quindi il merge non era un secondo
+> esperimento indipendente: era lo **stesso** esperimento con codice diverso, e
+> non dice niente su cosa causi il difetto. Riconfigurato il 2026-08-07 sera con la
+> configurazione di master (che Franco ha verificato buona su scena nuova) e
+> ricompilato da zero. Il worktree e' stato anche allineato a master
+> (`a1468a00b`, merge senza conflitti).
 
 **Differenze trovate** fra `ci-scripts/osx/tahoma-build.sh` e la nostra CMakeCache:
 | | CI | nostra (rotta) |
