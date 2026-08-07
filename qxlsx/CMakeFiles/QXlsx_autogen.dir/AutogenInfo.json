@@ -347,7 +347,7 @@
 		"/opt/homebrew/Cellar/qt@5/5.15.18/lib/QtCore.framework/Versions/5/Headers/5.15.18",
 		"/opt/homebrew/Cellar/qt@5/5.15.18/lib/QtCore.framework/Versions/5/Headers/5.15.18/QtCore",
 		"/Volumes/ZioSam/tahoma2d-workspace/tahoma2d/toonz/sources/BEFORE",
-		"/opt/homebrew/opt/libtiff44/include",
+		"/Volumes/ZioSam/tahoma2d-workspace/tahoma2d/thirdparty/tiff-4.2.0/libtiff",
 		"/opt/homebrew/include",
 		"/opt/homebrew/opt/lz4/include",
 		"/opt/homebrew/Cellar/superlu/7.0.1/include/superlu",

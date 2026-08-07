@@ -452,6 +452,62 @@ nella sub-scene corretta.
 
 ## Priority Order
 
+### 🔴 MIGLIORATO MA NON RISOLTO — render plastic e configurazione della build (2026-08-07)
+
+Due giorni di caccia. **Non era la scena, non era il codice, non era Qt, non era
+la RAM, non era l'ottimizzazione**: la nostra build locale non e' mai stata
+configurata come quella che produce i rilasci. Il pacchetto 0.12 scaricato dal
+repo renderizzava bene sulla stessa macchina; la nostra no; il merge 1.6.2 (codice
+piu' recente) sbagliava uguale.
+
+**Differenze trovate** fra `ci-scripts/osx/tahoma-build.sh` e la nostra CMakeCache:
+| | CI | nostra (rotta) |
+|---|---|---|
+| `QT_PATH` | `/opt/homebrew/opt/qt@5/lib/` | **`~/Qt5.9.2/5.9.2/clang_64/lib`** (Qt del 2017) |
+| `TIFF_INCLUDE_DIR` | `thirdparty/tiff-4.2.0/libtiff/` | libtiff44 di Homebrew |
+| `CMAKE_OSX_DEPLOYMENT_TARGET` | `12.0` | vuoto |
+| `WITH_SYSTEM_SUPERLU` | `ON` | non impostato |
+| `WITH_GPHOTO2` | `ON` | spento (libgphoto2 non installata) |
+| CMake | 3.31.6 (fissata dal workflow) | 4.x |
+
+Ricompilando con la configurazione della CI il render torna corretto **su scena
+nuova** (verificato da Franco). La cartella di build nella radice e' stata
+riconfigurata di conseguenza il 2026-08-07.
+
+⛔ **MA NON E\' RISOLTO.** Franco, stesso giorno: «su quel progetto e su **sh110**
+soprattutto continua a dare problemi». Quindi la configurazione della build era
+**una** causa, non **la** causa: spiega perche' il pacchetto CI rendeva bene dove
+la nostra build no, ma non spiega sh110. Restano in piedi le differenze fra
+scene nuove e scene di quel progetto — ed e\' li\' che va guardato, NON di nuovo
+nella configurazione.
+**Dato correlato dello stesso giorno**: su uno shot precedente all\'IK il pin
+finisce sul vertice sbagliato (voce qui sotto). Due sintomi diversi che
+compaiono entrambi su materiale VECCHIO e non su scene nuove: vale la pena
+chiedersi se abbiano la stessa radice, cioe\' una migrazione dati incompleta.
+
+⚠️ **DA FARE perche' non si ripresenti**: `build_and_deploy.sh` non configura, usa
+la cache esistente. Se qualcuno ricrea la build dir a mano torna il problema.
+Andrebbe fatto configurare come la CI, o almeno avvisare quando la cache diverge.
+⚠️ Non sappiamo ancora **quale** delle differenze fosse la causa: si trova
+riaccendendone una per volta. Il sospetto e' `QT_PATH`, che finisce in
+`CMAKE_PREFIX_PATH` e mescolava header di Qt 5.9.2 con librerie 5.15.18.
+
+**Lezione**: quando lo stesso sorgente si comporta diversamente fra il pacchetto
+rilasciato e la build locale, confrontare **tutta** la configurazione di build
+PRIMA di cercare nel codice. Vedi [[feedback_instrument_the_fx_input_first]].
+
+### 🔴 APERTO — su scene vecchie il pin va sul vertice sbagliato (2026-08-07)
+
+Segnalato da Franco subito dopo il fix sopra: aprendo uno shot **precedente
+all'introduzione della cinematica inversa**, mettendo il pin su un vertice lo
+mette su un altro. Su scena nuova funziona bene.
+Ipotesi da verificare per prima: e' un problema di **migrazione dati**. Il canale
+`PIN` e' stato aggiunto a `SkVD` dopo, e se l'enum dei canali e' usato come
+indice nella serializzazione, i file vecchi mappano i valori sugli slot
+sbagliati. Guardare l'ordine di `SkVD::Channel` e come `PlasticSkeletonDeformation`
+legge i vertici dai `.tnz` privi del canale PIN.
+
+
 ### 🔧 APERTO — richieste di Franco del 2026-08-05 (fine sessione)
 
 **✅ FATTO — bucature (peg) ripristinate nello stage schematic.**
