@@ -354,6 +354,7 @@
 		"/opt/homebrew/Cellar/libmypaint/1.6.1_1/include/libmypaint",
 		"/opt/homebrew/Cellar/json-c/0.18/include",
 		"/opt/homebrew/Cellar/json-c/0.18/include/json-c",
+		"/usr/local/include",
 		"/opt/homebrew/Cellar/qt@5/5.15.18/lib/QtCore.framework",
 		"/opt/homebrew/Cellar/qt@5/5.15.18/lib/QtCore.framework/Headers",
 		"/opt/homebrew/Cellar/qt@5/5.15.18/mkspecs/macx-clang",

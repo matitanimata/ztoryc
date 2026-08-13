@@ -7,7 +7,6 @@
 #include "tgl.h"
 
 // TnzLib includes
-#include "toonz/ikccd.h"
 #include "toonz/tframehandle.h"
 #include "toonz/tobjecthandle.h"
 #include "toonz/txsheethandle.h"
