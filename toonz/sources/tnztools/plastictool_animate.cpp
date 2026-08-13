@@ -476,6 +476,8 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
 // value because the CCD helpers below are free functions: they must not reach
 // back into the tool, and re-reading a TDoubleProperty per rotation would be
 // absurd. Set once per drag event, in leftButtonDrag_animate.
+void ztoryIkLog(const QString &riga);  // definita piu' sotto
+
 double l_ikDampPercent = 12.0;
 
 //! Largest rotation, in radians, that one step of posing may apply to a joint.
@@ -516,20 +518,24 @@ static double ikStepWeight(int i, int n) {
 // dimostrato che sia questo cio' che l'utente vede — correggere significa
 // rimettere a posto la catena SENZA specchiare gli arti che le pendono addosso,
 // ed e' un meccanismo che non vale la pena inventare su un'ipotesi.
-bool l_ikNoFlipWatch = false;
+bool l_ikNoFlipWatch = true;  // sempre attiva durante la caccia: vedi commit
 
 //! Annota un ribaltamento su file, non su qDebug: l'app la si lancia dal Finder
 //! e nessuno guarda uno standard output che non esiste. Il file sta accanto
 //! alla cache, si apre da Finder e si legge a occhio.
-static void ztoryIkFlipLog(int pin, int chainLen, double before, double after) {
+void ztoryIkLog(const QString &riga) {
   const QString path =
       ToonzFolder::getCacheRootFolder().getQString() + "/ztoryc_ikflip.log";
   QFile f(path);
   if (!f.open(QIODevice::Append | QIODevice::Text)) return;
   QTextStream out(&f);
-  out << QDateTime::currentDateTime().toString("HH:mm:ss.zzz")
-      << "  RIBALTAMENTO  pin=" << pin << " giunti=" << chainLen
-      << "  lato prima=" << before << " dopo=" << after << "\n";
+  out << QDateTime::currentDateTime().toString("HH:mm:ss.zzz") << "  " << riga
+      << "\n";
+}
+
+static void ztoryIkFlipLog(int pin, int chainLen, double before, double after) {
+  ztoryIkLog(QString("RIBALTAMENTO  pin=%1 giunti=%2  lato prima=%3 dopo=%4")
+                 .arg(pin).arg(chainLen).arg(before).arg(after));
 }
 
 //! Lato con segno del giunto interno che si scosta di piu' dall'asse
@@ -623,7 +629,6 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
       // unified graph; otherwise fall back to the single-level pin path.
       l_ikDampPercent      = m_ikDamping.getValue();
       l_ikRootEasePercent  = m_ikRootEase.getValue();
-      l_ikNoFlipWatch      = m_ikNoFlip.getValue();
 
       const bool diag = ::getenv("ZTORYC_PIN_DIAG") != nullptr;
 
@@ -1788,6 +1793,17 @@ void PlasticTool::moveVertexIK_animate(double frame, int v,
   std::vector<int> pins = pinnedVerticesAtFrame(frame);
   bool vIsPin = std::find(pins.begin(), pins.end(), v) != pins.end();
   const bool ikDiag = ::getenv("ZTORYC_PIN_DIAG") != nullptr;
+  if (l_ikNoFlipWatch)
+    ztoryIkLog(QString("strada=%1 v=%2 pin=%3")
+                   .arg((pins.empty() || vIsPin)
+                            ? "FK-semplice"
+                            : (pins.size() >= 2 &&
+                               spanningOfPins(orig, pins).count(v))
+                                  ? "multi-ancora"
+                                  : "pin-singolo")
+                   .arg(v)
+                   .arg((int)pins.size()));
+
   if (pins.empty() || vIsPin) {
     if (ikDiag)
       qDebug().noquote() << QString("[IK_BRANCH] plainFK v=%1 pins=%2")
