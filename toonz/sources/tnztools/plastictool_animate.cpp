@@ -1483,11 +1483,20 @@ void solveMultiAnchor(const PlasticSkeleton &orig, const PinTree &T,
         // near the root feel nervous while a long limb feels calm, and why the
         // measured response swung between 0 and 24x for the same input.
         //
-        // So the step is capped in DISTANCE (a fraction of the chain's own
-        // length) and turned back into an angle through the lever. A fixed cap
-        // in degrees would do the opposite of what is wanted: the same limit
-        // for a short bone and a long one, when it is the short one that has to
-        // be reined in.
+        // The cap is therefore in DEGREES, flat for every joint — see the long
+        // note on ikMaxStep(). A distance cap was tried first and is exactly
+        // backwards: it grows as the lever shortens, loosening the limit
+        // precisely where it had to be tightest. This comment used to describe
+        // that old distance cap and survived the fix, contradicting the line
+        // right below it.
+        //
+        // Annealing (a cap that shrinks toward the root, DragonBones' advice)
+        // was MEASURED on 2026-08-13 and NOT adopted: on a 5-vertex chain it
+        // shifts work from root to tip as advertised (root half 36% -> 26%) but
+        // its effect on convergence is not monotonic — better at mid travel,
+        // WORSE at large travel, where the root joints are the reach. The
+        // existing flat cap already lands within 0.7% of chain length. Don't
+        // re-litigate without a case where the current behaviour visibly fails.
         const double maxAng = ikMaxStep();
         ang                 = std::min(std::max(ang, -maxAng), maxAng);
 

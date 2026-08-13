@@ -757,18 +757,59 @@ TFxP FxBuilder::getFxWithColumnMovements(const PlacedFx &pf) {
 
 //-------------------------------------------------------------------
 
+// DIAGNOSTICA TEMPORANEA (2026-08-13) — accesa solo con ZTORYC_PLASTIC_DIAG=1.
+// Serve a rispondere a una domanda sola: sul fotogramma rotto di sh110, quali
+// colonne NON ricevono il deformatore plastico, e per quale dei tre motivi?
+// Un pezzo che non lo riceve viene disegnato alla posa di RIPOSO, che puo'
+// stare fuori campo — e a schermo si legge come «pezzo mancante».
+static bool plasticDiagOn() {
+  static const bool on = (::getenv("ZTORYC_PLASTIC_DIAG") != nullptr);
+  return on;
+}
+
+static void plasticDiag(int col, const std::string &levelName,
+                        const TStageObjectId &parentId,
+                        const std::string &handle, const char *esito) {
+  if (!plasticDiagOn()) return;
+  std::cout << "PLASTICDIAG col=" << col << " livello='" << levelName
+            << "' padre=" << parentId.toString() << " handle='" << handle
+            << "' -> " << esito << std::endl;
+}
+
 bool FxBuilder::addPlasticDeformerFx(PlacedFx &pf) {
   TStageObject *obj =
       m_xsh->getStageObject(TStageObjectId::ColumnId(pf.m_columnIndex));
   TStageObjectId parentId(obj->getParent());
 
-  if (parentId.isColumn() && obj->getParentHandle()[0] != 'H') {
+  std::string diagName;
+  if (plasticDiagOn()) {
+    const TXshCell &c = m_xsh->getCell(m_frame, pf.m_columnIndex);
+    if (c.m_level) diagName = ::to_string(c.m_level->getName());
+  }
+  const std::string diagHandle = obj->getParentHandle();
+
+  if (!parentId.isColumn()) {
+    plasticDiag(pf.m_columnIndex, diagName, parentId, diagHandle,
+                "SCARTATO: il padre non e' una colonna");
+    return false;
+  }
+  if (obj->getParentHandle()[0] == 'H') {
+    plasticDiag(pf.m_columnIndex, diagName, parentId, diagHandle,
+                "SCARTATO: agganciato con un hook");
+    return false;
+  }
+
+  {
     const SkDP &sd =
         m_xsh->getStageObject(parentId)->getPlasticSkeletonDeformation();
 
     const TXshCell &parentCell = m_xsh->getCell(m_frame, parentId.getIndex());
 
-    if (parentCell.getFrameId().isStopFrame()) return false;
+    if (parentCell.getFrameId().isStopFrame()) {
+      plasticDiag(pf.m_columnIndex, diagName, parentId, diagHandle,
+                  "SCARTATO: la cella della mesh e' uno stop frame");
+      return false;
+    }
 
     TXshSimpleLevel *parentSl  = parentCell.getSimpleLevel();
 
@@ -787,8 +828,20 @@ bool FxBuilder::addPlasticDeformerFx(PlacedFx &pf) {
       pf.m_fx  = plasticFx;
       pf.m_aff = pf.m_aff * plasticFx->m_texPlacement.inv();
 
+      plasticDiag(pf.m_columnIndex, diagName, parentId, diagHandle,
+                  "ok: deformatore attaccato");
       return true;
     }
+
+    // Il padre e' una colonna ma non porta una mesh deformabile.
+    std::string perche = "SCARTATO:";
+    if (!sd) perche += " niente deformazione plastica sul padre;";
+    if (!parentSl)
+      perche += " la cella del padre non ha un livello;";
+    else if (parentSl->getType() != MESH_XSHLEVEL)
+      perche += " il livello del padre non e' una mesh;";
+    plasticDiag(pf.m_columnIndex, diagName, parentId, diagHandle,
+                perche.c_str());
   }
 
   return false;
