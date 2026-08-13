@@ -7,10 +7,12 @@
 
 #include "saveloadqsettings.h"
 
+#include "tfilepath.h"
 #include "toonz/txsheet.h"
 #include "toonzqt/keyframenavigator.h"
 
 #include <QToolBar>
+#include <QStringList>
 
 //-----------------------------------------------------------------------------
 
@@ -39,7 +41,32 @@ public:
   QString getBarId() { return m_barId; }
 
   bool isDefault() { return m_isDefault; }
-  void setDefault(bool isDefault) { m_isDefault = isDefault; } 
+  void setDefault(bool isDefault) { m_isDefault = isDefault; }
+
+  // ─── Ztoryc: Quick Toolbar per workflow ────────────────────────────────────
+  // Il workflow e' espresso come "tag" (una stringa) invece che come enum per
+  // non tirarsi dentro ztorymodel.h in ogni header che usa la toolbar.
+  //
+  // currentWorkflowTag() torna una stringa VUOTA quando la preferenza e'
+  // spenta, e la stringa vuota significa ovunque «la barra comune» — cosi' il
+  // meccanismo si spegne per intero senza rami separati.
+  static QString currentWorkflowTag();
+  static QStringList allWorkflowTags();
+  static QString workflowDisplayName(const QString &workflowTag);
+
+  // Percorso del file della Quick Toolbar. workflowTag vuoto = barra comune
+  // (`quicktoolbar.xml`), altrimenti `quicktoolbars/quicktoolbar_<tag>.xml` —
+  // stessa convenzione della cartella `commandbars/` gia' usata dalle Command
+  // Bar con id.
+  static TFilePath quickToolbarPath(const QString &workflowTag,
+                                    bool fromTemplate);
+
+  // Ztoryc: travaso una-tantum dei comandi nuovi nelle Quick Toolbar personali.
+  // Serve perche' il file personale VINCE sul template e non c'e' nessuna
+  // fusione: senza questo, una voce aggiunta al default non arriva mai a chi
+  // la barra se l'era gia' personalizzata. Va chiamata una volta all'avvio,
+  // dopo defineActions().
+  static void migrateQuickToolbars();
 
   // SaveLoadQSettings
   virtual void save(QSettings &settings,

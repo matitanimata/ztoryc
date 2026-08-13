@@ -25,4 +25,7 @@
     <command>MI_Collapse</command>
     <command>MI_ToggleXsheetBreadcrumbs</command>
     <command>MI_ToggleEditInPlace</command>
+    <separator/>
+    <command>MI_ZtoryShowMesh</command>
+    <command>MI_ToggleKeyframesFollowExposure</command>
 </commandbar>

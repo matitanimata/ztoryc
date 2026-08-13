@@ -19,6 +19,7 @@ extern ToggleCommandHandler showMeshToggle;
 #include "tooloptionsshortcutinvoker.h"
 #include "custompanelmanager.h"
 #include "maintoolbar.h"
+#include "commandbar.h"
 #include "statusbar.h"
 #include "aboutpopup.h"
 #include "filebrowserpopup.h"
@@ -523,6 +524,9 @@ MainWindow::MainWindow(const QString &argumentLayoutFileName, QWidget *parent,
     ZtoryModel::instance()->setWorkflow(ZtoryWorkflow::Tradigital);
   makeTransparencyDialog();
   defineActions();
+  // Ztoryc: dopo defineActions() perche' i comandi da travasare devono gia'
+  // esistere, e prima che le room (e quindi le toolbar) vengano costruite.
+  CommandBar::migrateQuickToolbars();
   // user defined shortcuts will be loaded here
   CommandManager::instance()->loadShortcuts();
 

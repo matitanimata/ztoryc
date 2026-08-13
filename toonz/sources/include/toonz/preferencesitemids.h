@@ -144,6 +144,10 @@ enum PreferencesItemId {
   inputCellsWithoutDoubleClickingEnabled,
   shortcutCommandsWhileRenamingCellEnabled,
   showQuickToolbar,
+  ztoryPerWorkflowQuickToolbar,  // Ztoryc: una Quick Toolbar per workflow
+  // Ztoryc: quale «giro» di comandi nuovi e' gia' stato travasato nella Quick
+  // Toolbar personale. Non compare nelle Preferenze: e' un segnaposto interno.
+  ztoryQuickToolbarMigration,
   showXsheetBreadcrumbs,
   expandFunctionHeader,
   showColumnNumbers,

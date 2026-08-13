@@ -169,6 +169,7 @@ private:
   // Xsheet
   void onShowKeyframesOnCellAreaChanged();
   void onShowQuickToolbarClicked();
+  void onZtoryPerWorkflowQuickToolbarChanged();
   void onUnifyColumnVisibilityTogglesChanged();
   void onShowXsheetBreadcrumbsClicked();
   void onShowDragBarsChanged();

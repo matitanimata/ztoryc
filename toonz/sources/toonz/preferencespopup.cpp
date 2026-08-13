@@ -739,6 +739,15 @@ void PreferencesPopup::onShowQuickToolbarClicked() {
 
 //-----------------------------------------------------------------------------
 
+// Ztoryc: notifica distinta da "QuickToolbar" perche' qui non cambia se la
+// barra si vede, ma QUALE file la riempie.
+void PreferencesPopup::onZtoryPerWorkflowQuickToolbarChanged() {
+  TApp::instance()->getCurrentScene()->notifyPreferenceChanged(
+      "QuickToolbarWorkflow");
+}
+
+//-----------------------------------------------------------------------------
+
 void PreferencesPopup::onShowXsheetBreadcrumbsClicked() {
   TApp::instance()->getCurrentScene()->notifyPreferenceChanged(
       "XsheetBreadcrumbs");
@@ -1461,6 +1470,8 @@ QString PreferencesPopup::getUIString(PreferencesItemId id) {
       {shortcutCommandsWhileRenamingCellEnabled,
        tr("Enable Ztoryc Commands' Shortcut Keys While Renaming Cell")},
       {showQuickToolbar, tr("Show Quick Toolbar")},
+      {ztoryPerWorkflowQuickToolbar,
+       tr("Use a Separate Quick Toolbar for Each Workflow")},
       {showXsheetBreadcrumbs, tr("Show Sub-Scene Navigation Bar")},
       {expandFunctionHeader, tr("Expand Function Editor Header to Match Xsheet Header Height*")},
       {showColumnNumbers, tr("Show Column Numbers")},
@@ -2333,6 +2344,7 @@ QGridLayout* PreferencesPopup::createXsheetLayout() {
   QGridLayout* xshToolbarLay = insertGroupBox(tr("Scene Tools"), lay);
   {
     insertUI(showQuickToolbar, xshToolbarLay);
+    insertUI(ztoryPerWorkflowQuickToolbar, xshToolbarLay);
     insertUI(showXsheetBreadcrumbs, xshToolbarLay);
 // Obsolete. Setting is local to panel
 //    insertUI(expandFunctionHeader, xshToolbarLay);
@@ -2362,6 +2374,9 @@ QGridLayout* PreferencesPopup::createXsheetLayout() {
       &PreferencesPopup::onUnifyColumnVisibilityTogglesChanged);
   m_onEditedFuncMap.insert(showQuickToolbar,
                            &PreferencesPopup::onShowQuickToolbarClicked);
+  m_onEditedFuncMap.insert(
+      ztoryPerWorkflowQuickToolbar,
+      &PreferencesPopup::onZtoryPerWorkflowQuickToolbarChanged);
   m_onEditedFuncMap.insert(showXsheetBreadcrumbs,
                            &PreferencesPopup::onShowXsheetBreadcrumbsClicked);
   m_onEditedFuncMap.insert(showDragBars,

@@ -431,6 +431,12 @@ public:
   bool isShowQuickToolbarEnabled() const {
     return getBoolValue(showQuickToolbar);
   }
+  bool isZtoryPerWorkflowQuickToolbarEnabled() const {
+    return getBoolValue(ztoryPerWorkflowQuickToolbar);
+  }
+  int getZtoryQuickToolbarMigration() const {
+    return getIntValue(ztoryQuickToolbarMigration);
+  }
   bool isShowXsheetBreadcrumbsEnabled() const {
     return getBoolValue(showXsheetBreadcrumbs);
   }

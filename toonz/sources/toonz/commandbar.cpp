@@ -17,10 +17,15 @@
 #include "toonz/toonzscene.h"
 #include "toonz/childstack.h"
 #include "toonz/toonzfolders.h"
+#include "toonz/preferences.h"
+
+// Ztoryc includes
+#include "ztorymodel.h"
 
 // Qt includes
 #include <QWidgetAction>
 #include <QXmlStreamReader>
+#include <QFile>
 #include <QtDebug>
 #include <QMenuBar>
 #include <QContextMenuEvent>
@@ -76,6 +81,131 @@ void CommandBar::load(QSettings &settings) {
 
 //-----------------------------------------------------------------------------
 
+// ─── Ztoryc: travaso una-tantum dei comandi nuovi ────────────────────────────
+
+namespace {
+
+// Comandi entrati nella Quick Toolbar dopo che gli utenti avevano gia' un file
+// personale. Il numero e' il «giro»: alzandolo e aggiungendo righe qui, il
+// travaso riparte solo per le voci nuove.
+struct QuickToolbarAddition {
+  int round;
+  const char *commandId;
+};
+
+const QuickToolbarAddition l_quickToolbarAdditions[] = {
+    {1, "MI_ZtoryShowMesh"},
+    {1, "MI_ToggleKeyframesFollowExposure"},
+};
+
+const int l_quickToolbarMigrationRound = 1;
+
+// Aggiunge i comandi mancanti in coda al file, subito prima di </commandbar>.
+// Si lavora sul testo invece di rileggere e riscrivere l'XML apposta per non
+// poter perdere niente di quello che l'utente ci aveva messo.
+bool appendCommandsToBar(const TFilePath &fp, const QStringList &commandIds) {
+  QFile file(toQString(fp));
+  if (!file.open(QFile::ReadOnly | QFile::Text)) return false;
+  QString content = QString::fromUtf8(file.readAll());
+  file.close();
+
+  int closing = content.lastIndexOf("</commandbar>");
+  if (closing < 0) return false;  // non e' un file che riconosciamo: non tocco
+
+  QString toAdd;
+  for (const QString &id : commandIds) {
+    if (content.contains("<command>" + id + "</command>")) continue;
+    toAdd += "    <command>" + id + "</command>\n";
+  }
+  if (toAdd.isEmpty()) return false;
+
+  content.insert(closing, "    <separator/>\n" + toAdd);
+
+  if (!file.open(QFile::WriteOnly | QFile::Truncate | QFile::Text)) return false;
+  file.write(content.toUtf8());
+  file.close();
+  return true;
+}
+
+}  // namespace
+
+//-----------------------------------------------------------------------------
+
+void CommandBar::migrateQuickToolbars() {
+  const int done = Preferences::instance()->getZtoryQuickToolbarMigration();
+  if (done >= l_quickToolbarMigrationRound) return;
+
+  QStringList commandIds;
+  for (const QuickToolbarAddition &a : l_quickToolbarAdditions)
+    if (a.round > done) commandIds << QString(a.commandId);
+
+  if (!commandIds.isEmpty()) {
+    // La barra comune e' quella da cui ricadono tutti i workflow, quindi basta
+    // lei; le barre per workflow che nascessero dopo partono gia' da questa.
+    QStringList tags;
+    tags << QString();
+    tags << allWorkflowTags();
+
+    for (const QString &tag : tags) {
+      TFilePath fp = quickToolbarPath(tag, false);
+      if (TSystem::doesExistFileOrLevel(fp)) appendCommandsToBar(fp, commandIds);
+    }
+  }
+
+  Preferences::instance()->setValue(ztoryQuickToolbarMigration,
+                                    l_quickToolbarMigrationRound);
+}
+
+// ─── Ztoryc: Quick Toolbar per workflow ──────────────────────────────────────
+
+QString CommandBar::currentWorkflowTag() {
+  if (!Preferences::instance()->isZtoryPerWorkflowQuickToolbarEnabled())
+    return QString();
+
+  switch (ZtoryModel::instance()->currentWorkflow()) {
+  case ZtoryWorkflow::Storyboard:
+    return QString("storyboard");
+  case ZtoryWorkflow::Tradigital:
+    return QString("tradigital");
+  case ZtoryWorkflow::CutoutDigital:
+    return QString("cutout");
+  case ZtoryWorkflow::StopMotion:
+    return QString("stopmotion");
+  }
+  return QString();
+}
+
+//-----------------------------------------------------------------------------
+
+QStringList CommandBar::allWorkflowTags() {
+  return QStringList() << "storyboard" << "tradigital" << "cutout"
+                       << "stopmotion";
+}
+
+//-----------------------------------------------------------------------------
+
+QString CommandBar::workflowDisplayName(const QString &workflowTag) {
+  if (workflowTag == "storyboard") return tr("Storyboard");
+  if (workflowTag == "tradigital") return tr("2D Tradigital");
+  if (workflowTag == "cutout") return tr("Cutout Digital");
+  if (workflowTag == "stopmotion") return tr("Stop Motion");
+  return tr("All Workflows");
+}
+
+//-----------------------------------------------------------------------------
+
+TFilePath CommandBar::quickToolbarPath(const QString &workflowTag,
+                                       bool fromTemplate) {
+  TFilePath dir = fromTemplate ? ToonzFolder::getTemplateModuleDir()
+                               : ToonzFolder::getMyModuleDir();
+  if (workflowTag.isEmpty()) return dir + TFilePath("quicktoolbar.xml");
+
+  return dir + TFilePath("quicktoolbars") +
+         TFilePath("quicktoolbar_" + workflowTag + ".xml");
+}
+
+//-----------------------------------------------------------------------------
+
 void CommandBar::fillToolbar(CommandBar *toolbar, CommandBarType barType,
                              QString barId) {
   toolbar->clear();
@@ -83,8 +213,13 @@ void CommandBar::fillToolbar(CommandBar *toolbar, CommandBarType barType,
   TFilePath personalPath;
   bool fileFound = false;
   if (barType == CommandBarType::Quick) {
-    personalPath =
-        ToonzFolder::getMyModuleDir() + TFilePath("quicktoolbar.xml");
+    // Ztoryc: prima la barra del workflow corrente, poi quella comune. Con la
+    // preferenza spenta (tag vuoto) il primo ramo non si prende nemmeno, e il
+    // comportamento e' identico a quello di sempre.
+    QString wfTag = currentWorkflowTag();
+    personalPath  = quickToolbarPath(wfTag, false);
+    if (!wfTag.isEmpty() && !TSystem::doesExistFileOrLevel(personalPath))
+      personalPath = quickToolbarPath("", false);
   } else if (barType == CommandBarType::Main) {
     personalPath = ToonzFolder::getMyModuleDir() + TFilePath("maintoolbar.xml");
   } else if (!barId.isEmpty()) {
@@ -102,8 +237,12 @@ void CommandBar::fillToolbar(CommandBar *toolbar, CommandBarType barType,
 
   if (!fileFound) {
     if (barType == CommandBarType::Quick) {
-      personalPath =
-          ToonzFolder::getTemplateModuleDir() + TFilePath("quicktoolbar.xml");
+      // Stessa ricaduta sui template: cosi' si potranno spedire default per
+      // singolo workflow senza toccare piu' il codice.
+      QString wfTag = currentWorkflowTag();
+      personalPath  = quickToolbarPath(wfTag, true);
+      if (!wfTag.isEmpty() && !TSystem::doesExistFileOrLevel(personalPath))
+        personalPath = quickToolbarPath("", true);
     } else if (barType == CommandBarType::Main) {
       personalPath =
           ToonzFolder::getTemplateModuleDir() + TFilePath("maintoolbar.xml");

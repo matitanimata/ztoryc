@@ -43,6 +43,11 @@ protected:
 protected slots:
   void doCustomizeCommandBar();
   void doResetCommandBar();
+  // Ztoryc: la barra puo' essere diversa per workflow, quindi va ricostruita
+  // quando il workflow cambia — e quando si accende/spegne la preferenza che
+  // decide se le barre sono separate.
+  void onWorkflowChanged();
+  void onPreferenceChanged(const QString &prefName);
 };
 
 }  // namespace XsheetGUI

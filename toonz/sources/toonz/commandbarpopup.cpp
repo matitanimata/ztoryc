@@ -562,10 +562,24 @@ CommandBarPopup::CommandBarPopup(QString barId, CommandBarType barType)
              "CustomizeCommandBar") {
   QLabel* commandBarLabel;
   if (barType == CommandBarType::Quick) {
-    m_defaultPath = m_path =
-        ToonzFolder::getMyModuleDir() + TFilePath("quicktoolbar.xml");
-    commandBarLabel = new QLabel(tr("Quick Toolbar"));
-    setWindowTitle(tr("Customize Quick Toolbar"));
+    // Ztoryc: si modifica la barra del workflow corrente, e si PARTE da quella
+    // comune se per questo workflow non ne esiste ancora una — stesso schema
+    // gia' usato qui sotto dalle Command Bar con id.
+    QString wfTag = CommandBar::currentWorkflowTag();
+    m_defaultPath = CommandBar::quickToolbarPath("", false);
+    m_path        = CommandBar::quickToolbarPath(wfTag, false);
+    if (!wfTag.isEmpty()) TSystem::touchParentDir(m_path);
+
+    // Il workflow va DETTO: senza, si crede di modificare la barra di tutti e
+    // se ne modifica una sola.
+    if (wfTag.isEmpty()) {
+      commandBarLabel = new QLabel(tr("Quick Toolbar"));
+      setWindowTitle(tr("Customize Quick Toolbar"));
+    } else {
+      QString wfName  = CommandBar::workflowDisplayName(wfTag);
+      commandBarLabel = new QLabel(tr("Quick Toolbar (%1)").arg(wfName));
+      setWindowTitle(tr("Customize Quick Toolbar (%1)").arg(wfName));
+    }
   } else if (barType == CommandBarType::Main) {
     m_defaultPath = m_path =
         ToonzFolder::getMyModuleDir() + TFilePath("maintoolbar.xml");

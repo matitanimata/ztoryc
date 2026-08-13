@@ -682,6 +682,13 @@ void Preferences::definePreferenceItems() {
   define(shortcutCommandsWhileRenamingCellEnabled,
          "shortcutCommandsWhileRenamingCellEnabled", QMetaType::Bool, false);
   define(showQuickToolbar, "showQuickToolbar", QMetaType::Bool, true);
+  // Ztoryc: acceso di default e' comunque a comportamento invariato — finche'
+  // non esiste un file per il workflow corrente si ricade sulla barra comune,
+  // che e' esattamente quella di prima.
+  define(ztoryPerWorkflowQuickToolbar, "ztoryPerWorkflowQuickToolbar",
+         QMetaType::Bool, true);
+  define(ztoryQuickToolbarMigration, "ztoryQuickToolbarMigration",
+         QMetaType::Int, 0, 0, 1000);
   define(showXsheetBreadcrumbs, "showXsheetBreadcrumbs", QMetaType::Bool,
          false);
   define(expandFunctionHeader, "expandFunctionHeader", QMetaType::Bool, false);
