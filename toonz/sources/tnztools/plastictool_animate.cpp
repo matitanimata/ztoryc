@@ -4,6 +4,10 @@
 #include "tundo.h"
 
 #include <QDebug>
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
+#include "toonz/toonzfolders.h"
 #include "tgl.h"
 
 // TnzLib includes
@@ -490,6 +494,64 @@ double l_ikDampPercent = 12.0;
 */
 static double ikMaxStep() { return l_ikDampPercent * (M_PI / 180.0); }
 
+// Annealing (proposta DragonBones): quanto ammorbidire i giunti vicini alla
+// RADICE rispetto a quelli vicini all'estremita'. 0 = come e' sempre stato,
+// stesso tetto per tutti. Guidato dallo slider "Root Ease".
+double l_ikRootEasePercent = 0.0;
+
+//! Peso sul tetto per un pivot in posizione `i` di una catena di `n` pivot,
+//! con 0 = radice. A Root Ease 0 torna 1 per tutti, cioe' il comportamento
+//! precedente bit per bit.
+static double ikStepWeight(int i, int n) {
+  if (l_ikRootEasePercent <= 0.0 || n <= 1) return 1.0;
+  const double wRoot = 1.0 - 0.01 * l_ikRootEasePercent;  // 100% -> radice ferma
+  const double t     = (double)i / (double)(n - 1);
+  return wRoot + (1.0 - wRoot) * t;
+}
+
+// Guardia anti-ribaltamento: per ora OSSERVA e basta. Una catena che raggiunge
+// un bersaglio ha due soluzioni a specchio; passando vicino alla posa dritta il
+// solver puo' cadere nell'altra, e siccome la posa risolta e' il seme
+// dell'evento successivo lo scatto non si riassorbe. Prima di correggere va
+// dimostrato che sia questo cio' che l'utente vede — correggere significa
+// rimettere a posto la catena SENZA specchiare gli arti che le pendono addosso,
+// ed e' un meccanismo che non vale la pena inventare su un'ipotesi.
+bool l_ikNoFlipWatch = false;
+
+//! Annota un ribaltamento su file, non su qDebug: l'app la si lancia dal Finder
+//! e nessuno guarda uno standard output che non esiste. Il file sta accanto
+//! alla cache, si apre da Finder e si legge a occhio.
+static void ztoryIkFlipLog(int pin, int chainLen, double before, double after) {
+  const QString path =
+      ToonzFolder::getCacheRootFolder().getQString() + "/ztoryc_ikflip.log";
+  QFile f(path);
+  if (!f.open(QIODevice::Append | QIODevice::Text)) return;
+  QTextStream out(&f);
+  out << QDateTime::currentDateTime().toString("HH:mm:ss.zzz")
+      << "  RIBALTAMENTO  pin=" << pin << " giunti=" << chainLen
+      << "  lato prima=" << before << " dopo=" << after << "\n";
+}
+
+//! Lato con segno del giunto interno che si scosta di piu' dall'asse
+//! inizio->fine: identifica da che parte la catena sta piegando. Zero quando la
+//! catena e' dritta, ed e' proprio li' che il verso e' indecidibile.
+static double chainBendSide(const std::vector<int> &chain,
+                            const std::map<int, TPointD> &P) {
+  if ((int)chain.size() < 3) return 0.0;
+  auto itA = P.find(chain.front());
+  auto itB = P.find(chain.back());
+  if (itA == P.end() || itB == P.end()) return 0.0;
+  const TPointD a = itA->second, axis = itB->second - a;
+  double best = 0.0, bestAbs = 0.0;
+  for (size_t i = 1; i + 1 < chain.size(); ++i) {
+    auto it = P.find(chain[i]);
+    if (it == P.end()) continue;
+    const double s = cross(axis, it->second - a);
+    if (fabs(s) > bestAbs) bestAbs = fabs(s), best = s;
+  }
+  return best;
+}
+
 void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
                                          const TMouseEvent &me) {
   if (m_correctiveSculpt.getValue()) {
@@ -559,7 +621,9 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
       // graph (STEP A): re-root at the pin so the foot holds while the body
       // articulates. If it doesn't apply, FK posing (no pins) also runs on the
       // unified graph; otherwise fall back to the single-level pin path.
-      l_ikDampPercent = m_ikDamping.getValue();
+      l_ikDampPercent      = m_ikDamping.getValue();
+      l_ikRootEasePercent  = m_ikRootEase.getValue();
+      l_ikNoFlipWatch      = m_ikNoFlip.getValue();
 
       const bool diag = ::getenv("ZTORYC_PIN_DIAG") != nullptr;
 
@@ -1403,6 +1467,21 @@ void solveMultiAnchor(const PlasticSkeleton &orig, const PinTree &T,
     sref[u] = r;
   }
 
+  // Verso di piega di ogni catena PRIMA di risolvere. Si legge dalla posa in
+  // ingresso, che e' quella su cui l'utente sta guardando: se dopo il solve una
+  // catena si ritrova a piegare dall'altra parte, quello e' lo scatto.
+  std::map<int, std::vector<int>> chainOf;
+  std::map<int, double> sideBefore;
+  if (l_ikNoFlipWatch) {
+    for (const auto &ap : anchor) {
+      std::vector<int> ch;
+      for (int u = ap.first; u >= 0; u = T.parentT.at(u)) ch.push_back(u);
+      std::reverse(ch.begin(), ch.end());
+      sideBefore[ap.first] = chainBendSide(ch, P);
+      chainOf[ap.first]    = std::move(ch);
+    }
+  }
+
   const int ITERS = 10;
   for (int it = 0; it < ITERS; ++it) {
     P[T.order[0]] = t;
@@ -1497,7 +1576,15 @@ void solveMultiAnchor(const PlasticSkeleton &orig, const PinTree &T,
         // WORSE at large travel, where the root joints are the reach. The
         // existing flat cap already lands within 0.7% of chain length. Don't
         // re-litigate without a case where the current behaviour visibly fails.
-        const double maxAng = ikMaxStep();
+        //
+        // 2026-08-14: rimessa in gioco come MANOPOLA («Root Ease») dopo che
+        // Franco ha segnalato che mettere in posa e' ancora difficoltoso. A 0
+        // il peso vale 1 per tutti e questo ramo e' identico a prima.
+        const int lo   = firstExcl - 1;
+        const int hi   = (int)chain.size() - 2;
+        const int nPiv = std::max(1, hi - lo + 1);
+
+        const double maxAng = ikMaxStep() * ikStepWeight(i - lo, nPiv);
         ang                 = std::min(std::max(ang, -maxAng), maxAng);
 
         double c = cos(ang), s = sin(ang);
@@ -1513,6 +1600,29 @@ void solveMultiAnchor(const PlasticSkeleton &orig, const PinTree &T,
           P[u]      = pivot + TPointD(c * d.x - s * d.y, s * d.x + c * d.y);
         }
       }
+    }
+  }
+
+  // Il verso di piega si e' rovesciato? Per ora si annota e basta: serve sapere
+  // se lo scatto che si vede a schermo coincide davvero con questo, prima di
+  // costruire il rimedio. Si scarta il caso in cui la catena partiva GIA' quasi
+  // dritta: li' il verso non e' definito e un cambio di segno non e' un
+  // ribaltamento, e' rumore.
+  if (l_ikNoFlipWatch) {
+    for (const auto &kv : chainOf) {
+      const double before = sideBefore[kv.first];
+      const double after  = chainBendSide(kv.second, P);
+      if (before * after >= 0.0) continue;
+
+      double span = 0.0;
+      for (size_t i = 1; i < kv.second.size(); ++i) {
+        auto a = P.find(kv.second[i - 1]), b = P.find(kv.second[i]);
+        if (a != P.end() && b != P.end()) span += norm(b->second - a->second);
+      }
+      const double soglia = 0.02 * span * span;  // stessa scala del cross
+      if (fabs(before) < soglia) continue;
+
+      ztoryIkFlipLog(kv.first, (int)kv.second.size(), before, after);
     }
   }
 }

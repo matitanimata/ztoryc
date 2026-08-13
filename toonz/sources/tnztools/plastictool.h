@@ -138,6 +138,23 @@ private:
   //! the body hanging off a joint is proportional to the angle alone.
   TDoubleProperty m_ikDamping;
 
+  //! ZtoRig — guardia contro il ribaltamento della piega («il personaggio
+  //! scatta»). Una catena che deve raggiungere un bersaglio ha due soluzioni a
+  //! specchio, gomito in su e gomito in giu': passando vicino alla posa dritta
+  //! il solver puo' cadere nell'altra, e siccome la posa risolta diventa il
+  //! punto di partenza dell'evento dopo, lo scatto resta. Con questa accesa il
+  //! verso di piega di ogni catena viene confrontato con quello di partenza e
+  //! ripristinato se si e' rovesciato.
+  TBoolProperty m_ikNoFlip;
+
+  //! ZtoRig — quanto ammorbidire i giunti vicini alla RADICE rispetto a quelli
+  //! vicini all'estremita' (annealing). 0 = come sempre, stesso tetto per
+  //! tutti; alzandolo, la radice si muove meno per evento. Da provare in mano:
+  //! sulla convergenza la misura dice che aiuta a meta' corsa e penalizza sugli
+  //! spostamenti ampi, ma quello che conta qui e' come risponde al
+  //! trascinamento, che un numero non vede.
+  TDoubleProperty m_ikRootEase;
+
   TEnumProperty m_scaleConstraint;  //!< Squash & stretch constraint, like the
                                     //!< Animate tool: None / Aspect Ratio /
                                     //!< Mass (V = 1/H, area preserved)

@@ -1094,6 +1094,8 @@ PlasticTool::PlasticTool()
     , m_snapToMesh("snapToMesh", false)
     , m_thickness("Thickness", 1, 100, 5)
     , m_ikDamping("IKDamping", 1, 90, 15)
+    , m_ikNoFlip("ikNoFlip", false)
+    , m_ikRootEase("ikRootEase", 0, 100, 0)
     , m_rigidValue("rigidValue")
     , m_globalKey("globalKeyframe", true)
     , m_globalKeyScope("Key:")  // Ztoryc: portata della chiave globale
@@ -1137,6 +1139,8 @@ PlasticTool::PlasticTool()
 
   m_propGroup[RIGIDITY_IDX].bind(m_thickness);
   m_propGroup[ANIMATE_IDX].bind(m_ikDamping);
+  m_propGroup[ANIMATE_IDX].bind(m_ikNoFlip);
+  m_propGroup[ANIMATE_IDX].bind(m_ikRootEase);
   m_propGroup[ANIMATE_IDX].bind(m_correctiveSculpt);
   m_propGroup[ANIMATE_IDX].bind(m_correctiveRadius);
   m_propGroup[ANIMATE_IDX].bind(m_correctiveOrder);
@@ -1170,6 +1174,8 @@ PlasticTool::PlasticTool()
   m_snapToMesh.setId("SnapToMesh");
   m_thickness.setId("Thickness");
   m_ikDamping.setId("IKDamping");
+  m_ikNoFlip.setId("ikNoFlip");
+  m_ikRootEase.setId("ikRootEase");
   m_correctiveSculpt.setId("PlasticCorrectiveSculpt");
   m_correctiveRadius.setId("PlasticCorrectiveRadius");
   m_correctiveOrder.setId("PlasticCorrectiveOrder");
@@ -1237,6 +1243,8 @@ void PlasticTool::updateTranslation() {
   m_snapToMesh.setQStringName(tr("Snap To Mesh"));
   m_thickness.setQStringName(tr("Thickness"));
   m_ikDamping.setQStringName(tr("IK Max Step"));
+  m_ikNoFlip.setQStringName(tr("No Flip"));
+  m_ikRootEase.setQStringName(tr("Root Ease"));
   m_correctiveSculpt.setQStringName(tr("Sculpt"));
   m_correctiveRadius.setQStringName(tr("Brush"));
   m_correctiveOrder.setQStringName(tr("Order"));
