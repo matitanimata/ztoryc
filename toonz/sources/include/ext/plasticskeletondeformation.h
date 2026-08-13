@@ -759,6 +759,15 @@ public:
   //! the ARAP result by the deformer. (0,0) when no corrective touches it.
   TPointD meshCorrectiveOffset(int meshIdx, int v, double frame) const;
 
+  //! Quanto la correttiva \p idx sta contribuendo a \p frame, in [0,1]. Serve
+  //! all'interfaccia: la dissolvenza per angolo e' l'unica parte del meccanismo
+  //! che non si vede guardando il personaggio, e senza un numero non si capisce
+  //! se una correttiva e' spenta perche' e' sbagliata o perche' il giunto non e'
+  //! ancora piegato abbastanza.
+  //! Torna -1 quando la correttiva non c'e' o il suo giunto guida non si trova
+  //! — che e' un'informazione diversa da «pesa zero» e va poter distinguere.
+  double meshCorrectiveWeight(int idx, double frame) const;
+
   //! \name ZtoRig stacking-order ownership
   //@{
   //! Which skeleton vertex a mesh vertex takes its stacking order FROM.

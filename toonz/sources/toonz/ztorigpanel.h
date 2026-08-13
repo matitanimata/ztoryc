@@ -33,6 +33,7 @@ class QDoubleSpinBox;
 class QToolButton;
 class QCheckBox;
 class QAction;
+class QTabWidget;
 
 //! One row: name + dial + remove.
 class ZtoRigActionRow final : public QWidget {
@@ -104,6 +105,44 @@ private:
 
 //----------------------------------------------------------------------------
 
+//! Una riga della scheda Correttive: nome, giunto guida, intervallo di
+//! dissolvenza, quanto pesa adesso, e il cestino.
+//!
+//! Le correttive nascono da sole quando si scolpisce (il pennello le chiama
+//! `<giunto>_<angolo>` e incatena l'intervallo a quella sotto), ma fino a qui
+//! erano a SENSO UNICO: nessun elenco, nessuna cancellazione, nessun modo di
+//! spostare la dissolvenza se entrava troppo presto.
+class ZtoRigCorrectiveRow final : public QWidget {
+  Q_OBJECT
+
+public:
+  ZtoRigCorrectiveRow(int index, const QString &name, const QString &driver,
+                      double restAngle, double fullAngle,
+                      QWidget *parent = nullptr);
+
+  int index() const { return m_index; }
+  //! Aggiorna il peso mostrato senza toccare gli spin (che l'utente potrebbe
+  //! stare modificando). Peso negativo = giunto guida introvabile, che e' una
+  //! cosa diversa da «pesa zero» e va detta.
+  void setWeight(double w);
+
+signals:
+  void rangeChanged(int index, double restAngle, double fullAngle);
+  void removeRequested(int index);
+
+private slots:
+  void onSpin(double);
+
+private:
+  int m_index;
+  QDoubleSpinBox *m_restSpin = nullptr;
+  QDoubleSpinBox *m_fullSpin = nullptr;
+  QLabel *m_weightLabel      = nullptr;
+  bool m_updating            = false;
+};
+
+//----------------------------------------------------------------------------
+
 class ZtoRigPanel final : public TPanel {
   Q_OBJECT
 
@@ -134,6 +173,15 @@ private slots:
   void onBaseToggled(int index, bool isBase);
   void onSkeletonsChanged(int index, const std::set<int> &skelIds);
   void onRemove(int index);
+
+  //! ---- Scheda Correttive ----
+  //! Ricostruisce le righe dalla deformazione corrente (colonna/scena cambiata).
+  void rebuildCorrectives();
+  //! Solo i pesi (fotogramma cambiato): ricostruire ad ogni fotogramma
+  //! azzererebbe lo scroll e combatterebbe con chi sta modificando uno spin.
+  void refreshCorrectiveWeights();
+  void onCorrectiveRangeChanged(int index, double restAngle, double fullAngle);
+  void onCorrectiveRemove(int index);
   //! Frame changed: the slider reads the current pose STRENGTH off the keys, so
   //! it shows where you are (0 rest, 1 pose) and can be dialled in and out.
   void onFrameSwitched();
@@ -214,6 +262,17 @@ private:
   QPushButton *m_recordBt = nullptr;
   QVector<ZtoRigActionRow *> m_rows;
   QCheckBox *m_showAllBt = nullptr;
+
+  //! Le schede. A tab e non impilate perche' la sezione correttive e' una
+  //! tabella: sotto le pose schiaccerebbe entrambe, e ne arriveranno altre.
+  QTabWidget *m_tabs           = nullptr;
+  QVBoxLayout *m_corrRowsLay   = nullptr;
+  QScrollArea *m_corrScroll    = nullptr;
+  QLabel *m_corrEmptyLabel     = nullptr;
+  QVector<ZtoRigCorrectiveRow *> m_corrRows;
+  //! Correttive all'ultima ricostruzione, per accorgersi che ne e' nata una
+  //! nuova sotto il pennello senza ricostruire ad ogni fotogramma.
+  int m_builtCorrectiveCount = -1;
 
   // Vector pose test (see the slots above).
   TVectorImageP m_vecA, m_vecB;

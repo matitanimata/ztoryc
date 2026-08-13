@@ -50,6 +50,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSlider>
+#include <QTabWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -381,13 +382,110 @@ void ZtoRigActionRow::onSpin(double v) {
 // ZtoRigPanel
 //=============================================================================
 
+//============================================================================
+// ZtoRigCorrectiveRow
+//----------------------------------------------------------------------------
+
+ZtoRigCorrectiveRow::ZtoRigCorrectiveRow(int index, const QString &name,
+                                         const QString &driver,
+                                         double restAngle, double fullAngle,
+                                         QWidget *parent)
+    : QWidget(parent), m_index(index) {
+  auto *lay = new QHBoxLayout(this);
+  lay->setContentsMargins(0, 0, 0, 0);
+  lay->setSpacing(4);
+
+  auto *nameLabel = new QLabel(name, this);
+  nameLabel->setToolTip(
+      tr("Corrective sculpted on the joint '%1'.\n"
+         "The name is given by the brush: joint plus the angle it was\n"
+         "sculpted at.")
+          .arg(driver));
+  nameLabel->setMinimumWidth(90);
+  lay->addWidget(nameLabel, 1);
+
+  // Riposo e pieno regime: l'intervallo su cui la correttiva entra. Nascono
+  // incatenati (una parte dove finisce quella sotto), ma vanno spostabili —
+  // e' l'unica manopola che governa COME entra, e finora non c'era.
+  auto makeSpin = [&](double v, const QString &tip) {
+    auto *s = new QDoubleSpinBox(this);
+    s->setRange(-360.0, 360.0);
+    s->setDecimals(1);
+    s->setSingleStep(1.0);
+    s->setSuffix(tr("°"));
+    s->setValue(v);
+    s->setToolTip(tip);
+    s->setFixedWidth(72);
+    return s;
+  };
+  m_restSpin = makeSpin(restAngle, tr("Angle at which this corrective is OFF."));
+  m_fullSpin =
+      makeSpin(fullAngle, tr("Angle at which it applies FULLY.\n"
+                             "Between the two it fades in proportionally."));
+  lay->addWidget(m_restSpin);
+  lay->addWidget(new QLabel(QString::fromUtf8("→"), this));
+  lay->addWidget(m_fullSpin);
+
+  // Quanto pesa ADESSO. E' la sola parte del meccanismo che il personaggio non
+  // mostra: senza, una correttiva spenta perche' il giunto non e' piegato
+  // abbastanza sembra identica a una sbagliata.
+  m_weightLabel = new QLabel(this);
+  m_weightLabel->setFixedWidth(46);
+  m_weightLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  m_weightLabel->setToolTip(tr("How much this corrective is contributing at "
+                               "the current frame."));
+  lay->addWidget(m_weightLabel);
+
+  auto *removeBt = new QPushButton(tr("×"), this);
+  removeBt->setFixedSize(QSize(22, 20));
+  removeBt->setToolTip(tr("Delete this corrective. The sculpted shape is lost."));
+  lay->addWidget(removeBt);
+
+  connect(m_restSpin, SIGNAL(valueChanged(double)), this, SLOT(onSpin(double)));
+  connect(m_fullSpin, SIGNAL(valueChanged(double)), this, SLOT(onSpin(double)));
+  connect(removeBt, &QPushButton::clicked, this,
+          [this] { emit removeRequested(m_index); });
+}
+
+//----------------------------------------------------------------------------
+
+void ZtoRigCorrectiveRow::setWeight(double w) {
+  if (w < 0.0) {
+    m_weightLabel->setText(tr("—"));
+    m_weightLabel->setToolTip(
+        tr("Driving joint not found: this corrective can never apply."));
+    return;
+  }
+  m_weightLabel->setText(QString::number(qRound(w * 100.0)) + "%");
+}
+
+//----------------------------------------------------------------------------
+
+void ZtoRigCorrectiveRow::onSpin(double) {
+  if (m_updating) return;
+  emit rangeChanged(m_index, m_restSpin->value(), m_fullSpin->value());
+}
+
+//============================================================================
+// ZtoRigPanel
+//----------------------------------------------------------------------------
+
 ZtoRigPanel::ZtoRigPanel(QWidget *parent) : TPanel(parent) {
-  auto *root = new QWidget(this);
-  auto *lay  = new QVBoxLayout(root);
+  auto *root    = new QWidget(this);
+  auto *rootLay = new QVBoxLayout(root);
+  rootLay->setContentsMargins(0, 0, 0, 0);
+  rootLay->setSpacing(0);
+
+  m_tabs = new QTabWidget(root);
+  rootLay->addWidget(m_tabs, 1);
+
+  // ---- scheda Pose ----
+  auto *posesTab = new QWidget(m_tabs);
+  auto *lay      = new QVBoxLayout(posesTab);
   lay->setContentsMargins(4, 4, 4, 4);
   lay->setSpacing(4);
 
-  m_recordBt = new QPushButton(tr("Record Pose as Action…"), root);
+  m_recordBt = new QPushButton(tr("Record Pose as Action…"), posesTab);
   m_recordBt->setToolTip(
       tr("Store the pose authored at the current frame as a new action.\n"
          "Nothing changes on screen: the new dial starts at 0."));
@@ -401,7 +499,7 @@ ZtoRigPanel::ZtoRigPanel(QWidget *parent) : TPanel(parent) {
   // destroy a drawing to someone who cannot know that is not a fair trade for
   // letting them try it early. Set the variable to get the box back.
   if (::getenv("ZTORYC_VECPOSE")) {
-    auto *vecBox = new QWidget(root);
+    auto *vecBox = new QWidget(posesTab);
     auto *vl     = new QHBoxLayout(vecBox);
     vl->setContentsMargins(0, 2, 0, 2);
     vl->setSpacing(4);
@@ -436,7 +534,7 @@ ZtoRigPanel::ZtoRigPanel(QWidget *parent) : TPanel(parent) {
             &ZtoRigPanel::onVecBlend);
   }
 
-  m_showAllBt = new QCheckBox(tr("Show all skeletons"), root);
+  m_showAllBt = new QCheckBox(tr("Show all skeletons"), posesTab);
   m_showAllBt->setToolTip(
       tr("Off: only the actions usable on the skeleton at the current frame.\n"
          "On: every action, grouped by skeleton — for tidying up the views\n"
@@ -449,21 +547,52 @@ ZtoRigPanel::ZtoRigPanel(QWidget *parent) : TPanel(parent) {
       tr("No pose action on this column.\n\n"
          "Pose the character, then Record. Undo the pose and raise the\n"
          "dial: the pose comes back — driven by the action this time."),
-      root);
+      posesTab);
   m_emptyLabel->setWordWrap(true);
   m_emptyLabel->setAlignment(Qt::AlignTop);
   lay->addWidget(m_emptyLabel);
 
-  auto *rowsHost = new QWidget(root);
+  auto *rowsHost = new QWidget(posesTab);
   m_rowsLay      = new QVBoxLayout(rowsHost);
   m_rowsLay->setContentsMargins(0, 0, 0, 0);
   m_rowsLay->setSpacing(2);
   m_rowsLay->addStretch(1);
 
-  m_scroll = new QScrollArea(root);
+  m_scroll = new QScrollArea(posesTab);
   m_scroll->setWidgetResizable(true);
   m_scroll->setWidget(rowsHost);
   lay->addWidget(m_scroll, 1);
+
+  m_tabs->addTab(posesTab, tr("Poses"));
+
+  // ---- scheda Correttive ----
+  auto *corrTab = new QWidget(m_tabs);
+  auto *corrLay = new QVBoxLayout(corrTab);
+  corrLay->setContentsMargins(4, 4, 4, 4);
+  corrLay->setSpacing(4);
+
+  m_corrEmptyLabel = new QLabel(
+      tr("No joint corrective on this column.\n\n"
+         "Bend a joint, turn on the corrective brush in the Plastic tool,\n"
+         "and sculpt the shape back: the corrective is created here, named\n"
+         "after the joint and the angle you sculpted at."),
+      corrTab);
+  m_corrEmptyLabel->setWordWrap(true);
+  m_corrEmptyLabel->setAlignment(Qt::AlignTop);
+  corrLay->addWidget(m_corrEmptyLabel);
+
+  auto *corrHost = new QWidget(corrTab);
+  m_corrRowsLay  = new QVBoxLayout(corrHost);
+  m_corrRowsLay->setContentsMargins(0, 0, 0, 0);
+  m_corrRowsLay->setSpacing(2);
+  m_corrRowsLay->addStretch(1);
+
+  m_corrScroll = new QScrollArea(corrTab);
+  m_corrScroll->setWidgetResizable(true);
+  m_corrScroll->setWidget(corrHost);
+  corrLay->addWidget(m_corrScroll, 1);
+
+  m_tabs->addTab(corrTab, tr("Correctives"));
 
   setWidget(root);
 
@@ -785,6 +914,8 @@ public:
 //-----------------------------------------------------------------------------
 
 void ZtoRigPanel::rebuild() {
+  rebuildCorrectives();
+
   for (ZtoRigActionRow *row : m_rows) {
     m_rowsLay->removeWidget(row);
     row->deleteLater();
@@ -960,6 +1091,114 @@ void ZtoRigPanel::updateApplicability() {
 
 //-----------------------------------------------------------------------------
 
+void ZtoRigPanel::rebuildCorrectives() {
+  for (ZtoRigCorrectiveRow *row : m_corrRows) {
+    m_corrRowsLay->removeWidget(row);
+    row->deleteLater();
+  }
+  m_corrRows.clear();
+
+  const PlasticSkeletonDeformationP sd = currentDeformation();
+  const int count = sd ? sd->meshCorrectivesCount() : 0;
+  m_builtCorrectiveCount = count;
+
+  m_corrEmptyLabel->setVisible(count == 0);
+  m_corrScroll->setVisible(count > 0);
+
+  if (!sd) {
+    m_corrEmptyLabel->setText(
+        tr("This column has no plastic skeleton.\n\n"
+           "Build one with the Plastic tool, then come back here."));
+    return;
+  }
+  if (count == 0) {
+    m_corrEmptyLabel->setText(
+        tr("No joint corrective on this column.\n\n"
+           "Bend a joint, turn on the corrective brush in the Plastic tool,\n"
+           "and sculpt the shape back: the corrective is created here, named\n"
+           "after the joint and the angle you sculpted at."));
+    return;
+  }
+
+  for (int i = 0; i < count; ++i) {
+    const MeshCorrective *mc = sd->meshCorrective(i);
+    if (!mc) continue;
+    auto *row = new ZtoRigCorrectiveRow(i, mc->m_name, mc->m_driverVertexName,
+                                        mc->m_restAngle, mc->m_fullAngle);
+    connect(row, &ZtoRigCorrectiveRow::rangeChanged, this,
+            &ZtoRigPanel::onCorrectiveRangeChanged);
+    connect(row, &ZtoRigCorrectiveRow::removeRequested, this,
+            &ZtoRigPanel::onCorrectiveRemove);
+    m_corrRowsLay->insertWidget(m_corrRowsLay->count() - 1, row);
+    m_corrRows.push_back(row);
+  }
+
+  refreshCorrectiveWeights();
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoRigPanel::refreshCorrectiveWeights() {
+  const PlasticSkeletonDeformationP sd = currentDeformation();
+  if (!sd) return;
+
+  // Una correttiva puo' nascere sotto il pennello mentre il pannello e' aperto:
+  // se il conto non torna si ricostruisce, invece di leggere oltre la fine.
+  if (sd->meshCorrectivesCount() != m_builtCorrectiveCount) {
+    rebuildCorrectives();
+    return;
+  }
+
+  const double frame = paramsFrame();
+  for (ZtoRigCorrectiveRow *row : m_corrRows)
+    row->setWeight(sd->meshCorrectiveWeight(row->index(), frame));
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoRigPanel::onCorrectiveRangeChanged(int index, double restAngle,
+                                           double fullAngle) {
+  const PlasticSkeletonDeformationP sd = currentDeformation();
+  if (!sd) return;
+  MeshCorrective *mc = sd->meshCorrective(index);
+  if (!mc) return;
+
+  mc->m_restAngle = restAngle;
+  mc->m_fullAngle = fullAngle;
+
+  // Il peso cambia subito, e il disegno con lui: senza invalidare, la mesh
+  // seguirebbe solo al clic successivo (stessa trappola dei dial delle pose).
+  flushConnectedPlacements();
+  refreshCorrectiveWeights();
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoRigPanel::onCorrectiveRemove(int index) {
+  const PlasticSkeletonDeformationP sd = currentDeformation();
+  if (!sd) return;
+  const MeshCorrective *mc = sd->meshCorrective(index);
+  if (!mc) return;
+
+  // La forma scolpita se ne va e non torna: si chiede.
+  const QString name = mc->m_name;
+  if (QMessageBox::question(
+          this, tr("Delete Corrective"),
+          tr("Delete the corrective '%1'?\n\nThe sculpted shape is lost.")
+              .arg(name),
+          QMessageBox::Yes | QMessageBox::No,
+          QMessageBox::No) != QMessageBox::Yes)
+    return;
+
+  sd->removeMeshCorrective(index);
+  flushConnectedPlacements();
+  rebuildCorrectives();
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+}
+
+//-----------------------------------------------------------------------------
+
 void ZtoRigPanel::refreshValues() {
   const PlasticSkeletonDeformationP sd = currentDeformation();
   if (!sd) return;
@@ -975,6 +1214,8 @@ void ZtoRigPanel::refreshValues() {
   const double frame = paramsFrame();
   for (ZtoRigActionRow *row : m_rows)
     row->setValueSilently(sd->poseStrengthAt(row->index(), frame));
+
+  refreshCorrectiveWeights();
 }
 
 //-----------------------------------------------------------------------------
@@ -993,6 +1234,8 @@ void ZtoRigPanel::onFrameSwitched() {
   const double frame = paramsFrame();
   for (ZtoRigActionRow *row : m_rows)
     row->setValueSilently(sd->poseStrengthAt(row->index(), frame));
+
+  refreshCorrectiveWeights();
 
   // The active skeleton can change with the frame (turnaround). Which actions
   // are even listed depends on it, so that case needs a rebuild — but only

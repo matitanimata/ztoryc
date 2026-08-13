@@ -2528,6 +2528,23 @@ TPointD PlasticSkeletonDeformation::meshCorrectiveOffset(int meshIdx, int v,
 
 //------------------------------------------------------------------
 
+double PlasticSkeletonDeformation::meshCorrectiveWeight(int idx,
+                                                        double frame) const {
+  if (idx < 0 || idx >= (int)m_imp->m_meshCorrectives.size()) return -1.0;
+  const MeshCorrective &mc = m_imp->m_meshCorrectives[idx];
+
+  // Stessa risoluzione di meshCorrectiveOffset: angolo BASE del giunto guida,
+  // mai il risultato gia' fuso, cosi' la guida non insegue il proprio effetto.
+  SkVDSet::iterator it = m_imp->m_vds.find(mc.m_driverVertexName);
+  if (it == m_imp->m_vds.end()) return -1.0;
+  const SkVD &vd = it->m_vd;
+  if (!vd.m_params[SkVD::ANGLE]) return -1.0;
+
+  return mc.weight(vd.m_params[SkVD::ANGLE]->getValue(frame));
+}
+
+//------------------------------------------------------------------
+
 void PlasticSkeletonDeformation::saveData(TOStream &os) {
   // Save skeleton vertex deformations
   os.openChild("VertexDeforms");  // These are saved *before* skeletons
