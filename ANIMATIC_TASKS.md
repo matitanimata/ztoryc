@@ -387,14 +387,21 @@ nella sub-scene corretta.
   `solveMultiAnchor`, ma l'ultima parola ce l'ha il solve di personaggio in
   `TStageObject`. Esporre anche quello come query, come `plantPins()` /
   `pinResidualForPose()` per la singola colonna.
-- ⬜ **Chiudere un loop di camminata.** `SkVD::POSE_PARAMS`
-  (`plasticskeletondeformation.cpp:111`) mescola FORMA (ANGLE, DISTANCE, SO) e
-  PIAZZAMENTO (ROOTX/Y, TRANS, ROT, SCALE, PIVOT, SHEAR): copiare «la posa»
-  riporta indietro il personaggio. Con i pin il piazzamento non va copiato
-  affatto — il pin porta la posizione, gli angoli la forma. **Da provare prima**:
-  la modalita' `Part` richiama «solo i parametri registrati»; se Record cattura
-  solo cio' che e' cambiato dal riposo, potrebbe bastare. Altrimenti serve un
-  comando che copi ANGLE/DISTANCE/SO fra due frame lasciando il piazzamento.
+- ✅ **Chiudere un loop di camminata — RISOLTO il 2026-08-14, senza scrivere
+  codice.** Franco: «ha funzionato con **Part**». La prova che era annotata come
+  «da fare prima» ha chiuso la voce da sola: la modalita' `Part` richiama **solo
+  i parametri registrati**, quindi copiando una posa non si porta dietro il
+  PIAZZAMENTO e il personaggio non torna indietro.
+  **Quindi il comando nuovo NON serve.** Il difetto di fondo resta vero e va
+  conosciuto — `SkVD::POSE_PARAMS` (`plasticskeletondeformation.cpp:111`)
+  mescola FORMA (ANGLE, DISTANCE, SO) e PIAZZAMENTO (ROOTX/Y, TRANS, ROT, SCALE,
+  PIVOT, SHEAR), e con i pin il piazzamento non andrebbe copiato affatto perche'
+  il pin porta la posizione e gli angoli la forma — ma in pratica `Part` lo
+  aggira. Se un giorno servisse copiare pose **senza** passare da Part, il
+  rimedio e' un comando che copi solo ANGLE/DISTANCE/SO fra due frame.
+  ⚠️ **Da mettere nel manuale**: «per chiudere un ciclo, richiama la posa in
+  modalita' Part» e' conoscenza d'uso, non di codice, e senza scriverla si
+  riperde.
 - ⬜ **Template di scheletri riusabili + registrazione di animazioni.**
   ✅ **CONFERMATO da Franco il 2026-08-03** — era ricostruito a memoria, ora e' una voce
   vera. Restano aperte le domande di progetto: cosa contiene il template (topologia?
