@@ -485,6 +485,41 @@ nella sub-scene corretta.
 
 ## Priority Order
 
+### 🛑 SOSPESI PER DECISIONE DI FRANCO — non riproporli
+
+> Leggere PRIMA di proporre qualsiasi cosa. Sono voci ancora aperte piu' in
+> basso, ma Franco ha deciso di lasciarle stare: una sessione che le rilancia
+> gli fa perdere tempo. Si riaprono solo se **lui** le riapre, o se il sintomo
+> ricapita da solo lavorando.
+
+- **I crash e i problemi sulle SCENE VECCHIE** (2026-08-14): *«per quanto
+  riguarda i crash e i problemi con scene vecchie lascerei stare, vediamo se
+  ricapita lavorandoci»*. Coperti da questa decisione:
+  - crash su «Salva sotto-scena come scena», mesh non trovate
+  - il pin va sul vertice sbagliato su scene precedenti all'IK
+  - il personaggio «parte» manipolando le anche — solo su animazioni vecchie
+- **L'IK resta com'e'** (2026-08-14): dopo la prova col rilevatore di
+  ribaltamento, Franco: *«mi pare piu' stabile e controllabile di quel che
+  ricordavo, forse possiamo lasciare l'ik com'era»*. Branch
+  `feature/ik-pole-vector` non mergiato. Non riproporre annealing ne' pole
+  vector senza un sintomo nuovo.
+- **Otter (il secondo fork)** (2026-08-13): *«ci sto ancora ragionando, e' un
+  problema che possiamo affrontare in seguito»*. Vedi
+  `COMPETITIVE_ROADMAP.md` sez. 8.
+- **Assistenti al disegno da OpenToonz** (2026-08-13): candidato misurato e
+  registrato in `OPENTOONZ_PORT_CANDIDATES.md`, ma Franco ha scelto di passare
+  prima al rig. Non e' il prossimo lavoro.
+- **Render sbagliato sh110**: sospeso dal 2026-08-07. ⚠️ **Novita' del
+  2026-08-14**: ora e' **riproducibile a comando** (tcomposer headless, frame
+  110, MD5 stabile) — ma resta sospeso finche' Franco non lo riapre. Vedi la
+  voce dedicata piu' sotto.
+
+**Cosa e' invece VIVO al 2026-08-14**: il rig — collaudare il branch
+`feature/ztorig-correttive-ui` (pannello a schede + traccia in gradi), e poi il
+**taglio automatico sulla giuntura**, che e' la strada emersa dal disco
+parcheggiato.
+
+
 ### ⏸️ SOSPESO — render sbagliato su sh110: quindici cause ESCLUSE, nessuna trovata (2026-08-07 notte)
 
 Franco: «lasciamo perdere, vedremo con i prossimi progetti se risuccede».

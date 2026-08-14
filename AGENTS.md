@@ -291,10 +291,23 @@ cd toonz/sources && ./beautification.sh
 When the user says **"nuova sessione"** (with or without additional text), automatically:
 1. Read `~/ZtorYc/AGENTS.md` (this file) for rules and architecture
 2. Read `~/ZtorYc/CHANGELOG.md` for context — **ONLY the first 60 lines** (recent sessions)
-3. Read `~/ZtorYc/ANIMATIC_TASKS.md` — **ONLY the Priority Order section** (last ~40 lines,
-   starting from `## Priority Order`). Read full task details only when about to implement them.
+3. Read `~/ZtorYc/ANIMATIC_TASKS.md` a partire da `## Priority Order` — **e la
+   prima cosa da leggere e' il blocco `🛑 SOSPESI PER DECISIONE DI FRANCO`**, che
+   sta subito sotto quel titolo. Le voci elencate li' sono ancora scritte come
+   aperte piu' in basso nel file, ma Franco ha deciso di lasciarle stare:
+   riproporgliele gli fa perdere tempo.
+   (L'istruzione precedente diceva «le ultime ~40 righe»: era sbagliata, il
+   Priority Order NON e' in fondo al file — seguono centinaia di righe. Una
+   sessione che leggeva la coda si perdeva tutto.)
+   I dettagli di un task si leggono solo quando lo si sta per implementare.
 4. Report briefly: last session summary + what you'll work on today (starting from
    the highest-priority pending task in ANIMATIC_TASKS.md)
+
+> ⚠️ **Quando Franco decide di NON fare una cosa, si scrive.** Vale quanto
+> scrivere cosa si e' fatto. Le decisioni di sospendere vivono nella
+> conversazione e muoiono con lei: se non finiscono nel blocco `🛑 SOSPESI` la
+> sessione dopo le ripropone, e la colpa e' della lista, non sua. Successo il
+> 2026-08-14 con i crash e le scene vecchie.
 
 This keeps startup token cost low. Do NOT read full ANIMATIC_TASKS.md upfront.
 
