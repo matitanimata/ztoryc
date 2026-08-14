@@ -161,19 +161,22 @@ const int l_jointDiscPoints = 8;
 //! Torna -1 se la mesh non ne ha (non dovrebbe succedere).
 //! Indice del pezzo che CONTIENE \p p, o -1. Un giunto appartiene al pezzo in
 //! cui sta: e' quello, e solo quello, che il suo disco deve irrigidire.
-int meshContaining(const TMeshImage *meshImage, const TPointD &p,
-                   const TAffine &toMeshSpace) {
-  const TAffine inv = toMeshSpace.inv();
+//! ⚠️ \p p e' GIA' in spazio mesh: i punti di comando vengono trasformati con
+//! deformationAffine e poi confrontati direttamente con la mesh in compile(),
+//! quindi dopo quella trasformata sono nello spazio della geometria. Convertirli
+//! ancora (l'errore del 2026-08-14) faceva uscire un raggio scalato per il DPI:
+//! il disco inghiottiva mezzo braccio e lo ruotava rigido.
+int meshContaining(const TMeshImage *meshImage, const TPointD &p) {
   const std::vector<TTextureMeshP> &meshes = meshImage->meshes();
   for (int m = 0; m != (int)meshes.size(); ++m)
-    if (meshes[m]->faceContaining(inv * p) >= 0) return m;
+    if (meshes[m]->faceContaining(p) >= 0) return m;
   return -1;
 }
 
 //----------------------------------------------------------------------------------
 
 double distanceToMeshBoundary(const TMeshImage *meshImage, int meshIdx,
-                              const TPointD &p, const TAffine &toMeshSpace) {
+                              const TPointD &p) {
   double best = -1.0;
 
   {
@@ -182,8 +185,8 @@ double distanceToMeshBoundary(const TMeshImage *meshImage, int meshIdx,
       if (!mesh->edge(e).facesCount()) continue;
       if (mesh->edge(e).facesCount() != 1) continue;  // interno: non e' bordo
 
-      const TPointD a = toMeshSpace * mesh->vertex(mesh->edge(e).vertex(0)).P();
-      const TPointD b = toMeshSpace * mesh->vertex(mesh->edge(e).vertex(1)).P();
+      const TPointD a = mesh->vertex(mesh->edge(e).vertex(0)).P();
+      const TPointD b = mesh->vertex(mesh->edge(e).vertex(1)).P();
 
       const TPointD ab = b - a, ap = p - a;
       const double len2 = norm2(ab);
@@ -274,11 +277,10 @@ void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
         // Il pezzo a cui il giunto appartiene: quello che lo CONTIENE. Senza
         // questo, la corona finiva dentro ogni pezzo sovrapposto — il braccio
         // sopra il corpo — e inchiodava anche quello alla rotazione del gomito.
-        const int ownerMesh = ::meshContaining(meshImage, c, deformationAffine);
+        const int ownerMesh = ::meshContaining(meshImage, c);
         if (ownerMesh < 0) continue;  // giunto fuori dal disegno: niente disco
 
-        const double r =
-            ::distanceToMeshBoundary(meshImage, ownerMesh, c, deformationAffine);
+        const double r = ::distanceToMeshBoundary(meshImage, ownerMesh, c);
         if (r <= 0.0) continue;
 
         DataGroup::JointDisc disc;
