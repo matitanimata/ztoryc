@@ -13,6 +13,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QMimeDatabase>
+#include <algorithm>
 
 namespace {
 const char *kGroupBaseUrl  = "Ztoryc/Kitsu/BaseUrl";
@@ -205,6 +206,58 @@ void KitsuClient::onProjectsReply(QNetworkReply *reply) {
   const QJsonArray arr = QJsonDocument::fromJson(body).array();
   for (const QJsonValue &v : arr) m_projects.push_back(parseProject(v.toObject()));
   emit projectsFetched(m_projects);
+}
+
+//-----------------------------------------------------------------------------
+
+void KitsuClient::fetchEpisodes() {
+  m_episodes.clear();
+  m_episodesPending = 0;
+  if (!isLoggedIn()) {
+    emit networkError(tr("Not logged in."));
+    emit episodesFetched(m_episodes);
+    return;
+  }
+
+  QVector<KitsuProject> shows;
+  for (const KitsuProject &p : m_projects)
+    if (p.isTvshow()) shows.push_back(p);
+
+  // Nothing to ask about: answer anyway, so a caller can always wait for this
+  // one signal instead of branching on the production type.
+  if (shows.isEmpty()) { emit episodesFetched(m_episodes); return; }
+
+  m_episodesPending = shows.size();
+  for (const KitsuProject &show : shows) {
+    const QString projectId = show.id;
+    QNetworkReply *reply =
+        m_nam->get(authGet("/api/data/projects/" + projectId + "/episodes"));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, projectId]() {
+      reply->deleteLater();
+      const QByteArray b = reply->readAll();
+      // A show whose episodes we cannot read is reported and then simply has
+      // none: one unreadable production must not sink the whole list.
+      if (reply->error() != QNetworkReply::NoError) {
+        emit networkError(errorMessage(reply, b));
+      } else {
+        QVector<KitsuEpisode> eps;
+        for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+          const QJsonObject o = v.toObject();
+          KitsuEpisode e;
+          e.id        = o.value("id").toString();
+          e.name      = o.value("name").toString();
+          e.projectId = projectId;
+          if (!e.id.isEmpty()) eps.push_back(e);
+        }
+        std::sort(eps.begin(), eps.end(),
+                  [](const KitsuEpisode &a, const KitsuEpisode &b) {
+                    return a.name.localeAwareCompare(b.name) < 0;
+                  });
+        m_episodes.insert(projectId, eps);
+      }
+      if (--m_episodesPending == 0) emit episodesFetched(m_episodes);
+    });
+  }
 }
 
 KitsuProject KitsuClient::parseProject(const QJsonObject &o) {
@@ -735,13 +788,15 @@ void KitsuClient::pullFail(const QString &message) {
   emit statusesPulled(false, {}, message);
 }
 
-void KitsuClient::pullStatuses(const QString &projectId) {
+void KitsuClient::pullStatuses(const QString &projectId,
+                               const QString &episodeId) {
   if (!isLoggedIn()) { emit statusesPulled(false, {}, tr("Not logged in.")); return; }
   if (projectId.isEmpty()) {
     emit statusesPulled(false, {}, tr("Project not linked to Kitsu."));
     return;
   }
   m_pullProjectId = projectId;
+  m_pullEpisodeId = episodeId;
   m_pullSeqName.clear();
   m_pullShotSeq.clear();
   m_pullShotName.clear();
@@ -760,6 +815,13 @@ void KitsuClient::pullLoadSequences() {
     if (r->error() != QNetworkReply::NoError) { pullFail(errorMessage(r, b)); return; }
     for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
       const QJsonObject o = v.toObject();
+      // On a tvshow a sequence's parent is its episode. Keeping only our
+      // episode's sequences is what makes the shot filter below work, and it
+      // mirrors what the push path already does to avoid reusing a same-named
+      // sequence from another episode.
+      if (!m_pullEpisodeId.isEmpty() &&
+          o.value("parent_id").toString() != m_pullEpisodeId)
+        continue;
       m_pullSeqName.insert(o.value("id").toString(), o.value("name").toString());
     }
     pullLoadShots();
@@ -776,8 +838,13 @@ void KitsuClient::pullLoadShots() {
     for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
       const QJsonObject o  = v.toObject();
       const QString id     = o.value("id").toString();
+      const QString seqId  = o.value("parent_id").toString();
+      // /shots returns the WHOLE project, every episode included. Filtering the
+      // sequences alone would not be enough: a foreign shot would still land
+      // here, just with an empty sequence name.
+      if (!m_pullEpisodeId.isEmpty() && !m_pullSeqName.contains(seqId)) continue;
       m_pullShotName.insert(id, o.value("name").toString());
-      m_pullShotSeq.insert(id, m_pullSeqName.value(o.value("parent_id").toString()));
+      m_pullShotSeq.insert(id, m_pullSeqName.value(seqId));
     }
     pullLoadTaskTypes();
   });
@@ -1190,10 +1257,12 @@ void KitsuClient::asPullFail(const QString &message) {
   emit assetsPulled(false, {}, message);
 }
 
-void KitsuClient::pullAssets(const QString &projectId) {
+void KitsuClient::pullAssets(const QString &projectId,
+                             const QString &episodeId) {
   if (!isLoggedIn()) { emit assetsPulled(false, {}, tr("Not logged in.")); return; }
   if (projectId.isEmpty()) { emit assetsPulled(false, {}, tr("No project.")); return; }
-  m_asProjectId = projectId;
+  m_asProjectId     = projectId;
+  m_entityEpisodeId = episodeId;
   m_asTypeNameById.clear();
   asPullLoadTypes();
 }
@@ -1213,6 +1282,20 @@ void KitsuClient::asPullLoadTypes() {
   });
 }
 
+bool KitsuClient::episodeScoped(const QJsonObject &entity) const {
+  // No episode bound (or not a tvshow): everything belongs here, as before.
+  if (m_entityEpisodeId.isEmpty()) return true;
+  // In a Kitsu tvshow an asset can belong to ONE episode, and then its
+  // source_id points at that episode. Measured on «CARTOON SCHOOL 2026»: all
+  // 145 assets are episode-scoped this way, 40/39/38/28 across four episodes —
+  // which is why pulling by project alone dragged in the other episodes'.
+  const QString src = entity.value("source_id").toString();
+  // An asset with no episode is the show's, shared by every episode: it must
+  // keep arriving, or a common prop would vanish from all of them at once.
+  if (src.isEmpty()) return true;
+  return src == m_entityEpisodeId;
+}
+
 void KitsuClient::asPullLoadAssets() {
   emit shotsPushProgress(tr("Reading Kitsu assets…"));
   QNetworkReply *r =
@@ -1224,6 +1307,7 @@ void KitsuClient::asPullLoadAssets() {
     QVector<KitsuAsset> out;
     for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
       const QJsonObject o = v.toObject();
+      if (!episodeScoped(o)) continue;
       KitsuAsset a;
       a.kitsuAssetId = o.value("id").toString();
       a.name         = o.value("name").toString();
@@ -1245,13 +1329,15 @@ void KitsuClient::apFail(const QString &message) {
   emit assetStatusesPulled(false, {}, message);
 }
 
-void KitsuClient::pullAssetStatuses(const QString &projectId) {
+void KitsuClient::pullAssetStatuses(const QString &projectId,
+                                    const QString &episodeId) {
   if (!isLoggedIn()) { emit assetStatusesPulled(false, {}, tr("Not logged in.")); return; }
   if (projectId.isEmpty()) {
     emit assetStatusesPulled(false, {}, tr("Project not linked to Kitsu."));
     return;
   }
-  m_apProjectId = projectId;
+  m_apProjectId     = projectId;
+  m_entityEpisodeId = episodeId;
   m_apAssetTypeName.clear();
   m_apAssetName.clear();
   m_apAssetType.clear();
@@ -1284,6 +1370,7 @@ void KitsuClient::apLoadAssets() {
     if (r->error() != QNetworkReply::NoError) { apFail(errorMessage(r, b)); return; }
     for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
       const QJsonObject o = v.toObject();
+      if (!episodeScoped(o)) continue;
       const QString id    = o.value("id").toString();
       m_apAssetName.insert(id, o.value("name").toString());
       m_apAssetType.insert(
@@ -1361,9 +1448,15 @@ void KitsuClient::loadRosterThen(const QString &projectId,
     const QByteArray b = r->readAll();
     m_personNameById.clear();
     m_personIdByName.clear();
+    m_rosterError.clear();
     // Persons are best-effort context: if the roster can't be read (restricted
     // account) we still continue — the project GET below carries its own error.
-    if (r->error() == QNetworkReply::NoError) {
+    // But we REMEMBER why: swallowing it produced the misleading «their names
+    // couldn't be read (persons endpoint restricted?)», a guess dressed up as a
+    // diagnosis. Whoever reports the failure can now say what actually broke.
+    if (r->error() != QNetworkReply::NoError) {
+      m_rosterError = errorMessage(r, b);
+    } else {
       for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
         const QJsonObject o = v.toObject();
         const QString id    = o.value("id").toString();
@@ -1372,6 +1465,11 @@ void KitsuClient::loadRosterThen(const QString &projectId,
           name = (o.value("first_name").toString() + " " +
                   o.value("last_name").toString()).trimmed();
         if (name.trimmed().isEmpty()) name = o.value("email").toString();
+        // Last resort: a person with no readable name would silently vanish
+        // from the team, which is worse than showing a placeholder the user can
+        // recognise as «something is off with this account».
+        if (!id.isEmpty() && name.trimmed().isEmpty())
+          name = tr("(unnamed person %1)").arg(id.left(8));
         if (id.isEmpty() || name.isEmpty()) continue;
         m_personNameById.insert(id, name);
         m_personIdByName.insert(name.toLower(), id);
@@ -1415,9 +1513,15 @@ void KitsuClient::pullTeam(const QString &projectId) {
       emit teamPulled(true, team, tr("Kitsu project has no team members."));
     else if (team.isEmpty())
       emit teamPulled(false, team,
-                      tr("Team has %1 members but their names couldn't be read "
-                         "(persons endpoint restricted?).")
-                          .arg(m_teamPersonIds.size()));
+                      m_rosterError.isEmpty()
+                          ? tr("Team has %1 members but none of their ids match "
+                               "the %2 persons read from Kitsu.")
+                                .arg(m_teamPersonIds.size())
+                                .arg(m_personNameById.size())
+                          : tr("Team has %1 members but the persons list "
+                               "failed: %2")
+                                .arg(m_teamPersonIds.size())
+                                .arg(m_rosterError));
     else
       emit teamPulled(true, team,
                       tr("Pulled %1 team members from Kitsu.").arg(team.size()));

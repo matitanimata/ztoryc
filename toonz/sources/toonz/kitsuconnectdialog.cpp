@@ -11,6 +11,9 @@
 #include <QSpinBox>
 #include <QPushButton>
 #include <QComboBox>
+#include <QAbstractItemView>
+#include <QFontMetrics>
+#include <algorithm>
 #include <QLabel>
 #include <QGroupBox>
 #include <QTableWidget>
@@ -127,20 +130,16 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
             m_statusLabel->setStyleSheet("color:#FF3860;");
           });
   connect(m_client, &KitsuClient::projectsFetched, this,
-          [this](const QVector<KitsuProject> &projects) {
-            m_projectCombo->clear();
-            for (const KitsuProject &p : projects)
-              m_projectCombo->addItem(
-                  QString("%1  (%2, %3 fps)")
-                      .arg(p.name, p.resolution, p.fps),
-                  p.id);
-            // Target the production this Ztoryc project is already bound to.
-            const QString boundId = ZtoryModel::instance()->kitsuProjectId();
-            if (!boundId.isEmpty()) {
-              int idx = m_projectCombo->findData(boundId);
-              if (idx >= 0) m_projectCombo->setCurrentIndex(idx);
-            }
-            updateBindingButtons();
+          [this](const QVector<KitsuProject> &) {
+            // The list is built in episodesFetched, which arrives right after:
+            // a tvshow must appear as its episodes, not as itself, and we only
+            // know them once they are in. fetchEpisodes() always answers, even
+            // when there is no tvshow at all.
+            m_client->fetchEpisodes();
+          });
+  connect(m_client, &KitsuClient::episodesFetched, this,
+          [this](const QMap<QString, QVector<KitsuEpisode>> &) {
+            rebuildProjectCombo();
           });
 
   connect(m_client, &KitsuClient::projectCreated, this,
@@ -177,6 +176,72 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
   }
 }
 
+void KitsuConnectDialog::rebuildProjectCombo() {
+  m_projectCombo->clear();
+  for (const KitsuProject &p : m_client->projects()) {
+    // Only the parts we actually have: an empty resolution used to leave a
+    // stray "(, 25 fps)".
+    QStringList metaBits;
+    if (!p.resolution.isEmpty()) metaBits << p.resolution;
+    if (!p.fps.isEmpty()) metaBits << QString("%1 fps").arg(p.fps);
+    const QString meta =
+        metaBits.isEmpty() ? QString()
+                           : QString("  (%1)").arg(metaBits.join(", "));
+    const QVector<KitsuEpisode> eps = m_client->episodes(p.id);
+
+    // A show with no episodes yet still gets its own row: binding to it and
+    // pushing is how the first episode gets created (pushEnsureEpisode).
+    if (!p.isTvshow() || eps.isEmpty()) {
+      m_projectCombo->addItem(p.name + meta, p.id);
+      m_projectCombo->setItemData(m_projectCombo->count() - 1, QString(),
+                                  Qt::UserRole + 1);
+      m_projectCombo->setItemData(m_projectCombo->count() - 1, p.name,
+                                  Qt::ToolTipRole);
+      continue;
+    }
+    for (const KitsuEpisode &e : eps) {
+      // EPISODE FIRST, production after. Qt elides at the end, so whatever
+      // leads is what survives a narrow combo — and with six episodes of one
+      // show the production name is the half that is identical on every row.
+      const QString label = QString("%1 — %2").arg(e.name, p.name);
+      m_projectCombo->addItem(label + meta, p.id);
+      m_projectCombo->setItemData(m_projectCombo->count() - 1, e.id,
+                                  Qt::UserRole + 1);
+      m_projectCombo->setItemData(m_projectCombo->count() - 1, label,
+                                  Qt::ToolTipRole);
+    }
+  }
+
+  // Let the drop-down be as wide as its longest row even when the closed combo
+  // is squeezed by the dialog: AdjustToContents alone only sizes the closed
+  // widget, which the layout can then shrink again.
+  if (m_projectCombo->count() > 0) {
+    const QFontMetrics fm(m_projectCombo->font());
+    int w = 0;
+    for (int i = 0; i < m_projectCombo->count(); ++i)
+      w = std::max(w, fm.horizontalAdvance(m_projectCombo->itemText(i)));
+    // Room for the frame, the scrollbar and a little air.
+    m_projectCombo->view()->setMinimumWidth(w + 48);
+  }
+
+  // Re-target the row this Ztoryc project is already bound to. Matching on the
+  // PAIR matters: with six episodes of one show in the list, the project id
+  // alone would land on the first of them.
+  ZtoryModel *m           = ZtoryModel::instance();
+  const QString boundProj = m->kitsuProjectId();
+  const QString boundEp   = m->kitsuEpisodeId();
+  if (!boundProj.isEmpty()) {
+    for (int i = 0; i < m_projectCombo->count(); ++i) {
+      if (m_projectCombo->itemData(i).toString() != boundProj) continue;
+      if (m_projectCombo->itemData(i, Qt::UserRole + 1).toString() != boundEp)
+        continue;
+      m_projectCombo->setCurrentIndex(i);
+      break;
+    }
+  }
+  updateBindingButtons();
+}
+
 void KitsuConnectDialog::updateBindingButtons() {
   const bool connected = m_client->isLoggedIn();
   m_linkBtn->setEnabled(connected && m_projectCombo->count() > 0);
@@ -189,13 +254,21 @@ void KitsuConnectDialog::updateBindingButtons() {
 }
 
 void KitsuConnectDialog::onLinkClicked() {
-  const QString id = m_projectCombo->currentData().toString();
+  const int row = m_projectCombo->currentIndex();
+  if (row < 0) return;
+  const QString id = m_projectCombo->itemData(row).toString();
   if (id.isEmpty()) return;
+  const QString episodeId =
+      m_projectCombo->itemData(row, Qt::UserRole + 1).toString();
   // Find the full project record from the last fetch.
   KitsuProject sel;
   for (const KitsuProject &p : m_client->projects())
     if (p.id == id) { sel = p; break; }
   if (sel.id.isEmpty()) return;
+
+  QString episodeName;
+  for (const KitsuEpisode &e : m_client->episodes(id))
+    if (e.id == episodeId) { episodeName = e.name; break; }
 
   ZtoryModel *m = ZtoryModel::instance();
   m->setProduction(sel.name);
@@ -206,6 +279,10 @@ void KitsuConnectDialog::onLinkClicked() {
   m->setRatio(sel.ratio);
   m->setResolution(sel.resolution);
   m->setKitsuProject(sel.id, sel.name);
+  // Only overwrite the episode when a row actually carries one: on a show with
+  // no episodes yet the user may have typed a name in the tracker, and binding
+  // must not wipe it — pushEnsureEpisode() will create it under that name.
+  if (!episodeId.isEmpty()) m->setKitsuEpisode(episodeId, episodeName);
   m->saveProjectDb();
 
   // Pull the project's team right away so the assignee picker is populated
@@ -213,7 +290,10 @@ void KitsuConnectDialog::onLinkClicked() {
   m_client->pullTeam(sel.id);
 
   m_statusLabel->setStyleSheet("color:#22D160;");
-  m_statusLabel->setText(tr("Linked to %1.").arg(sel.name));
+  m_statusLabel->setText(episodeName.isEmpty()
+                             ? tr("Linked to %1.").arg(sel.name)
+                             : tr("Linked to %1 — episode %2.")
+                                   .arg(sel.name, episodeName));
   updateBindingButtons();  // push becomes available now that we're linked
 }
 

@@ -236,6 +236,26 @@ QStringList ZtoryModel::assetTaskTypesForType(const QString &type) const {
   return (t && !t->taskTypes.isEmpty()) ? t->taskTypes : canonicalAssetTaskOrder();
 }
 
+void ZtoryModel::addAssetTaskType(const QString &type, const QString &taskType) {
+  const QString name = taskType.trimmed();
+  if (name.isEmpty()) return;
+
+  AssetType *t = nullptr;
+  for (auto &at : m_assetTypes)
+    if (at.name.compare(type, Qt::CaseInsensitive) == 0) { t = &at; break; }
+  if (!t) {
+    // An asset type Kitsu has and we don't: start it from the canonical
+    // pipeline so it isn't born with a single stray column.
+    m_assetTypes.push_back(AssetType{type, canonicalAssetTaskOrder()});
+    t = &m_assetTypes.back();
+  }
+  // Case-insensitive on purpose: Kitsu's «clean» and our «Clean» are the same
+  // step, and adopting both would show two columns for one piece of work.
+  for (const QString &existing : t->taskTypes)
+    if (existing.compare(name, Qt::CaseInsensitive) == 0) return;
+  t->taskTypes.push_back(name);
+}
+
 QStringList ZtoryModel::assetTaskColumns() const {
   // Which task types are in play = union across the types the assets actually
   // use. Ordered by the asset-type pipelines (the sequence set in the editor),
@@ -412,6 +432,7 @@ void ZtoryModel::resetProjectLevelDefaults() {
   m_useKitsu = false;
   m_kitsuProjectId.clear();
   m_kitsuProjectName.clear();
+  m_kitsuEpisodeId.clear();
   m_productionType.clear();
   m_productionStyle.clear();
   m_ratio.clear();
@@ -540,6 +561,10 @@ void ZtoryModel::saveProjectDb() {
     xml.writeAttribute("kitsuProjectId",   m_kitsuProjectId);
     xml.writeAttribute("kitsuProjectName", m_kitsuProjectName);
   }
+  // The episode NAME is already saved as "episode"; this is the stable id that
+  // survives a rename on the Kitsu side.
+  if (!m_kitsuEpisodeId.isEmpty())
+    xml.writeAttribute("kitsuEpisodeId", m_kitsuEpisodeId);
   if (!m_productionType.isEmpty())  xml.writeAttribute("productionType",  m_productionType);
   if (!m_productionStyle.isEmpty()) xml.writeAttribute("productionStyle", m_productionStyle);
   if (!m_ratio.isEmpty())           xml.writeAttribute("ratio",           m_ratio);
@@ -687,6 +712,9 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
       // Kitsu (M5) binding + mirrored metadata.
       m_kitsuProjectId   = a.value("kitsuProjectId").toString();
       m_kitsuProjectName = a.value("kitsuProjectName").toString();
+      // Assente nei progetti salvati prima del legame per episodio: resta vuoto
+      // e il comportamento e' quello di prima (nessun filtro).
+      m_kitsuEpisodeId   = a.value("kitsuEpisodeId").toString();
       m_productionType   = a.value("productionType").toString();
       m_productionStyle  = a.value("productionStyle").toString();
       m_ratio            = a.value("ratio").toString();

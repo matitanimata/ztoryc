@@ -31,6 +31,11 @@ private:
   void onCreateClicked();  // create a new Kitsu project from the Ztoryc model (push)
   void setBusy(bool busy);
   void updateBindingButtons();
+  // Fill the production list. A tvshow is listed once PER EPISODE, because a
+  // Ztoryc project maps to one episode and not to the whole show; everything
+  // else keeps a single row. Each row carries the project id in Qt::UserRole
+  // and the episode id (empty when there is none) in Qt::UserRole + 1.
+  void rebuildProjectCombo();
 
   KitsuClient  *m_client   = nullptr;
   QLineEdit    *m_urlEdit  = nullptr;

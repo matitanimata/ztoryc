@@ -237,6 +237,13 @@ class ZtoryModel : public QObject {
   bool                              m_useKitsu = false; // opt-in Kitsu sync UI
   QString                           m_kitsuProjectId;   // empty = not linked
   QString                           m_kitsuProjectName; // cached for display
+  // Episode binding, for tvshow productions. One Kitsu tvshow holds several
+  // episodes and each one is a separate Ztoryc project, so the binding is the
+  // PAIR (project, episode) — the project alone would pull every episode's
+  // shots into this tracker. Empty on non-tvshow productions.
+  // The id is what makes the link survive a rename: m_episode is the name the
+  // user typed and Kitsu lets it change.
+  QString                           m_kitsuEpisodeId;
   QString                           m_productionType;   // Kitsu: tvshow/short/featurefilm
   QString                           m_productionStyle;  // Kitsu: 2d/3d/2d3d
   QString                           m_ratio;            // Kitsu: e.g. 16:9
@@ -314,6 +321,16 @@ public:
   void    setKitsuProject(const QString &id, const QString &name) {
     m_kitsuProjectId = id; m_kitsuProjectName = name;
   }
+  // Episode binding (tvshow only). `name` also lands in m_episode, which is
+  // what pushShots() already sends and what the worksheet header prints — so
+  // the two never drift apart.
+  QString kitsuEpisodeId() const { return m_kitsuEpisodeId; }
+  void    setKitsuEpisode(const QString &id, const QString &name) {
+    m_kitsuEpisodeId = id; m_episode = name;
+  }
+  // True when this project is bound to one episode of a tvshow: the pulls must
+  // then be restricted to it, or the other episodes' shots land here too.
+  bool    isKitsuEpisodeLinked() const { return !m_kitsuEpisodeId.isEmpty(); }
   QString productionType()  const { return m_productionType; }
   void    setProductionType(const QString &s) { m_productionType = s; }
   QString productionStyle() const { return m_productionStyle; }
@@ -442,6 +459,13 @@ public:
   // Ordered asset-task names for an asset type (falls back to the canonical
   // order for an unknown/empty type, so legacy assets never lose their tasks).
   QStringList assetTaskTypesForType(const QString &type) const;
+  // Append a task type to an asset type's pipeline, creating the asset type if
+  // it isn't there yet. Used when a Kitsu pull brings a task type this project
+  // has no counterpart for: adopting it keeps the task, dropping it loses data
+  // without telling anyone. No-op when the name is already in the pipeline
+  // (compared through the same normalization the sync uses, so «Rough» and
+  // «rough» don't both end up as columns).
+  void addAssetTaskType(const QString &type, const QString &taskType);
   // Union of asset-task names across the types actually used by the assets, in
   // asset-type pipeline order — the asset table's task columns.
   QStringList assetTaskColumns() const;
