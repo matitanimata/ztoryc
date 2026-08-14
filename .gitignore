@@ -38,6 +38,16 @@ Thumbs.db
 /lzodecompress
 /lzodriver/
 /mousedragfilter/
+# Directory di build del target QXlsx: il nome viene da
+# `add_subdirectory(${SDKROOT}/QXlsx qxlsx)` in toonz/sources/CMakeLists.txt:769
+# — il sorgente sta in thirdparty/QXlsx/, questa e' solo uscita di compilazione.
+# Mancava da questo elenco, e per questo 48 file (libQXlsx.a, .o, moc) sono
+# finiti tracciati con la feature di export XLSX (f3757ba3f).
+/qxlsx/
+# configure_file() da toonz/cmake/BundleInfo.plist.in e
+# toonz/sources/include/tversion.h.in: si rigenera a ogni configurazione, e
+# cambiando a ogni build entrava nei commit fatti con `git add -A`.
+/ztoryc_generated/
 
 # App bundle and build outputs under toonz/
 /toonz/CMakeFiles/

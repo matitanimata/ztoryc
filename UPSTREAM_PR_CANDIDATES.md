@@ -67,6 +67,52 @@ succede, perché questi difetti sono quasi sempre copiaincollati in più punti �
 **ridirlo a Franco**, perché la decisione «vado diretto o passo dal revisore»
 l'aveva presa su una dimensione diversa.
 
+- [ ] 🆕🎯 **`doDryCompute` e `doCompute` calcolano bbox DIVERSI: un fattore invertito** (`toonzlib/plasticdeformerfx.cpp`, righe ~302/310 contro ~520/527) — **candidato doppio: identico in Tahoma2D e in OpenToonz**, e non e' nostro. Trovato il 2026-08-13 leggendo il codice, **non ancora riprodotto**.
+
+  Le due funzioni calcolano la stessa quantita', `meshToTextureAff`, e differiscono per **una sola cosa: l'inversione del primo fattore.**
+  ```cpp
+  // doCompute (:302, :310)
+  const TAffine &imageToTextureAff = texInfo.m_affine;
+  meshToTextureAff = imageToTextureAff * worldTexLevelToTexLevelAff *
+                     worldTexLevelToWorldMeshAff.inv() * meshToWorldMeshAff;
+
+  // doDryCompute (:520, :525) — stesso valore, INVERTITO
+  const TAffine &textureToImageAff = texInfo.m_affine;
+  meshToTextureAff = textureToImageAff.inv() * worldTexLevelToTexLevelAff *
+                     worldImageToWorldMeshAff.inv() * meshToWorldMeshAff;
+  ```
+  Tutto il resto della catena e' identico (`m_texPlacement` e' lo stesso oggetto, ha solo due nomi diversi), e le due funzioni costruiscono `texInfo` allo stesso modo: copia di `info`, poi `buildTextureDataSl`/`buildTextureData`. Le uniche differenze in doCompute sono i flag di maschera, che non toccano `m_affine`.
+
+  **`texInfo.m_affine` NON e' l'identita'**, quindi la differenza e' reale: `buildTextureDataSl` gli assegna l'affine gestita completa per i livelli **PLI/vettoriali** (`info.m_affine = handledAff`), e per i **raster** una scala non banale ogni volta che si rimpicciolisce (`handledAff.a11 < worldLevelToLevelAff.a11`).
+
+  **Quale delle due e' giusta: `doCompute`.** Tre argomenti indipendenti:
+  1. `meshBBox` va intersecato con `texBBox`, che viene da `m_port->getBBox(frame, texBBox, texInfo)` — cioe' vive nello spazio di uscita della porta, che e' proprio `texInfo.m_affine` applicata. Per arrivarci si applica quell'affine, non la sua inversa.
+  2. Il **viewer** calcola l'analogo senza nessuna inversione (`toonzlib/stagevisitor.cpp:1761`).
+  3. Una passata *dry* esiste per dichiarare cio' che servira' alla passata vera: se dichiara una regione diversa, non sta facendo il suo mestiere.
+
+  **Eta' e diffusione**: `git log -L` porta la riga a prima del 2016 (la tocca solo `120a6e041`, il clang-format di massa di Shinya Kitaoka). Verificato con `git show <remote>/master:<file>`: **presente identica in `upstream/master` (Tahoma2D) e in `opentoonz/master`**. E' codice Toonz originale, non una regressione recente e non nostra.
+
+  **Impatto — da non gonfiare.** `doCompute` fa comunque `allocateAndCompute`, quindi i pixel vengono calcolati lo stesso: non e' un difetto visivo garantito. Il danno passa dalla **cache**, che e' cio' che la passata dry alimenta — e quindi sarebbe **dipendente dallo stato**. ⚠️ Questa e' la parte **non dimostrata**: e' un'ipotesi, non una diagnosi.
+
+  **Perche' vale la pena provarlo comunque, e subito**: la caccia al render sbagliato di sh110 (sospesa, quindici cause escluse) ha come vincolo piu' forte *«stesso binario, stessa scena, preview calda in entrambi i casi, a volte rende bene e a volte no»* — cioe' esattamente la firma di qualcosa che dipende dallo stato della cache. E quell'indagine si era fermata perche' **mancava un modo di ottenere un render buono a comando**: se questa e' la causa, correggerla fornisce proprio il controllo positivo che mancava.
+
+  **Prossimo passo**: togliere `.inv()` in `doDryCompute` sul worktree `tahoma-stock`, e vedere se sh110 cambia comportamento. **Non toccare il ramo di lavoro prima di quella prova** — cambiare il percorso di render di una scena che gia' sbaglia, senza un modo di verificare, confonde le acque invece di schiarirle.
+
+- [ ] 🆕🎯 **`doDryCompute` non imposta i flag di maschera che `doCompute` imposta — SOLO TAHOMA2D** (`toonzlib/plasticdeformerfx.cpp`, :262-265 contro :491). Trovato il 2026-08-13 subito dopo il candidato qui sopra, cercando se lo schema si ripetesse. Si ripete, ed e' **indipendente** dal primo: stessa coppia di funzioni, seconda incoerenza.
+  ```cpp
+  // doCompute (:262)                  // doDryCompute (:491)
+  TRenderSettings texInfo(info);       TRenderSettings texInfo(info);
+  texInfo.m_applyMask   = false;       // (niente)
+  texInfo.m_useMaskBox  = false;
+  texInfo.m_plasticMask = info.m_applyMask;
+  ```
+  **Origine**: `3488987d9` (manongjohn, 2023-10-07, *"Fix rendering plastic deformed mask"*), che ha aggiunto le maschere a `doCompute` **senza aggiornare `doDryCompute`**. Verificato: **OpenToonz non ha `m_plasticMask` da nessuna parte** in questo file — e' roba di Tahoma2D, quindi la PR va solo li'. Stessa forma del candidato sulle chiavi piu' sotto: un fix vero che ha lasciato indietro un chiamante.
+
+  **Perche' conta, ed e' il punto interessante**: `m_applyMask`, `m_useMaskBox` e `m_plasticMask` sono tutti e tre dentro **`TRenderSettings::operator==`** (`tnzbase/trasterfx.cpp:1298-1299`), insieme a `m_affine`. Quell'operatore e' l'**identita' con cui il render decide se un risultato in cache corrisponde. Quindi la passata dry chiede sotto un'identita' e la passata vera sotto un'altra**: la prova generale mette in scena uno spettacolo diverso da quello che va poi in scena.
+  Sommato al candidato precedente, `doDryCompute` diverge da `doCompute` su **due assi insieme**: la regione richiesta (affine invertita) e l'identita' con cui la si chiede (flag di maschera).
+
+  **Nota di onesta'**: sul solo comportamento visibile la differenza sembra annullarsi — l'unico punto che legge questi flag per decidere se disegnare (`toonzlib/tcolumnfx.cpp:999`, `isMask() && !m_applyMask && !m_plasticMask`) da' lo stesso esito nei due casi, perche' `m_plasticMask = info.m_applyMask` compensa. **L'effetto atteso e' quindi sulla cache, non sul disegno** — e resta un'ipotesi non misurata, esattamente come sopra.
+
 - [ ] **L'oggetto si SPOSTA cancellando una chiave, a valori di canale identici** (`toonz/keyframeselection.cpp` ×2, `toonzlib/stageobjectutil.cpp` ×2, `toonz/xsheetcmd.cpp`, `toonzlib/doubleparamcmd.cpp` ×2) — 🎯 **SOLO TAHOMA2D**, verificato: OpenToonz non ha il difetto (zero occorrenze del pattern nei quattro file). Nasce da `baecf7504` (manongjohn, 2026-04-19, *"Fix resetting center and offset on key delete"*), un fix che ha allargato troppo il tiro; **`upstream/master` a oggi non l'ha ancora corretto**.
   **Sintomo**: si cancellano le prime chiavi di una serie per ripartire dalla posizione dell'ultima, e l'oggetto si sposta — **i valori alle chiavi restano identici**, il che manda fuori strada chiunque cerchi la causa nei canali. Succede con e senza percorso.
   **Causa**: dopo ogni chiave rimossa il codice fa `TPointD center = pegbar->getCenter(row); if (center != TPointD()) pegbar->setCenter(row, center, true);`. L'overload a tre argomenti inoltra a quello a quattro come `setCenter(frame, center, CENTER, resetOrigin)`, quindi scrive `m_frameCenter = center` — **un valore diverso da quello che aveva** — e ricalcola `m_offset` da un piazzamento che ha appena azzerato. Né `m_frameCenter` né `m_offset` sono canali chiavati, e **entrambi entrano nel piazzamento**: su un percorso `position = puntoSpline - m_frameCenter`, e sempre `pos = m_offset + position`. Da qui il fatto che si veda con la spline e senza. Nota: **`m_frameCenter` non è nemmeno serializzato** nel `.tnz` (assente da `saveData`/`loadData`), quindi è stato volatile — sospetto adiacente **non verificato**: la stessa scena riaperta potrebbe piazzare diversamente un oggetto su percorso.

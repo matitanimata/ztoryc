@@ -387,14 +387,21 @@ nella sub-scene corretta.
   `solveMultiAnchor`, ma l'ultima parola ce l'ha il solve di personaggio in
   `TStageObject`. Esporre anche quello come query, come `plantPins()` /
   `pinResidualForPose()` per la singola colonna.
-- ⬜ **Chiudere un loop di camminata.** `SkVD::POSE_PARAMS`
-  (`plasticskeletondeformation.cpp:111`) mescola FORMA (ANGLE, DISTANCE, SO) e
-  PIAZZAMENTO (ROOTX/Y, TRANS, ROT, SCALE, PIVOT, SHEAR): copiare «la posa»
-  riporta indietro il personaggio. Con i pin il piazzamento non va copiato
-  affatto — il pin porta la posizione, gli angoli la forma. **Da provare prima**:
-  la modalita' `Part` richiama «solo i parametri registrati»; se Record cattura
-  solo cio' che e' cambiato dal riposo, potrebbe bastare. Altrimenti serve un
-  comando che copi ANGLE/DISTANCE/SO fra due frame lasciando il piazzamento.
+- ✅ **Chiudere un loop di camminata — RISOLTO il 2026-08-14, senza scrivere
+  codice.** Franco: «ha funzionato con **Part**». La prova che era annotata come
+  «da fare prima» ha chiuso la voce da sola: la modalita' `Part` richiama **solo
+  i parametri registrati**, quindi copiando una posa non si porta dietro il
+  PIAZZAMENTO e il personaggio non torna indietro.
+  **Quindi il comando nuovo NON serve.** Il difetto di fondo resta vero e va
+  conosciuto — `SkVD::POSE_PARAMS` (`plasticskeletondeformation.cpp:111`)
+  mescola FORMA (ANGLE, DISTANCE, SO) e PIAZZAMENTO (ROOTX/Y, TRANS, ROT, SCALE,
+  PIVOT, SHEAR), e con i pin il piazzamento non andrebbe copiato affatto perche'
+  il pin porta la posizione e gli angoli la forma — ma in pratica `Part` lo
+  aggira. Se un giorno servisse copiare pose **senza** passare da Part, il
+  rimedio e' un comando che copi solo ANGLE/DISTANCE/SO fra due frame.
+  ⚠️ **Da mettere nel manuale**: «per chiudere un ciclo, richiama la posa in
+  modalita' Part» e' conoscenza d'uso, non di codice, e senza scriverla si
+  riperde.
 - ⬜ **Template di scheletri riusabili + registrazione di animazioni.**
   ✅ **CONFERMATO da Franco il 2026-08-03** — era ricostruito a memoria, ora e' una voce
   vera. Restano aperte le domande di progetto: cosa contiene il template (topologia?
@@ -425,6 +432,32 @@ nella sub-scene corretta.
 
 - ⬜ **Correttive di giuntura, milestone 3 (UI).** La milestone 2 (authoring, il
   pennello) e' entrata su master il 2026-08-03.
+  **2026-08-14**: su branch `feature/ztorig-correttive-ui` (`785b0860d`) c'e' il
+  pannello ZtoRig a schede + la scheda Correttive come **traccia in gradi** (una
+  corsia per giunto, una chiave per correttiva, clic per andare a quella piega,
+  trascinamento per spostarla, tasto destro per cancellare). **Da collaudare.**
+  L'idea della traccia e' di Franco, ed e' come funzionano gli Smart Bones di
+  Moho. Il dato non e' cambiato per ottenerla: le correttive nascono gia'
+  incatenate, quindi erano gia' chiavi su una traccia scritte come tabella.
+  Resta fuori: creare una correttiva NUOVA dal modo di rigging, e la
+  separazione di Sculpt/Order fuori da Animate (deciso con Franco: modellare e
+  riggare non e' animare).
+
+- ⏸️ **Disco rigido di articolazione — PARCHEGGIATO il 2026-08-14.**
+  Branch `feature/ztorig-joint-disc` (`50eb4cd95`), preferenza spenta.
+  Il gomito pizzica perche' un giunto e' **UN** punto di comando e l'ARAP deve
+  far coesistere li' due rotazioni. Il disco (corona di punti sintetici, raggio
+  = meta' larghezza dell'arto, rotazione sulla bisettrice) toglie il
+  pizzicamento, si vede nel tool e si tara.
+  ⚠️ **Ma non puo' dare il bersaglio**: piegando, all'interno i due segmenti si
+  SOVRAPPONGONO, e una maglia unica non puo' sovrapporsi a se stessa — puo' solo
+  accartocciarsi o aprire un buco. Provato a Joint Blend 0 e 100: cambia solo
+  quale difetto prevale.
+  **La strada giusta e' il TAGLIO automatico**, che era la prima idea di Franco:
+  dove il disco incontra l'arto la maglia si sdoppia in due meta' con calotta
+  circolare, i vertici della calotta restano condivisi (quindi non si separano
+  mai) e le due meta' si sovrappongono. Tocca la topologia: sessione a se'.
+  Dettagli e i sei errori da non ripetere: memoria `project_ztorig_joint_disc`.
 
 **Altro**
 
@@ -451,6 +484,41 @@ nella sub-scene corretta.
 ---
 
 ## Priority Order
+
+### 🛑 SOSPESI PER DECISIONE DI FRANCO — non riproporli
+
+> Leggere PRIMA di proporre qualsiasi cosa. Sono voci ancora aperte piu' in
+> basso, ma Franco ha deciso di lasciarle stare: una sessione che le rilancia
+> gli fa perdere tempo. Si riaprono solo se **lui** le riapre, o se il sintomo
+> ricapita da solo lavorando.
+
+- **I crash e i problemi sulle SCENE VECCHIE** (2026-08-14): *«per quanto
+  riguarda i crash e i problemi con scene vecchie lascerei stare, vediamo se
+  ricapita lavorandoci»*. Coperti da questa decisione:
+  - crash su «Salva sotto-scena come scena», mesh non trovate
+  - il pin va sul vertice sbagliato su scene precedenti all'IK
+  - il personaggio «parte» manipolando le anche — solo su animazioni vecchie
+- **L'IK resta com'e'** (2026-08-14): dopo la prova col rilevatore di
+  ribaltamento, Franco: *«mi pare piu' stabile e controllabile di quel che
+  ricordavo, forse possiamo lasciare l'ik com'era»*. Branch
+  `feature/ik-pole-vector` non mergiato. Non riproporre annealing ne' pole
+  vector senza un sintomo nuovo.
+- **Otter (il secondo fork)** (2026-08-13): *«ci sto ancora ragionando, e' un
+  problema che possiamo affrontare in seguito»*. Vedi
+  `COMPETITIVE_ROADMAP.md` sez. 8.
+- **Assistenti al disegno da OpenToonz** (2026-08-13): candidato misurato e
+  registrato in `OPENTOONZ_PORT_CANDIDATES.md`, ma Franco ha scelto di passare
+  prima al rig. Non e' il prossimo lavoro.
+- **Render sbagliato sh110**: sospeso dal 2026-08-07. ⚠️ **Novita' del
+  2026-08-14**: ora e' **riproducibile a comando** (tcomposer headless, frame
+  110, MD5 stabile) — ma resta sospeso finche' Franco non lo riapre. Vedi la
+  voce dedicata piu' sotto.
+
+**Cosa e' invece VIVO al 2026-08-14**: il rig — collaudare il branch
+`feature/ztorig-correttive-ui` (pannello a schede + traccia in gradi), e poi il
+**taglio automatico sulla giuntura**, che e' la strada emersa dal disco
+parcheggiato.
+
 
 ### ⏸️ SOSPESO — render sbagliato su sh110: quindici cause ESCLUSE, nessuna trovata (2026-08-07 notte)
 

@@ -1,3 +1,202 @@
+## [2026-08-14b] — Il disco di articolazione: sei correzioni, e la strada giusta era la prima idea di Franco
+
+### Added — pannello ZtoRig a schede, correttive come TRACCIA IN GRADI
+Branch `feature/ztorig-correttive-ui` (`785b0860d`), **da collaudare**.
+Le correttive erano a senso unico: il pennello le crea e da li' in poi niente —
+nessun elenco, `removeMeshCorrective()` esisteva **senza un solo chiamante**.
+Prima ci ho messo una tabella; poi Franco ha detto la cosa giusta: *«una
+timeline coi gradi al posto dei fotogrammi, su cui vediamo le correttive come
+chiavi»*. E' esattamente come funzionano gli **Smart Bones di Moho**, a cui e'
+arrivato da solo senza averli usati.
+Il dato non e' cambiato per ottenerla: le correttive nascono gia' incatenate
+(il riposo di una e' il pieno della precedente), quindi **erano gia' chiavi su
+una traccia, scritte in forma di tabella**. Tabella buttata.
+
+### ⏸️ PARCHEGGIATO — il disco rigido di articolazione
+Branch `feature/ztorig-joint-disc` (`50eb4cd95`), preferenza spenta di default.
+
+Il gomito pizzica per un motivo **strutturale**: `verticesToHandles()` mappa un
+vertice di scheletro a **UN** punto di comando, e l'ARAP deve far coesistere in
+quel punto le due rotazioni degli ossi. Franco l'ha verificato a mano
+aggiungendo due vertici «collare» ai lati del gomito: il pizzicamento sparisce.
+
+Il disco — corona di punti sintetici attorno al giunto, raggio = meta' larghezza
+dell'arto, rotazione sulla bisettrice — toglie il pizzicamento, si vede nel tool
+e si tara. **Ma non puo' dare il bersaglio che Franco ha disegnato**: piegando,
+all'interno i due segmenti si SOVRAPPONGONO, e una maglia unica non puo'
+sovrapporsi a se stessa. Puo' solo accartocciarsi o aprire un buco. Provato a
+Joint Blend 0 e 100: cambia solo quale dei due difetti prevale.
+
+**La strada giusta e' il taglio automatico — la PRIMA idea di Franco, che io
+avevo scartato per un motivo sbagliato** (il costo di authoring). Dove il disco
+incontra l'arto la maglia si sdoppia in due meta' con calotta circolare; i
+vertici della calotta restano condivisi, quindi le due meta' non possono
+allontanarsi e si sovrappongono ruotando. Il suo «taglio che non diventa mai
+effettivo». Tocca la topologia: sessione a se'.
+
+### I sei errori, che valgono piu' del codice
+1. **Accodare a un array condiviso non e' un'aggiunta locale.** Avevo verificato
+   UN lettore (il solver) e tirato dritto: `updateHandlesSO` camminava in
+   lockstep coi vertici dello scheletro → **crash** (l'assert c'era, in release
+   non esiste). Cercare TUTTI i lettori.
+2. `compile()` gira **una volta per mesh con lo stesso array**: la corona
+   inchiodava anche i pezzi sovrapposti (braccio sopra il corpo) e li distorceva.
+3. **Spazio contato due volte**: i punti post-affine sono GIA' in spazio mesh.
+   Il raggio usciva scalato per il DPI e il braccio si arrotolava a ferro di
+   cavallo.
+4. **Nel raccordo si fonde la ROTAZIONE, non il risultato**: mediare due
+   posizioni ruotate taglia la corda dell'arco — lo stesso errore misurato
+   nell'esperimento sul giro di testa. Si vedeva come un morso al gomito.
+5. Tre dei sei erano **tentativi di indovinare a distanza un valore che Franco
+   vede in due secondi**. Quando c'e' un numero da tarare a occhio va messo su
+   uno slider subito, non dopo il quinto giro.
+6. Ieri avevo detto che il file di configurazione in uso e' quello in `stuff/`:
+   **falso**, l'app scrive in `ztorycstuff` dentro il bundle. Me l'ero anche
+   annotato in passato e l'ho contraddetto.
+
+### Deciso con Franco — direzione
+Sculpt e Order **fuori da Animate**: modellare e correggere la forma di un
+braccio che si piega e' **rigging, non animazione**. Nel modo di rigging la posa
+non deve scrivere chiavi sulla timeline della scena — la chiave la scrive sulla
+traccia della correttiva. Riferimenti utili: **Moho** (Smart Bones), **Blender**
+(shape key correttive con driver sulla rotazione), **AnimeEffects** (strumenti
+separati per dipingere/cancellare influenza, e Posa a parte). **VPaint/VAC non
+serve** a questo problema, e dirlo evita di riaprirlo.
+
+### Altro
+Isolare i vertici per SO (per dipingere l'ownership quando un braccio sta sopra
+il corpo): `getSOOwners()` ha gia' il dato e `m_mvSel` la selezione — manca solo
+«seleziona i vertici di questo giunto» e la maschera sui pennelli. Da fare.
+## [2026-08-14] — sh110 diventa riproducibile a comando, e due voci si chiudono senza scrivere codice
+
+Sessione lunga, con un filo conduttore involontario: **tre volte su quattro il
+lavoro utile e' stato smontare una mia ipotesi con una misura**, non costruire.
+
+### Added — una Quick Toolbar per workflow (`5f42d48e1`)
+Leggeva un solo file per utente, uguale in tutte le room. Ora cerca prima
+`quicktoolbars/quicktoolbar_<workflow>.xml` e **ricade** sulla barra comune:
+finche' non esiste un file per quel workflow il comportamento e' identico a
+prima, quindi la novita' non tocca nessuno finche' non la si usa. Il meccanismo
+non e' nuovo — le Command Bar con id usano gia' `commandbars/` con la stessa
+ricaduta.
+Preferenza `ztoryPerWorkflowQuickToolbar` (Xsheet → Scene Tools). Il menu
+contestuale e il titolo dicono **su quale barra** si sta per agire: senza, si
+personalizza un workflow credendo di toccarli tutti. Reset azzera cio' che si
+sta guardando.
+`MI_ZtoryShowMesh` e `MI_ToggleKeyframesFollowExposure` nel default, piu' un
+**travaso una-tantum versionato**: il file personale vince sul template e non
+c'e' nessuna fusione, quindi da soli non sarebbero mai arrivati a chi la barra
+se l'era gia' personalizzata.
+
+### 🔴 sh110 — IL DIFETTO E' RIPRODUCIBILE A COMANDO
+La cosa piu' importante della sessione. `tcomposer` (nel bundle) renderizza la
+scena **headless**, ~5 s a fotogramma. Sul **fotogramma 110** — quello dove
+Franco vede cane e gatto ridotti a frammenti — esce lo stesso identico difetto,
+e **quattro render danno quattro MD5 uguali** (`69cb901d18ac29f347fc9d2a867413dc`).
+Deterministico, da cache fredda, ciclo di prova da sei secondi.
+
+> ⚠️ **Ribalta la direzione dell'indagine.** Valeva «stesso binario, a volte bene
+> a volte no → non e' il codice», ed e' la premessa che aveva spinto la caccia
+> fuori dal codice per quindici cause. Sul 110 sbaglia **sempre**.
+
+**Escluse CON MISURA su questo caso**, non per ragionamento:
+- l'inversione `.inv()` in `doDryCompute` — applicata e ricompilata: l'uscita
+  cambia di un **sub-pixel**, il difetto resta identico;
+- le tessere — `-maxtilesize 100000` (tessera unica): identico.
+
+**Misurato con la diagnostica nuova** (`ZTORYC_PLASTIC_DIAG=1`, `9f6c85eea`,
+verificata **byte-neutra**): sul 110, di 49 colonne, 10 ricevono il deformatore
+plastico e **39 no** — fra cui **tutti** i 9 pezzi di PINCO e i 10 di PALLINO,
+che hanno padre `Table`. Confermato leggendo il `.tnz`: zombie_01 ha
+`Col1→Col2`, `Col3→Col4` e hook; Pinco ha `Col1…Col10 → Table`, tutte.
+
+**⚠️ Ma la spiegazione NON regge, ed e' li' che ci si e' fermati.** Franco ha
+verificato che **nel viewer e nella preview il 110 e' corretto**, e il viewer usa
+la condizione **identica** (`stage.cpp:339`, `stagevisitor.cpp:1518`). Se la
+parentela fosse davvero `Table`, sbaglierebbero entrambi.
+Ipotesi non verificata: le due strade percorrono il legame in **versi opposti**
+(il render sale dal pezzo al padre mesh, il viewer forse scende dalla mesh ai
+figli). Oppure ci sono piu' copie annidate di Pinco e le due strade ne risolvono
+una diversa. **Sospeso per decisione di Franco**: «vedremo se ricapita».
+
+**Falso allarme da non ripetere**: dal fotogramma ~145 in poi un solo
+personaggio su sfondo bianco **e' corretto** (le colonne finiscono a 141/142/144,
+solo la colonna 8 arriva a 277). In un contact sheet un personaggio intero
+sembra un frammento: guardare a grandezza naturale prima di dire «riprodotto».
+
+### Added — due candidati upstream nuovi
+In `UPSTREAM_PR_CANDIDATES.md`, `plasticdeformerfx.cpp`: `doDryCompute` diverge
+da `doCompute` su **due assi indipendenti** — l'affine col primo fattore
+invertito (presente identica in **OpenToonz e Tahoma2D**, blame prima del 2016) e
+i **flag di maschera** che `doCompute` imposta e `doDryCompute` no (**solo
+Tahoma2D**, da `3488987d9`). Quei flag stanno in `TRenderSettings::operator==`,
+cioe' l'identita' con cui il render riconosce un risultato in cache: la prova
+generale mette in scena uno spettacolo diverso da quello che va in scena.
+Restano validi come difetti; **non** sono la causa di sh110.
+
+### Added — `OPENTOONZ_PORT_CANDIDATES.md`
+Nato dal metodo di Claudio, con il primo candidato vero: gli **assistenti al
+disegno** di OpenToonz. Non «piu' completi», ma **presenti contro assenti**:
+~8.400 righe su 42 file (framework, punto di fuga, prospettiva, ellisse,
+fisheye, replicatori) che noi non abbiamo affatto. Il costo vero e' che si
+agganciano a `TInputManager`, una catena di modificatori fra tavoletta e
+pennello, pilotata da tutti e tre i pennelli — proprio i file dove Tahoma ha
+divergiuto di piu' (solo sul vettoriale il diff e' ~2957 righe). Piano in tre
+tempi, rischio tutto nella fase 2.
+
+### ✅ Loop di camminata — RISOLTO senza scrivere codice
+La prova annotata come «da fare prima» ha chiuso la voce da sola: la modalita'
+**Part** richiama solo i parametri registrati, quindi copiando una posa non si
+porta dietro il piazzamento e il personaggio non torna indietro. Il comando
+nuovo **non serve**. `POSE_PARAMS` mescola davvero forma e piazzamento, ma
+`Part` lo aggira.
+⚠️ Da mettere nel manuale: e' conoscenza d'uso, non di codice.
+
+### IK — misurato l'annealing, NON adottato; poi il pole vector, esperimento fallito
+Da `DRAGONBONES_IK_NOTES.md`. L'annealing (tetto che si stringe verso la radice)
+misurato su una simulazione fedele del ciclo: sposta lavoro dalla radice alla
+punta come promesso (quota radice 36% → 26%) ma sulla convergenza **non e'
+monotono** — meglio a meta' corsa, peggio sugli spostamenti ampi. Non adottato;
+resta il commento che registra la misura.
+Poi Franco: «a volte mettere in posa e' ancora difficoltoso», e alla domanda su
+cosa succede: «**scatta o si ribalta**» — cioe' l'ambiguita' di piega, non
+l'annealing. Branch `feature/ik-pole-vector` con un rilevatore di ribaltamento
+e l'annealing come manopola.
+**L'esperimento non ha prodotto prove**, in nessuna direzione: il log non e' mai
+stato scritto e **non e' mai stato dimostrato che quel logger sappia scrivere**.
+Due giri persi per lo stesso errore di progetto — la diagnostica era armata da
+una casella che l'utente doveva ricordarsi di spuntare. Franco ha poi giudicato
+l'IK «piu' stabile e controllabile di quel che ricordavo» e ha deciso di
+lasciarla com'era. **Branch non mergiato.**
+
+### Removed — `ikccd`, il core IK mai cablato (`354d6f020`)
+304 righe che non chiamava nessuno. Non e' stato cablato perche' risolve una
+geometria diversa: `assert(parentIndex == i-1)`, **solo catene seriali**, mentre
+l'IK vera lavora su un albero di pin con piu' ancore. L'unico argomento per
+tenerlo era estrarne il pole vector, e quella strada e' stata chiusa.
+
+### Fixed — il commento che diceva l'opposto del codice (`9f6c85eea`)
+`plastictool_animate.cpp`: il commento sopra il cap dell'IK descriveva un tetto
+«in DISTANZA» e sosteneva che uno fisso in gradi avrebbe fatto l'opposto di quel
+che serve — mentre la riga sotto fa esattamente un tetto fisso in gradi. Residuo
+di prima della correzione: avrebbe spinto il prossimo lettore a «rimettere a
+posto» proprio la cosa giusta.
+
+### WIP (branch) — pannello ZtoRig a schede + correttive gestibili
+`feature/ztorig-correttive-ui`, `785b0860d`. **Da collaudare: Franco ha visto
+anomalie non ancora descritte.** Su branch di proposito.
+Le correttive di giuntura erano a **senso unico**: il pennello le crea da solo e
+da li' in poi niente — nessun elenco, nessun modo di spostare la dissolvenza, e
+`removeMeshCorrective()` esisteva **senza un solo chiamante**. Ora una scheda con
+una riga per correttiva: giunto guida, riposo→pieno modificabili, **quanto pesa
+adesso**, e cancella. A schede (idea di Franco) perche' e' una tabella e ne
+arriveranno altre.
+
+### Note — Rhubarb chiama il riconoscitore INGLESE per default
+Il selettore esiste (`lipsyncpopup.cpp:245`) ma parte su «PocketSphinx (English)»
+ed e' **nascosto** se la sorgente audio e' un file invece di una colonna. Su
+audio italiano, di default, Rhubarb prova a riconoscere parole inglesi. Codice
+upstream: candidato PR.
 ## [2026-08-08] — Il merge 1.6.2 entra in master, e una notte a escludere quindici cause senza trovarne una
 
 ### Merged — Tahoma2D 1.6.2 su master (`1bfd1c3c1`)
