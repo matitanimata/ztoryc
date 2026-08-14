@@ -560,8 +560,17 @@ nella sub-scene corretta.
      allineando i pesi di attenzione, ed e' la parte meno solida della catena.
    - Whisper **inventa testo** su silenzio e rumore. In un tool di lipsync, dove
      le pause contano, va gestito esplicitamente.
-   - Decisione aperta: i file del modello pesano da centinaia di MB a qualche GB
-     — scaricarli al primo uso o metterli nel bundle?
+   - ✅ **DECISO (Franco, 2026-08-14): il modello NON va nel bundle.** *«Se
+     pesano tanto dobbiamo prevedere che sia una scelta dell'utente scaricarlo o
+     meno e in che versione»*. Quindi serve una UI di gestione modelli: scegli
+     quale, scarichi, vedi quanto pesa, lo puoi togliere. Ztoryc deve funzionare
+     senza nessun modello scaricato (lipsync col solo Rhubarb, come oggi).
+   - ⭐ **Osservazione che puo' ridurre di molto il modello necessario**: se il
+     testo lo diamo noi (`PanelData::dialog`), il lavoro non e' piu'
+     *riconoscimento* ma **allineamento forzato** — sappiamo gia' cosa e' detto,
+     serve solo sapere quando. E' un compito molto piu' facile, su cui un modello
+     piccolo se la cava. Il modello grande serve solo quando il copione NON c'e'.
+     Da misurare prima di imporre a tutti un download da qualche GB.
    - Primo passo comunque indipendente da Whisper: collegare `PanelData::dialog`
      all'argomento `-d` di Rhubarb. Il copione ce l'abbiamo gia' scritto, e
      nessun riconoscitore batte il testo vero.
