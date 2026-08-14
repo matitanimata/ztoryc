@@ -1,3 +1,72 @@
+## [2026-08-14b] — Il disco di articolazione: sei correzioni, e la strada giusta era la prima idea di Franco
+
+### Added — pannello ZtoRig a schede, correttive come TRACCIA IN GRADI
+Branch `feature/ztorig-correttive-ui` (`785b0860d`), **da collaudare**.
+Le correttive erano a senso unico: il pennello le crea e da li' in poi niente —
+nessun elenco, `removeMeshCorrective()` esisteva **senza un solo chiamante**.
+Prima ci ho messo una tabella; poi Franco ha detto la cosa giusta: *«una
+timeline coi gradi al posto dei fotogrammi, su cui vediamo le correttive come
+chiavi»*. E' esattamente come funzionano gli **Smart Bones di Moho**, a cui e'
+arrivato da solo senza averli usati.
+Il dato non e' cambiato per ottenerla: le correttive nascono gia' incatenate
+(il riposo di una e' il pieno della precedente), quindi **erano gia' chiavi su
+una traccia, scritte in forma di tabella**. Tabella buttata.
+
+### ⏸️ PARCHEGGIATO — il disco rigido di articolazione
+Branch `feature/ztorig-joint-disc` (`50eb4cd95`), preferenza spenta di default.
+
+Il gomito pizzica per un motivo **strutturale**: `verticesToHandles()` mappa un
+vertice di scheletro a **UN** punto di comando, e l'ARAP deve far coesistere in
+quel punto le due rotazioni degli ossi. Franco l'ha verificato a mano
+aggiungendo due vertici «collare» ai lati del gomito: il pizzicamento sparisce.
+
+Il disco — corona di punti sintetici attorno al giunto, raggio = meta' larghezza
+dell'arto, rotazione sulla bisettrice — toglie il pizzicamento, si vede nel tool
+e si tara. **Ma non puo' dare il bersaglio che Franco ha disegnato**: piegando,
+all'interno i due segmenti si SOVRAPPONGONO, e una maglia unica non puo'
+sovrapporsi a se stessa. Puo' solo accartocciarsi o aprire un buco. Provato a
+Joint Blend 0 e 100: cambia solo quale dei due difetti prevale.
+
+**La strada giusta e' il taglio automatico — la PRIMA idea di Franco, che io
+avevo scartato per un motivo sbagliato** (il costo di authoring). Dove il disco
+incontra l'arto la maglia si sdoppia in due meta' con calotta circolare; i
+vertici della calotta restano condivisi, quindi le due meta' non possono
+allontanarsi e si sovrappongono ruotando. Il suo «taglio che non diventa mai
+effettivo». Tocca la topologia: sessione a se'.
+
+### I sei errori, che valgono piu' del codice
+1. **Accodare a un array condiviso non e' un'aggiunta locale.** Avevo verificato
+   UN lettore (il solver) e tirato dritto: `updateHandlesSO` camminava in
+   lockstep coi vertici dello scheletro → **crash** (l'assert c'era, in release
+   non esiste). Cercare TUTTI i lettori.
+2. `compile()` gira **una volta per mesh con lo stesso array**: la corona
+   inchiodava anche i pezzi sovrapposti (braccio sopra il corpo) e li distorceva.
+3. **Spazio contato due volte**: i punti post-affine sono GIA' in spazio mesh.
+   Il raggio usciva scalato per il DPI e il braccio si arrotolava a ferro di
+   cavallo.
+4. **Nel raccordo si fonde la ROTAZIONE, non il risultato**: mediare due
+   posizioni ruotate taglia la corda dell'arco — lo stesso errore misurato
+   nell'esperimento sul giro di testa. Si vedeva come un morso al gomito.
+5. Tre dei sei erano **tentativi di indovinare a distanza un valore che Franco
+   vede in due secondi**. Quando c'e' un numero da tarare a occhio va messo su
+   uno slider subito, non dopo il quinto giro.
+6. Ieri avevo detto che il file di configurazione in uso e' quello in `stuff/`:
+   **falso**, l'app scrive in `ztorycstuff` dentro il bundle. Me l'ero anche
+   annotato in passato e l'ho contraddetto.
+
+### Deciso con Franco — direzione
+Sculpt e Order **fuori da Animate**: modellare e correggere la forma di un
+braccio che si piega e' **rigging, non animazione**. Nel modo di rigging la posa
+non deve scrivere chiavi sulla timeline della scena — la chiave la scrive sulla
+traccia della correttiva. Riferimenti utili: **Moho** (Smart Bones), **Blender**
+(shape key correttive con driver sulla rotazione), **AnimeEffects** (strumenti
+separati per dipingere/cancellare influenza, e Posa a parte). **VPaint/VAC non
+serve** a questo problema, e dirlo evita di riaprirlo.
+
+### Altro
+Isolare i vertici per SO (per dipingere l'ownership quando un braccio sta sopra
+il corpo): `getSOOwners()` ha gia' il dato e `m_mvSel` la selezione — manca solo
+«seleziona i vertici di questo giunto» e la maschera sui pennelli. Da fare.
 ## [2026-08-14] — sh110 diventa riproducibile a comando, e due voci si chiudono senza scrivere codice
 
 Sessione lunga, con un filo conduttore involontario: **tre volte su quattro il

@@ -432,6 +432,32 @@ nella sub-scene corretta.
 
 - ⬜ **Correttive di giuntura, milestone 3 (UI).** La milestone 2 (authoring, il
   pennello) e' entrata su master il 2026-08-03.
+  **2026-08-14**: su branch `feature/ztorig-correttive-ui` (`785b0860d`) c'e' il
+  pannello ZtoRig a schede + la scheda Correttive come **traccia in gradi** (una
+  corsia per giunto, una chiave per correttiva, clic per andare a quella piega,
+  trascinamento per spostarla, tasto destro per cancellare). **Da collaudare.**
+  L'idea della traccia e' di Franco, ed e' come funzionano gli Smart Bones di
+  Moho. Il dato non e' cambiato per ottenerla: le correttive nascono gia'
+  incatenate, quindi erano gia' chiavi su una traccia scritte come tabella.
+  Resta fuori: creare una correttiva NUOVA dal modo di rigging, e la
+  separazione di Sculpt/Order fuori da Animate (deciso con Franco: modellare e
+  riggare non e' animare).
+
+- ⏸️ **Disco rigido di articolazione — PARCHEGGIATO il 2026-08-14.**
+  Branch `feature/ztorig-joint-disc` (`50eb4cd95`), preferenza spenta.
+  Il gomito pizzica perche' un giunto e' **UN** punto di comando e l'ARAP deve
+  far coesistere li' due rotazioni. Il disco (corona di punti sintetici, raggio
+  = meta' larghezza dell'arto, rotazione sulla bisettrice) toglie il
+  pizzicamento, si vede nel tool e si tara.
+  ⚠️ **Ma non puo' dare il bersaglio**: piegando, all'interno i due segmenti si
+  SOVRAPPONGONO, e una maglia unica non puo' sovrapporsi a se stessa — puo' solo
+  accartocciarsi o aprire un buco. Provato a Joint Blend 0 e 100: cambia solo
+  quale difetto prevale.
+  **La strada giusta e' il TAGLIO automatico**, che era la prima idea di Franco:
+  dove il disco incontra l'arto la maglia si sdoppia in due meta' con calotta
+  circolare, i vertici della calotta restano condivisi (quindi non si separano
+  mai) e le due meta' si sovrappongono. Tocca la topologia: sessione a se'.
+  Dettagli e i sei errori da non ripetere: memoria `project_ztorig_joint_disc`.
 
 **Altro**
 
