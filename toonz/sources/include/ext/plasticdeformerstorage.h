@@ -92,6 +92,32 @@ struct DVAPI PlasticDeformerDataGroup {
   //! ricalcolano a ogni fotogramma nello stesso ordine, altrimenti i due array
   //! non corrispondono piu'.
   std::vector<JointDisc> m_jointDiscs;
+
+  //! ZtoRig — corpi rigidi: l'osso o il disco a cui una zona della maglia
+  //! appartiene. Il disco da solo non bastava: inchioda la giuntura, ma braccio
+  //! e avambraccio restavano liberi di incurvarsi fra i loro due punti di
+  //! comando, e il braccio faceva un arco morbido invece di due segmenti dritti
+  //! che ruotano attorno al gomito (Franco, 2026-08-14).
+  //!
+  //! Qui i vertici della maglia vengono PIAZZATI con la trasformazione rigida
+  //! del loro corpo, dopo il solve ARAP: non si deformano, si spostano. E' molto
+  //! piu' economico che riempire l'arto di punti di comando.
+  struct RigidBody {
+    bool m_isDisc = false;  //!< disco di giuntura (ruota sulla bisettrice)
+    int m_vIdx    = -1;     //!< disco: il giunto. Osso: il vertice FIGLIO, cioe'
+                            //!< l'osso parent(vIdx) -> vIdx
+    TPointD m_restOrigin;   //!< origine a riposo della trasformazione
+    double m_restAngle = 0.;
+  };
+  std::vector<RigidBody> m_rigidBodies;
+
+  //! Per ogni mesh, per ogni vertice: indice in m_rigidBodies, oppure -1 se il
+  //! vertice resta libero. I due pesi servono al RACCORDO: un vertice a cavallo
+  //! fra disco e osso prende una miscela dei due, altrimenti al bordo del disco
+  //! si aprirebbe una discontinuita' e l'arto si strapperebbe.
+  std::vector<std::vector<int>> m_rigidOwner;
+  std::vector<std::vector<double>> m_rigidWeight;
+  std::vector<std::vector<int>> m_rigidOther;  //!< il corpo verso cui si sfuma
   //! Con quale impostazione dei dischi e' stato compilato questo gruppo. Se
   //! cambia, i punti di comando non sono piu' quelli e va ricompilato — come
   //! gia' succede quando cambia m_skeletonAffine. Senza, accendere o spegnere

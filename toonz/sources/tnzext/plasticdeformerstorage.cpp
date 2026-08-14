@@ -177,6 +177,12 @@ void jointDiscDiag(const QString &joint, int meshIdx, double sideA,
 //! nel solver.
 const int l_jointDiscPoints = 8;
 
+//! Fin dove arriva la fascia di raccordo, in multipli del raggio del disco.
+//! Fra il bordo del disco e questo limite i vertici passano gradualmente dal
+//! disco all'osso: e' l'unica cosa che impedisce all'arto di strapparsi al
+//! bordo, dove disco e osso ruotano di angoli diversi.
+const double l_discBlendOuter = 1.6;
+
 //! Distanza dal punto \p p allo spigolo di CONTORNO piu' vicino, cioe' al bordo
 //! del disegno. Uno spigolo e' di contorno quando tocca una faccia sola.
 //! Torna -1 se la mesh non ne ha (non dovrebbe succedere).
@@ -281,6 +287,116 @@ bool jointBisector(const PlasticSkeleton &skel, int v, TPointD &dir) {
   return true;
 }
 
+//! Distanza dal punto \p p al segmento a-b, e posizione lungo di esso.
+double distToSegment(const TPointD &p, const TPointD &a, const TPointD &b) {
+  const TPointD ab = b - a, ap = p - a;
+  const double len2 = norm2(ab);
+  double t = (len2 > 1e-12) ? ((ap * ab) / len2) : 0.0;
+  t        = std::max(0.0, std::min(1.0, t));
+  return norm(ap - t * ab);
+}
+
+//! Assegna ogni vertice della maglia a un corpo rigido: il disco se ci sta
+//! dentro, altrimenti l'osso piu' vicino. Fra il bordo del disco e l'inizio
+//! della zona rigida dell'osso c'e' una FASCIA DI RACCORDO in cui i due si
+//! mescolano — senza, al bordo del disco si aprirebbe una discontinuita' pari a
+//! meta' dell'angolo di piega, e l'arto si strapperebbe.
+void buildRigidBodies(DataGroup *group, const PlasticSkeleton &skeleton,
+                      const TMeshImage *meshImage,
+                      const TAffine &deformationAffine) {
+  group->m_rigidBodies.clear();
+  group->m_rigidOwner.clear();
+  group->m_rigidWeight.clear();
+  group->m_rigidOther.clear();
+  if (!l_rigidJointDiscs) return;
+
+  // Un corpo per disco...
+  std::map<int, int> discBody;  // vertice del giunto -> indice del corpo
+  for (const DataGroup::JointDisc &disc : group->m_jointDiscs) {
+    DataGroup::RigidBody b;
+    b.m_isDisc    = true;
+    b.m_vIdx      = disc.m_vIdx;
+    b.m_restOrigin = deformationAffine * skeleton.vertex(disc.m_vIdx).P();
+    b.m_restAngle = disc.m_restAngle;
+    discBody[disc.m_vIdx] = (int)group->m_rigidBodies.size();
+    group->m_rigidBodies.push_back(b);
+  }
+  // ...e uno per osso (identificato dal vertice FIGLIO).
+  std::map<int, int> boneBody;
+  for (int v = 0; v != skeleton.verticesCount(); ++v) {
+    const int p = skeleton.vertex(v).parent();
+    if (p < 0) continue;
+    DataGroup::RigidBody b;
+    b.m_isDisc     = false;
+    b.m_vIdx       = v;
+    const TPointD a = deformationAffine * skeleton.vertex(p).P();
+    const TPointD c = deformationAffine * skeleton.vertex(v).P();
+    b.m_restOrigin = a;
+    b.m_restAngle  = atan2(c.y - a.y, c.x - a.x);
+    boneBody[v]    = (int)group->m_rigidBodies.size();
+    group->m_rigidBodies.push_back(b);
+  }
+  if (group->m_rigidBodies.empty()) return;
+
+  const int mCount = (int)meshImage->meshes().size();
+  group->m_rigidOwner.resize(mCount);
+  group->m_rigidWeight.resize(mCount);
+  group->m_rigidOther.resize(mCount);
+
+  for (int m = 0; m != mCount; ++m) {
+    const TTextureMesh &mesh = *meshImage->meshes()[m];
+    const int vCount         = mesh.verticesCount();
+    group->m_rigidOwner[m].assign(vCount, -1);
+    group->m_rigidWeight[m].assign(vCount, 1.0);
+    group->m_rigidOther[m].assign(vCount, -1);
+
+    for (int mv = 0; mv != vCount; ++mv) {
+      const TPointD p = mesh.vertex(mv).P();
+
+      // L'osso piu' vicino.
+      int bestBone = -1;
+      double bestD = 0.0;
+      for (const auto &kv : boneBody) {
+        const int v = kv.first, par = skeleton.vertex(v).parent();
+        const double d =
+            ::distToSegment(p, deformationAffine * skeleton.vertex(par).P(),
+                            deformationAffine * skeleton.vertex(v).P());
+        if (bestBone < 0 || d < bestD) bestD = d, bestBone = kv.second;
+      }
+      if (bestBone < 0) continue;
+
+      // Il disco piu' vicino, se ci si e' dentro o nella sua fascia.
+      int bestDisc     = -1;
+      double bestDiscD = 0.0, bestDiscR = 0.0;
+      for (const DataGroup::JointDisc &disc : group->m_jointDiscs) {
+        const TPointD c = deformationAffine * skeleton.vertex(disc.m_vIdx).P();
+        const double d  = norm(p - c);
+        if (d > disc.m_radius * l_discBlendOuter) continue;
+        if (bestDisc < 0 || d < bestDiscD)
+          bestDiscD = d, bestDiscR = disc.m_radius,
+          bestDisc  = discBody[disc.m_vIdx];
+      }
+
+      if (bestDisc < 0) {                       // fuori da ogni disco: osso puro
+        group->m_rigidOwner[m][mv]  = bestBone;
+        group->m_rigidWeight[m][mv] = 1.0;
+        continue;
+      }
+      if (bestDiscD <= bestDiscR) {             // dentro il disco: disco puro
+        group->m_rigidOwner[m][mv]  = bestDisc;
+        group->m_rigidWeight[m][mv] = 1.0;
+        continue;
+      }
+      // Nella fascia: si sfuma dal disco all'osso.
+      const double t = (bestDiscD - bestDiscR) /
+                       std::max(1e-9, bestDiscR * (l_discBlendOuter - 1.0));
+      group->m_rigidOwner[m][mv]  = bestDisc;
+      group->m_rigidOther[m][mv]  = bestBone;
+      group->m_rigidWeight[m][mv] = 1.0 - std::min(1.0, std::max(0.0, t));
+    }
+  }
+}
+
 void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
                     const SkD *sd, int skelId,
                     const TAffine &deformationAffine) {
@@ -363,6 +479,8 @@ void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
         }
         group->m_jointDiscs.push_back(disc);
       }
+
+      ::buildRigidBodies(group, *skeleton, meshImage, deformationAffine);
 
       // Prepare a vector for handles' face hints
       for (int m = 0; m != mCount; ++m)
@@ -657,6 +775,94 @@ void processMesh(DataGroup *group, double frame, const TMeshImage *meshImage,
     for (m = 0; m != mCount; ++m) {
       PlasticDeformerData &data = group->m_datas[m];
       data.m_deformer.deform(dstHandlePos, data.m_output.get());
+
+      // ZtoRig — i corpi rigidi. I vertici assegnati a un osso o a un disco
+      // vengono PIAZZATI con la trasformazione rigida di quel corpo invece che
+      // lasciati dove l'ARAP li ha messi: non si deformano, si spostano. E'
+      // questo che fa di braccio e avambraccio due segmenti che ruotano attorno
+      // al gomito, invece di un arco morbido.
+      if (!group->m_rigidBodies.empty() && m < (int)group->m_rigidOwner.size()) {
+        const PlasticSkeletonP &restSkel = sd->skeleton(skelId);
+        PlasticSkeleton defSkel;
+        sd->storeDeformedSkeleton(skelId, frame, defSkel);
+
+        // Trasformazione corrente di ogni corpo: origine deformata e rotazione
+        // rispetto al riposo.
+        std::vector<TPointD> orig(group->m_rigidBodies.size());
+        std::vector<double> rot(group->m_rigidBodies.size(), 0.0);
+        for (size_t b = 0; b != group->m_rigidBodies.size(); ++b) {
+          const DataGroup::RigidBody &rb = group->m_rigidBodies[b];
+          if (rb.m_vIdx < 0 || rb.m_vIdx >= defSkel.verticesCount()) continue;
+
+          if (rb.m_isDisc) {
+            orig[b] = deformationAffine * defSkel.vertex(rb.m_vIdx).P();
+            TPointD dir;
+            if (::jointBisector(defSkel, rb.m_vIdx, dir)) {
+              const TPointD d =
+                  deformationAffine * (defSkel.vertex(rb.m_vIdx).P() + dir) - orig[b];
+              rot[b] = atan2(d.y, d.x) - rb.m_restAngle;
+            }
+          } else {
+            const int par = defSkel.vertex(rb.m_vIdx).parent();
+            if (par < 0) continue;
+            const TPointD a = deformationAffine * defSkel.vertex(par).P();
+            const TPointD c = deformationAffine * defSkel.vertex(rb.m_vIdx).P();
+            orig[b] = a;
+            rot[b]  = atan2(c.y - a.y, c.x - a.x) - rb.m_restAngle;
+          }
+        }
+
+        // ⚠️ Nella fascia si fonde la ROTAZIONE, non il risultato.
+        //
+        // Mediare due posizioni gia' ruotate (w*P1 + (1-w)*P2) taglia la corda
+        // dell'arco: la stessa cosa che nell'esperimento sul giro di testa
+        // faceva sbagliare la traiettoria del 13% a meta' rotazione. Qui si
+        // vedeva come un MORSO all'interno del gomito — massa persa proprio
+        // dove il disco doveva conservarla.
+        //
+        // Fondendo origine e angolo e applicando UNA trasformazione, le
+        // distanze si conservano e il raccordo non accorcia niente.
+        auto placeBlend = [&](int b1, int b2, double w, const TPointD &p) {
+          const DataGroup::RigidBody &r1 = group->m_rigidBodies[b1];
+
+          TPointD o = orig[b1];
+          double a  = rot[b1];
+          TPointD restO = r1.m_restOrigin;
+
+          if (b2 >= 0 && w < 1.0) {
+            const DataGroup::RigidBody &r2 = group->m_rigidBodies[b2];
+            // Differenza d'angolo riportata in [-pi, pi]: senza, un raccordo a
+            // cavallo del giro si avvolgerebbe dalla parte lunga.
+            double da = rot[b2] - rot[b1];
+            while (da > M_PI) da -= 2.0 * M_PI;
+            while (da < -M_PI) da += 2.0 * M_PI;
+
+            a     = rot[b1] + (1.0 - w) * da;
+            o     = w * orig[b1] + (1.0 - w) * orig[b2];
+            restO = w * r1.m_restOrigin + (1.0 - w) * r2.m_restOrigin;
+          }
+
+          const TPointD d = p - restO;
+          const double c = cos(a), s2 = sin(a);
+          return o + TPointD(c * d.x - s2 * d.y, s2 * d.x + c * d.y);
+        };
+
+        const TTextureMeshP &mesh = meshImage->meshes()[m];
+        const int vCount          = mesh->verticesCount();
+        double *out               = data.m_output.get();
+        const std::vector<int> &owner  = group->m_rigidOwner[m];
+        const std::vector<int> &other  = group->m_rigidOther[m];
+        const std::vector<double> &wgt = group->m_rigidWeight[m];
+
+        for (int v = 0; v < vCount && v < (int)owner.size(); ++v) {
+          if (owner[v] < 0) continue;
+          const TPointD rest = mesh->vertex(v).P();
+
+          const TPointD p = placeBlend(owner[v], other[v], wgt[v], rest);
+          out[2 * v]     = p.x;
+          out[2 * v + 1] = p.y;
+        }
+      }
 
       // ZtoRig joint correctives: pose-space deformation on top of the ARAP
       // result. Reads the driving joint's base angle at this frame, so it
