@@ -67,6 +67,22 @@ struct KitsuEpisode {
 };
 
 //----------------------------------------------------------------------------
+// One line of a shot's BREAKDOWN — Kitsu calls it «casting» and stores it in
+// entity_link (entity_in = shot, entity_out = asset).
+// Flat on purpose, with the shot id inside each entry: the bulk endpoint hands
+// back a map shot -> entries, and flattening it here keeps the caller from
+// having to walk two levels.
+//----------------------------------------------------------------------------
+struct KitsuCastingEntry {
+  QString kitsuShotId;
+  QString kitsuAssetId;
+  QString assetName;
+  QString assetType;      // asset_type_name — arrives with the casting
+  int     nbOccurrences = 1;
+  QString label;          // free label (seen in the wild: "animate")
+};
+
+//----------------------------------------------------------------------------
 // A Kitsu task status (/api/data/task-status). The semantic flags drive the
 // mapping onto Ztoryc's enum, so a renamed pipeline still maps sanely without
 // depending on display names.
@@ -244,6 +260,11 @@ public:
   // productions that have no episodes at all.
   void pullStatuses(const QString &projectId,
                     const QString &episodeId = QString());
+  // Pull the BREAKDOWN (Kitsu «casting») of every shot, in ONE call: the bulk
+  // endpoint returns a map shot -> assets. With an episode bound it asks only
+  // for that episode's sequences. -> breakdownPulled()
+  void pullBreakdown(const QString &projectId,
+                     const QString &episodeId = QString());
 
   // Bidirectional asset sync. pushAssets creates the assets missing in Kitsu
   // (upsert by type+name, resolving each canonical type onto a Kitsu asset-type)
@@ -324,6 +345,8 @@ signals:
   void projectsFetched(const QVector<KitsuProject> &projects);
   // Keyed by project id; only tvshow projects appear.
   void episodesFetched(const QMap<QString, QVector<KitsuEpisode>> &episodes);
+  void breakdownPulled(bool ok, const QVector<KitsuCastingEntry> &entries,
+                       const QString &message);
   void taskStatusesFetched(const QVector<KitsuTaskStatus> &statuses);
   void projectCreated(bool ok, const KitsuProject &project, const QString &message);
   void projectUpdated(bool ok, const QString &message);

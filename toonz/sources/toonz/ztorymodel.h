@@ -155,6 +155,37 @@ struct ShotData {
   }
 };
 
+// Come l'export porta un asset dentro lo shot.
+//
+// La distinzione Load/Import NON e' cosmetica ed e' la scelta piu' pesante di
+// tutta la faccenda:
+//  - Load  = lo shot PUNTA al file dov'e'. Una sorgente sola: correggi l'asset
+//            una volta e la correzione arriva in tutti gli shot. Ma se il file
+//            si sposta o sparisce, gli shot si rompono tutti insieme.
+//  - Import = il file viene COPIATO nel progetto dello shot. Lo shot e'
+//            autosufficiente (consegna, archivio, chi lavora altrove), ma una
+//            correzione va rifatta shot per shot.
+// Non c'e' una risposta giusta in assoluto: dipende se l'asset e' ancora in
+// lavorazione (Load) o congelato (Import). Per questo si sceglie, e si puo'
+// scegliere per singolo asset.
+struct AssetImportPolicy {
+  enum Mode { Default = 0, Load, Import };
+  Mode mode = Default;  // Default = usa quella di progetto
+
+  // Opzioni del popup PSD (psdsettingspopup.cpp), replicate qui perche' un
+  // export automatico non puo' fermarsi a chiedere per ognuno dei 145 asset.
+  // Vuote = si usano quelle di progetto.
+  QString psdLoadAs;     // "Single Image" | "Frames" | "Columns"
+  QString psdLevelName;  // "FileName#LayerName" | "LayerName"
+  QString psdGroups;     // "Ignore" | "SubSceneColumns" | "ColumnFrames"
+  int     psdSubScene = -1;  // -1 = non impostato, 0 = no, 1 = si'
+
+  bool isDefault() const {
+    return mode == Default && psdLoadAs.isEmpty() && psdLevelName.isEmpty() &&
+           psdGroups.isEmpty() && psdSubScene < 0;
+  }
+};
+
 // A production asset (character, prop, environment, …). Project-level entity,
 // source-agnostic: it may have art attached or be just a name from the script
 // breakdown. Has its own task pipeline, mirroring shot tasks.
@@ -165,11 +196,30 @@ struct Asset {
   QString kitsuAssetId;  // Kitsu asset (entity) id once synced — link across renames
   QMap<QString, TaskState> tasks;  // keyed by asset task-type name
   QStringList              tags;   // free categorisation (future: breakdown / AI)
+  // Il file di questo asset, per l'export che lo importa nello shot.
+  // - Character (cutout): la SCENA .tnz che lo contiene, importata come
+  //   sotto-scena. Va indicata a mano: non c'e' convenzione che la indovini.
+  // - Prop / Environment: facoltativo. Se vuoto si risolve per convenzione
+  //   dalla cartella della categoria (vedi assetDirForType) piu' il nome.
+  QString filePath;
+  // Come portarlo nello shot. Vuota = si usa la politica di progetto.
+  AssetImportPolicy importPolicy;
 };
 
 // A project-level shot record. Owns the production progress (task status/
 // assignee). The structural metadata (seq/label/frames/technique) is authored
 // by the storyboard .tnz and published here via publishShotsToProjectDb().
+// One line of a shot's breakdown: an asset this shot needs. Kitsu calls it
+// «casting» and stores it in entity_link (shot -> asset), which is where this
+// syncs to and from.
+// The asset is held by UUID, not by name: a rename in the tracker must not
+// silently empty a shot's breakdown.
+struct BreakdownEntry {
+  QString assetUuid;
+  int     nbOccurrences = 1;  // same asset appearing more than once in the shot
+  QString label;              // Kitsu's free label (seen in the wild: "animate")
+};
+
 struct ProjectShot {
   QString uuid;
   QString source;    // basename of the originating .tnz storyboard (e.g. "reel1.tnz")
@@ -179,6 +229,7 @@ struct ProjectShot {
   QString technique;
   QString kitsuShotId;  // Kitsu shot id once synced — keeps the link across renames
   QMap<QString, TaskState> tasks;  // progress — authoritative for the project DB
+  QVector<BreakdownEntry>  breakdown;  // assets this shot needs
 };
 
 // ─── Animatic export burn-in ──────────────────────────────────────────────────
@@ -244,6 +295,21 @@ class ZtoryModel : public QObject {
   // The id is what makes the link survive a rename: m_episode is the name the
   // user typed and Kitsu lets it change.
   QString                           m_kitsuEpisodeId;
+
+  // ── Dove stanno i file degli asset (per l'export completo) ──────────────
+  // Una cartella PER CATEGORIA, non un percorso per asset: con 145 asset la
+  // seconda strada non la compila nessuno. Il file si risolve per convenzione,
+  // cartella della categoria + nome dell'asset.
+  // I PERSONAGGI non stanno qui: nel cutout digitale sono scene vere e proprie
+  // dello stesso progetto, e si importano come sotto-scene (scelta di Franco,
+  // 2026-08-15). m_modelSheetDir serve invece al tradigital, dove del
+  // personaggio si importa il model sheet come immagine.
+  QString                           m_propsDir;
+  QString                           m_backgroundsDir;
+  QString                           m_modelSheetDir;
+  // Politica di default per l'import degli asset. I singoli asset possono
+  // scostarsene; questa e' quella che vale quando non lo fanno.
+  AssetImportPolicy                 m_defaultImportPolicy;
   QString                           m_productionType;   // Kitsu: tvshow/short/featurefilm
   QString                           m_productionStyle;  // Kitsu: 2d/3d/2d3d
   QString                           m_ratio;            // Kitsu: e.g. 16:9
@@ -331,6 +397,41 @@ public:
   // True when this project is bound to one episode of a tvshow: the pulls must
   // then be restricted to it, or the other episodes' shots land here too.
   bool    isKitsuEpisodeLinked() const { return !m_kitsuEpisodeId.isEmpty(); }
+
+  // Cartelle degli asset, per categoria (vedi il commento sui membri).
+  QString propsDir()       const { return m_propsDir; }
+  QString backgroundsDir() const { return m_backgroundsDir; }
+  QString modelSheetDir()  const { return m_modelSheetDir; }
+  void setPropsDir(const QString &s)       { m_propsDir = s; }
+  void setBackgroundsDir(const QString &s) { m_backgroundsDir = s; }
+  void setModelSheetDir(const QString &s)  { m_modelSheetDir = s; }
+  // La cartella in cui cercare i file di un asset di questo tipo, o vuota se
+  // per quel tipo non si passa da una cartella (i Character sono sotto-scene).
+  QString assetDirForType(const QString &type) const;
+  const AssetImportPolicy &defaultImportPolicy() const { return m_defaultImportPolicy; }
+  void setDefaultImportPolicy(const AssetImportPolicy &p) { m_defaultImportPolicy = p; }
+  void setAssetImportPolicy(int i, const AssetImportPolicy &p) {
+    if (i >= 0 && i < (int)m_assets.size()) m_assets[i].importPolicy = p;
+  }
+  // La politica EFFETTIVA di un asset: la sua dove l'ha impostata, quella di
+  // progetto dove non l'ha fatto. Campo per campo, non tutto-o-niente: chi
+  // cambia solo il modo non deve riscrivere anche le opzioni PSD.
+  AssetImportPolicy effectiveImportPolicy(const Asset &a) const;
+  // Il file vero di un asset, per l'export. Regola, in ordine:
+  //   1. il legame esplicito (Asset::filePath) VINCE sempre;
+  //   2. altrimenti cartella della categoria + nome base UGUALE al nome
+  //      dell'asset (senza distinzione di maiuscole, qualunque estensione);
+  //   3. zero risultati o PIU' di uno → si restituisce vuoto e si spiega il
+  //      perche' in `why`. Non si indovina mai: scegliere a caso fra
+  //      «macchina.tlv» e «macchina.psd» e' un errore che si vede solo in
+  //      render, giorni dopo.
+  // Volutamente niente prefissi/suffissi: «macchina» non pesca «macchina_v03».
+  QString resolveAssetFile(const Asset &a, QString *why = nullptr) const;
+  // Il file legato a un asset (per un Character cutout: la scena da importare
+  // come sotto-scena). Vuoto = nessun legame diretto.
+  void setAssetFilePath(int i, const QString &path) {
+    if (i >= 0 && i < (int)m_assets.size()) m_assets[i].filePath = path;
+  }
   QString productionType()  const { return m_productionType; }
   void    setProductionType(const QString &s) { m_productionType = s; }
   QString productionStyle() const { return m_productionStyle; }
@@ -365,6 +466,13 @@ public:
 
   // B3b — Project shots (multi-storyboard)
   const std::vector<ProjectShot> &projectShots() const { return m_projectShots; }
+  // Replace one shot's breakdown. A setter and not a non-const projectShots():
+  // this is the only field of a project shot the sync writes, and opening the
+  // whole vector to mutation to write one field is how invariants get lost.
+  void setShotBreakdown(int i, const QVector<BreakdownEntry> &b) {
+    if (i >= 0 && i < (int)m_projectShots.size())
+      m_projectShots[i].breakdown = b;
+  }
   // Cumulative frame ranges [in,out] (1-based) for each project shot, in
   // m_projectShots order, reset at every source storyboard change. Maps onto
   // Kitsu's frame_in/frame_out (the shot's start/end timecode in the edit).

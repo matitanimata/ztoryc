@@ -125,6 +125,30 @@ private:
   void applyTaskTypesToTechnique(); // task-type list → selected workflow + persist
 
   QWidget *buildAssetTypesTab();
+  // Breakdown: which assets each shot needs. Read-only for now — it is
+  // pulled from Kitsu, where it is authored (Kitsu calls it «casting»).
+  QWidget *buildBreakdownTab();
+  void rebuildBreakdown();
+  void onBreakdownContextMenu(const QPoint &pos);
+  // Chiede il file di un asset e lo lega. Condivisa fra scheda Assets e
+  // scheda Breakdown: due copie divergono, e la seconda dimentica il
+  // filtro .tnz dei personaggi.
+  bool linkAssetFileInteractive(int assetIndex);
+  // Opzioni PSD di UN asset. Registra solo cio' che differisce dal
+  // default di progetto, cosi' cambiare il default continua ad arrivare
+  // qui: salvare anche i campi uguali li congelerebbe.
+  bool editAssetPsdOptions(int assetIndex);
+  QLineEdit *m_propsDirEdit = nullptr;
+  QComboBox *m_importModeCombo = nullptr;
+  QComboBox *m_psdLoadAsCombo = nullptr;
+  QComboBox *m_psdLevelNameCombo = nullptr;
+  QComboBox *m_psdGroupsCombo = nullptr;
+  QCheckBox *m_psdSubSceneCheck = nullptr;
+  QLineEdit *m_bgDirEdit = nullptr;
+  QLineEdit *m_modelSheetDirEdit = nullptr;
+  QTableWidget *m_breakdownTable = nullptr;
+  QPushButton  *m_breakdownPullBtn = nullptr;
+  QLabel       *m_breakdownLabel = nullptr;
   void reloadAssetTypesTab();        // model → asset-type list
   void reloadAssetTaskTypeList();    // selected asset type → its task pipeline
   void applyAssetTaskTypesToType();  // task list → selected asset type + persist

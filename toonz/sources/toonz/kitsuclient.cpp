@@ -1282,6 +1282,55 @@ void KitsuClient::asPullLoadTypes() {
   });
 }
 
+void KitsuClient::pullBreakdown(const QString &projectId,
+                                const QString &episodeId) {
+  if (!isLoggedIn()) { emit breakdownPulled(false, {}, tr("Not logged in.")); return; }
+  if (projectId.isEmpty()) {
+    emit breakdownPulled(false, {}, tr("Project not linked to Kitsu."));
+    return;
+  }
+  // One call for the whole episode. Asking shot by shot would be dozens of
+  // round trips for the same data.
+  const QString path =
+      episodeId.isEmpty()
+          ? "/api/data/projects/" + projectId + "/sequences/all/casting"
+          : "/api/data/projects/" + projectId + "/episodes/" + episodeId +
+                "/sequences/all/casting";
+
+  QNetworkReply *r = m_nam->get(authGet(path));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) {
+      emit breakdownPulled(false, {}, errorMessage(r, b));
+      return;
+    }
+    // Shape: { "<shot id>": [ {asset_id, asset_name, asset_type_name,
+    //                          nb_occurences, label}, … ], … }
+    QVector<KitsuCastingEntry> out;
+    const QJsonObject byShot = QJsonDocument::fromJson(b).object();
+    for (auto it = byShot.constBegin(); it != byShot.constEnd(); ++it) {
+      const QString shotId = it.key();
+      for (const QJsonValue &v : it.value().toArray()) {
+        const QJsonObject o = v.toObject();
+        KitsuCastingEntry e;
+        e.kitsuShotId  = shotId;
+        e.kitsuAssetId = o.value("asset_id").toString();
+        e.assetName    = o.value("asset_name").toString();
+        e.assetType    = o.value("asset_type_name").toString();
+        // Kitsu spells it «occurences», with one r. Reading our own spelling
+        // here would silently give 0 on every line.
+        e.nbOccurrences = o.value("nb_occurences").toInt(1);
+        e.label         = o.value("label").toString();
+        if (!e.kitsuAssetId.isEmpty()) out.push_back(e);
+      }
+    }
+    emit breakdownPulled(
+        true, out,
+        tr("Pulled %1 breakdown links from Kitsu.").arg(out.size()));
+  });
+}
+
 bool KitsuClient::episodeScoped(const QJsonObject &entity) const {
   // No episode bound (or not a tvshow): everything belongs here, as before.
   if (m_entityEpisodeId.isEmpty()) return true;

@@ -373,6 +373,7 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   m_tabs->addTab(buildAssetsTab(),    QObject::tr("Assets"));
   m_tabs->addTab(buildWorkflowsTab(), QObject::tr("Workflows"));
   m_tabs->addTab(buildAssetTypesTab(), QObject::tr("Asset Types"));
+  m_tabs->addTab(buildBreakdownTab(), QObject::tr("Breakdown"));
 
   // Exit bar — only meaningful when the tracker IS the standalone Production
   // room (no File menu there). A button reopens the Startup screen so the user
@@ -644,6 +645,70 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
               : tr("%1 (%2 updated)").arg(msg).arg(updated));
     }
   });
+  connect(kc, &KitsuClient::breakdownPulled, this,
+          [this](bool ok, const QVector<KitsuCastingEntry> &entries,
+                 const QString &msg) {
+    if (!m_breakdownLabel) return;
+    if (!ok) {
+      m_breakdownLabel->setStyleSheet("color:#FF3860;");
+      m_breakdownLabel->setText(msg);
+      return;
+    }
+    ZtoryModel *mm = ZtoryModel::instance();
+
+    // Index by Kitsu id once, instead of scanning the vectors per entry: with
+    // 145 assets and dozens of shots the nested scan is the slow, quiet kind.
+    QHash<QString, int> shotByKitsuId, assetIdxByKitsuId;
+    for (int i = 0; i < (int)mm->projectShots().size(); i++) {
+      const QString &k = mm->projectShots()[i].kitsuShotId;
+      if (!k.isEmpty()) shotByKitsuId.insert(k, i);
+    }
+    for (int i = 0; i < (int)mm->assets().size(); i++) {
+      const QString &k = mm->assets()[i].kitsuAssetId;
+      if (!k.isEmpty()) assetIdxByKitsuId.insert(k, i);
+    }
+
+    // Kitsu is authoritative on the breakdown, so each touched shot is REPLACED
+    // rather than merged: a link removed on the web must disappear here too,
+    // and merging would make deletions impossible to propagate.
+    // Accumulated first, written after: a shot is replaced once, with its whole
+    // new list, instead of being cleared and refilled while we iterate.
+    QHash<int, QVector<BreakdownEntry>> byShot;
+    int linked = 0, unknownShot = 0, unknownAsset = 0;
+    for (const KitsuCastingEntry &e : entries) {
+      auto sit = shotByKitsuId.constFind(e.kitsuShotId);
+      if (sit == shotByKitsuId.constEnd()) { unknownShot++; continue; }
+      auto ait = assetIdxByKitsuId.constFind(e.kitsuAssetId);
+      if (ait == assetIdxByKitsuId.constEnd()) { unknownAsset++; continue; }
+
+      BreakdownEntry be;
+      be.assetUuid     = mm->assets()[*ait].uuid;
+      be.nbOccurrences = e.nbOccurrences;
+      be.label         = e.label;
+      byShot[*sit].push_back(be);
+      linked++;
+    }
+    for (auto it = byShot.constBegin(); it != byShot.constEnd(); ++it)
+      mm->setShotBreakdown(it.key(), it.value());
+    mm->saveProjectDb();
+    rebuildBreakdown();
+
+    // The two «unknown» counts are the useful part: an asset that never got
+    // pulled down, or a shot never pushed up, shows here as a number instead of
+    // as a breakdown that is quietly short.
+    QString extra;
+    if (unknownAsset > 0)
+      extra += QObject::tr(" — %1 skipped: asset not in this project (pull "
+                           "assets first)").arg(unknownAsset);
+    if (unknownShot > 0)
+      extra += QObject::tr(" — %1 skipped: shot not linked to Kitsu")
+                   .arg(unknownShot);
+    m_breakdownLabel->setStyleSheet(unknownAsset || unknownShot
+                                        ? "color:#F5A623;"
+                                        : "color:#22D160;");
+    m_breakdownLabel->setText(
+        QObject::tr("%1 (%2 linked)").arg(msg).arg(linked) + extra);
+  });
   connect(kc, &KitsuClient::teamPulled, this,
           [this](bool ok, const QVector<KitsuPerson> &persons, const QString &msg) {
     if (!ok) {
@@ -691,6 +756,9 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   rebuildAssets();
   reloadWorkflowsTab();
   reloadAssetTypesTab();
+  // Il breakdown e' persistito nel .ztoryc: va ridisegnato all'apertura, non
+  // solo dopo un pull, o la scheda sembra vuota finche' non si ricontatta Kitsu.
+  rebuildBreakdown();
 }
 
 //-----------------------------------------------------------------------------
@@ -740,6 +808,9 @@ void ZtoryProductionPanel::onModelChanged() {
   rebuildAssets();
   reloadWorkflowsTab();
   reloadAssetTypesTab();
+  // Il breakdown e' persistito nel .ztoryc: va ridisegnato all'apertura, non
+  // solo dopo un pull, o la scheda sembra vuota finche' non si ricontatta Kitsu.
+  rebuildBreakdown();
 }
 
 //-----------------------------------------------------------------------------
@@ -1205,6 +1276,89 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   form->addRow(QObject::tr("Default technique:"), m_techCombo);
   form->addRow(QObject::tr("Naming pattern:"),    m_patternEdit);
 
+  // Dove stanno i file degli asset, UNA CARTELLA PER CATEGORIA. Con 145 asset
+  // un percorso per ciascuno non lo compila nessuno: qui si indica la cartella
+  // e il file si risolve per convenzione dal nome dell'asset.
+  // I Character non hanno cartella: nel cutout sono SCENE, e la scena si lega
+  // sull'asset stesso (scheda Assets → Link file).
+  auto addDirRow = [&](const QString &label, QLineEdit *&edit,
+                       const QString &tip) {
+    auto *row  = new QWidget(w);
+    auto *hl   = new QHBoxLayout(row);
+    hl->setContentsMargins(0, 0, 0, 0);
+    edit       = new QLineEdit(row);
+    edit->setToolTip(tip);
+    auto *browse = new QPushButton(QObject::tr("…"), row);
+    browse->setFixedWidth(28);
+    hl->addWidget(edit);
+    hl->addWidget(browse);
+    connect(browse, &QPushButton::clicked, this, [this, edit, label] {
+      const QString d = QFileDialog::getExistingDirectory(this, label,
+                                                          edit->text());
+      if (!d.isEmpty()) { edit->setText(d); applyProjectFromFields(); }
+    });
+    connect(edit, &QLineEdit::editingFinished, this,
+            [this] { applyProjectFromFields(); });
+    form->addRow(label, row);
+  };
+  addDirRow(QObject::tr("Props folder:"), m_propsDirEdit,
+            QObject::tr("Folder holding the prop files. The export looks here "
+                        "for a prop that has no file of its own."));
+  addDirRow(QObject::tr("Backgrounds folder:"), m_bgDirEdit,
+            QObject::tr("Folder holding the background/environment files."));
+  addDirRow(QObject::tr("Model sheets folder:"), m_modelSheetDirEdit,
+            QObject::tr("Tradigital: folder holding the character model "
+                        "sheets, imported as images.\nIn digital cutout a "
+                        "character is a scene instead — link it on the asset."));
+
+  // Come l'export porta gli asset dentro lo shot. Default di progetto: i
+  // singoli asset possono scostarsene dalla scheda Assets.
+  m_importModeCombo = new QComboBox(w);
+  m_importModeCombo->addItem(QObject::tr("Load — the shot points at the file"),
+                             int(AssetImportPolicy::Load));
+  m_importModeCombo->addItem(
+      QObject::tr("Import — the file is copied into the shot"),
+      int(AssetImportPolicy::Import));
+  m_importModeCombo->setToolTip(QObject::tr(
+      "Load: one source for everyone — fix the asset once and every shot gets "
+      "the fix, but a moved file breaks them all together.\n"
+      "Import: the shot is self-contained (delivery, archive, someone working "
+      "elsewhere), but a fix has to be redone shot by shot.\n"
+      "Rule of thumb: Load while the asset is still being worked on, Import "
+      "once it is frozen. Single assets can differ (Assets tab)."));
+  form->addRow(QObject::tr("Assets come in as:"), m_importModeCombo);
+  connect(m_importModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this] { applyProjectFromFields(); });
+
+  // Opzioni PSD: sono quelle del popup di import, replicate qui perche' un
+  // export automatico non puo' fermarsi a chiederle per ognuno dei 145 asset.
+  m_psdLoadAsCombo = new QComboBox(w);
+  m_psdLoadAsCombo->addItems({QObject::tr("Single Image"), QObject::tr("Frames"),
+                              QObject::tr("Columns")});
+  m_psdLevelNameCombo = new QComboBox(w);
+  m_psdLevelNameCombo->addItems({"FileName#LayerName", "LayerName"});
+  m_psdGroupsCombo = new QComboBox(w);
+  m_psdGroupsCombo->addItems(
+      {QObject::tr("Ignore groups"),
+       QObject::tr("Group layers as columns in a sub-scene"),
+       QObject::tr("Group layers as frames in a column")});
+  m_psdSubSceneCheck =
+      new QCheckBox(QObject::tr("Expose in a Sub-Scene"), w);
+  for (QWidget *cw : QList<QWidget *>{m_psdLoadAsCombo, m_psdLevelNameCombo,
+                                      m_psdGroupsCombo})
+    static_cast<QComboBox *>(cw)->setToolTip(
+        QObject::tr("Default for PSD assets. Same options as the PSD import "
+                    "dialog."));
+  form->addRow(QObject::tr("PSD — load as:"),    m_psdLoadAsCombo);
+  form->addRow(QObject::tr("PSD — level name:"), m_psdLevelNameCombo);
+  form->addRow(QObject::tr("PSD — groups:"),     m_psdGroupsCombo);
+  form->addRow(QString(), m_psdSubSceneCheck);
+  for (QComboBox *cb : {m_psdLoadAsCombo, m_psdLevelNameCombo, m_psdGroupsCombo})
+    connect(cb, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this] { applyProjectFromFields(); });
+  connect(m_psdSubSceneCheck, &QCheckBox::toggled, this,
+          [this] { applyProjectFromFields(); });
+
   // Kitsu was an opt-in taken at project creation and never revisitable: the
   // whole integration stayed hidden for a project made before you knew you
   // wanted it, with no way to turn it on short of recreating the project.
@@ -1309,6 +1463,23 @@ void ZtoryProductionPanel::reloadProjectTab() {
   m_seasonEdit->setText(m->season());
   m_titleEdit->setText(m->title());
   m_epEdit->setText(m->episode());
+  if (m_propsDirEdit)      m_propsDirEdit->setText(m->propsDir());
+  if (m_bgDirEdit)         m_bgDirEdit->setText(m->backgroundsDir());
+  if (m_modelSheetDirEdit) m_modelSheetDirEdit->setText(m->modelSheetDir());
+  if (m_importModeCombo && m_psdLoadAsCombo) {
+    const AssetImportPolicy &p = m->defaultImportPolicy();
+    m_importModeCombo->setCurrentIndex(
+        p.mode == AssetImportPolicy::Import ? 1 : 0);
+    const QStringList loadAs{"Single Image", "Frames", "Columns"};
+    const QStringList groups{"Ignore", "SubSceneColumns", "ColumnFrames"};
+    m_psdLoadAsCombo->setCurrentIndex(qMax(0, loadAs.indexOf(p.psdLoadAs)));
+    m_psdGroupsCombo->setCurrentIndex(qMax(0, groups.indexOf(p.psdGroups)));
+    if (!p.psdLevelName.isEmpty()) {
+      int i = m_psdLevelNameCombo->findText(p.psdLevelName);
+      if (i >= 0) m_psdLevelNameCombo->setCurrentIndex(i);
+    }
+    m_psdSubSceneCheck->setChecked(p.psdSubScene == 1);
+  }
   // Bound to a Kitsu episode: the name is no longer ours to change. Renaming it
   // here would leave the name and kitsuEpisodeId pointing at different things —
   // the push would create a NEW episode under the typed name while the pull
@@ -1488,12 +1659,311 @@ void ZtoryProductionPanel::applyProjectFromFields() {
     m->setDefaultTechnique(m_techCombo->currentText());
   if (m_patternEdit && !m_patternEdit->text().trimmed().isEmpty())
     m->setNamingPattern(m_patternEdit->text().trimmed());
+  // Cartelle degli asset per categoria (export completo). Nessun trim del
+  // percorso oltre agli spazi: un nome di cartella puo' contenerne.
+  if (m_propsDirEdit)      m->setPropsDir(m_propsDirEdit->text().trimmed());
+  if (m_bgDirEdit)         m->setBackgroundsDir(m_bgDirEdit->text().trimmed());
+  if (m_modelSheetDirEdit) m->setModelSheetDir(m_modelSheetDirEdit->text().trimmed());
+  if (m_importModeCombo && m_psdLoadAsCombo) {
+    AssetImportPolicy p;
+    p.mode = static_cast<AssetImportPolicy::Mode>(
+        m_importModeCombo->currentData().toInt());
+    // I valori salvati sono le chiavi NON tradotte: salvare l'etichetta
+    // renderebbe il .ztoryc illeggibile da una build in un'altra lingua.
+    static const char *kLoadAs[] = {"Single Image", "Frames", "Columns"};
+    static const char *kGroups[] = {"Ignore", "SubSceneColumns", "ColumnFrames"};
+    p.psdLoadAs    = kLoadAs[qBound(0, m_psdLoadAsCombo->currentIndex(), 2)];
+    p.psdLevelName = m_psdLevelNameCombo->currentText();
+    p.psdGroups    = kGroups[qBound(0, m_psdGroupsCombo->currentIndex(), 2)];
+    p.psdSubScene  = m_psdSubSceneCheck->isChecked() ? 1 : 0;
+    m->setDefaultImportPolicy(p);
+  }
   m->saveProjectDb();  // project-meta lives in the project DB
   rebuild();  // default-technique change may alter which task columns apply
 }
 
 //-----------------------------------------------------------------------------
 // Assets tab — project-level asset list with its own task pipeline.
+
+bool ZtoryProductionPanel::editAssetPsdOptions(int assetIndex) {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (assetIndex < 0 || assetIndex >= m->assetCount()) return false;
+  const Asset &a = m->assets()[assetIndex];
+
+  // Si parte dai valori EFFETTIVI (default di progetto + eventuali scostamenti
+  // gia' presenti): il dialogo deve mostrare cosa succederebbe adesso, non
+  // campi vuoti da cui dedurre.
+  const AssetImportPolicy eff = m->effectiveImportPolicy(a);
+  const AssetImportPolicy def = m->defaultImportPolicy();
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(QObject::tr("PSD import options — %1").arg(a.name));
+  auto *lay  = new QVBoxLayout(&dlg);
+  auto *form = new QFormLayout();
+  lay->addLayout(form);
+
+  const QStringList kLoadAs{"Single Image", "Frames", "Columns"};
+  const QStringList kGroups{"Ignore", "SubSceneColumns", "ColumnFrames"};
+
+  auto *loadAs = new QComboBox(&dlg);
+  loadAs->addItems({QObject::tr("Single Image"), QObject::tr("Frames"),
+                    QObject::tr("Columns")});
+  loadAs->setCurrentIndex(qMax(0, kLoadAs.indexOf(eff.psdLoadAs)));
+  auto *levelName = new QComboBox(&dlg);
+  levelName->addItems({"FileName#LayerName", "LayerName"});
+  if (!eff.psdLevelName.isEmpty()) {
+    int i = levelName->findText(eff.psdLevelName);
+    if (i >= 0) levelName->setCurrentIndex(i);
+  }
+  auto *groups = new QComboBox(&dlg);
+  groups->addItems({QObject::tr("Ignore groups"),
+                    QObject::tr("Group layers as columns in a sub-scene"),
+                    QObject::tr("Group layers as frames in a column")});
+  groups->setCurrentIndex(qMax(0, kGroups.indexOf(eff.psdGroups)));
+  auto *subScene = new QCheckBox(QObject::tr("Expose in a Sub-Scene"), &dlg);
+  subScene->setChecked(eff.psdSubScene == 1);
+
+  form->addRow(QObject::tr("Load as:"),    loadAs);
+  form->addRow(QObject::tr("Level name:"), levelName);
+  form->addRow(QObject::tr("Groups:"),     groups);
+  form->addRow(QString(), subScene);
+
+  auto *hint = new QLabel(
+      QObject::tr("Only what differs from the project default is stored, so "
+                  "changing the project default still reaches this asset."),
+      &dlg);
+  hint->setWordWrap(true);
+  lay->addWidget(hint);
+
+  auto *box = new QDialogButtonBox(QDialogButtonBox::Ok |
+                                       QDialogButtonBox::Cancel,
+                                   &dlg);
+  QPushButton *resetBtn =
+      box->addButton(QObject::tr("Use project defaults"),
+                     QDialogButtonBox::ResetRole);
+  lay->addWidget(box);
+  connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  bool reset = false;
+  connect(resetBtn, &QPushButton::clicked, &dlg, [&] { reset = true; dlg.accept(); });
+
+  if (dlg.exec() != QDialog::Accepted) return false;
+
+  AssetImportPolicy p = a.importPolicy;  // il modo Load/Import non si tocca qui
+  if (reset) {
+    p.psdLoadAs.clear();
+    p.psdLevelName.clear();
+    p.psdGroups.clear();
+    p.psdSubScene = -1;
+  } else {
+    // SOLO gli scostamenti. Salvare anche i campi uguali al default li
+    // congelerebbe: cambiare il default di progetto non arriverebbe piu' qui,
+    // e nessuno capirebbe perche' proprio questo asset non segue.
+    const QString newLoadAs = kLoadAs[loadAs->currentIndex()];
+    const QString newGroups = kGroups[groups->currentIndex()];
+    const QString newLevel  = levelName->currentText();
+    const int     newSub    = subScene->isChecked() ? 1 : 0;
+    p.psdLoadAs    = (newLoadAs == def.psdLoadAs) ? QString() : newLoadAs;
+    p.psdGroups    = (newGroups == def.psdGroups) ? QString() : newGroups;
+    p.psdLevelName = (newLevel == def.psdLevelName) ? QString() : newLevel;
+    p.psdSubScene  = (newSub == def.psdSubScene) ? -1 : newSub;
+  }
+  m->setAssetImportPolicy(assetIndex, p);
+  persistAssets();
+  rebuildAssets();
+  rebuildBreakdown();
+  return true;
+}
+
+bool ZtoryProductionPanel::linkAssetFileInteractive(int assetIndex) {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (assetIndex < 0 || assetIndex >= m->assetCount()) return false;
+  const Asset &a    = m->assets()[assetIndex];
+  const bool isChar = a.type.compare("Character", Qt::CaseInsensitive) == 0;
+
+  // Un personaggio cutout E' una scena, e nello shot entra come sotto-scena:
+  // per quello serve il .tnz. Prop e sfondi sono livelli, e il legame diretto
+  // e' l'eccezione alla convenzione per cartella — quindi si parte dalla
+  // cartella della categoria, dove il file probabilmente e' gia'.
+  QString start = a.filePath;
+  if (start.isEmpty()) {
+    if (isChar) {
+      // I personaggi non hanno una cartella di categoria: sono scene DI QUESTO
+      // progetto, quindi si parte da +scenes invece che da dove capita.
+      if (ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene())
+        start = sc->decodeFilePath(TFilePath("+scenes")).getQString();
+    } else {
+      start = m->assetDirForType(a.type);
+    }
+  }
+  const QString f = QFileDialog::getOpenFileName(
+      this, QObject::tr("Link file to %1").arg(a.name), start,
+      isChar ? QObject::tr("Scenes (*.tnz)") : QObject::tr("All files (*)"));
+  if (f.isEmpty()) return false;
+  m->setAssetFilePath(assetIndex, f);
+  persistAssets();
+  rebuildAssets();
+  rebuildBreakdown();
+  // Un PSD entra in molti modi diversi, e il momento in cui lo si collega e'
+  // l'unico in cui si ha in mente com'e' fatto. Chiederlo dopo vuol dire non
+  // chiederlo mai: «Use project defaults» chiude in un clic.
+  if (QFileInfo(f).suffix().compare("psd", Qt::CaseInsensitive) == 0)
+    editAssetPsdOptions(assetIndex);
+  return true;
+}
+
+void ZtoryProductionPanel::onBreakdownContextMenu(const QPoint &pos) {
+  if (!m_breakdownTable) return;
+  QTableWidgetItem *it = m_breakdownTable->itemAt(pos);
+  if (!it) return;
+  // L'indice dell'asset viaggia sulla riga: la tabella e' piatta (shot × asset)
+  // e lo stesso asset compare in piu' righe, quindi risalirci dal nome sarebbe
+  // sbagliato appena due asset si chiamano uguale in tipi diversi.
+  const int assetIndex =
+      m_breakdownTable->item(it->row(), 1)->data(Qt::UserRole).toInt();
+  ZtoryModel *m = ZtoryModel::instance();
+  if (assetIndex < 0 || assetIndex >= m->assetCount()) return;
+  const Asset &a    = m->assets()[assetIndex];
+  const bool isChar = a.type.compare("Character", Qt::CaseInsensitive) == 0;
+
+  QMenu menu(this);
+  QAction *linkAct = menu.addAction(isChar
+                                        ? QObject::tr("Link character scene…")
+                                        : QObject::tr("Link file…"));
+  QAction *clearAct = a.filePath.isEmpty()
+                          ? nullptr
+                          : menu.addAction(QObject::tr("Clear link"));
+  QAction *psdAct = nullptr;
+  if (QFileInfo(m->resolveAssetFile(a)).suffix().compare(
+          "psd", Qt::CaseInsensitive) == 0) {
+    menu.addSeparator();
+    psdAct = menu.addAction(QObject::tr("PSD import options…"));
+  }
+  QAction *ch = menu.exec(m_breakdownTable->viewport()->mapToGlobal(pos));
+  if (!ch) return;
+  if (ch == psdAct) {
+    editAssetPsdOptions(assetIndex);
+  } else if (ch == linkAct) {
+    linkAssetFileInteractive(assetIndex);
+  } else if (ch == clearAct) {
+    m->setAssetFilePath(assetIndex, QString());
+    persistAssets();
+    rebuildAssets();
+    rebuildBreakdown();
+  }
+}
+
+QWidget *ZtoryProductionPanel::buildBreakdownTab() {
+  QWidget *w = new QWidget(this);
+  auto *lay  = new QVBoxLayout(w);
+
+  auto *btns = new QHBoxLayout();
+  m_breakdownPullBtn =
+      new QPushButton(QObject::tr("Pull breakdown from Kitsu"), w);
+  m_breakdownPullBtn->setToolTip(QObject::tr(
+      "Read from Kitsu which assets each shot needs (Kitsu calls it casting).\n"
+      "Read-only for now: nothing is sent back."));
+  btns->addWidget(m_breakdownPullBtn);
+  m_breakdownLabel = new QLabel(QString(), w);
+  btns->addWidget(m_breakdownLabel);
+  btns->addStretch();
+  lay->addLayout(btns);
+
+  m_breakdownTable = new QTableWidget(w);
+  m_breakdownTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+  m_breakdownTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  m_breakdownTable->verticalHeader()->setVisible(false);
+  m_breakdownTable->setContextMenuPolicy(Qt::CustomContextMenu);
+  lay->addWidget(m_breakdownTable);
+  connect(m_breakdownTable, &QWidget::customContextMenuRequested, this,
+          &ZtoryProductionPanel::onBreakdownContextMenu);
+  // La colonna File e' dove si VEDE cosa manca, quindi e' li' che si aggiusta:
+  // doppio clic = collega, senza passare dalla scheda Assets.
+  connect(m_breakdownTable, &QTableWidget::cellDoubleClicked, this,
+          [this](int row, int) {
+            QTableWidgetItem *it = m_breakdownTable->item(row, 1);
+            if (it) linkAssetFileInteractive(it->data(Qt::UserRole).toInt());
+          });
+
+  connect(m_breakdownPullBtn, &QPushButton::clicked, this, [this] {
+    ZtoryModel *m = ZtoryModel::instance();
+    if (!m->isKitsuLinked()) return;
+    m_breakdownLabel->setStyleSheet(QString());
+    m_breakdownLabel->setText(QObject::tr("Pulling breakdown…"));
+    KitsuClient::instance()->pullBreakdown(m->kitsuProjectId(),
+                                           m->kitsuEpisodeId());
+  });
+  return w;
+}
+
+void ZtoryProductionPanel::rebuildBreakdown() {
+  if (!m_breakdownTable) return;
+  ZtoryModel *m = ZtoryModel::instance();
+
+  m_breakdownTable->clear();
+  m_breakdownTable->setColumnCount(5);
+  m_breakdownTable->setHorizontalHeaderLabels(
+      {QObject::tr("Shot"), QObject::tr("Asset"), QObject::tr("Type"),
+       QObject::tr("×"), QObject::tr("File")});
+
+  // One row per (shot, asset): the flat form is what you read when you want to
+  // know «what does this shot need», and it sorts and searches naturally.
+  int rows = 0;
+  for (const ProjectShot &ps : m->projectShots()) rows += ps.breakdown.size();
+  m_breakdownTable->setRowCount(rows);
+
+  int r = 0;
+  for (const ProjectShot &ps : m->projectShots()) {
+    for (const BreakdownEntry &be : ps.breakdown) {
+      // The asset is held by uuid; resolve it for display. An entry whose asset
+      // is gone shows the uuid rather than an empty cell — a silent blank would
+      // read as «no asset» instead of «dangling link».
+      QString name = QObject::tr("⟨missing asset %1⟩").arg(be.assetUuid.left(8));
+      QString type;
+      const Asset *found = nullptr;
+      int assetIndex = -1;
+      for (int ai = 0; ai < m->assetCount(); ai++)
+        if (m->assets()[ai].uuid == be.assetUuid) {
+          found = &m->assets()[ai]; name = found->name; type = found->type;
+          assetIndex = ai;
+          break;
+        }
+
+      m_breakdownTable->setItem(r, 0, new QTableWidgetItem(ps.label));
+      auto *nameItem = new QTableWidgetItem(name);
+      nameItem->setData(Qt::UserRole, assetIndex);
+      m_breakdownTable->setItem(r, 1, nameItem);
+      m_breakdownTable->setItem(r, 2, new QTableWidgetItem(type));
+      m_breakdownTable->setItem(
+          r, 3,
+          new QTableWidgetItem(be.nbOccurrences > 1
+                                   ? QString::number(be.nbOccurrences)
+                                   : QString()));
+
+      // Cosa troverebbe l'export, ADESSO. E' la colonna che rende il breakdown
+      // utile invece che decorativo: un asset che non si risolve va visto qui,
+      // non scoperto a export fatto.
+      auto *fileItem = new QTableWidgetItem();
+      if (found) {
+        QString why;
+        const QString path = m->resolveAssetFile(*found, &why);
+        if (!path.isEmpty()) {
+          fileItem->setText(QFileInfo(path).fileName());
+          fileItem->setToolTip(path);
+          fileItem->setForeground(QBrush(QColor("#22D160")));
+        } else {
+          fileItem->setText(why);
+          fileItem->setToolTip(
+              why + QObject::tr("\n\nRight-click to link the file by hand."));
+          fileItem->setForeground(QBrush(QColor("#F5A623")));
+        }
+      }
+      m_breakdownTable->setItem(r, 4, fileItem);
+      r++;
+    }
+  }
+  m_breakdownTable->resizeColumnsToContents();
+}
 
 QWidget *ZtoryProductionPanel::buildAssetsTab() {
   QWidget *w   = new QWidget(this);
@@ -1633,7 +2103,87 @@ void ZtoryProductionPanel::onAssetContextMenu(const QPoint &pos) {
         targets.append({row, m->assets()[row].uuid, m_assetTaskCols[ti]});
     }
   }
-  if (targets.isEmpty()) return;
+
+  // Nessun task sotto il puntatore: siamo su Type o Name, e li' la voce utile
+  // e' il legame al FILE, che appartiene alla riga e non a una cella di task.
+  // Senza questo ramo il comando sarebbe raggiungibile solo cliccando per caso
+  // su una colonna di task.
+  if (targets.isEmpty()) {
+    QTableWidgetItem *it = m_assetTable->itemAt(pos);
+    if (!it) return;
+    const int row = it->row();
+    if (row < 0 || row >= m->assetCount()) return;
+    const Asset &a    = m->assets()[row];
+    const bool isChar = a.type.compare("Character", Qt::CaseInsensitive) == 0;
+
+    QMenu rowMenu(this);
+    QAction *linkAct  = rowMenu.addAction(isChar
+                                              ? QObject::tr("Link character scene…")
+                                              : QObject::tr("Link file…"));
+    QAction *clearAct = a.filePath.isEmpty()
+                            ? nullptr
+                            : rowMenu.addAction(QObject::tr("Clear link"));
+    if (!a.filePath.isEmpty()) {
+      rowMenu.addSeparator();
+      QAction *shown = rowMenu.addAction(a.filePath);
+      shown->setEnabled(false);  // mostra il legame, non e' un comando
+    }
+    // Scostamento dalla politica di progetto, per QUESTO asset. «Use project
+    // default» e' una voce a sé e non l'assenza di scelta: si deve poter
+    // tornare indietro, e si deve vedere quale delle tre e' attiva.
+    QAction *psdAct = nullptr;
+    if (QFileInfo(m->resolveAssetFile(a)).suffix().compare(
+            "psd", Qt::CaseInsensitive) == 0)
+      psdAct = rowMenu.addAction(QObject::tr("PSD import options…"));
+
+    rowMenu.addSeparator();
+    const AssetImportPolicy eff = m->effectiveImportPolicy(a);
+    QMenu *modeMenu = rowMenu.addMenu(QObject::tr("Comes in as"));
+    struct ModeAct { QAction *act; AssetImportPolicy::Mode mode; };
+    QVector<ModeAct> modeActs;
+    auto addMode = [&](const QString &text, AssetImportPolicy::Mode mo) {
+      QAction *act = modeMenu->addAction(text);
+      act->setCheckable(true);
+      act->setChecked(a.importPolicy.mode == mo);
+      modeActs.push_back({act, mo});
+    };
+    addMode(QObject::tr("Use project default (%1)")
+                .arg(eff.mode == AssetImportPolicy::Import
+                         ? QObject::tr("Import")
+                         : QObject::tr("Load")),
+            AssetImportPolicy::Default);
+    modeMenu->addSeparator();
+    addMode(QObject::tr("Load — point at the file"), AssetImportPolicy::Load);
+    addMode(QObject::tr("Import — copy into the shot"), AssetImportPolicy::Import);
+
+    QAction *ch = rowMenu.exec(m_assetTable->viewport()->mapToGlobal(pos));
+    if (!ch) return;
+    if (ch == psdAct) { editAssetPsdOptions(row); return; }
+
+    for (const ModeAct &ma : modeActs)
+      if (ch == ma.act) {
+        AssetImportPolicy p = a.importPolicy;  // le opzioni PSD restano
+        p.mode = ma.mode;
+        m->setAssetImportPolicy(row, p);
+        persistAssets();
+        rebuildAssets();
+        rebuildBreakdown();
+        return;
+      }
+
+    if (ch == clearAct) {
+      m->setAssetFilePath(row, QString());
+    } else if (ch == linkAct) {
+      linkAssetFileInteractive(row);  // fa da sé persist + rebuild
+      return;
+    } else {
+      return;
+    }
+    persistAssets();
+    rebuildAssets();
+    rebuildBreakdown();
+    return;
+  }
 
   QMenu menu(this);
   QMenu *sm = menu.addMenu(QObject::tr("Set status (%1 tasks)").arg(targets.size()));

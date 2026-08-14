@@ -236,6 +236,107 @@ QStringList ZtoryModel::assetTaskTypesForType(const QString &type) const {
   return (t && !t->taskTypes.isEmpty()) ? t->taskTypes : canonicalAssetTaskOrder();
 }
 
+//-----------------------------------------------------------------------------
+// AssetImportPolicy <-> XML. Un helper solo, usato dal default di progetto e
+// dagli scostamenti dei singoli asset: due copie divergono, e la seconda
+// dimentica sempre un campo.
+
+static void writeImportPolicy(QXmlStreamWriter &xml, const AssetImportPolicy &p) {
+  if (p.mode == AssetImportPolicy::Load)   xml.writeAttribute("import", "load");
+  else if (p.mode == AssetImportPolicy::Import) xml.writeAttribute("import", "import");
+  if (!p.psdLoadAs.isEmpty())    xml.writeAttribute("psdLoadAs", p.psdLoadAs);
+  if (!p.psdLevelName.isEmpty()) xml.writeAttribute("psdLevelName", p.psdLevelName);
+  if (!p.psdGroups.isEmpty())    xml.writeAttribute("psdGroups", p.psdGroups);
+  if (p.psdSubScene >= 0)
+    xml.writeAttribute("psdSubScene", p.psdSubScene ? "1" : "0");
+}
+
+static AssetImportPolicy readImportPolicy(const QXmlStreamAttributes &a) {
+  AssetImportPolicy p;
+  const QString m = a.value("import").toString();
+  if (m == QLatin1String("load"))        p.mode = AssetImportPolicy::Load;
+  else if (m == QLatin1String("import")) p.mode = AssetImportPolicy::Import;
+  p.psdLoadAs    = a.value("psdLoadAs").toString();
+  p.psdLevelName = a.value("psdLevelName").toString();
+  p.psdGroups    = a.value("psdGroups").toString();
+  if (a.hasAttribute("psdSubScene"))
+    p.psdSubScene = a.value("psdSubScene").toString() == QLatin1String("1") ? 1 : 0;
+  return p;
+}
+
+AssetImportPolicy ZtoryModel::effectiveImportPolicy(const Asset &a) const {
+  // Campo per campo, non tutto-o-niente: chi cambia solo il modo su un asset
+  // non deve ritrovarsi con le opzioni PSD azzerate, e chi cambia solo le
+  // opzioni PSD non deve perdere il modo. Un merge grossolano qui produce
+  // regressioni che si vedono solo all'export.
+  AssetImportPolicy p = m_defaultImportPolicy;
+  const AssetImportPolicy &o = a.importPolicy;
+  if (o.mode != AssetImportPolicy::Default) p.mode = o.mode;
+  if (!o.psdLoadAs.isEmpty())    p.psdLoadAs    = o.psdLoadAs;
+  if (!o.psdLevelName.isEmpty()) p.psdLevelName = o.psdLevelName;
+  if (!o.psdGroups.isEmpty())    p.psdGroups    = o.psdGroups;
+  if (o.psdSubScene >= 0)        p.psdSubScene  = o.psdSubScene;
+  // Il default del default: senza nulla di impostato si fa Load, che e' la
+  // scelta non distruttiva — punta al file invece di moltiplicarne le copie.
+  if (p.mode == AssetImportPolicy::Default) p.mode = AssetImportPolicy::Load;
+  return p;
+}
+
+QString ZtoryModel::resolveAssetFile(const Asset &a, QString *why) const {
+  auto fail = [&](const QString &msg) {
+    if (why) *why = msg;
+    return QString();
+  };
+  // 1. Il legame esplicito VINCE sempre. E' l'unica risposta che non e' una
+  //    supposizione, quindi non si discute e non si cerca oltre.
+  if (!a.filePath.isEmpty()) {
+    if (QFile::exists(a.filePath)) { if (why) why->clear(); return a.filePath; }
+    return fail(tr("linked file is missing: %1").arg(a.filePath));
+  }
+
+  // 2. Altrimenti la convenzione: cartella della categoria + nome dell'asset.
+  const QString dir = assetDirForType(a.type);
+  if (dir.isEmpty())
+    return fail(a.type.compare("Character", Qt::CaseInsensitive) == 0
+                    ? tr("a character has no folder: link its scene")
+                    : tr("no folder set for type %1").arg(a.type));
+  if (!QDir(dir).exists()) return fail(tr("folder not found: %1").arg(dir));
+
+  // Corrispondenza sul NOME BASE, senza distinzione di maiuscole, con qualunque
+  // estensione. Volutamente NON si accettano prefissi o suffissi: «macchina»
+  // non deve pescare «macchina_v03» ne' «macchina_rotta», perche' sceglierne
+  // uno a caso e' peggio che non trovarlo — l'errore si vedrebbe solo in
+  // render, giorni dopo.
+  QStringList hits;
+  const QFileInfoList entries =
+      QDir(dir).entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
+  for (const QFileInfo &fi : entries)
+    if (fi.completeBaseName().compare(a.name, Qt::CaseInsensitive) == 0)
+      hits << fi.absoluteFilePath();
+
+  if (hits.isEmpty())
+    return fail(tr("no file named «%1» in %2").arg(a.name, dir));
+  // 3. Ambiguo: NON si indovina. Due file con lo stesso nome e estensione
+  //    diversa (macchina.tlv e macchina.psd) sono una scelta dell'utente, non
+  //    nostra; si chiede il legame esplicito.
+  if (hits.size() > 1)
+    return fail(tr("%1 files named «%2» in %3 — link the right one")
+                    .arg(hits.size()).arg(a.name, dir));
+
+  if (why) why->clear();
+  return hits.first();
+}
+
+QString ZtoryModel::assetDirForType(const QString &type) const {
+  // Character: nessuna cartella. Nel cutout digitale un personaggio e' una
+  // SCENA dello stesso progetto e si importa come sotto-scena; nel tradigital
+  // di lui si importa il model sheet, che ha la sua cartella a parte.
+  if (type.compare("Prop", Qt::CaseInsensitive) == 0) return m_propsDir;
+  if (type.compare("Environment", Qt::CaseInsensitive) == 0)
+    return m_backgroundsDir;
+  return QString();
+}
+
 void ZtoryModel::addAssetTaskType(const QString &type, const QString &taskType) {
   const QString name = taskType.trimmed();
   if (name.isEmpty()) return;
@@ -433,6 +534,10 @@ void ZtoryModel::resetProjectLevelDefaults() {
   m_kitsuProjectId.clear();
   m_kitsuProjectName.clear();
   m_kitsuEpisodeId.clear();
+  m_propsDir.clear();
+  m_backgroundsDir.clear();
+  m_modelSheetDir.clear();
+  m_defaultImportPolicy = AssetImportPolicy();
   m_productionType.clear();
   m_productionStyle.clear();
   m_ratio.clear();
@@ -565,6 +670,11 @@ void ZtoryModel::saveProjectDb() {
   // survives a rename on the Kitsu side.
   if (!m_kitsuEpisodeId.isEmpty())
     xml.writeAttribute("kitsuEpisodeId", m_kitsuEpisodeId);
+  // Cartelle degli asset per categoria (export completo).
+  if (!m_propsDir.isEmpty())       xml.writeAttribute("propsDir", m_propsDir);
+  if (!m_backgroundsDir.isEmpty()) xml.writeAttribute("backgroundsDir", m_backgroundsDir);
+  if (!m_modelSheetDir.isEmpty())  xml.writeAttribute("modelSheetDir", m_modelSheetDir);
+  writeImportPolicy(xml, m_defaultImportPolicy);
   if (!m_productionType.isEmpty())  xml.writeAttribute("productionType",  m_productionType);
   if (!m_productionStyle.isEmpty()) xml.writeAttribute("productionStyle", m_productionStyle);
   if (!m_ratio.isEmpty())           xml.writeAttribute("ratio",           m_ratio);
@@ -606,6 +716,8 @@ void ZtoryModel::saveProjectDb() {
     if (!as.kitsuAssetId.isEmpty())
       xml.writeAttribute("kitsuAssetId", as.kitsuAssetId);
     if (!as.tags.isEmpty()) xml.writeAttribute("tags", as.tags.join("|"));
+    if (!as.filePath.isEmpty()) xml.writeAttribute("file", as.filePath);
+    if (!as.importPolicy.isDefault()) writeImportPolicy(xml, as.importPolicy);
     for (auto it = as.tasks.constBegin(); it != as.tasks.constEnd(); ++it) {
       xml.writeStartElement("atask");
       xml.writeAttribute("type",   it.key());
@@ -644,6 +756,15 @@ void ZtoryModel::saveProjectDb() {
       xml.writeAttribute("status", taskStatusLabel(it.value().status));
       if (!it.value().assignees.isEmpty())
         xml.writeAttribute("assignee", it.value().assignees.join(", "));
+      xml.writeEndElement();
+    }
+    for (const BreakdownEntry &be : ps.breakdown) {
+      if (be.assetUuid.isEmpty()) continue;
+      xml.writeStartElement("needs");
+      xml.writeAttribute("asset", be.assetUuid);
+      if (be.nbOccurrences != 1)
+        xml.writeAttribute("n", QString::number(be.nbOccurrences));
+      if (!be.label.isEmpty()) xml.writeAttribute("label", be.label);
       xml.writeEndElement();
     }
     xml.writeEndElement();  // shot
@@ -715,6 +836,10 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
       // Assente nei progetti salvati prima del legame per episodio: resta vuoto
       // e il comportamento e' quello di prima (nessun filtro).
       m_kitsuEpisodeId   = a.value("kitsuEpisodeId").toString();
+      m_propsDir         = a.value("propsDir").toString();
+      m_backgroundsDir   = a.value("backgroundsDir").toString();
+      m_modelSheetDir    = a.value("modelSheetDir").toString();
+      m_defaultImportPolicy = readImportPolicy(a);
       m_productionType   = a.value("productionType").toString();
       m_productionStyle  = a.value("productionStyle").toString();
       m_ratio            = a.value("ratio").toString();
@@ -741,6 +866,8 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
       if (as.type == QLatin1String("BG")) as.type = "Environment";
       as.name  = a.value("name").toString();
       as.kitsuAssetId = a.value("kitsuAssetId").toString();
+      as.filePath     = a.value("file").toString();
+      as.importPolicy = readImportPolicy(a);
       QString tg = a.value("tags").toString();
       if (!tg.isEmpty()) as.tags = tg.split('|', Qt::SkipEmptyParts);
       assets.push_back(as);
@@ -792,6 +919,17 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
           }
           pshots[psi].tasks.insert(type, ts);
         }
+      }
+    } else if (xml.name() == QLatin1String("needs")) {
+      // breakdown child of a <shot>: an asset this shot needs
+      if (psi >= 0 && psi < (int)pshots.size()) {
+        auto a = xml.attributes();
+        BreakdownEntry be;
+        be.assetUuid = a.value("asset").toString();
+        be.nbOccurrences =
+            a.hasAttribute("n") ? a.value("n").toInt() : 1;
+        be.label = a.value("label").toString();
+        if (!be.assetUuid.isEmpty()) pshots[psi].breakdown.push_back(be);
       }
     }
   }
