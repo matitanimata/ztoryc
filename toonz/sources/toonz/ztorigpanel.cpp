@@ -383,87 +383,215 @@ void ZtoRigActionRow::onSpin(double v) {
 //=============================================================================
 
 //============================================================================
-// ZtoRigCorrectiveRow
+// ZtoRigAngleTrack — l'asse sono i GRADI, non i fotogrammi
 //----------------------------------------------------------------------------
 
-ZtoRigCorrectiveRow::ZtoRigCorrectiveRow(int index, const QString &name,
-                                         const QString &driver,
-                                         double restAngle, double fullAngle,
-                                         QWidget *parent)
-    : QWidget(parent), m_index(index) {
-  auto *lay = new QHBoxLayout(this);
-  lay->setContentsMargins(0, 0, 0, 0);
-  lay->setSpacing(4);
+namespace {
+const int kLaneH      = 30;   // altezza di una corsia
+const int kTopPad     = 18;   // spazio per la riga dei gradi
+const int kSidePad    = 46;   // spazio a sinistra per il nome del giunto
+const int kKeyR       = 6;    // mezzo lato del rombo di una chiave
+const double kMinSpan = 30.0; // apertura minima dell'asse, in gradi
+}  // namespace
 
-  auto *nameLabel = new QLabel(name, this);
-  nameLabel->setToolTip(
-      tr("Corrective sculpted on the joint '%1'.\n"
-         "The name is given by the brush: joint plus the angle it was\n"
-         "sculpted at.")
-          .arg(driver));
-  nameLabel->setMinimumWidth(90);
-  lay->addWidget(nameLabel, 1);
-
-  // Riposo e pieno regime: l'intervallo su cui la correttiva entra. Nascono
-  // incatenati (una parte dove finisce quella sotto), ma vanno spostabili —
-  // e' l'unica manopola che governa COME entra, e finora non c'era.
-  auto makeSpin = [&](double v, const QString &tip) {
-    auto *s = new QDoubleSpinBox(this);
-    s->setRange(-360.0, 360.0);
-    s->setDecimals(1);
-    s->setSingleStep(1.0);
-    s->setSuffix(tr("°"));
-    s->setValue(v);
-    s->setToolTip(tip);
-    s->setFixedWidth(72);
-    return s;
-  };
-  m_restSpin = makeSpin(restAngle, tr("Angle at which this corrective is OFF."));
-  m_fullSpin =
-      makeSpin(fullAngle, tr("Angle at which it applies FULLY.\n"
-                             "Between the two it fades in proportionally."));
-  lay->addWidget(m_restSpin);
-  lay->addWidget(new QLabel(QString::fromUtf8("→"), this));
-  lay->addWidget(m_fullSpin);
-
-  // Quanto pesa ADESSO. E' la sola parte del meccanismo che il personaggio non
-  // mostra: senza, una correttiva spenta perche' il giunto non e' piegato
-  // abbastanza sembra identica a una sbagliata.
-  m_weightLabel = new QLabel(this);
-  m_weightLabel->setFixedWidth(46);
-  m_weightLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  m_weightLabel->setToolTip(tr("How much this corrective is contributing at "
-                               "the current frame."));
-  lay->addWidget(m_weightLabel);
-
-  auto *removeBt = new QPushButton(tr("×"), this);
-  removeBt->setFixedSize(QSize(22, 20));
-  removeBt->setToolTip(tr("Delete this corrective. The sculpted shape is lost."));
-  lay->addWidget(removeBt);
-
-  connect(m_restSpin, SIGNAL(valueChanged(double)), this, SLOT(onSpin(double)));
-  connect(m_fullSpin, SIGNAL(valueChanged(double)), this, SLOT(onSpin(double)));
-  connect(removeBt, &QPushButton::clicked, this,
-          [this] { emit removeRequested(m_index); });
+ZtoRigAngleTrack::ZtoRigAngleTrack(QWidget *parent) : QWidget(parent) {
+  setMouseTracking(true);
+  setMinimumHeight(kTopPad + kLaneH);
 }
 
 //----------------------------------------------------------------------------
 
-void ZtoRigCorrectiveRow::setWeight(double w) {
-  if (w < 0.0) {
-    m_weightLabel->setText(tr("—"));
-    m_weightLabel->setToolTip(
-        tr("Driving joint not found: this corrective can never apply."));
+void ZtoRigAngleTrack::setKeys(const QVector<ZtoRigTrackKey> &keys,
+                               const QMap<QString, double> &currentAngles) {
+  m_keys          = keys;
+  m_currentAngles = currentAngles;
+  setMinimumHeight(kTopPad + qMax(1, lanes().size()) * kLaneH);
+  update();
+}
+
+//----------------------------------------------------------------------------
+
+QVector<QString> ZtoRigAngleTrack::lanes() const {
+  QVector<QString> out;
+  for (const ZtoRigTrackKey &k : m_keys)
+    if (!out.contains(k.m_driver)) out.push_back(k.m_driver);
+  return out;
+}
+
+//----------------------------------------------------------------------------
+
+void ZtoRigAngleTrack::angleRange(double &lo, double &hi) const {
+  lo = hi = 0.0;
+  for (const ZtoRigTrackKey &k : m_keys)
+    lo = qMin(lo, k.m_angle), hi = qMax(hi, k.m_angle);
+  // L'indicatore deve poter uscire dal gruppo di chiavi: se il giunto e' piegato
+  // oltre l'ultima correttiva, quello e' proprio cio' che si vuole vedere.
+  for (double a : m_currentAngles) lo = qMin(lo, a), hi = qMax(hi, a);
+
+  const double margin = qMax(kMinSpan * 0.25, (hi - lo) * 0.15);
+  lo -= margin, hi += margin;
+  if (hi - lo < kMinSpan) {
+    const double c = 0.5 * (lo + hi);
+    lo = c - kMinSpan * 0.5, hi = c + kMinSpan * 0.5;
+  }
+}
+
+//----------------------------------------------------------------------------
+
+double ZtoRigAngleTrack::angleToX(double angle) const {
+  double lo, hi;
+  angleRange(lo, hi);
+  const double w = qMax(1, width() - kSidePad - 8);
+  return kSidePad + w * (angle - lo) / (hi - lo);
+}
+
+double ZtoRigAngleTrack::xToAngle(int x) const {
+  double lo, hi;
+  angleRange(lo, hi);
+  const double w = qMax(1, width() - kSidePad - 8);
+  return lo + (hi - lo) * (x - kSidePad) / w;
+}
+
+int ZtoRigAngleTrack::laneTop(int lane) const {
+  return kTopPad + lane * kLaneH;
+}
+
+//----------------------------------------------------------------------------
+
+int ZtoRigAngleTrack::keyAt(const QPoint &p) const {
+  const QVector<QString> ln = lanes();
+  for (int i = 0; i < m_keys.size(); ++i) {
+    const int lane = ln.indexOf(m_keys[i].m_driver);
+    if (lane < 0) continue;
+    const QPointF c(angleToX(m_keys[i].m_angle), laneTop(lane) + kLaneH * 0.5);
+    if (qAbs(p.x() - c.x()) <= kKeyR + 2 && qAbs(p.y() - c.y()) <= kKeyR + 2)
+      return i;
+  }
+  return -1;
+}
+
+//----------------------------------------------------------------------------
+
+void ZtoRigAngleTrack::paintEvent(QPaintEvent *) {
+  QPainter p(this);
+  p.setRenderHint(QPainter::Antialiasing, true);
+
+  const QColor fg   = palette().color(QPalette::WindowText);
+  const QColor dim  = QColor(fg.red(), fg.green(), fg.blue(), 90);
+  const QColor rail = QColor(fg.red(), fg.green(), fg.blue(), 45);
+
+  double lo, hi;
+  angleRange(lo, hi);
+
+  // Riga dei gradi. Passo scelto perche' restino cinque o sei tacche: numeri
+  // troppo fitti su una traccia stretta non si leggono e basta.
+  const double span = hi - lo;
+  double step       = 10.0;
+  const double cand[] = {5.0, 10.0, 15.0, 30.0, 45.0, 60.0, 90.0};
+  for (double c : cand)
+    if (span / c <= 6.0) { step = c; break; }
+
+  p.setPen(dim);
+  QFont f = p.font();
+  f.setPointSizeF(qMax(7.0, f.pointSizeF() - 2.0));
+  p.setFont(f);
+  for (double a = std::ceil(lo / step) * step; a <= hi; a += step) {
+    const double x = angleToX(a);
+    p.drawLine(QPointF(x, kTopPad - 4), QPointF(x, height()));
+    p.drawText(QRectF(x - 20, 0, 40, kTopPad - 5),
+               Qt::AlignHCenter | Qt::AlignBottom,
+               QString::number((int)qRound(a)) + QString::fromUtf8("°"));
+  }
+
+  const QVector<QString> ln = lanes();
+  for (int lane = 0; lane < ln.size(); ++lane) {
+    const int top = laneTop(lane);
+    const double yc = top + kLaneH * 0.5;
+
+    p.setPen(dim);
+    p.drawText(QRectF(2, top, kSidePad - 6, kLaneH),
+               Qt::AlignVCenter | Qt::AlignRight, ln[lane]);
+
+    p.setPen(QPen(rail, 2.0));
+    p.drawLine(QPointF(kSidePad, yc), QPointF(width() - 6, yc));
+
+    // L'indicatore: dove sta DAVVERO il giunto adesso. E' la cosa che dice se
+    // una correttiva e' spenta perche' sbagliata o solo perche' non ci si e'
+    // ancora arrivati.
+    auto it = m_currentAngles.find(ln[lane]);
+    if (it != m_currentAngles.end()) {
+      const double x = angleToX(it.value());
+      p.setPen(QPen(QColor(230, 90, 90), 1.5));
+      p.drawLine(QPointF(x, top + 3), QPointF(x, top + kLaneH - 3));
+    }
+  }
+
+  // Le chiavi sopra tutto, cosi' l'indicatore non le nasconde.
+  for (int i = 0; i < m_keys.size(); ++i) {
+    const int lane = ln.indexOf(m_keys[i].m_driver);
+    if (lane < 0) continue;
+    const QPointF c(angleToX(m_keys[i].m_angle),
+                    laneTop(lane) + kLaneH * 0.5);
+    QPolygonF d;
+    d << QPointF(c.x(), c.y() - kKeyR) << QPointF(c.x() + kKeyR, c.y())
+      << QPointF(c.x(), c.y() + kKeyR) << QPointF(c.x() - kKeyR, c.y());
+
+    const bool hot = (i == m_hoverKey || i == m_dragKey);
+    p.setPen(QPen(fg, hot ? 1.8 : 1.2));
+    p.setBrush(hot ? QBrush(fg) : QBrush(palette().color(QPalette::Window)));
+    p.drawPolygon(d);
+  }
+
+  if (m_keys.isEmpty()) {
+    p.setPen(dim);
+    p.drawText(rect(), Qt::AlignCenter, tr("no correctives"));
+  }
+}
+
+//----------------------------------------------------------------------------
+
+void ZtoRigAngleTrack::mousePressEvent(QMouseEvent *e) {
+  if (e->button() != Qt::LeftButton) return;
+  const int k = keyAt(e->pos());
+  if (k < 0) return;
+  m_dragKey = k;
+  // Il clic porta subito il giunto li': rivedere cio' che si e' scolpito e'
+  // l'uso principale, e non deve costare un gesto in piu'.
+  emit keyActivated(m_keys[k].m_index);
+  update();
+}
+
+//----------------------------------------------------------------------------
+
+void ZtoRigAngleTrack::mouseMoveEvent(QMouseEvent *e) {
+  if (m_dragKey >= 0) {
+    emit keyMoved(m_keys[m_dragKey].m_index, xToAngle(e->pos().x()));
     return;
   }
-  m_weightLabel->setText(QString::number(qRound(w * 100.0)) + "%");
+  const int h = keyAt(e->pos());
+  if (h != m_hoverKey) {
+    m_hoverKey = h;
+    setCursor(h >= 0 ? Qt::SizeHorCursor : Qt::ArrowCursor);
+    update();
+  }
 }
 
 //----------------------------------------------------------------------------
 
-void ZtoRigCorrectiveRow::onSpin(double) {
-  if (m_updating) return;
-  emit rangeChanged(m_index, m_restSpin->value(), m_fullSpin->value());
+void ZtoRigAngleTrack::mouseReleaseEvent(QMouseEvent *) {
+  m_dragKey = -1;
+  update();
+}
+
+//----------------------------------------------------------------------------
+
+void ZtoRigAngleTrack::contextMenuEvent(QContextMenuEvent *e) {
+  const int k = keyAt(e->pos());
+  if (k < 0) return;
+  QMenu menu(this);
+  QAction *del = menu.addAction(tr("Delete Corrective"));
+  if (menu.exec(e->globalPos()) == del)
+    emit keyRemoveRequested(m_keys[k].m_index);
 }
 
 //============================================================================
@@ -581,16 +709,20 @@ ZtoRigPanel::ZtoRigPanel(QWidget *parent) : TPanel(parent) {
   m_corrEmptyLabel->setAlignment(Qt::AlignTop);
   corrLay->addWidget(m_corrEmptyLabel);
 
-  auto *corrHost = new QWidget(corrTab);
-  m_corrRowsLay  = new QVBoxLayout(corrHost);
-  m_corrRowsLay->setContentsMargins(0, 0, 0, 0);
-  m_corrRowsLay->setSpacing(2);
-  m_corrRowsLay->addStretch(1);
+  m_corrTrack = new ZtoRigAngleTrack(corrTab);
+  m_corrTrack->setToolTip(
+      tr("Correctives on the angle of their driving joint.\n"
+         "Click a key to take the joint to that bend; drag it to move the\n"
+         "corrective to another angle; right-click to delete.\n"
+         "The red line is where the joint actually is now."));
+  corrLay->addWidget(m_corrTrack, 1);
 
-  m_corrScroll = new QScrollArea(corrTab);
-  m_corrScroll->setWidgetResizable(true);
-  m_corrScroll->setWidget(corrHost);
-  corrLay->addWidget(m_corrScroll, 1);
+  connect(m_corrTrack, &ZtoRigAngleTrack::keyActivated, this,
+          &ZtoRigPanel::onCorrectiveKeyActivated);
+  connect(m_corrTrack, &ZtoRigAngleTrack::keyMoved, this,
+          &ZtoRigPanel::onCorrectiveKeyMoved);
+  connect(m_corrTrack, &ZtoRigAngleTrack::keyRemoveRequested, this,
+          &ZtoRigPanel::onCorrectiveRemove);
 
   m_tabs->addTab(corrTab, tr("Correctives"));
 
@@ -1092,18 +1224,12 @@ void ZtoRigPanel::updateApplicability() {
 //-----------------------------------------------------------------------------
 
 void ZtoRigPanel::rebuildCorrectives() {
-  for (ZtoRigCorrectiveRow *row : m_corrRows) {
-    m_corrRowsLay->removeWidget(row);
-    row->deleteLater();
-  }
-  m_corrRows.clear();
-
   const PlasticSkeletonDeformationP sd = currentDeformation();
   const int count = sd ? sd->meshCorrectivesCount() : 0;
   m_builtCorrectiveCount = count;
 
-  m_corrEmptyLabel->setVisible(count == 0);
-  m_corrScroll->setVisible(count > 0);
+  m_corrEmptyLabel->setVisible(!sd || count == 0);
+  m_corrTrack->setVisible(sd && count > 0);
 
   if (!sd) {
     m_corrEmptyLabel->setText(
@@ -1115,25 +1241,41 @@ void ZtoRigPanel::rebuildCorrectives() {
     m_corrEmptyLabel->setText(
         tr("No joint corrective on this column.\n\n"
            "Bend a joint, turn on the corrective brush in the Plastic tool,\n"
-           "and sculpt the shape back: the corrective is created here, named\n"
-           "after the joint and the angle you sculpted at."));
+           "and sculpt the shape back: the corrective lands here, as a key on\n"
+           "the angle you sculpted it at."));
     return;
   }
 
+  QVector<ZtoRigTrackKey> keys;
   for (int i = 0; i < count; ++i) {
     const MeshCorrective *mc = sd->meshCorrective(i);
     if (!mc) continue;
-    auto *row = new ZtoRigCorrectiveRow(i, mc->m_name, mc->m_driverVertexName,
-                                        mc->m_restAngle, mc->m_fullAngle);
-    connect(row, &ZtoRigCorrectiveRow::rangeChanged, this,
-            &ZtoRigPanel::onCorrectiveRangeChanged);
-    connect(row, &ZtoRigCorrectiveRow::removeRequested, this,
-            &ZtoRigPanel::onCorrectiveRemove);
-    m_corrRowsLay->insertWidget(m_corrRowsLay->count() - 1, row);
-    m_corrRows.push_back(row);
+    ZtoRigTrackKey k;
+    k.m_index  = i;
+    k.m_driver = mc->m_driverVertexName;
+    k.m_angle  = mc->m_fullAngle;  // la chiave sta dove entra a pieno regime
+    keys.push_back(k);
   }
+  m_corrTrack->setKeys(keys, driverAngles());
+}
 
-  refreshCorrectiveWeights();
+//-----------------------------------------------------------------------------
+
+QMap<QString, double> ZtoRigPanel::driverAngles() const {
+  QMap<QString, double> out;
+  const PlasticSkeletonDeformationP sd = currentDeformation();
+  if (!sd) return out;
+
+  const double frame = paramsFrame();
+  for (int i = 0; i < sd->meshCorrectivesCount(); ++i) {
+    const MeshCorrective *mc = sd->meshCorrective(i);
+    if (!mc || out.contains(mc->m_driverVertexName)) continue;
+    SkVD *vd = sd->vertexDeformation(mc->m_driverVertexName);
+    if (!vd || !vd->m_params[SkVD::ANGLE]) continue;  // assente = ignoto, non 0
+    out.insert(mc->m_driverVertexName,
+               vd->m_params[SkVD::ANGLE]->getValue(frame));
+  }
+  return out;
 }
 
 //-----------------------------------------------------------------------------
@@ -1142,32 +1284,83 @@ void ZtoRigPanel::refreshCorrectiveWeights() {
   const PlasticSkeletonDeformationP sd = currentDeformation();
   if (!sd) return;
 
-  // Una correttiva puo' nascere sotto il pennello mentre il pannello e' aperto:
-  // se il conto non torna si ricostruisce, invece di leggere oltre la fine.
+  // Una correttiva puo' nascere sotto il pennello mentre il pannello e' aperto.
   if (sd->meshCorrectivesCount() != m_builtCorrectiveCount) {
     rebuildCorrectives();
     return;
   }
+  if (!m_corrTrack->isVisible()) return;
 
-  const double frame = paramsFrame();
-  for (ZtoRigCorrectiveRow *row : m_corrRows)
-    row->setWeight(sd->meshCorrectiveWeight(row->index(), frame));
+  // Le chiavi non si muovono col fotogramma, solo gli indicatori.
+  QVector<ZtoRigTrackKey> keys;
+  for (int i = 0; i < sd->meshCorrectivesCount(); ++i) {
+    const MeshCorrective *mc = sd->meshCorrective(i);
+    if (!mc) continue;
+    ZtoRigTrackKey k;
+    k.m_index  = i;
+    k.m_driver = mc->m_driverVertexName;
+    k.m_angle  = mc->m_fullAngle;
+    keys.push_back(k);
+  }
+  m_corrTrack->setKeys(keys, driverAngles());
 }
 
 //-----------------------------------------------------------------------------
 
-void ZtoRigPanel::onCorrectiveRangeChanged(int index, double restAngle,
-                                           double fullAngle) {
+void ZtoRigPanel::onCorrectiveKeyActivated(int index) {
+  const PlasticSkeletonDeformationP sd = currentDeformation();
+  if (!sd) return;
+  const MeshCorrective *mc = sd->meshCorrective(index);
+  if (!mc) return;
+
+  SkVD *vd = sd->vertexDeformation(mc->m_driverVertexName);
+  if (!vd || !vd->m_params[SkVD::ANGLE]) return;
+
+  // Porta il giunto alla piega a cui la correttiva e' stata scolpita: e' il
+  // modo di rivederla e ritoccarla.
+  //
+  // ⚠️ PROVVISORIO: qui si scrive nel parametro della scena, come fanno gia' i
+  // dial delle pose. Nella modalita' di rigging che stiamo progettando questa
+  // sara' una posa DI LAVORO che non tocca le chiavi — e allora la riserva qui
+  // sopra sparisce, invece di essere tamponata con una voce di undo.
+  vd->m_params[SkVD::ANGLE]->setValue(paramsFrame(), mc->m_fullAngle);
+
+  flushConnectedPlacements();
+  refreshCorrectiveWeights();
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoRigPanel::onCorrectiveKeyMoved(int index, double angle) {
   const PlasticSkeletonDeformationP sd = currentDeformation();
   if (!sd) return;
   MeshCorrective *mc = sd->meshCorrective(index);
   if (!mc) return;
 
-  mc->m_restAngle = restAngle;
-  mc->m_fullAngle = fullAngle;
+  mc->m_fullAngle = angle;
 
-  // Il peso cambia subito, e il disegno con lui: senza invalidare, la mesh
-  // seguirebbe solo al clic successivo (stessa trappola dei dial delle pose).
+  // Le correttive di uno stesso giunto sono incatenate: l'angolo di riposo di
+  // una e' quello di pieno della precedente. Spostare una chiave deve rifare la
+  // catena, altrimenti restano intervalli scavalcati o buchi in cui non entra
+  // piu' niente.
+  std::vector<const MeshCorrective *> sameDriver;
+  for (int i = 0; i < sd->meshCorrectivesCount(); ++i) {
+    const MeshCorrective *o = sd->meshCorrective(i);
+    if (o && o->m_driverVertexName == mc->m_driverVertexName)
+      sameDriver.push_back(o);
+  }
+  for (int i = 0; i < sd->meshCorrectivesCount(); ++i) {
+    MeshCorrective *o = sd->meshCorrective(i);
+    if (!o || o->m_driverVertexName != mc->m_driverVertexName) continue;
+    double rest = 0.0;
+    for (const MeshCorrective *q : sameDriver)
+      if (q != o && fabs(q->m_fullAngle) < fabs(o->m_fullAngle) &&
+          fabs(q->m_fullAngle) > fabs(rest))
+        rest = q->m_fullAngle;
+    o->m_restAngle = rest;
+  }
+
   flushConnectedPlacements();
   refreshCorrectiveWeights();
   TApp::instance()->getCurrentScene()->setDirtyFlag(true);
