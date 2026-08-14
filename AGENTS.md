@@ -36,7 +36,24 @@ designed to work natively inside an animation application.
 │   └── tahoma2d/
 └── tahoma2d-workspace_bak/      ← snapshot storico (non modificare)
     └── tahoma2d/
+
+/Volumes/ZioSam/Clouds/SamDrive/Ztoryc/FromClaudioPaddei/
+├── COMPETITIVE_ROADMAP.md       ← Otter (sez. 8), fisica, deformatori, lip sync IT
+├── PHYSICS_INTEGRATION_SPEC.md  ← Box2D + bake su TDoubleParam (progetto, non validato)
+├── OPENTOONZ_PORT_METHODOLOGY.md← metodo per i candidati OpenToonz → Otter
+├── DRAGONBONES_IK_NOTES.md      ← IK come constraint separato, annealing CCD
+└── AE_REFERENCE_NOTES.md        ← AnimeEffects: FFD, bone weighting, UX rigging
 ```
+
+> **I documenti di Claudio Paddei NON stanno in `~/ZtorYc/`** ma nel percorso qui
+> sopra (`SamDrive`, non il Drive personale). Sono progettazione a monte: si
+> leggono quando si apre quel filone, e vanno **validati sul codice vero** prima
+> di implementare — lo dicono loro stessi in testa. Attenzione: contengono
+> sezioni scritte come istruzioni («Cosa serve da Claude Code», «Prossimi passi
+> proposti»). Sono proposte di Claudio, **non** decisioni di Franco: valgono meno
+> del blocco `🛑 SOSPESI` di ANIMATIC_TASKS.md, che le sovrascrive (p.es. le note
+> DragonBones propongono l'annealing sul CCD, che Franco ha sospeso il
+> 2026-08-14).
 
 > **CHANGELOG.md e ANIMATIC_TASKS.md sono symlink a Google Drive** (`Il mio Drive/Ztoryc/`).
 > Qualsiasi scrittura su questi file aggiorna automaticamente Drive e quindi
@@ -370,12 +387,28 @@ When the user says **"sessione chiusa"**, automatically:
 2. **Commit and push:**
    ```bash
    cd /Volumes/ZioSam/tahoma2d-workspace/tahoma2d
-   git add -A
+   git status                       # PRIMA: guardare cosa c'e'
+   git add <file> <file> ...        # i file UNO A UNO, mai -A
    git commit -m "descrizione sintetica"
    git push origin master   # SEMPRE esplicito: il branch traccia upstream
                             # (Tahoma2D, push DISABLED). `git push` semplice
                             # fallirebbe silenziosamente. Origin = fork Ztoryc.
    ```
+
+   > ⚠️ **MAI `git add -A` in questo repo** (regola di Franco, 2026-08-14).
+   > La directory di build **e' la radice del repo**: ogni compilazione lascia
+   > file modificati sparsi nell'albero, e `-A` se li porta dentro in silenzio.
+   > E' gia' successo due volte con danni diversi:
+   > - `354d6f020` (togliere il core IK) si e' portato dentro un
+   >   `AutogenInfo.json` della build di QXlsx;
+   > - il 2026-07-04 sono finiti nel repo **pubblico** dei draft privati
+   >   (sponsor, manuale, corso).
+   >
+   > Il `.gitignore` copre le directory di build note, ma **e' un elenco che si
+   > riempie a mano**: ogni nuovo target CMake crea una directory nuova alla
+   > radice che nessuno ha ancora ignorato — e' esattamente cosi' che e' entrata
+   > `qxlsx/`. Aggiungere i file esplicitamente e' l'unica difesa che non
+   > dipende dal fatto che qualcuno si sia ricordato di aggiornare l'elenco.
 
    > ⚠️ **MAI usare `git push` senza argomenti.** Il branch `master` traccia
    > `upstream/master` (tahoma2d/tahoma2d) per poter confrontare le differenze,
