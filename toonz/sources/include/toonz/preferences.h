@@ -437,6 +437,9 @@ public:
   int getZtoryQuickToolbarMigration() const {
     return getIntValue(ztoryQuickToolbarMigration);
   }
+  bool isZtoryRigidJointDiscsEnabled() const {
+    return getBoolValue(ztoryRigidJointDiscs);
+  }
   bool isShowXsheetBreadcrumbsEnabled() const {
     return getBoolValue(showXsheetBreadcrumbs);
   }

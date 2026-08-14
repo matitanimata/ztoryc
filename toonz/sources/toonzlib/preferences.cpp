@@ -689,6 +689,9 @@ void Preferences::definePreferenceItems() {
          QMetaType::Bool, true);
   define(ztoryQuickToolbarMigration, "ztoryQuickToolbarMigration",
          QMetaType::Int, 0, 0, 1000);
+  // Spenta di default: accesa cambia la deformazione di OGNI rig esistente, e
+  // non e' una cosa che debba capitare aprendo una scena vecchia.
+  define(ztoryRigidJointDiscs, "ztoryRigidJointDiscs", QMetaType::Bool, false);
   define(showXsheetBreadcrumbs, "showXsheetBreadcrumbs", QMetaType::Bool,
          false);
   define(expandFunctionHeader, "expandFunctionHeader", QMetaType::Bool, false);

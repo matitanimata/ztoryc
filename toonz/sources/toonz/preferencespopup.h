@@ -170,6 +170,7 @@ private:
   void onShowKeyframesOnCellAreaChanged();
   void onShowQuickToolbarClicked();
   void onZtoryPerWorkflowQuickToolbarChanged();
+  void onZtoryRigidJointDiscsChanged();
   void onUnifyColumnVisibilityTogglesChanged();
   void onShowXsheetBreadcrumbsClicked();
   void onShowDragBarsChanged();

@@ -7,6 +7,7 @@
 #include "versioncontrol.h"
 #include "levelsettingspopup.h"
 #include "tapp.h"
+#include "ext/plasticdeformerstorage.h"
 #include "cleanupsettingsmodel.h"
 #include "formatsettingspopups.h"
 #include "tenv.h"
@@ -729,6 +730,19 @@ void PreferencesPopup::onLevelBasedToolsDisplayChanged() {
 
 void PreferencesPopup::onShowKeyframesOnCellAreaChanged() {
   TApp::instance()->getCurrentScene()->notifyPreferenceChanged("XsheetCamera");
+}
+
+//-----------------------------------------------------------------------------
+
+// Ztoryc: la preferenza vive in toonzlib, il deformatore in tnzext — che non
+// la puo' vedere. Si spinge in giu' il valore, stesso schema gia' usato per
+// PlasticPinSolver::setSolveSuspended. E si butta la cache: cambia il modo in
+// cui la maglia si deforma, non solo cosa si disegna.
+void PreferencesPopup::onZtoryRigidJointDiscsChanged() {
+  PlasticDeformerStorage::setRigidJointDiscsEnabled(
+      Preferences::instance()->isZtoryRigidJointDiscsEnabled());
+  TApp::instance()->getCurrentScene()->notifyPreferenceChanged("RigidJointDiscs");
+  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
 }
 
 //-----------------------------------------------------------------------------
@@ -1469,6 +1483,8 @@ QString PreferencesPopup::getUIString(PreferencesItemId id) {
        tr("Enable to Input Cells without Double Clicking")},
       {shortcutCommandsWhileRenamingCellEnabled,
        tr("Enable Ztoryc Commands' Shortcut Keys While Renaming Cell")},
+      {ztoryRigidJointDiscs,
+       tr("Rigid Joint Discs (ZtoRig, experimental)")},
       {showQuickToolbar, tr("Show Quick Toolbar")},
       {ztoryPerWorkflowQuickToolbar,
        tr("Use a Separate Quick Toolbar for Each Workflow")},
@@ -2374,6 +2390,8 @@ QGridLayout* PreferencesPopup::createXsheetLayout() {
       &PreferencesPopup::onUnifyColumnVisibilityTogglesChanged);
   m_onEditedFuncMap.insert(showQuickToolbar,
                            &PreferencesPopup::onShowQuickToolbarClicked);
+  m_onEditedFuncMap.insert(ztoryRigidJointDiscs,
+                           &PreferencesPopup::onZtoryRigidJointDiscsChanged);
   m_onEditedFuncMap.insert(
       ztoryPerWorkflowQuickToolbar,
       &PreferencesPopup::onZtoryPerWorkflowQuickToolbarChanged);
@@ -2393,6 +2411,7 @@ QGridLayout* PreferencesPopup::createAnimationLayout() {
   QGridLayout* lay = new QGridLayout();
   setupLayout(lay);
 
+  insertUI(ztoryRigidJointDiscs, lay);
   insertUI(keyframeType, lay, getComboItemList(keyframeType));
   insertUI(autoBezierKeys, lay);
   insertUI(animationStep, lay);

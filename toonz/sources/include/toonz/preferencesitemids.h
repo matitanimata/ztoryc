@@ -148,6 +148,8 @@ enum PreferencesItemId {
   // Ztoryc: quale «giro» di comandi nuovi e' gia' stato travasato nella Quick
   // Toolbar personale. Non compare nelle Preferenze: e' un segnaposto interno.
   ztoryQuickToolbarMigration,
+  // Ztoryc: disco rigido di articolazione nel deformatore plastico.
+  ztoryRigidJointDiscs,
   showXsheetBreadcrumbs,
   expandFunctionHeader,
   showColumnNumbers,

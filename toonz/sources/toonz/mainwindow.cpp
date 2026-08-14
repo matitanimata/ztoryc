@@ -20,6 +20,7 @@ extern ToggleCommandHandler showMeshToggle;
 #include "custompanelmanager.h"
 #include "maintoolbar.h"
 #include "commandbar.h"
+#include "ext/plasticdeformerstorage.h"
 #include "statusbar.h"
 #include "aboutpopup.h"
 #include "filebrowserpopup.h"
@@ -527,6 +528,10 @@ MainWindow::MainWindow(const QString &argumentLayoutFileName, QWidget *parent,
   // Ztoryc: dopo defineActions() perche' i comandi da travasare devono gia'
   // esistere, e prima che le room (e quindi le toolbar) vengano costruite.
   CommandBar::migrateQuickToolbars();
+  // Ztoryc: la preferenza sta in toonzlib, il deformatore in tnzext che non la
+  // vede — va spinta in giu' anche all'avvio, non solo quando si cambia.
+  PlasticDeformerStorage::setRigidJointDiscsEnabled(
+      Preferences::instance()->isZtoryRigidJointDiscsEnabled());
   // user defined shortcuts will be loaded here
   CommandManager::instance()->loadShortcuts();
 

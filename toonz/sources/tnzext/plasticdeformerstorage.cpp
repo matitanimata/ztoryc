@@ -149,6 +149,74 @@ void transformHandles(std::vector<TPointD> &handles, const TAffine &aff) {
 
 //----------------------------------------------------------------------------------
 
+bool l_rigidJointDiscs = false;
+
+//! ZtoRig — quanti punti compongono la corona di un disco. Otto bastano a
+//! inchiodare l'interno: sono vincoli, non geometria da vedere, e ognuno costa
+//! nel solver.
+const int l_jointDiscPoints = 8;
+
+//! Distanza dal punto \p p allo spigolo di CONTORNO piu' vicino, cioe' al bordo
+//! del disegno. Uno spigolo e' di contorno quando tocca una faccia sola.
+//! Torna -1 se la mesh non ne ha (non dovrebbe succedere).
+double distanceToMeshBoundary(const TMeshImage *meshImage, const TPointD &p,
+                              const TAffine &toMeshSpace) {
+  double best = -1.0;
+
+  for (const TTextureMeshP &mesh : meshImage->meshes()) {
+    for (int e = 0; e < mesh->edgesCount(); ++e) {
+      if (!mesh->edge(e).facesCount()) continue;
+      if (mesh->edge(e).facesCount() != 1) continue;  // interno: non e' bordo
+
+      const TPointD a = toMeshSpace * mesh->vertex(mesh->edge(e).vertex(0)).P();
+      const TPointD b = toMeshSpace * mesh->vertex(mesh->edge(e).vertex(1)).P();
+
+      const TPointD ab = b - a, ap = p - a;
+      const double len2 = norm2(ab);
+      double t = (len2 > 1e-12) ? ((ap * ab) / len2) : 0.0;
+      t        = std::max(0.0, std::min(1.0, t));
+      const double d = norm(ap - t * ab);
+
+      if (best < 0.0 || d < best) best = d;
+    }
+  }
+  return best;
+}
+
+//! Direzione della bisettrice del giunto \p v: la media delle direzioni verso il
+//! padre e verso i figli. E' l'orientamento naturale del disco — i due ossi lo
+//! incontrano a meta' strada ciascuno invece che uno solo portarselo dietro.
+//! Torna false quando il giunto non e' un'articolazione (radice o estremita').
+bool jointBisector(const PlasticSkeleton &skel, int v, TPointD &dir) {
+  const int parent = skel.vertex(v).parent();
+  if (parent < 0) return false;  // la radice non e' un'articolazione
+
+  const TPointD c = skel.vertex(v).P();
+  TPointD toParent = skel.vertex(parent).P() - c;
+  if (norm2(toParent) < 1e-12) return false;
+  toParent = normalize(toParent);
+
+  TPointD toChild;
+  int children = 0;
+  for (int w = 0; w < skel.verticesCount(); ++w) {
+    if (skel.vertex(w).parent() != v) continue;
+    TPointD d = skel.vertex(w).P() - c;
+    if (norm2(d) < 1e-12) continue;
+    toChild = toChild + normalize(d);
+    ++children;
+  }
+  if (!children) return false;  // estremita': non c'e' niente da articolare
+
+  // Il disco guarda dove guarda l'angolo fra i due ossi. Con piu' figli si usa
+  // la loro media, che degrada in modo sensato su una biforcazione.
+  TPointD b = toChild - toParent;
+  if (norm2(b) < 1e-12) b = toChild;   // ossi allineati: basta un riferimento
+  if (norm2(b) < 1e-12) return false;
+
+  dir = normalize(b);
+  return true;
+}
+
 void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
                     const SkD *sd, int skelId,
                     const TAffine &deformationAffine) {
@@ -175,6 +243,40 @@ void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
       group->m_handles = skeleton->verticesToHandles();
       ::transformHandles(group->m_handles, deformationAffine);
 
+      // ZtoRig — le corone dei dischi di articolazione, IN CODA ai punti dello
+      // scheletro: cosi' gli indici dei vertici restano quelli di sempre e
+      // nessun altro codice se ne accorge.
+      //
+      // Si lavora nello spazio della mesh, cioe' DOPO deformationAffine, per
+      // non dover riportare avanti e indietro il raggio, che si misura sulla
+      // geometria.
+      group->m_jointDiscs.clear();
+      for (int v = 0; l_rigidJointDiscs && v != skeleton->verticesCount(); ++v) {
+        TPointD dir;
+        if (!::jointBisector(*skeleton, v, dir)) continue;
+
+        const TPointD c = deformationAffine * skeleton->vertex(v).P();
+        const double r  = ::distanceToMeshBoundary(meshImage, c, deformationAffine);
+        if (r <= 0.0) continue;
+
+        DataGroup::JointDisc disc;
+        disc.m_vIdx   = v;
+        disc.m_radius = r;
+        disc.m_first  = (int)group->m_handles.size();
+        disc.m_count  = l_jointDiscPoints;
+        // La bisettrice va misurata nello stesso spazio in cui si piazza la
+        // corona, altrimenti una scala non uniforme falsa la rotazione.
+        const TPointD dirM = deformationAffine * (skeleton->vertex(v).P() + dir) - c;
+        disc.m_restAngle   = atan2(dirM.y, dirM.x);
+
+        for (int i = 0; i != l_jointDiscPoints; ++i) {
+          const double a = disc.m_restAngle + 2.0 * M_PI * i / l_jointDiscPoints;
+          group->m_handles.push_back(
+              PlasticHandle(c + TPointD(r * cos(a), r * sin(a))));
+        }
+        group->m_jointDiscs.push_back(disc);
+      }
+
       // Prepare a vector for handles' face hints
       for (int m = 0; m != mCount; ++m)
         group->m_datas[m].m_faceHints.resize(group->m_handles.size(), -1);
@@ -191,6 +293,29 @@ void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
     group->m_dstHandles = std::vector<TPointD>(
         deformedSkeleton.vertices().begin(), deformedSkeleton.vertices().end());
     ::transformHandles(group->m_dstHandles, deformationAffine);
+
+    // ZtoRig — le corone, nello stesso ordine in cui sono state compilate.
+    // Ogni disco si piazza RIGIDAMENTE: si sposta col giunto e ruota di quanto
+    // e' ruotata la sua bisettrice. Nessun punto della corona ha liberta', ed
+    // e' questo che impedisce alla massa attorno al giunto di deformarsi.
+    for (const DataGroup::JointDisc &disc : group->m_jointDiscs) {
+      const int v = disc.m_vIdx;
+
+      TPointD dir;
+      const TPointD cD = deformationAffine * deformedSkeleton.vertex(v).P();
+      double angle     = disc.m_restAngle;  // giunto degenere: nessuna rotazione
+      if (::jointBisector(deformedSkeleton, v, dir)) {
+        const TPointD dirM =
+            deformationAffine * (deformedSkeleton.vertex(v).P() + dir) - cD;
+        angle = atan2(dirM.y, dirM.x);
+      }
+
+      for (int i = 0; i != disc.m_count; ++i) {
+        const double a = angle + 2.0 * M_PI * i / disc.m_count;
+        group->m_dstHandles.push_back(
+            cD + TPointD(disc.m_radius * cos(a), disc.m_radius * sin(a)));
+      }
+    }
 
     group->m_upToDate |= PlasticDeformerStorage::HANDLES;
   }
@@ -527,6 +652,12 @@ const PlasticDeformerDataGroup *PlasticDeformerStorage::process(
     group->m_skeletonAffine = skeletonAffine;
   }
 
+  if (group->m_compiledWithDiscs != l_rigidJointDiscs) {
+    group->m_upToDate            = NONE;
+    group->m_compiled            = NONE;
+    group->m_compiledWithDiscs   = l_rigidJointDiscs;
+  }
+
   if (group->m_outputFrame != frame) {
     group->m_upToDate    = NONE;
     group->m_outputFrame = frame;
@@ -704,4 +835,14 @@ void PlasticDeformerStorage::clear() {
   QMutexLocker locker(&m_imp->m_mutex);
 
   m_imp->m_deformers.clear();
+}
+
+//====================================================================================
+
+void PlasticDeformerStorage::setRigidJointDiscsEnabled(bool on) {
+  l_rigidJointDiscs = on;
+}
+
+bool PlasticDeformerStorage::isRigidJointDiscsEnabled() {
+  return l_rigidJointDiscs;
 }

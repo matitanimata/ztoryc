@@ -66,6 +66,38 @@ struct DVAPI PlasticDeformerDataGroup {
   std::vector<TPointD>
       m_dstHandles;  //!< Corresponding destination handle positions
 
+  //! ZtoRig — disco rigido di articolazione.
+  //!
+  //! Un giunto e' UN punto di comando, e l'ARAP deve far coesistere in quel
+  //! punto le due rotazioni degli ossi che ci si incontrano: la maglia si apre
+  //! a ventaglio, ed e' il pizzicamento del gomito.
+  //!
+  //! Il rimedio non richiede di toccare il solver. Attorno al giunto si
+  //! aggiunge una CORONA di punti di comando sintetici, e a ogni fotogramma la
+  //! si piazza ruotandola rigidamente: dentro la corona la maglia non ha piu'
+  //! liberta', quindi la massa non si deforma e i due ossi le ruotano attorno.
+  //! I punti di comando sono un array qualunque — al solver non importa che
+  //! nascano da un vertice dello scheletro.
+  //!
+  //! Il raggio arriva al BORDO del braccio (Franco, 2026-08-14): si misura
+  //! sugli spigoli di contorno della mesh, quelli con una faccia sola.
+  struct JointDisc {
+    int m_vIdx = -1;      //!< vertice di scheletro al centro
+    double m_radius = 0.;
+    int m_first = 0;      //!< indice del primo punto della corona in m_handles
+    int m_count = 0;
+    double m_restAngle = 0.;  //!< bisettrice a riposo, per misurare la rotazione
+  };
+  //! Compilati una volta con i punti di comando; le posizioni deformate si
+  //! ricalcolano a ogni fotogramma nello stesso ordine, altrimenti i due array
+  //! non corrispondono piu'.
+  std::vector<JointDisc> m_jointDiscs;
+  //! Con quale impostazione dei dischi e' stato compilato questo gruppo. Se
+  //! cambia, i punti di comando non sono piu' quelli e va ricompilato — come
+  //! gia' succede quando cambia m_skeletonAffine. Senza, accendere o spegnere
+  //! la preferenza non avrebbe effetto sulle scene gia' aperte.
+  bool m_compiledWithDiscs = false;
+
   int m_compiled;  //!< Whether compiled data is present about a certain
                    //! datatype.
   int m_upToDate;  //!< Whether updated  data is present about a certain
@@ -203,6 +235,14 @@ public:
   ~PlasticDeformerStorage();
 
   static PlasticDeformerStorage *instance();
+
+  //! ZtoRig — disco rigido di articolazione (vedi PlasticDeformerDataGroup::
+  //! JointDisc). La preferenza vive in toonzlib, che tnzext non puo' vedere:
+  //! il valore si spinge in giu' da li', stesso schema di
+  //! PlasticPinSolver::setSolveSuspended.
+  //! **Spento di default**: acceso cambia la deformazione di ogni rig esistente.
+  static void setRigidJointDiscsEnabled(bool on);
+  static bool isRigidJointDiscsEnabled();
 
   //! This function processes the specified meshImage-deformation pair,
   //! returning a DataGroup
