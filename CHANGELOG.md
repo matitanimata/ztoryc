@@ -1,3 +1,108 @@
+## [2026-08-14c] — Il tracker si lega a un episodio, e un elenco che si riempiva a mano
+
+### Added — Kitsu: il legame diventa la COPPIA (progetto, episodio) — `3775c1144`
+Franco: «devo poter connettere il production tracker al singolo episodio». Su
+Kitsu «CARTOON SCHOOL 2026» e' **un** progetto tvshow con 6 episodi, e ogni
+episodio e' un progetto Ztoryc a se': legandosi al solo progetto, ogni tracker
+si tirava dentro la roba di tutti.
+
+**Misurato sull'istanza vera PRIMA di scrivere** — ed e' la parte che vale:
+106 shot su 3 episodi (30+32+44), 145 asset su 4 (40+39+38+28), zero sequenze
+senza episodio padre. Numeri, non intuizioni.
+
+- Nel dialogo un tvshow si espande nei suoi episodi; gli altri restano una riga.
+- `m_kitsuEpisodeId` persistito: e' l'**id**, non il nome — rinominare su Kitsu
+  non rompe il legame. Vuoto nei progetti vecchi = comportamento di prima.
+- Il riaggancio confronta la **coppia**: col solo id di progetto, sei episodi
+  della stessa serie fanno atterrare sempre sul primo.
+- Filtro shot **e** asset. Sugli asset il predicato e' uno solo condiviso dalle
+  DUE catene (import e stati): filtrarne una sola avrebbe fatto atterrare per
+  nome gli stati degli asset altrui su quelli nostri.
+- **Team NON filtrato**, di proposito: la troupe di una serie e' della serie.
+
+### Due bug trovati per strada, che non c'entravano con gli episodi
+1. **156 task su 591 sparivano in silenzio.** Lo stato si applicava solo se il
+   task type esisteva gia' nella pipeline: `Modeling` e `Rigging` non hanno
+   corrispondenza in Concept/Rough/Clean/Color e finivano nel nulla. Ora Kitsu
+   e' la fonte di verita' e il tipo viene **adottato**. `reloadAssetTypesTab()`
+   esisteva ma nessuno la chiamava, e `addAsset()` non creava il tipo mancante.
+2. **I nomi del team non arrivavano PERCHE' Franco e' admin.** Zou serializza le
+   persone con `serialize_safe` per gli amministratori, e li' `full_name` non
+   c'e': e' una proprieta' Python, non una colonna. Solo i non-admin ricevono
+   `present_minimal`, che la aggiunge a mano. Il codice inoltre **ingoiava**
+   l'errore di rete e lo sostituiva con «persons endpoint restricted?» — una
+   ipotesi travestita da diagnosi. Ora dice la causa vera.
+
+### Fixed — 50 artefatti di build tolti dal versionamento — `4e7cadaaa`
+`qxlsx/` non e' una libreria: e' la **directory di build** del target QXlsx
+(`add_subdirectory(${SDKROOT}/QXlsx qxlsx)`, il secondo argomento e' la binary
+dir). Dentro: `libQXlsx.a` da 27 MB, 35 `.o`, il moc. Piu' `ztoryc_generated/`,
+che la ricerca per `.o`/`CMakeFiles`/`autogen` **non trovava**.
+
+**Non e' una classe nuova di problema: e' un buco in un elenco che esiste gia'.**
+Il `.gitignore` ha da tempo una riga per ogni target, perche' la directory di
+build E' la radice del repo. Mancavano `/qxlsx/` e `/ztoryc_generated/`.
+
+**NON toccati** benche' la stessa ricerca li peschi: i 24 `.o` assembly i386 di
+`thirdparty/lzo/` e i 20 file di `thirdparty/Lz4/.../vs2010/CMakeFiles/` sono di
+**upstream**, identici ai loro, mai toccati dalla nostra build e mai nominati da
+un percorso di compilazione. Cancellarli sarebbe solo divergenza, col merge
+1.6.2 in attesa. E i due `autogen.sh` di libpng/tiff **non sono artefatti**:
+sono script di bootstrap autotools, li pescava il pattern per il nome.
+
+### Modified — la regola, e il file che diceva il contrario — `baaf1759b`
+AGENTS.md **prescriveva `git add -A`** nel passo «Commit and push»: la riga che
+ha prodotto entrambi gli incidenti che il file stesso racconta come da evitare
+(gli artefatti dentro `354d6f020`, i draft privati nel repo pubblico il
+2026-07-04). Ora dice `git status` e poi i file uno a uno.
+Aggiunta anche la mappa di `FromClaudioPaddei/` (sta su **SamDrive**, non sotto
+`~/ZtorYc/`: il rimando a COMPETITIVE_ROADMAP.md era cieco), con l'avvertenza
+che quei documenti hanno sezioni scritte come istruzioni («Cosa serve da Claude
+Code») che sono **proposte di Claudio, non decisioni di Franco** — e il blocco
+SOSPESI le sovrascrive.
+
+### Recap lipsync — la miglioria che non era nella roadmap
+Rhubarb ha gia' un selettore di riconoscitore, ma **il default e' l'inglese** e
+in due dei tre percorsi la combo e' nascosta: su audio italiano PocketSphinx
+cerca parole inglesi. Livello 0 = selettore di lingua e scelta ricordata.
+Livello 1 (miglior rapporto sforzo/risultato, indipendente dalla lingua) = hold
+minimo per viseme, fusione dei troppo brevi, anticipo di 1-2 frame sulle
+bilabiali. Livello 2 = Whisper + espeak-ng al posto del riconoscitore, tenendo
+la tabella dei viseme (`--datUsePrestonBlair` c'e' gia').
+
+**La cosa che rende il lipsync davvero automatico non e' in COMPETITIVE_ROADMAP**
+perche' e' stata scritta senza sapere che `PanelData` esiste: ogni pannello di
+storyboard ha gia' `dialog`, `startFrame` e `duration`. Rhubarb accetta il testo
+con `-d`, e col testo l'allineamento migliora enormemente **in qualunque
+lingua**. Oggi quel testo lo si incolla a mano.
+
+### Deformatori raster — rispondendo a Franco: valgono anche per il vettoriale
+MLS e Mean Value Coordinates non sono algoritmi «raster»: sono **mappe di
+punti**. Sul vettoriale si applicano ai punti di controllo — niente
+ricampionamento, risultato ancora editabile. Due avvertenze: una Bezier
+deformata da una mappa non lineare non e' piu' una Bezier (va **suddivisa** fino
+a tolleranza), e lo **spessore** va scalato per lo Jacobiano locale o la linea
+ingrassa dove non deve. Architettura: scrivere la deformazione come interfaccia
+«mappa di punti» e due applicatori. E' gia' il pattern del Plastic.
+
+### Deciso — ZtoRig in pausa
+Franco, dopo il collaudo della traccia in gradi: «le correttive impostate cosi'
+vanno bene [...] mi fermerei un attimo visto che e' piuttosto laboriosa, ma gia'
+cosi' abbiamo degli strumenti utilissimi». **In pausa, non abbandonato.** Da
+fare quando si riapre: evidenziare meglio il diamante della posa in edit, e la
+**modalita' rig vs animazione** (in rig le operazioni non scrivono chiavi —
+riferimento suo: anche Harmony ha una modalita' che non anima davvero). Resta il
+taglio automatico sulla giuntura.
+
+### Note — cosa resta aperto
+- Conteggio shot per episodio: provato con **un solo shot**, quindi il filtro
+  non e' ancora messo davvero alla prova.
+- Gli asset gia' scaricati per errore **restano** nel progetto: il filtro blocca
+  i nuovi, non ripulisce i vecchi. Toglierli e' un lavoro a se' (distinguere
+  «entrato per errore» da «aggiunto a mano»: il `kitsuAssetId` da solo non basta).
+- Ordine dato da Franco per il seguito: Kitsu (fatto), lipsync, deformatori
+  raster, libreria di rig riusabili, 2.5D di Rivers, e **auto-shadow per ultimo**.
+
 ## [2026-08-14b] — Il disco di articolazione: sei correzioni, e la strada giusta era la prima idea di Franco
 
 ### Added — pannello ZtoRig a schede, correttive come TRACCIA IN GRADI

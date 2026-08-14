@@ -514,10 +514,40 @@ nella sub-scene corretta.
   110, MD5 stabile) — ma resta sospeso finche' Franco non lo riapre. Vedi la
   voce dedicata piu' sotto.
 
-**Cosa e' invece VIVO al 2026-08-14**: il rig — collaudare il branch
-`feature/ztorig-correttive-ui` (pannello a schede + traccia in gradi), e poi il
-**taglio automatico sulla giuntura**, che e' la strada emersa dal disco
-parcheggiato.
+- **ZtoRig — FERMATO IN PAUSA** (2026-08-14, dopo il collaudo della traccia in
+  gradi): *«le correttive impostate cosi' vanno bene [...] riguardo la parte
+  ZtoRig mi fermerei un attimo visto che e' piuttosto laboriosa, ma gia' cosi'
+  abbiamo degli strumenti utilissimi»*. **Non e' abbandonato, e' in pausa**: si
+  riprende quando lo dice lui. Due cose gia' decise, da fare quando si riapre:
+  - **evidenziare meglio il diamante della posa che si sta editando** (piccola,
+    UI). Vedi la grammatica del diamante in `ztorykeydiamond.h`.
+  - **modalita' rig vs modalita' animazione**: in modalita' rig queste
+    operazioni **non devono generare chiavi di animazione** — sono modifiche al
+    rig del personaggio, come la modalita' «build skeleton». Riferimento
+    esplicito di Franco: anche Harmony ha una modalita' Animate e una in cui non
+    anima davvero. Stessa direzione gia' registrata il 2026-08-14b (Sculpt e
+    Order fuori da Animate).
+  - Resta valido, per quando si riapre: il **taglio automatico sulla giuntura**,
+    la strada emersa dal disco parcheggiato (memoria
+    `project_ztorig_joint_disc`).
+
+**Cosa e' invece VIVO dal 2026-08-14 (ordine dato da Franco)**:
+1. ~~**Kitsu — legare il Production Tracker al singolo EPISODIO**~~ ✅ **FATTO
+   il 2026-08-14** (`3775c1144`). Legame = coppia (progetto, episodio) per ID;
+   filtro su shot e asset; team NON filtrato di proposito. Due bug chiusi per
+   strada: 156 task su 591 scartati in silenzio, e i nomi del team invisibili
+   *perche'* Franco e' admin (Zou non serializza `full_name` per gli admin).
+   ⚠️ **Resta da verificare**: il conteggio shot per episodio e' stato provato
+   con **un solo shot**. E gli asset gia' scaricati per errore restano nel
+   progetto — il filtro blocca i nuovi, non ripulisce i vecchi.
+2. **Lipsync davvero automatico** — recap delle migliorie possibili fatto il
+   2026-08-14, vedi la voce dedicata piu' sotto.
+3. **Deformatori raster** ispirati a Krita ma **riscritti dai paper** (Krita e'
+   GPL): MLS per il warp, Mean Value Coordinates per la cage.
+4. **Libreria di rig riusabili**.
+5. **Ricerca 2.5D Cartoon Models** (Rivers).
+6. **Auto-shadow agganciato alla Light Arrow del Board** — esplicitamente
+   **per ultimo**.
 
 
 ### ⏸️ SOSPESO — render sbagliato su sh110: quindici cause ESCLUSE, nessuna trovata (2026-08-07 notte)
