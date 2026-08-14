@@ -138,6 +138,14 @@ private:
   //! the body hanging off a joint is proportional to the angle alone.
   TDoubleProperty m_ikDamping;
 
+  //! ZtoRig — larghezza della fascia di raccordo attorno al disco di
+  //! articolazione, in centesimi del raggio oltre il bordo. 0 = nessun
+  //! raccordo, il disco resta netto (e la sua circonferenza e' la sagoma al
+  //! gomito) ma al bordo disco e osso ruotano di angoli diversi e l'arto puo'
+  //! strapparsi. Alzandolo la giunzione si ammorbidisce e la sagoma si sbava.
+  //! Da tarare guardando il gomito, non da indovinare.
+  TDoubleProperty m_jointBlend;
+
   TEnumProperty m_scaleConstraint;  //!< Squash & stretch constraint, like the
                                     //!< Animate tool: None / Aspect Ratio /
                                     //!< Mass (V = 1/H, area preserved)

@@ -270,6 +270,10 @@ public:
   static void setRigidJointDiscsEnabled(bool on);
   static bool isRigidJointDiscsEnabled();
 
+  //! ZtoRig — larghezza della fascia di raccordo attorno al disco, in centesimi
+  //! del raggio. 0 = disco netto. Spinta dal tool, come sopra.
+  static void setJointBlendPercent(double percent);
+
   //! This function processes the specified meshImage-deformation pair,
   //! returning a DataGroup
   //! with the required data.

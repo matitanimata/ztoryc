@@ -1094,6 +1094,7 @@ PlasticTool::PlasticTool()
     , m_snapToMesh("snapToMesh", false)
     , m_thickness("Thickness", 1, 100, 5)
     , m_ikDamping("IKDamping", 1, 90, 15)
+    , m_jointBlend("jointBlend", 0, 200, 60)
     , m_rigidValue("rigidValue")
     , m_globalKey("globalKeyframe", true)
     , m_globalKeyScope("Key:")  // Ztoryc: portata della chiave globale
@@ -1137,6 +1138,7 @@ PlasticTool::PlasticTool()
 
   m_propGroup[RIGIDITY_IDX].bind(m_thickness);
   m_propGroup[ANIMATE_IDX].bind(m_ikDamping);
+  m_propGroup[ANIMATE_IDX].bind(m_jointBlend);
   m_propGroup[ANIMATE_IDX].bind(m_correctiveSculpt);
   m_propGroup[ANIMATE_IDX].bind(m_correctiveRadius);
   m_propGroup[ANIMATE_IDX].bind(m_correctiveOrder);
@@ -1170,6 +1172,7 @@ PlasticTool::PlasticTool()
   m_snapToMesh.setId("SnapToMesh");
   m_thickness.setId("Thickness");
   m_ikDamping.setId("IKDamping");
+  m_jointBlend.setId("jointBlend");
   m_correctiveSculpt.setId("PlasticCorrectiveSculpt");
   m_correctiveRadius.setId("PlasticCorrectiveRadius");
   m_correctiveOrder.setId("PlasticCorrectiveOrder");
@@ -1237,6 +1240,7 @@ void PlasticTool::updateTranslation() {
   m_snapToMesh.setQStringName(tr("Snap To Mesh"));
   m_thickness.setQStringName(tr("Thickness"));
   m_ikDamping.setQStringName(tr("IK Max Step"));
+  m_jointBlend.setQStringName(tr("Joint Blend"));
   m_correctiveSculpt.setQStringName(tr("Sculpt"));
   m_correctiveRadius.setQStringName(tr("Brush"));
   m_correctiveOrder.setQStringName(tr("Order"));
@@ -2455,6 +2459,13 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
   // Assigning stacking order without seeing it is guesswork: turn the SO
   // display on with the mode. Left on when the mode goes off — it is a display
   // preference, and silently undoing the user's view is worse than a stale one.
+  if (propertyName == m_jointBlend.getName()) {
+    PlasticDeformerStorage::setJointBlendPercent(m_jointBlend.getValue());
+    PlasticDeformerStorage::instance()->invalidateDeformation(m_sd.getPointer());
+    invalidate();
+    return true;
+  }
+
   if (propertyName == m_correctiveOrder.getName()) {
     if (m_correctiveOrder.getValue() && !m_pvs.m_drawSO) {
       m_pvs.m_drawSO = true;

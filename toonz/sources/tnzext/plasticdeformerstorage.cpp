@@ -181,7 +181,7 @@ const int l_jointDiscPoints = 8;
 //! Fra il bordo del disco e questo limite i vertici passano gradualmente dal
 //! disco all'osso: e' l'unica cosa che impedisce all'arto di strapparsi al
 //! bordo, dove disco e osso ruotano di angoli diversi.
-const double l_discBlendOuter = 1.6;
+double l_discBlendOuter = 1.6;
 
 //! Distanza dal punto \p p allo spigolo di CONTORNO piu' vicino, cioe' al bordo
 //! del disegno. Uno spigolo e' di contorno quando tocca una faccia sola.
@@ -1176,4 +1176,8 @@ void PlasticDeformerStorage::setRigidJointDiscsEnabled(bool on) {
 
 bool PlasticDeformerStorage::isRigidJointDiscsEnabled() {
   return l_rigidJointDiscs;
+}
+
+void PlasticDeformerStorage::setJointBlendPercent(double percent) {
+  l_discBlendOuter = 1.0 + 0.01 * std::max(0.0, percent);
 }
