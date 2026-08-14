@@ -571,6 +571,27 @@ nella sub-scene corretta.
      serve solo sapere quando. E' un compito molto piu' facile, su cui un modello
      piccolo se la cava. Il modello grande serve solo quando il copione NON c'e'.
      Da misurare prima di imporre a tutti un download da qualche GB.
+   - **WhisperX — l'idea si prende, il codice no.** Franco l'ha segnalato il
+     2026-08-14 («esiste una versione whisper X che supporta i fonemi»). Non e'
+     un modello diverso: e' una *pipeline* attorno a Whisper (gruppo di Oxford)
+     con VAD prima (taglia il silenzio -> meno allucinazioni + piu' veloce),
+     **allineamento forzato con un modello CTC** per lingua, e diarizzazione
+     opzionale.
+     ⚠️ Due precisazioni che cambiano le conclusioni:
+     - il modello di allineamento serve a **datare**, non a produrre fonemi da
+       mappare sui viseme: l'uscita sono parole/caratteri con tempi precisi. Il
+       pezzo testo->fonemi resta comunque da fare.
+     - **e' Python e tira dentro PyTorch**: svariati GB, impraticabile in un
+       bundle .app firmato. NON e' la versione leggera — quella e' whisper.cpp,
+       che e' un'altra cosa.
+     **Cosa prendere**: l'idea che i timestamp nativi di Whisper sono la parte
+     fragile e un allineatore forzato li batte. In C++: o l'opzione **DTW per
+     token gia' presente in whisper.cpp**, o un allineatore CTC invocato come
+     processo separato (schema Rhubarb/ffmpeg).
+     ❓ **Da verificare prima di adottarlo**: licenza di WhisperX e dei modelli
+     di allineamento (quelli di diarizzazione stanno dietro condizioni d'uso su
+     HuggingFace). In questo progetto la licenza e' stata la sorpresa finale
+     troppe volte — Krita, AnimeEffects, espeak-ng.
    - Primo passo comunque indipendente da Whisper: collegare `PanelData::dialog`
      all'argomento `-d` di Rhubarb. Il copione ce l'abbiamo gia' scritto, e
      nessun riconoscitore batte il testo vero.
