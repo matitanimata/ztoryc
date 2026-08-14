@@ -4701,6 +4701,57 @@ std::map<int, int> PlasticTool::nearestJointPerVertex_animate(int meshIdx) {
   return out;
 }
 
+//! Disegna i dischi rigidi di articolazione — quelli VERI, letti dal
+//! deformatore, non rimisurati qui: se il tool ne calcolasse una sua versione,
+//! prima o poi mostrerebbe una cosa e il render ne farebbe un'altra.
+//!
+//! Nel tool l'affine passata al deformatore e' l'IDENTITA', quindi spazio mesh
+//! e spazio di disegno coincidono e il raggio si usa cosi' com'e'.
+void PlasticTool::drawJointDiscs_animate(double pixelSize) {
+  if (!PlasticDeformerStorage::isRigidJointDiscsEnabled() || !m_sd) return;
+
+  TMeshImageP mi = TImageP(getImage(false));
+  if (!mi) return;
+  TStageObject *obj = ::stageObject();
+  if (!obj) return;
+
+  const double sdFrame = obj->paramsTime(::frame());
+  const int skelId     = m_sd->skeletonId(sdFrame);
+
+  const PlasticDeformerDataGroup *dg =
+      PlasticDeformerStorage::instance()->process(
+          sdFrame, mi.getPointer(), m_sd.getPointer(), skelId, TAffine(),
+          PlasticDeformerStorage::MESH);
+  if (!dg) return;
+
+  const PlasticSkeleton &defSkel = deformedSkeleton();
+  const int selV = m_svSel.hasSingleObject() ? (int)m_svSel : -1;
+
+  glLineWidth(1.5f * m_viewer->getDevPixRatio());
+  for (const PlasticDeformerDataGroup::JointDisc &disc : dg->m_jointDiscs) {
+    if (disc.m_vIdx < 0 || disc.m_vIdx >= defSkel.verticesCount()) continue;
+
+    const TPointD c = defSkel.vertex(disc.m_vIdx).P();
+    const bool sel  = (disc.m_vIdx == selV);
+
+    // Il selezionato piu' acceso: e' quello che si sta per ridimensionare.
+    if (sel)
+      glColor4ub(255, 190, 60, 230);
+    else
+      glColor4ub(255, 190, 60, 90);
+
+    const int steps = 48;
+    glBegin(GL_LINE_LOOP);
+    for (int i = 0; i != steps; ++i) {
+      const double a = 2.0 * M_PI * i / steps;
+      tglVertex(c + TPointD(disc.m_radius * cos(a), disc.m_radius * sin(a)));
+    }
+    glEnd();
+  }
+}
+
+//------------------------------------------------------------------------
+
 void PlasticTool::drawCorrectiveSculpt_animate(double pixelSize) {
   if (!m_correctiveSculpt.getValue()) return;
 
@@ -5012,6 +5063,7 @@ void PlasticTool::draw_animate() {
     // Drawn ON TOP of the skeletons so the thick bone edges don't cover it.
     drawCrossLevelLinks_animate(pixelSize);
     drawCorrectiveSculpt_animate(pixelSize);
+    drawJointDiscs_animate(pixelSize);
     drawSelections(m_sd, deformedSkeleton, pixelSize);
     drawAngleLimits(m_sd, m_skelId, m_svSel, pixelSize);
 

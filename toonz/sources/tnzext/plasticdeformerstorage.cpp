@@ -333,8 +333,15 @@ void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
         const double dirLen = norm(dirM);
         if (dirLen < 1e-9) continue;
 
+        // Il raggio deciso a mano vince sulla misura; 0 = misuralo, negativo =
+        // disco spento su questo giunto.
+        const double chosen = skeleton->vertex(v).m_discRadius;
+        if (chosen < 0.0) continue;
+
         double sideA = 0.0, sideB = 0.0;
-        const double r = ::jointDiscRadius(meshImage, ownerMesh, c,
+        double r = (chosen > 0.0)
+                       ? chosen
+                       : ::jointDiscRadius(meshImage, ownerMesh, c,
                                            dirM * (1.0 / dirLen), sideA, sideB);
         ::jointDiscDiag(skeleton->vertex(v).name(), ownerMesh, sideA, sideB, r);
         if (r <= 0.0) continue;

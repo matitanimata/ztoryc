@@ -63,6 +63,10 @@ void PlasticSkeletonVertex::saveData(TOStream &os) {
 
   if (m_maxAngle != (std::numeric_limits<double>::max)())
     os.child("maxAngle") << m_maxAngle;
+
+  // Scritto solo quando l'utente l'ha deciso: uno zero significa «misuralo tu»,
+  // e non c'e' motivo di sporcare i file di chi non ha mai toccato la cosa.
+  if (m_discRadius != 0.0) os.child("discRadius") << m_discRadius;
 }
 
 //-------------------------------------------------------------------------------
@@ -84,6 +88,8 @@ void PlasticSkeletonVertex::loadData(TIStream &is) {
       is >> m_minAngle, is.matchEndTag();
     else if (tagName == "maxAngle")
       is >> m_maxAngle, is.matchEndTag();
+    else if (tagName == "discRadius")
+      is >> m_discRadius, is.matchEndTag();
     else
       is.skipCurrentTag();
   }

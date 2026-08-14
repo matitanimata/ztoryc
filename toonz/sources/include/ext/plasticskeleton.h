@@ -82,6 +82,13 @@ public:
   bool m_interpolate;  //!< Whether the vertex needs to be interpolated (see
                        //! plasticdeformer.h)
 
+  //! ZtoRig — raggio del disco rigido di articolazione, in unita' di mesh.
+  //! 0 = **automatico**: meta' della larghezza dell'arto misurata attraverso la
+  //! giuntura. Un valore > 0 e' la scelta dell'utente, che lo ridimensiona a
+  //! mano trascinandolo, e vince sulla misura.
+  //! Negativo = disco disattivato su questo giunto.
+  double m_discRadius = 0.0;
+
 public:
   PlasticSkeletonVertex();
   explicit PlasticSkeletonVertex(const TPointD &pos);

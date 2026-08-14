@@ -554,6 +554,8 @@ private:
                       double pixelSize);
 
   void drawAngleLimits(const SkDP &sd, int skeId, int v, double pixelSize);
+  //! ZtoRig: i dischi rigidi di articolazione, come li vede il deformatore.
+  void drawJointDiscs_animate(double pixelSize);
 
   // SuperPlastic multi-level: the skeletons of the columns hierarchically
   // connected to the current one (via TStageObject parenting) — i.e. the whole
