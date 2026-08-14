@@ -97,9 +97,12 @@ taglio automatico sulla giuntura.
 ### Note — cosa resta aperto
 - Conteggio shot per episodio: provato con **un solo shot**, quindi il filtro
   non e' ancora messo davvero alla prova.
-- Gli asset gia' scaricati per errore **restano** nel progetto: il filtro blocca
-  i nuovi, non ripulisce i vecchi. Toglierli e' un lavoro a se' (distinguere
-  «entrato per errore» da «aggiunto a mano»: il `kitsuAssetId` da solo non basta).
+- ~~Gli asset gia' scaricati per errore restano nel progetto~~ **CHIUSO**:
+  Franco li ha rimossi a mano. *«Adesso che abbiamo fixato il problema non
+  dovrebbe ricapitare»* — corretto. **Niente ripulitore automatico: non serve
+  piu' e non va riproposto.** Unica condizione: il filtro agisce solo quando
+  c'e' un episodio legato; su un progetto legato al solo tvshow, senza episodio
+  scelto, `episodeScoped()` lascia passare tutto come prima.
 - Ordine dato da Franco per il seguito: Kitsu (fatto), lipsync, deformatori
   raster, libreria di rig riusabili, 2.5D di Rivers, e **auto-shadow per ultimo**.
 

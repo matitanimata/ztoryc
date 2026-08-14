@@ -538,8 +538,9 @@ nella sub-scene corretta.
    strada: 156 task su 591 scartati in silenzio, e i nomi del team invisibili
    *perche'* Franco e' admin (Zou non serializza `full_name` per gli admin).
    ⚠️ **Resta da verificare**: il conteggio shot per episodio e' stato provato
-   con **un solo shot**. E gli asset gia' scaricati per errore restano nel
-   progetto — il filtro blocca i nuovi, non ripulisce i vecchi.
+   con **un solo shot**. Gli asset entrati per errore invece sono **chiusi**:
+   rimossi a mano da Franco, e il filtro impedisce che ne arrivino altri —
+   **non proporre un ripulitore automatico.**
 2. **Lipsync davvero automatico** — recap delle migliorie possibili fatto il
    2026-08-14, vedi la voce dedicata piu' sotto.
 3. **Deformatori raster** ispirati a Krita ma **riscritti dai paper** (Krita e'
