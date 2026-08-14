@@ -300,6 +300,15 @@ void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
     // e' questo che impedisce alla massa attorno al giunto di deformarsi.
     for (const DataGroup::JointDisc &disc : group->m_jointDiscs) {
       const int v = disc.m_vIdx;
+      // I dischi sono compilati una volta, lo scheletro deformato si ricostruisce
+      // ad ogni fotogramma: se per qualunque motivo non combaciano, si salta
+      // invece di leggere fuori. Ma allora anche m_dstHandles resterebbe piu'
+      // corto di m_handles, quindi si riempie comunque, col centro.
+      if (v < 0 || v >= deformedSkeleton.verticesCount()) {
+        for (int i = 0; i != disc.m_count; ++i)
+          group->m_dstHandles.push_back(TPointD());
+        continue;
+      }
 
       TPointD dir;
       const TPointD cD = deformationAffine * deformedSkeleton.vertex(v).P();
@@ -344,9 +353,16 @@ bool updateHandlesSO(DataGroup *group, const SkD *sd, int skelId,
   // Return whether values changed with respect to previous ones
   bool changed = false;
 
-  assert(group->m_handles.size() == skeleton->verticesCount());
+  // ⚠️ Questo ciclo cammina sui punti di comando IN LOCKSTEP con la lista dei
+  // vertici, quindi si ferma dove finiscono i vertici. Le corone dei dischi di
+  // articolazione stanno IN CODA e non hanno un vertice a cui corrispondere:
+  // proseguire porterebbe l'iteratore oltre la fine (crash del 2026-08-14,
+  // `vertexDeformation()` su una stringa spazzatura — l'assert qui sotto c'era
+  // ma in release non esiste).
+  const int skelCount = skeleton->verticesCount();
+  assert((int)group->m_handles.size() >= skelCount);
 
-  int h, hCount = group->m_handles.size();
+  int h, hCount = std::min((int)group->m_handles.size(), skelCount);
   {
     tcg::list<PlasticSkeletonVertex>::iterator vt =
         skeleton->vertices().begin();
@@ -365,10 +381,32 @@ bool updateHandlesSO(DataGroup *group, const SkD *sd, int skelId,
     }
   }
 
+  // La corona di un disco prende l'ordine di sovrapposizione DEL SUO GIUNTO: il
+  // disco appartiene all'articolazione, quindi si impila come lei. Lasciarlo a
+  // zero (il default) tirava l'SO verso lo zero attorno a ogni giunto, ed e' il
+  // motivo per cui il disegno si sfasciava ancora prima del crash.
+  for (const DataGroup::JointDisc &disc : group->m_jointDiscs) {
+    if (disc.m_vIdx < 0 || disc.m_vIdx >= skelCount) continue;
+    const SkVD *vd = sd->vertexDeformation(skeleton->vertex(disc.m_vIdx).name());
+    if (!vd || !vd->m_params[SkVD::SO]) continue;
+
+    const double so = vd->m_params[SkVD::SO]->getValue(frame);
+    for (int i = 0; i != disc.m_count; ++i) {
+      const int idx = disc.m_first + i;
+      if (idx < 0 || idx >= (int)group->m_handles.size()) continue;
+      if (group->m_handles[idx].m_so != so) {
+        group->m_handles[idx].m_so = so;
+        changed                    = true;
+      }
+    }
+  }
+
   if (changed) {
-    // Rebuild SO minmax
+    // Rebuild SO minmax — QUI su tutti, corone comprese: i loro valori sono
+    // legittimi e devono entrare nella scala.
     group->m_soMax = -(group->m_soMin = (std::numeric_limits<double>::max)());
 
+    hCount = (int)group->m_handles.size();
     for (h = 0; h != hCount; ++h) {
       const double &so = group->m_handles[h].m_so;
 
