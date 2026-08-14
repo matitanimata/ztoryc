@@ -25,6 +25,7 @@
 #include <QObject>
 #include <QString>
 #include <QVector>
+#include <QMap>
 #include <QHash>
 #include <QSet>
 #include <QPair>
@@ -49,6 +50,20 @@ struct KitsuProject {
   QString resolution;
   QString productionType;   // tvshow / short / featurefilm
   QString productionStyle;  // 2d / 3d / 2d3d
+  bool isTvshow() const { return productionType == "tvshow"; }
+};
+
+//----------------------------------------------------------------------------
+// One episode of a tvshow (/api/data/projects/<id>/episodes).
+// A Ztoryc project maps to ONE episode, not to the whole show: «Cartoon School
+// 2026» is a single Kitsu project holding six episodes, and each episode is its
+// own Ztoryc project. Binding to the project alone would make every episode's
+// shots show up in every tracker.
+//----------------------------------------------------------------------------
+struct KitsuEpisode {
+  QString id;
+  QString name;
+  QString projectId;  // the tvshow it belongs to
 };
 
 //----------------------------------------------------------------------------
@@ -198,6 +213,11 @@ public:
   void login();              // POST /api/auth/login        -> loginFinished()
   void fetchProjects();      // GET  /api/data/projects/open -> projectsFetched()
   void fetchTaskStatuses();  // GET  /api/data/task-status   -> taskStatusesFetched()
+  // Episodes of every tvshow in the last fetchProjects() result, one GET each,
+  // emitted as a single episodesFetched() once they are all in — so the caller
+  // builds its list once instead of redrawing per reply. Emits immediately with
+  // an empty map when there is no tvshow to ask about.
+  void fetchEpisodes();      // GET  /api/data/projects/<id>/episodes
 
   // Login, then on success fetch projects + task statuses in one shot.
   void connectAndSync();
@@ -219,18 +239,26 @@ public:
 
   // Pull task statuses DOWN from Kitsu (review sync: Kitsu is authoritative on
   // WFA→Done/Retake). -> statusesPulled().
-  void pullStatuses(const QString &projectId);
+  // `episodeId` restricts the pull to one episode of a tvshow. Empty (the
+  // default) keeps the old whole-project behaviour, which is right for
+  // productions that have no episodes at all.
+  void pullStatuses(const QString &projectId,
+                    const QString &episodeId = QString());
 
   // Bidirectional asset sync. pushAssets creates the assets missing in Kitsu
   // (upsert by type+name, resolving each canonical type onto a Kitsu asset-type)
   // -> assetsPushed(). pullAssets fetches the project's assets so ones authored
   // in Kitsu can be imported into the tracker -> assetsPulled().
   void pushAssets(const QString &projectId, const QVector<KitsuAsset> &assets);
-  void pullAssets(const QString &projectId);
+  // `episodeId` restricts the pull to the assets of one episode of a tvshow.
+  // Assets with no episode are the show's and always come through.
+  void pullAssets(const QString &projectId,
+                  const QString &episodeId = QString());
 
   // Pull asset TASK statuses DOWN from Kitsu (review sync; mirror of
   // pullStatuses for the asset entity). -> assetStatusesPulled().
-  void pullAssetStatuses(const QString &projectId);
+  void pullAssetStatuses(const QString &projectId,
+                         const QString &episodeId = QString());
 
   // Pull the project's TEAM (its Kitsu persons) down into the roster used by the
   // assignee picker. -> teamPulled().
@@ -277,6 +305,11 @@ public:
 
   QVector<KitsuProject>    projects() const { return m_projects; }
   QVector<KitsuTaskStatus> taskStatuses() const { return m_taskStatuses; }
+  // Episodes of a tvshow, from the last fetchEpisodes(). Empty for a project
+  // that has none (or that was never asked about).
+  QVector<KitsuEpisode>    episodes(const QString &projectId) const {
+    return m_episodes.value(projectId);
+  }
 
   // Map a fetched Kitsu status id onto Ztoryc's enum (valid after statuses are
   // fetched). Unknown ids fall back to Todo.
@@ -289,6 +322,8 @@ public:
 signals:
   void loginFinished(bool ok, const QString &message);
   void projectsFetched(const QVector<KitsuProject> &projects);
+  // Keyed by project id; only tvshow projects appear.
+  void episodesFetched(const QMap<QString, QVector<KitsuEpisode>> &episodes);
   void taskStatusesFetched(const QVector<KitsuTaskStatus> &statuses);
   void projectCreated(bool ok, const KitsuProject &project, const QString &message);
   void projectUpdated(bool ok, const QString &message);
@@ -391,6 +426,10 @@ private:
   void pullFail(const QString &message);
 
   QString m_pullProjectId;
+  // When set, the pull is restricted to this episode: a tvshow holds every
+  // episode's shots in one project, so without it a six-episode show drops all
+  // six episodes' shots into whichever tracker asked.
+  QString m_pullEpisodeId;
   QHash<QString, QString> m_pullSeqName;     // sequence id   -> name
   QHash<QString, QString> m_pullShotSeq;     // shot id       -> sequence name
   QHash<QString, QString> m_pullShotName;    // shot id       -> shot name
@@ -464,6 +503,16 @@ private:
   QString m_teamProjectId;
   QHash<QString, QString> m_personNameById;   // person id     -> display name (all)
   QHash<QString, QString> m_personIdByName;   // name(lower)   -> person id  (all)
+  // Why the persons list failed, when it did. Kept so the team pull can report
+  // the real cause instead of guessing at one.
+  QString m_rosterError;
+  // Episode the current asset pull is scoped to (empty = whole project).
+  // Shared by both asset chains, which is why it isn't one of their m_as*/m_ap*
+  // fields: they must answer the same question the same way.
+  QString m_entityEpisodeId;
+  // True when this Kitsu entity belongs in the bound episode: its own episode,
+  // or no episode at all (a shared asset from the show's library).
+  bool episodeScoped(const class QJsonObject &entity) const;
   QSet<QString>           m_teamPersonIds;    // project team person ids (assignable)
   QVector<QPair<QString, QString>> m_assignQueue;  // (taskId, personId) to add
   int m_assignIdx = 0;
@@ -508,6 +557,8 @@ private:
   bool    m_syncAfterLogin = false;  // connectAndSync() pending
 
   QVector<KitsuProject>      m_projects;
+  QMap<QString, QVector<KitsuEpisode>> m_episodes;  // by project id (tvshow only)
+  int                        m_episodesPending = 0; // replies still in flight
   QVector<KitsuTaskStatus>   m_taskStatuses;
   QHash<QString, TaskStatus> m_statusById;  // built after fetchTaskStatuses()
 };

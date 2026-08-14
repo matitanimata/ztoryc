@@ -541,7 +541,7 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
     }
     // Import Kitsu-authored assets: match by id, then type+name; add the new ones.
     ZtoryModel *mm = ZtoryModel::instance();
-    int added = 0, linked = 0;
+    int added = 0, linked = 0, newTypes = 0;
     bool dirty = false;
     for (const KitsuAsset &ka : assets) {
       if (ka.name.trimmed().isEmpty()) continue;
@@ -556,20 +556,37 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
         if (found->kitsuAssetId != ka.kitsuAssetId) { found->kitsuAssetId = ka.kitsuAssetId; ++linked; dirty = true; }
         continue;
       }
+      // A Kitsu asset type this project has no pipeline for (the instance also
+      // defines Scene and analisi_target beyond our canonical four): create it,
+      // or the asset lands with a type that shows nowhere in the Asset Types
+      // tab and silently borrows the canonical task order.
+      if (!ka.type.trimmed().isEmpty() && !mm->findAssetType(ka.type)) {
+        mm->assetTypes().push_back(
+            AssetType{ka.type, ZtoryModel::canonicalAssetTaskOrder()});
+        ++newTypes;
+      }
       mm->addAsset(ka.type, ka.name.trimmed());
       mm->assets().back().kitsuAssetId = ka.kitsuAssetId;
       ++added;
       dirty = true;
     }
     if (dirty) { mm->saveProjectDb(); rebuildAssets(); }
+    if (newTypes > 0) reloadAssetTypesTab();
     if (m_kitsuSyncLabel) {
       m_kitsuSyncLabel->setStyleSheet("color:#22D160;");
-      m_kitsuSyncLabel->setText(tr("%1 (%2 added, %3 linked)  Pulling asset statuses…")
-                                    .arg(msg).arg(added).arg(linked));
+      m_kitsuSyncLabel->setText(
+          newTypes > 0
+              ? tr("%1 (%2 added, %3 linked, %4 new asset types)  Pulling asset "
+                   "statuses…")
+                    .arg(msg).arg(added).arg(linked).arg(newTypes)
+              : tr("%1 (%2 added, %3 linked)  Pulling asset statuses…")
+                    .arg(msg).arg(added).arg(linked));
     }
     // Entities are now imported/linked; pull their review statuses down too so
     // the single "Pull assets" action mirrors the supervisor's asset state.
-    KitsuClient::instance()->pullAssetStatuses(ZtoryModel::instance()->kitsuProjectId());
+    KitsuClient::instance()->pullAssetStatuses(
+        ZtoryModel::instance()->kitsuProjectId(),
+        ZtoryModel::instance()->kitsuEpisodeId());
   });
   connect(kc, &KitsuClient::assetStatusesPulled, this,
           [this](bool ok, const QVector<KitsuAssetStatusEntry> &entries, const QString &msg) {
@@ -578,7 +595,7 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
       return;
     }
     ZtoryModel *mm = ZtoryModel::instance();
-    int updated = 0; bool dirty = false;
+    int updated = 0, adopted = 0; bool dirty = false;
     for (const KitsuAssetStatusEntry &e : entries) {
       const QString ekey = KitsuClient::normalizeTaskType(e.taskType);
       for (Asset &a : mm->assets()) {
@@ -590,19 +607,41 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
                    a.name.trimmed().compare(e.assetName.trimmed(), Qt::CaseInsensitive) == 0);
         if (!match) continue;
         if (a.kitsuAssetId.isEmpty() && !e.kitsuAssetId.isEmpty()) { a.kitsuAssetId = e.kitsuAssetId; dirty = true; }
+        QString target;
         for (const QString &tt : mm->assetTaskTypesForType(a.type))
-          if (KitsuClient::normalizeTaskType(tt) == ekey) {
-            if (a.tasks[tt].status != e.status) { a.tasks[tt].status = e.status; ++updated; dirty = true; }
-            for (const QString &nm : e.assignees)
-              if (!a.tasks[tt].assignees.contains(nm)) { a.tasks[tt].assignees.push_back(nm); dirty = true; }
-            break;
-          }
+          if (KitsuClient::normalizeTaskType(tt) == ekey) { target = tt; break; }
+        // No counterpart in this asset type's pipeline: ADOPT the Kitsu task
+        // type instead of dropping it. Silently discarding it is what made a
+        // pull look like it had worked while leaving the tasks empty — on
+        // «CARTOON SCHOOL 2026», Modeling and Rigging vanished this way because
+        // Ztoryc's canonical pipeline is Concept/Rough/Clean/Color.
+        // Kitsu is the source of truth for the pipeline, so it gets appended.
+        if (target.isEmpty()) {
+          mm->addAssetTaskType(a.type, e.taskType);
+          target = e.taskType;
+          ++adopted;
+          dirty = true;
+        }
+        if (a.tasks[target].status != e.status) { a.tasks[target].status = e.status; ++updated; dirty = true; }
+        for (const QString &nm : e.assignees)
+          if (!a.tasks[target].assignees.contains(nm)) { a.tasks[target].assignees.push_back(nm); dirty = true; }
       }
     }
     if (dirty) { mm->saveProjectDb(); rebuildAssets(); }
+    // Adopting a task type changes the asset-type PIPELINES, which the Asset
+    // Types tab shows in its own two-pane editor: without this it kept showing
+    // the pre-pull list, and the new columns in the asset table looked like
+    // they had come from nowhere.
+    if (adopted > 0) reloadAssetTypesTab();
     if (m_kitsuSyncLabel) {
       m_kitsuSyncLabel->setStyleSheet("color:#22D160;");
-      m_kitsuSyncLabel->setText(tr("%1 (%2 updated)").arg(msg).arg(updated));
+      // Say how many task types were adopted: the asset table grew columns, and
+      // that should not look like it happened by itself.
+      m_kitsuSyncLabel->setText(
+          adopted > 0
+              ? tr("%1 (%2 updated, %3 new task types adopted from Kitsu)")
+                    .arg(msg).arg(updated).arg(adopted)
+              : tr("%1 (%2 updated)").arg(msg).arg(updated));
     }
   });
   connect(kc, &KitsuClient::teamPulled, this,
@@ -1270,6 +1309,18 @@ void ZtoryProductionPanel::reloadProjectTab() {
   m_seasonEdit->setText(m->season());
   m_titleEdit->setText(m->title());
   m_epEdit->setText(m->episode());
+  // Bound to a Kitsu episode: the name is no longer ours to change. Renaming it
+  // here would leave the name and kitsuEpisodeId pointing at different things —
+  // the push would create a NEW episode under the typed name while the pull
+  // kept filtering on the old id. The rename belongs on Kitsu, then re-link.
+  {
+    const bool epBound = m->isKitsuEpisodeLinked();
+    m_epEdit->setReadOnly(epBound);
+    m_epEdit->setToolTip(
+        epBound ? QObject::tr("Bound to the Kitsu episode. Rename it in Kitsu, "
+                              "then link again from the Kitsu dialog.")
+                : QString());
+  }
   m_techCombo->clear();
   for (const Technique &t : m->techniques()) m_techCombo->addItem(t.name);
   int di = m_techCombo->findText(m->defaultTechnique());
@@ -1348,7 +1399,10 @@ void ZtoryProductionPanel::onKitsuPull() {
   // Also refresh the team roster (project members) from Kitsu; independent async
   // call, populates the assignee picker.
   KitsuClient::instance()->pullTeam(m->kitsuProjectId());
-  KitsuClient::instance()->pullStatuses(m->kitsuProjectId());
+  // The episode id narrows the pull to this episode's shots. The team stays
+  // project-wide on purpose: a tvshow's crew is the show's, not the episode's.
+  KitsuClient::instance()->pullStatuses(m->kitsuProjectId(),
+                                        m->kitsuEpisodeId());
 }
 
 void ZtoryProductionPanel::onKitsuUpload() {
@@ -1410,7 +1464,10 @@ void ZtoryProductionPanel::onKitsuPullAssets() {
   if (!m->isKitsuLinked()) return;
   m_kitsuSyncLabel->setStyleSheet(QString());
   m_kitsuSyncLabel->setText(tr("Pulling assets from Kitsu…"));
-  KitsuClient::instance()->pullAssets(m->kitsuProjectId());
+  // Scoped to the bound episode: the other episodes' assets are not ours.
+  // Assets with no episode are the show's shared library and still come down.
+  KitsuClient::instance()->pullAssets(m->kitsuProjectId(),
+                                      m->kitsuEpisodeId());
 }
 
 void ZtoryProductionPanel::applyProjectFromFields() {
@@ -1423,7 +1480,10 @@ void ZtoryProductionPanel::applyProjectFromFields() {
   }
   m->setSeason(m_seasonEdit->text().trimmed());
   m->setTitle(m_titleEdit->text().trimmed());
-  m->setEpisode(m_epEdit->text().trimmed());
+  // Same rule as Production/Code: while bound to a Kitsu episode the name is
+  // Kitsu's, and writing the field back would desync it from kitsuEpisodeId.
+  if (!m->isKitsuEpisodeLinked())
+    m->setEpisode(m_epEdit->text().trimmed());
   if (!m_techCombo->currentText().isEmpty())
     m->setDefaultTechnique(m_techCombo->currentText());
   if (m_patternEdit && !m_patternEdit->text().trimmed().isEmpty())
