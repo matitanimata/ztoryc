@@ -645,6 +645,102 @@ nella sub-scene corretta.
    - Primo passo comunque indipendente da Whisper: collegare `PanelData::dialog`
      all'argomento `-d` di Rhubarb. Il copione ce l'abbiamo gia' scritto, e
      nessun riconoscitore batte il testo vero.
+
+---
+
+### 🎬 ARCHITETTURA LIPSYNC — dove vive il dato (progetto di Franco, 2026-08-14)
+
+> Franco mi ha fermato mentre mettevo un pulsante «prendi il copione dallo
+> storyboard» nel pannello lipsync: *«aspetta aspetta, vediamo di capirci bene
+> [...] qui c'e' da pensarla bene»*. Aveva ragione: quel pulsante tappa un buco,
+> mentre la domanda vera e' **dove il dato deve vivere**. Questa sezione e' la
+> risposta, ed e' da leggere PRIMA di scrivere codice sul lipsync.
+
+**L'idea**: ogni shot genera una scena a parte che ha gia' il suo audio (anche
+su piu' tracce, una per personaggio) e i suoi dialoghi divisi per personaggio.
+Il lipsync si **prepara ed esporta da Ztoryc**, ma viene **applicato
+dall'animatore** nello shot esportato, quando importa come scena la sotto-scena
+del personaggio.
+
+#### Cosa ESISTE gia' (non inventare)
+- **`TXshSoundTextColumn`** — la colonna dialoghi classica dell'x-sheet, con
+  `createSoundTextLevel(riga, listaDiTesti)`: una stringa per cella, cioe' per
+  fotogramma. Gia' persistita, gia' disegnata dallo xsheet viewer, e **gia'
+  gestita da `exportxsheetpdf`** — quindi finisce nell'exposure sheet STAMPATO.
+- **I personaggi sono gia' asset** di tipo Character, sincronizzati da Kitsu.
+- **L'export verso progetto** fa gia' il grosso: scorre il level set, risolve e
+  copia i file con `decodeFilePath`, riscrive i percorsi a destinazione, salva
+  le sotto-scene con `IoCmd::saveScene(SAVE_SUBXSHEET)`, staging + log.
+
+#### I DUE campi che mancano, e sono i perni
+1. **`PanelData::dialog` e' una stringa ANONIMA.** Deve diventare una **lista di
+   battute, ognuna con un personaggio**. Non un campo singolo: in un pannello
+   parlano in due, e un campo solo costringerebbe a spezzare i pannelli per
+   ragioni sbagliate. Tutto il resto poggia qui.
+2. **`Asset` non ha un percorso file** (ha uuid/type/name/kitsuAssetId/tasks/
+   tags). Serve per l'export completo, vedi sotto.
+
+#### Il legame traccia audio → personaggio
+Va tenuto in **`ZtoryModel`**, NON dentro `TXshSoundColumn`: la regola del
+progetto dice che l'audio si legge e non si tocca, e cosi' sopravvive anche ai
+file aperti con Tahoma2D. Persistito nel `.ztoryc`.
+
+#### Le tre decisioni, PRESE da Franco il 2026-08-14
+1. **Dove gira il lipsync**: si **prepara ed esporta da Ztoryc**, si **applica
+   dall'animatore** nello shot esportato quando importa la sotto-scena del
+   personaggio. → Il **MouthSet deve VIAGGIARE col personaggio**, perche' viene
+   usato dopo, altrove, magari da un'altra persona.
+2. **Nelle celle vanno i FONEMI**, come nell'x-sheet tradizionale. Il testo
+   normale si legge nel pannello shot board. (Io avevo proposto le parole:
+   scelta di Franco, ed e' quella dell'animatore.)
+3. **Una colonna per personaggio**, non una condivisa: *«altrimenti fa il
+   lipsync anche delle battute dette da altri»*.
+
+#### Whisper serve solo per i TEMPI
+Il testo lo abbiamo gia' scritto noi. Il compito e' **allineamento**, non
+riconoscimento — e questo e' anche il motivo per cui forse basta un modello
+piccolo.
+
+#### Una room dedicata
+Idea di Franco: x-sheet + un pannello **Ztoryc shot board** in cui leggere i
+testi mentre si anima.
+
+---
+
+### 📦 EXPORT COMPLETO — gli asset linkati a file veri (idea di Franco, 2026-08-14)
+
+*«Se dal production tracker gli asset fossero linkati a dei file reali, si
+potrebbe pensare a un export ancora piu' completo, dove il programma provvede
+anche a importare nello shot tutti gli asset necessari, anche i personaggi
+importati come sotto-scene.»*
+
+**Fattibile, e la parte pesante e' gia' scritta** (vedi sopra: l'export copia i
+file, riscrive i percorsi, salva le sotto-scene). Manca:
+1. **un percorso file su `Asset`** + il modo di assegnarlo (sfoglia, o dedotto
+   dalla struttura cartelle di produzione, o da Kitsu);
+2. **quali asset servono a quale shot** — relazione shot↔asset;
+3. il passo che li **piazza** nello shot: livelli caricati nel level set ed
+   esposti in colonna, personaggi caricati come **sotto-scene**.
+
+⚠️ **Rischio da tenere d'occhio, non da riaprire**: importare un personaggio
+come sotto-scena e' parente stretto del percorso che ha il crash noto su «Salva
+sotto-scena come scena, mesh non trovate» (nel blocco SOSPESI). E' la macchina
+su cui questa feature poggia: meglio saperlo prima.
+
+---
+
+### ⚠️ Lavoro del 2026-08-14 sera, NON committato — da rivedere alla luce di sopra
+- ✅ **Selettore di lingua** (`lipsyncpopup.cpp` + preferenza `lipSyncPhonetic`):
+  **resta valido**, indipendente da tutto questo. La combo diceva «Recognizer» e
+  spariva proprio quando carichi un file audio, cioe' dove serve; il default era
+  l'inglese e su audio italiano PocketSphinx cercava parole inglesi. Ora si
+  chiama «Dialogue language», e' sempre visibile quando Rhubarb gira, e la
+  scelta si ricorda. Corretto anche un confronto su `currentText()` che si
+  sarebbe rotto in ogni build tradotta.
+- ⏳ **Pulsante «From storyboard»**: **PROVVISORIO**. Legge il dialogo **senza
+  sapere chi parla**, cioe' gli manca esattamente il perno del progetto qui
+  sopra. Oggi funziona ed e' meglio che incollare a mano, ma va sostituito dal
+  dialogo per personaggio.
 3. **Deformatori raster** ispirati a Krita ma **riscritti dai paper** (Krita e'
    GPL): MLS per il warp, Mean Value Coordinates per la cage.
 4. **Libreria di rig riusabili**.
