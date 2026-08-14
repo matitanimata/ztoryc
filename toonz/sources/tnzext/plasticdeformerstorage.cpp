@@ -17,6 +17,10 @@
 // Qt includes
 #include <QMutex>
 #include <QMutexLocker>
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
+#include <QStandardPaths>
 
 #include "ext/plasticdeformerstorage.h"
 #include "ext/plasticvisualsettings.h"
@@ -151,6 +155,23 @@ void transformHandles(std::vector<TPointD> &handles, const TAffine &aff) {
 
 bool l_rigidJointDiscs = false;
 
+//! Diagnostica del disco, accesa con ZTORYC_DISC_DIAG=1. Scrive su file perche'
+//! l'app si lancia dal Finder e uno standard output non c'e'. Gira solo alla
+//! COMPILAZIONE dei punti di comando, non a ogni fotogramma.
+void jointDiscDiag(const QString &joint, int meshIdx, double sideA,
+                   double sideB, double radius) {
+  static const bool on = (::getenv("ZTORYC_DISC_DIAG") != nullptr);
+  if (!on) return;
+
+  QFile f(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) +
+          "/ztoryc_disc.log");
+  if (!f.open(QIODevice::Append | QIODevice::Text)) return;
+  QTextStream(&f) << QDateTime::currentDateTime().toString("HH:mm:ss")
+                  << "  giunto=" << joint << " pezzo=" << meshIdx
+                  << "  latoA=" << sideA << " latoB=" << sideB
+                  << "  RAGGIO=" << radius << "\n";
+}
+
 //! ZtoRig — quanti punti compongono la corona di un disco. Otto bastano a
 //! inchiodare l'interno: sono vincoli, non geometria da vedere, e ognuno costa
 //! nel solver.
@@ -175,29 +196,55 @@ int meshContaining(const TMeshImage *meshImage, const TPointD &p) {
 
 //----------------------------------------------------------------------------------
 
-double distanceToMeshBoundary(const TMeshImage *meshImage, int meshIdx,
-                              const TPointD &p) {
+//! Distanza dal punto \p p al primo spigolo di CONTORNO incontrato andando
+//! nella direzione \p dir. -1 se non se ne incontra nessuno.
+double rayToMeshBoundary(const TTextureMesh &mesh, const TPointD &p,
+                         const TPointD &dir) {
   double best = -1.0;
 
-  {
-    const TTextureMeshP &mesh = meshImage->meshes()[meshIdx];
-    for (int e = 0; e < mesh->edgesCount(); ++e) {
-      if (!mesh->edge(e).facesCount()) continue;
-      if (mesh->edge(e).facesCount() != 1) continue;  // interno: non e' bordo
+  for (int e = 0; e < mesh.edgesCount(); ++e) {
+    if (mesh.edge(e).facesCount() != 1) continue;  // interno: non e' bordo
 
-      const TPointD a = mesh->vertex(mesh->edge(e).vertex(0)).P();
-      const TPointD b = mesh->vertex(mesh->edge(e).vertex(1)).P();
+    const TPointD a = mesh.vertex(mesh.edge(e).vertex(0)).P();
+    const TPointD b = mesh.vertex(mesh.edge(e).vertex(1)).P();
 
-      const TPointD ab = b - a, ap = p - a;
-      const double len2 = norm2(ab);
-      double t = (len2 > 1e-12) ? ((ap * ab) / len2) : 0.0;
-      t        = std::max(0.0, std::min(1.0, t));
-      const double d = norm(ap - t * ab);
+    // Raggio p+t*dir contro il segmento a+u*(b-a), con t>=0 e u in [0,1].
+    const TPointD ab = b - a;
+    const double den = cross(dir, ab);
+    if (fabs(den) < 1e-12) continue;  // paralleli
 
-      if (best < 0.0 || d < best) best = d;
-    }
+    const TPointD ap = a - p;
+    const double t   = cross(ap, ab) / den;
+    const double u   = cross(ap, dir) / den;
+    if (t < 0.0 || u < 0.0 || u > 1.0) continue;
+
+    if (best < 0.0 || t < best) best = t;
   }
   return best;
+}
+
+//! Raggio del disco: **meta' della larghezza del braccio all'altezza del
+//! giunto** (Franco, 2026-08-14 — «il cerchio deve essere grande quanto la
+//! larghezza del braccio all'altezza del gomito»).
+//!
+//! Si misura attraversando l'arto, cioe' lungo la PERPENDICOLARE alla
+//! bisettrice, contando i due lati. La distanza dal bordo piu' vicino — la
+//! prima versione — al gomito prende l'angolo INTERNO della piega, che e'
+//! molto meno di meta' larghezza: usciva un disco troppo piccolo per servire.
+double jointDiscRadius(const TMeshImage *meshImage, int meshIdx,
+                       const TPointD &p, const TPointD &bisector,
+                       double &outSideA, double &outSideB) {
+  const TTextureMesh &mesh = *meshImage->meshes()[meshIdx];
+  const TPointD perp(-bisector.y, bisector.x);
+
+  outSideA = rayToMeshBoundary(mesh, p, perp);
+  outSideB = rayToMeshBoundary(mesh, p, -perp);
+
+  if (outSideA < 0.0 && outSideB < 0.0) return -1.0;
+  if (outSideA < 0.0) return outSideB;
+  if (outSideB < 0.0) return outSideA;
+
+  return 0.5 * (outSideA + outSideB);
 }
 
 //! Direzione della bisettrice del giunto \p v: la media delle direzioni verso il
@@ -280,7 +327,16 @@ void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
         const int ownerMesh = ::meshContaining(meshImage, c);
         if (ownerMesh < 0) continue;  // giunto fuori dal disegno: niente disco
 
-        const double r = ::distanceToMeshBoundary(meshImage, ownerMesh, c);
+        // La perpendicolare alla bisettrice, nello stesso spazio del punto.
+        const TPointD dirM =
+            deformationAffine * (skeleton->vertex(v).P() + dir) - c;
+        const double dirLen = norm(dirM);
+        if (dirLen < 1e-9) continue;
+
+        double sideA = 0.0, sideB = 0.0;
+        const double r = ::jointDiscRadius(meshImage, ownerMesh, c,
+                                           dirM * (1.0 / dirLen), sideA, sideB);
+        ::jointDiscDiag(skeleton->vertex(v).name(), ownerMesh, sideA, sideB, r);
         if (r <= 0.0) continue;
 
         DataGroup::JointDisc disc;
@@ -288,10 +344,9 @@ void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
         disc.m_radius = r;
         disc.m_first  = (int)group->m_handles.size();
         disc.m_count  = l_jointDiscPoints;
-        // La bisettrice va misurata nello stesso spazio in cui si piazza la
+        // Stessa bisettrice usata per misurare: nello spazio in cui si piazza la
         // corona, altrimenti una scala non uniforme falsa la rotazione.
-        const TPointD dirM = deformationAffine * (skeleton->vertex(v).P() + dir) - c;
-        disc.m_restAngle   = atan2(dirM.y, dirM.x);
+        disc.m_restAngle = atan2(dirM.y, dirM.x);
 
         for (int i = 0; i != l_jointDiscPoints; ++i) {
           const double a = disc.m_restAngle + 2.0 * M_PI * i / l_jointDiscPoints;
