@@ -592,6 +592,56 @@ nella sub-scene corretta.
      di allineamento (quelli di diarizzazione stanno dietro condizioni d'uso su
      HuggingFace). In questo progetto la licenza e' stata la sorpresa finale
      troppe volte — Krita, AnimeEffects, espeak-ng.
+   - 👥 **I PERSONAGGI — chi parla, e con quale bocca** (Franco, 2026-08-14).
+     Il problema vero non e' il lipsync di una battuta: e' la catena
+     **chi parla -> quale audio -> quale testo -> quale livello animare**.
+
+     **Due anelli su tre ci sono gia', senza indovinare niente:**
+     - *Chi parla*: una **colonna audio per personaggio**. E' come lavora il
+       montaggio del suono, e Ztoryc le colonne sonore le scorre gia'. Se
+       l'audio arriva separato, chi parla e' un DATO, non una deduzione.
+     - *Chi esiste*: i personaggi sono **gia' asset di tipo Character** (63 nel
+       progetto di Franco) e da oggi si sincronizzano da Kitsu. La lista non va
+       inventata.
+
+     **L'anello mancante**: `PanelData` ha `dialog`, `action`, `notes` ma **non
+     ha un campo personaggio**. Il testo c'e' ed e' anonimo. Aggiungere un
+     riferimento all'asset Character e' la modifica che chiude la catena.
+
+     **La diarizzazione e' un ripiego**, non il progetto: serve solo con traccia
+     unica mixata e nessuna annotazione, e comunque restituisce SPEAKER_00 /
+     SPEAKER_01 — qualcuno deve poi dire chi sono.
+
+   - 👄 **MOUTH SET — assegnare i disegni ai fonemi UNA VOLTA SOLA** (idea di
+     Franco, 2026-08-14, ed e' il pezzo di maggior valore pratico).
+     *«I fonemi vanno associati a due set diversi di bocche (bocca in su o in
+     giu') per ogni posizione. Potremmo fare in modo che tutto questo venga
+     registrato e associato al personaggio, cosi' e' un'operazione veloce invece
+     di stare ogni volta a riassegnare i disegni ai fonemi: lo si fa una volta e
+     basta e poi si sceglie quale set usare (frontale o profilo, felice o
+     triste).»*
+
+     Struttura dati che ne segue:
+     - un **MouthSet** = mappa viseme (A-H, Preston Blair — gia' quelli che
+       usiamo, `--datUsePrestonBlair`) -> disegno specifico (livello + frame);
+     - il MouthSet ha i suoi attributi: **vista** (frontale / profilo / 3-4),
+       **espressione** (felice / triste), **variante** (bocca in su / in giu');
+     - un **personaggio possiede PIU' MouthSet**, e al momento del lipsync si
+       sceglie solo quale usare: tutto il resto e' gia' noto.
+
+     **Dove va salvato**: sul PERSONAGGIO, non sullo shot — cosi' viaggia fra
+     shot, episodi e produzioni. Il che lo rende **lo stesso problema della
+     «libreria di rig riusabili»** (punto 4 delle priorita'): un personaggio
+     porta con se' il suo rig, i suoi mouth set, i suoi asset. E' una
+     *definizione di personaggio* che esiste una volta sola. Progettarli
+     separati sarebbe farlo due volte.
+
+     ⚠️ **Vincolo per il futuro**: oggi il lipsync scambia disegni in un
+     livello. Con ZtoRig un personaggio riggato ha la bocca DENTRO il rig,
+     quindi prima o poi dovra' scrivere **pose** e non scambi di disegno. Non
+     inchiodare il bersaglio al «livello di bocche»: il MouthSet deve poter
+     puntare a un disegno OPPURE a una posa.
+
    - Primo passo comunque indipendente da Whisper: collegare `PanelData::dialog`
      all'argomento `-d` di Rhubarb. Il copione ce l'abbiamo gia' scritto, e
      nessun riconoscitore batte il testo vero.
