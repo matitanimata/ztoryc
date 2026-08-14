@@ -821,8 +821,13 @@ importati come sotto-scene.»*
 file, riscrive i percorsi, salva le sotto-scene). Manca:
 1. **un percorso file su `Asset`** + il modo di assegnarlo (sfoglia, o dedotto
    dalla struttura cartelle di produzione, o da Kitsu);
-2. ~~**quali asset servono a quale shot**~~ → **NON VA INVENTATA: e' il
-   BREAKDOWN di Kitsu** (segnalato da Franco, contratto verificato sull'istanza
+2. ✅ **FATTO il 2026-08-15** (`d48f46b0e`) — scheda Breakdown nel tracker,
+   modello + persistenza + pull da Kitsu (una chiamata per episodio, sola
+   lettura). **DA COLLAUDARE sui 53 link veri.** Fatti anche: cartelle asset per
+   categoria, `resolveAssetFile()`, Load/Import e opzioni PSD (default di
+   progetto + scostamento per asset), legame a mano dalla scheda Breakdown.
+   **RESTA il pezzo 3**: il passo che PIAZZA davvero gli asset nello shot.
+   ~~quali asset servono a quale shot~~ → era il **BREAKDOWN di Kitsu** (segnalato da Franco, contratto verificato sull'istanza
    locale il 2026-08-14). Kitsu lo chiama *casting*.
 
    **Dato**: tabella `entity_link` — `entity_in_id` = lo SHOT,

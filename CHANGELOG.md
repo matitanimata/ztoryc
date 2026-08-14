@@ -1,3 +1,90 @@
+## [2026-08-15] — Il breakdown, e il rifiuto di indovinare
+
+Sessione lunga di **progettazione** con Franco su lipsync ed export, con due
+implementazioni in mezzo. Il filo: quasi ogni volta il pezzo mancante non era
+codice nuovo ma **un campo anonimo** — un dato che c'e' e non sa a chi
+appartiene.
+
+### Added — il selettore di lingua del lipsync (`f81d39338`)
+L'etichetta diceva «Recognizer» e le due voci erano «PocketSphinx (English)» e
+«Phonetic»: non diceva la cosa che conta, cioe' che una capisce PAROLE INGLESI e
+l'altra non capisce parole affatto. Chi sincronizza italiano non poteva sapere
+che il default cercava l'inglese nel suo audio. Ora e' «Dialogue language», e'
+**sempre visibile quando Rhubarb gira** (prima spariva proprio quando carichi un
+file audio, cioe' dove serve) e la scelta si ricorda.
+Corretto un difetto latente: il confronto era su `currentText()`, cioe' il testo
+**tradotto** — rendendo le voci traducibili si sarebbe rotto in ogni build
+localizzata.
+
+### Added — breakdown e catena degli asset (`d48f46b0e`)
+Il breakdown **non e' stato inventato**: e' il *casting* di Kitsu, contratto
+verificato sull'istanza vera prima di scrivere (tabella `entity_link`, 53 link
+reali). Pull in **una chiamata** per tutto l'episodio; Kitsu e' autorevole
+quindi ogni shot si **sostituisce**, non si fonde; solo lettura di proposito,
+perche' il PUT di Kitsu sostituisce l'intero casting di uno shot e una spinta
+parziale cancellerebbe il lavoro altrui.
+
+Piu': cartelle asset **per categoria** nei parametri di progetto (con 145 asset
+un percorso per ciascuno non lo compila nessuno), `resolveAssetFile()`, e la
+scelta **Load vs Import** con default di progetto e scostamento per asset.
+
+**La decisione di cui vado piu' fiero: non indovinare.** `resolveAssetFile()`
+accetta solo il nome base UGUALE — «macchina» non pesca «macchina_v03» — e con
+zero o piu' di un risultato restituisce vuoto col motivo. Un file non trovato si
+risolve in dieci secondi; un file **sbagliato** scelto in silenzio si scopre in
+render, giorni dopo. La colonna File della scheda Breakdown mostra cosa l'export
+troverebbe ADESSO, ed e' cio' che la rende utile invece che decorativa.
+
+### 🎬 Progettato con Franco — lipsync, e dove vive il dato
+Franco mi ha fermato mentre mettevo un pulsante «prendi il copione dallo
+storyboard»: *«aspetta aspetta [...] qui c'e' da pensarla bene»*. Aveva ragione,
+e il pulsante e' stato **tolto lo stesso giorno** — leggeva il dialogo senza
+sapere chi parla, cioe' gli mancava il perno.
+
+Tutto in ANIMATIC_TASKS. In sintesi:
+- **Meta' dei pezzi esistono gia'**: `TXshSoundTextColumn` e' la colonna
+  dialoghi classica (una stringa per fotogramma) ed e' **gia' stampata
+  nell'exposure sheet** da `exportxsheetpdf`; i personaggi sono gia' asset.
+- **Mancano DUE campi, e sono i perni**: `PanelData::dialog` e' una stringa
+  ANONIMA (deve diventare una lista di battute con un personaggio ciascuna — in
+  un pannello parlano in due), e `Asset` non aveva un percorso file. Lo stesso
+  identico schema due volte: il dato c'e' ed e' anonimo.
+- **Decisioni di Franco**: il lipsync si prepara in Ztoryc e si applica
+  dall'animatore nello shot esportato → il **MouthSet deve viaggiare col
+  personaggio**; nelle celle i **fonemi**, come nell'x-sheet tradizionale (io
+  avevo proposto le parole: ha ragione lui, quella colonna e' l'istruzione
+  operativa, non documentazione); **una colonna per personaggio**, o si fa il
+  lipsync delle battute dette da altri.
+- **MouthSet = sidecar accanto al LIVELLO**, non dentro il progetto: viaggia con
+  cio' che l'animatore importa davvero. ⚠️ L'export dovra' copiarlo, o il
+  personaggio arriva con le bocche e senza le istruzioni per usarle.
+- **Scoperta che rimpicciolisce il lavoro**: il pannello lipsync ha **gia'** i
+  dieci slot di Preston Blair e chiede gia' quell'associazione — poi la
+  dimentica ogni volta. Il MouthSet non e' una struttura da inventare, e' dare
+  una casa a un dato che il programma raccoglie e butta via.
+- **Whisper + espeak-ng** entrano come processi separati: `thirdparty.cpp` ha
+  gia' la macchina. Le finezze (minimo 2 frame, anticipo di M/B/P) sono spiegate
+  col PERCHE' — percezione la prima, fisiologia la seconda (il suono E'
+  l'apertura delle labbra) — e con l'avvertenza che **litigano**: prima
+  anticipare, poi imporre il minimo, con la chiusura protetta.
+
+### Fixed — 50 artefatti di build tolti dal versionamento (`4e7cadaaa`)
+`qxlsx/` era la directory di BUILD del target QXlsx (27 MB di `libQXlsx.a` + 35
+`.o`), piu' `ztoryc_generated/`. Non una classe nuova di problema: **un buco in
+un elenco che esiste gia'** — il `.gitignore` ha una riga per ogni target,
+perche' la build dir E' la radice del repo. NON toccati i 24 `.o` di
+`thirdparty/lzo` e i 20 di `Lz4`: sono di upstream, identici ai loro.
+E AGENTS.md **prescriveva `git add -A`** (`baaf1759b`), la riga che ha prodotto
+entrambi gli incidenti che il file stesso racconta come da evitare.
+
+### Note — cosa resta da collaudare
+- Il pull del breakdown sui 53 link veri e la risoluzione dei file: finora hanno
+  girato solo nel compilatore.
+- Il filtro shot per episodio: provato con **un solo shot**.
+- Manca lo scostamento PSD **per singolo asset** nel senso completo? No: c'e'.
+  Manca invece l'export che USA tutto questo — il piazzamento vero degli asset
+  nello shot.
+
 ## [2026-08-14c] — Il tracker si lega a un episodio, e un elenco che si riempiva a mano
 
 ### Added — Kitsu: il legame diventa la COPPIA (progetto, episodio) — `3775c1144`
