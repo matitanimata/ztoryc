@@ -707,6 +707,109 @@ testi mentre si anima.
 
 ---
 
+### 👄 MOUTH SET — FILE ACCANTO AL LIVELLO (progetto di Franco, 2026-08-15)
+
+> *«Dovremmo stabilire che il tal livello contiene le bocche e salvare un file
+> associato al livello con i vari set diversi per posizione o espressione, cosi'
+> che praticamente neanche serve aprirlo il popup di Rhubarb una volta salvato
+> il personaggio e la sua bocca.»* Ambito dichiarato da lui: **cutout digitale
+> con personaggi da libreria**.
+
+#### 🔎 Scoperta che rimpicciolisce il problema
+**Il pannello lipsync ha GIA' i dieci slot di Preston Blair** — vedi
+`lipsyncpopup.cpp` ~riga 232: `A I`, `O`, `E`, `U`, `L`, `W Q`, `M B P`, `F V`,
+`Rest`, `C D G K N R S Th Y Z`.
+Cioe' l'interfaccia **chiede gia'** l'associazione fonema→disegno che Franco
+vuole salvare, e poi **la dimentica**, ogni volta, per ogni shot. Il MouthSet
+non e' una struttura nuova da inventare: e' **dare una casa a un dato che il
+programma gia' raccoglie e butta via**.
+
+#### Dove sta il dato: un SIDECAR accanto al file di livello
+Non dentro il livello. Motivi, in ordine di peso:
+1. **Viaggia con la cosa che l'animatore importa davvero.** Franco ha deciso che
+   il lipsync si prepara in Ztoryc e si applica **dopo, altrove**, quando
+   l'animatore importa la sotto-scena del personaggio: il dato deve stare
+   attaccato al livello, non al progetto Ztoryc che l'animatore non ha.
+2. **Non tocca il formato del livello**, quindi Tahoma2D continua ad aprirlo.
+3. La sua **esistenza dichiara** che quel livello contiene le bocche — che e'
+   esattamente il «stabilire che il tal livello contiene le bocche».
+
+Contenuto proposto (XML, come il `.ztoryc`):
+- il **personaggio** (uuid dell'asset + nome, per ritrovarlo dopo un rename);
+- una lista di **MouthSet**, ognuno con: nome, **vista** (frontale/profilo/3-4),
+  **espressione** (felice/triste), **variante** (bocca in su / in giu');
+- ogni set = i **dieci slot** → un `TFrameId` del livello.
+
+#### Conseguenza: il popup di Rhubarb non serve piu'
+Con personaggio + set scelto, l'associazione e' gia' nota. Il pannello resta per
+il caso in cui le bocche sono disegnate per quello shot, ma per il cutout da
+libreria diventa una scelta a due voci: **quale personaggio, quale set.**
+
+⚠️ **TRAPPOLA DA NON SCOPRIRE DOPO**: l'export che copia gli asset deve copiare
+**anche il sidecar**, o il personaggio arriva all'animatore con le bocche e
+senza le istruzioni per usarle. E' lo stesso genere di dimenticanza dei binari
+helper `lzocompress` fuori dal bundle.
+
+---
+
+### 🎚️ LE FINEZZE DEL LIPSYNC — perche' funzionano (spiegato a Franco 2026-08-15)
+
+Valgono **anche sull'uscita di Rhubarb**: non aspettano Whisper, e sono il pezzo
+col miglior rapporto sforzo/risultato.
+
+**1. Minimo due fotogrammi per viseme (a 24 fps).** Non e' una regola di
+software, e' percezione: una bocca tenuta UN fotogramma non viene letta come una
+forma ma come uno sfarfallio. L'occhio ha bisogno di circa 1/12 di secondo.
+Applicazione: i segmenti troppo corti devono sparire, ma i due modi **non sono
+equivalenti** — *allungarlo* rubando al vicino sposta il tempismo, *buttarlo*
+perde un suono. Regola: se e' uguale a un vicino si fondono (gratis); se e'
+diverso si butta **il piu' debole visivamente** — la chiusura M/B/P e le
+aperture larghe vincono sul gruppo neutro `C D G K N R S Th Y Z`, che e' gia'
+quasi una posa di riposo.
+
+**2. Anticipare M, B, P di 1-2 fotogrammi.** Non e' un trucco, e' fisiologia:
+per fare /m/ /b/ /p/ **le labbra devono essere GIA' chiuse** — il suono E'
+l'apertura, lo scoppio che le separa. Quindi la marca temporale segna il momento
+in cui le labbra **si aprono**, non quello in cui si chiudono. Mettere la bocca
+chiusa sul fotogramma del suono e' essere in ritardo di 1-2 fotogrammi, ed e'
+precisamente cio' che fa sembrare *doppiato* un lipsync in cui tutto il resto e'
+giusto.
+
+**3. ⚠️ Le due regole LITIGANO, ed e' qui che si sbaglia.** Anticipare la
+bilabiale accorcia il viseme precedente, magari sotto il minimo; e il minimo,
+applicato dopo, se lo rimangia. Ordine giusto: **prima anticipare, poi imporre
+il minimo**, e trattare la chiusura come **PROTETTA** — mai lei quella accorciata
+o buttata. Altrimenti la regola che corregge l'errore piu' visibile finisce
+mangiata da quella che corregge il meno visibile.
+
+**4.** I numeri vanno espressi **in tempo, non in fotogrammi** (2 frame a 24 fps
+= 1/12 s; a 12 fps sono il doppio) e messi **su uno slider subito** — lezione
+gia' pagata col disco di articolazione.
+
+---
+
+### 🔌 WHISPER + ESPEAK-NG — come entrano
+Come **processi separati**, come Rhubarb e ffmpeg lo sono gia'. Non e'
+un'analogia: **`thirdparty.cpp` ha gia' la macchina** (`checkRhubarb()`,
+`autodetectRhubarb()`, percorso in preferenze con ricerca automatica) — i due
+nuovi si infilano nello stesso schema. Il confine di processo e' anche cio' che
+tiene pulita la licenza GPL-3 di espeak-ng.
+
+Catena, **per personaggio**:
+```
+traccia audio del personaggio + le sue battute (testo che abbiamo gia')
+  → whisper.cpp   parole con inizio/fine   ← ALLINEAMENTO, non riconoscimento
+  → espeak-ng     parola → sequenza di fonemi
+  → distribuzione dei fonemi nella finestra della parola
+  → fonema → viseme (i 10 slot che il pannello ha gia')
+  → le finezze qui sopra
+  → fotogrammi → TXshSoundTextColumn (una per personaggio)
+```
+❓ Le opzioni esatte da riga di comando vanno verificate sulla versione che si
+imballa: non sono state confermate.
+
+---
+
 ### 📦 EXPORT COMPLETO — gli asset linkati a file veri (idea di Franco, 2026-08-14)
 
 *«Se dal production tracker gli asset fossero linkati a dei file reali, si
