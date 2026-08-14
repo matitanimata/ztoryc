@@ -318,6 +318,8 @@ public:
   bool getFfmpegMultiThread() const { return getBoolValue(ffmpegMultiThread); }
   QString getRhubarbPath() const { return getStringValue(rhubarbPath); }
   int getRhubarbTimeout() { return getIntValue(rhubarbTimeout); }
+  bool isLipSyncPhonetic() const { return getBoolValue(lipSyncPhonetic); }
+  void setLipSyncPhonetic(bool on) { setValue(lipSyncPhonetic, on); }
 
   // Drawing  tab
   QString getDefRasterFormat() const { return getStringValue(DefRasterFormat); }

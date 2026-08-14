@@ -89,6 +89,11 @@ enum PreferencesItemId {
   ffmpegMultiThread,
   rhubarbPath,
   rhubarbTimeout,
+  // Lip sync: true = Rhubarb's phonetic recognizer, false = PocketSphinx.
+  // Remembered because the choice belongs to the production's language, not to
+  // the single run: PocketSphinx only knows ENGLISH words, so on any other
+  // language it was quietly trying to recognise English in Italian audio.
+  lipSyncPhonetic,
 
   //----------
   // Drawing

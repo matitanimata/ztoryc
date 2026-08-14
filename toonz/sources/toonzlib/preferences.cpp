@@ -590,6 +590,10 @@ void Preferences::definePreferenceItems() {
   define(rhubarbPath, "rhubarbPath", QMetaType::QString, "");
   define(rhubarbTimeout, "rhubarbTimeout", QMetaType::Int, 0, 0,
          std::numeric_limits<int>::max());
+  // Default false = PocketSphinx, i.e. exactly what every existing install
+  // already does. Switching the default would silently change the result for
+  // English productions.
+  define(lipSyncPhonetic, "lipSyncPhonetic", QMetaType::Bool, false);
 
   // Drawing
   define(DefRasterFormat, "DefRasterFormat", QMetaType::QString, "png");

@@ -718,7 +718,38 @@ importati come sotto-scene.»*
 file, riscrive i percorsi, salva le sotto-scene). Manca:
 1. **un percorso file su `Asset`** + il modo di assegnarlo (sfoglia, o dedotto
    dalla struttura cartelle di produzione, o da Kitsu);
-2. **quali asset servono a quale shot** — relazione shot↔asset;
+2. ~~**quali asset servono a quale shot**~~ → **NON VA INVENTATA: e' il
+   BREAKDOWN di Kitsu** (segnalato da Franco, contratto verificato sull'istanza
+   locale il 2026-08-14). Kitsu lo chiama *casting*.
+
+   **Dato**: tabella `entity_link` — `entity_in_id` = lo SHOT,
+   `entity_out_id` = l'ASSET, piu' `nb_occurences`, `label` (stringa libera) e
+   un `data` jsonb. Nell'istanza di Franco ci sono **53 link** veri: p.es. lo
+   shot `boh` usa `cittaIngranaggio` (Environment), `veicolo`, `macchina`,
+   `piazza`, `parco`, con label «animate».
+
+   **API**:
+   - `GET /api/data/projects/<project_id>/entities/<entity_id>/casting`
+     → array di `{asset_id, asset_name, asset_type_name, ready_for,
+     episode_id, preview_file_id, nb_occurences, label, is_shared, project_id}`.
+     Comodo: **`asset_type_name` arriva gia' qui**, non serve risolverlo a parte.
+   - `PUT` sullo stesso URL, corpo = array di `{asset_id, nb_occurences, label}`.
+   - Letture in blocco (da preferire, ora che ci leghiamo a un episodio):
+     `/data/projects/<id>/episodes/<episode_id>/sequences/all/casting`,
+     `/data/projects/<id>/sequences/<sequence_id>/casting`,
+     `/data/projects/<id>/episodes/casting`.
+
+   ⚠️ **IL PUT SOSTITUISCE TUTTO IL CASTING DELLO SHOT.** In
+   `breakdown_service.update_casting()` c'e'
+   `entity.update({"entities_out": [], "nb_entities_out": 0})` e poi ricrea i
+   link dall'array ricevuto. Quindi **mandare una lista parziale CANCELLA il
+   resto**: non e' un merge. E' la trappola numero uno di questa sincronia.
+
+   **Nel tracker**: una **pagina Breakdown** (idea di Franco), righe = shot,
+   con la lista degli asset necessari. Nel modello: shot → lista di
+   (uuid asset, nb_occurences, label).
+
+3. **un percorso file su `Asset`** — vedi punto 1 qui sopra;
 3. il passo che li **piazza** nello shot: livelli caricati nel level set ed
    esposti in colonna, personaggi caricati come **sotto-scene**.
 
@@ -737,10 +768,16 @@ su cui questa feature poggia: meglio saperlo prima.
   chiama «Dialogue language», e' sempre visibile quando Rhubarb gira, e la
   scelta si ricorda. Corretto anche un confronto su `currentText()` che si
   sarebbe rotto in ogni build tradotta.
-- ⏳ **Pulsante «From storyboard»**: **PROVVISORIO**. Legge il dialogo **senza
-  sapere chi parla**, cioe' gli manca esattamente il perno del progetto qui
-  sopra. Oggi funziona ed e' meglio che incollare a mano, ma va sostituito dal
-  dialogo per personaggio.
+- 🗑️ **Pulsante «From storyboard»: TOLTO** su decisione di Franco (*«visto che
+  non serve lo toglierei»*), il giorno stesso in cui l'avevo scritto. Leggeva il
+  dialogo **senza sapere chi parla**, cioe' gli mancava il perno del progetto qui
+  sopra: sarebbe rimasto in giro come scorciatoia da disfare. Il suo posto lo
+  prende il dialogo per personaggio.
+  *(Resta annotato il modo per risalire allo shot corrente, se un domani
+  servisse: confrontare la sotto-scena aperta — `ChildStack::getXsheet()` —
+  con il `TXshChildLevel` delle celle delle colonne del top xsheet. La COLONNA
+  sta in `ChildStack::AncestorNode::m_col` ma non ha accessori pubblici, e
+  `childstack.h` e' core condiviso con Tahoma2D.)*
 3. **Deformatori raster** ispirati a Krita ma **riscritti dai paper** (Krita e'
    GPL): MLS per il warp, Mean Value Coordinates per la cage.
 4. **Libreria di rig riusabili**.

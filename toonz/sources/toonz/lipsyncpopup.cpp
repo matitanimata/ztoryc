@@ -26,6 +26,7 @@
 #include "toutputproperties.h"
 #include "toonz/tproject.h"
 #include "thirdparty.h"
+#include "toonz/preferences.h"
 
 // TnzCore includes
 #include "filebrowsermodel.h"
@@ -241,13 +242,25 @@ LipSyncPopup::LipSyncPopup()
   m_startAt     = new DVGui::IntLineEdit(this, 0);
   m_restToEnd   = new QCheckBox(tr("Extend Rest Drawing to End Marker"), this);
 
-  m_recognizerLabel = new QLabel(tr("Recognizer"));
+  // «Recognizer» said nothing about the only thing that matters here: one of
+  // the two options understands ENGLISH WORDS and the other doesn't understand
+  // words at all. Someone syncing Italian had no way to know the default was
+  // trying to hear English in their audio.
+  m_recognizerLabel = new QLabel(tr("Dialogue language"));
   m_recognizer      = new QComboBox(this);
-  m_recognizer->addItem("PocketSphinx (English)");
-  m_recognizer->addItem("Phonetic");
-
-  m_recognizerLabel->hide();
-  m_recognizer->hide();
+  m_recognizer->addItem(tr("English (word recognition)"));
+  m_recognizer->addItem(tr("Other language (phonetic)"));
+  m_recognizer->setToolTip(
+      tr("PocketSphinx recognises English words only. For any other language "
+         "pick Phonetic: it reads sounds instead of words.\n"
+         "Either way, filling in the script below improves the result a lot."));
+  // Remembered: the language is a property of the production, not of the run.
+  m_recognizer->setCurrentIndex(
+      Preferences::instance()->isLipSyncPhonetic() ? 1 : 0);
+  connect(m_recognizer, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [](int idx) {
+            Preferences::instance()->setLipSyncPhonetic(idx == 1);
+          });
 
   QImage placeHolder(160, 90, QImage::Format_ARGB32);
   placeHolder.fill(Qt::white);
@@ -520,15 +533,15 @@ void LipSyncPopup::setPage(int index) {
     if (m_soundLevels->currentIndex() < m_soundLevels->count() - 1) {
       m_insertAtLabel->hide();
       m_startAt->hide();
-      m_recognizerLabel->show();
-      m_recognizer->show();
     }
     else {
       m_insertAtLabel->show();
       m_startAt->show();
-      m_recognizerLabel->hide();
-      m_recognizer->hide();
     }
+    // Pagina 0 = si analizza l'audio, quindi la lingua serve sempre.
+    // (Sulla pagina 1 si applica un .dat gia' pronto: li' resta nascosta.)
+    m_recognizerLabel->show();
+    m_recognizer->show();
   }
 }
 
@@ -608,15 +621,16 @@ void LipSyncPopup::refreshSoundLevels() {
   if (m_soundLevels->currentIndex() < m_soundLevels->count() - 1) {
     m_insertAtLabel->hide();
     m_startAt->hide();
-    m_recognizerLabel->show();
-    m_recognizer->show();
   }
   else {
     m_insertAtLabel->show();
     m_startAt->show();
-    m_recognizerLabel->hide();
-    m_recognizer->hide();
   }
+  // La lingua vale in ENTRAMBI i rami: Rhubarb analizza sia la colonna sonora
+  // sia il file caricato. Nascondendola sul file si toglieva proprio dove
+  // serve — e' li' che si carica un wav non inglese.
+  m_recognizerLabel->show();
+  m_recognizer->show();
 }
 
 //-----------------------------------------------------------------------------
@@ -762,7 +776,9 @@ void LipSyncPopup::runRhubarb() {
                                 ->getFrameRate());
   args << "--datFrameRate" << QString::number(frameRate) << "--machineReadable";
 
-  if (m_recognizer->currentText() == "Phonetic")
+  // Index, not the label: the label is translated, so comparing it to the
+  // literal "Phonetic" silently stopped working in any localised build.
+  if (m_recognizer->currentIndex() == 1)
     args << "-r"
          << "phonetic";
 
@@ -814,15 +830,16 @@ void LipSyncPopup::onLevelChanged(int index) {
   if (m_soundLevels->currentIndex() < m_soundLevels->count() - 1) {
     m_insertAtLabel->hide();
     m_startAt->hide();
-    m_recognizerLabel->show();
-    m_recognizer->show();
   }
   else {
     m_insertAtLabel->show();
     m_startAt->show();
-    m_recognizerLabel->hide();
-    m_recognizer->hide();
   }
+  // La lingua vale in ENTRAMBI i rami: Rhubarb analizza sia la colonna sonora
+  // sia il file caricato. Nascondendola sul file si toglieva proprio dove
+  // serve — e' li' che si carica un wav non inglese.
+  m_recognizerLabel->show();
+  m_recognizer->show();
 }
 
 //-----------------------------------------------------------------------------
