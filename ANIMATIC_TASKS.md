@@ -541,8 +541,30 @@ nella sub-scene corretta.
    con **un solo shot**. Gli asset entrati per errore invece sono **chiusi**:
    rimossi a mano da Franco, e il filtro impedisce che ne arrivino altri —
    **non proporre un ripulitore automatico.**
-2. **Lipsync davvero automatico** — recap delle migliorie possibili fatto il
-   2026-08-14, vedi la voce dedicata piu' sotto.
+2. **Lipsync davvero automatico.** Recap del 2026-08-14 piu' sotto.
+   ✅ **WHISPER E' DECISO**, non e' piu' un'opzione da valutare. Franco: *«whisper
+   lo voglio assolutamente visto che sara' utile anche per l'inglese, credo fara'
+   la differenza in ogni situazione»*. Ha ragione anche sull'inglese: PocketSphinx
+   e' tecnologia dei primi anni 2000, Whisper e' migliore in assoluto, non solo
+   sulle lingue che l'altro non copre.
+
+   Vincoli gia' accertati, da non riscoprire:
+   - **Usare `whisper.cpp`** (C/C++, licenza **MIT**, nessuna dipendenza Python,
+     Metal su Apple Silicon). La versione originale in Python non e'
+     distribuibile dentro il bundle.
+   - ⚠️ **espeak-ng e' GPL-3.0.** Serve per testo→fonemi, ma NON va linkato:
+     va invocato come **processo separato**, esattamente come gia' si fa con
+     Rhubarb e ffmpeg. Linkarlo contaminerebbe la BSD di Ztoryc — stessa
+     trappola gia' incontrata con Krita e AnimeEffects.
+   - I **timestamp per parola** non sono nativi in Whisper: si ricavano
+     allineando i pesi di attenzione, ed e' la parte meno solida della catena.
+   - Whisper **inventa testo** su silenzio e rumore. In un tool di lipsync, dove
+     le pause contano, va gestito esplicitamente.
+   - Decisione aperta: i file del modello pesano da centinaia di MB a qualche GB
+     — scaricarli al primo uso o metterli nel bundle?
+   - Primo passo comunque indipendente da Whisper: collegare `PanelData::dialog`
+     all'argomento `-d` di Rhubarb. Il copione ce l'abbiamo gia' scritto, e
+     nessun riconoscitore batte il testo vero.
 3. **Deformatori raster** ispirati a Krita ma **riscritti dai paper** (Krita e'
    GPL): MLS per il warp, Mean Value Coordinates per la cage.
 4. **Libreria di rig riusabili**.
