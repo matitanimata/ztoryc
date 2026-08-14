@@ -272,7 +272,8 @@ public:
   Imp();
 
   void initialize(const TTextureMeshP &mesh);
-  void compile(const std::vector<PlasticHandle> &handles, int *faceHints);
+  void compile(const std::vector<PlasticHandle> &handles, int *faceHints,
+               int meshIdx);
   void deform(const TPointD *dstHandles, double *dstVerticesCoords);
 
   void copyOriginals(double *dstVerticesCoords);
@@ -352,7 +353,7 @@ void PlasticDeformer::Imp::initialize(const TTextureMeshP &mesh) {
 //-------------------------------------------------------------------------------------------
 
 void PlasticDeformer::Imp::compile(const std::vector<PlasticHandle> &handles,
-                                   int *faceHints) {
+                                   int *faceHints, int meshIdx) {
   assert(m_mesh);
 
   m_handles.clear(), m_handles.reserve(handles.size());
@@ -363,6 +364,13 @@ void PlasticDeformer::Imp::compile(const std::vector<PlasticHandle> &handles,
   // Build the linear constraints raising from the mesh-handles pairing
   int h, hCount = handles.size();
   for (h = 0; h < hCount; ++h) {
+    // Punto di comando che appartiene a un'altra mesh: si salta come se fosse
+    // fuori dalla geometria. constr.m_h conserva l'indice ORIGINALE, quindi
+    // saltare non sposta niente per gli altri.
+    if (meshIdx >= 0 && handles[h].m_meshIdx >= 0 &&
+        handles[h].m_meshIdx != meshIdx)
+      continue;
+
     int localFaceIdx = -1, &faceIdx = faceHints ? faceHints[h] : localFaceIdx;
 
     ::buildTriangularCoordinates(*m_mesh, faceIdx, handles[h].m_pos,
@@ -882,8 +890,8 @@ void PlasticDeformer::initialize(const TTextureMeshP &mesh) {
 //---------------------------------------------------------------------------------
 
 bool PlasticDeformer::compile(const std::vector<PlasticHandle> &handles,
-                              int *faceHints) {
-  m_imp->compile(handles, faceHints);
+                              int *faceHints, int meshIdx) {
+  m_imp->compile(handles, faceHints, meshIdx);
   return compiled();
 }
 

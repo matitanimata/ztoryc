@@ -59,10 +59,20 @@ struct PlasticHandle {
 
   double m_so;  //!< Local faces stacking order
 
+  //! ZtoRig — mesh a cui questo punto di comando appartiene, -1 = tutte.
+  //!
+  //! I punti dello scheletro valgono per tutte le mesh, ed e' voluto: un
+  //! vertice guida ogni pezzo che lo contiene. Ma la corona di un disco di
+  //! articolazione e' una costrizione RIGIDA su otto punti, e se cade dentro un
+  //! pezzo sovrapposto — il braccio sopra il corpo — inchioda anche quello alla
+  //! rotazione del gomito, e lo distorce. Quindi la corona dichiara il suo
+  //! pezzo, e sugli altri viene ignorata.
+  int m_meshIdx;
+
 public:
-  PlasticHandle() : m_interpolate(true), m_so(0.0) {}
+  PlasticHandle() : m_interpolate(true), m_so(0.0), m_meshIdx(-1) {}
   explicit PlasticHandle(const TPointD &pos)
-      : m_pos(pos), m_interpolate(true), m_so(0.0) {}
+      : m_pos(pos), m_interpolate(true), m_so(0.0), m_meshIdx(-1) {}
   ~PlasticHandle() {}
 };
 

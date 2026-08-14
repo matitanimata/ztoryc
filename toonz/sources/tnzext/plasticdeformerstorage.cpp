@@ -159,11 +159,25 @@ const int l_jointDiscPoints = 8;
 //! Distanza dal punto \p p allo spigolo di CONTORNO piu' vicino, cioe' al bordo
 //! del disegno. Uno spigolo e' di contorno quando tocca una faccia sola.
 //! Torna -1 se la mesh non ne ha (non dovrebbe succedere).
-double distanceToMeshBoundary(const TMeshImage *meshImage, const TPointD &p,
-                              const TAffine &toMeshSpace) {
+//! Indice del pezzo che CONTIENE \p p, o -1. Un giunto appartiene al pezzo in
+//! cui sta: e' quello, e solo quello, che il suo disco deve irrigidire.
+int meshContaining(const TMeshImage *meshImage, const TPointD &p,
+                   const TAffine &toMeshSpace) {
+  const TAffine inv = toMeshSpace.inv();
+  const std::vector<TTextureMeshP> &meshes = meshImage->meshes();
+  for (int m = 0; m != (int)meshes.size(); ++m)
+    if (meshes[m]->faceContaining(inv * p) >= 0) return m;
+  return -1;
+}
+
+//----------------------------------------------------------------------------------
+
+double distanceToMeshBoundary(const TMeshImage *meshImage, int meshIdx,
+                              const TPointD &p, const TAffine &toMeshSpace) {
   double best = -1.0;
 
-  for (const TTextureMeshP &mesh : meshImage->meshes()) {
+  {
+    const TTextureMeshP &mesh = meshImage->meshes()[meshIdx];
     for (int e = 0; e < mesh->edgesCount(); ++e) {
       if (!mesh->edge(e).facesCount()) continue;
       if (mesh->edge(e).facesCount() != 1) continue;  // interno: non e' bordo
@@ -256,7 +270,15 @@ void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
         if (!::jointBisector(*skeleton, v, dir)) continue;
 
         const TPointD c = deformationAffine * skeleton->vertex(v).P();
-        const double r  = ::distanceToMeshBoundary(meshImage, c, deformationAffine);
+
+        // Il pezzo a cui il giunto appartiene: quello che lo CONTIENE. Senza
+        // questo, la corona finiva dentro ogni pezzo sovrapposto — il braccio
+        // sopra il corpo — e inchiodava anche quello alla rotazione del gomito.
+        const int ownerMesh = ::meshContaining(meshImage, c, deformationAffine);
+        if (ownerMesh < 0) continue;  // giunto fuori dal disegno: niente disco
+
+        const double r =
+            ::distanceToMeshBoundary(meshImage, ownerMesh, c, deformationAffine);
         if (r <= 0.0) continue;
 
         DataGroup::JointDisc disc;
@@ -271,8 +293,9 @@ void processHandles(DataGroup *group, double frame, const TMeshImage *meshImage,
 
         for (int i = 0; i != l_jointDiscPoints; ++i) {
           const double a = disc.m_restAngle + 2.0 * M_PI * i / l_jointDiscPoints;
-          group->m_handles.push_back(
-              PlasticHandle(c + TPointD(r * cos(a), r * sin(a))));
+          PlasticHandle handle(c + TPointD(r * cos(a), r * sin(a)));
+          handle.m_meshIdx = ownerMesh;  // vale SOLO sul pezzo del giunto
+          group->m_handles.push_back(handle);
         }
         group->m_jointDiscs.push_back(disc);
       }
@@ -557,7 +580,7 @@ void processMesh(DataGroup *group, double frame, const TMeshImage *meshImage,
         data.m_deformer.initialize(mesh);
         data.m_deformer.compile(
             group->m_handles,
-            data.m_faceHints.empty() ? 0 : &data.m_faceHints.front());
+            data.m_faceHints.empty() ? 0 : &data.m_faceHints.front(), m);
         data.m_deformer.releaseInitializedData();
       }
 

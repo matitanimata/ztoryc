@@ -77,7 +77,12 @@ returned with the correct face indices containing each handle.
 fail to process handle configurations that \a cannot result in suitable
 deformations (eg, if more than 3 handles lie in the same mesh face).
 */
-  bool compile(const std::vector<PlasticHandle> &handles, int *faceHints = 0);
+  //! \p meshIdx: indice di QUESTA mesh nell'immagine. I punti di comando che
+  //! dichiarano un'altra mesh (PlasticHandle::m_meshIdx) vengono ignorati —
+  //! serve alle corone dei dischi ZtoRig, che devono agire solo sul pezzo del
+  //! loro giunto. -1 (il default) = nessun filtro, comportamento di sempre.
+  bool compile(const std::vector<PlasticHandle> &handles, int *faceHints = 0,
+               int meshIdx = -1);
 
   /*!
 Applies the deformation specified with input handles deformed positions,
