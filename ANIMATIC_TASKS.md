@@ -541,7 +541,27 @@ nella sub-scene corretta.
    con **un solo shot**. Gli asset entrati per errore invece sono **chiusi**:
    rimossi a mano da Franco, e il filtro impedisce che ne arrivino altri —
    **non proporre un ripulitore automatico.**
-2. **Lipsync davvero automatico.** Recap del 2026-08-14 piu' sotto.
+2. ⭐ **LIPSYNC — E' QUI CHE SI RIPRENDE (stato al 2026-08-15b).**
+   **PROSSIMO PASSO: L'ALLINEATORE FORZATO.** Franco: *«dobbiamo arrivare a un
+   sistema preciso, deve funzionare subito senza doverci rimettere le mani,
+   altrimenti non ha senso»* — quindi NIENTE pezze sui tempi approssimati.
+   Motivo MISURATO: i tempi per parola di whisper.cpp sono erratici, e il
+   modello INTERO li da' PEGGIORI del quantizzato (parole a durata zero, code
+   oltre la fine dell'audio). **Non si risolve con un modello piu' grande.**
+   Gia' provato e inutile: `-dtw`. Gia' verificato giusto: l'inviluppo
+   complessivo — sbaglia la distribuzione DENTRO. Serve un modello **CTC** che
+   riascolti l'audio sapendo gia' le parole (2° stadio di WhisperX).
+
+   **Gia' fatto, non rifare**: chi parla dal testo (evidenziazione + alias,
+   collaudato da Franco), whisper.cpp cablato col modello nel bundle, il
+   riallineamento parole↔copione (9 test sui dati veri), il comando nel menu
+   **Scene** (NON esiste un menu «Xsheet»).
+
+   **Dopo l'allineatore**: le finezze (minimo 2 frame, anticipo bilabiali), i
+   FONEMI al posto delle parole (serve espeak-ng), il Rest scritto per
+   complemento, e spostare la generazione delle colonne all'EXPORT.
+
+   Recap originale del 2026-08-14 piu' sotto.
    ✅ **WHISPER E' DECISO**, non e' piu' un'opzione da valutare. Franco: *«whisper
    lo voglio assolutamente visto che sara' utile anche per l'inglese, credo fara'
    la differenza in ogni situazione»*. Ha ragione anche sull'inglese: PocketSphinx
