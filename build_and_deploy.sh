@@ -241,40 +241,24 @@ if [[ ! -f "$WHISPER_DST/$WHISPER_MODEL_NAME" ]]; then
     echo "  ⚠ modello non trovato in $WHISPER_MODELS — lip sync via Whisper non disponibile"
     echo "    scaricalo da https://huggingface.co/ggerganov/whisper.cpp"
   fi
-  if [[ -f "$(brew --prefix 2>/dev/null)/bin/whisper-cli" ]]; then
-    cp "$(brew --prefix)/bin/whisper-cli" "$WHISPER_DST/"
-    # ⚠ Il binario di Homebrew cerca libggml in /opt/homebrew, PERCORSO
-    # ASSOLUTO: copiarlo da solo produce un eseguibile che gira su questa
-    # macchina e muore su quella di chiunque altro. E' l'incidente dei DMG con
-    # protobuf, «build verde e app morta». Quindi si copiano le dylib e si
-    # riscrivono i percorsi su @loader_path.
-    for lib in libwhisper.1.dylib libggml.0.dylib libggml-base.0.dylib \
-               libggml-cpu.0.dylib libggml-metal.0.dylib libggml-blas.0.dylib; do
-      for d in "$(brew --prefix)/lib" "$(brew --prefix)/opt/ggml/lib" \
-               "$(brew --prefix)/opt/whisper-cpp/lib"; do
-        [[ -f "$d/$lib" && ! -f "$WHISPER_DST/$lib" ]] && cp "$d/$lib" "$WHISPER_DST/" && break
-      done
-    done
-    chmod u+w "$WHISPER_DST"/*.dylib "$WHISPER_DST/whisper-cli" 2>/dev/null || true
-    # Riscrive ogni riferimento assoluto a Homebrew in @loader_path, sia
-    # nell'eseguibile sia FRA le dylib (che si cercano fra loro).
-    for bin in "$WHISPER_DST/whisper-cli" "$WHISPER_DST"/*.dylib; do
-      [[ -f "$bin" ]] || continue
-      otool -L "$bin" 2>/dev/null | awk 'NR>1{print $1}' | grep "^/opt/homebrew\|^@rpath" | while read -r ref; do
-        base=$(basename "$ref")
-        [[ -f "$WHISPER_DST/$base" ]] && install_name_tool -change "$ref" "@loader_path/$base" "$bin" 2>/dev/null
-      done
-      install_name_tool -add_rpath "@loader_path" "$bin" 2>/dev/null || true
-    done
-    # Verifica: se resta un solo percorso Homebrew, il bundle e' rotto altrove.
-    if otool -L "$WHISPER_DST/whisper-cli" | grep -q "/opt/homebrew"; then
-      echo "  ⚠ whisper-cli ha ANCORA riferimenti a /opt/homebrew — non funzionera' fuori da questa macchina:"
-      otool -L "$WHISPER_DST/whisper-cli" | grep "/opt/homebrew" | sed 's/^/      /'
-    else
-      echo "  whisper-cli copiato da Homebrew, con le sue dylib e i percorsi riscritti"
-    fi
+  # ⚠️ NON si imballa il binario di Homebrew, ed e' una scoperta pagata:
+  # il percorso in cui ggml cerca i suoi backend (BLAS, Metal, CPU) e'
+  # COMPILATO DENTRO la libreria — /opt/homebrew/Cellar/ggml/<versione>/libexec —
+  # e non e' un rpath che install_name_tool possa riscrivere. GGML_BACKEND_PATH
+  # non lo sostituisce, aggiunge soltanto, e la versione baked vince. Verificato
+  # il 2026-08-15: copiando binario, dylib e backend, whisper-cli continuava a
+  # caricarli da Homebrew. Sulla macchina di uno sviluppatore funziona; su
+  # quella di un utente resterebbe senza backend, e macOS non direbbe niente.
+  #
+  # La strada per la release e' compilare whisper.cpp in CI (e' MIT, ci mette
+  # pochi minuti) e mettere i backend dove decidiamo noi.
+  # Fino ad allora l'app lo cerca nel sistema: autodetectWhisper() guarda anche
+  # /opt/homebrew/bin, che NON e' nel PATH dei processi lanciati dal Finder.
+  if command -v whisper-cli > /dev/null 2>&1; then
+    echo "  whisper-cli presente nel sistema: verra' usato quello"
   else
-    echo "  ⚠ whisper-cli non trovato — verra' cercato nel sistema all'avvio"
+    echo "  ⚠ whisper-cli non installato — il lip sync via Whisper non partira'"
+    echo "    brew install whisper-cpp"
   fi
 fi
 
@@ -326,7 +310,7 @@ fi
 # nasce gia' invalida perche' i suoi pezzi cambiano dopo.
 if [[ -d "$APP/Contents/Resources/whisper" ]]; then
   xattr -cr "$APP/Contents/Resources/whisper" 2>/dev/null || true
-  for f in "$APP/Contents/Resources/whisper/"*.dylib; do
+  for f in "$APP/Contents/Resources/whisper/"*.dylib(N) "$APP/Contents/Resources/whisper/"*.so(N); do
     [[ -f "$f" ]] && codesign --force --sign - "$f" 2>/dev/null
   done
   codesign --force --sign - "$APP/Contents/Resources/whisper/whisper-cli" 2>/dev/null
