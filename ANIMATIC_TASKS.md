@@ -503,9 +503,15 @@ nella sub-scene corretta.
   ricordavo, forse possiamo lasciare l'ik com'era»*. Branch
   `feature/ik-pole-vector` non mergiato. Non riproporre annealing ne' pole
   vector senza un sintomo nuovo.
-- **Otter (il secondo fork)** (2026-08-13): *«ci sto ancora ragionando, e' un
-  problema che possiamo affrontare in seguito»*. Vedi
-  `COMPETITIVE_ROADMAP.md` sez. 8.
+- **Otter (il secondo fork)** — ⚠️ **NON PIU' SOSPESO, ma nemmeno da fare
+  adesso** (Franco, 2026-08-16): *«su Otter sono gia' praticamente convinto e
+  dobbiamo lavorare COME SE fosse gia' cosi', pero' non ho urgenza di metterlo
+  in atto subito»*. Sostituisce il «ci sto ancora ragionando» del 2026-08-13.
+  **Cosa vuol dire in pratica**: le scelte di progetto vanno prese tenendo
+  separati storyboard/animatic (Ztoryc) e character animation (ZtoRig,
+  deformatori, fisica, auto-shadow → Otter), senza pero' spendere tempo nella
+  separazione vera. Non proporre il fork come lavoro; non incrociare i due
+  mondi in modo che poi separarli costi. Vedi `COMPETITIVE_ROADMAP.md` sez. 8.
 - **Assistenti al disegno da OpenToonz** (2026-08-13): candidato misurato e
   registrato in `OPENTOONZ_PORT_CANDIDATES.md`, ma Franco ha scelto di passare
   prima al rig. Non e' il prossimo lavoro.
@@ -531,6 +537,76 @@ nella sub-scene corretta.
     la strada emersa dal disco parcheggiato (memoria
     `project_ztorig_joint_disc`).
 
+## 🔝 ORDINE DI PRIORITA' — rifatto da Franco il 2026-08-16
+
+> *«La mia priorità è chiudere il discorso character, mi serve poter usare il
+> nuovo lipsync, e vediamo se si riesce a creare un template di scheletro per
+> riutilizzare le animazioni. Il resto a questo punto è secondario mi pare.»*
+
+**A. CHIUDERE IL PERSONAGGIO** — e' questo il lavoro, il resto viene dopo.
+   1. **MouthSet**, perche' e' cio' che rende il lipsync USABILE: la catena
+      fonemi→colonne e' finita e collaudata, ma senza l'associazione
+      bocche↔fonemi salvata sul personaggio resta un elenco di sigle. Progetto
+      pronto nella sezione «IL PERSONAGGIO COME OGGETTO»: sidecar `.ztoryc` con
+      `role="character"`, riferimento per NOME DI LIVELLO + fotogramma.
+   2. **Libreria di pose + ritorno in libreria** — «pubblica in libreria» /
+      «prendi dalla libreria», con rifiuto se incompatibile e v2 se la struttura
+      diverge (decisione di Franco, vedi sezione «IL RITORNO IN LIBRERIA»).
+   3. **Template di scheletro con proporzioni standard, e compensazione**
+      (idea di Franco, 2026-08-16): *«creare un template di scheletro con delle
+      proporzioni standard; quando viene riadattato sul personaggio, facendo la
+      differenza dall'originale si dovrebbe riuscire a compensare le modifiche
+      in modo che le animazioni funzionino comunque»*. E' il **retargeting**, ed
+      e' la strada giusta.
+
+      💡 **E' economico, e si vede dalla struttura dei dati.** I delta di una
+      posa sono salvati per NOME DI VERTICE (`plasticskeletondeformation.h:289`)
+      e in **coordinate polari rispetto al padre** (`:139`), non in posizioni
+      assolute. Quindi si spezzano in tre nature con destini opposti:
+      - **ANGLE** — un angolo. 30° sono 30° su qualunque personaggio:
+        **si trasferisce invariato**, nessuna compensazione.
+      - **DISTANCE** — una lunghezza. E' **l'UNICO** che rompe cambiando
+        proporzioni, ed e' esattamente il limite dichiarato alla riga 330.
+      - **SO, PIN, PINTX/PINTY** — passano invariati.
+
+      La compensazione non e' quindi un motore di retargeting, e' **una
+      moltiplicazione su un parametro solo**:
+      ```
+      distanza_bersaglio = distanza_template × (riposo_bersaglio ÷ riposo_template)
+      ```
+
+      **Tre verifiche prima di progettare in grande**, in ordine di rischio:
+      1. i **nomi dei vertici** devono coincidere — il template e' prima di
+         tutto un ELENCO DI NOMI;
+      2. le **lunghezze a riposo** devono essere leggibili da entrambi gli
+         scheletri: cercando `restLength` non ho trovato un accessore pronto, va
+         verificato nel codice vero (potrebbe esserci con altro nome, o si
+         ricava dalle posizioni a riposo);
+      3. il rapporto va preso **PER OSSO, non globale**: un personaggio con
+         gambe lunghe e braccia corte con un fattore unico verrebbe peggio che
+         non compensando affatto.
+
+      ⚠️ **Limite onesto**: questo non salva una posa in cui la mano TOCCA il
+      fianco. Cambiando proporzioni il contatto si perde comunque, perche' il
+      vincolo era geometrico e non angolare. La scala completa sarebbe: angoli
+      gratis → distanze in proporzione → **contatti tenuti dai PIN** (che
+      esistono gia': `PIN/PINTX/PINTY`, «l'ancoraggio resta piantato anche sugli
+      intermedi»). I pin pero' sono la parte collaudata e messa in pausa: e' il
+      terzo pezzo naturale, non un lavoro da aprire adesso.
+
+**B. SECONDARIO da qui in poi** (era il Priority Order precedente):
+   - **Deformatori** (punto 3 sotto). Stimato il 2026-08-16 in **2-3 sessioni**
+     per il primo (Liquify, che serve a misurare l'impalcatura) e 1-2 per
+     ciascuno degli altri tre. ⚠️ Scoperta del 2026-08-16: il Plastic e' gia'
+     `bind(TTool::AllImages)`, quindi un deformatore ANIMABILE su tutti i tipi
+     di livello **esiste gia'** — il buco e' il ritocco DIRETTO, senza mesh ne'
+     rig. Nessuna sovrapposizione, l'inquadramento di Claudio era giusto.
+   - **Assistenti al disegno da OpenToonz** — Franco li ha ricordati il
+     2026-08-16 come ancora in sospeso. Restano sotto al blocco A.
+   - 2.5D Cartoon Models (ricerca), auto-shadow (per ultimo, sua indicazione).
+
+---
+
 **Cosa e' invece VIVO dal 2026-08-14 (ordine dato da Franco)**:
 1. ~~**Kitsu — legare il Production Tracker al singolo EPISODIO**~~ ✅ **FATTO
    il 2026-08-14** (`3775c1144`). Legame = coppia (progetto, episodio) per ID;
@@ -541,25 +617,74 @@ nella sub-scene corretta.
    con **un solo shot**. Gli asset entrati per errore invece sono **chiusi**:
    rimossi a mano da Franco, e il filtro impedisce che ne arrivino altri —
    **non proporre un ripulitore automatico.**
-2. ⭐ **LIPSYNC — E' QUI CHE SI RIPRENDE (stato al 2026-08-15b).**
-   **PROSSIMO PASSO: L'ALLINEATORE FORZATO.** Franco: *«dobbiamo arrivare a un
-   sistema preciso, deve funzionare subito senza doverci rimettere le mani,
-   altrimenti non ha senso»* — quindi NIENTE pezze sui tempi approssimati.
-   Motivo MISURATO: i tempi per parola di whisper.cpp sono erratici, e il
-   modello INTERO li da' PEGGIORI del quantizzato (parole a durata zero, code
-   oltre la fine dell'audio). **Non si risolve con un modello piu' grande.**
-   Gia' provato e inutile: `-dtw`. Gia' verificato giusto: l'inviluppo
-   complessivo — sbaglia la distribuzione DENTRO. Serve un modello **CTC** che
-   riascolti l'audio sapendo gia' le parole (2° stadio di WhisperX).
+2. ✅ **LIPSYNC — L'ALLINEATORE FORZATO E' FATTO (2026-08-16).**
+   **Vosk** ha sostituito Whisper nel ruolo di cronometro. Whisper resta per le
+   lingue senza modello e per il rilevamento automatico. Misurato sull'audio
+   vero di sh020 con riscontro sulle **fricative dello spettro** (la /s/ di
+   «que*s*to», la /f/ di «fa»: eventi fisici, non l'opinione di un altro
+   modello):
 
-   **Gia' fatto, non rifare**: chi parla dal testo (evidenziazione + alias,
-   collaudato da Franco), whisper.cpp cablato col modello nel bundle, il
-   riallineamento parole↔copione (9 test sui dati veri), il comando nel menu
-   **Scene** (NON esiste un menu «Xsheet»).
+   | | scarto medio | peggiore |
+   |---|---|---|
+   | **Vosk small it (48 MB)** | **10 ms — 0,2 fotogrammi** | 30 ms |
+   | Whisper base-q5_1 | 30 ms — 0,8 | 110 ms |
+   | Whisper + DTW | 191 ms — 4,8 | 400 ms |
 
-   **Dopo l'allineatore**: le finezze (minimo 2 frame, anticipo bilabiali), i
-   FONEMI al posto delle parole (serve espeak-ng), il Rest scritto per
-   complemento, e spostare la generazione delle colonne all'EXPORT.
+   Su 14 battute: Whisper 86 parole a durata ZERO su 263 e un'allucinazione
+   (108 parole, coda a 22 s oltre la fine); Vosk zero degenerazioni su 158.
+
+   ⚠️ **Correzione a quanto scritto il 2026-08-15**: `-dtw` non «non ha avuto
+   effetto» per la quantizzazione — **non era mai stato eseguito**, perche' il
+   flash attention e' attivo di default e lo disabilita stampando una riga nel
+   log. Acceso davvero (`-nfa`), PEGGIORA.
+
+   **La catena completa, com'e' adesso**:
+   `Vosk` dice QUANDO cade la parola (10 ms) → `espeak-ng --ipa` dice DI COSA e'
+   fatta (processo separato, GPL, mai linkato) → l'**ONDA** dice dove cade il
+   suono dentro la parola.
+
+   Fatto, in ordine di quanto e' costato scoprirlo:
+   - **Il centro delle vocali si aggancia ai massimi di energia** (idea di
+     Franco). Non pesare i fonemi con l'energia — provato e MISURATO inutile,
+     perche' campionava l'onda nella posizione indovinata, ed e' la posizione a
+     essere sbagliata. Vocali sul picco: da 4/13 a **10/13**.
+   - **L'accento di espeak e' durata, non punteggiatura.** `fˈatʃile`: la ˈ
+     sulla /a/. Lo scartavo coi separatori. Ora moltiplica il peso (×2,5
+     primario, ×1,5 secondario).
+   - **L'avanzo va un fotogramma alla volta a chi e' piu' sotto il proprio
+     peso**, non per arrotondamento: con 6 fonemi e 3 fotogrammi d'avanzo
+     l'arrotondamento ne dava al massimo uno a testa e la vocale accentata
+     restava al minimo come le altre.
+   - **Durata minima 2 fotogrammi imposta sulla COLONNA**, non parola per
+     parola, con prelievo **a cascata** (il vicino immediato spesso e' gia' al
+     minimo mentre c'e' spazio cinque celle piu' in la').
+   - **Mai fondere due bocche uguali e visibili**: togliere la /e/ fra la P di
+     «per» e la M di «me» sembra innocuo e fa leggere UNA tenuta dove devono
+     esserci due colpi.
+   - **Anticipo** 2 fotogrammi regolabile (Preferenze > Import/Export > Lip
+     Sync) **+1 sulle labiali**, solo sull'attacco.
+   - **Rest esplicito** nelle pause ≥ 2 fotogrammi; buchi piu' corti assorbiti
+     dalla cella precedente (una cella vuota TIENE il disegno prima, non chiude
+     la bocca).
+   - **Due colonne** per personaggio: prima le parole, poi le bocche.
+
+   🧪 **Il banco di prova sta in `reference/forced-align/`** e la verita' di
+   riscontro sono le **fricative dello spettro**, non un altro modello:
+   `check_align.py`, `sibilance.py`, `robustness.py`, `visemes.py`.
+
+   **Resta da fare**: spostare la generazione delle colonne all'EXPORT, e
+   imballare espeak-ng (oggi viene da Homebrew, come whisper-cli — se manca, le
+   colonne tornano a contenere le parole intere invece di fallire).
+
+   💡 **POSSIBILE SVILUPPO FUTURO — codici dei fonemi personalizzabili**
+   (Franco, 2026-08-16: *«i fonemi potremmo anche farli customizzabili, molto
+   spesso le produzioni hanno delle tavole con dei codici»* — poi: *«per adesso
+   lasciamo cosi', segniamocela come possibile implementazione futura»*).
+   Quando si riapre: i codici sono della **PRODUZIONE**, quindi vanno nel
+   progetto come gli alias dei personaggi, non nelle preferenze
+   dell'applicazione. Resta da chiarire se basta rinominare le dieci caselle o
+   se le tavole vere hanno un numero diverso di bocche — Franco si era offerto
+   di mostrarne una.
 
    Recap originale del 2026-08-14 piu' sotto.
    ✅ **WHISPER E' DECISO**, non e' piu' un'opzione da valutare. Franco: *«whisper
@@ -797,6 +922,132 @@ nella sub-scene corretta.
    - Primo passo comunque indipendente da Whisper: collegare `PanelData::dialog`
      all'argomento `-d` di Rhubarb. Il copione ce l'abbiamo gia' scritto, e
      nessun riconoscitore batte il testo vero.
+
+---
+
+### 🧍 IL PERSONAGGIO COME OGGETTO — com'e' fatto DAVVERO (rilevato 2026-08-16)
+
+> Franco ha fermato la progettazione del MouthSet: *«prima definiamo il
+> PERSONAGGIO»*, perche' e' lo stesso problema della libreria di rig riusabili e
+> farlo due volte non ha senso. Poi ha spiegato com'e' fatto oggi e ha indicato
+> gli esempi veri. Questa sezione e' OSSERVATA sul suo progetto
+> `2604_grottazzolina`, non immaginata.
+
+**Com'e' fatto un personaggio oggi (parole sue):** una **scena** che contiene il
+personaggio riggato; la mesh applicata a una **sotto-scena** con le varie parti;
+le **bocche di solito sono un livello a parte dentro la sotto-scena della
+testa** (che a volte sta insieme al corpo). Quando serve, si **importa come
+sotto-scena**.
+
+**Verificato nel progetto reale** (`scenes/LIB_*.tnz`, sette personaggi):
+- un personaggio = `scenes/LIB_NOME.tnz` + un PSD in `extras/LIB_NOME/`;
+- il PSD e' caricato **a gruppi**: ogni gruppo diventa un livello chiamato
+  `CH_nome#@N#group`. ⚠️ **I nomi sono NUMERATI, non descrittivi**: non esiste
+  convenzione che permetta di indovinare quale livello sia la bocca. Va indicato
+  a mano una volta, e ricordato. E' esattamente il sidecar che dice Franco.
+- accanto al PSD stanno i `.mesh` del rig (`sub.0007.mesh`…).
+
+⚠️ **IL PSD E' UN CASO, NON LA REGOLA** (correzione di Franco, 2026-08-16):
+*«il sidecar e' legato al livello della scena, non al psd, potrebbe essere anche
+un personaggio disegnato direttamente in ztoryc, vettoriale, smart raster o
+raster che sia»*. Quindi il MouthSet punta a **un LIVELLO della scena
+personaggio** — qualunque tipo, qualunque provenienza — e non va legato ne' al
+formato ne' al file d'origine. Il PSD a gruppi e' solo il modo in cui e' fatta
+questa produzione.
+
+🎯 **IL FATTO CHE DECIDE L'ARCHITETTURA**: importare il personaggio in uno shot
+**COPIA** i suoi file dentro `extras/<shot>/LIB_NOME/` (23 MB di PSD per ogni
+shot). Quindi:
+
+```
+percorso   +extras/LIB_GIORNALISTA/…   →  +extras/scsh010/LIB_GIORNALISTA/…   CAMBIA
+nome       CH_giornalista#@7#group     →  CH_giornalista#@7#group             RESTA
+```
+
+**Quindi il MouthSet NON va agganciato al percorso del file, ma al NOME DEL
+LIVELLO** (piu' il numero di fotogramma). Il nome sopravvive alla copia, il
+percorso no. Un sidecar messo accanto al PSD si romperebbe al primo import — o
+costringerebbe a inseguire le copie.
+
+🏠 **DOVE METTERLO: il sidecar `.ztoryc` ESISTE GIA'** accanto alle scene
+personaggio (`LIB_GIORNALISTA.ztoryc` c'e' davvero, scritto perche' la scena e'
+stata aperta in Ztoryc) e ha gia' un attributo **`role`**. Oggi i ruoli sono due,
+`"storyboard"` e `"shot"` (`ztorymodel.cpp:151, 1445`). Un terzo ruolo
+**`"character"`** e' il posto naturale per mouth set, pose registrate e
+correttive: viaggia col file della scena, e' gia' letto e scritto, e non serve
+inventare un formato nuovo.
+
+**Struttura che ne segue** (da implementare, non ancora fatto):
+- il MouthSet vive nel sidecar della scena personaggio (`role="character"`),
+  con un riferimento incrociato all'**Asset** di progetto via `uuid`;
+- una voce = `viseme -> (nome livello, fotogramma)`, dieci voci. **Il nome del
+  livello, non il percorso**: e' l'unica cosa che sopravvive alla copia
+  nell'import, e non dipende dal tipo di livello;
+- un personaggio ne possiede **piu' d'uno**, con attributi vista / espressione /
+  variante, e al lip sync si sceglie solo quale;
+- ⚠️ deve poter puntare a un disegno **OPPURE a una posa**: con ZtoRig la bocca
+  sta dentro il rig, e prima o poi si scrivono pose, non scambi di disegno.
+- il personaggio deve conservare anche **pose registrate e correttive** (Franco,
+  2026-08-16): il MouthSet e' UNA delle cose che gli appartengono, non un
+  oggetto a se'.
+
+**Il pezzo di interfaccia c'e' gia'**: `LipSyncPopup` ha le dieci caselle con
+anteprima e frecce per scorrere i disegni del livello. Manca **salvare
+quell'assegnazione sul personaggio e ripescarla** — non l'assegnazione in se'.
+
+---
+
+### ♻️ IL RITORNO IN LIBRERIA — le pose create animando (Franco, 2026-08-16)
+
+> *«Creo il personaggio e lo importo come sottoscena per animarlo nei vari shot,
+> animandolo però creo nuove pose e animazioni che potrebbero tornarmi utili, la
+> sua libreria si arricchisce: come aggiorniamo il file sorgente?»*
+
+🎯 **LA PARTE DIFFICILE E' GIA' RISOLTA, e non l'avevamo notato.** Da
+`include/ext/plasticskeletondeformation.h:289`:
+> «Deltas are stored **BY VERTEX NAME**, like keyframes are, and never by vertex
+> index: that is what lets an action be **copied to a skeleton whose internal
+> vertex numbering differs**.»
+
+Cioe' una `PoseAction` e' **portabile per costruzione**: si trapianta da una
+copia del personaggio a un'altra. E' esattamente il caso del ritorno in
+libreria, ed e' il problema che di solito costa caro. Manca solo il TRASPORTO.
+
+C'e' anche gia' il controllo di compatibilita': `m_skelIds` dice su quali
+scheletri una posa e' lecita (riga 330). Una posa registrata sul frontale
+replicata sul profilo «lands somewhere nobody authored» — quindi il travaso non
+puo' essere cieco.
+
+**Come farlo, quando si riapre:**
+- ⚠️ **Esplicito e a senso unico, MAI automatico.** Il personaggio nello shot e'
+  una COPIA (l'import copia i file, verificato: 23 MB di PSD per shot), quindi
+  e' un fork. Una sincronizzazione automatica propagherebbe anche gli errori e
+  le pose sbagliate a tutta la produzione.
+- Due comandi simmetrici: **«pubblica in libreria»** dallo shot (scegli quali
+  azioni, finiscono nel personaggio) e **«prendi dalla libreria»** nello shot.
+  E' il modello dei template di Harmony, ed e' come ragiona un animatore:
+  «questa me la salvo».
+- Le pose vanno nel sidecar `role="character"` (vedi la sezione sopra), non
+  dentro la scena: cosi' si leggono senza aprire il personaggio.
+- **I CICLI di animazione sono un'altra cosa**, piu' grossa: non un insieme di
+  valori ma curve nel tempo su piu' parametri. Da progettare a parte — una posa
+  e' uno stato, un ciclo e' una clip. Non trattarli come lo stesso oggetto.
+✅ **DECISO da Franco (2026-08-16) — divergenza strutturale**: *«il salvataggio
+sul character sorgente viene RIFIUTATO se non e' compatibile; se e' diverso
+strutturalmente potremmo esportarlo come una v2 dello stesso personaggio»*.
+Buona regola: trasforma un caso d'errore in un atto deliberato, invece di
+lasciare all'utente una fusione a meta'.
+
+Il controllo di compatibilita' ha una definizione CONCRETA, e la si ha gratis
+perche' i delta sono per nome di vertice:
+- lo scheletro di destinazione contiene **tutti** i nomi citati dalla posa →
+  compatibile, si accetta (se ne ha altri in piu' restano fermi: la posa e'
+  PART, tocca solo i suoi);
+- ne manca anche uno → **rifiuto**, e si propone la **v2 del personaggio**.
+
+**Il flusso, come lo ha descritto Franco:** animi nello shot → comando
+«pubblica in libreria» → scegli quali azioni registrate → controllo → finiscono
+nella libreria del personaggio sorgente, disponibili da li' in poi in ogni shot.
 
 ---
 

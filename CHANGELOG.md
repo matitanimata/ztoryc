@@ -1,3 +1,198 @@
+## [2026-08-16] — L'allineatore forzato, e tre difetti che sembravano «serve un modello più grande»
+
+Sessione lunga sul lipsync, chiusa con la catena completa **Vosk → espeak-ng →
+onda**. Il filo conduttore: **ogni volta che ho misurato invece di dedurre ho
+trovato un difetto mio**, e due volte quel difetto somigliava a un limite del
+modello.
+
+### Added — l'allineatore forzato (Vosk)
+
+Vosk sostituisce Whisper nel ruolo di cronometro. Whisper resta per le lingue
+senza modello e per il rilevamento automatico — il testo lo prende bene, sono i
+tempi la sua parte debole.
+
+Misurato su sh020 (battuta di SOFIA) con riscontro sulle **fricative dello
+spettro** — la /s/ di «que*s*to» dura 140 ms e sta dove sta, qualunque cosa dica
+un modello:
+
+| | scarto medio | peggiore |
+|---|---|---|
+| **Vosk small it (48 MB)** | **10 ms — 0,2 fotogrammi** | 30 ms |
+| Whisper base-q5_1 | 30 ms — 0,8 | 110 ms |
+| Whisper + DTW | 191 ms — 4,8 | 400 ms |
+
+Su 14 battute: Whisper **86 parole a durata ZERO su 263** e un'allucinazione
+(108 parole, coda a 22 s oltre la fine dell'audio); Vosk zero degenerazioni su
+158.
+
+Imballaggio: `libvosk.dylib` (12,5 MB, universale, nessuna dipendenza esterna)
+caricata con `QLibrary` a runtime — non linkata, così se manca si ripiega su
+Whisper invece di impedire l'avvio. Modelli compressi in `.zvosk` (formato
+nostro, `tools/pack_vosk_model.py`: blocchi in formato `qCompress` letti con
+`qUncompress`, nessuna libreria zip nuova nella build) e scompattati in cache al
+primo uso. Bundle a ~272 MB invece di 340.
+
+### Added — i FONEMI al posto delle parole
+
+`espeak-ng --ipa` come **processo separato** (è GPL-3.0, mai linkato). Vosk dice
+QUANDO cade la parola, espeak DI COSA è fatta, l'**onda** dove cade il suono
+dentro la parola. Due colonne per personaggio: prima le parole, poi le bocche.
+
+I nomi delle caselle sono esattamente quelli che `LipSyncPopup` già si aspetta,
+quindi la colonna è leggibile anche dal percorso Rhubarb preesistente.
+
+**Osservazione di Franco che allarga il valore della cosa**: la colonna dei
+fonemi serve anche al **tradizionale e al tradigital** — l'animatore legge quale
+bocca disegnare a quale fotogramma. È il foglio di esposizione di sempre.
+
+### Fixed — i tre difetti che sembravano il modello
+
+1. **`-dtw` non era MAI partito.** Il flash attention è attivo di default e lo
+   disabilita stampando una riga nel log. La causa registrata il 2026-08-15 («il
+   modello quantizzato non ha le teste di allineamento») era sbagliata. Acceso
+   davvero, PEGGIORA.
+2. **Audio a 48 kHz e 24 bit dichiarato come 16 kHz.** Vosk crede a ciò che gli
+   si dichiara: leggeva un audio tre volte più veloce e trovava due parole su
+   otto. Ora la conversione è in due passi ed è **verificata**: se il formato
+   finale non è quello atteso il comando si ferma e dice quale ha ottenuto.
+3. **`QRegExp` non conosce `\p{L}`** (è sintassi PCRE). Dal testo estraeva la
+   sola parola `p`, che per sfortuna esiste nel vocabolario italiano di Vosk e
+   quindi non veniva scartata: il riconoscitore restava vincolato a una lettera.
+
+Su (2) e (3) la lezione è la stessa: **dall'esterno somigliavano entrambi a
+«serve un modello più grande»**, ed è il motivo per cui non abbiamo scaricato il
+modello da 1,5 GB.
+
+### Fixed — la resa, sulle segnalazioni a orecchio di Franco
+
+- **Durata minima 2 fotogrammi imposta sulla COLONNA**, non parola per parola:
+  la coda di una parola sforava nella successiva («non» finisce a 2280 ms e «fa»
+  comincia a 2280) e la scrittura, che sovrascrive, la riduceva a un fotogramma.
+- **Prelievo a cascata**: il vicino immediato è spesso già al minimo mentre c'è
+  spazio cinque celle più in là.
+- **Mai fondere due bocche uguali e visibili**: togliere la /e/ fra la P di
+  «per» e la M di «me» fa leggere UNA tenuta dove devono esserci due colpi.
+  Segnalato da Franco, e aveva ragione: le chiusure sono le forme che l'occhio
+  àncora.
+- **L'accento di espeak è durata, non punteggiatura** (`fˈatʃile`): lo scartavo
+  coi separatori. Franco sentiva la /a/ di 4 fotogrammi e ne riceveva 2.
+- **L'avanzo va un fotogramma alla volta a chi è più sotto il proprio peso**,
+  non per arrotondamento: con 6 fonemi e 3 fotogrammi d'avanzo nessuno poteva
+  prenderne più di uno.
+- **Anticipo** 2 fotogrammi regolabile + 1 sulle labiali, solo sull'attacco.
+- **Rest esplicito** nelle pause ≥ 2 fotogrammi; buchi più corti assorbiti dalla
+  cella precedente (una cella vuota TIENE il disegno di prima, non chiude la
+  bocca).
+
+### Added — l'onda decide DOVE cade la bocca (idea di Franco)
+
+Il centro delle vocali si aggancia ai **massimi di energia**. Pesare i fonemi
+con l'ampiezza era stato provato e **misurato inutile**: campionava l'onda nella
+posizione indovinata, ed è la posizione a essere sbagliata. Vocali sul picco:
+da 4/13 a **10/13**.
+
+### Added — multilingua: 28 lingue possibili
+
+Vosk ha modelli piccoli (31–100 MB) per 28 lingue, tutte `Apache-2.0` tranne il
+ceco (`MIT`); espeak-ng ne copre 142, quindi il collo di bottiglia è Vosk.
+⚠️ **Nel bundle però ci sono solo italiano e inglese e non esiste nessuno
+scaricatore**: le altre 26 sono possibili ma irraggiungibili.
+
+Misurando la mappa IPA→bocche su venti lingue sono usciti difetti veri:
+- **simboli che non sono suoni diventavano bocche** — il giapponese ne aveva
+  **47 su 135**, un terzo della colonna; i toni di vietnamita e cinese (che
+  espeak scrive come **cifre**), la palatalizzazione russa `ʲ` (8 volte in una
+  frase), le parentesi giapponesi. Ora si scartano per **categoria Unicode**,
+  così vale anche per le lingue non provate;
+- **lo schwa `ə` non era mappato** — la vocale più frequente di inglese,
+  francese, tedesco, olandese e catalano prendeva una bocca da consonante;
+- aggiunte le arrotondate anteriori (`ø œ y ʏ`), le alte non arrotondate
+  (`ɨ ɯ`), le interdentali `θ ð` su «L» e `β ʋ` sulle labiali.
+
+Dopo: in tutte e venti le lingue quel che resta fuori sono **solo consonanti**,
+che è giusto finiscano in «etc».
+
+### Fixed — il bundle (fuori dal lipsync)
+
+- **La firma del bundle falliva da mesi in silenzio.** Un `.app` può contenere
+  solo `Contents/` nella radice; c'erano anche `+scenes` (l'app che scrive
+  dentro se stessa) e `Icon` del Finder. `codesign` rifiutava e lo script tirava
+  dritto fino a «✓ Fatto». Ora si spostano da parte prima di firmare — non si
+  cancellano — e **la firma viene verificata**: se fallisce lo dice.
+- Lo scompattamento del modello italiano falliva su un file di **zero byte**
+  (`ivector/online_cmvn.conf`) che Vosk pretende esista: trattare «vuoto» come
+  «corrotto». L'inglese non ce l'ha, quindi funzionava — un difetto che si
+  manifesta su una lingua sola.
+
+### Modified — preferenze
+
+Nuovo gruppo **Lip Sync** (era «Rhubarb Lip Sync»: ormai ci convivono tre
+motori). In cima la **Dialogue Language**, che sceglie anche il MOTORE, con la
+spiegazione; sotto Rhubarb e whisper sotto l'etichetta «programmi esterni, usati
+solo come ripiego». Prima la lingua veniva dall'interruttore binario di Rhubarb
+e poteva essere solo inglese o niente — su un progetto italiano la prova
+falliva in modo incomprensibile.
+
+### Upstream candidates
+
+- 📝 **Commenti invertiti su `ANGLE` e `DISTANCE`**
+  (`include/ext/plasticskeletondeformation.h:139-140`): `ANGLE` è documentato
+  come distanza e viceversa. Identico in `upstream/master`, quindi non è nostro.
+  **Diagnosticato, non verificato**: va letto chi USA i due parametri prima di
+  mandarlo. Conta perché tutto il progetto di retargeting poggia su quella
+  distinzione.
+
+### Notes — progettazione, con riscontri sul progetto vero di Franco
+
+Osservato su `2604_grottazzolina` invece che immaginato:
+- un personaggio = `scenes/LIB_NOME.tnz` + PSD in `extras/`, caricato a gruppi
+  con nomi **numerati, non descrittivi**: non c'è convenzione che indovini quale
+  livello sia la bocca;
+- ⚠️ **importare il personaggio COPIA i suoi file nello shot** (23 MB di PSD per
+  shot): **il percorso cambia, il nome del livello no**. Quindi il MouthSet va
+  agganciato al NOME, non al percorso;
+- correzione di Franco: il sidecar è legato **al livello della scena, non al
+  PSD** — può essere un personaggio disegnato in Ztoryc, vettoriale, smart
+  raster o raster;
+- il sidecar `.ztoryc` **esiste già** accanto alle scene personaggio e ha un
+  attributo `role` (oggi `storyboard` e `shot`): un terzo ruolo `character` è la
+  casa naturale per mouth set, pose e correttive.
+
+**Ritorno in libreria**: la parte cara è già pagata — i delta delle `PoseAction`
+sono salvati **per nome di vertice**, «that is what lets an action be copied to
+a skeleton whose internal vertex numbering differs». Manca solo il trasporto.
+Deciso da Franco: esplicito e a senso unico, **rifiuto** se incompatibile e
+**v2 del personaggio** se la struttura diverge.
+
+**Template di scheletro con compensazione** (idea di Franco): è retargeting, ed
+è economico perché le pose sono in coordinate polari — gli **angoli** si
+trasferiscono invariati, solo le **distanze** vanno riscalate per il rapporto
+fra le lunghezze a riposo, per osso e non globale.
+
+### Notes — decisioni di Franco
+
+- **Otter non è più sospeso**: *«sono già praticamente convinto e dobbiamo
+  lavorare come se fosse già così, però non ho urgenza di metterlo in atto
+  subito»*. Le scelte di progetto tengano separati storyboard/animatic e
+  character animation, senza spendere tempo nella separazione vera.
+- **Nuovo ordine di priorità**: chiudere il **personaggio** (MouthSet → libreria
+  di pose → template di scheletro); deformatori, assistenti OpenToonz, 2.5D e
+  auto-shadow scendono a secondari.
+- **Codici dei fonemi personalizzabili**: segnato come sviluppo futuro. Vanno
+  nel progetto (sono della produzione), non nelle preferenze.
+
+### Resta da fare
+
+Gestione modelli per le altre 26 lingue; imballare **espeak-ng** (oggi viene da
+Homebrew come whisper-cli — se manca, le colonne tornano alle parole intere
+senza fallire); spostare la generazione delle colonne all'EXPORT.
+
+🧪 Il banco di prova è in `reference/forced-align/`: `check_align.py`,
+`sibilance.py`, `robustness.py`, `visemes.py`, `lang_coverage.py`. La verità di
+riscontro sono le **fricative dello spettro**, non un altro modello — il
+2026-08-16 due configurazioni dello STESSO modello hanno dato risposte a 300 ms
+di distanza, entrambe plausibili a occhio.
+
 ## [2026-08-15b] — Whisper dentro Ztoryc, e la misura che dice di non fidarsene
 
 Sessione lunga, tutta sul lipsync. Il filo: **ogni volta che ho misurato invece

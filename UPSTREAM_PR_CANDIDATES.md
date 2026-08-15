@@ -67,6 +67,27 @@ succede, perché questi difetti sono quasi sempre copiaincollati in più punti �
 **ridirlo a Franco**, perché la decisione «vado diretto o passo dal revisore»
 l'aveva presa su una dimensione diversa.
 
+- [ ] 📝 **Commenti INVERTITI su `ANGLE` e `DISTANCE`** (`include/ext/plasticskeletondeformation.h`, righe ~139-140) — **candidato doppio, e non e' nostro**: identico in `upstream/master`, quindi presumibilmente da OpenToonz.
+
+  ```cpp
+  ANGLE = 0,  //!< Distance from parent vertex (delta)
+  DISTANCE,   //!< Angle with parent edge (delta)
+  ```
+
+  `ANGLE` e' documentato come distanza e `DISTANCE` come angolo. Chi legge i
+  commenti conclude l'opposto della verita'.
+
+  **Perche' conta per noi**: tutto il progetto di compensazione del template di
+  scheletro (retargeting, voce A3 di ANIMATIC_TASKS) poggia sul fatto che gli
+  ANGOLI si trasferiscano invariati e le DISTANZE vadano riscalate. Su questa
+  distinzione i commenti mentono.
+
+  ⚠️ **DIAGNOSTICATO, NON VERIFICATO**: e' proprio il tipo di riga su cui si
+  sbaglia al contrario. Prima di aprire la PR va letto **chi USA** i due
+  parametri (non chi li dichiara) e confermato quale sia quale. Trovato il
+  2026-08-16. Fix da una riga, rischio zero, ma inutile mandarlo se e' il
+  commento a essere giusto e la mia lettura sbagliata.
+
 - [ ] 🆕🎯 **`doDryCompute` e `doCompute` calcolano bbox DIVERSI: un fattore invertito** (`toonzlib/plasticdeformerfx.cpp`, righe ~302/310 contro ~520/527) — **candidato doppio: identico in Tahoma2D e in OpenToonz**, e non e' nostro. Trovato il 2026-08-13 leggendo il codice, **non ancora riprodotto**.
 
   Le due funzioni calcolano la stessa quantita', `meshToTextureAff`, e differiscono per **una sola cosa: l'inversione del primo fattore.**
