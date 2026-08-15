@@ -457,6 +457,10 @@ void TopBar::loadMenubar() {
   addMenuItem(sceneMenu, MI_RemoveGlobalStopframe);
   sceneMenu->addSeparator();
   addMenuItem(sceneMenu, MI_LipSyncPopup);
+  // Accanto al lip sync di Rhubarb, perche' e' la stessa domanda posta in modo
+  // diverso: li' si sceglie a mano un audio, qui il copione dei pannelli e
+  // l'audio dello shot vengono presi da soli.
+  addMenuItem(sceneMenu, MI_ZtoryLipSyncShot);
   sceneMenu->addSeparator();
   addMenuItem(sceneMenu, MI_RemoveEmptyColumns);
   sceneMenu->addSeparator();

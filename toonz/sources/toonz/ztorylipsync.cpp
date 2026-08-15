@@ -46,17 +46,44 @@ ZtoryShotContext ztoryCurrentShotContext() {
   if (!top || !cur || cur == top) return ctx;
 
   for (int col = 0; col < top->getColumnCount(); col++) {
-    TXshCell cell = top->getCell(0, col);
-    if (cell.isEmpty() || !cell.m_level) continue;
-    TXshChildLevel *cl = cell.m_level->getChildLevel();
+    // ⚠️ NON si guarda la riga 0. In Ztoryc gli shot stanno in FILA nel tempo:
+    // il secondo comincia dove finisce il primo, quindi solo lo shot iniziale
+    // ha una cella alla riga 0. Guardando li' si trovava sempre e solo il
+    // primo shot, e da ogni altro il comando rispondeva «apri una sotto-scena»
+    // stando gia' dentro una sotto-scena.
+    int r0 = 0, r1 = 0;
+    top->getCellRange(col, r0, r1);
+    if (r1 < r0) continue;  // colonna vuota
+    TXshChildLevel *cl = nullptr;
+    for (int r = r0; r <= r1 && !cl; r++) {
+      TXshCell cell = top->getCell(r, col);
+      if (!cell.isEmpty() && cell.m_level) cl = cell.m_level->getChildLevel();
+    }
     if (!cl || cl->getXsheet() != cur) continue;
 
     ctx.column    = col;
     ctx.subXsheet = cur;
-    top->getCellRange(col, ctx.firstRow, ctx.lastRow);
+    ctx.firstRow  = r0;
+    ctx.lastRow   = r1;
     const std::vector<ShotData> &shots = ZtoryModel::instance()->shots();
     for (int i = 0; i < (int)shots.size(); i++)
       if (shots[i].xsheetColumn == col) { ctx.shotIndex = i; break; }
+    // Ripiego: xsheetColumn puo' essere stale (lo si riscrive solo in certe
+    // operazioni). Contare la colonna fra quelle che contengono una sotto-scena
+    // da' lo stesso numero senza dipendere da un campo che qualcuno deve aver
+    // aggiornato.
+    if (ctx.shotIndex < 0) {
+      int n = 0;
+      for (int c2 = 0; c2 < col; c2++) {
+        int a = 0, b = 0;
+        top->getCellRange(c2, a, b);
+        for (int r = a; r <= b; r++) {
+          TXshCell cc = top->getCell(r, c2);
+          if (!cc.isEmpty() && cc.m_level && cc.m_level->getChildLevel()) { n++; break; }
+        }
+      }
+      if (n < (int)shots.size()) ctx.shotIndex = n;
+    }
     break;
   }
   return ctx;
@@ -180,8 +207,14 @@ bool ZtoryLipSync::start(const Request &req) {
   args << "-ml" << "1" << "-sow";
   args << "-oj" << "-of" << base;
   if (!m_req.language.isEmpty()) args << "-l" << m_req.language;
-  // Niente stampa a video: la sola uscita che ci interessa e' il JSON.
-  args << "-np" << "-nt";
+  // Niente stampa di avanzamento. ⚠️ MAI aggiungere `-nt` qui: significa «no
+  // timestamps» e distrugge i tempi per parola, che sono l'UNICA cosa per cui
+  // stiamo chiamando Whisper. Misurato il 2026-08-15: con `-nt` le parole
+  // centrali escono tutte con durata ZERO sullo stesso istante e l'ultima
+  // arriva a 30000 ms — la finestra da 30 secondi con cui whisper.cpp riempie
+  // l'audio piu' corto. Nella colonna si vedeva una parola lunga cinquanta
+  // fotogrammi, quattro sparite e l'ultima al fotogramma 751 di uno shot da 81.
+  args << "-np";
   args << m_req.wavPath;
 
   if (!m_proc) {
@@ -240,12 +273,26 @@ void ZtoryLipSync::onProcessDone(int exitCode) {
     return;
   }
   QString err;
-  const QVector<TimedWord> heard = parseWhisperJson(f.readAll(), &err);
+  QVector<TimedWord> heard = parseWhisperJson(f.readAll(), &err);
   f.close();
   QFile::remove(m_jsonPath);
   if (heard.isEmpty()) {
     emit finished(false, {}, err.isEmpty() ? tr("No words recognised.") : err);
     return;
+  }
+
+  // Difesa: whisper.cpp riempie a 30 secondi l'audio piu' corto, e in certe
+  // combinazioni di opzioni riporta la coda a fine FINESTRA invece che a fine
+  // audio. Una parola oltre la durata vera non e' un dato: e' un artefatto, e
+  // lasciandola passare finisce a scrivere centinaia di fotogrammi vuoti.
+  if (m_req.audioMs > 0) {
+    QVector<TimedWord> clamped;
+    for (TimedWord w : heard) {
+      if (w.startMs >= m_req.audioMs) continue;  // interamente nel riempimento
+      w.endMs = qMin(w.endMs, m_req.audioMs);
+      clamped.push_back(w);
+    }
+    if (!clamped.isEmpty()) heard = clamped;
   }
 
   emit progress(tr("Matching against the storyboard dialogue…"));
@@ -303,6 +350,8 @@ void ZtoryLipSync::onProcessDone(int exitCode) {
 
 #include <QMainWindow>
 
+#include <algorithm>
+
 namespace {
 
 // Scrive una colonna di testo per un personaggio: i FONEMI dove parla — per ora
@@ -314,11 +363,21 @@ namespace {
 // tutta la battuta dell'altro. Il silenzio e' un dato, non un'assenza.
 void writeCharacterColumn(TXsheet *xsh, int col,
                           const ZtoryCharacterTrack &track, int lastFrame) {
-  QList<QString> cells;
-  for (int f = 0; f <= lastFrame; f++) cells.append(QString());
+  // ⚠️ createSoundTextLevel(row, lista) mette lista[i] alla RIGA i, e la riga 0
+  // e' il fotogramma 1. I fotogrammi qui sono 1-based, quindi l'indice e'
+  // frame-1: scriverlo a `frame` sposta tutto avanti di uno.
+  // La colonna si allunga oltre lo shot se una battuta sfora: perdere dialogo
+  // per far quadrare una lunghezza e' il contrario di cio' che serve.
+  int needed = lastFrame;
   for (const ZtoryCharacterTrack::Word &w : track.words)
-    for (int f = w.startFrame; f <= w.endFrame && f <= lastFrame; f++)
-      if (f >= 0) cells[f] = w.text;
+    needed = std::max(needed, w.endFrame);
+  QList<QString> cells;
+  for (int i = 0; i < needed; i++) cells.append(QString());
+  for (const ZtoryCharacterTrack::Word &w : track.words)
+    for (int f = w.startFrame; f <= w.endFrame; f++) {
+      const int i = f - 1;
+      if (i >= 0 && i < cells.size()) cells[i] = w.text;
+    }
 
   TXshSoundTextColumn *sc = new TXshSoundTextColumn();
   sc->createSoundTextLevel(0, cells);
@@ -375,6 +434,9 @@ public:
     // La sotto-scena parte dal fotogramma 1, e l'audio estratto parte
     // dall'inizio dello shot: i due zeri coincidono.
     req.firstFrame = 1;
+    // Durata vera dell'audio, dalle righe dello shot: e' il metro con cui si
+    // scarta la coda inventata dal riempimento a 30 secondi.
+    req.audioMs = int((ctx.lastRow - ctx.firstRow + 1) * 1000.0 / req.fps);
 
     auto *job = new ZtoryLipSync(TApp::instance()->getMainWindow());
     const int shotIdx = ctx.shotIndex;
@@ -389,18 +451,27 @@ public:
       if (!ok) { DVGui::warning(msg); return; }
 
       TUndoManager::manager()->beginBlock();
-      int written = 0;
+      int written = 0, orphanWords = 0;
       for (const ZtoryCharacterTrack &t : tracks) {
-        // Le parole senza personaggio non diventano una colonna: sarebbe una
-        // colonna senza nome che nessuno sa a chi applicare.
-        if (t.assetUuid.isEmpty()) continue;
+        // Le parole senza personaggio NON spariscono piu' in silenzio: prima
+        // l'intera traccia veniva saltata, e chi guardava vedeva mancare
+        // proprio le battute dell'altro personaggio senza sapere perche'.
+        // Si scrive comunque la colonna e si dice quante parole erano orfane:
+        // quasi sempre e' un nome che il progetto non conosce.
+        if (t.assetUuid.isEmpty()) orphanWords += t.words.size();
         writeCharacterColumn(sub, sub->getColumnCount(), t, lastF);
         written++;
       }
       TUndoManager::manager()->endBlock();
       TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+      QString extra;
+      if (orphanWords > 0)
+        extra = QObject::tr(
+                    "  —  %1 words have no character: check the names in the "
+                    "dialogue (they turn green when recognised).")
+                    .arg(orphanWords);
       DVGui::info(QObject::tr("%1  —  %2 dialogue columns written.")
-                      .arg(msg).arg(written));
+                      .arg(msg).arg(written) + extra);
     });
     job->start(req);
   }

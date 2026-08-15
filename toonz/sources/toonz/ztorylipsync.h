@@ -80,6 +80,10 @@ public:
     QString language;       // "it", "en", … vuoto = rilevamento automatico
     double  fps        = 24;
     int     firstFrame = 1;  // fotogramma a cui corrisponde l'istante 0 del wav
+    // Durata vera del wav in millisecondi. Serve a scartare la coda che
+    // whisper.cpp puo' riportare a fine finestra da 30 s invece che a fine
+    // audio. 0 = sconosciuta, nessun controllo.
+    int     audioMs    = 0;
   };
 
   // Avvia. Il risultato arriva con finished(); un solo lavoro alla volta.
