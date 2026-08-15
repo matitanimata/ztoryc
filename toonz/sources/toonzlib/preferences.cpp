@@ -594,6 +594,8 @@ void Preferences::definePreferenceItems() {
   // already does. Switching the default would silently change the result for
   // English productions.
   define(lipSyncPhonetic, "lipSyncPhonetic", QMetaType::Bool, false);
+  define(dialogueSpeakerHighlight, "dialogueSpeakerHighlight",
+         QMetaType::Bool, true);
 
   // Drawing
   define(DefRasterFormat, "DefRasterFormat", QMetaType::QString, "png");

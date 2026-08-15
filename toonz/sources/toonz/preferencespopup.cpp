@@ -1402,6 +1402,8 @@ QString PreferencesPopup::getUIString(PreferencesItemId id) {
        tr("Allow Multi-Thread in FFMPEG Rendering (UNSTABLE)")},
       {rhubarbPath, tr("Executable Directory:")},
       {rhubarbTimeout, tr("Analyze Audio Timeout (seconds):")},
+      {dialogueSpeakerHighlight,
+       tr("Highlight character names in dialogue fields")},
 
       // Drawing
       {DefRasterFormat, tr("Default Raster Level Format:")},
@@ -2208,6 +2210,7 @@ QGridLayout* PreferencesPopup::createImportExportLayout() {
   {
     insertUI(rhubarbPath, rhubarbOptionsLay);
     insertUI(rhubarbTimeout, rhubarbOptionsLay);
+    insertUI(dialogueSpeakerHighlight, rhubarbOptionsLay);
   }
 
   lay->setRowStretch(lay->rowCount(), 1);

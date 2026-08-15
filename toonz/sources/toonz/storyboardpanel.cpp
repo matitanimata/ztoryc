@@ -939,6 +939,8 @@ static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
 
 void PanelWidget::refreshSpeakersLabel() {
   if (!m_speakersLabel) return;
+  // Stessa regola dell'evidenziatore: se lui tace, tace anche l'avviso.
+  if (!ZtoryDialogueHighlighter::enabled()) { m_speakersLabel->hide(); return; }
   ZtoryModel *m = ZtoryModel::instance();
   QStringList known, unknown;
   for (const DialogueLine &dl : m->parseDialogue(m_dialogField->toPlainText())) {

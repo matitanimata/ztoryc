@@ -94,6 +94,10 @@ enum PreferencesItemId {
   // the single run: PocketSphinx only knows ENGLISH words, so on any other
   // language it was quietly trying to recognise English in Italian audio.
   lipSyncPhonetic,
+  // Colora il nome del personaggio dentro il campo dialogo. Disattivabile
+  // perche' su un progetto che non usa i personaggi ogni riga in maiuscolo
+  // diventerebbe un avviso, cioe' rumore invece di informazione.
+  dialogueSpeakerHighlight,
 
   //----------
   // Drawing

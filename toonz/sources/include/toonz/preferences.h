@@ -320,6 +320,9 @@ public:
   int getRhubarbTimeout() { return getIntValue(rhubarbTimeout); }
   bool isLipSyncPhonetic() const { return getBoolValue(lipSyncPhonetic); }
   void setLipSyncPhonetic(bool on) { setValue(lipSyncPhonetic, on); }
+  bool isDialogueSpeakerHighlight() const {
+    return getBoolValue(dialogueSpeakerHighlight);
+  }
 
   // Drawing  tab
   QString getDefRasterFormat() const { return getStringValue(DefRasterFormat); }

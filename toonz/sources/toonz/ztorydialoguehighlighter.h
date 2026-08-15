@@ -23,6 +23,7 @@
 //============================================================================
 
 #include "ztorymodel.h"
+#include "toonz/preferences.h"
 
 #include <QSyntaxHighlighter>
 #include <QTextDocument>
@@ -34,9 +35,21 @@ public:
   explicit ZtoryDialogueHighlighter(QTextDocument *doc)
       : QSyntaxHighlighter(doc) {}
 
+  // Spento dalla preferenza, oppure quando il progetto non ha NESSUN
+  // personaggio: li' ogni riga in maiuscolo diventerebbe un avviso arancione,
+  // cioe' rumore invece di informazione. Chi non usa i personaggi non deve
+  // accorgersi che questa cosa esiste.
+  static bool enabled() {
+    if (!Preferences::instance()->isDialogueSpeakerHighlight()) return false;
+    for (const Asset &a : ZtoryModel::instance()->assets())
+      if (a.type.compare("Character", Qt::CaseInsensitive) == 0) return true;
+    return false;
+  }
+
 protected:
   void highlightBlock(const QString &text) override {
     if (text.trimmed().isEmpty()) return;
+    if (!ZtoryDialogueHighlighter::enabled()) return;
     // La riga dopo serve alla regola di Fountain (nome seguito da qualcosa).
     const QTextBlock next = currentBlock().next();
     const QString nextText = next.isValid() ? next.text() : QString();
