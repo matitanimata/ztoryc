@@ -1,6 +1,18 @@
 #include "ztorylipsync.h"
 
 #include "thirdparty.h"
+#include "tapp.h"
+#include "toonz/toonzscene.h"
+#include "toonz/tscenehandle.h"
+#include "toonz/txsheethandle.h"
+#include "toonz/txsheet.h"
+#include "toonz/childstack.h"
+#include "toonz/txshchildlevel.h"
+#include "toonz/txshcell.h"
+#include "toonz/txshsoundcolumn.h"
+#include "toonz/sceneproperties.h"
+#include "toutputproperties.h"
+#include "tsound_io.h"
 #include "toonz/preferences.h"
 #include "toonz/toonzfolders.h"
 #include "tsystem.h"
@@ -18,6 +30,77 @@
 #include <cmath>
 
 //-----------------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------
+
+ZtoryShotContext ztoryCurrentShotContext() {
+  ZtoryShotContext ctx;
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return ctx;
+  ChildStack *cs = scene->getChildStack();
+  if (!cs) return ctx;
+  TXsheet *top = cs->getTopXsheet();
+  TXsheet *cur = cs->getXsheet();
+  // Al livello principale non c'e' nessuno shot aperto: e' un'informazione, non
+  // un errore, e chi chiama la trasforma in un messaggio comprensibile.
+  if (!top || !cur || cur == top) return ctx;
+
+  for (int col = 0; col < top->getColumnCount(); col++) {
+    TXshCell cell = top->getCell(0, col);
+    if (cell.isEmpty() || !cell.m_level) continue;
+    TXshChildLevel *cl = cell.m_level->getChildLevel();
+    if (!cl || cl->getXsheet() != cur) continue;
+
+    ctx.column    = col;
+    ctx.subXsheet = cur;
+    top->getCellRange(col, ctx.firstRow, ctx.lastRow);
+    const std::vector<ShotData> &shots = ZtoryModel::instance()->shots();
+    for (int i = 0; i < (int)shots.size(); i++)
+      if (shots[i].xsheetColumn == col) { ctx.shotIndex = i; break; }
+    break;
+  }
+  return ctx;
+}
+
+//-----------------------------------------------------------------------------
+
+QString ztoryExtractShotAudio(const ZtoryShotContext &ctx) {
+  if (!ctx.isValid()) return QString();
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return QString();
+  TXsheet *top = scene->getChildStack()->getTopXsheet();
+  if (!top) return QString();
+
+  // Tutte le colonne sonore, mixate. Il mix va bene: chi parla lo dice il
+  // copione, quindi non serve una pista separata per personaggio.
+  std::vector<TXshSoundColumn *> cols;
+  for (int c = 0; c < top->getColumnCount(); c++)
+    if (TXshSoundColumn *sc = top->getColumn(c)->getSoundColumn())
+      cols.push_back(sc);
+  if (cols.empty()) return QString();
+
+  const double fps =
+      scene->getProperties()->getOutputProperties()->getFrameRate();
+  TSoundTrackP st =
+      cols[0]->mixingTogether(cols, ctx.firstRow, ctx.lastRow, fps);
+  if (!st || st->getSampleCount() == 0) return QString();
+
+  const QString cacheRoot = ToonzFolder::getCacheRootFolder().getQString();
+  const QString dir       = cacheRoot + "/whisper";
+  if (!TSystem::doesExistFileOrLevel(TFilePath(dir)))
+    TSystem::mkDir(TFilePath(dir));
+  // Nome per shot e non fisso: due shot analizzati in fila non devono
+  // sovrascriversi l'audio a vicenda mentre il processo precedente legge ancora.
+  const TFilePath out(dir + QString("/shot_%1.wav").arg(ctx.shotIndex));
+  try {
+    TSoundTrackWriter::save(out, st);
+  } catch (...) {
+    return QString();
+  }
+  // whisper.cpp ricampiona da solo: verificato su 44.1 kHz stereo, quindi non
+  // serve passare da ffmpeg.
+  return out.getQString();
+}
 
 ZtoryLipSync::ZtoryLipSync(QObject *parent) : QObject(parent) {}
 
@@ -204,3 +287,123 @@ void ZtoryLipSync::onProcessDone(int exitCode) {
                     .arg(aligned.size())
                     .arg(tracks.size()));
 }
+
+
+//=============================================================================
+// Il comando: dallo shot aperto alle colonne di testo, una per personaggio.
+//=============================================================================
+
+#include "menubarcommandids.h"
+#include "toonzqt/menubarcommand.h"
+#include "toonzqt/dvdialog.h"
+#include "toonz/txshsoundtextcolumn.h"
+#include "toonz/tcolumnhandle.h"
+#include "historytypes.h"
+#include "tundo.h"
+
+#include <QMainWindow>
+
+namespace {
+
+// Scrive una colonna di testo per un personaggio: i FONEMI dove parla — per ora
+// le parole, i fonemi arriveranno con espeak-ng — e il RESTO esplicito dove
+// tace.
+//
+// ⚠️ Il riposo va SCRITTO, non lasciato vuoto. Una cella vuota tiene l'ultimo
+// disegno: il personaggio resterebbe con la bocca aperta a meta' parola per
+// tutta la battuta dell'altro. Il silenzio e' un dato, non un'assenza.
+void writeCharacterColumn(TXsheet *xsh, int col,
+                          const ZtoryCharacterTrack &track, int lastFrame) {
+  QList<QString> cells;
+  for (int f = 0; f <= lastFrame; f++) cells.append(QString());
+  for (const ZtoryCharacterTrack::Word &w : track.words)
+    for (int f = w.startFrame; f <= w.endFrame && f <= lastFrame; f++)
+      if (f >= 0) cells[f] = w.text;
+
+  TXshSoundTextColumn *sc = new TXshSoundTextColumn();
+  sc->createSoundTextLevel(0, cells);
+  xsh->insertColumn(col, sc);
+}
+
+class ZtoryLipSyncCommand final : public MenuItemHandler {
+public:
+  ZtoryLipSyncCommand() : MenuItemHandler(MI_ZtoryLipSyncShot) {}
+
+  void execute() override {
+    const QString why = ZtoryLipSync::unavailableReason();
+    if (!why.isEmpty()) { DVGui::warning(why); return; }
+
+    const ZtoryShotContext ctx = ztoryCurrentShotContext();
+    if (!ctx.isValid()) {
+      DVGui::warning(QObject::tr(
+          "Open a shot's sub-scene first: the dialogue and the audio are read "
+          "from that shot."));
+      return;
+    }
+
+    // Il copione: tutti i pannelli dello shot, nell'ordine in cui stanno.
+    ZtoryModel *m = ZtoryModel::instance();
+    QStringList text;
+    for (const PanelData &p : m->shot(ctx.shotIndex).panels)
+      if (!p.dialog.trimmed().isEmpty()) text << p.dialog.trimmed();
+    if (text.isEmpty()) {
+      DVGui::warning(QObject::tr(
+          "This shot has no dialogue in its storyboard panels. The words come "
+          "from there — Whisper only supplies the timing."));
+      return;
+    }
+
+    const QString wav = ztoryExtractShotAudio(ctx);
+    if (wav.isEmpty()) {
+      DVGui::warning(QObject::tr(
+          "No audio over this shot in the main xsheet."));
+      return;
+    }
+
+    ZtoryLipSync::Request req;
+    req.wavPath  = wav;
+    req.dialogue = text.join("\n\n");
+    // Si riusa la scelta «Dialogue language» del pannello Rhubarb invece di
+    // aggiungerne una seconda: e' la stessa domanda, e due interruttori per la
+    // stessa cosa finiscono per contraddirsi. «Altra lingua» diventa qui
+    // rilevamento automatico, perche' Whisper le conosce tutte e noi non
+    // abbiamo un elenco da far scegliere.
+    req.language = Preferences::instance()->isLipSyncPhonetic() ? QString()
+                                                                : QString("en");
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    req.fps = scene->getProperties()->getOutputProperties()->getFrameRate();
+    // La sotto-scena parte dal fotogramma 1, e l'audio estratto parte
+    // dall'inizio dello shot: i due zeri coincidono.
+    req.firstFrame = 1;
+
+    auto *job = new ZtoryLipSync(TApp::instance()->getMainWindow());
+    const int shotIdx = ctx.shotIndex;
+    TXsheet *sub      = ctx.subXsheet;
+    const int lastF   = ctx.lastRow - ctx.firstRow + 1;
+
+    QObject::connect(job, &ZtoryLipSync::finished, job,
+                     [job, sub, lastF](bool ok,
+                                       const QVector<ZtoryCharacterTrack> &tracks,
+                                       const QString &msg) {
+      job->deleteLater();
+      if (!ok) { DVGui::warning(msg); return; }
+
+      TUndoManager::manager()->beginBlock();
+      int written = 0;
+      for (const ZtoryCharacterTrack &t : tracks) {
+        // Le parole senza personaggio non diventano una colonna: sarebbe una
+        // colonna senza nome che nessuno sa a chi applicare.
+        if (t.assetUuid.isEmpty()) continue;
+        writeCharacterColumn(sub, sub->getColumnCount(), t, lastF);
+        written++;
+      }
+      TUndoManager::manager()->endBlock();
+      TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+      DVGui::info(QObject::tr("%1  —  %2 dialogue columns written.")
+                      .arg(msg).arg(written));
+    });
+    job->start(req);
+  }
+} ztoryLipSyncCommand;
+
+}  // namespace

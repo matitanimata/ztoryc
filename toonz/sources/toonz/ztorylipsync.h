@@ -39,6 +39,32 @@ struct ZtoryCharacterTrack {
 };
 
 //----------------------------------------------------------------------------
+// Contesto dello shot su cui si sta lavorando: quale shot, che intervallo di
+// righe occupa nel main xsheet (dov'e' l'audio), e la sua sotto-scena (dove
+// vanno le colonne di testo).
+//----------------------------------------------------------------------------
+struct ZtoryShotContext {
+  int      shotIndex = -1;
+  int      column    = -1;   // colonna del main xsheet
+  int      firstRow  = 0;    // prima riga occupata nel main xsheet
+  int      lastRow   = 0;
+  class TXsheet *subXsheet = nullptr;
+  bool isValid() const { return shotIndex >= 0 && subXsheet; }
+};
+
+// Lo shot la cui sotto-scena e' aperta adesso. Si risale confrontando la
+// sotto-scena corrente col TXshChildLevel delle celle del main xsheet: la
+// COLONNA sta in ChildStack::AncestorNode ma non ha accessori pubblici, e
+// childstack.h e' core condiviso con Tahoma2D.
+ZtoryShotContext ztoryCurrentShotContext();
+
+// Estrae in un wav l'audio del main xsheet sull'intervallo dello shot, mixando
+// TUTTE le colonne sonore. Il mix va bene: chi parla lo dice il copione, non
+// serve una pista per personaggio.
+// Stringa vuota = nessun audio (nessuna colonna sonora, o silenzio).
+QString ztoryExtractShotAudio(const ZtoryShotContext &ctx);
+
+//----------------------------------------------------------------------------
 class ZtoryLipSync final : public QObject {
   Q_OBJECT
 public:

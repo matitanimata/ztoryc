@@ -2723,6 +2723,11 @@ void MainWindow::defineActions() {
                          "prev_nav_tag");
   createMenuXsheetAction(MI_EditTaggedFrame, QT_TR_NOOP("Edit Tag"), "", "");
   createMenuXsheetAction(MI_ClearTags, QT_TR_NOOP("Remove Tags"), "", "");
+  // Lip sync dai dialoghi dello storyboard: le PAROLE vengono dal copione, i
+  // TEMPI da Whisper. Sta nel menu Xsheet accanto al lip sync di Rhubarb.
+  createMenuXsheetAction(MI_ZtoryLipSyncShot,
+                         QT_TR_NOOP("Lip Sync from Storyboard Dialogue..."), "",
+                         "");
   CommandManager::instance()->enable(MI_NextTaggedFrame, false);
   CommandManager::instance()->enable(MI_PrevTaggedFrame, false);
   CommandManager::instance()->enable(MI_EditTaggedFrame, false);
