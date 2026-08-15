@@ -797,7 +797,7 @@ namespace {
 // tutta la battuta dell'altro. Il silenzio e' un dato, non un'assenza.
 void writeCellsColumn(TXsheet *xsh, int col,
                       const QVector<ZtoryCharacterTrack::Word> &cells,
-                      int lastFrame) {
+                      int lastFrame, bool restWhereSilent) {
   // ⚠️ createSoundTextLevel(row, lista) mette lista[i] alla RIGA i, e la riga 0
   // e' il fotogramma 1. I fotogrammi qui sono 1-based, quindi l'indice e'
   // frame-1: scriverlo a `frame` sposta tutto avanti di uno.
@@ -806,8 +806,19 @@ void writeCellsColumn(TXsheet *xsh, int col,
   int needed = lastFrame;
   for (const ZtoryCharacterTrack::Word &w : cells)
     needed = std::max(needed, w.endFrame);
+  // ⚠️ IL RIPOSO VA SCRITTO OVUNQUE IL PERSONAGGIO TACCIA, non solo fra due sue
+  // parole. Una cella vuota TIENE il disegno precedente: con due personaggi in
+  // scena, quello che ha finito di parlare resterebbe con l'ultima bocca aperta
+  // per tutta la battuta dell'altro. La colonna consegnata all'animatore e' una
+  // linea temporale COMPLETA — fonemi dove parla, riposo dove tace — e il
+  // silenzio si ricava per complemento, che e' il motivo per cui una traccia
+  // audio mixata basta.
+  // Non vale per la colonna delle PAROLE: li' il vuoto e' vuoto, e un «rest»
+  // scritto fra una battuta e l'altra sarebbe rumore da leggere.
   QList<QString> rows;
-  for (int i = 0; i < needed; i++) rows.append(QString());
+  const QString filler =
+      restWhereSilent ? QString::fromUtf8(ZtoryPhonemes::kRest) : QString();
+  for (int i = 0; i < needed; i++) rows.append(filler);
   for (const ZtoryCharacterTrack::Word &w : cells)
     for (int f = w.startFrame; f <= w.endFrame; f++) {
       const int i = f - 1;
@@ -894,10 +905,10 @@ public:
         if (t.assetUuid.isEmpty()) orphanWords += t.spoken.size();
         // Prima le parole, poi le bocche: nel foglio si legge da sinistra, e la
         // battuta viene prima di come la si esegue.
-        writeCellsColumn(sub, sub->getColumnCount(), t.spoken, lastF);
+        writeCellsColumn(sub, sub->getColumnCount(), t.spoken, lastF, false);
         written++;
         if (!t.words.isEmpty()) {
-          writeCellsColumn(sub, sub->getColumnCount(), t.words, lastF);
+          writeCellsColumn(sub, sub->getColumnCount(), t.words, lastF, true);
           written++;
         }
       }
