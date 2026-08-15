@@ -1,0 +1,54 @@
+Ztoryc ships with whisper.cpp and a Whisper speech-recognition model, and uses
+whisper.cpp through command line commands.
+Ztoryc does not directly use whisper.cpp libraries or code.
+
+whisper.cpp is used to obtain WORD TIMINGS for lip sync. The words themselves
+come from the storyboard dialogue, not from the recognizer.
+
+whisper.cpp source code can be found at:
+https://github.com/ggml-org/whisper.cpp
+
+The bundled model file (ggml-base-q5_1.bin) is a quantized GGML conversion of
+OpenAI's Whisper "base" model, obtained from:
+https://huggingface.co/ggerganov/whisper.cpp
+
+Both the program and the model weights are distributed under the MIT License,
+verified 2026-08-15 at the three sources above (whisper.cpp LICENSE,
+openai/whisper LICENSE, and the license:mit tag of the HuggingFace repository).
+The MIT License is compatible with the Modified BSD License of Ztoryc, and
+requires the copyright notice and permission notice below to be distributed —
+which is the purpose of this file.
+
+-------------------------------------------------------------------------------
+whisper.cpp
+
+MIT License
+
+Copyright (c) 2023-2026 The ggml authors
+
+-------------------------------------------------------------------------------
+Whisper model weights
+
+MIT License
+
+Copyright (c) 2022 OpenAI
+
+-------------------------------------------------------------------------------
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

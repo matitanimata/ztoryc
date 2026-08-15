@@ -289,6 +289,11 @@ QString autodetectWhisper() {
   if (!dir.isEmpty() && findWhisper(dir)) return dir;
 
   QStringList folderList;
+  // PRIMA il bundle: cosi' l'app imballata funziona senza che l'utente installi
+  // niente, ed e' anche la copia di cui conosciamo la versione. Stesso posto e
+  // stesso ordine di ffmpeg.
+  folderList.append(QCoreApplication::applicationDirPath() +
+                    "/../Resources/whisper");
   folderList.append(".");
   folderList.append("./whisper");
   folderList.append(TEnv::getWorkingDirectory().getQString() + "/whisper");
@@ -320,6 +325,20 @@ QString autodetectWhisper() {
 //-----------------------------------------------------------------------------
 
 QString getWhisperDir() { return Preferences::instance()->getWhisperPath(); }
+
+QString getWhisperModel() {
+  // La scelta dell'utente vince: chi si e' scaricato un modello piu' grande lo
+  // ha fatto apposta, e non deve vederselo scavalcare da quello imballato.
+  const QString pref = Preferences::instance()->getWhisperModel();
+  if (!pref.isEmpty() && TSystem::doesExistFileOrLevel(TFilePath(pref)))
+    return pref;
+  // Altrimenti quello nel bundle, che c'e' sempre: senza, Whisper non parte e
+  // l'utente non ha modo di capire perche'.
+  const QString bundled = QCoreApplication::applicationDirPath() +
+                          "/../Resources/whisper/ggml-base-q5_1.bin";
+  if (TSystem::doesExistFileOrLevel(TFilePath(bundled))) return bundled;
+  return QString();
+}
 
 void setWhisperDir(const QString &dir) {
   Preferences::instance()->setValue(whisperPath, dir);

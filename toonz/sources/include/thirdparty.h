@@ -78,6 +78,9 @@ DVAPI bool checkWhisper();
 DVAPI QString autodetectWhisper();
 DVAPI QString getWhisperDir();
 DVAPI void setWhisperDir(const QString &dir);
+// Il modello da usare: la preferenza se impostata e il file esiste, altrimenti
+// quello imballato nel bundle. Vuoto = nessun modello, Whisper non puo' partire.
+DVAPI QString getWhisperModel();
 
 //-----------------------------------------------------------------------------
 
