@@ -1,3 +1,76 @@
+## [2026-08-15b] — Whisper dentro Ztoryc, e la misura che dice di non fidarsene
+
+Sessione lunga, tutta sul lipsync. Il filo: **ogni volta che ho misurato invece
+di dedurre, ho trovato qualcosa che il ragionamento non prevedeva** — e due
+volte era colpa mia.
+
+### Added — chi parla, dal testo (`f7482e1f2`, `a721a4d77`)
+`PanelData::dialog` era una stringa ANONIMA: il perno di tutta la catena.
+Scelta di Franco: **convenzione nel testo, non campo strutturato** — «tanto
+facciamo copia e incolla dallo script, e in FDX e Fountain il character e'
+riconoscibilissimo». La strada strutturata avrebbe toccato 18 punti e fatto
+compilare due campi dove se ne incolla uno.
+Il nome si colora **dentro il campo** (idea sua: «non potrebbe bastare
+evidenziare in verde?»), con **alias** per forzare un nome sul personaggio
+giusto. Interruttore nelle preferenze, e si spegne da solo su un progetto senza
+personaggi. **15 test** sul codice vero: ne hanno presi due.
+
+### Added — whisper.cpp (`476a96306`, `4439834a2`, `bd6d81e23`, `257db25ea`)
+Cablato come Rhubarb, modello `base-q5_1` (57 MB) nel bundle, licenze verificate
+alla fonte (tutte MIT), riallineamento tempi↔copione con **9 test sui dati
+reali**, e il comando nel menu Scene.
+
+### ⚠️ I quattro difetti trovati facendolo girare davvero (`deaa616fa`)
+1. **Il comando non era in nessun menu.** Il menu di Ztoryc non viene da
+   `menubar.xml`: e' costruito in `TopBar::loadMenubar()`. Avevo modificato due
+   file che non legge nessuno. **Non esiste un menu «Xsheet»** — quelle voci
+   stanno in **Scene**.
+2. **Lo shot si cercava alla riga 0.** In Ztoryc gli shot stanno in fila nel
+   tempo: solo il primo ha una cella alla riga 0. Da ogni altro il comando
+   diceva «apri una sotto-scena» stando gia' dentro una sotto-scena.
+3. **`-nt` distruggeva i tempi.** L'avevo aggiunto per zittire la console:
+   significa *no timestamps*. Avevo spento l'unica cosa per cui chiamiamo
+   Whisper. Le parole centrali uscivano a durata ZERO e l'ultima a 30000 ms —
+   la finestra da 30 s con cui whisper.cpp riempie l'audio corto: a 25 fps il
+   fotogramma **751**, in uno shot da 81.
+4. **Sfasamento di un fotogramma** (`createSoundTextLevel` mette lista[i] alla
+   riga i, e la riga 0 e' il fotogramma 1) e **parole orfane buttate intere** in
+   silenzio.
+
+Su (3) la lezione non e' l'opzione sbagliata — capitano — ma che un dato assurdo
+sia arrivato **fino alla colonna** senza che nulla lo fermasse. Aggiunta la
+difesa a valle.
+
+### 🎯 Deciso — serve un ALLINEATORE FORZATO
+Franco: *«dobbiamo arrivare a un sistema preciso, deve funzionare subito senza
+doverci rimettere le mani, altrimenti non ha senso»*. Niente pezze.
+
+**La misura che chiude la questione**: i tempi per parola di whisper.cpp non
+sono un allineamento ma una segmentazione approssimata, ed **erraticI fra
+modelli**. Il modello **intero da' tempi PEGGIORI del quantizzato** — «fa» e
+«per» a durata zero, «me!» fino a 4660 ms su un audio di 3240. Quindi **non si
+risolve con un modello piu' grande**. `-dtw` provato: nessun effetto.
+L'inviluppo complessivo e' invece giusto (parlato fino a 2886 ms, Whisper dice
+2920): sbaglia la distribuzione dentro.
+
+Strada: modello **CTC di allineamento forzato** che riascolta l'audio sapendo
+gia' le parole — il secondo stadio di WhisperX, e la ragione per cui esiste.
+
+### Note — non toccato di proposito
+- **Crash** al cambio workflow (doppia liberazione fra i figli di `ColumnArea`
+  in `clearRooms()`): **non riproducibile**, e `xshcolumnviewer.cpp` non l'ho
+  mai toccato. Annotato, non inseguito.
+- **Riordino shot**: Franco ha segnalato dialoghi che sembravano spostarsi, poi
+  ha verificato che funziona — erano shot vuoti, indistinguibili fra loro.
+  **Nessuna modifica**, come da sua regola. Resta annotato che `refreshFromScene`
+  salta le colonne senza child level mentre `onMoveShot`/`onAddShot` usano
+  l'indice dello shot come indice di colonna: oggi coincidono, e il campo giusto
+  (`xsheetColumn`) esiste ed e' ignorato.
+- **Mark out** che si aggiorna solo muovendo il confine: voce separata, da fare.
+- **Colonne al momento dell'EXPORT** invece che a comando: idea di Franco, e ha
+  ragione — a meta' lavorazione la colonna diventa stantia al primo cambio di
+  timing. Da spostare li'.
+
 ## [2026-08-15] — Il breakdown, e il rifiuto di indovinare
 
 Sessione lunga di **progettazione** con Franco su lipsync ed export, con due

@@ -691,6 +691,42 @@ nella sub-scene corretta.
      sceneggiatura — il parser pretende almeno una lettera, o una riga di numeri
      diventerebbe un personaggio — ma funzionano con i due punti.
 
+   - 🎯 **DECISO 2026-08-15: serve un ALLINEATORE FORZATO. I tempi di
+     whisper.cpp NON bastano — misurato.** Franco: *«dobbiamo arrivare a un
+     sistema preciso, deve funzionare subito senza doverci rimettere le mani,
+     altrimenti non ha senso»*. Quindi NON si fa la pezza di ridistribuzione:
+     si fa la cosa giusta.
+
+     **La misura che chiude la questione** (audio vero di Franco, 3,24 s, una
+     battuta di SOFIA). I tempi per parola di `-ml 1 -sow` non sono un
+     allineamento: sono una segmentazione approssimata dei token, ed **erano
+     ERRATICI fra un modello e l'altro**:
+
+     | parola | base-q5_1 (57 MB) | base intero (141 MB) |
+     |---|---|---|
+     | facile? | 680–1430 | 1190–2000 |
+     | fa | 2350–2500 | **3240–3240** (durata zero) |
+     | me! | 2720–2920 | 3240–**4660** (oltre la fine dell'audio!) |
+
+     ⚠️ **Il modello INTERO da' tempi PEGGIORI del quantizzato**: parole a
+     durata zero e coda oltre l'audio. Quindi il problema **non si risolve con
+     un modello piu' grande**, e non e' un difetto del nostro codice.
+     `-dtw base` provato: nessun effetto (il modello quantizzato non ha le teste
+     di allineamento).
+     Verificato anche che l'inviluppo complessivo e' giusto: il parlato finisce
+     a 2886 ms (silencedetect) e Whisper dice 2920. E' la distribuzione DENTRO
+     a sbagliare.
+
+     **La strada**: un modello **CTC di allineamento forzato** che riascolta
+     l'audio SAPENDO gia' le parole e dice dove cadono — il secondo stadio di
+     WhisperX, e la ragione per cui WhisperX esiste. Precisione a decine di
+     millisecondi invece che centinaia. A 25 fps, 200 ms sono 5 fotogrammi:
+     nello scrub si vedono.
+     Da valutare: wav2vec2 CTC per lingua (quelli usati da WhisperX), oppure un
+     allineatore separato invocato come processo (schema Rhubarb/ffmpeg).
+     ⚠️ Licenza e peso dei modelli di allineamento **da verificare**, come si e'
+     fatto per whisper.cpp.
+
    - 🔇 **IL SILENZIO E' UN DATO — una traccia audio sola basta**
      (ragionato con Franco il 2026-08-15). Sua domanda: *«come fa a capire che a
      un certo punto quel personaggio deve restare muto e parla un altro? Con
