@@ -642,6 +642,102 @@ nella sub-scene corretta.
      inchiodare il bersaglio al «livello di bocche»: il MouthSet deve poter
      puntare a un disegno OPPURE a una posa.
 
+   - ✅ **FATTO il 2026-08-15 — CHI PARLA, ricavato dal testo.** Era il perno di
+     tutta la catena: `PanelData::dialog` era una stringa ANONIMA.
+
+     **Strada scelta da Franco: la convenzione, non un campo strutturato.**
+     *«Va bene la B perche' tanto facciamo copia e incolla dallo script, e in
+     alcuni formati come l'FDX e il Fountain il character e' riconoscibilissimo
+     nel testo.»* Decisiva: la strada strutturata avrebbe toccato **18 punti**
+     fra Board, animatic e due serializzatori, e avrebbe fatto compilare due
+     campi dove se ne incolla uno solo — perdendo l'unica cosa che rende il
+     lipsync automatico, cioe' che il testo c'e' gia'.
+
+     `ZtoryModel::parseDialogue()` riconosce le due forme vere:
+     `MARIO: battuta` e la forma sceneggiatura (nome da solo in maiuscolo,
+     battuta sotto). Toglie le estensioni `(V.O.)` `(O.S.)`, scarta le
+     didascalie fra parentesi, ricompone le battute su piu' righe.
+
+     **Il nome si colora DENTRO il campo** (idea di Franco: *«non potrebbe
+     bastare evidenziare in verde il nome?»* — si', ed e' meglio: il riscontro
+     va dove sta la causa). Verde = personaggio del progetto, arancione = no.
+     Resta una riga di avviso SOLO per i non riconosciuti, che in un campo lungo
+     e scrollato resterebbero fuori vista. Nel Board **e** nello Shot Board.
+
+     **ALIAS**: si seleziona un nome e lo si forza su un personaggio (tasto
+     destro). Serve davvero — negli script i nomi non coincidono mai del tutto
+     con quelli del tracker («PRINCIPESSA» nel copione, «PRINCENERENTOLA» fra
+     gli asset) e le alternative erano correggere il copione o rinominare
+     l'asset. L'alias e' di PROGETTO, non di pannello.
+
+     ⚠️ **La regola sta in UN posto solo** (`ZtoryModel::speakerAt()`), usata sia
+     dal parser sia dall'evidenziatore. Due copie divergono al primo caso
+     limite, e in questa feature e' gia' successo.
+
+     🧪 **13 casi di test** sul codice VERO (estratto testualmente, non
+     riscritto): `scratchpad/test_parser.cpp`. Ne hanno presi due, e valgono
+     piu' del codice:
+     1. la prima versione rifiutava un nome sconosciuto, e cosi' «GIOVANNI»
+        finiva inghiottito nella battuta — la funzione che deve SEGNALARE i
+        personaggi mancanti non poteva vederne nemmeno uno;
+     2. correggendo, avevo escluso le didascalie dal «seguito da»: ma
+        `MARIO / (sottovoce) / Non ci credo` e' normalissimo e la parentesi
+        CONFERMA l'intestazione. Facevo sparire Mario. A negarla e' la riga
+        VUOTA, non la parentesi.
+
+     📌 Nel progetto di Franco **51 personaggi su 63 hanno nomi veri e gia' in
+     maiuscolo** (BRONTOLO, FATINA, LUPO, SOFIA…), quindi la convenzione morde
+     da subito. I 12 chiamati «1».."12" non si riconoscono nella forma
+     sceneggiatura — il parser pretende almeno una lettera, o una riga di numeri
+     diventerebbe un personaggio — ma funzionano con i due punti.
+
+   - 🔇 **IL SILENZIO E' UN DATO — una traccia audio sola basta**
+     (ragionato con Franco il 2026-08-15). Sua domanda: *«come fa a capire che a
+     un certo punto quel personaggio deve restare muto e parla un altro? Con
+     Rhubarb colleghi il livello delle bocche alla colonna dell'audio.»*
+
+     **Non serve dividere l'audio per personaggio.** Separarlo servirebbe a
+     DEDURRE chi parla — ma non lo dobbiamo dedurre, **c'e' scritto** nel testo
+     del pannello. Dall'allineamento esce (personaggio, parola, inizio, fine),
+     quindi per ogni personaggio si sanno DUE cose: dove parla → viseme, e
+     **tutto il resto** → Rest. Il silenzio si ricava per complemento.
+
+     ⚠️ **Il Rest va SCRITTO, non lasciato vuoto.** Una cella vuota tiene
+     l'ultimo disegno: il personaggio resterebbe con la bocca aperta a meta'
+     parola per tutta la battuta dell'altro. La colonna consegnata all'animatore
+     e' una **linea temporale completa**: fonemi dove parla, Rest dove tace.
+
+     **E' MEGLIO della separazione audio, non un aggiramento.** Il legame
+     Rhubarb livello-bocche ↔ colonna audio presuppone che quell'audio sia di
+     quel personaggio: dandogli un mix, Rhubarb fa muovere la bocca su TUTTE le
+     battute, anche quelle degli altri — il difetto che Franco aveva gia'
+     individuato chiedendo una colonna per personaggio. Con l'attribuzione dal
+     testo sappiamo anche chi NON sta parlando, informazione che nemmeno una
+     pista pulita per personaggio da' (li' il silenzio non distingue fra pausa e
+     battuta altrui).
+
+     **Cosa creare in automatico e cosa no:**
+     - ✅ le **colonne di TESTO** (`TXshSoundTextColumn`), una per personaggio
+       che parla in quello shot: dati derivati, si rigenerano, e finiscono
+       nell'exposure sheet stampato.
+     - ❌ **NON** le tracce audio. L'audio vive nel main xsheet ed e' di tutta la
+       scena, i personaggi compaiono shot per shot: uno che parla in un pannello
+       solo si porterebbe una traccia per l'intero progetto. E una traccia vuota
+       «da riempire correttamente» e' un compito assegnato all'utente senza
+       dargli niente in cambio.
+     - 🔧 il legame **traccia → personaggio** resta come **RIFINITURA**: quando
+       l'audio arriva gia' separato (doppiaggio, una pista per attore) e'
+       guadagno netto — Whisper sente una voce sola. Ma e' un di piu' quando
+       c'e', non un requisito da soddisfare.
+
+     **Due limiti da tenere presenti:**
+     - il testo dev'essere **ragionevolmente completo**: qui Whisper fa
+       allineamento forzato, e una BATTUTA INTERA mancante puo' far slittare
+       tutto il seguito (un refuso invece non fa danno);
+     - il **parlato sovrapposto** e' l'unico caso in cui la traccia separata
+       vince davvero — da trattare come eccezione, non come regola che detta
+       l'architettura.
+
    - Primo passo comunque indipendente da Whisper: collegare `PanelData::dialog`
      all'argomento `-d` di Rhubarb. Il copione ce l'abbiamo gia' scritto, e
      nessun riconoscitore batte il testo vero.

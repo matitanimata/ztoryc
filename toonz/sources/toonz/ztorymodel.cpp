@@ -264,6 +264,181 @@ static AssetImportPolicy readImportPolicy(const QXmlStreamAttributes &a) {
   return p;
 }
 
+//-----------------------------------------------------------------------------
+// Dialoghi — riconoscere chi parla dentro il testo di un pannello.
+//
+// Le due forme che arrivano davvero, perche' nel Board si incolla dallo script:
+//   «MARIO: ma dove vai?»   forma con i due punti
+//   «MARIO»                 forma sceneggiatura: nome su riga propria, in
+//   «Ma dove vai?»          maiuscolo, battuta sotto (Fountain, FDX, Final Draft)
+
+// Toglie l'estensione fra parentesi da un nome: MARIO (V.O.) -> MARIO.
+// Sono indicazioni di regia (voce fuori campo, fuori scena, continua), non
+// personaggi diversi: senza questo «MARIO» e «MARIO (V.O.)» diventerebbero due.
+static QString stripSpeakerExtension(const QString &name) {
+  const int p = name.indexOf('(');
+  return (p < 0 ? name : name.left(p)).trimmed();
+}
+
+// Una riga e' un'intestazione di personaggio in stile sceneggiatura?
+// Regole prudenti, perche' un falso positivo si mangia una battuta:
+//  - non vuota, ragionevolmente corta;
+//  - nessuna lettera minuscola (i nomi in sceneggiatura sono in maiuscolo);
+//  - almeno una lettera (una riga di soli «---» non e' un nome);
+//  - non finisce con punteggiatura di frase.
+static bool looksLikeSpeakerCue(const QString &line) {
+  const QString s = stripSpeakerExtension(line);
+  if (s.isEmpty() || s.length() > 40) return false;
+  bool hasLetter = false;
+  for (const QChar &ch : s) {
+    if (ch.isLetter()) {
+      hasLetter = true;
+      if (ch.isLower()) return false;
+    }
+  }
+  if (!hasLetter) return false;
+  const QChar last = s.at(s.length() - 1);
+  return last != '.' && last != '!' && last != '?' && last != ',';
+}
+
+QVector<DialogueLine> ZtoryModel::parseDialogue(const QString &text) const {
+  QVector<DialogueLine> out;
+  if (text.trimmed().isEmpty()) return out;
+
+  // Indice dei personaggi del progetto, per nome minuscolo.
+  QHash<QString, QString> uuidByName;
+  for (const Asset &a : m_assets)
+    if (a.type.compare("Character", Qt::CaseInsensitive) == 0)
+      uuidByName.insert(a.name.trimmed().toLower(), a.uuid);
+  for (auto it = m_speakerAliases.constBegin(); it != m_speakerAliases.constEnd(); ++it)
+    uuidByName.insert(it.key(), it.value());
+
+  auto emitLine = [&](const QString &speaker, const QString &said) {
+    if (said.trimmed().isEmpty()) return;
+    DialogueLine dl;
+    dl.character = speaker;
+    dl.text      = said.trimmed();
+    if (!speaker.isEmpty()) {
+      auto it = uuidByName.constFind(speaker.toLower());
+      if (it != uuidByName.constEnd()) { dl.assetUuid = *it; dl.matched = true; }
+    }
+    out.push_back(dl);
+  };
+
+  QString current;      // personaggio in corso (forma sceneggiatura)
+  QString pending;      // sue battute accumulate
+  auto flush = [&]() {
+    if (!pending.isEmpty()) emitLine(current, pending);
+    pending.clear();
+  };
+
+  const QStringList rawLines = text.split('\n');
+  for (int li = 0; li < rawLines.size(); li++) {
+    const QString line = rawLines[li].trimmed();
+    // La riga dopo, per la regola di Fountain «intestazione = maiuscolo SEGUITO
+    // da qualcosa»: una didascalia urlata resta sola, col vuoto sotto.
+    // Attenzione: una didascalia SUBITO sotto il nome — «MARIO / (sottovoce) /
+    // Non ci credo» — e' normalissima in sceneggiatura e CONFERMA
+    // l'intestazione. Escluderla (primo tentativo) faceva sparire Mario: preso
+    // dal test, non dalla lettura.
+    QString next;
+    if (li + 1 < rawLines.size()) next = rawLines[li + 1].trimmed();
+    const bool nextIsDialogue = !next.isEmpty();
+
+    // Riga vuota: chiude la battuta in corso e ANCHE il personaggio. In
+    // sceneggiatura il blocco finisce li'; tenerlo aperto attribuirebbe a
+    // Mario la descrizione dell'inquadratura che segue.
+    if (line.isEmpty()) { flush(); current.clear(); continue; }
+
+    // Didascalia su riga propria: «(sottovoce)» non si pronuncia.
+    if (line.startsWith('(') && line.endsWith(')')) continue;
+
+    // Forma con i due punti. Si accetta solo se cio' che precede i due punti
+    // sembra un nome: altrimenti «Nota: arriva da destra» diventerebbe una
+    // battuta del personaggio «Nota».
+    const int colon = line.indexOf(':');
+    if (colon > 0) {
+      const QString head = stripSpeakerExtension(line.left(colon));
+      if (looksLikeSpeakerCue(head) || uuidByName.contains(head.toLower())) {
+        flush();
+        current.clear();
+        emitLine(head, line.mid(colon + 1));
+        continue;
+      }
+    }
+
+    // Forma sceneggiatura: il nome da solo, la battuta sotto.
+    // Regola di Fountain: un'intestazione e' in maiuscolo ED E' SEGUITA da una
+    // battuta. E' il «seguita da» a distinguerla da una didascalia urlata.
+    //
+    // Volutamente si accetta anche un nome che il progetto NON conosce, con
+    // matched=false. La prima versione lo rifiutava, e il test ha mostrato che
+    // cosi' il nome finiva inghiottito dentro la battuta («GIOVANNI Chi sono
+    // io?») e unknownSpeakers() non poteva piu' segnalarlo: proprio il caso per
+    // cui esiste — hai incollato uno script con un personaggio che non hai
+    // ancora creato. Meglio mostrarlo che mangiarlo.
+    if (looksLikeSpeakerCue(line) && nextIsDialogue) {
+      flush();
+      current = stripSpeakerExtension(line);
+      continue;
+    }
+
+    if (!pending.isEmpty()) pending += ' ';
+    pending += line;
+  }
+  flush();
+  return out;
+}
+
+void ZtoryModel::setSpeakerAlias(const QString &scriptName,
+                                const QString &assetUuid) {
+  const QString key = scriptName.trimmed().toLower();
+  if (key.isEmpty()) return;
+  if (assetUuid.isEmpty()) m_speakerAliases.remove(key);
+  else m_speakerAliases.insert(key, assetUuid);
+}
+
+bool ZtoryModel::speakerAt(const QString &rawLine, const QString &rawNext,
+                           QString *outName, bool *outMatched) const {
+  const QString line = rawLine.trimmed();
+  if (line.isEmpty()) return false;
+  if (line.startsWith('(') && line.endsWith(')')) return false;  // didascalia
+
+  QHash<QString, QString> uuidByName;
+  for (const Asset &a : m_assets)
+    if (a.type.compare("Character", Qt::CaseInsensitive) == 0)
+      uuidByName.insert(a.name.trimmed().toLower(), a.uuid);
+  // Gli alias contano come nomi veri: e' il loro scopo.
+  for (auto it = m_speakerAliases.constBegin(); it != m_speakerAliases.constEnd(); ++it)
+    uuidByName.insert(it.key(), it.value());
+
+  auto give = [&](const QString &name) {
+    if (outName) *outName = name;
+    if (outMatched) *outMatched = uuidByName.contains(name.toLower());
+    return true;
+  };
+
+  // Forma coi due punti.
+  const int colon = line.indexOf(':');
+  if (colon > 0) {
+    const QString head = stripSpeakerExtension(line.left(colon));
+    if (looksLikeSpeakerCue(head) || uuidByName.contains(head.toLower()))
+      return give(head);
+  }
+  // Forma sceneggiatura: maiuscolo, e seguito da qualcosa.
+  if (looksLikeSpeakerCue(line) && !rawNext.trimmed().isEmpty())
+    return give(stripSpeakerExtension(line));
+  return false;
+}
+
+QStringList ZtoryModel::unknownSpeakers(const QString &text) const {
+  QStringList out;
+  for (const DialogueLine &dl : parseDialogue(text))
+    if (!dl.character.isEmpty() && !dl.matched && !out.contains(dl.character))
+      out << dl.character;
+  return out;
+}
+
 AssetImportPolicy ZtoryModel::effectiveImportPolicy(const Asset &a) const {
   // Campo per campo, non tutto-o-niente: chi cambia solo il modo su un asset
   // non deve ritrovarsi con le opzioni PSD azzerate, e chi cambia solo le
@@ -538,6 +713,7 @@ void ZtoryModel::resetProjectLevelDefaults() {
   m_backgroundsDir.clear();
   m_modelSheetDir.clear();
   m_defaultImportPolicy = AssetImportPolicy();
+  m_speakerAliases.clear();
   m_productionType.clear();
   m_productionStyle.clear();
   m_ratio.clear();
@@ -679,6 +855,14 @@ void ZtoryModel::saveProjectDb() {
   if (!m_productionStyle.isEmpty()) xml.writeAttribute("productionStyle", m_productionStyle);
   if (!m_ratio.isEmpty())           xml.writeAttribute("ratio",           m_ratio);
   if (!m_resolution.isEmpty())      xml.writeAttribute("resolution",      m_resolution);
+  // Gli alias sono FIGLI, non attributi: sono una lista, e gli attributi
+  // vanno scritti tutti prima di aprire qualunque figlio.
+  for (auto it = m_speakerAliases.constBegin(); it != m_speakerAliases.constEnd(); ++it) {
+    xml.writeStartElement("alias");
+    xml.writeAttribute("name",  it.key());
+    xml.writeAttribute("asset", it.value());
+    xml.writeEndElement();
+  }
   xml.writeEndElement();
 
   xml.writeStartElement("team");
@@ -840,6 +1024,11 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
       m_backgroundsDir   = a.value("backgroundsDir").toString();
       m_modelSheetDir    = a.value("modelSheetDir").toString();
       m_defaultImportPolicy = readImportPolicy(a);
+    } else if (xml.name() == QLatin1String("alias")) {
+      auto a = xml.attributes();
+      const QString n = a.value("name").toString();
+      const QString u = a.value("asset").toString();
+      if (!n.isEmpty() && !u.isEmpty()) m_speakerAliases.insert(n.toLower(), u);
       m_productionType   = a.value("productionType").toString();
       m_productionStyle  = a.value("productionStyle").toString();
       m_ratio            = a.value("ratio").toString();

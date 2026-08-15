@@ -5,6 +5,7 @@
 #include "viewerpane.h"
 #include "comboviewerpane.h"
 #include "ztorymodel.h"
+#include "ztorydialoguehighlighter.h"
 #include "ztoryshotops.h"
 #include "toonz/tcolumnhandle.h"
 #include "subscenecommand.h"
@@ -84,6 +85,12 @@ extern ToggleCommandHandler mainAudioToggle;
 #include "toonz/stage.h"
 #include <QSplitter>
 #include <QApplication>
+
+// Definita piu' sotto, accanto a refreshSpeakersLabel(): serve al costruttore
+// del campo dialogo, che viene prima.
+static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
+                                   const QPoint &pos);
+
 
 // Shared label column width — must match ZtoryAudioTrack::labelW (80px).
 // Used by ZtoryAnimaticRuler and ZtoryAnimaticTrack to align with audio tracks.
@@ -4190,6 +4197,24 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
   lay->addWidget(makeLbl(tr("Dialog:")));
   m_dialogField = makeField(tr("Enter dialogue..."));
   lay->addWidget(m_dialogField);
+  // Chi parla si ricava dal testo, come in sceneggiatura («MARIO:» oppure il
+  // nome da solo in maiuscolo con la battuta sotto). E' una convenzione, quindi
+  // DEVE vedersi: una convenzione che fallisce in silenzio e' peggio di un
+  // campo in piu'. Qui si legge chi e' stato riconosciuto e chi no.
+  new ZtoryDialogueHighlighter(m_dialogField->document());
+  // Tasto destro sul campo: se c'e' una selezione, si puo' forzarla su un
+  // personaggio. Il menu standard (taglia/copia/incolla) resta.
+  m_dialogField->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(m_dialogField, &QWidget::customContextMenuRequested, this,
+          [this](const QPoint &p) {
+            ztoryOfferSpeakerAlias(this, m_dialogField, p);
+            refreshSpeakersLabel();
+          });
+  m_speakersLabel = new QLabel(container);
+  m_speakersLabel->setWordWrap(true);
+  m_speakersLabel->setStyleSheet("font-size: 10px;");
+  m_speakersLabel->hide();
+  lay->addWidget(m_speakersLabel);
   lay->addWidget(makeLbl(tr("Action:")));
   m_actionField = makeField(tr("Enter action notes..."));
   lay->addWidget(m_actionField);
@@ -4381,6 +4406,7 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
     if (m_panelIdx < 0 || m_panelIdx >= (int)panels.size()) return;
     PanelData &pd = ZtoryModel::instance()->shot(m_shotIdx).panels[m_panelIdx];
     pd.dialog = m_dialogField->toPlainText();
+    refreshSpeakersLabel();
     pd.action = m_actionField->toPlainText();
     pd.notes  = m_notesField->toPlainText();
     emit ZtoryModel::instance()->shotDataChanged(m_shotIdx);
@@ -4745,6 +4771,7 @@ void ZtoryPanelNavigator::refreshTextFields() {
   m_blockSignals = true;
   const PanelData &pd = panels[m_panelIdx];
   m_dialogField->setPlainText(pd.dialog);
+  refreshSpeakersLabel();
   m_actionField->setPlainText(pd.action);
   m_notesField->setPlainText(pd.notes);
   m_blockSignals = false;
@@ -5883,6 +5910,81 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
         showShotTimeline();
     });
   }
+}
+
+//-----------------------------------------------------------------------------
+// «Seleziona il nome e forzalo su un personaggio» (richiesta di Franco,
+// 2026-08-15). Negli script i nomi non coincidono mai del tutto con quelli del
+// tracker — «PRINCIPESSA» nel copione, «PRINCENERENTOLA» fra gli asset — e le
+// due alternative sarebbero correggere il copione o rinominare l'asset: due
+// cose che non si fanno per far contento un riconoscimento.
+// L'alias vale per TUTTO il progetto: se e' quel personaggio qui, lo e' anche
+// negli altri quaranta pannelli.
+static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
+                                   const QPoint &pos) {
+  ZtoryModel *m = ZtoryModel::instance();
+  QMenu *menu = field->createStandardContextMenu();
+  const QString sel = field->textCursor().selectedText().trimmed();
+
+  if (!sel.isEmpty() && sel.length() <= 40) {
+    menu->addSeparator();
+    QMenu *sub = menu->addMenu(
+        QObject::tr("Treat «%1» as character").arg(sel));
+    QHash<QAction *, QString> byAction;
+    const QString curAlias = m->speakerAlias(sel);
+    for (const Asset &a : m->assets()) {
+      if (a.type.compare("Character", Qt::CaseInsensitive) != 0) continue;
+      QAction *act = sub->addAction(a.name);
+      act->setCheckable(true);
+      act->setChecked(!curAlias.isEmpty() && curAlias == a.uuid);
+      byAction.insert(act, a.uuid);
+    }
+    QAction *clearAct = nullptr;
+    if (!curAlias.isEmpty()) {
+      sub->addSeparator();
+      clearAct = sub->addAction(QObject::tr("Remove this alias"));
+    }
+    if (sub->isEmpty()) sub->setEnabled(false);
+
+    QAction *chosen = menu->exec(field->viewport()->mapToGlobal(pos));
+    if (chosen) {
+      if (chosen == clearAct) {
+        m->setSpeakerAlias(sel, QString());
+        m->saveProjectDb();
+      } else if (byAction.contains(chosen)) {
+        m->setSpeakerAlias(sel, byAction.value(chosen));
+        m->saveProjectDb();
+      }
+      // Ridisegna: l'evidenziazione deve cambiare colore SUBITO, altrimenti
+      // non si capisce se l'assegnazione ha avuto effetto.
+      field->document()->markContentsDirty(0, field->toPlainText().length());
+    }
+    delete menu;
+    return;
+  }
+  menu->exec(field->viewport()->mapToGlobal(pos));
+  delete menu;
+}
+
+void ZtoryPanelNavigator::refreshSpeakersLabel() {
+  if (!m_speakersLabel) return;
+  ZtoryModel *m = ZtoryModel::instance();
+  const QString text = m_dialogField ? m_dialogField->toPlainText() : QString();
+
+  QStringList known, unknown;
+  for (const DialogueLine &dl : m->parseDialogue(text)) {
+    if (dl.character.isEmpty()) continue;
+    if (dl.matched) { if (!known.contains(dl.character)) known << dl.character; }
+    else if (!unknown.contains(dl.character)) unknown << dl.character;
+  }
+  Q_UNUSED(known);
+  // Vedi il commento gemello nel Board: i riconosciuti si vedono in verde nel
+  // testo, qui resta solo l'avviso su chi non lo e'.
+  if (unknown.isEmpty()) { m_speakersLabel->hide(); return; }
+  m_speakersLabel->setText(
+      QString("<span style='color:#F5A623;'>%1</span>")
+          .arg(tr("Not a character: %1").arg(unknown.join(", "))));
+  m_speakersLabel->show();
 }
 
 void ZtoryAnimaticPanel::refreshFromScene() {

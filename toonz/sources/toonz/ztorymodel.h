@@ -155,6 +155,19 @@ struct ShotData {
   }
 };
 
+// Una battuta estratta dal testo di un pannello: chi la dice e cosa dice.
+//
+// Il dialogo NON e' un campo strutturato ed e' una scelta: nel Board si incolla
+// dallo script, e in sceneggiatura il personaggio e' gia' scritto nel testo.
+// Costringere a compilare due campi dove se ne incolla uno solo avrebbe fatto
+// perdere l'unica cosa che rende il lipsync automatico — che il testo c'e' gia'.
+struct DialogueLine {
+  QString character;   // nome come scritto nel testo, gia' ripulito
+  QString assetUuid;   // asset di tipo Character corrispondente, se trovato
+  QString text;        // cio' che viene DETTO (niente didascalie)
+  bool    matched = false;  // false = nome nel testo che non e' un personaggio
+};
+
 // Come l'export porta un asset dentro lo shot.
 //
 // La distinzione Load/Import NON e' cosmetica ed e' la scelta piu' pesante di
@@ -304,6 +317,13 @@ class ZtoryModel : public QObject {
   // dello stesso progetto, e si importano come sotto-scene (scelta di Franco,
   // 2026-08-15). m_modelSheetDir serve invece al tradigital, dove del
   // personaggio si importa il model sheet come immagine.
+  // Nomi dello script forzati a mano su un personaggio, in minuscolo -> uuid.
+  // Serve perche' negli script i nomi non coincidono mai del tutto con quelli
+  // del tracker: «PRINCIPESSA» nel copione, «PRINCENERENTOLA» fra gli asset.
+  // Senza, l'unica via sarebbe correggere il copione o rinominare l'asset —
+  // due cose che non si vogliono fare per far funzionare un riconoscimento.
+  QHash<QString, QString>           m_speakerAliases;
+
   QString                           m_propsDir;
   QString                           m_backgroundsDir;
   QString                           m_modelSheetDir;
@@ -427,6 +447,38 @@ public:
   //      render, giorni dopo.
   // Volutamente niente prefissi/suffissi: «macchina» non pesca «macchina_v03».
   QString resolveAssetFile(const Asset &a, QString *why = nullptr) const;
+
+  // ── Dialoghi: chi dice cosa ────────────────────────────────────────────────
+  // Estrae le battute dal testo di un pannello, riconoscendo le due forme in cui
+  // un personaggio compare in una sceneggiatura:
+  //   «MARIO: ma dove vai?»          → forma con i due punti
+  //   «MARIO» su una riga sua, in     → forma sceneggiatura (Fountain, FDX,
+  //   maiuscolo, battuta sotto           copia-incolla da Final Draft)
+  // Le estensioni fra parentesi (V.O.), (O.S.), (CONT'D) si tolgono dal nome; le
+  // didascalie su riga propria — «(sottovoce)» — NON si pronunciano e si
+  // scartano. I nomi si risolvono sugli asset di tipo Character del progetto.
+  QVector<DialogueLine> parseDialogue(const QString &text) const;
+  // I soli nomi che il testo contiene ma il progetto non conosce. Serve a
+  // MOSTRARE il riconoscimento invece di lasciarlo magico: una convenzione che
+  // non si vede fallire in silenzio e' peggio di un campo in piu'.
+  QStringList unknownSpeakers(const QString &text) const;
+  // Questa riga e' un'intestazione di personaggio? Stessa identica regola di
+  // parseDialogue — esposta perche' l'evidenziatore del campo di testo la deve
+  // usare, e due copie della regola divergono al primo caso limite.
+  // `nextLine` serve alla regola di Fountain (nome seguito da qualcosa).
+  // Restituisce false se la riga non e' un'intestazione; altrimenti riempie
+  // `outName` e dice in `outMatched` se e' un personaggio del progetto.
+  bool speakerAt(const QString &line, const QString &nextLine,
+                 QString *outName, bool *outMatched) const;
+
+  // Alias: forza un nome dello script su un personaggio. uuid vuoto = toglie
+  // l'alias. Vale per tutto il progetto, non per il singolo pannello: se
+  // «PRINCIPESSA» e' quel personaggio qui, lo e' anche negli altri 40 pannelli.
+  void setSpeakerAlias(const QString &scriptName, const QString &assetUuid);
+  QString speakerAlias(const QString &scriptName) const {
+    return m_speakerAliases.value(scriptName.trimmed().toLower());
+  }
+  const QHash<QString, QString> &speakerAliases() const { return m_speakerAliases; }
   // Il file legato a un asset (per un Character cutout: la scena da importare
   // come sotto-scena). Vuoto = nessun legame diretto.
   void setAssetFilePath(int i, const QString &path) {

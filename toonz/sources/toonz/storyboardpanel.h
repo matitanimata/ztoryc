@@ -59,6 +59,10 @@ class PanelWidget final : public QFrame {
   QLabel      *m_previewLabel;
   QPixmap      m_previewPixmap;
   QTextEdit   *m_dialogField;
+  // «Chi parla», ricavato dal testo: la convenzione di sceneggiatura deve
+  // vedersi anche nel Board, che e' dove lo script si incolla.
+  QLabel      *m_speakersLabel = nullptr;
+  void refreshSpeakersLabel();
   QTextEdit   *m_actionField;
   QTextEdit   *m_notesField;
   QLabel* makeFieldLabel(const QString &text);

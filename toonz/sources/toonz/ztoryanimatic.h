@@ -745,6 +745,10 @@ private:
   QTextEdit    *m_dialogField      = nullptr;
   QTextEdit    *m_actionField      = nullptr;
   QTextEdit    *m_notesField       = nullptr;
+  // «Chi parla», ricavato dal testo del dialogo: la convenzione di
+  // sceneggiatura deve VEDERSI, o fallisce in silenzio.
+  QLabel       *m_speakersLabel    = nullptr;
+  void refreshSpeakersLabel();
   QToolButton  *m_syncBtn          = nullptr;
   QTimer       *m_refreshTimer     = nullptr;
   QPixmap       m_cachedPreview;
