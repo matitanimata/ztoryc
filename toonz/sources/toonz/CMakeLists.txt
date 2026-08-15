@@ -165,6 +165,8 @@ set(MOC_HEADERS
 
 set(HEADERS
     ${MOC_HEADERS}
+    ztoryvosk.h
+    ztoryphonemes.h
     celldata.h
     cellkeyframedata.h
     cellkeyframeselection.h
@@ -256,6 +258,8 @@ set(SOURCES
     ztorymodel.cpp
     ztoryshotops.cpp
     ztorylipsync.cpp
+    ztoryvosk.cpp
+    ztoryphonemes.cpp
     kitsuclient.cpp
     kitsuconnectdialog.cpp
     ztoryanimatic.cpp

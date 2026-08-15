@@ -35,7 +35,12 @@ struct ZtoryCharacterTrack {
     int     startFrame = 0;
     int     endFrame   = 0;
   };
-  QVector<Word> words;
+  // DUE colonne, non una (richiesta di Franco, 2026-08-16): `mouths` sono le
+  // caselle delle bocche, cioe' cio' che l'animatore esegue; `spoken` sono le
+  // parole, che servono a chi legge il foglio per sapere COSA si sta dicendo.
+  // Nell'x-sheet tradizionale convivono, e l'una non sostituisce l'altra.
+  QVector<Word> words;   // bocche (viseme)
+  QVector<Word> spoken;  // parole
 };
 
 //----------------------------------------------------------------------------
@@ -95,6 +100,12 @@ public:
   // start() per spegnere un comando invece di farlo fallire dopo il clic.
   static QString unavailableReason();
 
+  // Quale motore userebbe una richiesta con questa lingua. Serve alla UI per
+  // dirlo all'utente PRIMA: i due non danno gli stessi tempi, e sapere quale ha
+  // lavorato è la prima cosa da chiedersi se un risultato sembra storto.
+  enum class Engine { Vosk, Whisper };
+  static Engine engineFor(const QString &language);
+
 signals:
   void progress(const QString &message);
   // `ok` falso: `message` dice cosa è andato storto. Le tracce sono una per
@@ -109,8 +120,18 @@ private:
   static QVector<TimedWord> parseWhisperJson(const QByteArray &json,
                                              QString *error);
 
+  // Da qui in giù i due motori non si distinguono più: parole con tempi in
+  // ingresso, tracce per personaggio in uscita. Tenuta in un posto solo perché
+  // è la parte già collaudata, e duplicarla per motore vorrebbe dire vederla
+  // divergere alla prima correzione.
+  void completeWith(QVector<TimedWord> heard);
+
+  bool startVosk();
+  bool startWhisper();
+
   QProcess *m_proc = nullptr;
   bool      m_running = false;
   Request   m_req;
   QString   m_jsonPath;
+  class QThread *m_voskThread = nullptr;
 };

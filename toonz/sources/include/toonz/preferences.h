@@ -325,6 +325,10 @@ public:
   }
   QString getWhisperPath() const { return getStringValue(whisperPath); }
   QString getWhisperModel() const { return getStringValue(whisperModel); }
+  QString getLipSyncLanguage() const {
+    return getStringValue(lipSyncLanguage);
+  }
+  int getLipSyncLeadFrames() const { return getIntValue(lipSyncLeadFrames); }
 
   // Drawing  tab
   QString getDefRasterFormat() const { return getStringValue(DefRasterFormat); }

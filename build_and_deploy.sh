@@ -262,6 +262,31 @@ if [[ ! -f "$WHISPER_DST/$WHISPER_MODEL_NAME" ]]; then
   fi
 fi
 
+echo "→ Copia Vosk nel bundle (se assente)..."
+# L'allineatore forzato. A differenza di whisper-cli, qui imballare FUNZIONA:
+# libvosk e' autosufficiente (otool: solo Accelerate, libc++, libSystem) e non
+# ha percorsi di backend compilati dentro — era quello a rendere inutile copiare
+# whisper-cli, non un limite di macOS.
+#
+# I modelli si imballano COMPRESSI (.zvosk, vedi tools/pack_vosk_model.py) e
+# Ztoryc li scompatta in cache al primo uso di quella lingua: 86 MB nel bundle
+# invece di 155, e su disco finiscono solo le lingue davvero usate.
+VOSK_DST="$APP/Contents/Resources/vosk"
+VOSK_SRC="${ZTORYC_VOSK_DIR:-/Volumes/ZioSam/tahoma2d-workspace/reference/vosk}"
+if [[ ! -f "$VOSK_DST/libvosk.dylib" ]]; then
+  mkdir -p "$VOSK_DST"
+  if [[ -f "$VOSK_SRC/libvosk.dylib" ]]; then
+    cp "$VOSK_SRC/libvosk.dylib" "$VOSK_DST/"
+    echo "  libvosk.dylib copiata ($(du -h "$VOSK_DST/libvosk.dylib" | cut -f1))"
+  else
+    echo "  ⚠ libvosk.dylib non trovata in $VOSK_SRC — si ripieghera' su Whisper"
+  fi
+  for z in "$VOSK_SRC"/*.zvosk(N); do
+    cp "$z" "$VOSK_DST/"
+    echo "  modello $(basename "$z") copiato ($(du -h "$z" | cut -f1))"
+  done
+fi
+
 echo "→ Copia helper LZO..."
 LZO_DIR="$BUILD"
 [[ -f "$BUILD/lzodriver/lzocompress" ]] && LZO_DIR="$BUILD/lzodriver"
@@ -283,6 +308,32 @@ if [[ -d "$APP/ztorycstuff" ]]; then
   ZTORY_STUFF_TMP="/tmp/ztorycstuff_deploy_$$"
   mv "$APP/ztorycstuff" "$ZTORY_STUFF_TMP"
 fi
+
+# ...ma ztorycstuff non era l'unica cosa fuori posto, e finche' ne resta una la
+# firma FALLISCE in silenzio: un .app puo' contenere SOLO Contents/ nella sua
+# radice, tutto il resto e' "unsealed content" e codesign rifiuta, lasciando
+# l'app non firmata senza che il deploy si fermi. Qui si erano accumulate:
+#   +scenes  — l'app che scrive dentro se stessa: quando il progetto corrente
+#              non ha una radice valida, l'alias +scenes si risolve nella
+#              cartella dell'applicazione. Dentro c'erano icone di scena.
+#   Icon^M   — l'icona di cartella personalizzata messa dal Finder.
+# Si spostano da parte invece di cancellarle: un `rm -rf` dentro un bundle, se
+# un domani ci finisse qualcosa che conta, non lo si scopre piu'.
+ZTORY_STRAY_TMP="/tmp/ztorycstray_deploy_$$"
+setopt nullglob
+STRAY=()
+for entry in "$APP"/*(N) "$APP"/.??*(N); do
+  [[ "$(basename "$entry")" == "Contents" ]] && continue
+  STRAY+=("$entry")
+done
+if (( ${#STRAY[@]} )); then
+  mkdir -p "$ZTORY_STRAY_TMP"
+  for entry in "${STRAY[@]}"; do
+    echo "  spostato fuori dalla radice del bundle: $(basename "$entry")"
+    mv "$entry" "$ZTORY_STRAY_TMP/" 2>/dev/null || true
+  done
+fi
+unsetopt nullglob
 
 echo "→ Firma codice (dylib prima, poi bundle)..."
 # Prima firma ogni dylib singolarmente
@@ -315,8 +366,26 @@ if [[ -d "$APP/Contents/Resources/whisper" ]]; then
   done
   codesign --force --sign - "$APP/Contents/Resources/whisper/whisper-cli" 2>/dev/null
 fi
+
+# Vosk — stessa ragione: una dylib copiata a mano nel bundle va rifirmata, o
+# viene rifiutata al dlopen. I .zvosk sono dati, non codice: non si firmano.
+if [[ -f "$APP/Contents/Resources/vosk/libvosk.dylib" ]]; then
+  xattr -cr "$APP/Contents/Resources/vosk" 2>/dev/null || true
+  codesign --force --sign - "$APP/Contents/Resources/vosk/libvosk.dylib" 2>/dev/null
+fi
 # Infine firma il bundle completo (senza --deep per evitare re-firma ricorsiva)
 codesign --force --sign - --entitlements "$WORKSPACE/Ztoryc.entitlements" "$APP"
+
+# La firma va VERIFICATA, non data per fatta: codesign stampa il motivo e poi
+# lo script tirava dritto fino a «✓ Fatto», lasciando credere che fosse a posto.
+# Cosi' e' rimasta non firmata per mesi senza che nessuno se ne accorgesse.
+if ! codesign --verify "$APP" 2>/tmp/ztoryc_codesign_err; then
+  echo "⚠️  FIRMA FALLITA — l'app resta NON firmata:"
+  sed 's/^/     /' /tmp/ztoryc_codesign_err
+  echo "     (se dice 'unsealed contents', c'e' ancora qualcosa fuori da Contents/)"
+else
+  echo "  firma verificata"
+fi
 
 # Ripristina ztorycstuff dopo la firma.
 # ATTENZIONE al caso in cui l'app IN ESECUZIONE ha ricreato la cartella mentre

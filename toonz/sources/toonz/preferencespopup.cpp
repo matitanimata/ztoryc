@@ -1406,6 +1406,8 @@ QString PreferencesPopup::getUIString(PreferencesItemId id) {
        tr("Highlight character names in dialogue fields")},
       {whisperPath, tr("whisper.cpp Executable Directory:")},
       {whisperModel, tr("whisper.cpp Model File:")},
+      {lipSyncLanguage, tr("Dialogue Language:")},
+      {lipSyncLeadFrames, tr("Anticipate Mouths By (frames):")},
 
       // Drawing
       {DefRasterFormat, tr("Default Raster Level Format:")},
@@ -1577,6 +1579,13 @@ QList<ComboBoxItem> PreferencesPopup::getComboItemList(
          Preferences::SceneFolderAlias},
         {tr("Use Project Folder Aliases Only"),
          Preferences::ProjectFolderOnly}}},
+      {lipSyncLanguage,
+       // Solo le lingue di cui imballiamo un modello Vosk. Aggiungerne una
+       // qui senza il .zvosk corrispondente fa ricadere su Whisper senza
+       // spiegare perche'.
+       {{tr("Auto-detect (Whisper, less precise timing)"), ""},
+        {tr("Italian"), "it"},
+        {tr("English"), "en"}}},
       {linearUnits,  // cameraUnits shares items with linearUnits
        {{tr("cm"), "cm"},
         {tr("mm"), "mm"},
@@ -2208,13 +2217,27 @@ QGridLayout* PreferencesPopup::createImportExportLayout() {
     insertUI(ffmpegMultiThread, ffmpegOptionsLay);
   }
 
-  QGridLayout* rhubarbOptionsLay = insertGroupBox(tr("Rhubarb Lip Sync"), lay);
+  // Il gruppo non e' piu' «Rhubarb»: qui dentro convivono tre motori. E la
+  // lingua NON e' un'impostazione di whisper — decide quale motore lavora, e va
+  // quindi in cima e spiegata, non in coda ai percorsi degli eseguibili dove
+  // sembra un dettaglio di configurazione di uno solo di essi.
+  QGridLayout* lipSyncOptionsLay = insertGroupBox(tr("Lip Sync"), lay);
   {
-    insertUI(rhubarbPath, rhubarbOptionsLay);
-    insertUI(rhubarbTimeout, rhubarbOptionsLay);
-    insertUI(dialogueSpeakerHighlight, rhubarbOptionsLay);
-    insertUI(whisperPath, rhubarbOptionsLay);
-    insertUI(whisperModel, rhubarbOptionsLay);
+    putLabel(tr("Language of the recorded dialogue. This also picks the engine:\n"
+                "with a language listed here Ztoryc aligns the words to the audio\n"
+                "(accurate to a frame); on auto-detect it falls back to Whisper,\n"
+                "which recognises any language but times it less precisely."),
+             lipSyncOptionsLay);
+    insertUI(lipSyncLanguage, lipSyncOptionsLay,
+             getComboItemList(lipSyncLanguage));
+    insertUI(lipSyncLeadFrames, lipSyncOptionsLay);
+    insertUI(dialogueSpeakerHighlight, lipSyncOptionsLay);
+
+    putLabel(tr("External programs, used only as a fallback:"), lipSyncOptionsLay);
+    insertUI(rhubarbPath, lipSyncOptionsLay);
+    insertUI(rhubarbTimeout, lipSyncOptionsLay);
+    insertUI(whisperPath, lipSyncOptionsLay);
+    insertUI(whisperModel, lipSyncOptionsLay);
   }
 
   lay->setRowStretch(lay->rowCount(), 1);

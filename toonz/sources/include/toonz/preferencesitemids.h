@@ -104,6 +104,18 @@ enum PreferencesItemId {
   // Ztoryc deve funzionare anche senza, col solo Rhubarb.
   whisperPath,
   whisperModel,
+  // Lingua del lip sync. Sceglie anche il MOTORE: con una lingua per cui c'e'
+  // un modello Vosk si usa l'allineatore forzato (tempi molto piu' precisi);
+  // vuota = rilevamento automatico, cioe' Whisper. Non si deduce dalla lingua
+  // dell'interfaccia: si lavora spesso su audio in una lingua diversa da
+  // quella in cui si tiene il programma.
+  lipSyncLanguage,
+  // Anticipo in FOTOGRAMMI delle bocche rispetto al suono. Non e' una
+  // correzione di un errore di misura: e' la convenzione dell'animazione —
+  // l'occhio legge la bocca prima di sentire, e una bocca esattamente in
+  // tempo sembra in ritardo. Regolabile perche' e' una scelta di stile e
+  // dipende anche dalla cadenza del parlato.
+  lipSyncLeadFrames,
 
   //----------
   // Drawing

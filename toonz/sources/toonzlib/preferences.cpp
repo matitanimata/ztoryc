@@ -598,6 +598,15 @@ void Preferences::definePreferenceItems() {
          QMetaType::Bool, true);
   define(whisperPath, "whisperPath", QMetaType::QString, "");
   define(whisperModel, "whisperModel", QMetaType::QString, "");
+  // Vuota di proposito: indovinare la lingua dell'audio dalle impostazioni
+  // dell'utente sbaglia in silenzio, e un lip sync allineato sulla lingua
+  // sbagliata non si distingue da un lip sync rotto.
+  define(lipSyncLanguage, "lipSyncLanguage", QMetaType::QString, "");
+  // Due fotogrammi, e non e' un numero scelto a occhio: il 2026-08-16 Franco ha
+  // segnalato due punti diversi della stessa battuta — la /f/ di «Facile» che
+  // sentiva «un paio di fotogrammi prima», e la /u/ di «Uncinetto» che sentiva
+  // subito mentre compariva al terzo fotogramma. Tutti e due chiedevano 2.
+  define(lipSyncLeadFrames, "lipSyncLeadFrames", QMetaType::Int, 2);
 
   // Drawing
   define(DefRasterFormat, "DefRasterFormat", QMetaType::QString, "png");
