@@ -104,6 +104,7 @@ toonz/Tahoma2D.app.extras/
 # Rigenerato da toonz/sources/toonz/tests/extract_parser.py: e' una COPIA
 # del sorgente vero, versionarla vorrebbe dire avere due verita'.
 /toonz/sources/toonz/tests/parser_body.inc
+/toonz/sources/toonz/tests/align_body.inc
 .claude/
 /toonz/Ztoryc.app/
 # Bundle rinominati dei worktree di feature (Ztoryc-SP.app e simili): senza

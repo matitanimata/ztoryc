@@ -168,6 +168,22 @@ struct DialogueLine {
   bool    matched = false;  // false = nome nel testo che non e' un personaggio
 };
 
+// Una parola con il suo tempo, dopo il riallineamento fra cio' che Whisper ha
+// SENTITO e cio' che il copione DICE.
+//
+// Il testo viene dal copione, i tempi da Whisper. Non e' un compromesso: e'
+// l'unica combinazione affidabile. Misurato il 2026-08-15 — «credi» diventa
+// «cre di» col modello tiny, e col modello base si aggiusta ma compare «non me
+// vale» dove tiny aveva ragione. Nessuna dimensione di modello risolve; i tempi
+// invece sono buoni in entrambi.
+struct TimedWord {
+  QString word;      // dal COPIONE (o da Whisper se il copione non lo copre)
+  int     startMs = 0;
+  int     endMs   = 0;
+  QString assetUuid;  // personaggio, dalla battuta di provenienza
+  bool    fromScript = true;  // false = parola sentita ma non nel copione
+};
+
 // Come l'export porta un asset dentro lo shot.
 //
 // La distinzione Load/Import NON e' cosmetica ed e' la scelta piu' pesante di
@@ -462,6 +478,20 @@ public:
   // MOSTRARE il riconoscimento invece di lasciarlo magico: una convenzione che
   // non si vede fallire in silenzio e' peggio di un campo in piu'.
   QStringList unknownSpeakers(const QString &text) const;
+
+  // Riallinea le parole SENTITE da Whisper su quelle del copione, tenendo i
+  // tempi delle prime e il testo delle seconde.
+  //
+  // `heard` sono le parole di Whisper coi loro millisecondi; `spoken` sono le
+  // battute del pannello gia' attribuite (uscita di parseDialogue). Il risultato
+  // e' la sequenza del COPIONE con i tempi addosso.
+  //
+  // Serve un allineamento vero e non un accoppiamento uno-a-uno: Whisper spezza
+  // e fonde le parole («credi» -> «cre»+«di», «lascialo perdere» ->
+  // «lascia»+«l'operdere»), quindi le due sequenze hanno lunghezze diverse e
+  // l'indice non basta.
+  static QVector<TimedWord> alignToScript(const QVector<TimedWord> &heard,
+                                          const QVector<DialogueLine> &spoken);
   // Questa riga e' un'intestazione di personaggio? Stessa identica regola di
   // parseDialogue — esposta perche' l'evidenziatore del campo di testo la deve
   // usare, e due copie della regola divergono al primo caso limite.

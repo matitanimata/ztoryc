@@ -398,6 +398,120 @@ void ZtoryModel::setSpeakerAlias(const QString &scriptName,
   else m_speakerAliases.insert(key, assetUuid);
 }
 
+//-----------------------------------------------------------------------------
+// Riallineamento: i tempi di Whisper sulle parole del copione.
+//
+// Perché serve un allineamento vero e non un accoppiamento a indice: Whisper
+// spezza e fonde. Misurato: «credi» → «cre»+«di», «lascialo perdere» →
+// «lascia»+«l'operdere». Le due sequenze hanno lunghezze diverse, e dal primo
+// scarto in poi un accoppiamento posizionale sbaglierebbe TUTTO il seguito.
+//
+// Si usa la distanza di edit fra sequenze di parole (Needleman-Wunsch), con
+// una somiglianza fra parole invece dell'uguaglianza secca: «l'operdere» e
+// «perdere» non sono uguali, ma sono chiaramente la stessa cosa.
+
+// Somiglianza 0..1 fra due parole, ridotte a sole lettere minuscole (la
+// punteggiatura di Whisper è rumore: «andare,» e «andare» sono la stessa cosa).
+static double wordSimilarity(const QString &a, const QString &b) {
+  auto norm = [](const QString &s) {
+    QString o;
+    for (const QChar &ch : s)
+      if (ch.isLetter() || ch.isDigit()) o += ch.toLower();
+    return o;
+  };
+  const QString x = norm(a), y = norm(b);
+  if (x.isEmpty() || y.isEmpty()) return 0.0;
+  if (x == y) return 1.0;
+  // Prefisso comune: cattura i tagli di Whisper («cre» dentro «credi») e le
+  // code sporche («l'operdere» contro «perdere» condivide poco in testa, ma il
+  // contenimento sotto lo recupera).
+  int p = 0;
+  while (p < x.length() && p < y.length() && x[p] == y[p]) p++;
+  const double byPrefix = double(2 * p) / double(x.length() + y.length());
+  const double byContain =
+      (x.contains(y) || y.contains(x))
+          ? double(qMin(x.length(), y.length())) / double(qMax(x.length(), y.length()))
+          : 0.0;
+  return qMax(byPrefix, byContain);
+}
+
+QVector<TimedWord> ZtoryModel::alignToScript(
+    const QVector<TimedWord> &heard, const QVector<DialogueLine> &spoken) {
+  // Il copione, appiattito in parole, ognuna col suo personaggio.
+  QVector<TimedWord> script;
+  for (const DialogueLine &dl : spoken)
+    for (const QString &w : dl.text.split(QRegExp("\\s+"), Qt::SkipEmptyParts)) {
+      TimedWord tw;
+      tw.word      = w;
+      tw.assetUuid = dl.assetUuid;
+      script.push_back(tw);
+    }
+  // Senza copione non c'è niente da correggere: si tengono le parole sentite,
+  // che è meglio di niente e mantiene i tempi.
+  if (script.isEmpty()) return heard;
+  if (heard.isEmpty()) return script;  // tempi a zero: non inventiamo nulla
+
+  const int n = script.size(), m = heard.size();
+  const double kGap = -0.6;  // costo di saltare una parola
+
+  // Needleman-Wunsch. n e m sono le parole di un pannello, non di un film:
+  // la matrice piena è piccola e leggibile, e non vale un algoritmo furbo.
+  QVector<QVector<double>> d(n + 1, QVector<double>(m + 1, 0.0));
+  for (int i = 1; i <= n; i++) d[i][0] = d[i - 1][0] + kGap;
+  for (int j = 1; j <= m; j++) d[0][j] = d[0][j - 1] + kGap;
+  for (int i = 1; i <= n; i++)
+    for (int j = 1; j <= m; j++) {
+      const double diag =
+          d[i - 1][j - 1] + (wordSimilarity(script[i - 1].word, heard[j - 1].word) * 2.0 - 0.5);
+      d[i][j] = qMax(diag, qMax(d[i - 1][j] + kGap, d[i][j - 1] + kGap));
+    }
+
+  // Ripercorso all'indietro: a ogni parola del copione si attaccano i tempi di
+  // TUTTE le parole sentite che le corrispondono — così «cre»+«di» tornano una
+  // «credi» sola, dall'inizio della prima alla fine dell'ultima.
+  QVector<TimedWord> out;
+  int i = n, j = m;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0) {
+      const double diag =
+          d[i - 1][j - 1] + (wordSimilarity(script[i - 1].word, heard[j - 1].word) * 2.0 - 0.5);
+      if (qFuzzyCompare(d[i][j], diag)) {
+        TimedWord tw = script[i - 1];
+        tw.startMs   = heard[j - 1].startMs;
+        tw.endMs     = heard[j - 1].endMs;
+        // Assorbe le altre parole sentite che finiscono su questa del copione.
+        while (i > 1 && j > 1 &&
+               qFuzzyCompare(d[i - 1][j - 1], d[i - 1][j - 2] + kGap)) {
+          j--;
+          tw.startMs = heard[j - 1].startMs;
+        }
+        out.prepend(tw);
+        i--; j--;
+        continue;
+      }
+      if (qFuzzyCompare(d[i][j], d[i][j - 1] + kGap)) { j--; continue; }
+    }
+    if (i > 0) {
+      // Parola del copione che Whisper non ha sentito: resta, senza tempi
+      // propri. Toglierla vorrebbe dire perdere una battuta perché il
+      // riconoscitore ha avuto una défaillance.
+      out.prepend(script[i - 1]);
+      i--;
+      continue;
+    }
+    j--;
+  }
+
+  // Le parole senza tempo prendono quello del vicino: meglio una collocazione
+  // approssimata che una parola a zero, che finirebbe all'inizio dello shot.
+  for (int k = 0; k < out.size(); k++) {
+    if (out[k].endMs > 0) continue;
+    if (k > 0) { out[k].startMs = out[k - 1].endMs; out[k].endMs = out[k - 1].endMs; }
+    else if (out.size() > 1) { out[k].startMs = 0; out[k].endMs = 0; }
+  }
+  return out;
+}
+
 bool ZtoryModel::speakerAt(const QString &rawLine, const QString &rawNext,
                            QString *outName, bool *outMatched) const {
   const QString line = rawLine.trimmed();
