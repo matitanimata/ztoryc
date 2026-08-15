@@ -29,6 +29,12 @@ void initialize() {
     QString path = ThirdParty::autodetectRhubarb();
     if (!path.isEmpty()) ThirdParty::setRhubarbDir(path);
   }
+
+  // Auto detect whisper.cpp
+  if (!ThirdParty::checkWhisper()) {
+    QString path = ThirdParty::autodetectWhisper();
+    if (!path.isEmpty()) ThirdParty::setWhisperDir(path);
+  }
 }
 
 //=============================================================================
@@ -245,6 +251,78 @@ bool readFFmpegAudio(QProcess &process, QByteArray &rawData) {
   process.close();
 
   return success;
+}
+
+//=============================================================================
+// whisper.cpp interface
+//-----------------------------------------------------------------------------
+
+#ifdef _WIN32
+#define WHISPER_EXE "/whisper-cli.exe"
+#else
+#define WHISPER_EXE "/whisper-cli"
+#endif
+
+//-----------------------------------------------------------------------------
+
+bool findWhisper(QString dir) {
+  if (dir.isEmpty() || dir.at(0) == '.')
+    dir = QCoreApplication::applicationDirPath() + "/" + dir;
+  return TSystem::doesExistFileOrLevel(TFilePath(dir + WHISPER_EXE));
+}
+
+//-----------------------------------------------------------------------------
+
+bool checkWhisper() {
+  QString path = Preferences::instance()->getWhisperPath();
+  if (!path.isEmpty() && findWhisper(path)) return true;
+  path = autodetectWhisper();
+  if (path.isEmpty()) return false;
+  setWhisperDir(path);
+  return true;
+}
+
+//-----------------------------------------------------------------------------
+
+QString autodetectWhisper() {
+  QString dir = Preferences::instance()->getWhisperPath();
+  if (!dir.isEmpty() && findWhisper(dir)) return dir;
+
+  QStringList folderList;
+  folderList.append(".");
+  folderList.append("./whisper");
+  folderList.append(TEnv::getWorkingDirectory().getQString() + "/whisper");
+
+#ifndef _WIN32
+  folderList.append("/app/bin");
+  // Homebrew su Apple Silicon sta in /opt/homebrew, che NON e' nel PATH dei
+  // processi lanciati da Finder: senza questa riga l'app non lo trova mai,
+  // pur essendo installato.
+  folderList.append("/opt/homebrew/bin");
+  folderList.append("/usr/local/bin");
+  folderList.append("/usr/bin");
+  folderList.append("/bin");
+#endif
+
+#ifdef _WIN32
+  QString exePath = TSystem::findFileLocation(folderList, "whisper-cli.exe");
+#else
+  QString exePath = TSystem::findFileLocation(folderList, "whisper-cli");
+#endif
+
+  if (!exePath.isEmpty()) {
+    Preferences::instance()->setValue(whisperPath, exePath);
+    return exePath;
+  }
+  return QString();
+}
+
+//-----------------------------------------------------------------------------
+
+QString getWhisperDir() { return Preferences::instance()->getWhisperPath(); }
+
+void setWhisperDir(const QString &dir) {
+  Preferences::instance()->setValue(whisperPath, dir);
 }
 
 //=============================================================================

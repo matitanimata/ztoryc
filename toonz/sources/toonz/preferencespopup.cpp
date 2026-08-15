@@ -1404,6 +1404,8 @@ QString PreferencesPopup::getUIString(PreferencesItemId id) {
       {rhubarbTimeout, tr("Analyze Audio Timeout (seconds):")},
       {dialogueSpeakerHighlight,
        tr("Highlight character names in dialogue fields")},
+      {whisperPath, tr("whisper.cpp Executable Directory:")},
+      {whisperModel, tr("whisper.cpp Model File:")},
 
       // Drawing
       {DefRasterFormat, tr("Default Raster Level Format:")},
@@ -2211,6 +2213,8 @@ QGridLayout* PreferencesPopup::createImportExportLayout() {
     insertUI(rhubarbPath, rhubarbOptionsLay);
     insertUI(rhubarbTimeout, rhubarbOptionsLay);
     insertUI(dialogueSpeakerHighlight, rhubarbOptionsLay);
+    insertUI(whisperPath, rhubarbOptionsLay);
+    insertUI(whisperModel, rhubarbOptionsLay);
   }
 
   lay->setRowStretch(lay->rowCount(), 1);

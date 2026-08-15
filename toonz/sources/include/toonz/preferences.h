@@ -323,6 +323,8 @@ public:
   bool isDialogueSpeakerHighlight() const {
     return getBoolValue(dialogueSpeakerHighlight);
   }
+  QString getWhisperPath() const { return getStringValue(whisperPath); }
+  QString getWhisperModel() const { return getStringValue(whisperModel); }
 
   // Drawing  tab
   QString getDefRasterFormat() const { return getStringValue(DefRasterFormat); }

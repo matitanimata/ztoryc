@@ -98,6 +98,12 @@ enum PreferencesItemId {
   // perche' su un progetto che non usa i personaggi ogni riga in maiuscolo
   // diventerebbe un avviso, cioe' rumore invece di informazione.
   dialogueSpeakerHighlight,
+  // whisper.cpp: cartella dell'eseguibile e file del MODELLO.
+  // Il modello e' separato e sta vuoto di default: pesa da 75 MB a qualche GB,
+  // e Franco ha deciso (2026-08-15) che scaricarlo e' scelta dell'utente —
+  // Ztoryc deve funzionare anche senza, col solo Rhubarb.
+  whisperPath,
+  whisperModel,
 
   //----------
   // Drawing

@@ -596,6 +596,8 @@ void Preferences::definePreferenceItems() {
   define(lipSyncPhonetic, "lipSyncPhonetic", QMetaType::Bool, false);
   define(dialogueSpeakerHighlight, "dialogueSpeakerHighlight",
          QMetaType::Bool, true);
+  define(whisperPath, "whisperPath", QMetaType::QString, "");
+  define(whisperModel, "whisperModel", QMetaType::QString, "");
 
   // Drawing
   define(DefRasterFormat, "DefRasterFormat", QMetaType::QString, "png");
