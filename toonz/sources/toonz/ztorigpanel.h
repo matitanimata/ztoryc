@@ -17,6 +17,7 @@
 #include <QWidget>
 #include <QString>
 #include <QVector>
+#include <QMap>
 
 #include <set>
 #include <vector>
@@ -33,6 +34,7 @@ class QDoubleSpinBox;
 class QToolButton;
 class QCheckBox;
 class QAction;
+class QTabWidget;
 
 //! One row: name + dial + remove.
 class ZtoRigActionRow final : public QWidget {
@@ -104,6 +106,80 @@ private:
 
 //----------------------------------------------------------------------------
 
+//! Una chiave sulla traccia: una correttiva, piazzata all'angolo a cui e' stata
+//! scolpita.
+struct ZtoRigTrackKey {
+  int m_index = -1;    //!< indice della correttiva nella deformazione
+  QString m_driver;    //!< giunto guida — decide la corsia
+  double m_angle = 0.;  //!< angolo di pieno regime: la POSIZIONE della chiave
+  //! Che specie di chiave e'. Oggi ce n'e' una sola, ma il pilota (l'angolo di
+  //! un giunto) e' lo stesso che un giorno guidera' pose e disegni vettoriali:
+  //! il tipo sta qui perche' aggiungerne una specie non voglia dire rifare il
+  //! contenitore.
+  enum Kind { Corrective = 0 } m_kind = Corrective;
+};
+
+//! La traccia delle correttive: **l'asse orizzontale sono i GRADI**, non i
+//! fotogrammi.
+//!
+//! Una correttiva non e' una posa — non cambia da fotogramma a fotogramma, dice
+//! come la maglia risponde quando quel giunto piega di tanto. Quindi il suo
+//! editor naturale non e' una tabella ma una traccia il cui tempo e' l'angolo,
+//! con le correttive come chiavi sopra. (E' come funzionano gli Smart Bones di
+//! Moho, dove i fotogrammi dell'azione mappano l'escursione dell'osso.)
+//!
+//! Il dato non e' cambiato per ottenerla: le correttive nascono gia' incatenate
+//! — l'angolo di riposo di una e' quello di pieno della precedente — quindi
+//! erano gia' chiavi su una traccia, scritte in forma di tabella.
+//!
+//! Una corsia per ogni giunto che ha correttive, e un indicatore che segue
+//! l'angolo VERO del giunto: cosi' si vede a colpo d'occhio dove si e' rispetto
+//! a quello che si e' scolpito.
+class ZtoRigAngleTrack final : public QWidget {
+  Q_OBJECT
+
+public:
+  explicit ZtoRigAngleTrack(QWidget *parent = nullptr);
+
+  //! \p currentAngles: angolo attuale di ogni giunto guida, per l'indicatore.
+  //! Un giunto assente dalla mappa non ha indicatore — non e' zero, e' ignoto.
+  void setKeys(const QVector<ZtoRigTrackKey> &keys,
+               const QMap<QString, double> &currentAngles);
+
+signals:
+  //! Clic su una chiave: portami a quell'angolo, che e' il modo di rivedere e
+  //! ritoccare cio' che ci si era scolpito.
+  void keyActivated(int index);
+  //! Chiave trascinata: la correttiva entra a un angolo diverso.
+  void keyMoved(int index, double angle);
+  void keyRemoveRequested(int index);
+
+protected:
+  void paintEvent(QPaintEvent *) override;
+  void mousePressEvent(QMouseEvent *) override;
+  void mouseMoveEvent(QMouseEvent *) override;
+  void mouseReleaseEvent(QMouseEvent *) override;
+  void contextMenuEvent(QContextMenuEvent *) override;
+
+private:
+  //! I giunti guida, nell'ordine in cui compaiono: una corsia ciascuno.
+  QVector<QString> lanes() const;
+  //! Estremi dell'asse, allargati per contenere chiavi e indicatori.
+  void angleRange(double &lo, double &hi) const;
+  double angleToX(double angle) const;
+  double xToAngle(int x) const;
+  int laneTop(int lane) const;
+  //! Chiave sotto il puntatore, o -1.
+  int keyAt(const QPoint &p) const;
+
+  QVector<ZtoRigTrackKey> m_keys;
+  QMap<QString, double> m_currentAngles;
+  int m_dragKey  = -1;   //!< chiave che si sta trascinando
+  int m_hoverKey = -1;
+};
+
+//----------------------------------------------------------------------------
+
 class ZtoRigPanel final : public TPanel {
   Q_OBJECT
 
@@ -134,6 +210,20 @@ private slots:
   void onBaseToggled(int index, bool isBase);
   void onSkeletonsChanged(int index, const std::set<int> &skelIds);
   void onRemove(int index);
+
+  //! ---- Scheda Correttive ----
+  //! Ricostruisce le righe dalla deformazione corrente (colonna/scena cambiata).
+  void rebuildCorrectives();
+  //! Solo la posizione degli indicatori (fotogramma cambiato): ricostruire la
+  //! traccia ogni volta sarebbe sprecato, le chiavi non si muovono col tempo.
+  void refreshCorrectiveWeights();
+  //! Clic su una chiave: porta il giunto guida a quell'angolo, cosi' si rivede
+  //! — e si puo' ritoccare — la forma scolpita li'.
+  //! Angolo attuale di ogni giunto guida, per gli indicatori sulla traccia.
+  QMap<QString, double> driverAngles() const;
+  void onCorrectiveKeyActivated(int index);
+  void onCorrectiveKeyMoved(int index, double angle);
+  void onCorrectiveRemove(int index);
   //! Frame changed: the slider reads the current pose STRENGTH off the keys, so
   //! it shows where you are (0 rest, 1 pose) and can be dialled in and out.
   void onFrameSwitched();
@@ -214,6 +304,15 @@ private:
   QPushButton *m_recordBt = nullptr;
   QVector<ZtoRigActionRow *> m_rows;
   QCheckBox *m_showAllBt = nullptr;
+
+  //! Le schede. A tab e non impilate perche' la sezione correttive e' una
+  //! tabella: sotto le pose schiaccerebbe entrambe, e ne arriveranno altre.
+  QTabWidget *m_tabs           = nullptr;
+  ZtoRigAngleTrack *m_corrTrack = nullptr;
+  QLabel *m_corrEmptyLabel      = nullptr;
+  //! Correttive all'ultima ricostruzione, per accorgersi che ne e' nata una
+  //! nuova sotto il pennello senza ricostruire ad ogni fotogramma.
+  int m_builtCorrectiveCount = -1;
 
   // Vector pose test (see the slots above).
   TVectorImageP m_vecA, m_vecB;
