@@ -730,6 +730,60 @@ Verificato interrogando l'API delle release il 2026-08-16.
 
 ---
 
+## 🎞️ CONFORM DALL'EDITORIAL — valutato fattibile (2026-08-16)
+
+> Franco, confrontando con Storyboard Pro: *«il pezzo importante e' il conform
+> ma per come si lavora in ztoryc la vedo difficile»*. Valutato sul codice: e'
+> **fattibile, e meno difficile di come suona**, perche' i pezzi ci sono gia'.
+
+**Cosa esiste gia':**
+- **l'ancoraggio d'identita'**: l'export FCPXML scrive `name` su ogni
+  `asset-clip` (storyboardpanel.cpp ~6587), e `shotLabel` e' un identificatore
+  stabile («primary, v4+» in ztorymodel.h);
+- **la durata E' gia' «celle nel main xsheet»**, quindi cambiarla e'
+  un'operazione che il programma fa gia' (`onShotDurationChanged`,
+  `resequenceXsheet`);
+- **riordino, taglio e fusione** esistono come primitive con undo.
+
+Quindi il conform non e' un motore nuovo: e' **leggere l'XML, confrontare, e
+applicare con cio' che c'e'**.
+
+**La parte difficile e' semantica, non tecnica**: cosa fare di cio' che il
+montatore ha fatto e che nello storyboard non ha corrispettivo — clip nuovi
+(non si puo' inventare un pannello), ritempi DENTRO uno shot, transizioni
+cambiate. Per questo va fatto come **differenza da approvare**, non
+applicazione automatica: «SH020 48→36, SH030 rimosso, ordine cambiato».
+Stesso principio con cui l'apply del lip sync elenca i conflitti invece di
+sceglierli.
+
+⚠️ **DA PROVARE PRIMA DI SCRIVERE UNA RIGA** (dieci minuti): esportare, importare
+in DaVinci, riesportare XML e guardare se `SH020` e' ancora nel nome del clip.
+Se DaVinci rinomina o perde il nome, l'aggancio salta e tutto il resto non
+serve. Quella prova decide se il conform e' un lavoro o un problema.
+
+---
+
+## 🚪 TOGLIERE L'OBBLIGO DI USCIRE DALLO SHOT (Franco, 2026-08-16)
+
+> *«deve essere gestita dal programma senza obbligare ad uscire dallo shot»*
+
+Cercato: **ne e' rimasto UNO solo**, in `ztoryanimatic.cpp` ~6270 —
+l'eliminazione di una traccia audio mentre si e' dentro uno shot:
+
+> «Exit the shot (Back to Animatic) to delete an audio track.»
+
+**Causa** (gia' scritta li'): `ColumnCmd::deleteColumns()` lavora sull'xsheet
+CORRENTE, e dentro uno shot quello e' la sotto-scena — cancellerebbe la colonna
+sbagliata. Tutta la famiglia ColumnCmd prende l'xsheet da TApp, quindi non c'e'
+una variante che accetti quello giusto.
+
+**Come toglierlo senza toccare codice core**: scrivere l'eliminazione sul main
+xsheet con un undo nostro, come gia' si fa altrove in Ztoryc
+(`MouthApplyUndo`, `MouthExposeUndo`). Contenuto, e non sbalza l'utente fuori
+dallo shot.
+
+---
+
 ## 🔝 ORDINE DI PRIORITA' — rifatto da Franco il 2026-08-16
 
 > *«La mia priorità è chiudere il discorso character, mi serve poter usare il
