@@ -512,6 +512,20 @@ nella sub-scene corretta.
   deformatori, fisica, auto-shadow → Otter), senza pero' spendere tempo nella
   separazione vera. Non proporre il fork come lavoro; non incrociare i due
   mondi in modo che poi separarli costi. Vedi `COMPETITIVE_ROADMAP.md` sez. 8.
+- **Il Production Tracker RESTA «Tracker»** (Franco, 2026-08-16). Aveva chiesto
+  un parere sul rinominarlo «Production Manager», visto che il pannello non
+  osserva soltanto ma modifica asset, breakdown, tecniche e pipeline. Deciso di
+  **non** rinominare, con una ragione che vale piu' di quelle tecniche:
+
+  > *«se c'e' kitsu collegato e' lui il vero gestore della produzione»*
+
+  Chiamarlo «manager» lo metterebbe in concorrenza di nome con lo strumento che
+  quel ruolo ce l'ha davvero, proprio dove i due convivono. «Tracker» dice anche
+  di che FAMIGLIA e' (Kitsu, ftrack, Shotgun sono tutti production tracker),
+  cioe' informa chi arriva nuovo.
+  Non riproporre il rinomino: se il disagio torna, la cura sono i nomi delle
+  SCHEDE dentro il pannello, non quello della categoria.
+
 - **Assistenti al disegno da OpenToonz** (2026-08-13): candidato misurato e
   registrato in `OPENTOONZ_PORT_CANDIDATES.md`, ma Franco ha scelto di passare
   prima al rig. Non e' il prossimo lavoro.
