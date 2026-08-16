@@ -651,6 +651,31 @@ scenario A (dallo storyboard allo shot animabile). L'impacchettamento (punti
    ⚠️ **Non impacchettare altre lingue nel bundle**: en+it sono gia' 86 MB.
    Scaricabili a richiesta e' l'unica strada che scala.
 
+   **SCARICARE i modelli dall'app — verificato il 2026-08-16, non ipotizzato.**
+   Vosk pubblica un catalogo: `https://alphacephei.com/vosk/models/model-list.json`
+   risponde 200 e contiene **32 modelli piccoli non obsoleti** con nome,
+   dimensione e lingua (ar, ca, cn, cs, de, en-gb/in/us, es, fa, fr, hi, it, ja,
+   ko, nl, pl, pt, ru, sv, tr, ua, vn e altre). Quindi «Aggiungi lingua…» puo'
+   mostrare l'elenco invece di far cercare l'utente. Pesi: 40-160 MB, quindi
+   servono avanzamento e annullamento.
+
+   ⚠️ **L'ostacolo e' che i modelli sono `.zip` e Ztoryc non legge gli zip** —
+   scelta deliberata: il commento in `tools/pack_vosk_model.py` dice che tirare
+   dentro minizip avrebbe toccato la build su tre sistemi, «il punto dove questo
+   progetto ha perso piu' tempo». Si risolve come per ffmpeg, Rhubarb ed espeak:
+   **processo esterno**. `unzip` su macOS e Linux, `tar -xf` su Windows (dalla
+   10 legge gli zip; ⚠️ il tar GNU di Linux invece NO, li' serve `unzip`).
+   Quella tabellina va scritta in UN posto solo.
+
+   Alternativa scartata: ospitare noi i `.zvosk` gia' confezionati. Download
+   piu' piccoli e nessun unzip, ma 32 file da mantenere allineati a mano.
+   Scaricare dalla fonte resta aggiornato da solo e lascia l'attribuzione a chi
+   li pubblica.
+
+   Da prevedere: verifica di cio' che si e' scaricato (il catalogo non da'
+   checksum — almeno controllare che dentro ci sia `am/final.mdl` prima di
+   dichiarare installata la lingua).
+
 **D. Il segnale Kitsu «modifiche non pushate».** Non esiste nessuna nozione di
    «sporco» nel modello (cercato: nessun campo dirty/pending/lastSync). E'
    lavoro nuovo, non un'opzione da accendere.
