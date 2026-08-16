@@ -2492,6 +2492,11 @@ void StoryboardPanel::saveZtoryc() {
   // would corrupt the back-link (and make the shot show the SB badge / open in
   // the wrong workflow).
   if (m_currentSceneIsShot) return;
+  // Stessa ragione per le scene personaggio: il loro sidecar e' la casa dei
+  // mouth set (e domani delle pose registrate). Riscriverlo come storyboard
+  // li cancellerebbe in silenzio — l'utente se ne accorgerebbe al lip sync
+  // dello shot dopo, quando le bocche non si assegnano piu'.
+  if (m_currentSceneIsCharacter) return;
   // Use m_currentZtoryPath (set at end of refreshFromScene) instead of
   // ztoryPath() so we never write m_shots data to a different scene's file.
   // While m_shots is being rebuilt (clearShots clears it), this is empty →
@@ -2721,7 +2726,8 @@ void StoryboardPanel::loadZtoryc() {
   m_loadingZtoryc = true;  // suppress scriptFileChanged→saveZtoryc during load
   // Reset role/back-link state so values from a previous scene don't leak (and a
   // new/empty scene is never mistaken for a shot scene).
-  m_currentSceneIsShot    = false;
+  m_currentSceneIsShot      = false;
+  m_currentSceneIsCharacter = false;
   m_shotBackLinkProject   = QString();
   m_shotBackLinkUuid      = QString();
   m_shotBackLinkTaskStage = QString();
@@ -3078,7 +3084,8 @@ void StoryboardPanel::loadZtoryc() {
   ensureShotUuids();
   // Mark shot scenes BEFORE any saveZtoryc() below so the companion .ztoryc is
   // never rewritten with role="storyboard".
-  m_currentSceneIsShot = (sceneRole == "shot");
+  m_currentSceneIsShot      = (sceneRole == "shot");
+  m_currentSceneIsCharacter = (sceneRole == "character");
   // Persist the SFH-explosion repair so the scene loads cleanly next time.
   // m_currentZtoryPath is still empty here (set by refreshFromScene after we
   // return), so temporarily anchor it so saveZtoryc() can write.

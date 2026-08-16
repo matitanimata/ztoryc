@@ -13,6 +13,7 @@
 #include "toonz/stage.h"
 #include "projectpopup.h"
 #include "ztorymodel.h"
+#include "ztorycharacter.h"
 #include "ztorystartup.h"
 #include "columncommand.h"
 
@@ -269,6 +270,7 @@ StartupPopup::StartupPopup(Mode mode)
       m_loadWorkflowCB->addItem(tr("2D Tradigital Mode"));
       m_loadWorkflowCB->addItem(tr("Cutout Digital Mode"));
       m_loadWorkflowCB->addItem(tr("Stop-Motion Mode"));
+      m_loadWorkflowCB->addItem(tr("Character Mode"));
       wfRow->addWidget(m_loadWorkflowCB, 1);
       // Auto-detect: when checked, the workflow follows the scene's role/
       // technique and the manual combo is ignored (and disabled).
@@ -372,7 +374,16 @@ StartupPopup::StartupPopup(Mode mode)
       m_workflowCB->addItem(tr("2D Tradigital Mode"));  // 1 -> switchRoomChoice("Tradigital")
       m_workflowCB->addItem(tr("Cutout Digital Mode")); // 2 -> switchRoomChoice("Cutout")
       m_workflowCB->addItem(tr("Stop-Motion Mode"));    // 3 -> switchRoomChoice("StopMotion")
+      m_workflowCB->addItem(tr("Character Mode"));      // 4 -> room del Cutout, per ora
       newSceneLay->addWidget(m_workflowCB, 7, 1, 1, 5);
+
+      // In modalita' Character il nome si sceglie invece di digitarlo.
+      m_characterCB = new QComboBox(this);
+      m_characterCB->setToolTip(
+          tr("Which character this scene is. The list comes from the project's\n"
+             "Character assets, so the scene and the asset cannot drift apart."));
+      m_characterCB->hide();
+      newSceneLay->addWidget(m_characterCB, 0, 1, 1, 5);
 
       // ---- Ztoryc: Shot numbering (Storyboard Mode only) ----
       // All numbering controls live in m_numberingBox for easy show/hide.
@@ -512,7 +523,33 @@ StartupPopup::StartupPopup(Mode mode)
 
       // Show numbering only for Storyboard Mode (index 0)
       connect(m_workflowCB, QOverload<int>::of(&QComboBox::currentIndexChanged),
-              this, [this](int idx) { m_numberingBox->setVisible(idx == 0); });
+              this, [this](int idx) {
+                m_numberingBox->setVisible(idx == 0);
+                const bool isCharacter = (idx == 4);
+                m_nameFld->setVisible(!isCharacter);
+                m_characterCB->setVisible(isCharacter);
+                m_sceneNameLabel->setText(isCharacter ? tr("Character:")
+                                                      : tr("Scene Name:"));
+                if (isCharacter) refreshCharacterChoices();
+              });
+
+      connect(m_characterCB, QOverload<int>::of(&QComboBox::currentIndexChanged),
+              this, [this](int idx) {
+                // L'ultima voce e' «aggiungi»: chiede il nome e REGISTRA
+                // l'asset nel tracker, cosi' un personaggio nuovo non nasce
+                // fuori dalla produzione.
+                if (idx < 0 || idx != m_characterCB->count() - 1) return;
+                const QString name = DVGui::getText(
+                    tr("Add Character"), tr("Name of the new character:"));
+                if (name.trimmed().isEmpty()) {
+                  m_characterCB->setCurrentIndex(0);
+                  return;
+                }
+                ZtoryModel::instance()->addAsset("Character", name.trimmed());
+                refreshCharacterChoices();
+                const int i = m_characterCB->findText(name.trimmed());
+                if (i >= 0) m_characterCB->setCurrentIndex(i);
+              });
       // Show sequence prefix + resetOnSeq only for Sequence numbering style (index 1)
       connect(m_numberingStyleCB, QOverload<int>::of(&QComboBox::currentIndexChanged),
               this, [this](int idx) {
@@ -1033,34 +1070,9 @@ void StartupPopup::onExistingSceneClicked(int index) {
   } else {
     TApp::instance()->getCurrentScene()->setDirtyFlag(false);
     IoCmd::loadScene(TFilePath(path.toStdWString()), true, true);
-    // Apply the workflow AFTER loading so rooms are not cleared mid-load (caused
-    // a black screen on switch).
-    QString cmd;
-    if (ZtoryModel::autoWorkflowDetection()) {
-      // Auto: derive the workflow from the scene's .ztoryc (role + technique).
-      // Done here (not only in the Board) so it works even when the current room
-      // has no Storyboard panel to run loadZtoryc.
-      QString role = "storyboard", technique;
-      QString ztoryPath = path;
-      ztoryPath.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
-      QFile zf(ztoryPath);
-      if (zf.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QString head = QString::fromUtf8(zf.read(1024));
-        if (head.contains("role=\"shot\"")) role = "shot";
-        QRegularExpressionMatch mt =
-            QRegularExpression("technique=\"([^\"]*)\"").match(head);
-        if (mt.hasMatch()) technique = mt.captured(1);
-      }
-      cmd = ZtoryModel::workflowCommand(role, technique);
-    } else {
-      static const char *kCmds[] = {
-        MI_WorkflowStoryboard, MI_Workflow2D,
-        MI_WorkflowCutout,     MI_WorkflowStopMotion
-      };
-      int wfIdx = m_loadWorkflowCB->currentIndex();
-      cmd = (wfIdx >= 0 && wfIdx < 4) ? kCmds[wfIdx] : MI_WorkflowStoryboard;
-    }
-    CommandManager::instance()->execute(cmd.toStdString().c_str());
+    // Il workflow si applica DOPO il caricamento, o le room verrebbero
+    // svuotate a meta' caricamento (dava schermo nero al cambio).
+    applyWorkflowForScene(path);
     hide();
   }
 }
@@ -1080,7 +1092,96 @@ void StartupPopup::onLoadSelectedButton() {
 
 //-----------------------------------------------------------------------------
 
+//-----------------------------------------------------------------------------
+// La tendina dei personaggi: gli asset di tipo Character del progetto, piu' la
+// voce per aggiungerne uno. Se il progetto non e' aperto la lista e' vuota e
+// resta la sola voce «aggiungi»: si puo' comunque creare il personaggio, e
+// l'asset nasce con lui.
+// Applica il workflow per la scena appena caricata.
+//
+// ⚠️ Prima questa logica era SCRITTA DUE VOLTE, e la copia usata dai recenti
+// era sbagliata in due modi: ignorava la spunta «Automatic» (usando sempre
+// l'indice della tendina manuale, che in automatico e' disabilitata e mostra
+// un valore vecchio) e aveva una tabella di quattro comandi, senza Character.
+// Il commento accanto diceva «same logic as onExistingSceneClicked»: lo era
+// stato, e poi le due erano divergute. Ora e' una sola.
+void StartupPopup::applyWorkflowForScene(const QString &scenePath) {
+  if (m_mode == LoadSubSceneMode) return;
+
+  QString cmd;
+  if (ZtoryModel::autoWorkflowDetection()) {
+    // Auto: il workflow si ricava dal .ztoryc della scena (ruolo + tecnica).
+    // Qui e non solo nel Board, cosi' vale anche quando la room corrente non
+    // ha un pannello Storyboard che faccia girare loadZtoryc.
+    QString role = "storyboard", technique;
+    QString ztoryPath = scenePath;
+    ztoryPath.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
+    QFile zf(ztoryPath);
+    if (zf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+      const QString head = QString::fromUtf8(zf.read(1024));
+      // Si LEGGE il ruolo, non si deduce cercando «shot»: con il terzo ruolo
+      // (character) la deduzione mandava i personaggi nelle room dello
+      // storyboard. Assente = storyboard, come i sidecar scritti prima che il
+      // ruolo esistesse.
+      QRegularExpressionMatch rm =
+          QRegularExpression("<ztoryc[^>]*\\brole=\"([^\"]*)\"").match(head);
+      if (rm.hasMatch() && !rm.captured(1).isEmpty()) role = rm.captured(1);
+      QRegularExpressionMatch mt =
+          QRegularExpression("technique=\"([^\"]*)\"").match(head);
+      if (mt.hasMatch()) technique = mt.captured(1);
+    }
+    cmd = ZtoryModel::workflowCommand(role, technique);
+  } else {
+    static const char *kCmds[] = {
+      MI_WorkflowStoryboard, MI_Workflow2D,
+      MI_WorkflowCutout,     MI_WorkflowStopMotion,
+      MI_WorkflowCharacter
+    };
+    const int kCmdCount = int(sizeof(kCmds) / sizeof(kCmds[0]));
+    const int wfIdx = m_loadWorkflowCB ? m_loadWorkflowCB->currentIndex() : -1;
+    cmd = (wfIdx >= 0 && wfIdx < kCmdCount) ? kCmds[wfIdx]
+                                            : MI_WorkflowStoryboard;
+  }
+  CommandManager::instance()->execute(cmd.toStdString().c_str());
+}
+
+//-----------------------------------------------------------------------------
+
+void StartupPopup::refreshCharacterChoices() {
+  if (!m_characterCB) return;
+  const QString keep = m_characterCB->currentText();
+  m_characterCB->blockSignals(true);
+  m_characterCB->clear();
+  for (const Asset &a : ZtoryModel::instance()->assets())
+    if (a.type.compare("Character", Qt::CaseInsensitive) == 0)
+      m_characterCB->addItem(a.name, a.uuid);
+  // Sempre in fondo: l'indice dell'ultima voce e' cio' che lo slot riconosce.
+  m_characterCB->addItem(tr("＋ Add character…"), QString());
+  const int i = m_characterCB->findText(keep);
+  if (i >= 0 && i != m_characterCB->count() - 1) m_characterCB->setCurrentIndex(i);
+  else if (m_characterCB->count() > 1) m_characterCB->setCurrentIndex(0);
+  m_characterCB->blockSignals(false);
+}
+
+//-----------------------------------------------------------------------------
+
 void StartupPopup::onCreateButton() {
+  // In modalita' Character il nome della scena E' il personaggio scelto: non si
+  // digita, cosi' scena e asset non divergono per un refuso.
+  const bool isCharacterMode = (m_workflowCB->currentIndex() == 4);
+  QString characterName, characterUuid;
+  if (isCharacterMode) {
+    // L'ultima voce e' «aggiungi»: sceglierla e premere Create non e' una
+    // scelta, e' non aver scelto.
+    const int ci = m_characterCB->currentIndex();
+    if (ci < 0 || ci == m_characterCB->count() - 1) {
+      DVGui::warning(tr("Pick a character, or add one first."));
+      return;
+    }
+    characterName = m_characterCB->currentText().trimmed();
+    characterUuid = m_characterCB->currentData().toString();
+    m_nameFld->setText(characterName);
+  }
   if (m_nameFld->text().trimmed() == "") {
     DVGui::warning(tr("The name cannot be empty."));
     m_nameFld->setFocus();
@@ -1155,11 +1256,53 @@ void StartupPopup::onCreateButton() {
   {
     // Trigger the appropriate MI_Workflow* command — this calls the protected
     // switchRoomChoice() + room switch through the normal command path.
+    // ⚠️ La tabella era di TRE voci mentre il menu ne aveva quattro: scegliere
+    // «Stop-Motion Mode» apriva le room dello Storyboard, in silenzio. Ora le
+    // voci sono cinque come il menu — e il conteggio si legge dalla tabella,
+    // cosi' aggiungerne una non ripete lo sfasamento.
     static const char *kCmds[] = {
-      MI_WorkflowStoryboard, MI_Workflow2D, MI_WorkflowCutout
+      MI_WorkflowStoryboard, MI_Workflow2D, MI_WorkflowCutout,
+      MI_WorkflowStopMotion,
+      MI_WorkflowCharacter
     };
-    const char *cmd = (wfIdx >= 0 && wfIdx < 3) ? kCmds[wfIdx] : MI_WorkflowStoryboard;
+    const int kCmdCount = int(sizeof(kCmds) / sizeof(kCmds[0]));
+    const char *cmd =
+        (wfIdx >= 0 && wfIdx < kCmdCount) ? kCmds[wfIdx] : MI_WorkflowStoryboard;
     CommandManager::instance()->execute(cmd);
+  }
+
+  // ── L'ATTO che rende la scena un personaggio ─────────────────────────────
+  // Il ruolo non si deduce da dove sta il file: si DICHIARA, scrivendo il
+  // sidecar. Da qui in poi il badge e' CH, le room sono quelle giuste, e
+  // StoryboardPanel::saveZtoryc() non ci scrive sopra role="storyboard"
+  // (il guard e' li' apposta).
+  //
+  // Si scrive subito, prima ancora del primo salvataggio: e' cio' che rende
+  // vera la scelta fatta nel popup. Se poi la scena non viene mai salvata resta
+  // un sidecar orfano di pochi byte, che e' molto meno peggio di una scena
+  // creata come personaggio che si riapre come storyboard.
+  if (isCharacterMode) {
+    QString why;
+    const QString tnz = QString::fromStdWString(scenePath.getWideString());
+    if (!ZtoryCharacter::declareCharacterScene(tnz, characterUuid,
+                                               characterName, &why))
+      DVGui::warning(tr("Could not mark this scene as a character: %1").arg(why));
+    // L'asset punta alla sua scena: e' il collegamento che poi permette di
+    // risalire dal personaggio che parla al suo set di bocche. Compilarlo qui
+    // toglie di mezzo l'unico passaggio manuale della catena.
+    if (!characterUuid.isEmpty()) {
+      ZtoryModel *m = ZtoryModel::instance();
+      for (int i = 0; i < m->assetCount(); i++)
+        if (m->assets()[i].uuid == characterUuid) {
+          m->setAssetFilePath(i, tnz);
+          // Gli asset vivono in production.ztrack, non nel .ztoryc: senza
+          // questo il collegamento resterebbe solo in memoria e sparirebbe
+          // alla chiusura — e il personaggio si ritroverebbe scollegato senza
+          // che nessuno abbia fatto niente di sbagliato.
+          m->saveProjectDb();
+          break;
+        }
+    }
   }
 
   // Create initial shots only for Storyboard Mode
@@ -1673,16 +1816,7 @@ void StartupPopup::onRecentSceneClicked(int index) {
         TProjectManager::instance()->getCurrentProjectPath();
     RecentFiles::instance()->addFilePath(
         projectPath.getParentDir().getQString(), RecentFiles::Project);
-    // Apply the selected workflow — same logic as onExistingSceneClicked.
-    if (m_loadWorkflowCB && m_mode != LoadSubSceneMode) {
-      static const char *kCmds[] = {
-        MI_WorkflowStoryboard, MI_Workflow2D,
-        MI_WorkflowCutout,     MI_WorkflowStopMotion
-      };
-      int wfIdx = m_loadWorkflowCB->currentIndex();
-      const char *cmd = (wfIdx >= 0 && wfIdx < 4) ? kCmds[wfIdx] : MI_WorkflowStoryboard;
-      CommandManager::instance()->execute(cmd);
-    }
+    applyWorkflowForScene(path);
     hide();
   }
 }
@@ -1888,32 +2022,46 @@ void StartupScenesList::addScene(const QString &name, const QString &path) {
   } else
     pixmap = createScenePreview(name, TFilePath(path));
 
-  // Storyboard badge: if a .ztoryc sidecar with role="storyboard" exists, paint
-  // an "SB" pill over the thumbnail so the user can tell storyboard scenes from
-  // regular ones. Exported shot scenes (role="shot") are NOT storyboards.
+  // Pastiglia del RUOLO sulla miniatura: SB storyboard, SH shot, CH personaggio.
+  //
+  // ⚠️ Prima il ruolo si decideva per ESCLUSIONE (`!contains("role=shot")`), ed
+  // era una modellazione a due stati — «storyboard o no» — travestita da tre.
+  // Col terzo ruolo si rompeva subito: una scena personaggio avrebbe preso il
+  // badge SB. Ora si legge l'attributo e si mostra cio' che c'e' scritto; un
+  // ruolo futuro che non conosciamo non prende pastiglia, invece di prendere
+  // quella sbagliata.
   if (path != ":" && path != ":PT") {
     QString ztoryPath = path;
     ztoryPath.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
-    bool isStoryboard = false;
+    QString role;
     if (QFile::exists(ztoryPath)) {
       QFile zf(ztoryPath);
       if (zf.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        // The root <ztoryc role="…"> is near the top; a small read suffices.
-        QString head = QString::fromUtf8(zf.read(512));
-        // Default/legacy role is "storyboard" when the attribute is absent.
-        isStoryboard = !head.contains("role=\"shot\"");
+        // La radice <ztoryc role="…"> sta in cima: bastano pochi byte.
+        const QString head = QString::fromUtf8(zf.read(512));
+        QRegularExpressionMatch m =
+            QRegularExpression("<ztoryc[^>]*\\brole=\"([^\"]*)\"").match(head);
+        // Un sidecar senza attributo e' storyboard: e' cosi' che si scrivevano
+        // prima che il ruolo esistesse, e sono ancora in giro.
+        role = m.hasMatch() ? m.captured(1) : QString("storyboard");
       }
     }
-    if (isStoryboard && !pixmap.isNull()) {
+
+    QString label;
+    QColor  colour;
+    if (role == "storyboard")     { label = "SB"; colour = QColor(255, 160,   0, 220); }
+    else if (role == "shot")      { label = "SH"; colour = QColor( 90, 160, 255, 220); }
+    else if (role == "character") { label = "CH"; colour = QColor( 90, 200, 120, 220); }
+
+    if (!label.isEmpty() && !pixmap.isNull()) {
       QPainter p(&pixmap);
       p.setRenderHint(QPainter::Antialiasing);
       const int pad = 3, h = 14, r = 4;
-      QString label("SB");
       QFont f = p.font(); f.setBold(true); f.setPixelSize(9); p.setFont(f);
       int w = p.fontMetrics().horizontalAdvance(label) + pad * 2 + 2;
       QRect badge(pad, pixmap.height() - h - pad, w, h);
       p.setPen(Qt::NoPen);
-      p.setBrush(QColor(255, 160, 0, 220));
+      p.setBrush(colour);
       p.drawRoundedRect(badge, r, r);
       p.setPen(Qt::white);
       p.drawText(badge, Qt::AlignCenter, label);
@@ -1969,6 +2117,49 @@ void StartupScenesList::leaveEvent(QEvent *event) {
   unsetCursor();
   // In multi-select mode preserve selection so the user can Shift/Cmd-click.
   if (!m_multiSelect) clearSelection();
+}
+
+void StartupScenesList::contextMenuEvent(QContextMenuEvent *event) {
+  QListWidgetItem *it = itemAt(event->pos());
+  if (!it) return;
+  const QString path = it->data(Qt::UserRole).toString();
+  if (path.isEmpty() || path == ":" || path == ":PT") return;
+
+  const QString current = ZtoryCharacter::roleOf(path);
+  if (current.isEmpty()) return;  // nessun sidecar: non c'e' ruolo da cambiare
+
+  QMenu menu(this);
+  menu.addAction(tr("Role: %1").arg(current))->setEnabled(false);
+  menu.addSeparator();
+  struct { const char *role; const char *label; } kRoles[] = {
+    {"storyboard", QT_TR_NOOP("Storyboard  (SB)")},
+    {"shot",       QT_TR_NOOP("Shot  (SH)")},
+    {"character",  QT_TR_NOOP("Character  (CH)")},
+  };
+  for (const auto &r : kRoles) {
+    QAction *a = menu.addAction(tr(r.label));
+    a->setCheckable(true);
+    a->setChecked(current == QLatin1String(r.role));
+    a->setData(QString(r.role));
+  }
+
+  QAction *chosen = menu.exec(event->globalPos());
+  if (!chosen || !chosen->isEnabled()) return;
+  const QString role = chosen->data().toString();
+  if (role.isEmpty() || role == current) return;
+
+  QString why;
+  if (!ZtoryCharacter::setRole(path, role, &why)) {
+    DVGui::warning(tr("Could not change the role: %1").arg(why));
+    return;
+  }
+  // Rifare la miniatura e' l'unico modo di far vedere subito la pastiglia
+  // nuova: senza, la correzione sembrerebbe non aver fatto niente.
+  const QString name = it->text();
+  const int row      = this->row(it);
+  delete takeItem(row);
+  addScene(name, path);
+  if (row < count() - 1) insertItem(row, takeItem(count() - 1));
 }
 
 void StartupScenesList::onItemClicked(QListWidgetItem *item) {

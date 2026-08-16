@@ -461,6 +461,7 @@ void TopBar::loadMenubar() {
   // diverso: li' si sceglie a mano un audio, qui il copione dei pannelli e
   // l'audio dello shot vengono presi da soli.
   addMenuItem(sceneMenu, MI_ZtoryLipSyncShot);
+  addMenuItem(sceneMenu, MI_ZtoryApplyMouths);
   sceneMenu->addSeparator();
   addMenuItem(sceneMenu, MI_RemoveEmptyColumns);
   sceneMenu->addSeparator();
@@ -679,6 +680,7 @@ void TopBar::loadMenubar() {
   addMenuItem(workflowMenu, MI_Workflow2D);
   addMenuItem(workflowMenu, MI_WorkflowCutout);
   addMenuItem(workflowMenu, MI_WorkflowStopMotion);
+  addMenuItem(workflowMenu, MI_WorkflowCharacter);
 
   // Menu' WINDOWS
   QMenu *windowsMenu = addMenu(ShortcutTree::tr("Panels"), m_menuBar);

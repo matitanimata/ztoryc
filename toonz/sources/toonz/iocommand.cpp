@@ -3229,6 +3229,17 @@ bool IoCmd::takeCareSceneFolderItemsOnSaveSceneAs(
           warning(QObject::tr("Failed to overwrite %1")
                       .arg(fp.withType("tpl").getQString()));
       }
+      // Ztoryc: la mappatura delle bocche viaggia col livello, come la
+      // palette. Se resta indietro il personaggio arriva nello shot con le
+      // bocche e senza le istruzioni per usarle, e il lip sync non trova
+      // niente da applicare — senza che nessuno veda un errore.
+      // Vale per QUALSIASI tipo di livello (vettoriale, smart raster, PSD),
+      // non solo per i TZP come la palette.
+      if (TSystem::doesExistFileOrLevel(srcFp.withType("zmouth")) &&
+          !TSystem::copyFileOrLevel(fp.withType("zmouth"),
+                                    srcFp.withType("zmouth")))
+        warning(QObject::tr("Failed to overwrite %1")
+                    .arg(fp.withType("zmouth").getQString()));
     }
   }
   // list maximum 10 levels
@@ -3290,6 +3301,17 @@ bool IoCmd::takeCareSceneFolderItemsOnSaveSceneAs(
           warning(QObject::tr("Failed to overwrite %1")
                       .arg(fp.withType("tpl").getQString()));
       }
+      // Ztoryc: la mappatura delle bocche viaggia col livello, come la
+      // palette. Se resta indietro il personaggio arriva nello shot con le
+      // bocche e senza le istruzioni per usarle, e il lip sync non trova
+      // niente da applicare — senza che nessuno veda un errore.
+      // Vale per QUALSIASI tipo di livello (vettoriale, smart raster, PSD),
+      // non solo per i TZP come la palette.
+      if (TSystem::doesExistFileOrLevel(srcFp.withType("zmouth")) &&
+          !TSystem::copyFileOrLevel(fp.withType("zmouth"),
+                                    srcFp.withType("zmouth")))
+        warning(QObject::tr("Failed to overwrite %1")
+                    .arg(fp.withType("zmouth").getQString()));
     }
   } else if (ret == 2) {  // decode $scenefolder aliases case
     Preferences::PathAliasPriority oldPriority =

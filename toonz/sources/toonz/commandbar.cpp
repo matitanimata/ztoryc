@@ -171,6 +171,8 @@ QString CommandBar::currentWorkflowTag() {
     return QString("cutout");
   case ZtoryWorkflow::StopMotion:
     return QString("stopmotion");
+  case ZtoryWorkflow::Character:
+    return QString("character");
   }
   return QString();
 }
@@ -179,7 +181,7 @@ QString CommandBar::currentWorkflowTag() {
 
 QStringList CommandBar::allWorkflowTags() {
   return QStringList() << "storyboard" << "tradigital" << "cutout"
-                       << "stopmotion";
+                       << "stopmotion" << "character";
 }
 
 //-----------------------------------------------------------------------------

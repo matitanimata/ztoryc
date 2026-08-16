@@ -778,6 +778,7 @@ void ZtoryLipSync::completeWith(QVector<TimedWord> heard) {
 #include "toonzqt/menubarcommand.h"
 #include "toonzqt/dvdialog.h"
 #include "toonz/txshsoundtextcolumn.h"
+#include "toonz/tstageobject.h"
 #include "toonz/tcolumnhandle.h"
 #include "historytypes.h"
 #include "tundo.h"
@@ -797,7 +798,8 @@ namespace {
 // tutta la battuta dell'altro. Il silenzio e' un dato, non un'assenza.
 void writeCellsColumn(TXsheet *xsh, int col,
                       const QVector<ZtoryCharacterTrack::Word> &cells,
-                      int lastFrame, bool restWhereSilent) {
+                      int lastFrame, bool restWhereSilent,
+                      const QString &characterName) {
   // ⚠️ createSoundTextLevel(row, lista) mette lista[i] alla RIGA i, e la riga 0
   // e' il fotogramma 1. I fotogrammi qui sono 1-based, quindi l'indice e'
   // frame-1: scriverlo a `frame` sposta tutto avanti di uno.
@@ -828,6 +830,17 @@ void writeCellsColumn(TXsheet *xsh, int col,
   TXshSoundTextColumn *sc = new TXshSoundTextColumn();
   sc->createSoundTextLevel(0, rows);
   xsh->insertColumn(col, sc);
+
+  // ── IL NOME DI CHI PARLA SULLA COLONNA ────────────────────────────────
+  // Con due personaggi in scena ci sono quattro colonne di testo, e senza nome
+  // sono indistinguibili: applicare il lip sync diventa indovinare quale sia
+  // quella giusta (Franco, 2026-08-16). Il nome sta gia' nella traccia — non
+  // scriverlo era buttare via l'unica cosa che le distingue.
+  if (!characterName.isEmpty())
+    if (TStageObject *so = xsh->getStageObject(xsh->getColumnObjectId(col)))
+      so->setName((characterName + (restWhereSilent ? QObject::tr(" mouths")
+                                                    : QObject::tr(" words")))
+                      .toStdString());
 }
 
 class ZtoryLipSyncCommand final : public MenuItemHandler {
@@ -905,10 +918,13 @@ public:
         if (t.assetUuid.isEmpty()) orphanWords += t.spoken.size();
         // Prima le parole, poi le bocche: nel foglio si legge da sinistra, e la
         // battuta viene prima di come la si esegue.
-        writeCellsColumn(sub, sub->getColumnCount(), t.spoken, lastF, false);
+        // Senza personaggio riconosciuto il nome resta vuoto: meglio una
+        // colonna anonima che una intestata a un nome inventato.
+        const QString who = t.characterName;
+        writeCellsColumn(sub, sub->getColumnCount(), t.spoken, lastF, false, who);
         written++;
         if (!t.words.isEmpty()) {
-          writeCellsColumn(sub, sub->getColumnCount(), t.words, lastF, true);
+          writeCellsColumn(sub, sub->getColumnCount(), t.words, lastF, true, who);
           written++;
         }
       }

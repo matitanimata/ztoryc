@@ -1,4 +1,5 @@
 #include "ztorigpanel.h"
+#include "ztorigmouths.h"
 
 #include "tapp.h"
 #include "menubarcommandids.h"
@@ -726,6 +727,10 @@ ZtoRigPanel::ZtoRigPanel(QWidget *parent) : TPanel(parent) {
 
   m_tabs->addTab(corrTab, tr("Correctives"));
 
+  // ---- scheda Bocche ----
+  m_mouthsTab = new ZtoRigMouthsTab(m_tabs);
+  m_tabs->addTab(m_mouthsTab, tr("Mouths"));
+
   setWidget(root);
 
   connect(m_recordBt, &QPushButton::clicked, this, &ZtoRigPanel::onRecord);
@@ -1047,6 +1052,10 @@ public:
 
 void ZtoRigPanel::rebuild() {
   rebuildCorrectives();
+  // Cambiata scena o colonna cambiano anche i livelli: senza questo la scheda
+  // Bocche resterebbe a mostrare quelli della scena precedente, che e' il modo
+  // piu' rapido per scrivere una mappa sul livello sbagliato.
+  if (m_mouthsTab) m_mouthsTab->rebuild();
 
   for (ZtoRigActionRow *row : m_rows) {
     m_rowsLay->removeWidget(row);

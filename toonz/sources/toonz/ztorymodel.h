@@ -287,6 +287,7 @@ enum class ZtoryWorkflow {
   Tradigital,   // 2D Tradigital Mode
   CutoutDigital, // Cutout Digital Mode
   StopMotion,   // Stop-Motion Mode
+  Character,    // Character Mode — il personaggio di libreria (rig, bocche, pose)
 };
 
 // ─── ZtoryModel ───────────────────────────────────────────────────────────────
@@ -626,6 +627,13 @@ public:
                             const QStringList &assignees);
   void setShotTaskAssigneesByLabel(const QString &shotLabel, const QString &taskType,
                                    const QStringList &assignees);
+
+  // ── Dal nome che parla all'ASSET ──────────────────────────────────────────
+  // Il primo anello della catena decisa da Franco: chi parla -> asset ->
+  // livello di bocche -> set. Gli altri anelli non stanno qui — la mappa delle
+  // bocche e' attaccata al LIVELLO (ztorymouthmap.h), non al progetto.
+  const Asset *assetByUuid(const QString &uuid) const;
+  const Asset *assetByName(const QString &name) const;  // senza distinzione di caso
 
   // ── Assets (project-level) ─────────────────────────────────────────────────
   const std::vector<Asset> &assets() const { return m_assets; }

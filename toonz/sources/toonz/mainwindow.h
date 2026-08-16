@@ -260,6 +260,7 @@ protected slots:
   void onWorkflow2D();
   void onWorkflowCutout();
   void onWorkflowStopMotion();
+  void onWorkflowCharacter();
   void switchRoomChoice(const QString &choice);
   void updateWorkflowMenuChecks();
   void clearRooms();

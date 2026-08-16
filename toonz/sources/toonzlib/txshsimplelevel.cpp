@@ -2394,6 +2394,23 @@ void TXshSimpleLevel::copyFiles(const TFilePath &dst, const TFilePath &src) {
           srcPltPath, true);
   }
 
+  // Ztoryc: la mappatura delle bocche (.zmouth) segue il livello come la
+  // palette. Per QUALSIASI tipo di livello, non solo tlv: un personaggio puo'
+  // essere vettoriale, smart raster o un gruppo di PSD.
+  //
+  // ⚠️ Questo elenco e' scritto a mano ed e' il GEMELLO di quello in
+  // getFiles(): i due gia' non concordano (qui ci sono anche .plt e la
+  // cartella _files, la' no). Chi aggiunge un file che appartiene al livello
+  // deve toccarli entrambi, o il file viaggia in un percorso e non nell'altro.
+  {
+    const TFilePath srcMouths =
+        src.getParentDir() + TFilePath(src.getWideName() + L".zmouth");
+    if (TFileStatus(srcMouths).doesExist())
+      TSystem::copyFile(
+          dst.getParentDir() + TFilePath(dst.getWideName() + L".zmouth"),
+          srcMouths, true);
+  }
+
   const TFilePath &srcHookFile = TXshSimpleLevel::getExistingHookFile(src);
   if (!srcHookFile.isEmpty()) {
     const TFilePath &dstHookFile = getHookPath(dst);
@@ -2452,6 +2469,16 @@ void TXshSimpleLevel::getFiles(const TFilePath &fp, TFilePathSet &fpset) {
   if (fp.getType() == "tlv") {
     TFilePath tpl = fp.withType("tpl");
     if (TFileStatus(tpl).doesExist()) fpset.push_back(tpl);
+  }
+
+  // Ztoryc: la mappatura delle bocche (.zmouth) appartiene al LIVELLO come la
+  // palette — dice quale disegno e' quale viseme. Se non viaggia con lui, il
+  // personaggio arriva all'animatore con le bocche e senza le istruzioni per
+  // usarle. Vale per QUALSIASI tipo di livello, non solo tlv: un personaggio
+  // puo' essere vettoriale, smart raster o un gruppo di PSD.
+  {
+    TFilePath zmouth = fp.withType("zmouth");
+    if (TFileStatus(zmouth).doesExist()) fpset.push_back(zmouth);
   }
 
   // Store the hooks file if any (NOTE: there could be more than one hooks

@@ -308,6 +308,10 @@ private:
   //! Le schede. A tab e non impilate perche' la sezione correttive e' una
   //! tabella: sotto le pose schiaccerebbe entrambe, e ne arriveranno altre.
   QTabWidget *m_tabs           = nullptr;
+  //! Mappare le bocche: e' roba del PERSONAGGIO come pose e correttive, quindi
+  //! sta qui e non in un popup (Franco, 2026-08-16). Il dato pero' non e' del
+  //! personaggio: vive accanto al LIVELLO delle bocche (ztorymouthmap.h).
+  class ZtoRigMouthsTab *m_mouthsTab = nullptr;
   ZtoRigAngleTrack *m_corrTrack = nullptr;
   QLabel *m_corrEmptyLabel      = nullptr;
   //! Correttive all'ultima ricostruzione, per accorgersi che ne e' nata una

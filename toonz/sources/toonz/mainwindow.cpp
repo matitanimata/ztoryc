@@ -520,6 +520,8 @@ MainWindow::MainWindow(const QString &argumentLayoutFileName, QWidget *parent,
     ZtoryModel::instance()->setWorkflow(ZtoryWorkflow::CutoutDigital);
   else if (m_currentRoomsChoice == "StopMotion")
     ZtoryModel::instance()->setWorkflow(ZtoryWorkflow::StopMotion);
+  else if (m_currentRoomsChoice == "Character")
+    ZtoryModel::instance()->setWorkflow(ZtoryWorkflow::Character);
   else
     ZtoryModel::instance()->setWorkflow(ZtoryWorkflow::Tradigital);
   makeTransparencyDialog();
@@ -610,6 +612,7 @@ centralWidget->setLayout(centralWidgetLayout);*/
   setCommandHandler(MI_Workflow2D, this, &MainWindow::onWorkflow2D);
   setCommandHandler(MI_WorkflowCutout, this, &MainWindow::onWorkflowCutout);
   setCommandHandler(MI_WorkflowStopMotion, this, &MainWindow::onWorkflowStopMotion);
+  setCommandHandler(MI_WorkflowCharacter, this, &MainWindow::onWorkflowCharacter);
   setCommandHandler(MI_AutoFillToggle, this, &MainWindow::autofillToggle);
 
   setCommandHandler(MI_About, this, &MainWindow::onAbout);
@@ -1504,6 +1507,7 @@ void MainWindow::updateWorkflowMenuChecks() {
     {MI_Workflow2D,         "Tradigital"},
     {MI_WorkflowCutout,     "Cutout"},
     {MI_WorkflowStopMotion, "StopMotion"},
+    {MI_WorkflowCharacter,  "Character"},
   };
   for (auto &w : wf) {
     QAction *a = CommandManager::instance()->getAction(w.id);
@@ -1574,6 +1578,22 @@ void MainWindow::onWorkflowCutout() {
   m_isHandlingWorkflow = false;
 }
 
+void MainWindow::onWorkflowCharacter() {
+  if (m_isHandlingWorkflow) return;
+  m_isHandlingWorkflow = true;
+  ZtoryModel::instance()->setWorkflow(ZtoryWorkflow::Character);
+  switchRoomChoice("Character");
+  // I nomi delle room sono quelli copiati dal Cutout: si prova prima un nome
+  // dedicato (se un giorno ci sara'), poi quelli veri di adesso.
+  // ⚠️ I nomi delle room sono CASE-SENSITIVE (stessa trappola annotata in
+  // onWorkflowStopMotion). Il set copiato dal Cutout ha «FX-Rigging» e
+  // «cutout» minuscolo: su un personaggio si atterra dove si rigga.
+  if (!switchToFirstRoom(this, {"Character", "Rig", "FX-Rigging", "cutout"}) &&
+      getRoomCount() > 0)
+    switchToRoom(getRoom(0)->getName());
+  updateWorkflowMenuChecks();
+  m_isHandlingWorkflow = false;
+}
 void MainWindow::onWorkflowStopMotion() {
   if (m_isHandlingWorkflow) return;
   m_isHandlingWorkflow = true;
@@ -2728,6 +2748,10 @@ void MainWindow::defineActions() {
   createMenuXsheetAction(MI_ZtoryLipSyncShot,
                          QT_TR_NOOP("Lip Sync from Storyboard Dialogue..."), "",
                          "");
+  // La TERZA operazione: le colonne dei fonemi ci sono, il personaggio e'
+  // importato, qui si dice quale set usare su quale tratto.
+  createMenuXsheetAction(MI_ZtoryApplyMouths,
+                         QT_TR_NOOP("Apply Lip Sync to Mouths..."), "", "");
   CommandManager::instance()->enable(MI_NextTaggedFrame, false);
   CommandManager::instance()->enable(MI_PrevTaggedFrame, false);
   CommandManager::instance()->enable(MI_EditTaggedFrame, false);
@@ -2997,7 +3021,8 @@ void MainWindow::defineActions() {
   // Workflow actions — checkable so the active mode shows a checkmark in the menu.
   // setCheckable must be called after createMenuWindowsAction (which creates the QAction).
   for (const char *id : {MI_WorkflowStoryboard, MI_Workflow2D,
-                          MI_WorkflowCutout,     MI_WorkflowStopMotion}) {
+                          MI_WorkflowCutout,     MI_WorkflowStopMotion,
+                          MI_WorkflowCharacter}) {
     createMenuWindowsAction(id, "", "", "");
   }
   // Fix display names and make them checkable
@@ -3007,6 +3032,7 @@ void MainWindow::defineActions() {
       {MI_Workflow2D,         QT_TR_NOOP("&2D Tradigital Mode")},
       {MI_WorkflowCutout,     QT_TR_NOOP("&Cutout Digital Mode")},
       {MI_WorkflowStopMotion, QT_TR_NOOP("&Stop-Motion Mode")},
+      {MI_WorkflowCharacter,  QT_TR_NOOP("C&haracter Mode")},
     };
     for (auto &w : wf) {
       QAction *a = CommandManager::instance()->getAction(w.id);

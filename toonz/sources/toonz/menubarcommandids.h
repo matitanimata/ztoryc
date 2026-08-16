@@ -134,6 +134,7 @@
 #define MI_Workflow2D "MI_Workflow2D"
 #define MI_WorkflowCutout "MI_WorkflowCutout"
 #define MI_WorkflowStopMotion "MI_WorkflowStopMotion"
+#define MI_WorkflowCharacter "MI_WorkflowCharacter"
 #define MI_OpenSchematic "MI_OpenSchematic"
 
 #define MI_Export "MI_Export"
@@ -356,6 +357,7 @@
 #define MI_ToggleQuickToolbar "MI_ToggleQuickToolbar"
 #define MI_ZtoryShowMesh "MI_ZtoryShowMesh"
 #define MI_ZtoryLipSyncShot "MI_ZtoryLipSyncShot"
+#define MI_ZtoryApplyMouths "MI_ZtoryApplyMouths"
 #define MI_ToggleXsheetBreadcrumbs "MI_ToggleXsheetBreadcrumbs"
 #define MI_FoldColumns "MI_FoldColumns"
 #define MI_ToggleXsheetCameraColumn "MI_ToggleXsheetCameraColumn"

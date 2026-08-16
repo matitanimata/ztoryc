@@ -1464,7 +1464,12 @@ QPixmap IconGenerator::getIcon(TXshLevel *xl, const TFrameId &fid,
     // The icon must be calculated - add an IconRenderer task.
     // storeIcon(id, QPixmap());   //It was automatically added by the former
     // access
-    addTask(id, new XsheetIconRenderer(id, iconSize, cl->getXsheet()));
+    // La RIGA va passata: l'id la contiene gia' (getId(cl, fid-1)), ma il
+    // renderer prendeva il default 0, quindi ogni fotogramma di una sotto-scena
+    // veniva reso come il PRIMO e messo in cache sotto un id diverso. La cache
+    // sembrava funzionare e restituiva dieci volte la stessa immagine.
+    addTask(id, new XsheetIconRenderer(id, iconSize, cl->getXsheet(),
+                                       fid.getNumber() - 1));
   }
 
   if (TXshSimpleLevel *sl = xl->getSimpleLevel()) {
@@ -1549,7 +1554,12 @@ QPixmap IconGenerator::getSizedIcon(TXshLevel *xl, const TFrameId &fid,
     // The icon must be calculated - add an IconRenderer task.
     // storeIcon(id, QPixmap());   //It was automatically added by the former
     // access
-    addTask(id, new XsheetIconRenderer(id, iconSize, cl->getXsheet()));
+    // La RIGA va passata: l'id la contiene gia' (getId(cl, fid-1)), ma il
+    // renderer prendeva il default 0, quindi ogni fotogramma di una sotto-scena
+    // veniva reso come il PRIMO e messo in cache sotto un id diverso. La cache
+    // sembrava funzionare e restituiva dieci volte la stessa immagine.
+    addTask(id, new XsheetIconRenderer(id, iconSize, cl->getXsheet(),
+                                       fid.getNumber() - 1));
   }
 
   if (TXshSimpleLevel *sl = xl->getSimpleLevel()) {

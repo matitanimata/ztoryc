@@ -117,6 +117,8 @@ set(MOC_HEADERS
     ztorymonitorpanel.h
     ztorythumbnailpanel.h
     ztorigpanel.h
+    ztorigmouths.h
+    ztorymouthapplypopup.h
     ztorythumbnailcanvas.h
     ztorypapersheet.h
     ztorypapercapture.h
@@ -167,6 +169,9 @@ set(HEADERS
     ${MOC_HEADERS}
     ztoryvosk.h
     ztoryphonemes.h
+    ztorycharacter.h
+    ztorymouthmap.h
+    ztorymouthapply.h
     celldata.h
     cellkeyframedata.h
     cellkeyframeselection.h
@@ -260,6 +265,11 @@ set(SOURCES
     ztorylipsync.cpp
     ztoryvosk.cpp
     ztoryphonemes.cpp
+    ztorycharacter.cpp
+    ztorymouthmap.cpp
+    ztorymouthapply.cpp
+    ztorymouthapplypopup.cpp
+    ztorigmouths.cpp
     kitsuclient.cpp
     kitsuconnectdialog.cpp
     ztoryanimatic.cpp

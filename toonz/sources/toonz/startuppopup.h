@@ -75,6 +75,16 @@ public:
 
   // Ztoryc: workflow + shot numbering
   QComboBox *m_workflowCB;       // in "Create" tab
+  // Workflow «Character»: il nome della scena non si digita, si SCEGLIE fra i
+  // personaggi gia' registrati negli asset — cosi' la scena e l'asset non
+  // divergono per un refuso, che e' esattamente cio' che poi rompe il
+  // collegamento fra shot e libreria.
+  QComboBox *m_characterCB = nullptr;
+  void refreshCharacterChoices();
+  //! Applica il workflow giusto per la scena appena aperta.
+  //! UNA sola implementazione: prima ce n'erano due, e quella dei
+  //! recenti ignorava la spunta «Automatic» e non conosceva Character.
+  void applyWorkflowForScene(const QString &scenePath);
   QComboBox *m_loadWorkflowCB;   // in "Load" tab
   QCheckBox *m_autoWorkflowCB = nullptr;  // auto-detect workflow from scene
   QComboBox *m_numberingStyleCB;
@@ -194,6 +204,9 @@ protected:
   QPixmap createScenePreview(const QString &name, const TFilePath &fp);
   void mouseMoveEvent(QMouseEvent *event) override;
   void leaveEvent(QEvent *event) override;
+  //! Tasto destro sulla miniatura: cambia il RUOLO della scena. Sta qui perche'
+  //! e' qui che l'errore si vede — la pastiglia SB/SH/CH e' su questa immagine.
+  void contextMenuEvent(QContextMenuEvent *event) override;
 
   QSize m_iconSize;
   bool  m_multiSelect = false;

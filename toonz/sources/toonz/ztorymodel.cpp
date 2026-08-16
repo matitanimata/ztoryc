@@ -571,6 +571,29 @@ AssetImportPolicy ZtoryModel::effectiveImportPolicy(const Asset &a) const {
   return p;
 }
 
+// ── Dal nome che parla all'ASSET ──────────────────────────────────────────
+
+const Asset *ZtoryModel::assetByUuid(const QString &uuid) const {
+  if (uuid.isEmpty()) return nullptr;
+  for (const Asset &a : m_assets)
+    if (a.uuid == uuid) return &a;
+  return nullptr;
+}
+
+const Asset *ZtoryModel::assetByName(const QString &name) const {
+  const QString n = name.trimmed();
+  if (n.isEmpty()) return nullptr;
+  // Prima l'alias: e' la correzione esplicita dell'utente («PRINCIPESSA» nel
+  // copione, «PRINCENERENTOLA» fra gli asset) e vince su qualunque
+  // corrispondenza per nome.
+  const QString aliased = speakerAlias(n);
+  if (!aliased.isEmpty())
+    if (const Asset *a = assetByUuid(aliased)) return a;
+  for (const Asset &a : m_assets)
+    if (a.name.compare(n, Qt::CaseInsensitive) == 0) return &a;
+  return nullptr;
+}
+
 QString ZtoryModel::resolveAssetFile(const Asset &a, QString *why) const {
   auto fail = [&](const QString &msg) {
     if (why) *why = msg;
@@ -1442,6 +1465,13 @@ bool ZtoryModel::autoWorkflowDetection() {
 
 QString ZtoryModel::workflowCommand(const QString &role,
                                     const QString &technique) {
+  // Il personaggio ha il SUO set di room. All'inizio e' una copia di quello del
+  // cutout (la fa MainWindow::ensureCharacterRoomsFromCutout al primo
+  // passaggio), ma e' una copia vera: da li' in poi si personalizza senza
+  // toccare il cutout. Franco, 2026-08-16: «poi penseremo a delle room
+  // ottimizzate per il rigging che potrebbero essere diverse da quelle del
+  // cutout».
+  if (role == "character") return MI_WorkflowCharacter;
   if (role == "shot") {
     QString t = technique.toLower().trimmed();
     if (t.contains("cut-out") || t.contains("cutout") || t.contains("cut out"))
