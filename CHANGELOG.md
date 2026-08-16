@@ -125,7 +125,8 @@ Registrato in `UPSTREAM_PR_CANDIDATES.md`, da verificare su stock e su OpenToonz
   acceso spegnendo `Order`. Registrati in ANIMATIC_TASKS.
 - Restano aperti: opzione lip sync nell'export, import degli asset dal breakdown
   (il pezzo grosso dello scenario A), i folder nel browser, il segnale Kitsu non
-  pushato, e il rename Production Tracker → Manager (non deciso).
+  pushato. (Il rename del Production Tracker e' stato valutato e scartato:
+  resta «Tracker».)
 
 ## [2026-08-16] — L'allineatore forzato, e tre difetti che sembravano «serve un modello più grande»
 
