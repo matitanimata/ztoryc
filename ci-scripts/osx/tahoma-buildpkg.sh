@@ -122,6 +122,46 @@ then
    chmod -R 755 $TOONZDIR/Ztoryc.app/Contents/Resources/rhubarb
 fi
 
+# ── Lip sync: Vosk + Whisper ────────────────────────────────────────────────
+# I pezzi li mette ci-scripts/fetch-lipsync-deps.sh, uno script solo per i tre
+# sistemi. Qui si copiano soltanto.
+#
+# ⚠️ Se questa cartella manca, la build RIESCE lo stesso e l'applicazione parte:
+# libvosk si carica a runtime e in sua assenza il lip sync si ripiega. Cioe' una
+# release senza questi file sembrerebbe sana e avrebbe la funzione morta — la
+# stessa forma della dimenticanza dei binari helper LZO. Per questo sotto c'e'
+# un controllo esplicito invece di un semplice `if [ -d ]`.
+if [ -d thirdparty/apps/lipsync ]
+then
+   echo ">>> Copying Vosk to Ztoryc.app/Contents/Resources/vosk"
+   rm -rf "$TOONZDIR/Ztoryc.app/Contents/Resources/vosk"
+   mkdir -p "$TOONZDIR/Ztoryc.app/Contents/Resources/vosk"
+   cp thirdparty/apps/lipsync/libvosk.dylib \
+      thirdparty/apps/lipsync/*.zvosk \
+      "$TOONZDIR/Ztoryc.app/Contents/Resources/vosk/"
+   chmod -R 755 "$TOONZDIR/Ztoryc.app/Contents/Resources/vosk"
+
+   echo ">>> Copying Whisper model to Ztoryc.app/Contents/Resources/whisper"
+   rm -rf "$TOONZDIR/Ztoryc.app/Contents/Resources/whisper"
+   mkdir -p "$TOONZDIR/Ztoryc.app/Contents/Resources/whisper"
+   cp thirdparty/apps/lipsync/ggml-*.bin \
+      "$TOONZDIR/Ztoryc.app/Contents/Resources/whisper/"
+   chmod -R 755 "$TOONZDIR/Ztoryc.app/Contents/Resources/whisper"
+
+   # Il controllo che rende inutile fidarsi: se il lip sync doveva esserci e
+   # non c'e', la build si ferma qui invece di produrre un pacchetto monco.
+   for f in vosk/libvosk.dylib vosk/en.zvosk vosk/it.zvosk; do
+      if [ ! -s "$TOONZDIR/Ztoryc.app/Contents/Resources/$f" ]; then
+         echo "!!! manca nel bundle: Resources/$f"
+         exit 1
+      fi
+   done
+   echo ">>> Lip sync bundled"
+else
+   echo ">>> WARNING: thirdparty/apps/lipsync assente — il pacchetto NON avra'"
+   echo "    l'allineatore Vosk. Lanciare ci-scripts/fetch-lipsync-deps.sh."
+fi
+
 if [ ! -d $TOONZDIR/Ztoryc.app/Contents/Frameworks ]
 then
    mkdir $TOONZDIR/Ztoryc.app/Contents/Frameworks
