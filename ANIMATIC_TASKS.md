@@ -587,6 +587,48 @@ nella sub-scene corretta.
 
 ### ❌ MANCA — ed e' il lavoro di domani
 
+**Franco, 2026-08-16 sera: il lavoro di domani NON e' solo l'impacchettamento.**
+Vanno completate anche le quattro cose sotto, che sono cio' che resta dello
+scenario A (dallo storyboard allo shot animabile). L'impacchettamento (punti
+1-3) e queste quattro fanno insieme la 0.13.0.
+
+**A. Opzione lip sync nell'export.** Una casella nel popup di export: se attiva,
+   ogni shot esportato esce con le colonne parole+fonemi gia' generate. Il
+   generatore c'e' (`ztorylipsync.cpp`), va richiamato per shot dentro l'export.
+   Serve anche poterlo fare PRIMA, durante la lavorazione dello storyboard, come
+   controllo.
+
+**B. Import degli asset dal breakdown — IL PEZZO GROSSO.**
+   ⚠️ Nota del 2026-08-16: Franco lo dava per fatto («abbiamo previsto l'import
+   automatico»), ma **non lo e'**. Cercando `breakdown` non c'e' nessun
+   consumatore nel percorso di export. Cio' che esiste e' la colonna del
+   pannello Breakdown che mostra *cosa troverebbe* l'export (commento al
+   condizionale in `ztoryproductionpanel.cpp` ~1946) — serve a vedere prima
+   quali asset non si risolvono, non a importarli.
+   Quindi: la catena breakdown -> asset -> file risolto e' **preparata**, ma
+   l'export non li importa come sotto-scene. E' il pezzo che manca davvero allo
+   scenario A.
+
+**C. I folder degli asset nel browser.** Props, Backgrounds e Model sheets,
+   impostati nel tracker, devono comparire come radici nel browser senza doverli
+   cercare nei preferiti. I nodi si aggiungono in
+   `DvDirModelRootNode::refreshChildren()` (filebrowsermodel.cpp), dove stanno
+   My Documents / Desktop / Downloads / Favorites — sono
+   `DvDirModelSpecialFileFolderNode`. Vanno rifatti quando cambia progetto.
+   ⚠️ NON aggiungere una cartella «personaggi»: Franco l'ha bocciata il
+   2026-08-16 («va bene quella model sheet che gia' esiste»), ed era stata messa
+   e poi tolta.
+
+**D. Il segnale Kitsu «modifiche non pushate».** Non esiste nessuna nozione di
+   «sporco» nel modello (cercato: nessun campo dirty/pending/lastSync). E'
+   lavoro nuovo, non un'opzione da accendere.
+
+---
+
+#### L'impacchettamento (quello che restava dal 2026-08-16)
+
+
+
 1. **Costruire whisper-cli ed espeak-ng dai tag fissati**, per i tre sistemi.
    ⚠️ NON si possono scaricare gia' pronti: i binari precompilati portano dentro
    percorsi di backend che fuori dalla loro macchina non esistono — provato il
