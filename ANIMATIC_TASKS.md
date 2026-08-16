@@ -619,6 +619,38 @@ scenario A (dallo storyboard allo shot animabile). L'impacchettamento (punti
    2026-08-16 («va bene quella model sheet che gia' esiste»), ed era stata messa
    e poi tolta.
 
+**E. Lip sync in ALTRE LINGUE — installare un modello Vosk** (Franco,
+   2026-08-16). ⚠️ Da non affrontare come se non funzionasse niente: **oggi le
+   altre lingue gia' vanno**, solo con tempi meno precisi. Senza modello Vosk si
+   ripiega su Whisper (multilingue) ed espeak-ng copre un centinaio di lingue
+   per i fonemi. Si perde la precisione misurata — 10 ms con Vosk contro 30 con
+   Whisper — non la funzione.
+
+   **Il codice e' gia' quasi pronto.** `availableLanguages()` (ztoryvosk.cpp
+   ~313) cerca i `<lang>.zvosk` nel bundle **e** le cartelle gia' scompattate
+   nella cache, con il commento «se un domani si potranno scaricare, saranno qui
+   e non nel bundle». `hasLanguage()` e `prepareLanguage()` guardano gia'
+   entrambi i posti. Quindi un modello scompattato in cache **verrebbe gia'
+   trovato**.
+
+   **Cosa manca, ed e' poco:**
+   - una cartella dei modelli UTENTE che non sia la cache — la cache si puo'
+     svuotare, e un modello scaricato dall'utente non e' roba rigenerabile.
+     Naturale: `ToonzFolder::getMyModuleDir() + "vosk"`, cercata accanto alle
+     altre due;
+   - un comando «Aggiungi lingua…» che prenda la CARTELLA del modello scaricata
+     da alphacephei.com/vosk/models e la installi li'. Non serve
+     riconfezionarla in `.zvosk`: il codice legge gia' le cartelle scompattate.
+     Validare che dentro ci sia `am/final.mdl`, o si installa una cartella a
+     caso e l'errore si vede al primo lip sync;
+   - dire nell'interfaccia QUALE motore ha lavorato. `ZtoryLipSync::engineFor()`
+     esiste gia' apposta: se uno ottiene tempi mediocri deve poter capire che ha
+     lavorato Whisper perche' per la sua lingua non c'e' il modello, invece di
+     concludere che il lip sync e' impreciso.
+
+   ⚠️ **Non impacchettare altre lingue nel bundle**: en+it sono gia' 86 MB.
+   Scaricabili a richiesta e' l'unica strada che scala.
+
 **D. Il segnale Kitsu «modifiche non pushate».** Non esiste nessuna nozione di
    «sporco» nel modello (cercato: nessun campo dirty/pending/lastSync). E'
    lavoro nuovo, non un'opzione da accendere.
