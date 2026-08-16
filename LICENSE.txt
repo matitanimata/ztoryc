@@ -1,9 +1,15 @@
 Ztoryc additions and modifications
 Copyright (c) 2025-2026 Franco Bianco / Matitanimata
-All rights reserved.
 
-The original Tahoma2D and OpenToonz code retains its original copyright
+Ztoryc's own additions and modifications are released under the same terms as
+the code they build upon: the BSD 3-Clause "New" or "Revised" License, whose
+full text appears below.
+
+The original Toonz, OpenToonz and Tahoma2D code retains its original copyright
 as stated below.
+
+Toonz was originally developed by Digital Video S.p.A. (Rome), released as
+open source by DWANGO Co., Ltd. as OpenToonz, and forked as Tahoma2D.
 
 - - - - - - - - - - - - - - - -
 

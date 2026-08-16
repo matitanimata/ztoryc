@@ -65,7 +65,11 @@ AboutPopup::AboutPopup(QWidget* parent)
   mainLayout->addWidget(githubLink);
 
   AboutClickableLabel* licenseLink = new AboutClickableLabel(this);
-  licenseLink->setText(tr("Ztoryc License (GPL v3)"));
+  // ⚠️ Diceva «GPL v3», e apriva un file che GPL non e'. Ztoryc e' BSD
+  // 3-Clause come il codice su cui poggia (Toonz -> OpenToonz -> Tahoma2D):
+  // un'etichetta di licenza sbagliata nell'interfaccia e' cio' che l'utente
+  // legge, quindi non e' un dettaglio estetico.
+  licenseLink->setText(tr("Ztoryc License (BSD 3-Clause)"));
 
   connect(licenseLink, &AboutClickableLabel::clicked, [=]() {
     if (TSystem::isUNC(tahomaLicensePath))
@@ -93,7 +97,9 @@ AboutPopup::AboutPopup(QWidget* parent)
   mainLayout->addWidget(thirdPartyLink);
 
   QLabel* thirdPartyTools = new QLabel(
-      tr("Ztoryc ships with FFmpeg (LGPLv2.1)\nand Rhubarb Lip Sync (MIT)."), this);
+      tr("Ztoryc ships with FFmpeg (LGPLv2.1), Rhubarb Lip Sync (MIT),\n"
+         "Vosk (Apache 2.0) and whisper.cpp (MIT).\n"
+         "espeak-ng (GPLv3) is used as a separate process, never linked."), this);
   thirdPartyTools->setAlignment(Qt::AlignHCenter);
   mainLayout->addWidget(thirdPartyTools);
 

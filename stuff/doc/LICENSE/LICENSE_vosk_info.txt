@@ -1,0 +1,25 @@
+Ztoryc ships the Vosk speech-recognition library and two Vosk language models,
+and uses them to obtain WORD TIMINGS for lip sync. The words themselves come
+from the storyboard dialogue, not from the recognizer.
+
+The library (libvosk) is loaded at RUNTIME through QLibrary and is not linked
+into Ztoryc: when it is absent the feature falls back instead of preventing the
+application from starting.
+
+Vosk API is released under the Apache License 2.0.
+The full licence text is in LICENSE_vosk.txt (same text as the Apache 2.0
+licence already shipped for other components).
+
+Vosk API source code can be found at:
+https://github.com/alphacep/vosk-api
+
+BUNDLED MODELS
+--------------
+The files en.zvosk and it.zvosk are the Vosk "small" models for English and
+Italian, repacked into a compressed container (see tools/pack_vosk_model.py)
+and unpacked to a cache folder on first use. Repacking changes only the
+container, not the model data.
+
+The models are published by Alpha Cephei at https://alphacephei.com/vosk/models
+under the Apache License 2.0. Each model directory carries its own licence file
+in the original distribution; that file is preserved inside the .zvosk archive.

@@ -1,0 +1,19 @@
+espeak-ng is used by Ztoryc to turn words into PHONEMES for lip sync.
+
+*** IMPORTANT — WHY IT IS A SEPARATE PROCESS ***
+
+espeak-ng is licensed under the GNU General Public License version 3.
+Ztoryc NEVER links against it and never includes any of its code: it is
+invoked as a SEPARATE COMMAND-LINE PROCESS, exactly as ffmpeg and Rhubarb are.
+Linking it would impose the GPL on Ztoryc as a whole.
+
+If a build of Ztoryc DISTRIBUTES an espeak-ng binary, the GPLv3 obligations
+attach to that binary: the corresponding source must be offered to the
+recipients. See LICENSE_espeak-ng.txt for the full licence text when a binary
+is shipped.
+
+espeak-ng source code can be found at:
+https://github.com/espeak-ng/espeak-ng
+
+When no espeak-ng is found, Ztoryc writes the WORDS in the lip sync column
+instead of the phonemes: the feature degrades, it does not fail.
