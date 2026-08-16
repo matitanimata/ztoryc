@@ -550,6 +550,87 @@ nella sub-scene corretta.
     la strada emersa dal disco parcheggiato (memoria
     `project_ztorig_joint_disc`).
 
+## 📦 RILASCIO 0.13.0 — cosa manca (stato al 2026-08-16 sera)
+
+> Franco vuole rilasciare **appena il lip sync e' completo** (sua decisione del
+> 2026-08-16: strada **B**, prima si impacchetta e poi si rilascia — «non c'e'
+> fretta e sarebbe un peccato aspettare ancora»). Ha anche detto che **espeak
+> serve**, quindi va spedito, con l'obbligo GPLv3 che ne consegue.
+>
+> Da qui si riprende senza dover ricostruire niente: sotto c'e' quello che e'
+> fatto e verificato, e quello che manca con il perche'.
+
+### ✅ FATTO E VERIFICATO (commit locali, NON ancora pushati al 2026-08-16 sera)
+
+- `c4eeec038` **licenze allineate**. C'erano TRE affermazioni diverse: il
+  `LICENSE.txt` diceva «all rights reserved» sulle aggiunte Ztoryc (che NEGA il
+  permesso concesso piu' sotto dalla clausola BSD), la finestra About diceva
+  «GPL v3» e apriva un file che GPL non e', e l'intenzione di Franco era BSD
+  come Tahoma2D/OpenToonz. Ora dicono tutte **BSD 3-Clause**.
+  Aggiunta **Digital Video S.p.A.** alla genealogia: non compariva in nessuno
+  dei 26 file di licenza ed e' l'autore originale di Toonz.
+  Aggiunti `LICENSE_vosk.txt` (Apache 2.0, testo canonico ripreso da quello
+  gia' nel repo), `LICENSE_whisper.txt` (MIT, suo e dei pesi OpenAI) e
+  `LICENSE_espeak-ng_info.txt`.
+
+- `1f05c6036` **`ci-scripts/fetch-lipsync-deps.sh`** — UNO script per i tre
+  sistemi. Scarica i modelli Vosk dalle fonti originali e li riconfeziona in
+  `.zvosk` con `tools/pack_vosk_model.py`, prende il modello Whisper, scarica
+  il SORGENTE di espeak-ng, e sceglie l'archivio libvosk in base al sistema.
+  **Eseguito davvero** (22 s) e controllato:
+  - i `.zvosk` prodotti sono **identici byte per byte** a quelli collaudati;
+  - `libvosk.dylib` ha lo **stesso md5**, e' universal2 (x86_64+arm64) e non ha
+    dipendenze fuori dal sistema (Accelerate, libc++, libSystem);
+  - tutti gli URL fissati rispondono 200.
+  Piu' il passo di bundling macOS in `tahoma-buildpkg.sh`, che copia **e poi
+  controlla**: se i file dovevano esserci e non ci sono, si ferma.
+
+### ❌ MANCA — ed e' il lavoro di domani
+
+1. **Costruire whisper-cli ed espeak-ng dai tag fissati**, per i tre sistemi.
+   ⚠️ NON si possono scaricare gia' pronti: i binari precompilati portano dentro
+   percorsi di backend che fuori dalla loro macchina non esistono — provato il
+   2026-08-15 copiando whisper-cli a mano, non funzionava. Sono due
+   compilazioni CMake per piattaforma.
+2. **Windows e Linux**: lo script condiviso li gestisce gia' (sceglie l'archivio
+   giusto), mancano il passo che copia nel pacchetto e l'aggancio ai due
+   workflow. Su macOS il passo c'e'.
+3. **Allegare il sorgente di espeak alla release** — una riga nel job di
+   pubblicazione. E' l'adempimento GPLv3: senza, spedire il binario non e'
+   lecito. Il tag e' fissato apposta perche' l'archivio corrisponda al binario.
+
+### ⚠️ DA NON PERDERE — la trappola del pin Vosk
+
+**`ZTORYC_VOSK_RELEASE=0.3.42` non va alzato senza controllare gli asset.**
+La 0.3.42 e' l'ULTIMA release che pubblica un binario macOS
+(`vosk-osx-0.3.42.zip`). Dalla 0.3.45 in poi ci sono solo Linux, Windows e i
+wheel Python. Alzando il pin **nessuna build fallirebbe**: macOS resterebbe
+senza libvosk e il lip sync si ripiegherebbe su Whisper in silenzio.
+Verificato interrogando l'API delle release il 2026-08-16.
+
+### Il resto della checklist di rilascio
+
+- bump `toonz/cmake/ZtorycVersion.cmake` 0.12.0 -> **0.13.0** (69+ commit dal
+  4 agosto: e' una minor, non una patch);
+- **Rodney Baker c'e' gia'** nei ringraziamenti in-app accanto a Slam Rockwell.
+  Se Franco intendeva ringraziarlo come **revisore upstream** e' un'altra riga,
+  in un altro posto — da chiarire;
+- controllo dashboard sponsor contro `SUPPORTERS.md` (il token `gh` non ha lo
+  scope `read:user`: si guarda a mano);
+- note bilingui **inglese per primo** con le tre sezioni OS;
+- lanciare **tutti e tre** i workflow insieme, Linux compreso.
+
+### Due cose da provare prima di spedire, non dopo
+
+- **Le miniature delle sotto-scene** ora rendono ogni fotogramma invece di
+  riusare il primo: e' corretto, ma cambia il comportamento in TUTTA
+  l'applicazione. Va provato su uno storyboard pesante.
+- **La rinomina che scollega i set** (la chiave e' il nome del livello). Franco
+  ci e' incappato sapendo cosa cercare; un utente vede i set sparire. O
+  l'adozione dei set orfani, o almeno renderlo leggibile.
+
+---
+
 ## 🔝 ORDINE DI PRIORITA' — rifatto da Franco il 2026-08-16
 
 > *«La mia priorità è chiudere il discorso character, mi serve poter usare il
