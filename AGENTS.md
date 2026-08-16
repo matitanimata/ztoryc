@@ -295,9 +295,15 @@ cd toonz/sources && ./beautification.sh
 
 ## Known Bugs (do not regress)
 
-- Panel not removed when a drawing is deleted — `detectAndUpdatePanels` does not
-  handle panel removal.
-- Panels missing on scene open — `refreshFromScene` does not load all panels correctly.
+- ⏳ **Panels missing on scene open** — `refreshFromScene` non caricava tutti i
+  pannelli. **Franco crede sia risolto** (2026-08-16) ma **non l'ha ancora
+  provato**: lo verifica lui. Resta scritto qui finche' la prova non c'e' —
+  «credo» e «provato» sono due cose diverse, e togliendolo adesso nessuno si
+  ricorderebbe di controllarlo.
+
+> ✅ Risolto e tolto da questa lista: **pannello non rimosso alla cancellazione
+> di un disegno** (`detectAndUpdatePanels` non gestiva la rimozione), chiuso
+> prima del 2026-08-16.
 
 -----
 
