@@ -520,6 +520,19 @@ nella sub-scene corretta.
   110, MD5 stabile) — ma resta sospeso finche' Franco non lo riapre. Vedi la
   voce dedicata piu' sotto.
 
+- 🐞 **DUE DIFETTI ZtoRig segnalati usandolo** (Franco, 2026-08-16, mentre
+  costruiva il primo personaggio). Non affrontati subito per sua indicazione
+  («pero' ora chiudiamo quello che manca sul lipsync»), ma registrati perche'
+  vengono da uso vero, non da ispezione:
+  1. **Lo sculpt non crea la correttiva su un braccio.** Parole sue: «non mi
+     funziona lo sculpt su un braccio non riesco a fare la correttiva». Da
+     riprodurre: quale osso, se succede anche su altri arti, se la correttiva
+     non nasce o nasce e non si vede nella traccia in gradi.
+  2. **`Show SO` resta acceso spegnendo `Order`.** Attivando Order si accende
+     Show SO (voluto), ma disattivando Order non si rispegne. E' uno stato che
+     si accende in coppia e si spegne da solo: il classico toggle che ricorda
+     di accendere e non di ricordare com'era prima.
+
 - **ZtoRig — FERMATO IN PAUSA** (2026-08-14, dopo il collaudo della traccia in
   gradi): *«le correttive impostate cosi' vanno bene [...] riguardo la parte
   ZtoRig mi fermerei un attimo visto che e' piuttosto laboriosa, ma gia' cosi'

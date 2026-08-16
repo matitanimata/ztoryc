@@ -67,6 +67,53 @@ succede, perché questi difetti sono quasi sempre copiaincollati in più punti �
 **ridirlo a Franco**, perché la decisione «vado diretto o passo dal revisore»
 l'aveva presa su una dimensione diversa.
 
+- [ ] 🖼️ **Le miniature di una SOTTO-SCENA mostrano tutte il primo fotogramma**
+  (`toonzqt/icongenerator.cpp`, righe ~1467 e ~1552) — **diagnosticato il
+  2026-08-16, NON ancora verificato su stock.**
+
+  **Sintomo:** ogni fotogramma di una colonna sub-xsheet produce la stessa
+  immagine, quella della riga 0. Si vede nell'xsheet e ovunque si chiedano
+  anteprime per fotogramma di una sotto-scena.
+
+  **Causa root:** `XsheetIconRenderer` ha un parametro `int row = 0`, e
+  `IconGenerator::getIcon()` / `getSizedIcon()` **non lo passano mai** — e'
+  l'unico modo in cui la classe viene costruita (due siti, nessuno lo usa).
+  L'id di cache invece la riga ce l'ha, perche' e' calcolato con
+  `XsheetIconRenderer::getId(cl, fid.getNumber() - 1)`. Quindi la cache indicizza
+  correttamente per riga N immagini identiche: sembra funzionare, e restituisce
+  dieci volte la stessa.
+
+  Il difetto e' subdolo proprio per questo — con la cache che «funziona»,
+  guardando il codice della cache non si trova niente di storto.
+
+  **Fix applicato:** passare `fid.getNumber() - 1` come riga in entrambi i siti.
+  Una riga per sito, il parametro esisteva gia'.
+
+  **Come si e' trovato:** costruendo la scheda di mappatura delle bocche, dove
+  dieci anteprime della stessa sotto-scena devono mostrare dieci fotogrammi
+  diversi.
+
+  🎯 **CONFERMA, e cambia cosa si sta proponendo** (Franco, 2026-08-16: «in
+  tahoma non dava proprio anteprime se si sceglieva una sottoscena»). A monte
+  se ne erano ACCORTI, e invece di risalire alla causa hanno disattivato la
+  funzione: `lipsyncpopup.cpp` avvisa
+
+  > «Thumbnails are not available for sub-Xsheets. Please use the frame
+  > numbers for reference.»
+
+  e al posto delle anteprime disegna un rettangolo grigio con «SubXSheet Frame
+  N» (il ramo `if (m_cl)` in `paintEvent`).
+
+  Quindi la PR non e' «le miniature erano un po' storte»: e' **una funzione
+  disattivata che si riaccende**, e il fix e' una riga per sito. Vale la pena
+  proporre anche la rimozione dell'avviso e del segnaposto in `lipsyncpopup.cpp`
+  — ma come SECONDO commit, cosi' chi revisiona puo' prendere il fix e valutare
+  a parte il ripristino della funzione.
+
+  **Da fare prima della PR:** riprodurre su Tahoma2D stock e su OpenToonz —
+  il codice sembra antico e condiviso, quindi probabilmente c'e' in entrambi
+  (verificare con `git show <remote>/master:toonz/sources/toonzqt/icongenerator.cpp`).
+
 - [ ] 📝 **Commenti INVERTITI su `ANGLE` e `DISTANCE`** (`include/ext/plasticskeletondeformation.h`, righe ~139-140) — **candidato doppio, e non e' nostro**: identico in `upstream/master`, quindi presumibilmente da OpenToonz.
 
   ```cpp

@@ -1,3 +1,132 @@
+## [2026-08-16b] — Il personaggio come oggetto, e la mappatura delle bocche
+
+Sessione lunga, tutta su **A.1 — chiudere il personaggio**. Le tre operazioni del
+lip sync che Franco aveva separato («generare le colonne», «mappare le bocche»,
+«applicare a un intervallo») ora esistono tutte e tre, e sono tre cose distinte
+invece di una mescolata.
+
+Filo conduttore, e vale più del codice: **quasi ogni difetto di oggi era due
+copie della stessa regola che avevano preso strade diverse.** Tre nel codice
+esistente, una scritta da me a un'ora di distanza da me stesso.
+
+### Added — il PERSONAGGIO come oggetto
+
+Workflow **Character** completo: id comando, voce nel menu Workflow con la
+spunta, entrambe le tendine della start page, e un **set di room proprio**
+(`stuff/profiles/layouts/rooms/Character/`, copia di quelle del Cutout — la
+scelta viene validata contro le cartelle esistenti, quindi senza la sua sarebbe
+stata resettata in silenzio).
+
+**New Scene in modalità Character**: il campo nome diventa la tendina degli
+asset Character, con `＋ Add character…` che **registra l'asset nel tracker**.
+Alla creazione si scrive il sidecar `role="character"` e si collega l'asset alla
+sua scena — l'anello che poi permette di risalire da chi parla al suo set.
+
+**Badge SB / SH / CH** sulle miniature, e **cambio di ruolo** col tasto destro,
+chirurgico: cambia l'attributo e lascia intatto il resto del sidecar (19 test,
+compreso che un `role="animator"` di un membro del team non venga toccato).
+
+### Added — la mappatura delle bocche
+
+`ztorymouthmap.*` — file `.zmouth` **accanto al livello**, come una palette.
+Franco: *«il role character è legato alla scena, i dati del mapping delle bocche
+sono collegati ai livelli delle bocche di quel character»*. Regola che ne segue,
+e che rende il caso delle sotto-scene non-speciale:
+
+> **La mappa vive dove vive la cosa.** Livello con un file → `.zmouth` accanto
+> al file. Sotto-scena (che vive dentro il `.tnz`) → `.zmouth` accanto alla
+> **scena**, con `subscene="nome"` su ogni set.
+
+Un viseme è una **lista di bersagli**, non un disegno: nel cutout la bocca e i
+denti cambiano allo stesso istante. Previsto adesso su indicazione di Franco
+(*«quando inseriremo il 2.5D […] questo sarà da prevedere»*): il formato si
+cambia gratis finché nessuno ha scritto file, dopo si migra.
+
+**Scheda Mouths in ZtoRig**, accanto a Pose e Correttive. Zoom **interno** al
+riquadro con trascinamento — una sola inquadratura per tutte e dieci, perché le
+bocche stanno nello stesso punto e vanno confrontate fra loro. La tendina dei
+set mostra **tutti i set della scena** e sceglierne uno porta al suo livello
+(idea di Franco: si sa quale set si vuole, non su quale livello sta).
+
+### Added — applicare a intervalli
+
+`ztorymouthapply.*` — popup **da-frame-a-frame**, perché il set cambia a metà
+battuta quando il personaggio si gira. La corrispondenza fra i fotogrammi **si
+legge, non si calcola**: la cella che espone una sotto-scena porta il numero di
+fotogramma di quella sotto-scena, quindi funziona anche su fermi, rallentamenti
+e rimontaggi. Se lo stesso fotogramma è esposto due volte, i viseme in conflitto
+si **elencano** invece di far vincere l'ultimo.
+
+Le colonne generate portano il **nome di chi parla** (`SOFIA mouths`), e il
+popup accoppia colonna e personaggio da solo — con scavalco manuale che **resta**.
+
+### Fixed — quattro volte la stessa forma di difetto
+
+1. **Il ruolo dedotto per esclusione**, in TRE punti (`!contains("role=shot")`):
+   badge, rilevamento automatico del workflow, `workflowCommand`. Col terzo
+   ruolo una scena personaggio prendeva il badge SB e le room dello storyboard.
+2. **`kCmds` da 3 voci per 4 del menu** in New Scene: «Stop-Motion Mode» apriva
+   le room dello Storyboard, in silenzio.
+3. **Il workflow dai recenti ignorava «Automatic»** e usava sempre l'indice
+   della tendina manuale — che in automatico è disabilitata e mostra un valore
+   vecchio. Il commento accanto diceva «same logic as onExistingSceneClicked»:
+   lo era stato. Ora è una funzione sola.
+4. **Il recupero della mappa** l'avevo messo nel popup di Apply e non nella
+   scheda: l'apply trovava i set, la scheda diceva che non ce n'erano. Scritto
+   da me, oggi, a un'ora di distanza da me stesso.
+
+### Fixed — la lentezza, misurata invece che dedotta
+
+Caricare uno storyboard: **un minuto e mezzo**. Avevo ipotizzato il volume
+esterno e gli accessi ai file `.zmouth`, e messo una firma per saltare le
+ricostruzioni inutili: **non serviva a niente**, perché al cambio scena la firma
+cambia sempre.
+
+`sample` sul processo mentre era lento ha chiuso la questione in trenta secondi:
+**100% del thread principale in `collectColumnNames`**, mia, che ricorreva **per
+CELLA invece che per sotto-scena** — uno shot esposto per 100 fotogrammi faceva
+entrare 100 volte nella sua sotto-scena, annidato si moltiplicava.
+
+Stesso schema riconosciuto e corretto **prima** di consegnarlo nell'indicizzazione
+dei `.zmouth` del progetto (una scansione sola invece di una per livello).
+
+Un blocco vero, sempre con `sample`: `IconGenerator::addTask` inserisce l'id in
+un insieme ma **accoda comunque**, quindi ridisegnare a ogni icona pronta ne
+accodava altre dieci. Ora ogni sorgente si richiede una volta sola.
+
+### Upstream candidate
+
+🖼️ **Le miniature di una SOTTO-SCENA mostrano tutte il primo fotogramma**
+(`toonzqt/icongenerator.cpp` ~1467 e ~1552). `XsheetIconRenderer` ha un
+parametro `int row = 0` che **nessuno dei due chiamanti passa** — l'id di cache
+la riga ce l'ha, il renderer no. La cache indicizzava correttamente N immagini
+identiche, quindi guardandola sembrava sana.
+
+Conferma di Franco che cambia cosa si propone: *«in tahoma non dava proprio
+anteprime se si sceglieva una sottoscena»* — a monte se ne erano accorti e hanno
+**disattivato la funzione** («Thumbnails are not available for sub-Xsheets»)
+invece di risalire alla causa. Non è un ritocco: è una funzione che si riaccende.
+Registrato in `UPSTREAM_PR_CANDIDATES.md`, da verificare su stock e su OpenToonz.
+
+### Notes
+
+- Il `.zmouth` viaggia col livello: aggiunto a `TXshSimpleLevel::getFiles()`,
+  `copyFiles()` e ai due siti di `takeCareSceneFolderItemsOnSaveSceneAs`. Sono
+  **tre elenchi scritti a mano** che dovrebbero dire la stessa cosa e già non
+  concordavano fra loro.
+- Le copie fatte PRIMA che il `.zmouth` esistesse restano orfane: si recupera
+  cercando nel progetto per nome di file esatto.
+- ⚠️ **Rinominare un livello già mappato scollega i suoi set** (la chiave è il
+  nome). Franco ci è incappato: i set c'erano tutti, agganciati al nome vecchio.
+  Regola pratica per ora: **prima il nome, poi la mappatura.** L'adozione dei set
+  orfani è progettata ma non fatta.
+- ZtoRig, due difetti segnalati usando l'app e **non** affrontati per indicazione
+  di Franco: lo sculpt non crea la correttiva su un braccio; `Show SO` resta
+  acceso spegnendo `Order`. Registrati in ANIMATIC_TASKS.
+- Restano aperti: opzione lip sync nell'export, import degli asset dal breakdown
+  (il pezzo grosso dello scenario A), i folder nel browser, il segnale Kitsu non
+  pushato, e il rename Production Tracker → Manager (non deciso).
+
 ## [2026-08-16] — L'allineatore forzato, e tre difetti che sembravano «serve un modello più grande»
 
 Sessione lunga sul lipsync, chiusa con la catena completa **Vosk → espeak-ng →
