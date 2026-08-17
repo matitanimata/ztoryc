@@ -1,3 +1,38 @@
+## `renderFrame` rientrante lascia legato il framebuffer 0 (macOS/Linux/FreeBSD)
+
+**Sintomo.** Renderizzando un fotogramma fuori schermo, tutto cio' che viene
+disegnato DOPO una colonna deformata dal Plastic non compare: l'immagine esce
+vuota, non solo priva del personaggio. `glGetError()` dopo il disegno della
+mesh deformata restituisce `0x506` (`GL_INVALID_FRAMEBUFFER_OPERATION`).
+
+**File e riga.** `toonz/sources/toonzlib/toonzscene.cpp`, l'overload
+`renderFrame(ras, row, xsh, placedRect, worldToPlacedAff)`, ramo
+`#if defined(MACOSX) || defined(LINUX) || defined(FREEBSD)` — la `fb->release()`
+in fondo al blocco.
+
+**Causa root.** Questa funzione e' **rientrante** e nessuno se n'era accorto.
+Per disegnare una colonna deformata dal Plastic si passa da
+`texture_utils::getTextureData(const TXsheet *, int)`, che per costruire la
+texture della sotto-scena richiama **questa stessa** `renderFrame`. La chiamata
+annidata crea il proprio `QOpenGLFramebufferObject`, lo lega, e alla fine fa
+`fb->release()` — che lega il framebuffer **0**, non quello di prima. In un
+contesto offscreen il framebuffer 0 e' incompleto, quindi da quel momento ogni
+disegno del render esterno fallisce.
+
+Il `glPushAttrib(GL_ALL_ATTRIB_BITS)` gia' presente **non copre il caso**: il
+framebuffer legato non e' stato di attributi e `glPopAttrib` non lo ripristina.
+
+**Fix applicato (Ztoryc, 2026-08-18).** `glGetIntegerv(GL_FRAMEBUFFER_BINDING)`
+prima del `glPushAttrib`, e `glBindFramebuffer(GL_FRAMEBUFFER, prev)` subito
+dopo la `fb->release()`.
+
+**Stato.** Diagnosticato e verificato su Ztoryc con strumentazione su file
+(`RasterPainter::onImage` + `texture_utils`), non per lettura del codice: il
+`0x506` e' stato misurato. **NON verificato su Tahoma2D stock**, ma il codice e'
+identico e non ha niente di nostro. Per riprodurlo a monte serve una scena con
+una colonna deformata dal Plastic **dentro una sotto-scena**, renderizzata
+fuori schermo (icona di scena / anteprima), su macOS o Linux.
+
 ## Rhubarb trovato nel bundle per coincidenza (irrobustimento, non un difetto)
 
 **File e riga.** `toonz/sources/toonzlib/thirdparty.cpp`, `autodetectRhubarb()`.

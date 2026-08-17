@@ -485,7 +485,55 @@ nella sub-scene corretta.
 
 ## Priority Order
 
-### 🔥 IL PRIMO LAVORO DELLA PROSSIMA SESSIONE (2026-08-17 sera)
+### ✅ CHIUSI IL 2026-08-18
+
+**1. Le sotto-scene nell'anteprima dei pannelli — RISOLTO** (commit `a501495d3`).
+Tre difetti in fila, tutti trovati strumentando il render su file, nessuno
+leggendo il codice:
+1. `renderXsheetFrame` passava `false` credendo fosse `forSceneIcon`: e'
+   `checkFlags`, e `forSceneIcon` restava al suo default VERO. Con quello vero
+   `RasterPainter::onImage` salta il ramo della deformazione plastica, e i
+   personaggi ZtoRig sono sotto-xsheet senza livello semplice → `player.image()`
+   nulla → non si disegnava niente. Non uscivano deformati male: sparivano.
+2. `renderFrame` e' **rientrante** (la texture della sotto-scena si costruisce
+   richiamandola) e la `fb->release()` del ramo macOS lega il framebuffer **0**
+   invece di quello di prima. In un contesto offscreen e' incompleto: ogni
+   disegno successivo falliva con `GL_INVALID_FRAMEBUFFER_OPERATION` (0x506) e
+   l'anteprima usciva **vuota**, schizzo compreso. → candidato PR upstream,
+   registrato in `UPSTREAM_PR_CANDIDATES.md`.
+3. Le texture stanno in una cache globale che non sa in quale contesto OpenGL
+   sono nate: quella del viewer e' un numero morto nel contesto dell'anteprima,
+   e legarla non da' errore — campiona bianco. Erano le sagome bianche. Ora
+   `glIsTexture` la controlla e la ricostruisce.
+
+**2. Quanti pannelli fa una sotto-scena — DECISO E FATTO** (commit `02e2a98f0`).
+Regola scelta da Franco: **un pannello e' un disegno, non un fotogramma**.
+- il disegno esposto si guarda DENTRO le sotto-scene (fino a tre livelli), cosi'
+  un rig che tiene la posa non fa confine mentre la sotto-scena scorre;
+- confine sempre: chiavi di colonna e movimenti di camera;
+- livelli in **animazione piena**: non un pannello per cambio ma una griglia
+  regolare, al ritmo di una nuova preferenza **«Panels/s»** nella barra del
+  Board (1-24, predefinito 1) — di fatto un *each*;
+- nessun caso speciale per gli shot senza schizzo.
+
+**3. Rettangoli rossi di un movimento di camera che non c'e' piu' — RISOLTO**
+(commit `08c00a0a7`, verificato da Franco). Il `.ztoryc` non aspetta il Save
+della scena: si scrive a ogni modifica ed e' voluto, altrimenti dialoghi, note e
+numerazione si perderebbero a ogni chiusura non salvata. Il difetto era che al
+ricaricamento nessuno rimetteva in discussione quel dato: `computeCameraMove()`
+gira solo con almeno due chiavi di camera, e senza quelle il pannello restava
+intatto col valore vecchio. Ora senza chiavi il movimento si cancella — fra i
+due comanda la **scena**, e non si perde niente di scritto a mano perche' quel
+dato non lo scrive l'utente ma `classifyCameraMove()`.
+
+> Obiezione sollevata e **scartata da Franco** il 2026-08-18: annotare a mano un
+> movimento di camera sul pannello sarebbe **un disegno vero e proprio**, non un
+> campo di dati — quindi vive nel livello e questa pulizia non lo tocca. Non
+> serve nessun campo «da dove viene il movimento».
+
+---
+
+### (storico) IL PRIMO LAVORO DELLA SESSIONE 2026-08-17 sera
 
 **1. Le sotto-scene non si vedono nell'anteprima dei pannelli del Board.**
 Nel viewer e nell'animatic si vedono; nell'anteprima no, con gli occhietti

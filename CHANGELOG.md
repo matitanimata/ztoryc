@@ -1,3 +1,105 @@
+## [2026-08-18] — le sotto-scene tornano nell'anteprima, e un pannello e' un disegno
+
+Sessione tutta di diagnostica strumentata: tre correzioni «ragionate» erano
+state buttate il giorno prima, e la lista diceva di **misurare, non leggere**.
+Ha funzionato — ogni passo l'ha chiuso un numero, non un'ipotesi.
+
+Rilasciata la **0.13.1** (commit `0c3b2b618`), con dentro anche il lavoro sul
+lip sync della sessione precedente, che non era finito in nessun binario della
+0.13.0: macOS e Windows erano usciti da `18a0d0300` e Linux da `aa324c6eb`,
+entrambi precedenti. La 0.13.0 e' stata marcata **pre-release, non cancellata**:
+contiene `espeak-ng-1.52.0-source.tar.gz`, il sorgente corrispondente ai binari
+che qualcuno ha gia' scaricato, e la GPLv3 obbliga a continuare a offrirlo.
+
+### Fixed — le sotto-scene nell'anteprima dei pannelli (`a501495d3`)
+
+Tre difetti in fila, uno dietro l'altro. Nessuno sarebbe uscito leggendo.
+
+1. **Un parametro di default scambiato.** `IconGenerator::renderXsheetFrame`
+   chiamava `scene->renderFrame(ras, row, xsheet, false)` credendo che quel
+   `false` fosse `forSceneIcon`. E' **`checkFlags`**: la dichiarazione e'
+   `renderFrame(ras, row, xsh, checkFlags = true, forSceneIcon = true, ...)`,
+   quindi `forSceneIcon` restava al suo default, **vero**. Con quello vero
+   `RasterPainter::onImage` salta il ramo della deformazione plastica — e i
+   personaggi ZtoRig sono sotto-xsheet deformati da una mesh, **senza livello
+   semplice**: `player.image()` e' nulla e il disegno comune non disegna niente.
+   Non uscivano deformati male: sparivano.
+
+2. **`renderFrame` e' RIENTRANTE e lascia legato il framebuffer 0.** Per
+   disegnare una colonna deformata serve la texture della sotto-scena, e
+   costruirla richiama `renderFrame` sulla sotto-scena. Il ramo macOS lega un
+   proprio FBO e alla fine fa `fb->release()`, che lega il framebuffer **0** —
+   non quello di prima. In un contesto offscreen il framebuffer 0 e' incompleto:
+   da li' in poi ogni disegno del render esterno falliva con
+   `GL_INVALID_FRAMEBUFFER_OPERATION` (0x506) e l'anteprima usciva **vuota**,
+   schizzo compreso. `glPushAttrib` non copre il caso: il framebuffer legato non
+   e' stato di attributi. → **candidato PR upstream**, registrato.
+
+3. **Texture nate in un altro contesto OpenGL.** La cache delle texture e'
+   globale e indicizzata per immagine, senza nozione di contesto: quella creata
+   dal viewer e' un numero morto nel contesto offscreen dell'anteprima. Legarla
+   **non da' errore** — campiona bianco, e il personaggio esce come sagoma. Ora
+   `glIsTexture` la controlla e la ricostruisce.
+
+**Come sono stati trovati.** Strumentazione su file (l'app parte dal Finder,
+stderr non lo legge nessuno) con un **interruttore**: registra solo finche'
+esiste `<log>.on`, che si accende e si spegne da terminale intorno al momento
+che interessa. Senza, il viewer riempiva megabyte al secondo. Prima misura:
+`Stage::visit` raccoglie **14 player** nell'anteprima, sei dalle sotto-scene
+annidate — identico al viewer. Scagionato in un colpo, e con lui tutta la pista
+seguita il giorno prima.
+
+> ⚠️ **Attenzione a quale percorso si sta guardando.** Il primo confronto
+> «viewer contro anteprima» era falsato: il viewer usa `OpenGlPainter`,
+> l'anteprima `RasterPainter`. E il blocco che sembrava l'anteprima
+> (`forSceneIcon=1`) era l'icona di scena. Il percorso vero e' `col=-1`.
+
+### Added — un pannello e' un disegno, non un fotogramma (`02e2a98f0`)
+
+Regola decisa con Franco, dopo che escludere del tutto le colonne con
+sotto-scene aveva tolto anche i pannelli legittimi (*«e' anche peggiorata visto
+che ora non vede neanche i panel per ogni frame come dovrebbe»*).
+
+- il disegno **esposto** si guarda DENTRO le sotto-scene, fino a tre livelli
+  (`ztoryExposedSignature`): una sotto-scena avanza di una riga per riga per
+  definizione, quindi il vecchio confronto sulla cella era vero sempre;
+- confine sempre: **chiavi di colonna** (anche sui livelli in animazione piena:
+  sono messa in scena, non disegni che scorrono) e **movimenti di camera**;
+- livelli in **animazione piena**: non un pannello per cambio ma una **griglia
+  regolare**, al ritmo di una preferenza nuova — **`Panels/s`** nella barra del
+  Board, da 1 a 24, predefinito 1. Di fatto un *each*;
+- nessun caso speciale per gli shot senza schizzo.
+
+### Fixed — sulla camera comanda la scena, non il sidecar (`08c00a0a7`)
+
+Aggiunto un movimento di camera e chiusa la scena **senza salvare**, riaprendo
+il pannello mostrava ancora i rettangoli rossi di un movimento inesistente.
+
+Il `.ztoryc` non aspetta il Save della scena: si scrive a ogni modifica, in una
+trentina di punti, ed **e' voluto** — altrimenti dialoghi, note e numerazione si
+perderebbero a ogni chiusura non salvata. Il difetto era che al ricaricamento
+nessuno rimetteva in discussione quel dato: `computeCameraMove()` gira solo con
+almeno due chiavi di camera, e senza quelle il pannello restava col valore
+vecchio. Ora senza chiavi il movimento si cancella.
+
+> Obiezione mia, **scartata da Franco**: temevo che questo cancellasse una
+> futura annotazione a mano del movimento sul pannello. Ma un'annotazione del
+> genere sarebbe **un disegno vero e proprio**, non un campo di dati — vive nel
+> livello e questa pulizia non la tocca.
+
+### Upstream candidates
+
+- **`renderFrame` rientrante lascia legato il framebuffer 0** (macOS/Linux/
+  FreeBSD), `toonzscene.cpp`. Misurato, non dedotto: il `0x506` e' stato letto.
+  Non verificato su Tahoma2D stock, ma il codice e' identico e non ha niente di
+  nostro. Registrato in `UPSTREAM_PR_CANDIDATES.md`.
+
+### Notes
+
+- Il controllo sponsor della checklist di rilascio **non e' stato eseguito**: il
+  token `gh` di questa macchina non ha lo scope `read:user` e la dashboard va
+  guardata a mano. I ringraziamenti riportano gli stessi due nomi della 0.13.0.
+
 ## [2026-08-17b] — la 0.13.0 e' uscita, e il lip sync e' diventato un posto solo
 
 Sessione lunghissima, in tre tempi: il rilascio, la riorganizzazione del lip
