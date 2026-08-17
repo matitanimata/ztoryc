@@ -27,7 +27,7 @@
 ZtoryMouthApplyPopup::ZtoryMouthApplyPopup()
     : DVGui::Dialog(TApp::instance()->getMainWindow(), true, false,
                     "ZtoryMouthApply") {
-  setWindowTitle(tr("Apply Lip Sync to Mouths"));
+  setWindowTitle(tr("Assign Mouth Drawings"));
   setMinimumWidth(560);
 
   auto *top = new QWidget(this);
@@ -133,12 +133,18 @@ void ZtoryMouthApplyPopup::showEvent(QShowEvent *) {
   // e un messaggio unico manderebbe l'utente a cercare nel posto sbagliato.
   QStringList missing;
   if (m_phonemeCols.isEmpty())
-    missing << tr("no phoneme column here — generate one with Lip Sync from "
-                  "Storyboard Dialogue.\nIn a storyboard the columns are "
-                  "written INSIDE the shot: open the shot's sub-scene first.");
+    // ⚠️ Il nome del comando sta SCRITTO qui dentro: rinominandolo (2026-08-17,
+    // «Lip Sync from Storyboard Dialogue...» → «Lip Sync...») questo messaggio
+    // ha continuato a mandare l'utente a cercare una voce di menu che non
+    // esisteva piu'. Se il comando cambia nome di nuovo, cambia anche qui.
+    missing << tr("no phoneme column here — generate them with Xsheet ▸ Lip "
+                  "Sync…, which also says what else is missing.\n"
+                  "In a storyboard the columns live INSIDE the shot: open the "
+                  "shot's sub-scene first.");
   if (m_targets.isEmpty())
-    missing << tr("no mapped mouths — map them in ZtoRig ▸ Mouths, inside the "
-                  "character scene");
+    missing << tr("no mapped mouths — map them in ZtoRig ▸ Mouths, on the "
+                  "character's own drawings (once per character: the map "
+                  "travels with them)");
   const bool ready = missing.isEmpty();
   m_applyBt->setEnabled(ready);
   m_table->setEnabled(ready);

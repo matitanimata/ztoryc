@@ -299,6 +299,39 @@ elif [[ ! -x "$ESPEAK_SRC/espeak-ng" && ! -x "$ESPEAK_DST/espeak-ng" ]]; then
   echo "  si usera' quello di sistema se c'e'"
 fi
 
+echo "→ Copia Rhubarb nel bundle (se assente)..."
+# ⚠️ Nelle release Rhubarb C'E' (lo copiano i tre script di pacchetto), qui NO:
+# il bundle di sviluppo era l'unico posto dove il lip sync «senza copione» non
+# si poteva provare. Una funzione che funziona per gli utenti e non per chi la
+# scrive e' la premessa di tutti i difetti che non si vedono in tempo.
+#
+# La versione e' quella fissata per la CI: provare in locale una versione
+# diversa da quella spedita vorrebbe dire non aver provato niente.
+RHUBARB_DST="$APP/Contents/Resources/rhubarb"
+RHUBARB_SRC="$WORKSPACE/thirdparty/apps/rhubarb"
+if [[ ! -x "$RHUBARB_DST/rhubarb" ]]; then
+  if [[ ! -x "$RHUBARB_SRC/rhubarb" ]]; then
+    RHUBARB_REL="$(sed -n 's/^export TAHOMA_RHUBARB_RELEASE=\(.*\)$/\1/p' \
+                   "$WORKSPACE/ci-scripts/thirdparty_versions.sh")"
+    if [[ -n "$RHUBARB_REL" ]]; then
+      echo "  scarico Rhubarb $RHUBARB_REL"
+      mkdir -p "$WORKSPACE/thirdparty/apps"
+      (
+        cd "$WORKSPACE/thirdparty/apps" &&
+        curl -fsSL -o rh.zip "https://github.com/tahoma2d/rhubarb-lip-sync/releases/download/$RHUBARB_REL/rhubarb-lip-sync-tahoma2d-osx.zip" &&
+        unzip -q -o rh.zip -d rhubarb && rm -f rh.zip
+      ) || echo "  ⚠ scaricamento fallito — il lip sync senza copione non partira'"
+    fi
+  fi
+  if [[ -x "$RHUBARB_SRC/rhubarb" ]]; then
+    mkdir -p "$RHUBARB_DST"
+    cp -R "$RHUBARB_SRC/rhubarb" "$RHUBARB_DST/"
+    [[ -d "$RHUBARB_SRC/res" ]] && cp -R "$RHUBARB_SRC/res" "$RHUBARB_DST/"
+    chmod -R 755 "$RHUBARB_DST"
+    echo "  rhubarb imballato ($(du -h "$RHUBARB_DST/rhubarb" | cut -f1))"
+  fi
+fi
+
 echo "→ Copia Vosk nel bundle (se assente)..."
 # L'allineatore forzato. A differenza di whisper-cli, qui imballare FUNZIONA:
 # libvosk e' autosufficiente (otool: solo Accelerate, libc++, libSystem) e non

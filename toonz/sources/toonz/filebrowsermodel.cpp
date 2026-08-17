@@ -23,6 +23,7 @@
 
 #include <QFileInfo>
 #include <QDir>
+#include <algorithm>
 #include <QDirIterator>
 #include <QStandardPaths>
 
@@ -1531,6 +1532,28 @@ void DvDirModelRootNode::setSceneLocation(const TFilePath &path) {
 // Un nodo compare solo se il percorso e' impostato E la cartella esiste: una
 // radice che si apre sul vuoto e' peggio che non averla, perche' sembra che il
 // progetto sia rotto.
+bool DvDirModelRootNode::isChildPresent(DvDirModelNode *node) const {
+  return node && std::find(m_children.begin(), m_children.end(), node) !=
+                     m_children.end();
+}
+
+void DvDirModelRootNode::removeChildNode(DvDirModelNode *node) {
+  if (!node) return;
+  auto pos = std::find(m_children.begin(), m_children.end(), node);
+  if (pos == m_children.end()) {
+    node->setRow(-1);
+    return;
+  }
+  const int row = (int)std::distance(m_children.begin(), pos);
+  DvDirModel::instance()->notifyBeginRemoveRows(QModelIndex(), row, row);
+  m_children.erase(pos);
+  // La meta' che mancava: senza rinumerare, il prossimo erase parte da un
+  // indice che non esiste piu'.
+  for (int i = 0; i < (int)m_children.size(); i++) m_children[i]->setRow(i);
+  DvDirModel::instance()->notifyEndRemoveRows();
+  node->setRow(-1);
+}
+
 void DvDirModelRootNode::updateZtorycAssetNodes() {
   ZtoryModel *model = ZtoryModel::instance();
   struct { DvDirModelZtorycAssetNode *node; QString dir; } items[] = {
@@ -1542,21 +1565,20 @@ void DvDirModelRootNode::updateZtorycAssetNodes() {
   for (auto &it : items) {
     if (!it.node) continue;
     const bool show = !it.dir.isEmpty() && QDir(it.dir).exists();
+    // «C'e' o non c'e'» si chiede all'ELENCO, non alla riga registrata sul nodo:
+    // era quella a mentire (vedi removeChildNode).
+    const bool present = isChildPresent(it.node);
     if (show) {
       const TFilePath p(it.dir.toStdWString());
       if (it.node->getPath() != p) it.node->setPath(p);
-      if (it.node->getRow() == -1) {
+      if (!present) {
         const int row = getChildCount();
         DvDirModel::instance()->notifyBeginInsertRows(QModelIndex(), row, row);
         addChild(it.node);
         DvDirModel::instance()->notifyEndInsertRows();
       }
-    } else if (it.node->getRow() != -1) {
-      const int row = it.node->getRow();
-      DvDirModel::instance()->notifyBeginRemoveRows(QModelIndex(), row, row);
-      m_children.erase(m_children.begin() + row, m_children.begin() + row + 1);
-      DvDirModel::instance()->notifyEndRemoveRows();
-      it.node->setRow(-1);
+    } else if (present) {
+      removeChildNode(it.node);
     }
   }
 }
@@ -1564,18 +1586,19 @@ void DvDirModelRootNode::updateZtorycAssetNodes() {
 void DvDirModelRootNode::updateSceneFolderNodeVisibility(bool forceHide) {
   if (!m_sceneFolderNode) return;
   bool show = (forceHide) ? false : !m_sceneFolderNode->getPath().isEmpty();
-  if (show && m_sceneFolderNode->getRow() == -1) {
+  // ⚠️ Anche qui si guarda l'ELENCO e non la riga registrata. Prima delle
+  // cartelle asset questo nodo era l'ULTIMO e nessun fratello poteva spostarlo,
+  // quindi la riga registrata era sempre giusta; da quando accanto a lui ci
+  // sono tre nodi che compaiono e spariscono, non lo e' piu'. E' il commento
+  // «remove the last child of the root node» che non valeva piu'.
+  const bool present = isChildPresent(m_sceneFolderNode);
+  if (show && !present) {
     int row = getChildCount();
     DvDirModel::instance()->notifyBeginInsertRows(QModelIndex(), row, row);
     addChild(m_sceneFolderNode);
     DvDirModel::instance()->notifyEndInsertRows();
-  } else if (!show && m_sceneFolderNode->getRow() != -1) {
-    int row = m_sceneFolderNode->getRow();
-    DvDirModel::instance()->notifyBeginRemoveRows(QModelIndex(), row, row);
-    // remove the last child of the root node
-    m_children.erase(m_children.begin() + row, m_children.begin() + row + 1);
-    DvDirModel::instance()->notifyEndRemoveRows();
-    m_sceneFolderNode->setRow(-1);
+  } else if (!show && present) {
+    removeChildNode(m_sceneFolderNode);
   }
 }
 //=============================================================================

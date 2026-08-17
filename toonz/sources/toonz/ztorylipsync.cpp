@@ -2,6 +2,8 @@
 
 #include "ztoryvosk.h"
 #include "ztoryphonemes.h"
+#include "ztorycharacter.h"
+#include "ztorylipsyncdialog.h"
 #include "thirdparty.h"
 #include "tapp.h"
 #include "toonz/toonzscene.h"
@@ -26,6 +28,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QFile>
+#include <QTextStream>
 #include <QFileInfo>
 #include <QDir>
 #include <QUuid>
@@ -46,9 +49,31 @@ ZtoryShotContext ztoryCurrentShotContext() {
   if (!cs) return ctx;
   TXsheet *top = cs->getTopXsheet();
   TXsheet *cur = cs->getXsheet();
-  // Al livello principale non c'e' nessuno shot aperto: e' un'informazione, non
-  // un errore, e chi chiama la trasforma in un messaggio comprensibile.
-  if (!top || !cur || cur == top) return ctx;
+  if (!top || !cur) return ctx;
+
+  if (cur == top) {
+    // ── La scena aperta E' lo shot ────────────────────────────────────────
+    // Uno shot esportato dallo storyboard e' una scena a se': lo shot e' il suo
+    // xsheet principale, l'audio sta nelle sue colonne sonore, e di sotto-scene
+    // in cui entrare non ce n'e' nessuna — quelle che ci sono dentro sono i
+    // PERSONAGGI. E' il posto dove si animano le bocche, quindi rispondere
+    // «apri prima una sotto-scena» era rifiutare proprio il caso principale.
+    //
+    // Il ruolo si legge dal sidecar e non si deduce: nello storyboard, al
+    // livello principale, il lip sync NON si deve fare — le colonne finirebbero
+    // accanto agli shot invece che dentro uno.
+    const QString role = ZtoryCharacter::roleOf(
+        QString::fromStdWString(scene->getScenePath().getWideString()));
+    if (role != QLatin1String("shot")) return ctx;
+
+    ctx.shotIndex = 0;
+    ctx.column    = -1;
+    ctx.firstRow  = 0;
+    ctx.lastRow   = std::max(0, top->getFrameCount() - 1);
+    ctx.subXsheet = top;
+    ctx.ownScene  = true;
+    return ctx;
+  }
 
   for (int col = 0; col < top->getColumnCount(); col++) {
     // ⚠️ NON si guarda la riga 0. In Ztoryc gli shot stanno in FILA nel tempo:
@@ -150,6 +175,24 @@ ZtoryLipSync::~ZtoryLipSync() {
 
 //-----------------------------------------------------------------------------
 
+ZtoryLipSync::Engine ZtoryLipSync::engineFor(const QString &language,
+                                            bool hasScript) {
+  // Senza copione Vosk e Whisper non servono a niente: non inventano le parole,
+  // le cronometrano. Rhubarb invece guarda solo la forma dell'onda e restituisce
+  // CASELLE — ed e' l'unico che in quel caso ha qualcosa da dire.
+  if (!hasScript) return Engine::Rhubarb;
+  return engineFor(language);
+}
+
+QString ZtoryLipSync::engineName(Engine e) {
+  switch (e) {
+  case Engine::Vosk:    return QObject::tr("Vosk");
+  case Engine::Whisper: return QObject::tr("Whisper");
+  case Engine::Rhubarb: return QObject::tr("Rhubarb");
+  }
+  return QString();
+}
+
 ZtoryLipSync::Engine ZtoryLipSync::engineFor(const QString &language) {
   // Vosk vuole sapere la lingua: i suoi modelli sono uno per lingua e non c'e'
   // rilevamento automatico. Se il pannello non l'ha detta, il lavoro e' di
@@ -246,8 +289,12 @@ bool ZtoryLipSync::start(const Request &req) {
   if (!TSystem::doesExistFileOrLevel(TFilePath(req.wavPath))) return false;
 
   m_req = req;
-  return engineFor(m_req.language) == Engine::Vosk ? startVosk()
-                                                   : startWhisper();
+  switch (engineFor(m_req.language, !m_req.dialogue.trimmed().isEmpty())) {
+  case Engine::Rhubarb: return startRhubarb();
+  case Engine::Vosk:    return startVosk();
+  case Engine::Whisper: return startWhisper();
+  }
+  return false;
 }
 
 //-----------------------------------------------------------------------------
@@ -355,6 +402,98 @@ bool ZtoryLipSync::startWhisper() {
 }
 
 //-----------------------------------------------------------------------------
+// Rhubarb — il motore per gli shot SENZA copione.
+//
+// Non riconosce parole: guarda la forma dell'onda e restituisce direttamente le
+// caselle delle bocche. Con `--datUsePrestonBlair` le chiama con i nomi della
+// serie di Preston Blair — `AI E O U FV L MBP WQ etc rest` — che sono ESATTAMENTE
+// i nostri (vedi ZtoryPhonemes): nessuna tabella di conversione da mantenere, e
+// nessuna occasione di farne divergere due copie.
+//
+// Il formato `dat` e' una riga per cambio: «<fotogramma> <CASELLA>». Il
+// fotogramma e' relativo all'inizio del wav, quindi 1-based dopo lo scostamento
+// come per gli altri motori.
+//-----------------------------------------------------------------------------
+
+bool ZtoryLipSync::startRhubarb() {
+  if (!ThirdParty::checkRhubarb()) {
+    emit finished(false, {},
+                  tr("This shot has no dialogue written in its panels, so the "
+                     "timing can only come from the sound itself — and that is "
+                     "Rhubarb's job. Rhubarb was not found: set its folder in "
+                     "Preferences > Import/Export."));
+    return false;
+  }
+
+  const QString cacheRoot = ToonzFolder::getCacheRootFolder().getQString();
+  const QString dir       = cacheRoot + "/rhubarb";
+  if (!TSystem::doesExistFileOrLevel(TFilePath(dir)))
+    TSystem::mkDir(TFilePath(dir));
+  m_rhubarbDat =
+      dir + "/" + QUuid::createUuid().toString(QUuid::WithoutBraces).left(8) +
+      ".dat";
+
+  QStringList args;
+  args << "-o" << m_rhubarbDat << "-f" << "dat" << "--datUsePrestonBlair";
+  // ⚠️ Il frame rate va DICHIARATO, o Rhubarb usa il suo default e i numeri di
+  // riga che restituisce non sono i fotogrammi della scena. Arrotondato, come
+  // fa il popup di Tahoma: l'opzione vuole un intero.
+  args << "--datFrameRate"
+       << QString::number((int)std::lround(m_req.fps > 0 ? m_req.fps : 24.0));
+  args << "--machineReadable";
+  args << m_req.wavPath;
+
+  if (!m_proc) {
+    m_proc = new QProcess(this);
+    connect(m_proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this](int code, QProcess::ExitStatus) { onProcessDone(code); });
+  }
+  m_running = true;
+  emit progress(tr("Reading the mouth shapes from the sound…"));
+
+  QString exe = ThirdParty::getRhubarbDir() + "/rhubarb";
+#ifdef _WIN32
+  exe += ".exe";
+#endif
+  m_proc->start(exe, args);
+  if (!m_proc->waitForStarted(5000)) {
+    m_running = false;
+    emit finished(false, {}, tr("Could not start Rhubarb."));
+    return false;
+  }
+  return true;
+}
+
+//-----------------------------------------------------------------------------
+// Le caselle di Rhubarb -> UNA traccia, quella del personaggio scelto.
+//
+// Senza copione non c'e' nessuno che dica chi parla: la traccia e' una sola, e
+// il nome e' quello che l'utente ha indicato. Meglio una colonna intestata a un
+// personaggio scelto a mano che quattro colonne anonime.
+//-----------------------------------------------------------------------------
+void ZtoryLipSync::completeWithMouths(
+    QVector<ZtoryCharacterTrack::Word> mouths) {
+  if (mouths.isEmpty()) {
+    emit finished(false, {},
+                  tr("Rhubarb found no mouth shapes in this audio."));
+    return;
+  }
+  ZtoryCharacterTrack t;
+  t.assetUuid     = m_req.characterUuid;
+  t.characterName = m_req.characterName;
+  t.words         = mouths;
+  // `spoken` resta VUOTA, e non e' una mancanza: senza copione non ci sono
+  // parole da leggere nel foglio, e una colonna di caselle vuote sarebbe
+  // peggio di nessuna colonna.
+  QVector<ZtoryCharacterTrack> tracks;
+  tracks.push_back(t);
+  emit finished(true, tracks,
+                tr("%1 mouth shapes (timed by Rhubarb — this shot has no "
+                   "written dialogue).")
+                    .arg(mouths.size()));
+}
+
+//-----------------------------------------------------------------------------
 
 void ZtoryLipSync::cancel() {
   if (!m_running) return;
@@ -374,8 +513,69 @@ void ZtoryLipSync::cancel() {
 
 //-----------------------------------------------------------------------------
 
+// Dichiarata qui perche' la definizione sta piu' sotto, insieme al resto delle
+// regole sulle celle: e' la STESSA normalizzazione che applicano gli altri due
+// motori, e duplicarla per Rhubarb vorrebbe dire vedere divergere il minimo di
+// due fotogrammi alla prima correzione.
+namespace {
+void normalizeCells(QVector<ZtoryCharacterTrack::Word> &cells, int minFrames);
+}
+
 void ZtoryLipSync::onProcessDone(int exitCode) {
   m_running = false;
+  // Il processo e' lo stesso oggetto per whisper-cli e per Rhubarb: chi ha
+  // lavorato lo dice il file di uscita che stiamo aspettando.
+  const bool wasRhubarb = !m_rhubarbDat.isEmpty();
+
+  if (wasRhubarb) {
+    const QString dat = m_rhubarbDat;
+    m_rhubarbDat.clear();
+    if (exitCode != 0) {
+      QString err = QString::fromUtf8(m_proc->readAllStandardError()).trimmed();
+      emit finished(false, {},
+                    err.isEmpty()
+                        ? tr("Rhubarb failed (exit %1).").arg(exitCode)
+                        : err);
+      return;
+    }
+    QFile f(dat);
+    if (!f.open(QIODevice::ReadOnly)) {
+      emit finished(false, {}, tr("Rhubarb produced no output file."));
+      return;
+    }
+    // Una riga per CAMBIO di bocca: «<fotogramma> <CASELLA>». Ogni casella dura
+    // fino al fotogramma della riga successiva, e l'ultima riga chiude la serie
+    // — quindi si tiene la precedente e si scrive quando arriva la seguente.
+    QVector<ZtoryCharacterTrack::Word> mouths;
+    QString pendingShape;
+    int pendingStart = 0;
+    QTextStream in(&f);
+    while (!in.atEnd()) {
+      const QStringList parts =
+          in.readLine().simplified().split(' ', Qt::SkipEmptyParts);
+      if (parts.size() != 2) continue;
+      bool ok = false;
+      const int datFrame = parts[0].toInt(&ok);
+      if (!ok) continue;
+      // I nomi di Preston Blair sono i nostri, a meno delle maiuscole.
+      const QString shape = parts[1].toLower();
+      const int frame     = datFrame + m_req.firstFrame;
+      if (!pendingShape.isEmpty() && frame > pendingStart)
+        mouths.push_back({pendingShape, pendingStart, frame - 1});
+      pendingShape = shape;
+      pendingStart = frame;
+    }
+    f.close();
+    TSystem::deleteFile(TFilePath(dat.toStdWString()));
+    // ⚠️ L'ultima riga di Rhubarb e' la CHIUSURA, non una casella: senza una
+    // riga successiva non se ne conosce la fine, e inventarla lunga quanto
+    // l'ultima vista vorrebbe dire una bocca aperta oltre la fine del parlato.
+    // Si scarta, ed e' sempre il riposo finale.
+    normalizeCells(mouths, 2);
+    completeWithMouths(mouths);
+    return;
+  }
+
   if (exitCode != 0) {
     // Il messaggio di whisper-cli e' su stderr; senza, l'utente riceve solo un
     // numero. E il 137 (SIGKILL) ha un significato preciso su macOS.
@@ -872,64 +1072,19 @@ void writeCellsColumn(TXsheet *xsh, int col,
           lipSyncColumnName(characterName, restWhereSilent).toStdString());
 }
 
+// La voce dentro lo shot apre la FINESTRA DI STATO (ztorylipsyncdialog): le
+// quattro situazioni — colonne si/no × bocche mappate si/no — diventano la
+// stessa finestra con spunte diverse, invece di quattro comandi da indovinare.
+// Il vecchio comportamento (genera e basta) e' il bottone Generate di quella
+// finestra, che ora dice anche cosa manca dopo.
 class ZtoryLipSyncCommand final : public MenuItemHandler {
 public:
   ZtoryLipSyncCommand() : MenuItemHandler(MI_ZtoryLipSyncShot) {}
 
   void execute() override {
-    const QString why = ZtoryLipSync::unavailableReason();
-    if (!why.isEmpty()) { DVGui::warning(why); return; }
-
-    const ZtoryShotContext ctx = ztoryCurrentShotContext();
-    if (!ctx.isValid()) {
-      DVGui::warning(QObject::tr(
-          "Open a shot's sub-scene first: the dialogue and the audio are read "
-          "from that shot."));
-      return;
-    }
-
-    // Il copione: tutti i pannelli dello shot, nell'ordine in cui stanno.
-    ZtoryModel *m = ZtoryModel::instance();
-    const QString dialogue = ztoryShotDialogue(m->shot(ctx.shotIndex).panels);
-
-    ZtoryLipSync::Request req;
-    const QString why2 = ztoryPrepareLipSync(ctx, dialogue, req);
-    if (!why2.isEmpty()) { DVGui::warning(why2); return; }
-
-    auto *job       = new ZtoryLipSync(TApp::instance()->getMainWindow());
-    TXsheet *sub    = ctx.subXsheet;
-    const int lastF = ctx.lastRow - ctx.firstRow + 1;
-
-    QObject::connect(job, &ZtoryLipSync::finished, job,
-                     [job, sub, lastF](bool ok,
-                                       const QVector<ZtoryCharacterTrack> &tracks,
-                                       const QString &msg) {
-      job->deleteLater();
-      if (!ok) { DVGui::warning(msg); return; }
-
-      TUndoManager::manager()->beginBlock();
-      // Rigenerare vuol dire SOSTITUIRE: chi rilancia il comando su uno shot
-      // che ha gia' le sue colonne si aspetta di vederle rifatte, non di
-      // trovarne altre quattro accanto alle vecchie. Si tolgono qui e non
-      // prima di partire: se l'allineamento fallisce, le vecchie sono ancora
-      // meglio di niente.
-      for (int c : ztoryFindLipSyncColumns(sub)) sub->removeColumn(c);
-      int orphanWords = 0;
-      const int written =
-          ztoryWriteLipSyncColumns(sub, tracks, lastF, &orphanWords).size();
-      TUndoManager::manager()->endBlock();
-      TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
-      QString extra;
-      if (orphanWords > 0)
-        extra = QObject::tr(
-                    "  —  %1 words have no character: check the names in the "
-                    "dialogue (they turn green when recognised).")
-                    .arg(orphanWords);
-      DVGui::info(QObject::tr("%1  —  %2 dialogue columns written.")
-                      .arg(msg).arg(written) + extra);
-    });
-    job->start(req);
+    ztoryShowLipSyncDialog(TApp::instance()->getMainWindow());
   }
+
 } ztoryLipSyncCommand;
 
 }  // namespace
@@ -951,10 +1106,11 @@ QString ztoryShotDialogue(const std::vector<PanelData> &panels) {
 
 QString ztoryPrepareLipSync(const ZtoryShotContext &ctx,
                             const QString &dialogue,
-                            ZtoryLipSync::Request &req) {
+                            ZtoryLipSync::Request &req,
+                            bool allowWithoutScript) {
   if (!ctx.isValid())
     return QObject::tr("No shot to work on.");
-  if (dialogue.trimmed().isEmpty())
+  if (dialogue.trimmed().isEmpty() && !allowWithoutScript)
     return QObject::tr(
         "This shot has no dialogue in its storyboard panels. The words come "
         "from there — the engine only supplies the timing.");
@@ -1038,8 +1194,13 @@ QList<int> ztoryWriteLipSyncColumns(TXsheet *sub,
     // anonima che una intestata a un nome inventato.
     const QString who = t.characterName;
     int col = sub->getColumnCount();
-    writeCellsColumn(sub, col, t.spoken, lastFrame, false, who);
-    created.append(col);
+    // La colonna delle PAROLE solo se ci sono parole. Con Rhubarb (shot senza
+    // copione) non ce ne sono: scriverla comunque darebbe una colonna di celle
+    // vuote, che nel foglio e' rumore da leggere e non un'informazione.
+    if (!t.spoken.isEmpty()) {
+      writeCellsColumn(sub, col, t.spoken, lastFrame, false, who);
+      created.append(col);
+    }
     if (!t.words.isEmpty()) {
       col = sub->getColumnCount();
       writeCellsColumn(sub, col, t.words, lastFrame, true, who);

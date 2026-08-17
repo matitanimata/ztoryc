@@ -57,6 +57,20 @@ struct ZtoryShotContext {
   int      firstRow  = 0;    // prima riga occupata nel main xsheet
   int      lastRow   = 0;
   class TXsheet *subXsheet = nullptr;
+  // ⚠️ DUE POSTI DIVERSI, non uno.
+  //
+  //   false = si sta dentro la sotto-scena di uno shot dello STORYBOARD. Il
+  //           dialogo sta nei pannelli, l'audio nelle righe dello shot nel main
+  //           xsheet.
+  //   true  = la scena aperta E' essa stessa lo shot (esportata dallo
+  //           storyboard, role="shot"): non c'e' nessuna sotto-scena in cui
+  //           entrare, l'audio sta nelle colonne sonore di questa scena e i
+  //           pannelli non ci sono — il dialogo, se serve, lo scrive l'utente.
+  //
+  // E' il secondo caso quello in cui si animano davvero le bocche, e per un
+  // giorno il comando ci ha risposto «apri prima una sotto-scena» (Franco,
+  // 2026-08-17).
+  bool ownScene = false;
   bool isValid() const { return shotIndex >= 0 && subXsheet; }
 };
 
@@ -86,6 +100,11 @@ public:
     QString wavPath;        // audio già estratto, 16 kHz mono
     QString dialogue;       // testo dei pannelli, così com'è scritto
     QString language;       // "it", "en", … vuoto = rilevamento automatico
+    // Senza copione (`dialogue` vuoto) NON si sa chi parla, e tutta la catena
+    // verso i set di bocche parte da lì. Il personaggio lo indica l'utente, e
+    // queste due righe sono l'unico posto dove quella scelta entra.
+    QString characterUuid;
+    QString characterName;
     double  fps        = 24;
     int     firstFrame = 1;  // fotogramma a cui corrisponde l'istante 0 del wav
     // Durata vera del wav in millisecondi. Serve a scartare la coda che
@@ -106,8 +125,16 @@ public:
   // Quale motore userebbe una richiesta con questa lingua. Serve alla UI per
   // dirlo all'utente PRIMA: i due non danno gli stessi tempi, e sapere quale ha
   // lavorato è la prima cosa da chiedersi se un risultato sembra storto.
-  enum class Engine { Vosk, Whisper };
+  // Tre motori, e la scelta NON dipende solo dalla lingua:
+  //   con il copione  → Vosk se c'è il suo modello, altrimenti Whisper
+  //   senza copione   → Rhubarb, che è l'unico che non ha bisogno di testo
+  // Vosk e Whisper senza copione non hanno niente da allineare: le parole non
+  // le inventano, le CRONOMETRANO.
+  enum class Engine { Vosk, Whisper, Rhubarb };
   static Engine engineFor(const QString &language);
+  static Engine engineFor(const QString &language, bool hasScript);
+  // Il nome da mostrare all'utente, in un posto solo.
+  static QString engineName(Engine e);
 
 signals:
   void progress(const QString &message);
@@ -131,6 +158,13 @@ private:
 
   bool startVosk();
   bool startWhisper();
+  // Rhubarb non passa da `completeWith()`: non produce parole ma direttamente
+  // le CASELLE, e i suoi nomi (con `--datUsePrestonBlair`) sono già i nostri —
+  // `ai e o u fv l mbp wq etc rest` è la serie di Preston Blair, la stessa che
+  // usa `ZtoryPhonemes`. Nessuna tabella di conversione da mantenere.
+  bool startRhubarb();
+  void completeWithMouths(QVector<ZtoryCharacterTrack::Word> mouths);
+  QString m_rhubarbDat;
 
   QProcess *m_proc = nullptr;
   bool      m_running = false;
@@ -153,9 +187,14 @@ QString ztoryShotDialogue(const std::vector<PanelData> &panels);
 // Prepara la richiesta: estrae l'audio, prende lingua, fps e durata vera.
 // Ritorna il MOTIVO per cui non si può partire — una frase già pronta da
 // mostrare — o stringa vuota se `req` è utilizzabile.
+// `allowWithoutScript` cambia una cosa sola, ma importante: senza copione la
+// richiesta viene preparata comunque, e sara' Rhubarb a lavorare sul suono.
+// L'export lo lascia FALSO di proposito — uno shot senza dialogo va saltato,
+// non riempito di caselle attribuite a un personaggio che nessuno ha scelto.
 QString ztoryPrepareLipSync(const ZtoryShotContext &ctx,
                             const QString &dialogue,
-                            ZtoryLipSync::Request &req);
+                            ZtoryLipSync::Request &req,
+                            bool allowWithoutScript = false);
 
 // Esegue e ASPETTA. Serve a chi non ha una interfaccia da tenere viva:
 // l'export è un ciclo sincrono e non può proseguire senza le tracce.

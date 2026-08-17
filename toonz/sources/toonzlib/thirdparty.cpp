@@ -394,6 +394,21 @@ QString autodetectRhubarb() {
   folderList.append(".");
   folderList.append("./rhubarb");  // rhubarb folder
 
+  // ⚠️ Il bundle, DICHIARATO. Rhubarb era l'unico dei tre programmi esterni
+  // senza questa riga: lo trovava solo perche' getWorkingDirectory() risolve a
+  // Contents/Resources — e risolve li' perche' e' dove sta ztorycstuff, non
+  // perche' qualcuno l'abbia deciso per Rhubarb. Cioe' funzionava per una
+  // coincidenza: spostando la cartella dello stuff, Rhubarb sarebbe sparito e
+  // nessuno avrebbe collegato le due cose. ffmpeg e whisper la riga ce l'hanno.
+  {
+    QString appDir = QCoreApplication::applicationDirPath();
+    folderList.append(appDir + "/rhubarb");
+#ifdef MACOSX
+    QString resDir = QDir::cleanPath(appDir + "/../Resources");
+    folderList.append(resDir + "/rhubarb");
+#endif
+  }
+
   folderList.append(TEnv::getWorkingDirectory().getQString() +
                     "/rhubarb");  // rhubarb folder
 

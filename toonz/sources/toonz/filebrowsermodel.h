@@ -371,6 +371,24 @@ public:
   //! Ztoryc: allinea le tre cartelle degli asset a cio' che dice il Production
   //! Tracker per il progetto corrente.
   void updateZtorycAssetNodes();
+
+private:
+  //! Toglie un figlio della radice trovandone la posizione VERA, e rinumera i
+  //! fratelli che restano.
+  //!
+  //! ⚠️ NON usare `DvDirModelNode::getRow()` per calcolare l'iteratore di
+  //! `erase`: quel numero e' la posizione registrata quando il nodo e' stato
+  //! AGGIUNTO, e nessuno la aggiorna quando un fratello viene tolto. Con i tre
+  //! nodi degli asset che compaiono e spariscono col progetto, il primo erase
+  //! rendeva bugiardi i due seguenti — `m_children.begin() + row` finiva oltre
+  //! la fine e l'erase copiava una lunghezza di spazzatura: SIGBUS al cambio di
+  //! scena (crash del 2026-08-17, log Ztoryc-2026-08-17-172225).
+  void removeChildNode(DvDirModelNode *node);
+  //! Vero se il nodo sta DAVVERO fra i figli, indipendentemente da cio' che
+  //! dice la sua riga registrata.
+  bool isChildPresent(DvDirModelNode *node) const;
+
+public:
 };
 
 //=============================================================================

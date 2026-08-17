@@ -651,11 +651,26 @@ centralWidget->setLayout(centralWidgetLayout);*/
   // Deduplicate the Ztoryc shot-op toolbar once the initial room layout is
   // assembled (deferred so docked panels already exist as children).
   QTimer::singleShot(0, this, [this] { updateZtoryToolbarDedup(); });
+  // Il workflow cambia senza cambiare stanza (New Scene, apertura di una scena):
+  // senza questo la voce del lip sync resterebbe come l'aveva lasciata l'ultimo
+  // cambio di stanza.
+  connect(ZtoryModel::instance(), &ZtoryModel::workflowChanged, this,
+          [this](ZtoryWorkflow) { updateZtoryToolbarDedup(); });
 }
 
 //-----------------------------------------------------------------------------
 
 void MainWindow::updateZtoryToolbarDedup() {
+  // «Generate Lip Sync Columns...» lavora sugli shot del Board: fuori dalla
+  // modalita' storyboard non c'e' ne' Board ne' shot, e la voce risponderebbe
+  // «non trovo il Board». Spenta dice la stessa cosa prima del clic.
+  // Sta qui e non in un posto suo perche' questa funzione e' gia' quella che
+  // rimette a posto la UI quando cambia il contesto (stanza, avvio, workflow):
+  // un secondo aggancio agli stessi eventi avrebbe voluto dire due elenchi da
+  // tenere allineati.
+  CommandManager::instance()->enable(
+      MI_ZtoryLipSyncShots, ZtoryModel::instance()->isStoryboardWorkflow());
+
   Room *room = getCurrentRoom();
   if (!room) return;
   // Owner of shot ops = the Animatic panel. When it shares the room with the
@@ -2746,16 +2761,18 @@ void MainWindow::defineActions() {
   // Lip sync dai dialoghi dello storyboard: le PAROLE vengono dal copione, i
   // TEMPI da Whisper. Sta nel menu Xsheet accanto al lip sync di Rhubarb.
   createMenuXsheetAction(MI_ZtoryLipSyncShot,
-                         QT_TR_NOOP("Lip Sync from Storyboard Dialogue..."), "",
-                         "");
+                         QT_TR_NOOP("Lip Sync..."), "", "");
   // La TERZA operazione: le colonne dei fonemi ci sono, il personaggio e'
   // importato, qui si dice quale set usare su quale tratto.
+  // ⚠️ NON «Apply Lip Sync to Mouths...»: accanto al comando di Rhubarb di
+  // Tahoma («Apply Lip Sync to Column») i due nomi si somigliavano e facevano
+  // cose diverse. Questo assegna i DISEGNI, e il nome ora lo dice.
   createMenuXsheetAction(MI_ZtoryApplyMouths,
-                         QT_TR_NOOP("Apply Lip Sync to Mouths..."), "", "");
+                         QT_TR_NOOP("Assign Mouth Drawings..."), "", "");
   // Lo stesso lavoro su PIU' shot, presi dal Board invece che dalla sotto-scena
   // aperta: serve a controllare il sincrono mentre lo storyboard e' in corso.
   createMenuXsheetAction(MI_ZtoryLipSyncShots,
-                         QT_TR_NOOP("Lip Sync Storyboard Shots..."), "", "");
+                         QT_TR_NOOP("Generate Lip Sync Columns..."), "", "");
   CommandManager::instance()->enable(MI_NextTaggedFrame, false);
   CommandManager::instance()->enable(MI_PrevTaggedFrame, false);
   CommandManager::instance()->enable(MI_EditTaggedFrame, false);

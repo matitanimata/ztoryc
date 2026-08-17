@@ -5,6 +5,7 @@
 #include "ztorylipsync.h"
 #include "ztoryassetimport.h"
 #include <QMenu>
+#include "toonz/toonzfolders.h"
 #include <QProgressDialog>
 #include "kitsuclient.h"  // post-export upload to Kitsu
 
@@ -1683,6 +1684,54 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   });
   connect(TApp::instance()->getCurrentFrame(), &TFrameHandle::frameSwitched,
           this, [this](){ m_panelDetectTimer->start(); });
+  // ⚠️ IMPORTARE qualcosa in uno shot non cambia fotogramma, quindi il
+  // riquadro restava quello di prima: due personaggi importati come
+  // sotto-scene non comparivano nell'anteprima finche' non si cambiava
+  // workflow, che rifa' tutto (Franco, 2026-08-17).
+  //
+  // Si aggancia `castChanged` — che scatta quando il cast della scena cambia,
+  // cioe' proprio quando arriva o se ne va un livello — e NON `xsheetChanged`,
+  // che AGENTS.md vieta apposta: quello scatta a ogni pennellata e il render
+  // sincrono spezzava la linea a meta' tratto.
+  //
+  // Costa poco perche' il render e' in cache con una chiave che contiene il
+  // CONTENUTO: se non e' cambiato niente, la richiesta si risolve in una
+  // lettura di hash e non in un render.
+  // Rifare le anteprime del Board dal LIVELLO PRINCIPALE, che e' da dove il
+  // Board si guarda.
+  auto refreshPreviewsFromMain = [this]() {
+    // ⚠️ Il timer sopra ESCE SUBITO se non si e' dentro una sotto-scena
+    // (`getAncestorCount() == 0`): serve l'informazione dell'antenato per
+    // sapere QUALE shot e' sporco. Ma il Board lo si guarda dal livello
+    // principale, quindi agganciarci e basta voleva dire non fare niente.
+    //
+    // Dal livello principale non si sa quale shot sia cambiato — e non serve
+    // saperlo: si buttano le pixmap di quelli VISIBILI e si lascia che
+    // updateVisiblePreviews() li rifaccia. Costa poco perche' il render e' in
+    // cache con una chiave che contiene il contenuto: cio' che non e' cambiato
+    // si risolve in una lettura di hash.
+    ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
+    if (sc && sc->getChildStack()->getAncestorCount() > 0) {
+      m_panelDetectTimer->start();
+      return;
+    }
+    for (auto &shot : m_shots)
+      for (PanelWidget *pw : shot.panels)
+        if (pw) pw->setPreviewPixmap(QPixmap());
+    updateVisiblePreviews();
+  };
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::castChanged, this,
+          refreshPreviewsFromMain);
+  // L'occhietto di una colonna non cambia il CAST: la sua notifica e'
+  // xsheetChanged. Agganciarla qui non viola la regola di AGENTS.md — quella
+  // vieta di rifare le miniature a ogni pennellata DENTRO una sotto-scena, e
+  // questo ramo gira solo al livello principale, dove non si disegna.
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+          this, [this, refreshPreviewsFromMain]() {
+    ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
+    if (sc && sc->getChildStack()->getAncestorCount() == 0)
+      refreshPreviewsFromMain();
+  });
   connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched,
           this, [this](){
     disconnect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
@@ -2253,8 +2302,31 @@ QPixmap ztoryRenderPanelPreview(TXsheet *subXsh, const PanelData &pd,
   // identificare nulla in modo stabile → si renderizza e basta.
   QString cacheKey;
   if (!subSceneName.isEmpty()) {
-    cacheKey = QString("%1|%2|%3x%4").arg(subSceneName).arg(frame)
-                   .arg(physW).arg(physH);
+    // ⚠️ NELLA CHIAVE DEVE ENTRARE ANCHE IL CONTENUTO, non solo nome, fotogramma
+    // e dimensioni. Senza, importare qualcosa nella sotto-scena — due
+    // personaggi, per dire — non cambia la chiave: torna il render di prima e
+    // l'anteprima nel Board resta senza i personaggi. Si vedeva comparire solo
+    // dove nasceva un pannello NUOVO, perche' li' cambiava il fotogramma
+    // (Franco, 2026-08-17).
+    //
+    // La firma e' cio' che determina l'immagine: quante colonne ci sono e cosa
+    // espone ciascuna a QUEL fotogramma. Costa una passata sulle colonne — una
+    // manciata — e vale quanto una scansione dell'intera sotto-scena.
+    QString sig = QString::number(subXsh->getColumnCount());
+    for (int c = 0; c < subXsh->getColumnCount(); c++) {
+      // ⚠️ ANCHE L'OCCHIETTO nella firma: accendere o spegnere una colonna non
+      // tocca le celle, quindi senza questo la chiave resta identica e torna
+      // l'immagine di prima. Accendendo lo schizzo si continuava a vedere
+      // l'anteprima vecchia (Franco, 2026-08-17).
+      TXshColumn *col = subXsh->getColumn(c);
+      sig += (col && col->isCamstandVisible()) ? "|v" : "|x";
+      const TXshCell cc = subXsh->getCell(frame, c);
+      if (cc.isEmpty() || !cc.m_level) { sig += "-"; continue; }
+      sig += QString::fromStdWString(cc.m_level->getName()) + ":" +
+             QString::number(cc.m_frameId.getNumber());
+    }
+    cacheKey = QString("%1|%2|%3x%4|%5").arg(subSceneName).arg(frame)
+                   .arg(physW).arg(physH).arg(sig);
     if (g.valid)  // la regione di camera cambia l'inquadratura renderizzata
       cacheKey += QString("|r%1,%2,%3,%4")
                       .arg(g.minX, 0, 'f', 3).arg(g.minY, 0, 'f', 3)
@@ -3622,7 +3694,28 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
   // panel boundary where they start/end.  Skip them in both passes below.
   auto isDrawingCol = [&](int c) -> bool {
     TXshColumn *col = xsh->getColumn(c);
-    return col && !col->getSoundColumn() && !col->getSoundTextColumn();
+    if (!col || col->getSoundColumn() || col->getSoundTextColumn()) return false;
+    // ⚠️ UNA SOTTO-SCENA NON E' UN CONFINE DI PANNELLO.
+    //
+    // Una colonna che espone una sotto-scena cambia fotogramma A OGNI RIGA per
+    // definizione — espone il fotogramma 1, poi il 2, poi il 3 — quindi il
+    // confronto «la cella e' cambiata» qui sotto e' vero sempre. Importando due
+    // personaggi in uno shot da 151 fotogrammi il Board ha prodotto 151
+    // pannelli (Franco, 2026-08-17).
+    //
+    // E non e' solo una questione di quantita': un pannello di storyboard e' un
+    // DISEGNO, un'inquadratura che l'autore ha messo li'. Un personaggio
+    // animato che si muove non e' un pannello nuovo — e' lo stesso pannello che
+    // prende vita. Il confine lo fanno i disegni dello storyboard e i movimenti
+    // di camera, non l'animazione dentro.
+    int r0 = 0, r1 = -1;
+    xsh->getCellRange(c, r0, r1);
+    for (int r = r0; r <= r1; r++) {
+      const TXshCell cell = xsh->getCell(r, c);
+      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
+        return false;
+    }
+    return true;
   };
 
   // A single camera keyframe means a static framing — no actual movement,
@@ -5901,11 +5994,12 @@ static void removeExportColumns(TXsheet *childXsh, QList<int> cols) {
 void StoryboardPanel::onLipSyncShots() {
   const QString why = ZtoryLipSync::unavailableReason();
   if (!why.isEmpty()) {
-    QMessageBox::warning(this, tr("Lip Sync Shots"), why);
+    QMessageBox::warning(this, tr("Generate Lip Sync Columns"), why);
     return;
   }
   if (m_shots.empty()) {
-    QMessageBox::information(this, tr("Lip Sync Shots"), tr("No shots."));
+    QMessageBox::information(this, tr("Generate Lip Sync Columns"),
+                             tr("No shots."));
     return;
   }
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
@@ -5913,24 +6007,59 @@ void StoryboardPanel::onLipSyncShots() {
   TXsheet *mainXsh = scene->getChildStack()->getTopXsheet();
   if (!mainXsh) return;
 
-  // Selezione se c'e', altrimenti tutti: sullo storyboard intero e' una passata
-  // lunga, e chiederlo prima e' meglio che scoprirlo dopo.
-  QList<int> indices;
+  // La scelta «selezionati / tutti» si FA nella finestra, con i numeri veri
+  // davanti: la stessa riga del popup di export, che l'utente ha gia' visto.
+  // Prima la regola era implicita — «se c'e' una selezione uso quella» — e chi
+  // aveva cliccato uno shot per sbaglio lanciava una passata su uno shot solo
+  // credendo di averla lanciata su tutti.
+  QList<int> selected;
   for (int i : m_selectedIndices)
-    if (i >= 0 && i < (int)m_shots.size()) indices.append(i);
-  if (indices.isEmpty())
-    for (int i = 0; i < (int)m_shots.size(); i++) indices.append(i);
-  std::sort(indices.begin(), indices.end());
+    if (i >= 0 && i < (int)m_shots.size()) selected.append(i);
+  std::sort(selected.begin(), selected.end());
 
-  if (QMessageBox::question(
-          this, tr("Lip Sync Shots"),
-          tr("Write the dialogue columns for %1 shot(s)?\n\n"
-             "The words come from the storyboard panels, the timing from each "
-             "shot's audio. Shots that already have lip sync columns get them "
-             "rewritten.")
-              .arg(indices.size()),
-          QMessageBox::Ok | QMessageBox::Cancel) != QMessageBox::Ok)
-    return;
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Generate Lip Sync Columns"));
+  dlg.setMinimumWidth(480);
+  auto *lay = new QVBoxLayout(&dlg);
+  auto *txt = new QLabel(
+      tr("The words come from the storyboard panels, the timing from each "
+         "shot's audio. Shots that already have lip sync columns get them "
+         "rewritten; shots with no dialogue or no audio are listed at the end "
+         "with the reason."),
+      &dlg);
+  txt->setWordWrap(true);
+  lay->addWidget(txt);
+
+  auto *row     = new QHBoxLayout();
+  auto *selRadio = new QRadioButton(
+      tr("Selected (%1)").arg(selected.size()), &dlg);
+  auto *allRadio = new QRadioButton(
+      tr("All shots (%1)").arg((int)m_shots.size()), &dlg);
+  selRadio->setEnabled(!selected.isEmpty());
+  if (!selected.isEmpty())
+    selRadio->setChecked(true);
+  else
+    allRadio->setChecked(true);
+  row->addWidget(new QLabel(tr("Shots:"), &dlg));
+  row->addWidget(selRadio);
+  row->addWidget(allRadio);
+  row->addStretch();
+  lay->addLayout(row);
+
+  auto *bbox = new QDialogButtonBox(&dlg);
+  bbox->addButton(tr("Generate"), QDialogButtonBox::AcceptRole);
+  bbox->addButton(QDialogButtonBox::Cancel);
+  lay->addWidget(bbox);
+  QObject::connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  QObject::connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  if (dlg.exec() != QDialog::Accepted) return;
+
+  QList<int> indices;
+  if (selRadio->isChecked())
+    indices = selected;
+  else
+    for (int i = 0; i < (int)m_shots.size(); i++) indices.append(i);
+  if (indices.isEmpty()) return;
 
   QProgressDialog progress(tr("Lip sync…"), tr("Cancel"), 0, indices.size(),
                            this);
@@ -6012,7 +6141,7 @@ void StoryboardPanel::onLipSyncShots() {
   QString text = tr("%1 shot(s) done").arg(done);
   if (skipped > 0) text += tr(", %1 skipped").arg(skipped);
   if (!reasons.isEmpty()) text += "\n\n" + reasons.join("\n");
-  QMessageBox::information(this, tr("Lip Sync Shots"), text);
+  QMessageBox::information(this, tr("Generate Lip Sync Columns"), text);
 }
 
 //-----------------------------------------------------------------------------

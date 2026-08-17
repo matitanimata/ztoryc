@@ -1505,8 +1505,12 @@ QString PreferencesPopup::getUIString(PreferencesItemId id) {
       {fastRenderPath, tr("Fast Render Output Directory:")},
       {ffmpegMultiThread,
        tr("Allow Multi-Thread in FFMPEG Rendering (UNSTABLE)")},
-      {rhubarbPath, tr("Executable Directory:")},
-      {rhubarbTimeout, tr("Analyze Audio Timeout (seconds):")},
+      // ⚠️ Il nome del programma DENTRO l'etichetta. «Executable Directory:» e'
+      // la stessa etichetta di ffmpeg: nel gruppo Lip Sync, accanto a quella di
+      // whisper.cpp, non si capiva di chi fosse la cartella — Franco l'ha
+      // cercata e non l'ha trovata (2026-08-17).
+      {rhubarbPath, tr("Rhubarb Executable Directory:")},
+      {rhubarbTimeout, tr("Rhubarb Analyze Audio Timeout (seconds):")},
       {dialogueSpeakerHighlight,
        tr("Highlight character names in dialogue fields")},
       {whisperPath, tr("whisper.cpp Executable Directory:")},
@@ -2353,7 +2357,10 @@ QGridLayout* PreferencesPopup::createImportExportLayout() {
     insertUI(lipSyncLeadFrames, lipSyncOptionsLay);
     insertUI(dialogueSpeakerHighlight, lipSyncOptionsLay);
 
-    putLabel(tr("External programs, used only as a fallback:"), lipSyncOptionsLay);
+    putLabel(tr("External programs. whisper.cpp ships with Ztoryc — set a path "
+                "only to use your own. Rhubarb is what reads the mouth shapes "
+                "when a shot has no written dialogue:"),
+             lipSyncOptionsLay);
     insertUI(rhubarbPath, lipSyncOptionsLay);
     insertUI(rhubarbTimeout, lipSyncOptionsLay);
     insertUI(whisperPath, lipSyncOptionsLay);

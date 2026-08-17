@@ -1,6 +1,7 @@
 #include "ztorymouthapply.h"
 
 #include "tapp.h"
+#include "toonzqt/icongenerator.h"
 #include "ztorymodel.h"
 
 #include "toonz/childstack.h"
@@ -9,6 +10,13 @@
 #include "toonz/tscenehandle.h"
 #include "toonz/txshcell.h"
 #include "toonz/txshchildlevel.h"
+#include "toonz/textureutils.h"
+
+#include <QDateTime>
+#include <QTextStream>
+#include <QFile>
+#include "toonz/toonzfolders.h"
+#include <functional>
 #include "toonz/txshcolumn.h"
 #include "toonz/txsheet.h"
 #include "toonz/txsheethandle.h"
@@ -222,7 +230,7 @@ public:
                (m_before.size() + m_after.size()) * sizeof(TXshCell));
   }
   QString getHistoryString() override {
-    return QObject::tr("Apply Lip Sync to Mouths");
+    return QObject::tr("Assign Mouth Drawings");
   }
 };
 
@@ -407,5 +415,87 @@ MouthApplyReport ZtoryMouthApply::apply(ToonzScene *scene, int phonemeCol,
       new MouthApplyUndo(destXsh, destCol, before, planned));
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
   TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+
+  // ⚠️ LE CELLE SONO STATE SCRITTE DENTRO UNA SOTTO-SCENA, ma chi guarda e'
+  // l'xsheet di sopra: la sua immagine resta quella di prima, e
+  // notifyXsheetChanged() non la rifa'. Sintomo esatto (Franco, 2026-08-17):
+  // applicato il set giusto, nel main restavano visibili le bocche del set
+  // sbagliato; entrando nella sotto-scena si vedevano quelle giuste, e
+  // uscendo il main si aggiornava. Non era un caso: uscire da una sotto-scena
+  // invalida l'icona del livello che la espone (subscenecommand.cpp,
+  // closeSubXsheet). Qui si fa la stessa cosa senza dover entrare e uscire.
+  //
+  // ⚠️ NON si svuota TImageCache: cancellerebbe anche i disegni su cui si sta
+  // lavorando, col cursore a pallino rosso per cache miss (vedi la nota in
+  // ztorymodel.cpp, ZtoryModel::activateShotForViewing).
+  if (TXsheet *cur = TApp::instance()->getCurrentXsheet()->getXsheet()) {
+    if (cur != destXsh) {
+      // ⚠️ NON basta la sotto-scena che e' cambiata: vanno invalidate TUTTE
+      // quelle che la contengono, fino a quella che si vede da qui.
+      //
+      // Le bocche stanno annidate — shot ▸ personaggio ▸ (magari) testa ▸
+      // bocche — e ogni livello tiene la propria immagine composita: quella del
+      // personaggio non si rifa' solo perche' e' cambiata quella dentro. Prima
+      // invalidavo solo l'anello piu' interno, e l'aggiornamento arrivava solo
+      // aprendo a mano tutte le nidificazioni (Franco, 2026-08-17) — cioe'
+      // facendo a mano, uscendo, cio' che closeSubXsheet fa a ogni livello.
+      //
+      // Si scende dall'xsheet corrente e si invalida ogni anello della catena
+      // che porta a quello modificato. Solo quella catena: invalidare tutto
+      // vorrebbe dire rigenerare i personaggi che non c'entrano.
+      std::function<bool(TXsheet *, std::set<TXsheet *> &)> invalidateChain =
+          [&](TXsheet *xsh, std::set<TXsheet *> &seen) -> bool {
+        if (!xsh || !seen.insert(xsh).second) return false;
+        if (xsh == destXsh) {
+          // ⚠️ QUESTA E' LA CACHE VERA, e non erano le icone.
+          //
+          // Il viewer NON tiene un'immagine composita: `stage.cpp` ricorre dal
+          // vivo dentro le sotto-scene a ogni ridisegno. Tiene pero' una
+          // TEXTURE OpenGL del CONTENUTO DI UN XSHEET a un dato fotogramma
+          // (`texture_utils::getTextureData(const TXsheet*, int)`), e cambiare
+          // le celle dentro quell'xsheet non la tocca. E' il motivo per cui
+          // uscire dalla sotto-scena aggiustava tutto: TXsheetHandle::setXsheet
+          // chiama invalidateTextures() con il commento «we'll be editing
+          // m_xsheet - so destroy every texture of his».
+          texture_utils::invalidateTextures(xsh);
+          return true;
+        }
+        bool onPath = false;
+        for (int c = 0; c < xsh->getColumnCount(); c++) {
+          int r0 = 0, r1 = -1;
+          xsh->getCellRange(c, r0, r1);
+          std::set<TXshLevel *> done;
+          for (int r = r0; r <= r1; r++) {
+            const TXshCell cell = xsh->getCell(r, c);
+            if (cell.isEmpty() || !cell.m_level) continue;
+            TXshChildLevel *cl = cell.m_level->getChildLevel();
+            if (!cl || !done.insert(cell.m_level.getPointer()).second) continue;
+            if (!invalidateChain(cl->getXsheet(), seen)) continue;
+            // Questa sotto-scena contiene cio' che e' cambiato: la sua icona
+            // non vale piu' su NESSUN fotogramma esposto, non solo sul primo.
+            for (int rr = r0; rr <= r1; rr++) {
+              const TXshCell cc = xsh->getCell(rr, c);
+              if (!cc.isEmpty() && cc.m_level.getPointer() ==
+                                       cell.m_level.getPointer())
+                IconGenerator::instance()->invalidate(cc.m_level.getPointer(),
+                                                      cc.m_frameId);
+            }
+            onPath = true;
+          }
+        }
+        // Anche gli ANELLI DI SOPRA: la texture di un xsheet e' il suo
+        // contenuto composito, quindi quella del personaggio contiene le bocche
+        // ed e' vecchia quanto la loro.
+        if (onPath) texture_utils::invalidateTextures(xsh);
+        return onPath;
+      };
+      std::set<TXsheet *> seen;
+      invalidateChain(cur, seen);
+
+      // La notifica che rifa' il render composito — la stessa che l'animatic usa
+      // dopo le sue modifiche.
+      TApp::instance()->getCurrentScene()->notifySceneChanged();
+    }
+  }
   return rep;
 }
