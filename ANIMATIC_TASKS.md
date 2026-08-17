@@ -599,6 +599,38 @@ scenario A (dallo storyboard allo shot animabile). L'impacchettamento (punti
    controllo.
 
 **B. Import degli asset dal breakdown — IL PEZZO GROSSO.**
+
+   ✅ **COME SI COMPORTA — deciso da Franco il 2026-08-17.**
+   Opzione nel popup di export (nome proposto: **«Import each shot's assets from
+   the breakdown»** — dice cosa fa e da dove prende; «automatic import» direbbe
+   *quando* e non *cosa*, e si confonderebbe con le opzioni di organizzazione
+   degli asset che stanno li' accanto).
+
+   Con l'opzione attiva, PRIMA di esportare si fa il **controllo** e si mostra un
+   **rapporto** di cio' che non si risolve. L'utente decide:
+   - **proseguire** saltando gli asset mancanti, oppure
+   - **interrompere**, sistemare cio' che manca, e rilanciare l'export.
+
+   Parole sue: *«fa un check degli asset e fa un report se manca qualcosa cosi'
+   l'utente puo' decidere se proseguire saltando gli asset mancanti oppure
+   interrompere, inserire le cose che mancano e rilanciare l'export»*.
+
+   **Il rapporto NON deve dire «manca».** `resolveAssetFile()` restituisce gia'
+   il motivo — «linked file is missing: X», «a character has no folder: link its
+   scene», «no folder set for type Prop», «folder not found» — e sono frasi che
+   dicono gia' cosa fare. Nel rapporto va quella riga, non un conteggio.
+
+   ⚠️ **Controllare una volta per ASSET DISTINTO, non per shot.** Gli asset si
+   ripetono su molti shot: controllando per shot diventano centinaia di accessi
+   al disco, e su un volume esterno si sentono. Franco lo da' per immediato, ed
+   e' vero solo con la deduplicazione. E' lo stesso errore che il 2026-08-16 ha
+   fatto caricare uno storyboard in un minuto e mezzo (`collectColumnNames`, che
+   ricorreva per cella invece che per sotto-scena).
+
+   Il controllo e' lo stesso che il pannello Breakdown mostra gia' nella colonna
+   «cosa troverebbe l'export»: la logica c'e', va solo chiamata prima
+   dell'export e raccolta in un rapporto.
+
    ⚠️ Nota del 2026-08-16: Franco lo dava per fatto («abbiamo previsto l'import
    automatico»), ma **non lo e'**. Cercando `breakdown` non c'e' nessun
    consumatore nel percorso di export. Cio' che esiste e' la colonna del
