@@ -3553,6 +3553,19 @@ static void classifyCameraMove(PanelData &pd) {
 
 // Called after panel boundaries are confirmed from camera keyframes: reads the
 // camera affines from the xsheet into pd, then classifies the move.
+// Il movimento di camera di un pannello NON e' un dato dell'utente: lo deduce
+// classifyCameraMove() dalle affini della camera. Quando nella scena non ci
+// sono (piu') chiavi di camera va cancellato, altrimenti resta quello che il
+// sidecar .ztoryc raccontava — e il sidecar si scrive a ogni modifica, senza
+// aspettare il Save della scena. Chiudendo senza salvare, la scena dimentica il
+// movimento e il sidecar no: alla riapertura restavano i rettangoli rossi di un
+// movimento che non esiste (Franco, 2026-08-18). Fra i due comanda la scena.
+static void clearCameraMove(PanelData &pd) {
+  pd.cameraMoveType  = PanelData::CamNone;
+  pd.cameraMoveLabel = "";
+  pd.camRenderFrame  = pd.startFrame;
+}
+
 static void computeCameraMove(TXsheet *xsh, PanelData &pd,
                               int timelineDuration, ToonzScene *scene) {
   if (!xsh || !scene) return;
@@ -3885,6 +3898,8 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
       // Re-compute camera move data (duration/frame may have changed)
       if (useCameraKeys)
         computeCameraMove(xsh, shot.data.panels[i], timelineDuration, scene);
+      else
+        clearCameraMove(shot.data.panels[i]);
     }
     for (PanelWidget *pw : shot.panels)
       pw->setTotalDuration(timelineDuration);
@@ -3907,6 +3922,8 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
     shot.data.panels[i].duration   = panelDur[i];
     if (useCameraKeys)
       computeCameraMove(xsh, shot.data.panels[i], timelineDuration, scene);
+    else
+      clearCameraMove(shot.data.panels[i]);
   }
   for (PanelWidget *pw : shot.panels) { m_grid->removeWidget(pw); delete pw; }
   shot.panels.clear();
