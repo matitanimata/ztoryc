@@ -1,3 +1,84 @@
+## [2026-08-17b] — la 0.13.0 e' uscita, e il lip sync e' diventato un posto solo
+
+Sessione lunghissima, in tre tempi: il rilascio, la riorganizzazione del lip
+sync, e una caccia a tre cache diverse di cui due chiuse e una aperta.
+
+### Released — 0.13.0, completa su tre sistemi
+
+Nove asset: due DMG macOS, installer e portable Windows, quattro pacchetti
+Linux (gcc e clang, .deb e .tar.gz) e `espeak-ng-1.52.0-source.tar.gz`.
+Note bilingui applicate a mano con `gh release edit` (il workflow pubblica col
+corpo vuoto). **Linux non restava indietro da due release.**
+
+Il difetto che lo bloccava non era nostro: `tenv.cpp` **non compilava su
+Linux/FreeBSD** — il ramo che cerca la cartella portatile da `$APPIMAGE` usa
+`portableStatus`, che non e' dichiarato da nessuna parte. Arriva dalla 1.6.2 e
+nessuno se n'era accorto perche' quel ramo su macOS e Windows non si compila.
+Registrato in `UPSTREAM_PR_CANDIDATES.md`. Nello stesso punto un difetto
+nostro: cercava solo «tahomastuff» mentre la cartella di Ztoryc si chiama
+«ztorycstuff» — l'AppImage non l'avrebbe trovata MAI.
+
+### Added — il lip sync diventa UN POSTO SOLO
+
+Franco: *«abbiamo creato uno strumento potente ma ora il difficile e' fare in
+modo che sia semplice usarlo»*. Le quattro situazioni (colonne si/no × bocche
+mappate si/no) non erano quattro strumenti diversi: erano **lo stesso stato
+invisibile**. Ora c'e' una finestra sola — `Xsheet ▸ Lip Sync…` — con tre righe
+che dicono cosa c'e' e cosa manca, e i pulsanti accesi solo dove servono.
+
+**Non modale e senza puntatori conservati**: resta aperta mentre si mappa in
+ZtoRig (modale bloccherebbe il pannello a cui manda), e il contesto dello shot
+si ricalcola a ogni aggiornamento — tenerlo da parte sarebbe un puntatore morto
+al primo cambio di scena.
+
+**Rhubarb come terzo motore**, per gli shot senza copione. Scoperta che ha reso
+la cosa pulita: con `--datUsePrestonBlair` i suoi nomi delle bocche sono
+ESATTAMENTE i nostri (`ai e o u fv l mbp wq etc rest` e' la serie di Preston
+Blair, la stessa di `ZtoryPhonemes`). Nessuna tabella di conversione.
+
+**Il copione che manca si scrive li'**: rifiutarsi e rimandare al Board era un
+controsenso. Nello storyboard il testo si salva nel primo pannello (e' dove il
+dialogo vive); nello shot esportato non c'e' posto dove tenerlo e vale per
+quella passata, detto nella finestra.
+
+**I DUE posti.** `ztoryCurrentShotContext()` rispondeva solo dentro la
+sotto-scena di uno storyboard, e nella **scena dello shot esportato** — che e'
+dove si animano le bocche — diceva «apri prima una sotto-scena». Ora riconosce
+anche quella, leggendo `role="shot"` dal sidecar.
+
+### Fixed — tre cache, e come si riconoscono
+
+1. **Crash al cambio scena** (`SIGBUS` in `vector::erase`): `getRow()` e' la
+   posizione REGISTRATA all'aggiunta, e nessuno la aggiorna quando un fratello
+   viene tolto. Con tre nodi asset che vanno e vengono, il primo erase rendeva
+   bugiardi i due dopo e l'intervallo finiva oltre la fine. Corretto anche il
+   nodo «Scene Folder» di Tahoma, che era diventato fragile per colpa nostra.
+2. **Viewer stantio dopo l'assegnazione delle bocche**: la cache non erano le
+   icone ma una **texture OpenGL del contenuto di un intero xsheet**
+   (`texture_utils::getTextureData(const TXsheet*, int)`). Sintomo che la
+   riconosce: «esco e rientro dalla sotto-scena e si aggiusta» — cioe' si sta
+   eseguendo a mano `invalidateTextures()`. Si invalida tutta la CATENA.
+3. **Chiave della cache dei render dei pannelli** senza il contenuto: importare
+   qualcosa non la faceva scadere.
+
+### Notes — APERTO, da riprendere
+
+**Le sotto-scene non si vedono nell'anteprima dei pannelli** (nel viewer si').
+Escluso leggendo: visibilita' (occhi accesi, stesso filtro nei due percorsi),
+`forSceneIcon` (tocca solo la deformazione plastica), il filtro «solo colonna
+corrente», e la cache. I due percorsi chiamano lo STESSO `Stage::visit`, che in
+`addCell` ricorre nelle sotto-scene. **Prossimo passo: strumentare `stage.cpp`**
+— contare i player raccolti e a quale livello di annidamento — non leggere
+ancora.
+
+⚠️ **E c'e' un disaccordo da sciogliere.** Ho escluso le colonne che espongono
+sotto-scene dal rilevamento dei pannelli, perche' una di esse cambia fotogramma
+a ogni riga e generava 151 pannelli su uno shot da 151. Franco: *«e' anche
+peggiorata visto che ora non vede neanche i panel per ogni frame come
+dovrebbe»*. Quindi la regola giusta va DECISA insieme, non dedotta: forse un
+pannello per ogni cambio di disegno DENTRO la sotto-scena, che non e' ne' uno ne'
+centocinquantuno.
+
 ## [2026-08-17] — lo shot esportato nasce pronto, e il lip sync entra nel pacchetto
 
 Chiusi i due punti che restavano dello scenario A, piu' l'impacchettamento.

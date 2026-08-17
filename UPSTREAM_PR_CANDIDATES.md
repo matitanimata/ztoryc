@@ -1,3 +1,25 @@
+## Rhubarb trovato nel bundle per coincidenza (irrobustimento, non un difetto)
+
+**File e riga.** `toonz/sources/toonzlib/thirdparty.cpp`, `autodetectRhubarb()`.
+
+**Cosa succede.** Dei tre programmi esterni, Rhubarb e' l'UNICO la cui ricerca
+non nomina il bundle: `autodetectFFmpeg()` e `autodetectWhisper()` hanno la riga
+esplicita `applicationDirPath() + "/../Resources/..."` (macOS), Rhubarb no. Lo
+trova comunque, ma solo perche' `TEnv::getWorkingDirectory()` risolve a
+`Contents/Resources` — e ci risolve perche' e' dove sta la cartella dello stuff,
+non perche' qualcuno l'abbia deciso per Rhubarb.
+
+**Perche' proporlo.** Non c'e' un sintomo oggi: e' una dipendenza implicita fra
+due cose che non si sanno l'una dell'altra. Spostando la cartella dello stuff,
+Rhubarb sparirebbe e nessuno collegherebbe le due cose. Vale anche per
+Tahoma2D, dove il layout del bundle e' lo stesso (`tahomastuff` in Resources).
+
+**Fix applicato (Ztoryc, 2026-08-17).** Aggiunte le due righe che hanno gli
+altri due — `appDir + "/rhubarb"` e, su macOS, `../Resources/rhubarb`.
+
+**Stato.** Diagnosticato leggendo il codice, non da un sintomo. Da proporre come
+allineamento fra le tre funzioni, non come correzione di un difetto.
+
 ## `portableStatus` non dichiarato: Tahoma2D 1.6.2 non compila su Linux
 
 **Sintomo.** Build Linux (gcc e clang) rotta:
