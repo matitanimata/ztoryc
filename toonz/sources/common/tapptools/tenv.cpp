@@ -304,11 +304,24 @@ public:
     if (!m_isPortable) {
       char *value = getenv("APPIMAGE");
       if (value) {
-        portableCheck  = TFilePath(value).getParentDir() + "/tahomastuff";
-        portableStatus = TFileStatus(portableCheck);
-        m_isPortable   = portableStatus.doesExist();
-        if (m_isPortable)
-          m_workingDirectory = portableCheck.getParentDir().getQString();
+        // ⚠️ Due difetti in tre righe, e nessuno dei due si vedeva su macOS.
+        // 1. `portableStatus` non e' MAI stato dichiarato: arriva cosi' dalla
+        //    1.6.2 e non compila su Linux/FreeBSD — candidato PR upstream.
+        // 2. cercava solo «tahomastuff», mentre la cartella portatile di
+        //    Ztoryc si chiama «ztorycstuff»: l'AppImage non l'avrebbe trovata
+        //    MAI, e l'applicazione sarebbe partita senza il suo stuff.
+        // Si scorrono gli stessi nomi degli altri rami, e si tiene quale si e'
+        // trovato — m_stuffDirName lo usa chi cerca i file dopo.
+        const TFilePath appImageDir = TFilePath(value).getParentDir();
+        for (const char *name : stuffNames) {
+          portableCheck = appImageDir + name;
+          if (TFileStatus(portableCheck).doesExist()) {
+            m_isPortable   = true;
+            m_stuffDirName = name;
+            m_workingDirectory = portableCheck.getParentDir().getQString();
+            break;
+          }
+        }
       }
     }
 #endif
