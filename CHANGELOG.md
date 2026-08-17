@@ -87,6 +87,32 @@ vecchio. Ora senza chiavi il movimento si cancella.
 > genere sarebbe **un disegno vero e proprio**, non un campo di dati — vive nel
 > livello e questa pulizia non la tocca.
 
+### Lesson — il ramo che compila su una piattaforma sola, stavolta nostro
+
+La correzione del framebuffer usava `glBindFramebuffer` **nuda**. Su macOS
+arriva dalle intestazioni di sistema, su Linux **no**: e' della famiglia FBO e
+va presa da Qt. Il blocco sta sotto `#if MACOSX || LINUX || FREEBSD`, quindi la
+CI Linux si e' rotta su **entrambi** i compilatori. E' esattamente il difetto
+che le note di rilascio descrivono parlando della 1.6.2 di Tahoma2D — un ramo
+che nessuno compila e quindi nessuno vede — rifatto da noi lo stesso giorno.
+Ora si passa da `QOpenGLContext::currentContext()->functions()`, con fallback
+per la costante `GL_FRAMEBUFFER_BINDING` (commit `a4bc8655c`).
+
+Le build macOS e Windows, gia' quasi finite, sono state **annullate apposta**:
+erano sane, ma avrebbero pubblicato binari da un commit il cui sorgente non
+compila su Linux — cioe' una release con pezzi di due sorgenti diversi, che e'
+il pasticcio della 0.13.0 che questa release doveva chiudere.
+
+### Corretto — il menu «Xsheet» NON ESISTE
+
+Il lip sync e' in **`Scene ▸ Lip Sync…`**, non in `Xsheet ▸ …`. L'errore veniva
+da un commento nel codice (`mainwindow.cpp`) di cui mi ero fidato, ed era finito
+nel changelog della sessione precedente e nelle note di rilascio.
+`createMenuXsheetAction` e' solo la **categoria** del comando nell'albero delle
+scorciatoie, non il menu in cui finisce: `menubar.cpp:463` lo mette nel menu
+Scene. I menu di primo livello sono File, Edit, Scene, Level, Cells, Play,
+Render, Cleanup, View, Workflow, Panels, Help. Il commento ora lo dice.
+
 ### Upstream candidates
 
 - **`renderFrame` rientrante lascia legato il framebuffer 0** (macOS/Linux/
@@ -125,7 +151,7 @@ nostro: cercava solo «tahomastuff» mentre la cartella di Ztoryc si chiama
 Franco: *«abbiamo creato uno strumento potente ma ora il difficile e' fare in
 modo che sia semplice usarlo»*. Le quattro situazioni (colonne si/no × bocche
 mappate si/no) non erano quattro strumenti diversi: erano **lo stesso stato
-invisibile**. Ora c'e' una finestra sola — `Xsheet ▸ Lip Sync…` — con tre righe
+invisibile**. Ora c'e' una finestra sola — `Scene ▸ Lip Sync…` — con tre righe
 che dicono cosa c'e' e cosa manca, e i pulsanti accesi solo dove servono.
 
 **Non modale e senza puntatori conservati**: resta aperta mentre si mappa in
