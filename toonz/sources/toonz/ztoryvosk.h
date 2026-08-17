@@ -51,6 +51,22 @@ bool hasLanguage(const QString &lang);
 // chi chiama possa mostrare un avviso PRIMA di sembrare bloccato.
 bool prepareLanguage(const QString &lang, QString *error = nullptr);
 
+// Installa un modello scaricato dall'utente (una cartella scompattata, come
+// esce dagli archivi di alphacephei.com/vosk/models): la copia fra le
+// impostazioni personali, dove non la cancella lo svuotamento della cache.
+// `srcDir` deve contenere `am/final.mdl`, o si installerebbe una cartella
+// qualsiasi e l'errore si vedrebbe al primo lip sync.
+// Ritorna vuoto se e' andata, altrimenti il motivo.
+QString installLanguage(const QString &lang, const QString &srcDir);
+
+// Dove finiscono i modelli installati dall'utente (per dirlo nell'interfaccia).
+QString userModelsFolder();
+
+// Il nome da mostrare per un codice lingua: «Italian (it)». I codici di Vosk
+// non sono tutti ISO (cn, ua, vn), quindi quando non si riconoscono resta il
+// codice — meglio grezzo che sbagliato.
+QString languageDisplayName(const QString &code);
+
 // Il lavoro vero. BLOCCANTE: chiamare da un thread di lavoro, non dalla UI.
 //
 // `scriptWords` sono le parole del copione: vincolano il riconoscimento a un

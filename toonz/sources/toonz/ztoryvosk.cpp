@@ -5,10 +5,13 @@
 #include "tsound_io.h"
 #include "tsop.h"
 #include "tsystem.h"
+#include "tenv.h"
 
 #include <QCoreApplication>
 #include <QDataStream>
 #include <QDir>
+#include <functional>
+#include <QLocale>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
@@ -102,15 +105,34 @@ Api &api() {
 // Percorsi
 //-----------------------------------------------------------------------------
 
-QString packedDir() {
+// ⚠️ Le cartelle in cui cercare sono PIU' DI UNA, e non e' pignoleria: nel
+// pacchetto Linux l'applicazione gira dentro un'AppImage montata, quindi
+// applicationDirPath() punta al montaggio e NON alla cartella portatile dove
+// stanno i modelli. E' la stessa lista che ffmpeg ha gia' (vedi
+// autodetectFFmpeg): li' il problema era stato risolto, qui no, e il lip sync
+// sarebbe ricaduto su Whisper su tutto Linux senza che niente lo segnalasse.
+QStringList packedDirs() {
+  QStringList dirs;
 #ifdef MACOSX
-  return QCoreApplication::applicationDirPath() + "/../Resources/vosk";
-#else
-  return QCoreApplication::applicationDirPath() + "/vosk";
+  dirs << QCoreApplication::applicationDirPath() + "/../Resources/vosk";
 #endif
+  dirs << QCoreApplication::applicationDirPath() + "/vosk";
+  dirs << TEnv::getWorkingDirectory().getQString() + "/vosk";
+  return dirs;
+}
+
+// La prima che esiste: serve per elencare le lingue imballate.
+QString packedDir() {
+  for (const QString &d : packedDirs())
+    if (QDir(d).exists()) return d;
+  return packedDirs().first();
 }
 
 QString packedArchive(const QString &lang) {
+  for (const QString &d : packedDirs()) {
+    const QString f = d + "/" + lang + ".zvosk";
+    if (QFile::exists(f)) return f;
+  }
   return packedDir() + "/" + lang + ".zvosk";
 }
 
@@ -118,6 +140,29 @@ QString packedArchive(const QString &lang) {
 // lettura una volta firmato, e su macOS scriverci dentro invalida la firma.
 QString unpackedDir(const QString &lang) {
   return ToonzFolder::getCacheRootFolder().getQString() + "/vosk/" + lang;
+}
+
+// I modelli INSTALLATI DALL'UTENTE non stanno in cache: la cache si svuota, e
+// un modello scaricato non e' roba che si rigenera da sola — sono 40-160 MB da
+// riprendere da internet. Vanno accanto alle altre impostazioni personali.
+QString userRoot() {
+  return ToonzFolder::getMyModuleDir().getQString() + "/vosk";
+}
+
+QString userDir(const QString &lang) { return userRoot() + "/" + lang; }
+
+// Un modello e' «pronto» se ha am/final.mdl: una cartella vuota o monca
+// esisterebbe lo stesso e fallirebbe piu' avanti senza dire perche'.
+bool looksLikeModel(const QString &dir) {
+  return QFile::exists(dir + "/am/final.mdl");
+}
+
+// Dove sta il modello di questa lingua, gia' pronto all'uso. Prima quello
+// dell'utente: se ne ha installato uno, e' perche' vuole quello.
+QString readyModelDir(const QString &lang) {
+  if (looksLikeModel(userDir(lang))) return userDir(lang);
+  if (looksLikeModel(unpackedDir(lang))) return unpackedDir(lang);
+  return QString();
 }
 
 //-----------------------------------------------------------------------------
@@ -224,7 +269,16 @@ VoskModel *modelFor(const QString &lang, QString *error) {
   auto it = g_models.find(lang);
   if (it != g_models.end()) return it.value();
 
-  const QString dir = unpackedDir(lang);
+  // La stessa scelta di readyModelDir(): prima il modello dell'utente, poi
+  // quello scompattato in cache. Ripetere qui `unpackedDir(lang)` faceva
+  // caricare un modello diverso da quello che prepareLanguage() aveva appena
+  // dichiarato pronto.
+  const QString dir = readyModelDir(lang);
+  if (dir.isEmpty()) {
+    if (error)
+      *error = QObject::tr("No Vosk model for language '%1'.").arg(lang);
+    return nullptr;
+  }
   VoskModel *m = api().model_new(dir.toUtf8().constData());
   if (!m) {
     if (error)
@@ -313,22 +367,26 @@ QString unavailableReason() {
 
 QStringList availableLanguages() {
   QStringList out;
-  for (const QFileInfo &fi :
-       QDir(packedDir()).entryInfoList(QStringList() << "*.zvosk", QDir::Files))
-    out << fi.completeBaseName();
-  // Anche quelle gia' scompattate: se un domani si potranno scaricare, saranno
-  // qui e non nel bundle.
-  for (const QFileInfo &fi :
-       QDir(ToonzFolder::getCacheRootFolder().getQString() + "/vosk")
-           .entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot))
-    if (!out.contains(fi.fileName())) out << fi.fileName();
+  for (const QString &d : packedDirs())
+    for (const QFileInfo &fi :
+         QDir(d).entryInfoList(QStringList() << "*.zvosk", QDir::Files))
+      if (!out.contains(fi.completeBaseName())) out << fi.completeBaseName();
+  // Quelle installate dall'utente e quelle gia' scompattate in cache. Si
+  // guardano le stesse cartelle che guarda readyModelDir(), o l'elenco
+  // direbbe di avere lingue che poi non partono.
+  for (const QString &root : {userRoot(), ToonzFolder::getCacheRootFolder()
+                                                  .getQString() +
+                                              "/vosk"})
+    for (const QFileInfo &fi :
+         QDir(root).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot))
+      if (!out.contains(fi.fileName()) && looksLikeModel(fi.absoluteFilePath()))
+        out << fi.fileName();
   out.sort();
   return out;
 }
 
 bool hasLanguage(const QString &lang) {
-  return QFile::exists(packedArchive(lang)) ||
-         QFile::exists(unpackedDir(lang) + "/am/final.mdl");
+  return QFile::exists(packedArchive(lang)) || !readyModelDir(lang).isEmpty();
 }
 
 //-----------------------------------------------------------------------------
@@ -338,10 +396,8 @@ bool prepareLanguage(const QString &lang, QString *error) {
     if (error) *error = QObject::tr("No language given.");
     return false;
   }
-  // `am/final.mdl` e non la sola cartella: una directory vuota o monca
-  // esisterebbe lo stesso, e il modello fallirebbe piu' avanti con un messaggio
-  // che non dice niente.
-  if (QFile::exists(unpackedDir(lang) + "/am/final.mdl")) return true;
+  // Gia' pronto (installato dall'utente o scompattato da noi): niente da fare.
+  if (!readyModelDir(lang).isEmpty()) return true;
 
   const QString archive = packedArchive(lang);
   if (!QFile::exists(archive)) {
@@ -351,6 +407,85 @@ bool prepareLanguage(const QString &lang, QString *error) {
   }
   QDir().mkpath(ToonzFolder::getCacheRootFolder().getQString() + "/vosk");
   return unpack(archive, unpackedDir(lang), error);
+}
+
+//-----------------------------------------------------------------------------
+
+QString userModelsFolder() { return userRoot(); }
+
+QString languageDisplayName(const QString &code) {
+  const QLocale loc(code);
+  // QLocale su un codice che non conosce risponde C/inglese: si accetta il
+  // nome solo se il codice e' davvero quello di quella lingua.
+  const QString name = QLocale::languageToString(loc.language());
+  if (loc.language() == QLocale::C || name.isEmpty() ||
+      (loc.language() == QLocale::English &&
+       !code.startsWith("en", Qt::CaseInsensitive)))
+    return code;
+  return QString("%1 (%2)").arg(name, code);
+}
+
+QString installLanguage(const QString &lang, const QString &srcDir) {
+  const QString code = lang.trimmed().toLower();
+  if (code.isEmpty()) return QObject::tr("No language code given.");
+  // La cartella che l'utente ha scelto puo' essere quella dell'archivio, che
+  // dentro ne ha un'altra sola: si scende di un livello invece di rifiutare.
+  QString src = srcDir;
+  if (!looksLikeModel(src)) {
+    const QFileInfoList subs =
+        QDir(src).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    QString found;
+    for (const QFileInfo &fi : subs)
+      if (looksLikeModel(fi.absoluteFilePath())) { found = fi.absoluteFilePath(); break; }
+    if (found.isEmpty())
+      return QObject::tr(
+                 "«%1» does not look like a Vosk model: there is no "
+                 "am/final.mdl inside it.")
+          .arg(srcDir);
+    src = found;
+  }
+
+  const QString dst = userDir(code);
+  if (QDir(dst).exists() && !QDir(dst).removeRecursively())
+    return QObject::tr("Could not replace the model already installed in %1")
+        .arg(dst);
+  if (!QDir().mkpath(userRoot()))
+    return QObject::tr("Could not create %1").arg(userRoot());
+
+  // Copia ricorsiva a mano: Qt non ne ha una, e un modello e' qualche
+  // migliaio di file piccoli piu' due grossi.
+  std::function<bool(const QString &, const QString &)> copyDir =
+      [&](const QString &from, const QString &to) -> bool {
+    if (!QDir().mkpath(to)) return false;
+    for (const QFileInfo &fi :
+         QDir(from).entryInfoList(QDir::Files | QDir::Dirs |
+                                  QDir::NoDotAndDotDot)) {
+      const QString t = to + "/" + fi.fileName();
+      if (fi.isDir()) {
+        if (!copyDir(fi.absoluteFilePath(), t)) return false;
+      } else if (!QFile::copy(fi.absoluteFilePath(), t))
+        return false;
+    }
+    return true;
+  };
+  // Si copia in una cartella «.part» e si rinomina alla fine, come per lo
+  // scompattamento: interrompendo a meta' non resta un modello monco che poi
+  // fallisce per sempre senza spiegazione.
+  const QString tmp = dst + ".part";
+  QDir(tmp).removeRecursively();
+  if (!copyDir(src, tmp)) {
+    QDir(tmp).removeRecursively();
+    return QObject::tr("Could not copy the model into %1").arg(dst);
+  }
+  if (!QDir().rename(tmp, dst)) {
+    QDir(tmp).removeRecursively();
+    return QObject::tr("Could not put the model in place (%1)").arg(dst);
+  }
+  if (!looksLikeModel(dst)) {
+    QDir(dst).removeRecursively();
+    return QObject::tr("The copied model is incomplete.");
+  }
+  return QString();
 }
 
 //-----------------------------------------------------------------------------

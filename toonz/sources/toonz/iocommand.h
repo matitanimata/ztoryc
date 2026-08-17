@@ -31,6 +31,7 @@ class ToonzScene;
 class TCamera;
 class TPropertyGroup;
 class TXsheet;
+class PsdSettingsPopup;
 
 namespace DVGui {
 class ProgressDialog;
@@ -226,6 +227,14 @@ int loadResources(
            //!< Loads a group of resources by path.
            //!  \return  The actually loaded levels count.
 );
+
+// Carica UN psd con le impostazioni gia' decise, senza aprire la finestra.
+// loadResources() apre PsdSettingsPopup per ogni psd: va bene per un file
+// scelto a mano, non per un export che ne importa uno per shot. Il popup qui
+// serve solo come portatore delle scelte (setPath + applySettings), non viene
+// mostrato.
+int loadPsdResource(LoadResourceArguments &args, PsdSettingsPopup *popup,
+                    bool updateRecentFile = false);
 
 int loadResourceFolders(
     LoadResourceArguments &args,  //!< Resource folders to be loaded.

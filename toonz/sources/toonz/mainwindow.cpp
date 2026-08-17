@@ -2752,6 +2752,10 @@ void MainWindow::defineActions() {
   // importato, qui si dice quale set usare su quale tratto.
   createMenuXsheetAction(MI_ZtoryApplyMouths,
                          QT_TR_NOOP("Apply Lip Sync to Mouths..."), "", "");
+  // Lo stesso lavoro su PIU' shot, presi dal Board invece che dalla sotto-scena
+  // aperta: serve a controllare il sincrono mentre lo storyboard e' in corso.
+  createMenuXsheetAction(MI_ZtoryLipSyncShots,
+                         QT_TR_NOOP("Lip Sync Storyboard Shots..."), "", "");
   CommandManager::instance()->enable(MI_NextTaggedFrame, false);
   CommandManager::instance()->enable(MI_PrevTaggedFrame, false);
   CommandManager::instance()->enable(MI_EditTaggedFrame, false);

@@ -1,4 +1,5 @@
 #include "ztorymodel.h"
+#include "ztorycharacter.h"
 #include "ztoryshotops.h"     // syncChildCameraToMain
 #include "menubarcommandids.h"  // MI_Workflow* ids for workflowCommand()
 #include "xsheetdragtool.h"   // XsheetGUI::setPlayRange
@@ -1676,6 +1677,112 @@ SequenceData* ZtoryModel::findSequence(const QString &uuid) {
   for (auto &seq : m_sequences)
     if (seq.uuid == uuid) return &seq;
   return nullptr;
+}
+
+int ZtoryModel::projectShotCountFromSource(const QString &sourceFile) const {
+  int n = 0;
+  for (const ProjectShot &ps : m_projectShots)
+    if (ps.source.compare(sourceFile, Qt::CaseInsensitive) == 0) n++;
+  return n;
+}
+
+int ZtoryModel::removeProjectShotsFromSource(const QString &sourceFile) {
+  if (sourceFile.isEmpty()) return 0;
+  const int before = (int)m_projectShots.size();
+  m_projectShots.erase(
+      std::remove_if(m_projectShots.begin(), m_projectShots.end(),
+                     [&](const ProjectShot &ps) {
+                       return ps.source.compare(sourceFile,
+                                                Qt::CaseInsensitive) == 0;
+                     }),
+      m_projectShots.end());
+  for (int i = m_storyboardFiles.size() - 1; i >= 0; i--)
+    if (m_storyboardFiles[i].compare(sourceFile, Qt::CaseInsensitive) == 0)
+      m_storyboardFiles.remove(i);
+  return before - (int)m_projectShots.size();
+}
+
+QStringList ZtoryModel::collidingShotLabels(const QString &sourceFile) const {
+  // ⚠️ Solo gli shot che vengono da scene che sono ANCORA storyboard.
+  // Una scena diventata personaggio (o shot) lascia dietro di se' gli shot che
+  // aveva pubblicato: sono residui, non un conflitto, e segnalarli vorrebbe
+  // dire chiedere una sequenza per distinguersi da qualcosa che non esiste
+  // piu'. Successo il 2026-08-17, con il popup che tornava a ogni salvataggio
+  // per una scena marcata CH.
+  QHash<QString, bool> isStoryboard;  // sorgente -> ancora storyboard?
+  const QString projDir = QFileInfo(projectDbPath()).absolutePath();
+  auto sourceIsStoryboard = [&](const QString &src) {
+    auto it = isStoryboard.constFind(src);
+    if (it != isStoryboard.constEnd()) return it.value();
+    bool ok = true;  // senza prove del contrario, e' uno storyboard
+    if (!projDir.isEmpty() && !src.isEmpty()) {
+      const QString sidecar = projDir + "/scenes/" + src;
+      if (QFile::exists(sidecar)) {
+        const QString role = ZtoryCharacter::roleOf(sidecar);
+        ok = role.isEmpty() || role == QLatin1String("storyboard");
+      }
+    }
+    isStoryboard.insert(src, ok);
+    return ok;
+  };
+
+  // Le chiavi degli shot che nel progetto vengono da un ALTRO storyboard.
+  QSet<QString> others;
+  for (const ProjectShot &ps : m_projectShots)
+    if (ps.source != sourceFile && sourceIsStoryboard(ps.source))
+      others.insert(
+          (ps.seq.trimmed() + "\n" + ps.label.trimmed()).toLower());
+  if (others.isEmpty()) return QStringList();
+
+  QStringList out;
+  for (const ShotData &sd : m_shots) {
+    QString seq;
+    for (const SequenceData &s : m_sequences)
+      if (s.uuid == sd.sequenceId) { seq = s.label; break; }
+    const QString key =
+        (seq.trimmed() + "\n" + sd.label().trimmed()).toLower();
+    if (!others.contains(key)) continue;
+    const QString shown =
+        seq.trimmed().isEmpty() ? sd.label() : (seq + " " + sd.label());
+    if (!out.contains(shown)) out << shown;
+  }
+  return out;
+}
+
+QString ZtoryModel::proposeFreeSequenceLabel() const {
+  // Il prefisso e il numero di cifre si prendono da cio' che il progetto usa
+  // gia': proporre "SQ040" in un progetto che scrive "SEQ04" sarebbe una terza
+  // convenzione inventata da noi.
+  QString prefix = "SQ";
+  int digits = 3, maxN = 0;
+  QSet<QString> used;
+  auto consider = [&](const QString &label) {
+    const QString l = label.trimmed();
+    if (l.isEmpty()) return;
+    used.insert(l.toLower());
+    int i = 0;
+    while (i < l.size() && !l[i].isDigit()) i++;
+    if (i == 0 || i >= l.size()) return;
+    prefix = l.left(i);
+    const QString num = l.mid(i);
+    digits = num.size();
+    bool ok = false;
+    const int n = num.toInt(&ok);
+    if (ok) maxN = std::max(maxN, n);
+  };
+  for (const SequenceData &s : m_sequences) consider(s.label);
+  for (const ProjectShot &ps : m_projectShots) consider(ps.seq);
+
+  // Passo di dieci come per gli shot: lascia posto a chi si infila in mezzo.
+  int n = ((maxN / 10) + 1) * 10;
+  if (n <= 0) n = 10;
+  for (int guard = 0; guard < 1000; guard++) {
+    const QString cand =
+        prefix + QString("%1").arg(n, digits, 10, QChar('0'));
+    if (!used.contains(cand.toLower())) return cand;
+    n += 10;
+  }
+  return prefix + "999";
 }
 
 SequenceData* ZtoryModel::findOrCreateSequence(const QString &label) {

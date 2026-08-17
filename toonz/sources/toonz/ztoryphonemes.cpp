@@ -2,10 +2,15 @@
 
 #include "tsystem.h"
 
+#include "tenv.h"
+
 #include <QCoreApplication>
 #include <QFile>
 #include <QHash>
 #include <QProcess>
+#include <QDir>
+#include <QFileInfo>
+#include <QProcessEnvironment>
 
 namespace ZtoryPhonemes {
 const char *kRest = "rest";
@@ -65,9 +70,14 @@ QString espeakExe() {
   QStringList folders;
 #ifdef MACOSX
   folders << QCoreApplication::applicationDirPath() + "/../Resources/espeak";
-#else
-  folders << QCoreApplication::applicationDirPath() + "/espeak";
 #endif
+  folders << QCoreApplication::applicationDirPath() + "/espeak";
+  // ⚠️ Nel pacchetto Linux l'applicazione gira dentro un'AppImage montata:
+  // applicationDirPath() e' il montaggio, non la cartella portatile dove
+  // stanno gli strumenti. Senza questa riga espeak-ng imballato non verrebbe
+  // MAI trovato su Linux — e il difetto si vedrebbe solo come colonne con le
+  // parole intere invece delle bocche. Stessa lista di ffmpeg.
+  folders << TEnv::getWorkingDirectory().getQString() + "/espeak";
 #ifndef _WIN32
   // Homebrew su Apple Silicon NON e' nel PATH dei processi lanciati dal Finder:
   // senza questa riga l'app non lo trova mai pur essendo installato. Stessa
@@ -152,6 +162,17 @@ QVector<ZtoryPhonemes::Viseme> parseIpa(const QString &ipa) {
 QString runEspeak(const QString &exe, const QString &lang,
                   const QString &stdinText, QString *error) {
   QProcess p;
+  // ⚠️ ESPEAK_DATA_PATH, o il binario imballato non pronuncia NIENTE.
+  // espeak-ng cerca `espeak-ng-data` nel prefisso in cui e' stato installato
+  // quando lo si e' costruito — un percorso che sulla macchina dell'utente non
+  // esiste. I dati viaggiano accanto all'eseguibile e glielo diciamo qui.
+  // E' la stessa trappola di GGML_BACKEND_PATH per whisper-cli, e fallisce
+  // allo stesso modo: il processo parte e restituisce una riga vuota.
+  QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+  const QString dataParent = QFileInfo(exe).absolutePath();
+  if (QDir(dataParent + "/espeak-ng-data").exists())
+    env.insert("ESPEAK_DATA_PATH", dataParent);
+  p.setProcessEnvironment(env);
   p.start(exe, QStringList() << "-v" << lang << "-q" << "--ipa");
   if (!p.waitForStarted(5000)) {
     if (error) *error = QObject::tr("Could not start espeak-ng.");

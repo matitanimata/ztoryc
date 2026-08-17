@@ -2652,6 +2652,15 @@ static int loadPSDResource(IoCmd::LoadResourceArguments &args,
   return count;
 }
 
+int IoCmd::loadPsdResource(IoCmd::LoadResourceArguments &args,
+                           PsdSettingsPopup *popup, bool updateRecentFile) {
+  if (!popup) return 0;
+  // Un blocco di annullamento come quello di loadResources: senza, le colonne
+  // create dal psd non si annullano insieme al resto del caricamento.
+  LoadResourceArguments::ScopedBlock sb;
+  return loadPSDResource(args, updateRecentFile, popup);
+}
+
 //===========================================================================
 // IoCmd::loadResources(actualPaths[], castFolder, row, col)
 //---------------------------------------------------------------------------

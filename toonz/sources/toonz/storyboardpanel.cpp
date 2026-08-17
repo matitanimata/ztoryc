@@ -2,7 +2,10 @@
 #include "ztoryshotops.h"
 #include "ztorylightgizmo.h"
 #include "ztorydialoguehighlighter.h"
+#include "ztorylipsync.h"
+#include "ztoryassetimport.h"
 #include <QMenu>
+#include <QProgressDialog>
 #include "kitsuclient.h"  // post-export upload to Kitsu
 
 // QXlsx (vendored, MIT) — production spreadsheet export.
@@ -2486,6 +2489,121 @@ QPixmap StoryboardPanel::firstPanelThumbnail(int shotIdx) const {
   return shot.panels[0]->previewPixmap();
 }
 
+//-----------------------------------------------------------------------------
+// «Non possono esserci due shot identici» (Franco, 2026-08-17).
+//
+// Nel progetto uno shot si riconosce da SEQUENZA + ETICHETTA. Due storyboard
+// senza sequenza hanno tutti e due il loro SH010: nel tracker sono due righe
+// uguali, per Kitsu sono lo STESSO shot (l'aggancio e' proprio seq+etichetta),
+// e il breakdown di uno finisce sull'altro — successo davvero, ed e' costato
+// mezza giornata a capirlo. La sequenza non e' un vezzo di numerazione: e' la
+// parte dell'identita' che dice da quale storyboard viene.
+//-----------------------------------------------------------------------------
+bool StoryboardPanel::s_shotIdentityPromptDone = false;
+
+void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
+  if (s_shotIdentityPromptDone) return;
+  ZtoryModel *model = ZtoryModel::instance();
+  if (model->projectDbPath().isEmpty()) return;
+  const QStringList clashes = model->collidingShotLabels(sourceFile);
+  if (clashes.isEmpty()) return;
+
+  // Una volta sola, qualunque sia la risposta: chiederlo a ogni salvataggio
+  // trasformerebbe una segnalazione utile in una molestia.
+  s_shotIdentityPromptDone = true;
+
+  // Chi sono gli altri: dirlo evita la caccia. «Si chiamano come quelli di un
+  // altro storyboard» senza dire QUALE lascia il problema tutto da cercare.
+  QStringList othersList;
+  for (const ProjectShot &ps : model->projectShots()) {
+    if (ps.source == sourceFile || ps.source.isEmpty()) continue;
+    QString src = ps.source;
+    src.remove(QRegularExpression("\\.ztoryc$",
+                                  QRegularExpression::CaseInsensitiveOption));
+    if (!othersList.contains(src)) othersList << src;
+  }
+
+  const QString proposed = model->proposeFreeSequenceLabel();
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(tr("Two shots with the same name"));
+  dlg.setMinimumWidth(520);
+  auto *lay = new QVBoxLayout(&dlg);
+  auto *head = new QLabel(
+      tr("In this project a shot is identified by its sequence plus its "
+         "number. These shots have the same name as shots of %1:")
+          .arg(othersList.isEmpty() ? tr("another storyboard")
+                                    : othersList.join(", ")),
+      &dlg);
+  head->setWordWrap(true);
+  lay->addWidget(head);
+
+  auto *list = new QPlainTextEdit(clashes.join("\n"), &dlg);
+  list->setReadOnly(true);
+  list->setMaximumHeight(120);
+  lay->addWidget(list);
+
+  auto *why = new QLabel(
+      tr("Give this storyboard a sequence and they become distinguishable "
+         "everywhere: Production Tracker, breakdown, Kitsu. Without it the two "
+         "are the same shot, and what belongs to one lands on the other."),
+      &dlg);
+  why->setWordWrap(true);
+  lay->addWidget(why);
+
+  auto *row = new QHBoxLayout();
+  row->addWidget(new QLabel(tr("Sequence:"), &dlg));
+  auto *edit = new QLineEdit(proposed, &dlg);
+  row->addWidget(edit);
+  row->addStretch();
+  lay->addLayout(row);
+  auto *note = new QLabel(
+      tr("It is given to the shots that have no sequence yet; shots already in "
+         "a sequence keep theirs. The Board switches to sequence numbering so "
+         "you can see it — the shot numbers themselves are not renumbered."),
+      &dlg);
+  note->setWordWrap(true);
+  note->setStyleSheet("color:#999; font-size:11px;");
+  lay->addWidget(note);
+
+  auto *bbox = new QDialogButtonBox(&dlg);
+  QPushButton *apply =
+      bbox->addButton(tr("Give the sequence"), QDialogButtonBox::AcceptRole);
+  bbox->addButton(tr("Leave as is"), QDialogButtonBox::RejectRole);
+  lay->addWidget(bbox);
+  QObject::connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  QObject::connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  (void)apply;
+  if (dlg.exec() != QDialog::Accepted) return;
+
+  const QString label = edit->text().trimmed();
+  if (label.isEmpty()) return;
+  SequenceData *seq = model->findOrCreateSequence(label);
+  if (!seq) return;
+
+  // Solo agli shot che una sequenza non ce l'hanno: uno storyboard puo' avere
+  // piu' sequenze sue (SQ010, SQ020...) e sovrascriverle tutte con una sola
+  // cancellerebbe la struttura che l'autore ha dato al racconto.
+  int touched = 0;
+  for (int i = 0; i < model->shotCount(); i++)
+    if (model->shot(i).sequenceId.isEmpty()) {
+      model->shot(i).sequenceId = seq->uuid;
+      touched++;
+    }
+  for (auto &sh : m_shots)
+    if (sh.data.sequenceId.isEmpty()) sh.data.sequenceId = seq->uuid;
+
+  // La numerazione del Board deve mostrare la sequenza, o l'utente si ritrova
+  // una sequenza assegnata e nessun posto dove vederla.
+  NumberingConfig nc = model->numberingConfig();
+  if (nc.style != NumberingConfig::Sequence) {
+    nc.style = NumberingConfig::Sequence;
+    model->setNumberingConfig(nc);
+  }
+  refreshFromScene();
+  DVGui::info(tr("%1 shot(s) are now in sequence %2.").arg(touched).arg(label));
+}
+
 void StoryboardPanel::saveZtoryc() {
   // Shot scenes (role="shot") have a companion .ztoryc authored once at export.
   // Never rewrite it here — saveZtoryc always writes role="storyboard", which
@@ -2690,6 +2808,9 @@ void StoryboardPanel::saveZtoryc() {
   if (!m_suppressProjectPublication) {
     QString sourceFile = QFileInfo(path).fileName();
     if (!sourceFile.isEmpty()) {
+      // Prima di pubblicare, non dopo: pubblicare e POI dire che c'e' un
+      // doppione vorrebbe dire lasciarlo nel progetto mentre lo si segnala.
+      ensureShotIdentityUnique(sourceFile);
       {
         // Sync the model's shot list to THIS scene's actual shots before
         // publishing, so leftover shots from a previously-open (larger) scene
@@ -2728,6 +2849,7 @@ void StoryboardPanel::loadZtoryc() {
   // new/empty scene is never mistaken for a shot scene).
   m_currentSceneIsShot      = false;
   m_currentSceneIsCharacter = false;
+  s_shotIdentityPromptDone  = false;
   m_shotBackLinkProject   = QString();
   m_shotBackLinkUuid      = QString();
   m_shotBackLinkTaskStage = QString();
@@ -5619,12 +5741,281 @@ static QList<int> injectAudioForShot(ToonzScene *scene, TXsheet *mainXsh,
   return injected;
 }
 
-// Remove injected audio columns in reverse order (to keep indices stable)
-static void removeInjectedAudio(TXsheet *childXsh, QList<int> cols) {
+// Toglie le colonne aggiunte SOLO per l'export (audio iniettato, lip sync), in
+// ordine decrescente perche' togliere dall'inizio sposta sotto i piedi gli
+// indici che restano. Chi ne toglie due gruppi cominci da quello con gli
+// indici piu' alti: fra un gruppo e l'altro il rimescolamento avviene lo
+// stesso.
+// L'etichetta con cui uno shot si chiama davvero. Nei due popup di export il
+// range si sceglieva con due contatori 1..N: per dire «da sh010 a sh030» si
+// doveva scrivere «da 1 a 3», cioe' tradurre a mente la numerazione dello
+// storyboard in un ordinale. Le tendine mostrano l'etichetta e non c'e' piu'
+// niente da tradurre (richiesta di Franco, 2026-08-17).
+static QString shotRangeLabel(const ShotData &sd, const ZtoryModel *m) {
+  QString seq;
+  for (const SequenceData &sq : m->sequences())
+    if (sq.uuid == sd.sequenceId) { seq = sq.label; break; }
+  const QString lbl = sd.label();
+  return seq.isEmpty() ? lbl : (seq + " " + lbl);
+}
+
+// La casella «genera il lip sync» dei due popup di export, allestita in un
+// posto solo: quale sia la scelta di prima, e perche' non si possa spuntare
+// quando manca il motore. Spenta e senza spiegazione, l'utente prova a
+// cliccarla e non capisce.
+// La scelta resta quella dell'ultima volta finche' l'applicazione e' aperta:
+// chi esporta col lip sync lo rifa' quasi sempre, e ricominciare da spenta a
+// ogni export e' una spunta da rimettere ogni volta.
+static bool g_ztoryExportLipSync = false;
+
+static void addLipSyncOption(QCheckBox *chk) {
+  const QString why = ZtoryLipSync::unavailableReason();
+  chk->setEnabled(why.isEmpty());
+  chk->setChecked(why.isEmpty() && g_ztoryExportLipSync);
+  chk->setToolTip(
+      why.isEmpty()
+          ? QObject::tr(
+                "Each exported shot comes out with its dialogue columns "
+                "already written: the words from the storyboard panels, the "
+                "timing from the shot's audio.\n"
+                "Shots with no dialogue or no audio are exported as usual — "
+                "the reason is written in ztoryc_export_log.txt.\n"
+                "Shots that already have lip sync columns keep the ones they "
+                "have.")
+          : why);
+}
+
+// La casella «importa gli asset del breakdown» dei due popup. Il nome dice
+// COSA fa e DA DOVE prende: «automatic import» direbbe quando e non cosa, e si
+// confonderebbe con le opzioni di organizzazione degli asset li' accanto.
+static bool g_ztoryExportAssets = false;
+
+static void addAssetImportOption(QCheckBox *chk) {
+  chk->setChecked(g_ztoryExportAssets);
+  chk->setToolTip(QObject::tr(
+      "Each exported shot is born with the assets its breakdown lists: "
+      "characters as sub-scenes, props and backgrounds as levels.\n"
+      "Before exporting, the assets are checked and anything that does not "
+      "resolve is reported, so you can go on without it or stop and fix it."));
+}
+
+// Il controllo PRIMA di esportare, e il rapporto. Ritorna false se l'utente ha
+// scelto di interrompere per sistemare cio' che manca.
+// Il rapporto e' in un dialogo con il testo scorribile e non in un QMessageBox:
+// gli asset che non si risolvono possono essere decine, e nascosti dietro a
+// «mostra dettagli» non li guarda nessuno.
+static bool ztoryConfirmShotAssets(QWidget *parent, const QStringList &uuids) {
+  const QVector<ZtoryAssetCheck> checks = ztoryCheckShotAssets(uuids);
+  // Gli shot guardati, come li conosce il tracker. Servono nel messaggio del
+  // caso vuoto: un progetto ha piu' storyboard, ognuno con il suo SH010, e
+  // vedere quali shot sono stati controllati e' l'unico modo per accorgersi
+  // che il breakdown che si ha davanti e' di un altro storyboard.
+  QStringList looked;
+  for (const QString &u : uuids)
+    for (const ProjectShot &ps : ZtoryModel::instance()->projectShots())
+      if (ps.uuid == u) {
+        QString src = ps.source;
+        src.remove(QRegularExpression("\\.ztoryc$",
+                                      QRegularExpression::CaseInsensitiveOption));
+        looked << QString("%1 %2 (%3)")
+                      .arg(ps.seq.isEmpty() ? QString("—") : ps.seq, ps.label,
+                           src.isEmpty() ? QObject::tr("no storyboard") : src);
+        break;
+      }
+  // Nessun asset da nessuna parte: la casella e' spuntata e non farebbe
+  // NIENTE. Dirlo prima, perche' un'opzione che non fa niente in silenzio e'
+  // peggio di un errore — l'utente resta convinto di avere gli asset dentro.
+  if (checks.isEmpty()) {
+    QString msg = QObject::tr(
+        "None of the shots being exported has anything in its breakdown, so "
+        "there is nothing to import.");
+    if (looked.isEmpty())
+      msg += QObject::tr(
+          "\n\nIn fact these shots are not in the Production Tracker at all: "
+          "save the storyboard so they get published to the project.");
+    else
+      msg += QObject::tr("\n\nShots checked:\n%1").arg(looked.join("\n"));
+    // Il breakdown si riempie per SHOT, e uno shot appartiene a UNO storyboard:
+    // se nel Breakdown si vedono asset su uno shot con la stessa etichetta,
+    // guardare a quale storyboard appartiene.
+    msg += QObject::tr(
+        "\n\nThe breakdown is filled in the Production Tracker, or pulled "
+        "from Kitsu. Mind that two storyboards in the same project can both "
+        "have a shot called SH010: the Breakdown tab now shows which "
+        "storyboard each row belongs to.");
+    return QMessageBox::question(parent,
+                                 QObject::tr("Assets from the Breakdown"), msg,
+                                 QMessageBox::Ok | QMessageBox::Cancel) ==
+           QMessageBox::Ok;
+  }
+  const QString report = ztoryAssetReport(checks);
+  if (report.isEmpty()) return true;  // niente da segnalare: si esporta e basta
+
+  int missing = 0;
+  for (const ZtoryAssetCheck &c : checks)
+    if (!c.ok()) missing++;
+
+  QDialog dlg(parent);
+  dlg.setWindowTitle(QObject::tr("Assets from the Breakdown"));
+  dlg.setMinimumSize(560, 380);
+  auto *lay = new QVBoxLayout(&dlg);
+  auto *head = new QLabel(
+      QObject::tr("%1 of the %2 assets these shots need cannot be resolved:")
+          .arg(missing)
+          .arg(checks.size()),
+      &dlg);
+  head->setWordWrap(true);
+  lay->addWidget(head);
+  auto *text = new QPlainTextEdit(report, &dlg);
+  text->setReadOnly(true);
+  lay->addWidget(text);
+  auto *foot = new QLabel(
+      QObject::tr("Export anyway and the missing ones are simply skipped; the "
+                  "rest is imported."),
+      &dlg);
+  foot->setWordWrap(true);
+  lay->addWidget(foot);
+  auto *bbox = new QDialogButtonBox(&dlg);
+  QPushButton *go =
+      bbox->addButton(QObject::tr("Export anyway"), QDialogButtonBox::AcceptRole);
+  bbox->addButton(QObject::tr("Stop and fix"), QDialogButtonBox::RejectRole);
+  lay->addWidget(bbox);
+  QObject::connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  QObject::connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  (void)go;
+  return dlg.exec() == QDialog::Accepted;
+}
+
+static void removeExportColumns(TXsheet *childXsh, QList<int> cols) {
   std::sort(cols.begin(), cols.end(), std::greater<int>());
   for (int c : cols)
     childXsh->removeColumn(c);
 }
+
+//-----------------------------------------------------------------------------
+// Lip sync dal Board, senza entrare in ogni shot: le colonne restano nello
+// storyboard e servono a CONTROLLARE il sincrono prima di esportare. Stessa
+// catena dell'export (un giro dentro la sotto-scena e uno fuori), ma qui
+// nessuno le toglie dopo.
+//-----------------------------------------------------------------------------
+void StoryboardPanel::onLipSyncShots() {
+  const QString why = ZtoryLipSync::unavailableReason();
+  if (!why.isEmpty()) {
+    QMessageBox::warning(this, tr("Lip Sync Shots"), why);
+    return;
+  }
+  if (m_shots.empty()) {
+    QMessageBox::information(this, tr("Lip Sync Shots"), tr("No shots."));
+    return;
+  }
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return;
+  TXsheet *mainXsh = scene->getChildStack()->getTopXsheet();
+  if (!mainXsh) return;
+
+  // Selezione se c'e', altrimenti tutti: sullo storyboard intero e' una passata
+  // lunga, e chiederlo prima e' meglio che scoprirlo dopo.
+  QList<int> indices;
+  for (int i : m_selectedIndices)
+    if (i >= 0 && i < (int)m_shots.size()) indices.append(i);
+  if (indices.isEmpty())
+    for (int i = 0; i < (int)m_shots.size(); i++) indices.append(i);
+  std::sort(indices.begin(), indices.end());
+
+  if (QMessageBox::question(
+          this, tr("Lip Sync Shots"),
+          tr("Write the dialogue columns for %1 shot(s)?\n\n"
+             "The words come from the storyboard panels, the timing from each "
+             "shot's audio. Shots that already have lip sync columns get them "
+             "rewritten.")
+              .arg(indices.size()),
+          QMessageBox::Ok | QMessageBox::Cancel) != QMessageBox::Ok)
+    return;
+
+  QProgressDialog progress(tr("Lip sync…"), tr("Cancel"), 0, indices.size(),
+                           this);
+  progress.setWindowModality(Qt::ApplicationModal);
+  progress.setMinimumDuration(0);
+
+  int done = 0, skipped = 0;
+  QStringList reasons;
+
+  for (int n = 0; n < indices.size(); n++) {
+    const int i = indices[n];
+    progress.setValue(n);
+    const ShotData &sd = m_shots[i].data;
+    progress.setLabelText(tr("Lip sync: %1").arg(sd.label()));
+    qApp->processEvents();
+    if (progress.wasCanceled()) break;
+
+    const int shotCol = sd.xsheetColumn;
+    int shotR0 = 0, shotR1 = -1;
+    int trueStart = 0, trueDur = 0;
+    if (ZtoryShotOps::shotTrueSpan(mainXsh, shotCol, trueStart, trueDur) &&
+        trueDur > 0) {
+      shotR0 = trueStart;
+      shotR1 = trueStart + trueDur - 1;
+    } else if (mainXsh->getColumn(shotCol)) {
+      mainXsh->getColumn(shotCol)->getRange(shotR0, shotR1,
+                                            /*ignoreLastStop=*/true);
+    }
+    if (shotR1 < shotR0) { skipped++; continue; }
+
+    TApp::instance()->getCurrentColumn()->setColumnIndex(shotCol);
+    TColumnSelection *colSel = new TColumnSelection();
+    colSel->selectColumn(shotCol, true);
+    TSelection::setCurrent(colSel);
+    ztoryOpenSubXsheet();
+    if (scene->getChildStack()->getAncestorCount() == 0) { skipped++; continue; }
+    TXsheet *childXsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+
+    ZtoryShotContext ctx;
+    ctx.shotIndex = i;
+    ctx.column    = shotCol;
+    ctx.firstRow  = shotR0;
+    ctx.lastRow   = shotR1;
+    ctx.subXsheet = childXsh;
+
+    ZtoryLipSync::Request req;
+    const QString skipWhy =
+        ztoryPrepareLipSync(ctx, ztoryShotDialogue(sd.panels), req);
+    if (!skipWhy.isEmpty()) {
+      skipped++;
+      // Il motivo, non un conteggio: «niente dialogo» e «niente audio» si
+      // sistemano in due posti diversi.
+      const QString line = tr("%1: %2").arg(sd.label(), skipWhy);
+      if (!reasons.contains(line)) reasons << line;
+      ztoryCloseSubXsheet(1);
+      continue;
+    }
+
+    QVector<ZtoryCharacterTrack> tracks;
+    QString msg;
+    if (ztoryRunLipSyncBlocking(req, tracks, msg)) {
+      // Rigenerare vuol dire sostituire: le vecchie si tolgono solo ora che le
+      // nuove ci sono davvero.
+      for (int c : ztoryFindLipSyncColumns(childXsh)) childXsh->removeColumn(c);
+      ztoryWriteLipSyncColumns(childXsh, tracks, shotR1 - shotR0 + 1);
+      done++;
+    } else {
+      skipped++;
+      const QString line = tr("%1: %2").arg(sd.label(), msg);
+      if (!reasons.contains(line)) reasons << line;
+    }
+    ztoryCloseSubXsheet(1);
+  }
+  progress.setValue(indices.size());
+
+  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+
+  QString text = tr("%1 shot(s) done").arg(done);
+  if (skipped > 0) text += tr(", %1 skipped").arg(skipped);
+  if (!reasons.isEmpty()) text += "\n\n" + reasons.join("\n");
+  QMessageBox::information(this, tr("Lip Sync Shots"), text);
+}
+
+//-----------------------------------------------------------------------------
 
 void StoryboardPanel::onExportShots() {
   if (m_shots.empty()) {
@@ -5679,18 +6070,22 @@ void StoryboardPanel::onExportShots() {
   auto *allRadio   = new QRadioButton(tr("All shots"), &dlg);
   auto *rangeRadio = new QRadioButton(tr("Range:"), &dlg);
   allRadio->setChecked(true);
-  auto *fromSpin = new QSpinBox(&dlg);
-  auto *toSpin   = new QSpinBox(&dlg);
-  auto *toLabel  = new QLabel(tr("to"), &dlg);
-  fromSpin->setRange(1, (int)m_shots.size()); fromSpin->setValue(1);
-  toSpin->setRange(1, (int)m_shots.size());   toSpin->setValue((int)m_shots.size());
-  fromSpin->setEnabled(false); toSpin->setEnabled(false); toLabel->setEnabled(false);
+  auto *fromCombo = new QComboBox(&dlg);
+  auto *toCombo   = new QComboBox(&dlg);
+  auto *toLabel   = new QLabel(tr("to"), &dlg);
+  for (const auto &sh : m_shots) {
+    const QString t = shotRangeLabel(sh.data, model);
+    fromCombo->addItem(t);
+    toCombo->addItem(t);
+  }
+  toCombo->setCurrentIndex((int)m_shots.size() - 1);
+  fromCombo->setEnabled(false); toCombo->setEnabled(false); toLabel->setEnabled(false);
   rangeRow->addWidget(allRadio); rangeRow->addWidget(rangeRadio);
-  rangeRow->addWidget(fromSpin); rangeRow->addWidget(toLabel);
-  rangeRow->addWidget(toSpin); rangeRow->addStretch();
+  rangeRow->addWidget(fromCombo); rangeRow->addWidget(toLabel);
+  rangeRow->addWidget(toCombo); rangeRow->addStretch();
   form->addRow(tr("Shots:"), rangeRow);
   QObject::connect(rangeRadio, &QRadioButton::toggled, [&](bool on) {
-    fromSpin->setEnabled(on); toSpin->setEnabled(on); toLabel->setEnabled(on);
+    fromCombo->setEnabled(on); toCombo->setEnabled(on); toLabel->setEnabled(on);
   });
 
   // Back-link checkbox (B3c)
@@ -5701,6 +6096,16 @@ void StoryboardPanel::onExportShots() {
   if (model->projectDbPath().isEmpty())
     backLinkChk->setToolTip(tr("Save the scene first to create a project DB."));
   form->addRow(QString(), backLinkChk);
+
+  // Lip sync: lo shot esportato nasce con le colonne del dialogo gia' fatte.
+  auto *lipSyncChk = new QCheckBox(tr("Generate lip sync columns"), &dlg);
+  addLipSyncOption(lipSyncChk);
+  form->addRow(QString(), lipSyncChk);
+
+  auto *assetsChk = new QCheckBox(
+      tr("Import each shot's assets from the breakdown"), &dlg);
+  addAssetImportOption(assetsChk);
+  form->addRow(QString(), assetsChk);
 
   // Naming preview
   auto *previewLabel = new QLabel(&dlg);
@@ -5748,15 +6153,35 @@ void StoryboardPanel::onExportShots() {
   if (dlg.exec() != QDialog::Accepted) return;
 
   // ── Export ───────────────────────────────────────────────────────────────
-  int from = allRadio->isChecked() ? 0 : fromSpin->value() - 1;
-  int to   = allRadio->isChecked() ? (int)m_shots.size() - 1 : toSpin->value() - 1;
+  int from = allRadio->isChecked() ? 0 : fromCombo->currentIndex();
+  int to   = allRadio->isChecked() ? (int)m_shots.size() - 1
+                                   : toCombo->currentIndex();
+  // Scelti a rovescio: si esporta lo stesso l'intervallo che ha in mente chi
+  // l'ha scelto, invece di non esportare niente senza dire perche'.
+  if (from > to) std::swap(from, to);
   QList<int> indices;
   for (int i = from; i <= to; i++) indices.append(i);
 
+  ShotExportOptions opts;
+  opts.writeLink       = backLinkChk->isChecked();
+  opts.lipSync         = lipSyncChk->isChecked();
+  opts.importAssets    = assetsChk->isChecked();
+  g_ztoryExportLipSync = opts.lipSync;
+  g_ztoryExportAssets  = opts.importAssets;
+
+  // Il controllo degli asset viene PRIMA di toccare il disco: chi si ferma per
+  // sistemare cio' che manca non deve trovarsi mezza cartella gia' esportata.
+  if (opts.importAssets) {
+    QStringList uuids;
+    for (int i : indices)
+      if (!m_shots[i].data.uuid.isEmpty()) uuids << m_shots[i].data.uuid;
+    if (!ztoryConfirmShotAssets(this, uuids)) return;
+  }
+
   int fail = 0;
   const TFilePath outDir(dirEdit->text().trimmed().toStdWString());
-  QList<TFilePath> exported = exportShotScenesToDir(
-      indices, outDir, verSpin->value(), backLinkChk->isChecked(), fail);
+  QList<TFilePath> exported =
+      exportShotScenesToDir(indices, outDir, verSpin->value(), opts, fail);
   dumpExportLog(outDir);
 
   QString msg =
@@ -5769,8 +6194,9 @@ void StoryboardPanel::onExportShots() {
 
 QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
     const QList<int> &indices, const TFilePath &outDirFp, int version,
-    bool writeLink, int &fail,
+    const ShotExportOptions &opts, int &fail,
     QHash<QString, QList<QPair<TFilePath, TFilePath>>> *assetCopies) {
+  const bool writeLink = opts.writeLink;
   QList<TFilePath> exported;
   ZtoryModel *model = ZtoryModel::instance();
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
@@ -5836,6 +6262,64 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
     if (mainXsh && childXsh && shotR1 >= shotR0)
       injectedCols = injectAudioForShot(scene, mainXsh, childXsh, shotR0,
                                         shotR1, fps, baseName, injectedLevels);
+
+    // ── Gli asset del breakdown, dentro lo shot ─────────────────────────────
+    // Lo shot esportato nasce gia' popolato: i personaggi come sotto-scene, il
+    // resto come livelli. Come per l'audio e il lip sync, le colonne stanno
+    // nella sotto-scena CONDIVISA con lo storyboard e vanno tolte dopo il
+    // salvataggio.
+    ZtoryImportedAssets imported;
+    int undoBefore = TUndoManager::manager()->getHistoryCount();
+    if (opts.importAssets && childXsh && !sd.uuid.isEmpty()) {
+      imported = ztoryImportShotAssets(sd.uuid, childXsh);
+      for (const QString &line : imported.log)
+        exportLog(QString("[%1] asset %2").arg(baseName, line));
+    }
+
+    // ── Lip sync: lo shot esce con le colonne parole+bocche gia' fatte ──────
+    // Le colonne stanno nella sotto-scena, che e' LA STESSA dello storyboard:
+    // vanno tolte dopo il salvataggio come l'audio iniettato, o al secondo
+    // export lo storyboard ne avrebbe quattro, al terzo sei.
+    QList<int> lipSyncCols;
+    if (opts.lipSync && childXsh && shotR1 >= shotR0) {
+      // Quelle che ci sono gia' — generate come controllo durante lo
+      // storyboard — valgono piu' di quelle che genereremmo ora: sono quelle
+      // che l'utente ha visto e magari corretto. Si esportano com'e' e non si
+      // toccano.
+      if (!ztoryFindLipSyncColumns(childXsh).isEmpty()) {
+        exportLog(QString("[%1] lip sync: columns already in the sub-scene, kept")
+                      .arg(baseName));
+      } else {
+        ZtoryShotContext lctx;
+        lctx.shotIndex = i;
+        lctx.column    = shotCol;
+        lctx.firstRow  = shotR0;
+        lctx.lastRow   = shotR1;
+        lctx.subXsheet = childXsh;
+        ZtoryLipSync::Request req;
+        // Il copione dalla copia del Board, non dal modello: e' quella che
+        // questo pannello sta esportando, e le due possono divergere.
+        const QString why = ztoryPrepareLipSync(
+            lctx, ztoryShotDialogue(m_shots[i].data.panels), req);
+        if (!why.isEmpty()) {
+          // Uno shot senza dialogo o senza audio non e' un errore di export:
+          // e' la maggior parte degli shot. Va nel registro, non in un avviso.
+          exportLog(QString("[%1] lip sync skipped: %2").arg(baseName, why));
+        } else {
+          QVector<ZtoryCharacterTrack> tracks;
+          QString msg;
+          if (ztoryRunLipSyncBlocking(req, tracks, msg)) {
+            lipSyncCols = ztoryWriteLipSyncColumns(childXsh, tracks,
+                                                   shotR1 - shotR0 + 1);
+            exportLog(QString("[%1] lip sync: %2 — %3 columns")
+                          .arg(baseName, msg)
+                          .arg(lipSyncCols.size()));
+          } else {
+            exportLog(QString("[%1] lip sync FAILED: %2").arg(baseName, msg));
+          }
+        }
+      }
+    }
 
     // Capture the SOURCE file of each project-folder level (coded '+' path),
     // keyed by the level, BEFORE save. Neither takeCareSceneFolderItems (only
@@ -5932,8 +6416,30 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
       if (assetCopies && !list.isEmpty()) assetCopies->insert(baseName, list);
     }
 
+    // Si tolgono a ritroso rispetto a come sono state aggiunte — lip sync,
+    // asset, audio — perche' ogni gruppo sta a destra del precedente e
+    // togliere prima quelli di sinistra farebbe scalare gli indici di tutti
+    // gli altri: si finirebbe per togliere colonne dello storyboard.
+    if (!lipSyncCols.isEmpty() && childXsh)
+      removeExportColumns(childXsh, lipSyncCols);
+    if (!imported.columns.isEmpty() && childXsh)
+      removeExportColumns(childXsh, imported.columns);
     if (!injectedCols.isEmpty() && childXsh)
-      removeInjectedAudio(childXsh, injectedCols);
+      removeExportColumns(childXsh, injectedCols);
+    // I livelli importati escono anche dal cast dello storyboard: restarci
+    // vorrebbe dire vedere il personaggio fra i livelli della scena dello
+    // storyboard, dove non e' mai stato messo da nessuno.
+    for (TXshLevel *lv : imported.levels)
+      if (lv) scene->getLevelSet()->removeLevel(lv);
+    // L'import passa dalle funzioni di caricamento di Tahoma, che scrivono
+    // nella cronologia degli annullamenti. Le colonne pero' le abbiamo appena
+    // tolte a mano: un annullamento le rimetterebbe in uno storyboard che non
+    // le ha mai avute. Si toglie dalla cronologia cio' che l'import ci ha
+    // messo.
+    if (opts.importAssets) {
+      const int added = TUndoManager::manager()->getHistoryCount() - undoBefore;
+      if (added > 0) TUndoManager::manager()->popUndo(added);
+    }
     // Drop the trimmed-audio levels from the storyboard scene's cast (the wav
     // files stay on disk — they are the exported shots' audio assets).
     for (TXshLevel *lv : injectedLevels)
@@ -6197,20 +6703,24 @@ void StoryboardPanel::onExportShotsToProject() {
   auto *selRadio   = new QRadioButton(tr("Selected"), shotsBox);
   auto *rangeRadio = new QRadioButton(tr("Range:"), shotsBox);
   allRadio->setChecked(true);
-  auto *fromSpin = new QSpinBox(shotsBox);
-  auto *toSpin   = new QSpinBox(shotsBox);
-  auto *toLabel  = new QLabel(tr("to"), shotsBox);
-  fromSpin->setRange(1, (int)m_shots.size()); fromSpin->setValue(1);
-  toSpin->setRange(1, (int)m_shots.size());   toSpin->setValue((int)m_shots.size());
-  fromSpin->setEnabled(false); toSpin->setEnabled(false); toLabel->setEnabled(false);
+  auto *fromCombo = new QComboBox(shotsBox);
+  auto *toCombo   = new QComboBox(shotsBox);
+  auto *toLabel   = new QLabel(tr("to"), shotsBox);
+  for (const auto &sh : m_shots) {
+    const QString t = shotRangeLabel(sh.data, model);
+    fromCombo->addItem(t);
+    toCombo->addItem(t);
+  }
+  toCombo->setCurrentIndex((int)m_shots.size() - 1);
+  fromCombo->setEnabled(false); toCombo->setEnabled(false); toLabel->setEnabled(false);
   selRadio->setEnabled(!m_selectedIndices.empty());
   rangeRow->addWidget(allRadio); rangeRow->addWidget(selRadio);
   rangeRow->addWidget(rangeRadio);
-  rangeRow->addWidget(fromSpin); rangeRow->addWidget(toLabel);
-  rangeRow->addWidget(toSpin); rangeRow->addStretch();
+  rangeRow->addWidget(fromCombo); rangeRow->addWidget(toLabel);
+  rangeRow->addWidget(toCombo); rangeRow->addStretch();
   shotsForm->addRow(tr("Shots:"), rangeRow);
   QObject::connect(rangeRadio, &QRadioButton::toggled, [&](bool on) {
-    fromSpin->setEnabled(on); toSpin->setEnabled(on); toLabel->setEnabled(on);
+    fromCombo->setEnabled(on); toCombo->setEnabled(on); toLabel->setEnabled(on);
   });
 
   // Production Tracker link — plain wording: what it writes and what happens.
@@ -6229,6 +6739,15 @@ void StoryboardPanel::onExportShotsToProject() {
     trackerChk->setToolTip(
         tr("Save the scene first to create a project DB."));
   shotsForm->addRow(QString(), trackerChk);
+
+  auto *lipSyncChk = new QCheckBox(tr("Generate lip sync columns"), shotsBox);
+  addLipSyncOption(lipSyncChk);
+  shotsForm->addRow(QString(), lipSyncChk);
+
+  auto *assetsChk = new QCheckBox(
+      tr("Import each shot's assets from the breakdown"), shotsBox);
+  addAssetImportOption(assetsChk);
+  shotsForm->addRow(QString(), assetsChk);
   lay->addWidget(shotsBox);
 
   auto *bbox = new QDialogButtonBox(
@@ -6273,12 +6792,23 @@ void StoryboardPanel::onExportShotsToProject() {
   if (selRadio->isChecked()) {
     for (int i : m_selectedIndices) indices.append(i);
   } else {
-    int from = allRadio->isChecked() ? 0 : fromSpin->value() - 1;
-    int to =
-        allRadio->isChecked() ? (int)m_shots.size() - 1 : toSpin->value() - 1;
+    int from = allRadio->isChecked() ? 0 : fromCombo->currentIndex();
+    int to   = allRadio->isChecked() ? (int)m_shots.size() - 1
+                                     : toCombo->currentIndex();
+    if (from > to) std::swap(from, to);
     for (int i = from; i <= to; i++) indices.append(i);
   }
   if (indices.isEmpty()) return;
+
+  // Il controllo degli asset PRIMA di creare il progetto di destinazione:
+  // fermarsi dopo lascerebbe in giro un progetto vuoto da cancellare a mano.
+  if (assetsChk->isChecked()) {
+    QStringList uuids;
+    for (int i : indices)
+      if (i >= 0 && i < (int)m_shots.size() && !m_shots[i].data.uuid.isEmpty())
+        uuids << m_shots[i].data.uuid;
+    if (!ztoryConfirmShotAssets(this, uuids)) return;
+  }
 
   ExportScenePopup::ExportTarget exportTarget =
       targetOT->isChecked() ? ExportScenePopup::ExportTarget::OpenToonz
@@ -6322,9 +6852,14 @@ void StoryboardPanel::onExportShotsToProject() {
   // Source files of project-folder levels (+extras/+drawings) per exported
   // scene: the export machinery won't copy these, so we do it below.
   QHash<QString, QList<QPair<TFilePath, TFilePath>>> assetCopies;
+  ShotExportOptions opts;
+  opts.writeLink       = trackerChk->isChecked();
+  opts.lipSync         = lipSyncChk->isChecked();
+  opts.importAssets    = assetsChk->isChecked();
+  g_ztoryExportLipSync = opts.lipSync;
+  g_ztoryExportAssets  = opts.importAssets;
   QList<TFilePath> staged = exportShotScenesToDir(
-      indices, stagingDir, verSpin->value(), trackerChk->isChecked(), fail,
-      &assetCopies);
+      indices, stagingDir, verSpin->value(), opts, fail, &assetCopies);
   if (staged.isEmpty()) {
     QApplication::restoreOverrideCursor();
     QMessageBox::warning(this, tr("Export Shots to New Project"),
@@ -8397,6 +8932,16 @@ public:
     if (auto *b = findZtoryBoard()) b->onExportShots(); else warnNoBoard();
   }
 } ztoryExportShotsCommand;
+
+// Il lip sync degli shot dal Board: l'altra meta' dell'opzione nell'export,
+// quella che serve mentre lo storyboard e' ancora in lavorazione.
+class ZtoryLipSyncShotsCommand final : public MenuItemHandler {
+public:
+  ZtoryLipSyncShotsCommand() : MenuItemHandler(MI_ZtoryLipSyncShots) {}
+  void execute() override {
+    if (auto *b = findZtoryBoard()) b->onLipSyncShots(); else warnNoBoard();
+  }
+} ztoryLipSyncShotsCommand;
 
 class ZtoryExportShotsToProjectCommand final : public MenuItemHandler {
 public:

@@ -107,6 +107,11 @@ private:
 private:
   void rebuildFormatsList();
   QList<ComboBoxItem> buildFontStyleList() const;
+  // Le lingue del lip sync si leggono dai modelli presenti (imballati con
+  // l'applicazione o installati dall'utente), non da un elenco scritto a mano:
+  // installare un modello deve bastare a vederlo qui.
+  QList<ComboBoxItem> buildLipSyncLanguageList() const;
+  void onAddLipSyncLanguage();
 
   QWidget* createUI(
       PreferencesItemId id,

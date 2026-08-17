@@ -561,6 +561,16 @@ public:
   // Kitsu's frame_in/frame_out (the shot's start/end timecode in the edit).
   std::vector<std::pair<int, int>> projectShotFrameRanges() const;
   const QVector<QString> &storyboardFiles() const { return m_storyboardFiles; }
+  // Quanti shot del progetto vengono da questo storyboard (per chiederlo prima
+  // di toglierli: «ne stai per buttare quattro» e' un'altra cosa da «uno»).
+  int projectShotCountFromSource(const QString &sourceFile) const;
+  // Toglie dal progetto gli shot pubblicati da uno storyboard, e lo cancella
+  // dall'elenco degli storyboard. Serve quando una scena smette di essere uno
+  // storyboard: senza, i suoi shot restano nel tracker PER SEMPRE — nessuno li
+  // ripubblica (la scena non pubblica piu') e nessuno li toglie. E' cosi' che
+  // un progetto finisce con quattro SH010 di quattro file diversi.
+  // Ritorna quanti ne ha tolti. Non salva: salva chi chiama.
+  int removeProjectShotsFromSource(const QString &sourceFile);
   // Upsert scene shots (m_shots) into m_projectShots keyed by uuid; sourceFile
   // is the .tnz basename.  Preserves existing task progress; initialises tasks
   // for new shots from the scene's current task state. Removes shots whose
@@ -708,6 +718,16 @@ public:
   void ensureDefaultSequence();
   // Find sequence by label (case-insensitive); create it with a new UUID if absent.
   SequenceData* findOrCreateSequence(const QString &label);
+  // Nel progetto uno shot si riconosce da SEQUENZA + ETICHETTA. Due storyboard
+  // senza sequenza hanno tutti e due il loro SH010, e da fuori — tracker,
+  // Kitsu, breakdown — sono lo stesso shot: e' cosi' che il breakdown di uno
+  // e' finito su un altro (2026-08-17). Qui si dice quali shot di QUESTA scena
+  // si chiamerebbero come quelli di un altro storyboard dello stesso progetto.
+  QStringList collidingShotLabels(const QString &sourceFile) const;
+  // Un'etichetta di sequenza che nel progetto non e' ancora usata, con lo
+  // stesso passo con cui si numerano gli shot. Serve a PROPORRE, non a
+  // imporre: il numero lo decide chi guarda il progetto.
+  QString proposeFreeSequenceLabel() const;
 
   // ── Preview ───────────────────────────────────────────────────────────────
   QPixmap preview(int shotIdx, int panelIdx) const;

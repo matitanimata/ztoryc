@@ -1,6 +1,7 @@
 
 
 #include "preferencespopup.h"
+#include "ztoryvosk.h"
 
 // Tnz6 includes
 #include "menubarcommandids.h"
@@ -50,6 +51,7 @@
 #include <QStackedWidget>
 #include <QLineEdit>
 #include <QFileDialog>
+#include <QInputDialog>
 #include <QFile>
 #include <QPushButton>
 #include <QApplication>
@@ -439,6 +441,65 @@ void PreferencesPopup::rebuildFormatsList() {
 }
 
 //-----------------------------------------------------------------------------
+
+QList<ComboBoxItem> PreferencesPopup::buildLipSyncLanguageList() const {
+  QList<ComboBoxItem> out;
+  // L'auto-riconoscimento resta il primo: e' cio' che si usa quando per la
+  // propria lingua un modello non c'e', e dire QUALE motore lavorera' e'
+  // l'informazione che spiega tempi meno precisi.
+  out.append(ComboBoxItem(
+      tr("Auto-detect (Whisper, less precise timing)"), QString("")));
+  for (const QString &code : ZtoryVosk::availableLanguages())
+    out.append(ComboBoxItem(
+        tr("%1 — aligned with Vosk").arg(ZtoryVosk::languageDisplayName(code)),
+        code));
+  return out;
+}
+
+void PreferencesPopup::onAddLipSyncLanguage() {
+  const QString dir = QFileDialog::getExistingDirectory(
+      this, tr("Pick the folder of the Vosk model"),
+      QDir::homePath());
+  if (dir.isEmpty()) return;
+
+  // Il codice lingua: si propone quello che si legge dal nome della cartella
+  // (i modelli si chiamano «vosk-model-small-fr-0.22»), perche' e' quasi
+  // sempre giusto e sbagliarlo si vede solo al primo lip sync.
+  QString guess;
+  const QStringList parts = QFileInfo(dir).fileName().split('-');
+  for (const QString &p : parts)
+    if (p.size() == 2 && p[0].isLetter() && p[1].isLetter()) { guess = p; break; }
+
+  bool ok = false;
+  const QString code = QInputDialog::getText(
+      this, tr("Add lip sync language"),
+      tr("Language code of this model (as in «it», «fr», «de»).\n"
+         "It must match the language of the recorded dialogue."),
+      QLineEdit::Normal, guess, &ok);
+  if (!ok || code.trimmed().isEmpty()) return;
+
+  QApplication::setOverrideCursor(Qt::WaitCursor);
+  const QString err = ZtoryVosk::installLanguage(code.trimmed(), dir);
+  QApplication::restoreOverrideCursor();
+  if (!err.isEmpty()) {
+    DVGui::warning(err);
+    return;
+  }
+  // La tendina si rifa' con la lingua nuova dentro, e la si sceglie subito:
+  // installare qualcosa e doverlo poi cercare in un elenco e' mezzo lavoro.
+  if (QComboBox *combo = getUI<QComboBox *>(lipSyncLanguage)) {
+    const QList<ComboBoxItem> items = buildLipSyncLanguageList();
+    combo->blockSignals(true);
+    combo->clear();
+    for (const ComboBoxItem &it : items) combo->addItem(it.first, it.second);
+    combo->blockSignals(false);
+    const int i = combo->findData(code.trimmed().toLower());
+    if (i >= 0) combo->setCurrentIndex(i);
+  }
+  m_pref->setValue(lipSyncLanguage, code.trimmed().toLower());
+  DVGui::info(tr("Language «%1» installed in %2.")
+                  .arg(code.trimmed(), ZtoryVosk::userModelsFolder()));
+}
 
 QList<ComboBoxItem> PreferencesPopup::buildFontStyleList() const {
   TFontManager* instance = TFontManager::instance();
@@ -1580,9 +1641,10 @@ QList<ComboBoxItem> PreferencesPopup::getComboItemList(
         {tr("Use Project Folder Aliases Only"),
          Preferences::ProjectFolderOnly}}},
       {lipSyncLanguage,
-       // Solo le lingue di cui imballiamo un modello Vosk. Aggiungerne una
-       // qui senza il .zvosk corrispondente fa ricadere su Whisper senza
-       // spiegare perche'.
+       // ⚠️ Questa lista NON e' piu' quella vera: le lingue si leggono dai
+       // modelli presenti (imballati o installati dall'utente) in
+       // buildLipSyncLanguageList(). Resta come ripiego per il caso in cui
+       // Vosk non si carichi affatto.
        {{tr("Auto-detect (Whisper, less precise timing)"), ""},
         {tr("Italian"), "it"},
         {tr("English"), "en"}}},
@@ -2228,8 +2290,22 @@ QGridLayout* PreferencesPopup::createImportExportLayout() {
                 "(accurate to a frame); on auto-detect it falls back to Whisper,\n"
                 "which recognises any language but times it less precisely."),
              lipSyncOptionsLay);
-    insertUI(lipSyncLanguage, lipSyncOptionsLay,
-             getComboItemList(lipSyncLanguage));
+    // Le lingue disponibili si CONTANO, non si elencano a mano: un modello
+    // installato dall'utente deve comparire qui, o installarlo non servirebbe
+    // a niente.
+    insertUI(lipSyncLanguage, lipSyncOptionsLay, buildLipSyncLanguageList());
+    {
+      auto *addLangBtn = new QPushButton(tr("Add language…"), this);
+      addLangBtn->setToolTip(
+          tr("Install a Vosk model downloaded from "
+             "alphacephei.com/vosk/models (unzip it first, then pick its "
+             "folder). Models stay in your personal folder, so emptying the "
+             "cache does not delete them."));
+      connect(addLangBtn, &QPushButton::clicked, this,
+              &PreferencesPopup::onAddLipSyncLanguage);
+      const int r = lipSyncOptionsLay->rowCount();
+      lipSyncOptionsLay->addWidget(addLangBtn, r, 1, Qt::AlignLeft);
+    }
     insertUI(lipSyncLeadFrames, lipSyncOptionsLay);
     insertUI(dialogueSpeakerHighlight, lipSyncOptionsLay);
 

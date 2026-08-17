@@ -20,6 +20,7 @@
 #include <QLabel>
 #include <QComboBox>
 #include <QRadioButton>
+#include <QAbstractButton>
 #include <QSize>
 #include <QStringList>
 #include <QTreeWidgetItem>
@@ -251,6 +252,40 @@ void PsdSettingsPopup::setPath(const TFilePath &path) {
       QString::fromStdWString(path.getParentDir().getWideString());
   m_filename->setText(filename);
   m_parentDir->setText(pathLbl);
+}
+
+void PsdSettingsPopup::applySettings(const QString &loadAs,
+                                     const QString &levelName,
+                                     const QString &groups, int subScene) {
+  // ⚠️ L'ORDINE conta. onModeChanged() legge l'opzione dei gruppi per decidere
+  // fra COLUMNS e FOLDER, e abilita la casella della sotto-scena solo in
+  // «Columns»: i gruppi vanno impostati PRIMA del modo, e la sotto-scena DOPO,
+  // perche' subxsheet() risponde solo se la casella e' abilitata.
+  const QStringList kGroups{"Ignore", "SubSceneColumns", "ColumnFrames"};
+  int gid = kGroups.indexOf(groups);
+  if (gid >= 0)
+    if (QAbstractButton *b = m_psdFolderOptions->button(gid))
+      b->setChecked(true);
+
+  if (!levelName.isEmpty()) {
+    // Per dato e non per testo tradotto: i valori salvati sono in inglese.
+    if (levelName == QLatin1String("LayerName"))
+      m_levelNameType->setCurrentIndex(1);
+    else
+      m_levelNameType->setCurrentIndex(0);
+  }
+
+  if (!loadAs.isEmpty()) {
+    int idx = m_loadMode->findData(loadAs);
+    // setCurrentIndex emette currentTextChanged, che ricalcola m_mode: e' cio'
+    // che rende questa funzione equivalente a un clic dell'utente.
+    if (idx >= 0) m_loadMode->setCurrentIndex(idx);
+  }
+  onModeChanged();  // anche quando l'indice non cambia (era gia' quello)
+
+  if (subScene >= 0) m_createSubXSheet->setChecked(subScene == 1);
+
+  doPsdParser();
 }
 
 void PsdSettingsPopup::onOk() {

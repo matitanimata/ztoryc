@@ -763,10 +763,22 @@ void ZtoryLipSync::completeWith(QVector<TimedWord> heard) {
                                   // sono da leggere, non da guardare in moto
   }
 
+  // QUALE MOTORE HA LAVORATO, sempre. I due non danno gli stessi tempi (10 ms
+  // contro 30, misurati il 2026-08-16): chi ottiene un risultato mediocre deve
+  // poter capire che per la sua lingua non c'e' un modello Vosk, invece di
+  // concludere che il lip sync e' impreciso.
+  const bool vosk = engineFor(m_req.language) == Engine::Vosk;
+  const QString how =
+      vosk ? tr("aligned with Vosk")
+           : m_req.language.isEmpty()
+                 ? tr("timed by Whisper — no language set, so no Vosk model")
+                 : tr("timed by Whisper — no Vosk model for '%1'")
+                       .arg(m_req.language);
   emit finished(true, tracks,
-                tr("%1 words across %2 characters.")
+                tr("%1 words across %2 characters (%3).")
                     .arg(aligned.size())
-                    .arg(tracks.size()));
+                    .arg(tracks.size())
+                    .arg(how));
 }
 
 
@@ -784,10 +796,28 @@ void ZtoryLipSync::completeWith(QVector<TimedWord> heard) {
 #include "tundo.h"
 
 #include <QMainWindow>
+#include <QEventLoop>
+#include <QStringList>
 
 #include <algorithm>
 
 namespace {
+
+// Il nome dell'intestazione, in UN posto solo: e' l'unica cosa che distingue
+// due colonne di testo altrimenti identiche, e serve sia a scriverle sia a
+// RITROVARLE (per non raddoppiarle rigenerando). Scritto in due punti,
+// diventerebbe due cose diverse alla prima correzione.
+QString lipSyncColumnName(const QString &characterName, bool mouths) {
+  return characterName +
+         (mouths ? QObject::tr(" mouths") : QObject::tr(" words"));
+}
+
+// Vero se il nome dell'intestazione e' quello di una colonna generata da noi.
+// Il personaggio davanti cambia, il suffisso no.
+bool isLipSyncColumnName(const QString &name) {
+  return name.endsWith(QObject::tr(" mouths")) ||
+         name.endsWith(QObject::tr(" words"));
+}
 
 // Scrive una colonna di testo per un personaggio: i FONEMI dove parla — per ora
 // le parole, i fonemi arriveranno con espeak-ng — e il RESTO esplicito dove
@@ -838,9 +868,8 @@ void writeCellsColumn(TXsheet *xsh, int col,
   // scriverlo era buttare via l'unica cosa che le distingue.
   if (!characterName.isEmpty())
     if (TStageObject *so = xsh->getStageObject(xsh->getColumnObjectId(col)))
-      so->setName((characterName + (restWhereSilent ? QObject::tr(" mouths")
-                                                    : QObject::tr(" words")))
-                      .toStdString());
+      so->setName(
+          lipSyncColumnName(characterName, restWhereSilent).toStdString());
 }
 
 class ZtoryLipSyncCommand final : public MenuItemHandler {
@@ -861,44 +890,15 @@ public:
 
     // Il copione: tutti i pannelli dello shot, nell'ordine in cui stanno.
     ZtoryModel *m = ZtoryModel::instance();
-    QStringList text;
-    for (const PanelData &p : m->shot(ctx.shotIndex).panels)
-      if (!p.dialog.trimmed().isEmpty()) text << p.dialog.trimmed();
-    if (text.isEmpty()) {
-      DVGui::warning(QObject::tr(
-          "This shot has no dialogue in its storyboard panels. The words come "
-          "from there — Whisper only supplies the timing."));
-      return;
-    }
-
-    const QString wav = ztoryExtractShotAudio(ctx);
-    if (wav.isEmpty()) {
-      DVGui::warning(QObject::tr(
-          "No audio over this shot in the main xsheet."));
-      return;
-    }
+    const QString dialogue = ztoryShotDialogue(m->shot(ctx.shotIndex).panels);
 
     ZtoryLipSync::Request req;
-    req.wavPath  = wav;
-    req.dialogue = text.join("\n\n");
-    // Lingua da Preferenze > Import/Export. Prima si ricavava dall'interruttore
-    // «phonetic» di Rhubarb, che pero' e' binario: dava solo "en" o niente, e su
-    // un progetto italiano non c'era modo di dire «italiano». Con Vosk la lingua
-    // sceglie anche il MOTORE, quindi doveva diventare una scelta esplicita.
-    req.language = Preferences::instance()->getLipSyncLanguage();
-    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
-    req.fps = scene->getProperties()->getOutputProperties()->getFrameRate();
-    // La sotto-scena parte dal fotogramma 1, e l'audio estratto parte
-    // dall'inizio dello shot: i due zeri coincidono.
-    req.firstFrame = 1;
-    // Durata vera dell'audio, dalle righe dello shot: e' il metro con cui si
-    // scarta la coda inventata dal riempimento a 30 secondi.
-    req.audioMs = int((ctx.lastRow - ctx.firstRow + 1) * 1000.0 / req.fps);
+    const QString why2 = ztoryPrepareLipSync(ctx, dialogue, req);
+    if (!why2.isEmpty()) { DVGui::warning(why2); return; }
 
-    auto *job = new ZtoryLipSync(TApp::instance()->getMainWindow());
-    const int shotIdx = ctx.shotIndex;
-    TXsheet *sub      = ctx.subXsheet;
-    const int lastF   = ctx.lastRow - ctx.firstRow + 1;
+    auto *job       = new ZtoryLipSync(TApp::instance()->getMainWindow());
+    TXsheet *sub    = ctx.subXsheet;
+    const int lastF = ctx.lastRow - ctx.firstRow + 1;
 
     QObject::connect(job, &ZtoryLipSync::finished, job,
                      [job, sub, lastF](bool ok,
@@ -908,26 +908,15 @@ public:
       if (!ok) { DVGui::warning(msg); return; }
 
       TUndoManager::manager()->beginBlock();
-      int written = 0, orphanWords = 0;
-      for (const ZtoryCharacterTrack &t : tracks) {
-        // Le parole senza personaggio NON spariscono piu' in silenzio: prima
-        // l'intera traccia veniva saltata, e chi guardava vedeva mancare
-        // proprio le battute dell'altro personaggio senza sapere perche'.
-        // Si scrive comunque la colonna e si dice quante parole erano orfane:
-        // quasi sempre e' un nome che il progetto non conosce.
-        if (t.assetUuid.isEmpty()) orphanWords += t.spoken.size();
-        // Prima le parole, poi le bocche: nel foglio si legge da sinistra, e la
-        // battuta viene prima di come la si esegue.
-        // Senza personaggio riconosciuto il nome resta vuoto: meglio una
-        // colonna anonima che una intestata a un nome inventato.
-        const QString who = t.characterName;
-        writeCellsColumn(sub, sub->getColumnCount(), t.spoken, lastF, false, who);
-        written++;
-        if (!t.words.isEmpty()) {
-          writeCellsColumn(sub, sub->getColumnCount(), t.words, lastF, true, who);
-          written++;
-        }
-      }
+      // Rigenerare vuol dire SOSTITUIRE: chi rilancia il comando su uno shot
+      // che ha gia' le sue colonne si aspetta di vederle rifatte, non di
+      // trovarne altre quattro accanto alle vecchie. Si tolgono qui e non
+      // prima di partire: se l'allineamento fallisce, le vecchie sono ancora
+      // meglio di niente.
+      for (int c : ztoryFindLipSyncColumns(sub)) sub->removeColumn(c);
+      int orphanWords = 0;
+      const int written =
+          ztoryWriteLipSyncColumns(sub, tracks, lastF, &orphanWords).size();
       TUndoManager::manager()->endBlock();
       TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
       QString extra;
@@ -944,3 +933,136 @@ public:
 } ztoryLipSyncCommand;
 
 }  // namespace
+
+//=============================================================================
+// Le stesse operazioni, chiamabili da fuori: l'export le usa una per shot.
+//=============================================================================
+
+QString ztoryShotDialogue(const std::vector<PanelData> &panels) {
+  QStringList text;
+  for (const PanelData &p : panels)
+    if (!p.dialog.trimmed().isEmpty()) text << p.dialog.trimmed();
+  // Riga vuota fra un pannello e l'altro: parseDialogue() legge il testo come
+  // e' scritto nel pannello, e due battute attaccate diventerebbero una.
+  return text.join("\n\n");
+}
+
+//-----------------------------------------------------------------------------
+
+QString ztoryPrepareLipSync(const ZtoryShotContext &ctx,
+                            const QString &dialogue,
+                            ZtoryLipSync::Request &req) {
+  if (!ctx.isValid())
+    return QObject::tr("No shot to work on.");
+  if (dialogue.trimmed().isEmpty())
+    return QObject::tr(
+        "This shot has no dialogue in its storyboard panels. The words come "
+        "from there — the engine only supplies the timing.");
+
+  const QString wav = ztoryExtractShotAudio(ctx);
+  if (wav.isEmpty())
+    return QObject::tr("No audio over this shot in the main xsheet.");
+
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return QObject::tr("No scene.");
+
+  req.wavPath  = wav;
+  req.dialogue = dialogue;
+  // Lingua da Preferenze > Import/Export. Prima si ricavava dall'interruttore
+  // «phonetic» di Rhubarb, che pero' e' binario: dava solo "en" o niente, e su
+  // un progetto italiano non c'era modo di dire «italiano». Con Vosk la lingua
+  // sceglie anche il MOTORE, quindi doveva diventare una scelta esplicita.
+  req.language = Preferences::instance()->getLipSyncLanguage();
+  req.fps = scene->getProperties()->getOutputProperties()->getFrameRate();
+  // La sotto-scena parte dal fotogramma 1, e l'audio estratto parte
+  // dall'inizio dello shot: i due zeri coincidono.
+  req.firstFrame = 1;
+  // Durata vera dell'audio, dalle righe dello shot: e' il metro con cui si
+  // scarta la coda inventata dal riempimento a 30 secondi.
+  req.audioMs = int((ctx.lastRow - ctx.firstRow + 1) * 1000.0 / req.fps);
+  return QString();
+}
+
+//-----------------------------------------------------------------------------
+
+bool ztoryRunLipSyncBlocking(const ZtoryLipSync::Request &req,
+                             QVector<ZtoryCharacterTrack> &tracks,
+                             QString &message) {
+  ZtoryLipSync job;
+  bool ok = false, done = false;
+  QEventLoop loop;
+  QObject::connect(&job, &ZtoryLipSync::finished,
+                   [&](bool o, const QVector<ZtoryCharacterTrack> &t,
+                       const QString &m) {
+                     ok      = o;
+                     tracks  = t;
+                     message = m;
+                     done    = true;
+                     loop.quit();
+                   });
+  // ⚠️ start() puo' fallire DOPO aver gia' emesso finished() (whisper-cli che
+  // non parte). Entrare comunque nel ciclo aspetterebbe un segnale gia'
+  // passato: l'export resterebbe li' per sempre.
+  const bool started = job.start(req);
+  if (!started && !done) {
+    message = ZtoryLipSync::unavailableReason();
+    if (message.isEmpty())
+      message = QObject::tr("Could not start the lip sync engine.");
+    return false;
+  }
+  // Niente clic mentre si aspetta: l'export sta lavorando dentro una
+  // sotto-scena aperta, e un secondo comando lanciato adesso la troverebbe in
+  // uno stato che non e' ne' quello di prima ne' quello di dopo.
+  if (!done) loop.exec(QEventLoop::ExcludeUserInputEvents);
+  return ok;
+}
+
+//-----------------------------------------------------------------------------
+
+QList<int> ztoryWriteLipSyncColumns(TXsheet *sub,
+                                    const QVector<ZtoryCharacterTrack> &tracks,
+                                    int lastFrame, int *orphanWords) {
+  QList<int> created;
+  if (!sub) return created;
+  int orphans = 0;
+  for (const ZtoryCharacterTrack &t : tracks) {
+    // Le parole senza personaggio NON spariscono in silenzio: prima l'intera
+    // traccia veniva saltata, e chi guardava vedeva mancare proprio le battute
+    // dell'altro personaggio senza sapere perche'. Si scrive comunque la
+    // colonna e si dice quante parole erano orfane: quasi sempre e' un nome
+    // che il progetto non conosce.
+    if (t.assetUuid.isEmpty()) orphans += t.spoken.size();
+    // Prima le parole, poi le bocche: nel foglio si legge da sinistra, e la
+    // battuta viene prima di come la si esegue.
+    // Senza personaggio riconosciuto il nome resta vuoto: meglio una colonna
+    // anonima che una intestata a un nome inventato.
+    const QString who = t.characterName;
+    int col = sub->getColumnCount();
+    writeCellsColumn(sub, col, t.spoken, lastFrame, false, who);
+    created.append(col);
+    if (!t.words.isEmpty()) {
+      col = sub->getColumnCount();
+      writeCellsColumn(sub, col, t.words, lastFrame, true, who);
+      created.append(col);
+    }
+  }
+  if (orphanWords) *orphanWords = orphans;
+  return created;
+}
+
+//-----------------------------------------------------------------------------
+
+QList<int> ztoryFindLipSyncColumns(TXsheet *sub) {
+  QList<int> cols;
+  if (!sub) return cols;
+  // In ordine DECRESCENTE: chi le trova quasi sempre le sta per togliere, e
+  // togliere dall'inizio sposta sotto i piedi gli indici che restano.
+  for (int c = sub->getColumnCount() - 1; c >= 0; c--) {
+    TXshColumn *col = sub->getColumn(c);
+    if (!col || !col->getSoundTextColumn()) continue;
+    TStageObject *so = sub->getStageObject(sub->getColumnObjectId(c));
+    if (so && isLipSyncColumnName(QString::fromStdString(so->getName())))
+      cols.append(c);
+  }
+  return cols;
+}

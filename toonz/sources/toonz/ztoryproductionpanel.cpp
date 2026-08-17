@@ -22,6 +22,7 @@
 #include "xlsxcellreference.h"
 
 #include <QVBoxLayout>
+#include <QRegularExpression>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QImage>
@@ -1812,6 +1813,11 @@ bool ZtoryProductionPanel::linkAssetFileInteractive(int assetIndex) {
   return true;
 }
 
+// La colonna della tabella Breakdown che porta l'indice dell'asset (Qt::UserRole).
+// In un posto solo: quando si aggiunge una colonna a sinistra, l'indice scritto
+// a mano in tre punti se ne accorge in due.
+static const int kBreakdownAssetCol = 2;
+
 void ZtoryProductionPanel::onBreakdownContextMenu(const QPoint &pos) {
   if (!m_breakdownTable) return;
   QTableWidgetItem *it = m_breakdownTable->itemAt(pos);
@@ -1820,7 +1826,9 @@ void ZtoryProductionPanel::onBreakdownContextMenu(const QPoint &pos) {
   // e lo stesso asset compare in piu' righe, quindi risalirci dal nome sarebbe
   // sbagliato appena due asset si chiamano uguale in tipi diversi.
   const int assetIndex =
-      m_breakdownTable->item(it->row(), 1)->data(Qt::UserRole).toInt();
+      m_breakdownTable->item(it->row(), kBreakdownAssetCol)
+          ->data(Qt::UserRole)
+          .toInt();
   ZtoryModel *m = ZtoryModel::instance();
   if (assetIndex < 0 || assetIndex >= m->assetCount()) return;
   const Asset &a    = m->assets()[assetIndex];
@@ -1853,6 +1861,176 @@ void ZtoryProductionPanel::onBreakdownContextMenu(const QPoint &pos) {
   }
 }
 
+//-----------------------------------------------------------------------------
+// Scrivere il breakdown a mano. Il pezzo che mancava: senza, «questo shot ha
+// bisogno di questo asset» si poteva dire solo passando da Kitsu.
+//-----------------------------------------------------------------------------
+
+namespace {
+
+// L'etichetta con cui uno shot di progetto si riconosce fra gli altri: piu'
+// storyboard nello stesso progetto hanno ognuno il suo SH010, e senza la
+// provenienza si sceglie quello sbagliato.
+QString projectShotLabel(const ProjectShot &ps) {
+  QString src = ps.source;
+  src.remove(QRegularExpression("\\.ztoryc$",
+                                QRegularExpression::CaseInsensitiveOption));
+  QString s = ps.seq.isEmpty() ? ps.label : (ps.seq + " " + ps.label);
+  if (!src.isEmpty()) s += "   —   " + src;
+  return s;
+}
+
+int projectShotIndexByUuid(const QString &uuid) {
+  const std::vector<ProjectShot> &v = ZtoryModel::instance()->projectShots();
+  for (int i = 0; i < (int)v.size(); i++)
+    if (v[i].uuid == uuid) return i;
+  return -1;
+}
+
+}  // namespace
+
+void ZtoryProductionPanel::onBreakdownAdd() {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (m->projectShots().empty() || m->assetCount() == 0) {
+    DVGui::warning(QObject::tr(
+        "Add some assets first, and save the storyboard so its shots reach the "
+        "project."));
+    return;
+  }
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(QObject::tr("This shot needs…"));
+  auto *lay  = new QVBoxLayout(&dlg);
+  auto *form = new QFormLayout();
+  lay->addLayout(form);
+
+  auto *shotCombo = new QComboBox(&dlg);
+  for (const ProjectShot &ps : m->projectShots())
+    shotCombo->addItem(projectShotLabel(ps), ps.uuid);
+  // Se una riga e' selezionata, si parte da quel suo shot: quasi sempre si
+  // aggiunge un asset allo shot che si sta guardando.
+  if (m_breakdownTable && m_breakdownTable->currentRow() >= 0)
+    if (QTableWidgetItem *it =
+            m_breakdownTable->item(m_breakdownTable->currentRow(), 0)) {
+      int i = shotCombo->findData(it->data(Qt::UserRole).toString());
+      if (i >= 0) shotCombo->setCurrentIndex(i);
+    }
+
+  auto *assetCombo = new QComboBox(&dlg);
+  for (int i = 0; i < m->assetCount(); i++) {
+    const Asset &a = m->assets()[i];
+    assetCombo->addItem(QString("%1  (%2)").arg(a.name, a.type), a.uuid);
+  }
+  auto *nSpin = new QSpinBox(&dlg);
+  nSpin->setRange(1, 99);
+
+  form->addRow(QObject::tr("Shot:"), shotCombo);
+  form->addRow(QObject::tr("Asset:"), assetCombo);
+  form->addRow(QObject::tr("How many:"), nSpin);
+
+  auto *box = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  lay->addWidget(box);
+  connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  if (dlg.exec() != QDialog::Accepted) return;
+
+  const int si = projectShotIndexByUuid(shotCombo->currentData().toString());
+  if (si < 0) return;
+  QVector<BreakdownEntry> b = m->projectShots()[si].breakdown;
+  const QString assetUuid   = assetCombo->currentData().toString();
+  for (BreakdownEntry &be : b)
+    if (be.assetUuid == assetUuid) {
+      // Gia' presente: si aggiorna il numero invece di aggiungere una seconda
+      // riga per la stessa coppia, che al momento dell'import sarebbe lo stesso
+      // file due volte.
+      be.nbOccurrences = nSpin->value();
+      m->setShotBreakdown(si, b);
+      m->saveProjectDb();
+      rebuildBreakdown();
+      return;
+    }
+  BreakdownEntry be;
+  be.assetUuid     = assetUuid;
+  be.nbOccurrences = nSpin->value();
+  b.push_back(be);
+  m->setShotBreakdown(si, b);
+  m->saveProjectDb();
+  rebuildBreakdown();
+}
+
+void ZtoryProductionPanel::onBreakdownRemove() {
+  if (!m_breakdownTable) return;
+  const int row = m_breakdownTable->currentRow();
+  if (row < 0) return;
+  QTableWidgetItem *key = m_breakdownTable->item(row, 0);
+  if (!key) return;
+  const QString shotUuid  = key->data(Qt::UserRole).toString();
+  const QString assetUuid = key->data(Qt::UserRole + 1).toString();
+  const int si            = projectShotIndexByUuid(shotUuid);
+  if (si < 0) return;
+  ZtoryModel *m             = ZtoryModel::instance();
+  QVector<BreakdownEntry> b = m->projectShots()[si].breakdown;
+  for (int i = 0; i < b.size(); i++)
+    if (b[i].assetUuid == assetUuid) { b.remove(i); break; }
+  m->setShotBreakdown(si, b);
+  m->saveProjectDb();
+  rebuildBreakdown();
+}
+
+void ZtoryProductionPanel::onBreakdownFromDialogue() {
+  ZtoryModel *m = ZtoryModel::instance();
+  // Solo gli shot dello storyboard APERTO: i dialoghi stanno nei suoi pannelli,
+  // e degli shot degli altri storyboard qui non si sa niente.
+  int added = 0, shotsTouched = 0, noProjectShot = 0;
+  for (int i = 0; i < m->shotCount(); i++) {
+    const ShotData &sd = m->shot(i);
+    if (sd.uuid.isEmpty()) continue;
+    const int si = projectShotIndexByUuid(sd.uuid);
+    if (si < 0) { noProjectShot++; continue; }
+
+    // Chi parla nei pannelli di questo shot, gia' risolto in asset: e'
+    // esattamente cio' che rende verdi i nomi nel Board.
+    QSet<QString> speakers;
+    for (const PanelData &p : sd.panels)
+      for (const DialogueLine &dl : m->parseDialogue(p.dialog))
+        if (dl.matched && !dl.assetUuid.isEmpty()) speakers.insert(dl.assetUuid);
+    if (speakers.isEmpty()) continue;
+
+    QVector<BreakdownEntry> b = m->projectShots()[si].breakdown;
+    QSet<QString> have;
+    for (const BreakdownEntry &be : b) have.insert(be.assetUuid);
+    bool changed = false;
+    for (const QString &u : speakers) {
+      if (have.contains(u)) continue;
+      // Si AGGIUNGE soltanto. Cio' che c'e' gia' — magari messo a mano o
+      // arrivato da Kitsu — non si tocca: questo bottone e' un aiuto, non
+      // un'autorita' sul breakdown.
+      BreakdownEntry be;
+      be.assetUuid = u;
+      b.push_back(be);
+      changed = true;
+      added++;
+    }
+    if (changed) {
+      m->setShotBreakdown(si, b);
+      shotsTouched++;
+    }
+  }
+  if (added > 0) m->saveProjectDb();
+  rebuildBreakdown();
+
+  QString msg = QObject::tr("%1 character(s) added across %2 shot(s).")
+                    .arg(added)
+                    .arg(shotsTouched);
+  if (noProjectShot > 0)
+    msg += QObject::tr(
+               "\n%1 shot(s) of this storyboard are not in the project yet: "
+               "save the scene to publish them.")
+               .arg(noProjectShot);
+  DVGui::info(msg);
+}
+
 QWidget *ZtoryProductionPanel::buildBreakdownTab() {
   QWidget *w = new QWidget(this);
   auto *lay  = new QVBoxLayout(w);
@@ -1864,6 +2042,29 @@ QWidget *ZtoryProductionPanel::buildBreakdownTab() {
       "Read from Kitsu which assets each shot needs (Kitsu calls it casting).\n"
       "Read-only for now: nothing is sent back."));
   btns->addWidget(m_breakdownPullBtn);
+  // ⚠️ Fino a oggi l'UNICO che scriveva il breakdown era la pull da Kitsu: su
+  // un progetto senza Kitsu non c'era modo di dire «questo shot ha bisogno di
+  // questo asset», e l'import degli asset all'export non avrebbe mai potuto
+  // fare niente.
+  auto *addBreakdownBtn = new QPushButton(QObject::tr("+ Add"), w);
+  addBreakdownBtn->setToolTip(
+      QObject::tr("Say by hand that a shot needs an asset."));
+  auto *remBreakdownBtn = new QPushButton(QObject::tr("− Remove"), w);
+  auto *fromDialogueBtn =
+      new QPushButton(QObject::tr("Characters from the dialogue"), w);
+  fromDialogueBtn->setToolTip(QObject::tr(
+      "For every shot of the storyboard now open, add the characters that "
+      "speak in its panels — the same names the Board shows in green.\n"
+      "Only adds what is missing: nothing already there is touched."));
+  btns->addWidget(addBreakdownBtn);
+  btns->addWidget(remBreakdownBtn);
+  btns->addWidget(fromDialogueBtn);
+  connect(addBreakdownBtn, &QPushButton::clicked, this,
+          &ZtoryProductionPanel::onBreakdownAdd);
+  connect(remBreakdownBtn, &QPushButton::clicked, this,
+          &ZtoryProductionPanel::onBreakdownRemove);
+  connect(fromDialogueBtn, &QPushButton::clicked, this,
+          &ZtoryProductionPanel::onBreakdownFromDialogue);
   m_breakdownLabel = new QLabel(QString(), w);
   btns->addWidget(m_breakdownLabel);
   btns->addStretch();
@@ -1881,7 +2082,8 @@ QWidget *ZtoryProductionPanel::buildBreakdownTab() {
   // doppio clic = collega, senza passare dalla scheda Assets.
   connect(m_breakdownTable, &QTableWidget::cellDoubleClicked, this,
           [this](int row, int) {
-            QTableWidgetItem *it = m_breakdownTable->item(row, 1);
+            QTableWidgetItem *it =
+                m_breakdownTable->item(row, kBreakdownAssetCol);
             if (it) linkAssetFileInteractive(it->data(Qt::UserRole).toInt());
           });
 
@@ -1901,10 +2103,16 @@ void ZtoryProductionPanel::rebuildBreakdown() {
   ZtoryModel *m = ZtoryModel::instance();
 
   m_breakdownTable->clear();
-  m_breakdownTable->setColumnCount(5);
+  // ⚠️ La colonna «Storyboard» non e' un di piu'. Un progetto ha piu' file di
+  // storyboard, e ognuno ha il suo SH010: senza la provenienza, due righe
+  // «SH010» di due storyboard diversi sono indistinguibili — e si finisce per
+  // credere che lo shot che si sta esportando abbia il breakdown di un altro.
+  // Successo davvero il 2026-08-17, con l'export che diceva giustamente «non
+  // c'e' niente da importare» mentre la tabella mostrava quattro asset.
+  m_breakdownTable->setColumnCount(6);
   m_breakdownTable->setHorizontalHeaderLabels(
-      {QObject::tr("Shot"), QObject::tr("Asset"), QObject::tr("Type"),
-       QObject::tr("×"), QObject::tr("File")});
+      {QObject::tr("Storyboard"), QObject::tr("Shot"), QObject::tr("Asset"),
+       QObject::tr("Type"), QObject::tr("×"), QObject::tr("File")});
 
   // One row per (shot, asset): the flat form is what you read when you want to
   // know «what does this shot need», and it sorts and searches naturally.
@@ -1929,13 +2137,28 @@ void ZtoryProductionPanel::rebuildBreakdown() {
           break;
         }
 
-      m_breakdownTable->setItem(r, 0, new QTableWidgetItem(ps.label));
+      QString src = ps.source;
+      src.remove(QRegularExpression("\\.ztoryc$", 
+                                    QRegularExpression::CaseInsensitiveOption));
+      auto *srcItem = new QTableWidgetItem(src);
+      // Le due chiavi della riga: quale shot e quale asset. Servono a togliere
+      // la voce senza dover indovinare da nome ed etichetta, che si ripetono.
+      srcItem->setData(Qt::UserRole, ps.uuid);
+      srcItem->setData(Qt::UserRole + 1, be.assetUuid);
+      srcItem->setToolTip(ps.source);
+      srcItem->setForeground(QBrush(QColor("#999999")));
+      m_breakdownTable->setItem(r, 0, srcItem);
+      // Sequenza + shot: due storyboard possono avere lo stesso SH010, ma
+      // dentro uno stesso storyboard e' la sequenza a distinguerli.
+      const QString shotText =
+          ps.seq.isEmpty() ? ps.label : (ps.seq + " " + ps.label);
+      m_breakdownTable->setItem(r, 1, new QTableWidgetItem(shotText));
       auto *nameItem = new QTableWidgetItem(name);
       nameItem->setData(Qt::UserRole, assetIndex);
-      m_breakdownTable->setItem(r, 1, nameItem);
-      m_breakdownTable->setItem(r, 2, new QTableWidgetItem(type));
+      m_breakdownTable->setItem(r, kBreakdownAssetCol, nameItem);
+      m_breakdownTable->setItem(r, 3, new QTableWidgetItem(type));
       m_breakdownTable->setItem(
-          r, 3,
+          r, 4,
           new QTableWidgetItem(be.nbOccurrences > 1
                                    ? QString::number(be.nbOccurrences)
                                    : QString()));
@@ -1958,7 +2181,7 @@ void ZtoryProductionPanel::rebuildBreakdown() {
           fileItem->setForeground(QBrush(QColor("#F5A623")));
         }
       }
-      m_breakdownTable->setItem(r, 4, fileItem);
+      m_breakdownTable->setItem(r, 5, fileItem);
       r++;
     }
   }

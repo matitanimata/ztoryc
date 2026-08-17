@@ -250,6 +250,17 @@ struct Shot {
   bool    m_currentSceneIsCharacter = false;
   // B3: suppress publication for scenes the user chose to keep standalone.
   bool    m_suppressProjectPublication = false;
+  // La richiesta della sequenza (shot che si chiamano come quelli di un altro
+  // storyboard) si fa UNA volta per scena caricata: saveZtoryc() gira a ogni
+  // modifica, e una domanda a ogni salvataggio e' insopportabile.
+  // ⚠️ STATICA, non per pannello: i Board aperti sono piu' d'uno (Board room,
+  // shot editor, board flottante) e ognuno salva il suo .ztoryc. Con un campo
+  // per istanza la domanda tornava una volta PER PANNELLO — cioe' sembrava
+  // che non si chiudesse mai (2026-08-17).
+  static bool s_shotIdentityPromptDone;
+  // Chiede una sequenza quando gli shot di questa scena si chiamerebbero come
+  // quelli di un altro storyboard dello stesso progetto.
+  void    ensureShotIdentityUnique(const QString &sourceFile);
   // Column index of the last shot edited while inside a sub-scene.
   // Set when xsheetChanged fires inside a sub-scene; used in showEvent to
   // invalidate that shot's stale thumbnail so it gets re-rendered on Board show.
@@ -331,6 +342,11 @@ public:
   // ExportScenePopup which creates the project and collects the assets.
   void onExportShotsToProject();
   void onExportAnimatic();
+  // Lip sync degli shot scelti nel Board, senza entrare in ogni sotto-scena.
+  // E' l'altra meta' dell'opzione nell'export: li' le colonne nascono nella
+  // scena esportata, qui restano nello storyboard — servono a CONTROLLARE il
+  // sincrono mentre lo storyboard e' ancora in lavorazione.
+  void onLipSyncShots();
   // Storyboard Settings dialog (production/episode/title/technique/numbering).
   void onStoryboardSettings();
   // Toolbar dedup (Board↔Animatic): hide the shared shot-op buttons
@@ -393,6 +409,21 @@ private:
   bool m_textEditing = false;
   std::vector<ZtoryShotSnap> m_textUndoBefore;
 
+public:
+  // Le scelte che i due popup di export raccogliono e che il ciclo applica a
+  // ogni shot. Uno struct e non altri due bool in coda alla firma: la lista
+  // cresce (lip sync, asset dal breakdown...) e una firma piena di bool si
+  // sbaglia in silenzio scambiandone due.
+  struct ShotExportOptions {
+    // .ztoryc con role="shot" accanto alla scena + avanzamento dei task.
+    bool writeLink = false;
+    // Ogni shot esportato esce con le colonne parole+bocche gia' generate.
+    bool lipSync = false;
+    // Ogni shot esportato nasce con dentro gli asset del suo breakdown.
+    bool importAssets = false;
+  };
+
+private:
   // Shared core of onExportShots / onExportShotsToProject: saves each listed
   // shot as a standalone .tnz (with animatic audio injected) into outDirFp.
   // Returns the exported scene paths; failures are counted in `fail`.
@@ -402,7 +433,7 @@ private:
   // copies these into the destination project after import.
   QList<TFilePath> exportShotScenesToDir(
       const QList<int> &indices, const TFilePath &outDirFp, int version,
-      bool writeLink, int &fail,
+      const ShotExportOptions &opts, int &fail,
       QHash<QString, QList<QPair<TFilePath, TFilePath>>> *assetCopies = nullptr);
 };
 

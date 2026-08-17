@@ -47,6 +47,7 @@
 #include <QApplication>
 #include <QScreen>
 #include <QMessageBox>
+#include <QFileInfo>
 #include <QTextStream>
 #include <QFrame>
 #include <QGroupBox>
@@ -2152,6 +2153,50 @@ void StartupScenesList::contextMenuEvent(QContextMenuEvent *event) {
   if (!ZtoryCharacter::setRole(path, role, &why)) {
     DVGui::warning(tr("Could not change the role: %1").arg(why));
     return;
+  }
+
+  // ⚠️ Cambiare il ruolo impedisce le pubblicazioni FUTURE, ma non tocca cio'
+  // che questa scena ha gia' pubblicato: quegli shot restano nel tracker per
+  // sempre, perche' da qui in poi nessuno li ripubblica e nessuno li toglie.
+  // E' cosi' che un progetto si ritrova quattro SH010 di quattro file diversi,
+  // indistinguibili fra loro (successo davvero, 2026-08-17).
+  if (current == QLatin1String("storyboard") &&
+      role != QLatin1String("storyboard")) {
+    ZtoryModel *m        = ZtoryModel::instance();
+    const QString dbPath = m->projectDbPath();
+    // Solo se la scena appartiene AL PROGETTO che il tracker ha in memoria:
+    // togliere shot da un altro progetto sarebbe un danno silenzioso.
+    const QString projDir = QFileInfo(dbPath).absolutePath();
+    const bool sameProject =
+        !dbPath.isEmpty() && !projDir.isEmpty() &&
+        QFileInfo(path).absoluteFilePath().startsWith(projDir + "/");
+    const QString source =
+        QFileInfo(ZtoryCharacter::sidecarPathFor(path)).fileName();
+    const int n = sameProject ? m->projectShotCountFromSource(source) : 0;
+    if (n > 0) {
+      QMessageBox ask(this);
+      ask.setWindowTitle(tr("Shots in the Production Tracker"));
+      ask.setIcon(QMessageBox::Question);
+      ask.setText(tr("This scene has %1 shot(s) in the Production Tracker, "
+                     "published while it was a storyboard.")
+                      .arg(n));
+      ask.setInformativeText(
+          tr("Now that it is not a storyboard any more, nothing will keep them "
+             "up to date — and a shot called like one of another storyboard "
+             "makes the two impossible to tell apart.\n\n"
+             "Their task statuses, assignees and breakdown are removed with "
+             "them."));
+      QPushButton *rem =
+          ask.addButton(tr("Remove them"), QMessageBox::AcceptRole);
+      ask.addButton(tr("Keep them"), QMessageBox::RejectRole);
+      ask.exec();
+      if (ask.clickedButton() == rem) {
+        const int removed = m->removeProjectShotsFromSource(source);
+        m->saveProjectDb();
+        emit m->taskStatusChanged();  // il tracker si ridisegna
+        DVGui::info(tr("%1 shot(s) removed from the project.").arg(removed));
+      }
+    }
   }
   // Rifare la miniatura e' l'unico modo di far vedere subito la pastiglia
   // nuova: senza, la correzione sembrerebbe non aver fatto niente.

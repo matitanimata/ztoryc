@@ -63,6 +63,17 @@ public:
   PsdSettingsPopup();
 
   void setPath(const TFilePath &path);
+  // Impostare le scelte SENZA aprire la finestra, e preparare i percorsi come
+  // farebbe l'OK. Serve all'export di Ztoryc, che importa i PSD con le
+  // impostazioni dell'asset e del progetto: fermarsi a chiedere per ognuno
+  // vorrebbe dire una finestra per PSD per shot.
+  // I valori sono le stesse stringhe che l'interfaccia mostra:
+  //   loadAs    "Single Image" | "Frames" | "Columns"
+  //   levelName "FileName#LayerName" | "LayerName"
+  //   groups    "Ignore" | "SubSceneColumns" | "ColumnFrames"
+  //   subScene  <0 non impostato, 0 no, 1 si'
+  void applySettings(const QString &loadAs, const QString &levelName,
+                     const QString &groups, int subScene);
   int getPsdLevelCount() { return m_psdLevelPaths.size(); };
   TFilePath getPsdPath(int levelIndex);
   TFilePath getPsdFramePath(int levelIndex, int frameIndex);

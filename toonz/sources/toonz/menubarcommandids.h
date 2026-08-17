@@ -358,6 +358,7 @@
 #define MI_ZtoryShowMesh "MI_ZtoryShowMesh"
 #define MI_ZtoryLipSyncShot "MI_ZtoryLipSyncShot"
 #define MI_ZtoryApplyMouths "MI_ZtoryApplyMouths"
+#define MI_ZtoryLipSyncShots "MI_ZtoryLipSyncShots"
 #define MI_ToggleXsheetBreadcrumbs "MI_ToggleXsheetBreadcrumbs"
 #define MI_FoldColumns "MI_FoldColumns"
 #define MI_ToggleXsheetCameraColumn "MI_ToggleXsheetCameraColumn"

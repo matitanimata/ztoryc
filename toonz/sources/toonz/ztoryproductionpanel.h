@@ -148,6 +148,10 @@ private:
   QLineEdit *m_modelSheetDirEdit = nullptr;
   QTableWidget *m_breakdownTable = nullptr;
   QPushButton  *m_breakdownPullBtn = nullptr;
+  // Scrittura del breakdown a mano: fino alla 0.13.0 lo scriveva solo Kitsu.
+  void onBreakdownAdd();
+  void onBreakdownRemove();
+  void onBreakdownFromDialogue();
   QLabel       *m_breakdownLabel = nullptr;
   void reloadAssetTypesTab();        // model → asset-type list
   void reloadAssetTaskTypeList();    // selected asset type → its task pipeline

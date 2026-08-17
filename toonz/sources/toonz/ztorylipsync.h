@@ -17,9 +17,12 @@
 
 #include "ztorymodel.h"
 
+#include <QList>
 #include <QObject>
 #include <QString>
 #include <QVector>
+
+#include <vector>
 
 class QProcess;
 
@@ -135,3 +138,38 @@ private:
   QString   m_jsonPath;
   class QThread *m_voskThread = nullptr;
 };
+
+//----------------------------------------------------------------------------
+// I pezzi di UNA passata di lip sync, tirati fuori dal comando perché ora i
+// chiamanti sono due: il comando (asincrono, l'interfaccia resta viva) e
+// l'export (sincrono, un ciclo su tutti gli shot). Due copie della stessa
+// regola sono il modo in cui la regola prende due strade diverse.
+//----------------------------------------------------------------------------
+
+// Il copione di uno shot: i dialoghi dei suoi pannelli, nell'ordine in cui
+// stanno. Vuoto = niente da allineare.
+QString ztoryShotDialogue(const std::vector<PanelData> &panels);
+
+// Prepara la richiesta: estrae l'audio, prende lingua, fps e durata vera.
+// Ritorna il MOTIVO per cui non si può partire — una frase già pronta da
+// mostrare — o stringa vuota se `req` è utilizzabile.
+QString ztoryPrepareLipSync(const ZtoryShotContext &ctx,
+                            const QString &dialogue,
+                            ZtoryLipSync::Request &req);
+
+// Esegue e ASPETTA. Serve a chi non ha una interfaccia da tenere viva:
+// l'export è un ciclo sincrono e non può proseguire senza le tracce.
+bool ztoryRunLipSyncBlocking(const ZtoryLipSync::Request &req,
+                             QVector<ZtoryCharacterTrack> &tracks,
+                             QString &message);
+
+// Scrive in coda alla sotto-scena le colonne di ogni personaggio (parole e
+// bocche). Ritorna gli indici creati: chi esporta le toglie dopo il
+// salvataggio, perché lo storyboard non deve accumularle a ogni export.
+QList<int> ztoryWriteLipSyncColumns(class TXsheet *sub,
+                                    const QVector<ZtoryCharacterTrack> &tracks,
+                                    int lastFrame, int *orphanWords = nullptr);
+
+// Le colonne di dialogo già presenti in una sotto-scena. Servono a non
+// raddoppiarle: rigenerare vuol dire sostituire, non aggiungere.
+QList<int> ztoryFindLipSyncColumns(class TXsheet *sub);

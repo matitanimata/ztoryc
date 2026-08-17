@@ -461,6 +461,7 @@ void TopBar::loadMenubar() {
   // diverso: li' si sceglie a mano un audio, qui il copione dei pannelli e
   // l'audio dello shot vengono presi da soli.
   addMenuItem(sceneMenu, MI_ZtoryLipSyncShot);
+  addMenuItem(sceneMenu, MI_ZtoryLipSyncShots);
   addMenuItem(sceneMenu, MI_ZtoryApplyMouths);
   sceneMenu->addSeparator();
   addMenuItem(sceneMenu, MI_RemoveEmptyColumns);
