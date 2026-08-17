@@ -1,3 +1,30 @@
+## `portableStatus` non dichiarato: Tahoma2D 1.6.2 non compila su Linux
+
+**Sintomo.** Build Linux (gcc e clang) rotta:
+`tenv.cpp:308: error: 'portableStatus' was not declared in this scope`.
+
+**File e riga.** `toonz/sources/common/tapptools/tenv.cpp`, ramo
+`#elif defined(LINUX) || defined(FREEBSD)` di `setWorkingDirectory()`.
+
+**Causa root.** Il blocco che cerca la cartella portatile a partire dalla
+variabile d'ambiente `APPIMAGE` usa una variabile `portableStatus` che non
+esiste da nessuna parte. Il ramo e' compilato SOLO su Linux/FreeBSD, quindi
+su macOS e Windows non se ne accorge nessuno. Arriva dalla 1.6.2 (upstream
+«Fix AppImage working directory»).
+
+**Fix applicato (Ztoryc, 2026-08-17).** Si usa `TFileStatus(portableCheck)`
+direttamente, come fanno gli altri rami. Nello stesso punto e' stato corretto
+un secondo difetto **nostro**: cercava solo «tahomastuff», mentre la cartella
+portatile di Ztoryc si chiama «ztorycstuff» — l'AppImage non l'avrebbe
+trovata mai. Ora scorre `stuffNames` come gli altri rami e valorizza anche
+`m_stuffDirName`.
+
+**Stato.** Diagnosticato sulla CI Linux di Ztoryc (run 32021466547).
+NON verificato su Tahoma2D stock: se upstream la loro CI Linux e' verde,
+allora hanno un percorso di compilazione diverso e va capito prima di
+proporre. La parte da proporre e' SOLO la variabile non dichiarata — il
+nome della cartella e' roba Ztoryc.
+
 # Ztoryc → Tahoma2D — candidati PR upstream
 
 > ✅ **FONTE DI VERITÀ.** Lista di lavoro tecnica, da aggiornare **in tempo reale**

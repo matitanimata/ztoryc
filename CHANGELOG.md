@@ -1,3 +1,98 @@
+## [2026-08-17] — lo shot esportato nasce pronto, e il lip sync entra nel pacchetto
+
+Chiusi i due punti che restavano dello scenario A, piu' l'impacchettamento.
+La 0.13.0 e' in costruzione: tre workflow lanciati sul commit `18a0d0300`,
+note di rilascio in `~/ZtorYc/RELEASE_NOTES_v0.13.0.md` (da applicare con
+`gh release edit v0.13.0 --notes-file` quando la release esiste — il
+workflow la pubblica col corpo vuoto).
+
+### Added — l'export
+
+**Lip sync nell'export** (punto A). Casella in ENTRAMBI i popup di export.
+Il generatore aveva un chiamante solo; ora ne ha due, quindi i pezzi di una
+passata sono usciti dal comando invece di essere copiati:
+`ztoryShotDialogue` / `ztoryPrepareLipSync` / `ztoryRunLipSyncBlocking` /
+`ztoryWriteLipSyncColumns` / `ztoryFindLipSyncColumns`. Le colonne si
+toglono dopo il salvataggio come l'audio iniettato — la sotto-scena e' la
+STESSA dello storyboard, e al secondo export ne avrebbe quattro.
+Piu' **Lip Sync Storyboard Shots...**: lo stesso lavoro sugli shot scelti
+nel Board, che LASCIA le colonne (il «controllo prima» che Franco chiedeva).
+
+**Import degli asset dal breakdown** (punto B, `ztoryassetimport.*`).
+Controllo prima di esportare, una volta per ASSET DISTINTO; rapporto con il
+MOTIVO di `resolveAssetFile` e gli shot che lo chiedono; poi l'import (.tnz
+come sotto-scene, il resto livelli). I PSD rispettano le impostazioni di
+asset e progetto SENZA finestre: `PsdSettingsPopup::applySettings()` +
+`IoCmd::loadPsdResource()` — un popup per file voleva dire quaranta finestre
+in un export da quaranta shot (correzione chiesta da Franco: «i psd non
+devono assolutamente essere importati piatti»).
+
+**Il breakdown si scrive a mano.** Fino a oggi l'UNICO scrittore era la pull
+da Kitsu: su un progetto senza Kitsu l'opzione appena fatta non avrebbe
+potuto fare niente. Ora + Add, − Remove, e «Characters from the dialogue».
+
+### Fixed — l'identita' di uno shot e' SEQUENZA + NUMERO
+
+Mezza giornata per capirlo, e vale piu' del codice. Il breakdown che Franco
+vedeva su «SH010» non era del suo shot: apparteneva a `scsh020.ztoryc`,
+un ALTRO storyboard dello stesso progetto. `shotIdsResolved` aggancia gli
+shot a Kitsu per `seq + label` **senza guardare da quale file vengono**, e
+con la sequenza vuota normalizzata a "SQ01" quattro SH010 di quattro file
+hanno preso lo stesso `kitsuShotId`.
+- colonna **Storyboard** nel Breakdown (e seq+label nella cella dello shot);
+- il Board chiede una sequenza quando si accorge della collisione, con una
+  proposta libera letta da prefisso/cifre/passo che il progetto usa gia';
+- togliendo il ruolo Storyboard a una scena si possono togliere gli shot che
+  aveva pubblicato — senza, restavano nel tracker PER SEMPRE;
+- il controllo ignora gli shot delle scene che non sono piu' storyboard
+  (residui, non conflitti) e la domanda si fa una volta per scena e non per
+  PANNELLO (era un campo per istanza, e i Board aperti sono piu' d'uno).
+
+### Added — le altre lingue del lip sync (punto E)
+
+Cartella modelli UTENTE (`getMyModuleDir()/vosk`) separata dalla cache, che
+si puo' svuotare; `readyModelDir()` in un posto solo (`modelFor` guardava
+`unpackedDir` e poteva caricare un modello diverso da quello dichiarato
+pronto); elenco lingue in Preferenze letto dai modelli presenti;
+**Add language…** che PRIMA dice dove si prendono (bottone che apre
+alphacephei.com/vosk/models senza chiudere il dialogo — segnalato da Franco
+appena provato) e poi installa la cartella scompattata; e ogni passata dice
+QUALE motore ha lavorato.
+
+### Added — l'impacchettamento (punti 1-3)
+
+`ci-scripts/build-lipsync-tools.sh`: whisper-cli ed espeak-ng dai tag
+fissati, UNO script per i tre sistemi (Windows in Git Bash). whisper-cli
+STATICO — `otool -L`: solo Accelerate, Metal, libSystem — quindi il
+problema dei backend ggml compilati dentro non esiste piu'. espeak-ng con i
+dizionari cinese e russo (10 MB sui 9 di base; Vosk pubblica i modelli per
+entrambe). Lo script LI LANCIA prima di dichiararli pronti.
+I tre workflow scaricano/costruiscono/imballano con cache sui tag; i tre
+script di pacchetto copiano e POI CONTROLLANO; la release allega il sorgente
+di espeak-ng (GPLv3).
+
+### Notes — tre trappole che non facevano fallire niente
+
+- **espeak-ng senza `espeak-ng-data`** parte e restituisce una riga vuota,
+  che somiglia a «lingua non supportata». Ora i dati viaggiano con lui e
+  Ztoryc gli passa `ESPEAK_DATA_PATH` (come `GGML_BACKEND_PATH` per whisper).
+- **Su Linux l'app gira dentro un'AppImage MONTATA**: cercare Vosk ed espeak
+  in `applicationDirPath()` non li avrebbe trovati MAI, e il lip sync
+  sarebbe ricaduto su Whisper su tutto Linux senza un errore. Ora la lista
+  include `getWorkingDirectory()`, la stessa che ffmpeg aveva gia'.
+- **`.gitignore`: la riga `build*` non ha una barra**, quindi ingoia
+  qualsiasi file che comincia per «build» a ogni livello.
+  `build-lipsync-tools.sh` sarebbe sparito in silenzio e la pipeline avrebbe
+  detto che non esiste. Aggiunte due eccezioni esplicite.
+
+### Notes — la pulizia rimandata
+
+Il DB di `cs26_grottazzolina` ha ancora 10 shot da scene vecchie o di
+libreria (`scsh010/020/130`, `LIB_BOVE`, `LIB_GIORNALISTA`). Franco: «per
+adesso non importa». Si tolgono cambiando ruolo alla scena (Storyboard →
+Character/Shot fa scattare la domanda). Script di riserva pronto e provato a
+vuoto in `scratchpad/clean_ztrack.py`.
+
 ## [2026-08-16b] — Il personaggio come oggetto, e la mappatura delle bocche
 
 Sessione lunga, tutta su **A.1 — chiudere il personaggio**. Le tre operazioni del

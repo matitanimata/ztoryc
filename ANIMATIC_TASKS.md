@@ -585,7 +585,29 @@ nella sub-scene corretta.
   Piu' il passo di bundling macOS in `tahoma-buildpkg.sh`, che copia **e poi
   controlla**: se i file dovevano esserci e non ci sono, si ferma.
 
-### ❌ MANCA — ed e' il lavoro di domani
+### ✅ TUTTO FATTO IL 2026-08-17 — la 0.13.0 e' IN COSTRUZIONE
+
+> Tre workflow lanciati sul commit `18a0d0300` con `publish_release=true` e
+> `release_tag=v0.13.0`. **Quando la release esiste, applicare le note**:
+> `gh release edit v0.13.0 --notes-file ~/ZtorYc/RELEASE_NOTES_v0.13.0.md`
+> (il workflow pubblica col corpo VUOTO). Poi controllare che i quattro asset
+> Linux e il sorgente di espeak-ng ci siano davvero (`gh release view v0.13.0`):
+> la 0.11.0 e' uscita senza binari Linux perche' nessuno ha guardato.
+>
+> ⚠️ **Windows e Linux non sono mai stati provati** su questi passi nuovi: se
+> la CI si lamenta, e' quasi certamente `build-lipsync-tools.sh` (cmake che non
+> trova il compilatore in Git Bash) o un percorso nei tre script di pacchetto.
+> macOS e' stato provato end-to-end in locale.
+>
+> Fatti oggi: **A** (lip sync nell'export + comando dal Board), **B** (import
+> asset dal breakdown, con il breakdown ora scrivibile a mano), **C** (fatto
+> ieri), **E** (cartella modelli utente, elenco lingue vero, «Add language…»,
+> motore dichiarato), e l'impacchettamento **1-3**. Resta **D**.
+>
+> Sotto resta la descrizione di com'erano concepiti: serve a capire il perche'
+> delle scelte, non e' lavoro aperto.
+
+### ❌ QUELLO CHE ERA IL LAVORO DI OGGI (fatto, tenuto per il perche')
 
 **Franco, 2026-08-16 sera: il lavoro di domani NON e' solo l'impacchettamento.**
 Vanno completate anche le quattro cose sotto, che sono cio' che resta dello
@@ -714,7 +736,7 @@ scenario A (dallo storyboard allo shot animabile). L'impacchettamento (punti
    checksum — almeno controllare che dentro ci sia `am/final.mdl` prima di
    dichiarare installata la lingua).
 
-**D. Il segnale Kitsu «modifiche non pushate».** Non esiste nessuna nozione di
+**D. Il segnale Kitsu «modifiche non pushate».** ⬅️ **L'UNICO ANCORA APERTO.** Non esiste nessuna nozione di
    «sporco» nel modello (cercato: nessun campo dirty/pending/lastSync). E'
    lavoro nuovo, non un'opzione da accendere.
 
