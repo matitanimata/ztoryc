@@ -51,6 +51,10 @@
 #include <QStackedWidget>
 #include <QLineEdit>
 #include <QFileDialog>
+#include <QDialogButtonBox>
+#include <QUrl>
+#include <QStandardPaths>
+#include <QDesktopServices>
 #include <QInputDialog>
 #include <QFile>
 #include <QPushButton>
@@ -457,9 +461,49 @@ QList<ComboBoxItem> PreferencesPopup::buildLipSyncLanguageList() const {
 }
 
 void PreferencesPopup::onAddLipSyncLanguage() {
+  // ⚠️ PRIMA si dice DOVE si prendono i modelli, e solo dopo si chiede la
+  // cartella. Aprire di colpo un selettore di cartelle dava per scontato che
+  // l'utente avesse gia' scaricato qualcosa e sapesse da dove — cioe' la parte
+  // che manca a chi clicca «Add language…» per la prima volta.
+  QDialog intro(this);
+  intro.setWindowTitle(tr("Add lip sync language"));
+  intro.setMinimumWidth(480);
+  auto *ilay = new QVBoxLayout(&intro);
+  auto *txt  = new QLabel(
+      tr("<p>Ztoryc uses <b>Vosk</b> models to align the dialogue to the "
+         "audio. English and Italian ship with the app; any other language "
+         "needs its model, once.</p>"
+         "<ol>"
+         "<li>Open the model list and download a <b>small</b> model for your "
+         "language (40–160 MB).</li>"
+         "<li>Unzip it — a double click is enough.</li>"
+         "<li>Come back here and pick the folder that came out of it.</li>"
+         "</ol>"),
+      &intro);
+  txt->setWordWrap(true);
+  txt->setTextFormat(Qt::RichText);
+  ilay->addWidget(txt);
+  auto *bbox = new QDialogButtonBox(&intro);
+  QPushButton *openPage =
+      bbox->addButton(tr("Open the model list"), QDialogButtonBox::ActionRole);
+  bbox->addButton(tr("Pick the folder…"), QDialogButtonBox::AcceptRole);
+  bbox->addButton(QDialogButtonBox::Cancel);
+  ilay->addWidget(bbox);
+  // La pagina si apre SENZA chiudere il dialogo: si scarica, si scompatta, e
+  // il bottone per scegliere la cartella e' ancora li'.
+  connect(openPage, &QPushButton::clicked, this, [] {
+    QDesktopServices::openUrl(QUrl("https://alphacephei.com/vosk/models"));
+  });
+  connect(bbox, &QDialogButtonBox::accepted, &intro, &QDialog::accept);
+  connect(bbox, &QDialogButtonBox::rejected, &intro, &QDialog::reject);
+  if (intro.exec() != QDialog::Accepted) return;
+
+  // Si parte dai Download: e' dove il modello e' appena arrivato.
+  QString startAt =
+      QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+  if (startAt.isEmpty()) startAt = QDir::homePath();
   const QString dir = QFileDialog::getExistingDirectory(
-      this, tr("Pick the folder of the Vosk model"),
-      QDir::homePath());
+      this, tr("Pick the folder of the Vosk model"), startAt);
   if (dir.isEmpty()) return;
 
   // Il codice lingua: si propone quello che si legge dal nome della cartella
