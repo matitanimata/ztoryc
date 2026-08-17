@@ -187,6 +187,9 @@ QToolButton *m_numberingBtn;   // ⚙ Numbering config button
   QToolButton *m_lightColorButton = nullptr; // colour swatch → QColorDialog
   bool         m_showLights = true; // persisted in QSettings
   QSpinBox    *m_columnsPerRowSpin;
+  // Tetto ai pannelli generati dai livelli in animazione piena — vedi
+  // detectAndUpdatePanels(). Persistito in Ztoryc/MaxPanelsPerSecond.
+  QSpinBox    *m_maxPanelsPerSecSpin;
   // "Compact view": one card per shot (show only the current panel), with
   // ◀ ▶ to navigate panels in place.  Useful for animated scenes that generate
   // one panel per keyframe/frame.  Persisted in QSettings.
