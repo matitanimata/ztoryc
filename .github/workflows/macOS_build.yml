@@ -217,6 +217,16 @@ jobs:
           restore-keys: |
             ${{ runner.arch }}-${{ runner.os }}-rhubarb-
 
+      # Lip sync: modelli e binari (Vosk, Whisper, espeak-ng). In cache perche'
+      # sono ~160 MB di scaricamento piu' due compilazioni, e cambiano solo
+      # quando cambiano i tag fissati in thirdparty_versions.sh.
+      - name: Restore lip sync cache
+        id: restore-lipsync-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: thirdparty/apps/lipsync
+          key: ${{ runner.arch }}-${{ runner.os }}-lipsync-${{ hashFiles('ci-scripts/thirdparty_versions.sh', 'ci-scripts/fetch-lipsync-deps.sh', 'ci-scripts/build-lipsync-tools.sh') }}
+
       - name: Build ffmpeg (skipped when ffmpeg cache hit)
         if: ${{ steps.restore-ffmpeg-cache.outputs.cache-hit != 'true' }}
         env:
@@ -225,6 +235,15 @@ jobs:
         run: ci-scripts/osx/tahoma-buildffmpeg.sh
       - name: Bundle third-party apps (FFmpeg from brew + Rhubarb)
         run: ci-scripts/osx/tahoma-bundle-apps.sh
+      # ⚠️ Questi due passi NON sono facoltativi: senza, la build riesce lo
+      # stesso e l'applicazione parte, ma con il lip sync morto — libvosk si
+      # carica a runtime e in sua assenza si ripiega in silenzio. E' la stessa
+      # forma della dimenticanza dei binari helper LZO. Il controllo che ferma
+      # la build sta in tahoma-buildpkg.sh.
+      - name: Fetch lip sync models (Vosk, Whisper, espeak-ng source)
+        run: ci-scripts/fetch-lipsync-deps.sh
+      - name: Build lip sync tools (whisper-cli, espeak-ng)
+        run: ci-scripts/build-lipsync-tools.sh
       - name: Build OpenCV (skipped when OpenCV cache hit)
         if: ${{ steps.restore-opencv-cache.outputs.cache-hit != 'true' }}
         env:
@@ -360,6 +379,12 @@ jobs:
           path: |
             /Users/runner/.ccache
           key: ${{ runner.arch }}-${{ runner.os }}-ccache-8G-${{ github.ref }}
+      - name: Save lip sync cache
+        if: ${{ steps.restore-lipsync-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: thirdparty/apps/lipsync
+          key: ${{ runner.arch }}-${{ runner.os }}-lipsync-${{ hashFiles('ci-scripts/thirdparty_versions.sh', 'ci-scripts/fetch-lipsync-deps.sh', 'ci-scripts/build-lipsync-tools.sh') }}
       - name: Save ffmpeg dependency cache
         if: ${{ steps.restore-ffmpeg-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
@@ -480,6 +505,24 @@ jobs:
           fi
           echo "mactel=$MACTEL" >> "$GITHUB_OUTPUT"
           echo "silicon=$SILICON" >> "$GITHUB_OUTPUT"
+      # ⚠️ ADEMPIMENTO GPLv3, non un extra. Ztoryc spedisce il BINARIO di
+      # espeak-ng, che e' GPLv3: chi riceve la release ha diritto al sorgente
+      # corrispondente. «Corrispondente» vuol dire lo STESSO tag da cui il
+      # binario e' stato costruito — per questo ZTORYC_ESPEAK_TAG e' fissato in
+      # thirdparty_versions.sh e l'archivio si scarica da li'. Senza questo
+      # passo, spedire il binario non e' lecito.
+      - name: Fetch espeak-ng source (GPLv3 obligation)
+        id: espeak_src
+        run: |
+          set -euo pipefail
+          source ci-scripts/thirdparty_versions.sh
+          OUT="espeak-ng-${ZTORYC_ESPEAK_TAG}-source.tar.gz"
+          curl -fsSL -o "$OUT" \
+            "${ZTORYC_ESPEAK_REPO}/archive/refs/tags/${ZTORYC_ESPEAK_TAG}.tar.gz"
+          # Vuoto o mancante = release non lecita: meglio fermarsi qui.
+          test -s "$OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          echo "Sorgente espeak-ng ${ZTORYC_ESPEAK_TAG}: $(du -h "$OUT" | cut -f1)"
       - name: Create release tag if missing
         run: |
           git config user.name "github-actions[bot]"
@@ -497,7 +540,7 @@ jobs:
         with:
           allowUpdates: true
           artifactErrorsFailBuild: true
-          artifacts: ${{ steps.release_dmgs.outputs.mactel }},${{ steps.release_dmgs.outputs.silicon }}
+          artifacts: ${{ steps.release_dmgs.outputs.mactel }},${{ steps.release_dmgs.outputs.silicon }},${{ steps.espeak_src.outputs.path }}
           artifactContentType: "raw"
           name: Ztoryc ${{ steps.release_version.outputs.tag }}
           omitBodyDuringUpdate: true

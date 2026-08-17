@@ -227,39 +227,76 @@ fi
 echo "→ Copia whisper.cpp nel bundle (se assente)..."
 # Stesso schema di ffmpeg: NON sta nel repo. Il modello pesa 57 MB e committarlo
 # sarebbe zavorra in git per sempre; l'eseguibile idem. Si copiano qui, e la CI
-# fara' lo stesso scaricandoli.
+# fa lo stesso con ci-scripts/fetch-lipsync-deps.sh + build-lipsync-tools.sh.
 WHISPER_DST="$APP/Contents/Resources/whisper"
-# Cartella dove si tengono i modelli scaricati (fuori dal repo).
 WHISPER_MODELS="${ZTORYC_WHISPER_MODELS:-/Volumes/ZioSam/tahoma2d-workspace/reference}"
 WHISPER_MODEL_NAME="ggml-base-q5_1.bin"
+LIPSYNC_SRC="$WORKSPACE/thirdparty/apps/lipsync"
+mkdir -p "$WHISPER_DST"
 if [[ ! -f "$WHISPER_DST/$WHISPER_MODEL_NAME" ]]; then
-  mkdir -p "$WHISPER_DST"
-  if [[ -f "$WHISPER_MODELS/$WHISPER_MODEL_NAME" ]]; then
+  if [[ -f "$LIPSYNC_SRC/$WHISPER_MODEL_NAME" ]]; then
+    cp "$LIPSYNC_SRC/$WHISPER_MODEL_NAME" "$WHISPER_DST/"
+    echo "  modello $WHISPER_MODEL_NAME copiato ($(du -h "$WHISPER_DST/$WHISPER_MODEL_NAME" | cut -f1))"
+  elif [[ -f "$WHISPER_MODELS/$WHISPER_MODEL_NAME" ]]; then
     cp "$WHISPER_MODELS/$WHISPER_MODEL_NAME" "$WHISPER_DST/"
     echo "  modello $WHISPER_MODEL_NAME copiato ($(du -h "$WHISPER_DST/$WHISPER_MODEL_NAME" | cut -f1))"
   else
-    echo "  ⚠ modello non trovato in $WHISPER_MODELS — lip sync via Whisper non disponibile"
-    echo "    scaricalo da https://huggingface.co/ggerganov/whisper.cpp"
+    echo "  ⚠ modello non trovato — lip sync via Whisper non disponibile"
+    echo "    ci-scripts/fetch-lipsync-deps.sh"
   fi
-  # ⚠️ NON si imballa il binario di Homebrew, ed e' una scoperta pagata:
-  # il percorso in cui ggml cerca i suoi backend (BLAS, Metal, CPU) e'
-  # COMPILATO DENTRO la libreria — /opt/homebrew/Cellar/ggml/<versione>/libexec —
-  # e non e' un rpath che install_name_tool possa riscrivere. GGML_BACKEND_PATH
-  # non lo sostituisce, aggiunge soltanto, e la versione baked vince. Verificato
-  # il 2026-08-15: copiando binario, dylib e backend, whisper-cli continuava a
-  # caricarli da Homebrew. Sulla macchina di uno sviluppatore funziona; su
-  # quella di un utente resterebbe senza backend, e macOS non direbbe niente.
-  #
-  # La strada per la release e' compilare whisper.cpp in CI (e' MIT, ci mette
-  # pochi minuti) e mettere i backend dove decidiamo noi.
-  # Fino ad allora l'app lo cerca nel sistema: autodetectWhisper() guarda anche
-  # /opt/homebrew/bin, che NON e' nel PATH dei processi lanciati dal Finder.
-  if command -v whisper-cli > /dev/null 2>&1; then
-    echo "  whisper-cli presente nel sistema: verra' usato quello"
+fi
+
+# ⚠️ IL BINARIO DI HOMEBREW NON SI IMBALLA, ed e' una scoperta pagata: il
+# percorso in cui ggml cerca i suoi backend (BLAS, Metal, CPU) e' COMPILATO
+# DENTRO la libreria — /opt/homebrew/Cellar/ggml/<versione>/libexec — e non e'
+# un rpath che install_name_tool possa riscrivere. GGML_BACKEND_PATH non lo
+# sostituisce, aggiunge soltanto, e la versione baked vince. Verificato il
+# 2026-08-15: copiando binario, dylib e backend, whisper-cli continuava a
+# caricarli da Homebrew. Sulla macchina di uno sviluppatore funziona; su quella
+# di un utente resterebbe senza backend, e macOS non direbbe niente.
+#
+# ✅ RISOLTO dal 2026-08-17: whisper.cpp lo COSTRUIAMO noi con le librerie
+# STATICHE, quindi non ha piu' backend da cercare da nessuna parte (`otool -L`:
+# solo Accelerate, Metal e libSystem). Lo fa ci-scripts/build-lipsync-tools.sh,
+# lo stesso script che usa la CI: cio' che si prova qui e' esattamente cio' che
+# finisce nella release.
+if [[ -x "$LIPSYNC_SRC/whisper-cli" ]]; then
+  cp "$LIPSYNC_SRC/whisper-cli" "$WHISPER_DST/"
+  echo "  whisper-cli imballato ($(du -h "$WHISPER_DST/whisper-cli" | cut -f1))"
+elif [[ -x "$WHISPER_DST/whisper-cli" ]]; then
+  echo "  whisper-cli gia' nel bundle"
+elif command -v whisper-cli > /dev/null 2>&1; then
+  echo "  whisper-cli non costruito: si usera' quello di sistema"
+  echo "    per averlo nel bundle: ci-scripts/build-lipsync-tools.sh"
+else
+  echo "  ⚠ whisper-cli non c'e' — il lip sync via Whisper non partira'"
+  echo "    ci-scripts/build-lipsync-tools.sh"
+fi
+
+echo "→ Copia espeak-ng nel bundle (se assente)..."
+# I FONEMI. Senza, le colonne del lip sync portano le parole intere invece
+# delle caselle delle bocche.
+#
+# ⚠️ I DATI VANNO CON LUI. espeak-ng senza `espeak-ng-data` parte, non dice
+# niente e restituisce una riga vuota: il difetto piu' scomodo da riconoscere,
+# perche' somiglia a «non ha trovato fonemi per questa lingua». Ztoryc gli passa
+# ESPEAK_DATA_PATH puntando alla cartella dell'eseguibile.
+ESPEAK_DST="$APP/Contents/Resources/espeak"
+ESPEAK_SRC="$LIPSYNC_SRC"
+if [[ ! -x "$ESPEAK_DST/espeak-ng" && -x "$ESPEAK_SRC/espeak-ng" ]]; then
+  mkdir -p "$ESPEAK_DST"
+  cp "$ESPEAK_SRC/espeak-ng" "$ESPEAK_DST/"
+  rm -rf "$ESPEAK_DST/espeak-ng-data"
+  cp -R "$ESPEAK_SRC/espeak-ng-data" "$ESPEAK_DST/"
+  ipa="$(ESPEAK_DATA_PATH="$ESPEAK_DST" "$ESPEAK_DST/espeak-ng" -v it --ipa -q casa 2>/dev/null | tr -d '[:space:]')"
+  if [[ -n "$ipa" ]]; then
+    echo "  espeak-ng imballato e funzionante (casa = $ipa)"
   else
-    echo "  ⚠ whisper-cli non installato — il lip sync via Whisper non partira'"
-    echo "    brew install whisper-cpp"
+    echo "  ⚠ espeak-ng imballato ma NON produce fonemi — dati non trovati"
   fi
+elif [[ ! -x "$ESPEAK_SRC/espeak-ng" && ! -x "$ESPEAK_DST/espeak-ng" ]]; then
+  echo "  espeak-ng non costruito (ci-scripts/build-lipsync-tools.sh) —"
+  echo "  si usera' quello di sistema se c'e'"
 fi
 
 echo "→ Copia Vosk nel bundle (se assente)..."

@@ -141,21 +141,55 @@ then
       "$TOONZDIR/Ztoryc.app/Contents/Resources/vosk/"
    chmod -R 755 "$TOONZDIR/Ztoryc.app/Contents/Resources/vosk"
 
-   echo ">>> Copying Whisper model to Ztoryc.app/Contents/Resources/whisper"
+   echo ">>> Copying Whisper (model + whisper-cli) to Resources/whisper"
    rm -rf "$TOONZDIR/Ztoryc.app/Contents/Resources/whisper"
    mkdir -p "$TOONZDIR/Ztoryc.app/Contents/Resources/whisper"
    cp thirdparty/apps/lipsync/ggml-*.bin \
       "$TOONZDIR/Ztoryc.app/Contents/Resources/whisper/"
+   # whisper-cli lo costruisce ci-scripts/build-lipsync-tools.sh: un binario
+   # scaricato gia' pronto cerca i backend di ggml dove non ci sono.
+   if [ -x thirdparty/apps/lipsync/whisper-cli ]; then
+      cp thirdparty/apps/lipsync/whisper-cli \
+         "$TOONZDIR/Ztoryc.app/Contents/Resources/whisper/"
+   fi
    chmod -R 755 "$TOONZDIR/Ztoryc.app/Contents/Resources/whisper"
+
+   # espeak-ng CON I SUOI DATI. Il binario da solo non pronuncia niente, e
+   # fallisce restituendo una riga vuota invece di un errore: le colonne
+   # uscirebbero con le parole intere al posto delle caselle delle bocche.
+   if [ -x thirdparty/apps/lipsync/espeak-ng ]; then
+      echo ">>> Copying espeak-ng to Ztoryc.app/Contents/Resources/espeak"
+      rm -rf "$TOONZDIR/Ztoryc.app/Contents/Resources/espeak"
+      mkdir -p "$TOONZDIR/Ztoryc.app/Contents/Resources/espeak"
+      cp thirdparty/apps/lipsync/espeak-ng \
+         "$TOONZDIR/Ztoryc.app/Contents/Resources/espeak/"
+      cp -R thirdparty/apps/lipsync/espeak-ng-data \
+         "$TOONZDIR/Ztoryc.app/Contents/Resources/espeak/"
+      chmod -R 755 "$TOONZDIR/Ztoryc.app/Contents/Resources/espeak"
+   fi
 
    # Il controllo che rende inutile fidarsi: se il lip sync doveva esserci e
    # non c'e', la build si ferma qui invece di produrre un pacchetto monco.
-   for f in vosk/libvosk.dylib vosk/en.zvosk vosk/it.zvosk; do
+   for f in vosk/libvosk.dylib vosk/en.zvosk vosk/it.zvosk \
+            whisper/ggml-base-q5_1.bin whisper/whisper-cli \
+            espeak/espeak-ng espeak/espeak-ng-data/phontab; do
       if [ ! -s "$TOONZDIR/Ztoryc.app/Contents/Resources/$f" ]; then
          echo "!!! manca nel bundle: Resources/$f"
          exit 1
       fi
    done
+   # E che FUNZIONINO, non solo che ci siano: un binario che cerca i dati dove
+   # non ci sono esiste benissimo e fallisce all'uso.
+   ESPEAK_BIN="$TOONZDIR/Ztoryc.app/Contents/Resources/espeak/espeak-ng"
+   if [ -x "$ESPEAK_BIN" ]; then
+      IPA="$(ESPEAK_DATA_PATH="$(dirname "$ESPEAK_BIN")" "$ESPEAK_BIN" \
+             -v it --ipa -q "casa" 2>/dev/null | tr -d '[:space:]')"
+      if [ -z "$IPA" ]; then
+         echo "!!! espeak-ng nel bundle non produce fonemi (dati non trovati)"
+         exit 1
+      fi
+      echo ">>> espeak-ng nel bundle risponde: casa = $IPA"
+   fi
    echo ">>> Lip sync bundled"
 else
    echo ">>> WARNING: thirdparty/apps/lipsync assente — il pacchetto NON avra'"

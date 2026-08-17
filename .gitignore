@@ -9,6 +9,13 @@ GeneratedFiles
 *.suo
 *.user
 build*
+# ⚠️ `build*` non ha una barra, quindi ignora QUALSIASI file che comincia per
+# «build», a ogni livello — non solo le directory di compilazione alla radice.
+# Uno script di CI che si chiama build-*.sh sparisce in silenzio: il repo
+# sembra a posto e la pipeline fallisce dicendo che il file non esiste.
+# build_and_deploy.sh e' salvo solo perche' era tracciato PRIMA di questa riga.
+!ci-scripts/build-lipsync-tools.sh
+!build_and_deploy.sh
 Thumbs.db
 
 # CMake/Ninja (in-source) build artifacts

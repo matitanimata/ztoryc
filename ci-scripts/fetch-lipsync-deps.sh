@@ -36,6 +36,12 @@ cd "$DST"
 
 say() { echo ">>> $*"; }
 
+# In Git Bash su Windows «python3» spesso non esiste e c'e' solo «python»:
+# cercarlo una volta qui evita che lo script fallisca a meta', dopo aver gia'
+# scaricato centoquaranta megabyte di modelli.
+PY="$(command -v python3 || command -v python || true)"
+[ -n "$PY" ] || { echo "!!! serve python per riconfezionare i modelli"; exit 1; }
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Modelli Vosk, riconfezionati in .zvosk
 #
@@ -55,7 +61,7 @@ pack_model() {
     rm -f "$name.zip"
   fi
   say "riconfeziono $name -> $out"
-  python3 "$REPO/tools/pack_vosk_model.py" "$name" "$out"
+  "$PY" "$REPO/tools/pack_vosk_model.py" "$name" "$out"
   # La cartella scompattata non serve piu': pesa quanto il modello intero.
   rm -rf "$name"
 }

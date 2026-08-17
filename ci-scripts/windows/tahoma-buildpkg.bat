@@ -90,6 +90,56 @@ IF EXIST ..\..\thirdparty\apps\rhubarb (
    xcopy /Y /E /I ..\..\thirdparty\apps\rhubarb\res "Ztoryc\rhubarb\res"
 )
 
+REM ── Lip sync: Vosk + Whisper + espeak-ng ────────────────────────────────────
+REM I pezzi li mettono ci-scripts\fetch-lipsync-deps.sh e build-lipsync-tools.sh
+REM (girano in Git Bash anche qui: uno script solo per i tre sistemi).
+REM
+REM ATTENZIONE: se mancano, la build RIESCE e l'applicazione parte — il lip sync
+REM si ripiega in silenzio. Per questo sotto c'e' un controllo esplicito che
+REM ferma tutto, come per gli helper LZO.
+IF EXIST ..\..\thirdparty\apps\lipsync (
+   echo ">>> Copying Vosk to Ztoryc\vosk"
+   IF EXIST Ztoryc\vosk rmdir /S /Q Ztoryc\vosk
+   mkdir Ztoryc\vosk
+   copy /Y ..\..\thirdparty\apps\lipsync\libvosk.dll Ztoryc\vosk
+   copy /Y ..\..\thirdparty\apps\lipsync\*.zvosk Ztoryc\vosk
+
+   echo ">>> Copying Whisper to Ztoryc\whisper"
+   IF EXIST Ztoryc\whisper rmdir /S /Q Ztoryc\whisper
+   mkdir Ztoryc\whisper
+   copy /Y ..\..\thirdparty\apps\lipsync\ggml-*.bin Ztoryc\whisper
+   IF EXIST ..\..\thirdparty\apps\lipsync\whisper-cli.exe (
+      copy /Y ..\..\thirdparty\apps\lipsync\whisper-cli.exe Ztoryc\whisper
+   )
+
+   IF EXIST ..\..\thirdparty\apps\lipsync\espeak-ng.exe (
+      echo ">>> Copying espeak-ng to Ztoryc\espeak"
+      IF EXIST Ztoryc\espeak rmdir /S /Q Ztoryc\espeak
+      mkdir Ztoryc\espeak
+      copy /Y ..\..\thirdparty\apps\lipsync\espeak-ng.exe Ztoryc\espeak
+      xcopy /Y /E /I ..\..\thirdparty\apps\lipsync\espeak-ng-data "Ztoryc\espeak\espeak-ng-data"
+   )
+
+   REM Il controllo che rende inutile fidarsi.
+   FOR %%F IN (
+      "Ztoryc\vosk\libvosk.dll"
+      "Ztoryc\vosk\en.zvosk"
+      "Ztoryc\vosk\it.zvosk"
+      "Ztoryc\whisper\ggml-base-q5_1.bin"
+      "Ztoryc\whisper\whisper-cli.exe"
+      "Ztoryc\espeak\espeak-ng.exe"
+      "Ztoryc\espeak\espeak-ng-data\phontab"
+   ) DO (
+      IF NOT EXIST %%F (
+         echo ERRORE: manca nel pacchetto %%F
+         exit /b 1
+      )
+   )
+   echo ">>> Lip sync bundled"
+) ELSE (
+   echo WARNING: thirdparty\apps\lipsync assente, il pacchetto NON avra' il lip sync
+)
+
 echo ">>> Remove unnecessary files"
 REM Remove github keep files
 del /A- /S ..\..\stuff\*.gitkeep

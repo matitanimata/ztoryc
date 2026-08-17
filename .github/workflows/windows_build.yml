@@ -59,6 +59,29 @@ jobs:
           ci-scripts\windows\tahoma-get3rdpartyapps.bat
       - name: Add msbuild to PATH
         uses: microsoft/setup-msbuild@v2
+      # Lip sync: gli STESSI script degli altri due sistemi, in Git Bash.
+      # ⚠️ Devono stare DOPO setup-msbuild: build-lipsync-tools.sh compila
+      # whisper.cpp ed espeak-ng con cmake, che qui si appoggia a Visual Studio.
+      # Senza questi passi la build riesce lo stesso e il lip sync e' morto: il
+      # controllo che ferma tutto sta in tahoma-buildpkg.bat.
+      - name: Restore lip sync cache
+        id: restore-lipsync-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: thirdparty/apps/lipsync
+          key: ${{ runner.arch }}-${{ runner.os }}-lipsync-${{ hashFiles('ci-scripts/thirdparty_versions.sh', 'ci-scripts/fetch-lipsync-deps.sh', 'ci-scripts/build-lipsync-tools.sh') }}
+      - name: Fetch lip sync models (Vosk, Whisper, espeak-ng source)
+        shell: bash
+        run: ci-scripts/fetch-lipsync-deps.sh
+      - name: Build lip sync tools (whisper-cli, espeak-ng)
+        shell: bash
+        run: ci-scripts/build-lipsync-tools.sh
+      - name: Save lip sync cache
+        if: ${{ steps.restore-lipsync-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: thirdparty/apps/lipsync
+          key: ${{ runner.arch }}-${{ runner.os }}-lipsync-${{ hashFiles('ci-scripts/thirdparty_versions.sh', 'ci-scripts/fetch-lipsync-deps.sh', 'ci-scripts/build-lipsync-tools.sh') }}
       - name: Build Ztoryc
         run: |
           ci-scripts\windows\tahoma-build.bat

@@ -69,6 +69,63 @@ then
    chmod 755 -R Ztoryc/rhubarb
 fi
 
+# ── Lip sync: Vosk + Whisper + espeak-ng ────────────────────────────────────
+# Stessa cartella portatile di ffmpeg e rhubarb: l'applicazione le cerca anche
+# a partire da TEnv::getWorkingDirectory(), che nell'AppImage e' la cartella
+# che contiene l'AppImage e non il montaggio.
+#
+# ⚠️ Se questa roba manca, la build RIESCE e l'applicazione parte: il lip sync
+# si ripiega in silenzio. Per questo sotto c'e' un controllo esplicito.
+LIPSYNC=../../thirdparty/apps/lipsync
+if [ -d "$LIPSYNC" ]
+then
+   echo ">>> Copying Vosk to Ztoryc/vosk"
+   rm -rf Ztoryc/vosk
+   mkdir -p Ztoryc/vosk
+   cp "$LIPSYNC"/libvosk.so "$LIPSYNC"/*.zvosk Ztoryc/vosk/
+   chmod -R 755 Ztoryc/vosk
+
+   echo ">>> Copying Whisper to Ztoryc/whisper"
+   rm -rf Ztoryc/whisper
+   mkdir -p Ztoryc/whisper
+   cp "$LIPSYNC"/ggml-*.bin Ztoryc/whisper/
+   if [ -x "$LIPSYNC/whisper-cli" ]; then
+      cp "$LIPSYNC/whisper-cli" Ztoryc/whisper/
+   fi
+   chmod -R 755 Ztoryc/whisper
+
+   if [ -x "$LIPSYNC/espeak-ng" ]; then
+      echo ">>> Copying espeak-ng to Ztoryc/espeak"
+      rm -rf Ztoryc/espeak
+      mkdir -p Ztoryc/espeak
+      cp "$LIPSYNC/espeak-ng" Ztoryc/espeak/
+      cp -R "$LIPSYNC/espeak-ng-data" Ztoryc/espeak/
+      chmod -R 755 Ztoryc/espeak
+   fi
+
+   # Il controllo che rende inutile fidarsi.
+   for f in vosk/libvosk.so vosk/en.zvosk vosk/it.zvosk \
+            whisper/ggml-base-q5_1.bin whisper/whisper-cli \
+            espeak/espeak-ng espeak/espeak-ng-data/phontab; do
+      if [ ! -s "Ztoryc/$f" ]; then
+         echo "!!! manca nel pacchetto: $f"
+         exit 1
+      fi
+   done
+   # E che espeak-ng funzioni davvero: senza i suoi dati parte e restituisce
+   # una riga vuota, che somiglia a «lingua non supportata».
+   IPA="$(ESPEAK_DATA_PATH=Ztoryc/espeak Ztoryc/espeak/espeak-ng -v it --ipa -q casa 2>/dev/null | tr -d '[:space:]')"
+   if [ -z "$IPA" ]; then
+      echo "!!! espeak-ng nel pacchetto non produce fonemi (dati non trovati)"
+      exit 1
+   fi
+   echo ">>> Lip sync bundled (espeak dice: casa = $IPA)"
+else
+   echo ">>> WARNING: thirdparty/apps/lipsync assente — il pacchetto NON avra'"
+   echo "    il lip sync. Lanciare ci-scripts/fetch-lipsync-deps.sh e"
+   echo "    ci-scripts/build-lipsync-tools.sh."
+fi
+
 if [ -d ../../thirdparty/canon/Library ]
 then
    echo ">>> Copying canon libraries"

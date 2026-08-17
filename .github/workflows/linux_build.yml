@@ -108,6 +108,26 @@ jobs:
           ci-scripts/linux/tahoma-buildlibgphoto2.sh
       - name: Bundle third-party apps (FFmpeg from /usr/local + Rhubarb)
         run: ci-scripts/linux/tahoma-bundle-apps.sh
+      # Lip sync: modelli e binari. In cache perche' sono ~160 MB di
+      # scaricamento piu' due compilazioni, e cambiano solo con i tag fissati.
+      # ⚠️ Senza questi passi la build riesce lo stesso e il lip sync e' morto:
+      # il controllo che ferma tutto sta in tahoma-buildpkg.sh.
+      - name: Restore lip sync cache
+        id: restore-lipsync-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: thirdparty/apps/lipsync
+          key: ${{ runner.arch }}-${{ runner.os }}-lipsync-${{ hashFiles('ci-scripts/thirdparty_versions.sh', 'ci-scripts/fetch-lipsync-deps.sh', 'ci-scripts/build-lipsync-tools.sh') }}
+      - name: Fetch lip sync models (Vosk, Whisper, espeak-ng source)
+        run: ci-scripts/fetch-lipsync-deps.sh
+      - name: Build lip sync tools (whisper-cli, espeak-ng)
+        run: ci-scripts/build-lipsync-tools.sh
+      - name: Save lip sync cache
+        if: ${{ steps.restore-lipsync-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v5
+        with:
+          path: thirdparty/apps/lipsync
+          key: ${{ runner.arch }}-${{ runner.os }}-lipsync-${{ hashFiles('ci-scripts/thirdparty_versions.sh', 'ci-scripts/fetch-lipsync-deps.sh', 'ci-scripts/build-lipsync-tools.sh') }}
       - name: Build Ztoryc
         run: |
           export CC="${{ matrix.cc }}"
