@@ -67,6 +67,34 @@ succede, perché questi difetti sono quasi sempre copiaincollati in più punti �
 **ridirlo a Franco**, perché la decisione «vado diretto o passo dal revisore»
 l'aveva presa su una dimensione diversa.
 
+- [ ] 🧩 **I comandi colonna (e il loro UNDO) risolvono l'xsheet da `TApp`**
+  (`toonz/columncommand.cpp`) — **diagnosticato il 2026-08-17, NON verificato su
+  stock.**
+
+  **Sintomo:** dentro una sotto-scena, i comandi che agiscono sulle colonne
+  operano sull'xsheet CORRENTE anche quando chi chiama intendeva un altro. E,
+  peggio, `DeleteColumnsUndo` risolve l'xsheet **al momento dell'undo**: se nel
+  frattempo si e' entrati in una sotto-scena diversa, l'annullamento ripristina
+  la colonna **nell'xsheet sbagliato**.
+
+  **Causa root:** `deleteColumnsWithoutUndo()` (e la famiglia ColumnCmd) fanno
+  `TApp::instance()->getCurrentXsheet()->getXsheet()` invece di ricevere
+  l'xsheet su cui devono agire. Nessuna variante accetta un xsheet.
+
+  **Come si e' trovato:** in Ztoryc l'animatic mostra le tracce audio del main
+  xsheet anche mentre si e' dentro uno shot, e cancellarne una da li' avrebbe
+  colpito la colonna sbagliata. La difesa attuale e' un messaggio che obbliga
+  l'utente a uscire dallo shot — cioe' qualcuno a monte ci era gia' finito
+  dentro e si e' protetto invece di risalire alla causa. Stessa forma del
+  difetto delle miniature qui sotto.
+
+  **Fix proposto:** parametrizzare comando e undo con l'xsheet bersaglio,
+  mantenendo l'attuale comportamento come default (xsheet corrente) per non
+  toccare i chiamanti esistenti.
+
+  **Da fare prima della PR:** riprodurre su stock — probabilmente basta
+  cancellare una colonna, entrare in una sotto-scena e annullare.
+
 - [ ] 🖼️ **Le miniature di una SOTTO-SCENA mostrano tutte il primo fotogramma**
   (`toonzqt/icongenerator.cpp`, righe ~1467 e ~1552) — **diagnosticato il
   2026-08-16, NON ancora verificato su stock.**

@@ -151,6 +151,26 @@ public:
 
 //-----------------------------------------------------------------------------
 
+//! Ztoryc: una cartella di asset del progetto (Props / Backgrounds / Model
+//! sheets) mostrata fra le radici del browser.
+//!
+//! Sono impostate nel Production Tracker e cambiano col progetto, quindi il
+//! percorso si aggiorna invece di essere fissato alla costruzione — come fa
+//! DvDirModelSceneFolderNode, da cui questa e' copiata.
+class DvDirModelZtorycAssetNode final
+    : public DvDirModelSpecialFileFolderNode {
+public:
+  DvDirModelZtorycAssetNode(DvDirModelNode *parent, std::wstring name,
+                            const TFilePath &localPath)
+      : DvDirModelSpecialFileFolderNode(parent, name, localPath) {}
+  void setPath(const TFilePath &path) {
+    m_path = path;
+    refreshChildren();
+  }
+};
+
+//-----------------------------------------------------------------------------
+
 class DvDirVersionControlNode : public DvDirModelFileFolderNode {
 private:
   QPixmap m_pixmap;
@@ -325,6 +345,12 @@ class DvDirModelRootNode final : public DvDirModelNode {
   DvDirModelProjectNode *m_currentProjectNode;
   std::set<TFilePath> m_projectPaths;
   DvDirModelSceneFolderNode *m_sceneFolderNode;
+  //! Ztoryc: le cartelle degli asset del progetto. Compaiono solo quando sono
+  //! impostate e la cartella esiste davvero — una radice che apre il vuoto e'
+  //! peggio che non averla.
+  DvDirModelZtorycAssetNode *m_ztorycPropsNode      = nullptr;
+  DvDirModelZtorycAssetNode *m_ztorycBackgroundsNode = nullptr;
+  DvDirModelZtorycAssetNode *m_ztorycModelSheetNode  = nullptr;
   std::vector<DvDirModelSpecialFileFolderNode *> m_specialNodes;
   std::vector<DvDirModelSpecialFileFolderNode *> m_projectDirNodes;
 
@@ -342,6 +368,9 @@ public:
   // set the path of sceneLocationNode
   void setSceneLocation(const TFilePath &path);
   void updateSceneFolderNodeVisibility(bool forceHide = false);
+  //! Ztoryc: allinea le tre cartelle degli asset a cio' che dice il Production
+  //! Tracker per il progetto corrente.
+  void updateZtorycAssetNodes();
 };
 
 //=============================================================================

@@ -600,6 +600,12 @@ scenario A (dallo storyboard allo shot animabile). L'impacchettamento (punti
 
 **B. Import degli asset dal breakdown — IL PEZZO GROSSO.**
 
+   ✅ **QUANDO — confermato da Franco il 2026-08-17**: li importa **l'export**,
+   non l'utente a mano dopo. *«anche i characters devono essere importati
+   automaticamente come sottoscene negli shot»*. Quindi lo shot esportato nasce
+   gia' popolato, e il codice va nel percorso di export — non nel pannello
+   Breakdown.
+
    ✅ **COME SI COMPORTA — deciso da Franco il 2026-08-17.**
    Opzione nel popup di export (nome proposto: **«Import each shot's assets from
    the breakdown»** — dice cosa fa e da dove prende; «automatic import» direbbe
@@ -795,24 +801,37 @@ serve. Quella prova decide se il conform e' un lavoro o un problema.
 
 ---
 
-## 🚪 TOGLIERE L'OBBLIGO DI USCIRE DALLO SHOT (Franco, 2026-08-16)
+## 🚪 TOGLIERE L'OBBLIGO DI USCIRE DALLO SHOT
 
 > *«deve essere gestita dal programma senza obbligare ad uscire dallo shot»*
+> (Franco, 2026-08-16). ✅ **DECISO il 2026-08-17: si fa, ma IN CODA A TUTTO.**
 
-Cercato: **ne e' rimasto UNO solo**, in `ztoryanimatic.cpp` ~6270 —
-l'eliminazione di una traccia audio mentre si e' dentro uno shot:
+Ne e' rimasto **UNO solo**: `ztoryanimatic.cpp` ~6270, eliminazione di una
+traccia audio mentre si e' dentro uno shot.
 
 > «Exit the shot (Back to Animatic) to delete an audio track.»
 
-**Causa** (gia' scritta li'): `ColumnCmd::deleteColumns()` lavora sull'xsheet
-CORRENTE, e dentro uno shot quello e' la sotto-scena — cancellerebbe la colonna
-sbagliata. Tutta la famiglia ColumnCmd prende l'xsheet da TApp, quindi non c'e'
-una variante che accetti quello giusto.
+⚠️ **STIMA CORRETTA il 2026-08-17 — NON e' piccola**, come era stata valutata il
+giorno prima. Guardando il codice:
 
-**Come toglierlo senza toccare codice core**: scrivere l'eliminazione sul main
-xsheet con un undo nostro, come gia' si fa altrove in Ztoryc
-(`MouthApplyUndo`, `MouthExposeUndo`). Contenuto, e non sbalza l'utente fuori
-dallo shot.
+- `deleteColumnsWithoutUndo()` prende l'xsheet da `TApp::getCurrentXsheet()`, e
+  non e' una riga isolata: cancellare una colonna smonta anche gli **FX
+  collegati** e la voce nel **peg tree**. Un undo scritto da noi vorrebbe dire
+  riscrivere `DeleteColumnsUndo`, che e' una classe intera.
+- Scambiare temporaneamente l'xsheet corrente NON e' indolore:
+  `TXsheetHandle::setXsheet()` **emette `xsheetSwitched` e invalida le
+  texture**. Due scambi = due ricostruzioni di tutti i pannelli, cioe' il costo
+  che il 2026-08-16 e' stato tolto a fatica.
+- 🎯 **E si capisce perche' quel messaggio esiste**: anche `DeleteColumnsUndo`
+  risolve l'xsheet da `TApp` **al momento dell'undo**. Annullare la
+  cancellazione di una colonna dopo essere entrati in una sotto-scena la
+  ripristinerebbe nell'xsheet sbagliato. Quel guard non e' pigrizia: qualcuno
+  ci e' finito dentro e si e' difeso.
+
+**Strada scelta (A)**: rendere i comandi colonna **consapevoli dell'xsheet**,
+comando e undo. E' la correzione giusta, vale anche per l'undo, ed e'
+**candidato PR upstream** — il difetto e' di Tahoma/OpenToonz, non nostro.
+Vedi `UPSTREAM_PR_CANDIDATES.md`.
 
 ---
 

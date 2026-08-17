@@ -1,6 +1,7 @@
 
 
 #include "filebrowsermodel.h"
+#include "ztorymodel.h"
 #include "tutil.h"
 #include "tsystem.h"
 #include "tconvert.h"
@@ -1326,6 +1327,16 @@ void DvDirModelRootNode::refreshChildren() {
     m_sceneFolderNode =
         new DvDirModelSceneFolderNode(this, L"Scene Folder", TFilePath());
     m_sceneFolderNode->setPixmap(QPixmap(":Resources/clapboard.png"));
+
+    // Ztoryc: le cartelle degli asset del progetto. Si creano qui ma NON si
+    // aggiungono: compaiono solo quando il progetto ne ha una impostata, e
+    // l'aggiunta la fa updateZtorycAssetNodes() con le notifiche al modello.
+    m_ztorycPropsNode =
+        new DvDirModelZtorycAssetNode(this, L"Props", TFilePath());
+    m_ztorycBackgroundsNode =
+        new DvDirModelZtorycAssetNode(this, L"Backgrounds", TFilePath());
+    m_ztorycModelSheetNode =
+        new DvDirModelZtorycAssetNode(this, L"Model Sheets", TFilePath());
   } else {
     RecentFiles *recent        = RecentFiles::instance();
     QList<QString> recentFiles = recent->getFilesNameList(RecentFiles::Project);
@@ -1386,6 +1397,9 @@ void DvDirModelRootNode::refreshChildren() {
       updateSceneFolderNodeVisibility();
     }
   }
+  // Le cartelle degli asset seguono il progetto: si riallineano a ogni
+  // ricostruzione delle radici, che e' quando il progetto puo' essere cambiato.
+  updateZtorycAssetNodes();
 }
 
 //-----------------------------------------------------------------------------
@@ -1509,6 +1523,43 @@ void DvDirModelRootNode::setSceneLocation(const TFilePath &path) {
 }
 
 //-----------------------------------------------------------------------------
+
+// Ztoryc: le cartelle degli asset impostate nel Production Tracker, mostrate
+// fra le radici del browser cosi' non vanno cercate ogni volta (richiesta di
+// Franco, 2026-08-16).
+//
+// Un nodo compare solo se il percorso e' impostato E la cartella esiste: una
+// radice che si apre sul vuoto e' peggio che non averla, perche' sembra che il
+// progetto sia rotto.
+void DvDirModelRootNode::updateZtorycAssetNodes() {
+  ZtoryModel *model = ZtoryModel::instance();
+  struct { DvDirModelZtorycAssetNode *node; QString dir; } items[] = {
+      {m_ztorycPropsNode,       model->propsDir()},
+      {m_ztorycBackgroundsNode, model->backgroundsDir()},
+      {m_ztorycModelSheetNode,  model->modelSheetDir()},
+  };
+
+  for (auto &it : items) {
+    if (!it.node) continue;
+    const bool show = !it.dir.isEmpty() && QDir(it.dir).exists();
+    if (show) {
+      const TFilePath p(it.dir.toStdWString());
+      if (it.node->getPath() != p) it.node->setPath(p);
+      if (it.node->getRow() == -1) {
+        const int row = getChildCount();
+        DvDirModel::instance()->notifyBeginInsertRows(QModelIndex(), row, row);
+        addChild(it.node);
+        DvDirModel::instance()->notifyEndInsertRows();
+      }
+    } else if (it.node->getRow() != -1) {
+      const int row = it.node->getRow();
+      DvDirModel::instance()->notifyBeginRemoveRows(QModelIndex(), row, row);
+      m_children.erase(m_children.begin() + row, m_children.begin() + row + 1);
+      DvDirModel::instance()->notifyEndRemoveRows();
+      it.node->setRow(-1);
+    }
+  }
+}
 
 void DvDirModelRootNode::updateSceneFolderNodeVisibility(bool forceHide) {
   if (!m_sceneFolderNode) return;
