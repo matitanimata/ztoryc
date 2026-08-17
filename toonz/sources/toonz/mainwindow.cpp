@@ -2759,7 +2759,11 @@ void MainWindow::defineActions() {
   createMenuXsheetAction(MI_EditTaggedFrame, QT_TR_NOOP("Edit Tag"), "", "");
   createMenuXsheetAction(MI_ClearTags, QT_TR_NOOP("Remove Tags"), "", "");
   // Lip sync dai dialoghi dello storyboard: le PAROLE vengono dal copione, i
-  // TEMPI da Whisper. Sta nel menu Xsheet accanto al lip sync di Rhubarb.
+  // TEMPI da Whisper. Sta nel menu SCENE accanto al lip sync di Rhubarb.
+  // ⚠️ Un menu «Xsheet» NON ESISTE: createMenuXsheetAction e' solo la
+  // CATEGORIA del comando nell'albero delle scorciatoie, e il nome trae in
+  // inganno. I menu di primo livello sono File, Edit, Scene, Level, Cells,
+  // Play, Render, Cleanup, View, Workflow, Panels, Help (menubar.cpp).
   createMenuXsheetAction(MI_ZtoryLipSyncShot,
                          QT_TR_NOOP("Lip Sync..."), "", "");
   // La TERZA operazione: le colonne dei fonemi ci sono, il personaggio e'

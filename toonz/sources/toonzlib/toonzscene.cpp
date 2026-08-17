@@ -58,6 +58,7 @@ TOfflineGL *currentOfflineGL = 0;
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
 #include <QOpenGLFramebufferObject>
+#include <QOpenGLFunctions>
 #endif
 //=============================================================================
 // Utility functions
@@ -848,6 +849,16 @@ void ToonzScene::renderFrame(const TRaster32P &ras, int row, const TXsheet *xsh,
   // momento OGNI disegno del render esterno fallisce con
   // GL_INVALID_FRAMEBUFFER_OPERATION (0x506): l'anteprima esce vuota, non solo
   // senza il personaggio. Misurato il 2026-08-18.
+  //
+  // ⚠️ NIENTE glBindFramebuffer DIRETTA. Su macOS arriva dalle intestazioni di
+  // sistema, su Linux NO: e' della famiglia FBO e va presa da Qt. Chiamandola
+  // nuda si ottiene un ramo che compila solo su una piattaforma — lo stesso
+  // difetto che ci ha tenuti senza build Linux per due release. Verificato
+  // sulla CI il 2026-08-18 (gcc e clang, entrambi rotti).
+  //
+#ifndef GL_FRAMEBUFFER_BINDING
+#define GL_FRAMEBUFFER_BINDING 0x8CA6
+#endif
   GLint prevFramebuffer = 0;
   glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFramebuffer);
 
@@ -907,7 +918,10 @@ void ToonzScene::renderFrame(const TRaster32P &ras, int row, const TXsheet *xsh,
     fb->release();
     // fb->release() lega il framebuffer 0, non quello di prima: rimetterlo a
     // mano e' l'unico modo perche' il chiamante ritrovi il suo bersaglio.
-    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFramebuffer);
+    // Via QOpenGLFunctions, non nuda — vedi il commento sopra.
+    if (QOpenGLContext *glCtx = QOpenGLContext::currentContext())
+      glCtx->functions()->glBindFramebuffer(GL_FRAMEBUFFER,
+                                            (GLuint)prevFramebuffer);
     assert(glGetError() == GL_NO_ERROR);
 #else
     TRop::over(ras, ogl.getRaster());
