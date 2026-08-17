@@ -176,7 +176,21 @@ DrawableTextureDataP texture_utils::getTextureData(const TXsheet *xsh,
 
   DrawableTextureDataP data(
       TTexturesStorage::instance()->getTextureData(texId));
-  if (data) return data;
+  if (data) {
+    // Un identificatore di texture vive nel contesto OpenGL che l'ha creata.
+    // La cache e' globale e di contesti non sa niente: quella nata nel viewer
+    // e' un numero morto nel contesto offscreen dell'anteprima dei pannelli, e
+    // legarla non da' errore — campiona bianco, e il personaggio esce come
+    // sagoma. glIsTexture lo dice; se e' morta si ricostruisce qui.
+    // Misurato il 2026-08-18.
+    const MeshTexturizer::TextureData *td = data->m_textureData;
+    const GLuint texGlId =
+        (td && !td->m_tileDatas.empty()) ? td->m_tileDatas[0].m_textureId : 0u;
+    if (texGlId && glIsTexture(texGlId)) return data;
+
+    data.reset();
+    TTexturesStorage::instance()->unloadTexture(texId);
+  }
 
   // No available texture - we must build and load it
   TRaster32P tex(

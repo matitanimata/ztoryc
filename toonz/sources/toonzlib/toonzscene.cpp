@@ -839,6 +839,18 @@ void ToonzScene::renderFrame(const TRaster32P &ras, int row, const TXsheet *xsh,
   surface->setFormat(format);
   surface->create();
 
+  // Il framebuffer legato NON fa parte dello stato salvato da glPushAttrib.
+  // Serve qui perche' questa funzione e' RIENTRANTE: disegnando una colonna
+  // deformata dal Plastic si passa da texture_utils::getTextureData(xsh, ...),
+  // che per costruire la texture della sotto-scena richiama questa stessa
+  // renderFrame. Senza salvarlo, la fb->release() qui sotto lega il
+  // framebuffer 0 — che in un contesto offscreen e' incompleto — e da quel
+  // momento OGNI disegno del render esterno fallisce con
+  // GL_INVALID_FRAMEBUFFER_OPERATION (0x506): l'anteprima esce vuota, non solo
+  // senza il personaggio. Misurato il 2026-08-18.
+  GLint prevFramebuffer = 0;
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFramebuffer);
+
   glPushAttrib(GL_ALL_ATTRIB_BITS);
   glMatrixMode(GL_MODELVIEW), glPushMatrix();
   glMatrixMode(GL_PROJECTION), glPushMatrix();
@@ -893,6 +905,9 @@ void ToonzScene::renderFrame(const TRaster32P &ras, int row, const TXsheet *xsh,
       srcPix += wrap;
     }
     fb->release();
+    // fb->release() lega il framebuffer 0, non quello di prima: rimetterlo a
+    // mano e' l'unico modo perche' il chiamante ritrovi il suo bersaglio.
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFramebuffer);
     assert(glGetError() == GL_NO_ERROR);
 #else
     TRop::over(ras, ogl.getRaster());

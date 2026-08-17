@@ -1150,7 +1150,16 @@ QPixmap IconGenerator::renderXsheetFrame(TXsheet *xsheet, int row, const TDimens
   TImageCache::instance()->setEnabled(false);
   bool rasterizePli = TXshSimpleLevel::m_rasterizePli;
   TXshSimpleLevel::m_rasterizePli = false;
-  scene->renderFrame(ras, row, xsheet, false);
+  // ⚠️ IL TERZO ARGOMENTO E' checkFlags, NON forSceneIcon. La dichiarazione e'
+  // renderFrame(ras, row, xsh, checkFlags = true, forSceneIcon = true, ...):
+  // fermandosi a `false` si lasciava forSceneIcon al suo default, cioe' VERO.
+  // Conseguenza misurata il 2026-08-18: in RasterPainter::onImage il ramo della
+  // deformazione plastica e' escluso quando forSceneIcon e' vero, e i
+  // personaggi ZtoRig sono sotto-xsheet deformati da una mesh — non hanno un
+  // livello semplice, quindi player.image() e' NULLA e il disegno comune non
+  // disegna niente. Non uscivano deformati male: sparivano.
+  scene->renderFrame(ras, row, xsheet, /*checkFlags*/ false,
+                     /*forSceneIcon*/ false);
   TXshSimpleLevel::m_rasterizePli = rasterizePli;
   TImageCache::instance()->setEnabled(true);
   int w = ras->getLx(), h = ras->getLy();
