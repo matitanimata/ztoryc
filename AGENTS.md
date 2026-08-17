@@ -295,15 +295,14 @@ cd toonz/sources && ./beautification.sh
 
 ## Known Bugs (do not regress)
 
-- ⏳ **Panels missing on scene open** — `refreshFromScene` non caricava tutti i
-  pannelli. **Franco crede sia risolto** (2026-08-16) ma **non l'ha ancora
-  provato**: lo verifica lui. Resta scritto qui finche' la prova non c'e' —
-  «credo» e «provato» sono due cose diverse, e togliendolo adesso nessuno si
-  ricorderebbe di controllarlo.
+Nessuno aperto.
 
-> ✅ Risolto e tolto da questa lista: **pannello non rimosso alla cancellazione
-> di un disegno** (`detectAndUpdatePanels` non gestiva la rimozione), chiuso
-> prima del 2026-08-16.
+> ✅ Chiusi e verificati da Franco il 2026-08-17:
+> - **pannello non rimosso alla cancellazione di un disegno**
+>   (`detectAndUpdatePanels` non gestiva la rimozione);
+> - **pannelli mancanti all'apertura della scena** (`refreshFromScene` non li
+>   caricava tutti) — era rimasto marcato «da verificare» perche' Franco
+>   credeva fosse risolto ma non l'aveva ancora provato. Provato: risolto.
 
 -----
 
