@@ -275,11 +275,25 @@ cd toonz/sources && ./beautification.sh
    > fix applicato, commit, e se e' stato **verificato su Tahoma2D stock** o solo
    > diagnosticato. Segnalarlo anche nel CHANGELOG della sessione.
    >
-   > **Non confondere i due file:**
-   > - `UPSTREAM_PR_CANDIDATES.md` — fonte di verita', tecnica, italiano, real-time
-   > - `PR_CANDIDATES_SHARE_EN.md` — versione **derivata** discorsiva in inglese per
-   >   la condivisione esterna (issue, forum, upstream). Si rigenera DA quella
-   >   tecnica quando serve condividere; non modificarla come se fosse l'originale.
+   > **UN FILE SOLO, e in INGLESE** (dal 2026-08-19). `UPSTREAM_PR_CANDIDATES.md`
+   > ha una **Parte 1 discorsiva** (cos'e' la lista, quanto e' certa ogni voce, da
+   > dove conviene cominciare) e una **Parte 2 tecnica** (correzioni, funzionalita'
+   > portabili, funzionalita' esclusive di Ztoryc, come si prepara una PR). E' sia
+   > la lista di lavoro sia il documento che si passa a chi da' una mano da fuori.
+   > `PR_CANDIDATES_SHARE_EN.md` e' **ritirato**: contiene solo un rimando.
+   >
+   > Perche' erano due e ora sono uno: si erano scollati male — il file «fonte di
+   > verita'» aveva 3 voci (solo quelle emerse da agosto), quello «derivato» ne
+   > aveva 32 (tutto lo storico). Cioe' nessuno dei due era la fonte di verita', ed
+   > e' esattamente il difetto che avere una fonte di verita' dovrebbe impedire.
+   >
+   > **Le funzionalita' si dividono su UNA domanda:** serve il sidecar `.ztoryc`
+   > per esistere? Se si', § 2.3, e non e' proponibile. Se no, § 2.2.
+   > **E si segna quanto sono assestate** — 🟢 consolidata, 🟡 recente, 🔴 in
+   > lavorazione. Il 🔴 non parla di qualita' ma di TEMPI: proporre una cosa a
+   > monte ne congela l'interfaccia, e congelarne una che si sta ancora muovendo
+   > la trasforma in un peso per tutti (indicazione di Franco, 2026-08-19: ZtoRig
+   > e' in pausa con due difetti aperti, e chi legge deve saperlo).
 
 -----
 

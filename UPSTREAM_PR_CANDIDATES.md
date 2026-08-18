@@ -1,453 +1,261 @@
-## `renderFrame` rientrante lascia legato il framebuffer 0 (macOS/Linux/FreeBSD)
+# Ztoryc → Tahoma2D / OpenToonz — Upstream Contribution Candidates
 
-**Sintomo.** Renderizzando un fotogramma fuori schermo, tutto cio' che viene
-disegnato DOPO una colonna deformata dal Plastic non compare: l'immagine esce
-vuota, non solo priva del personaggio. `glGetError()` dopo il disegno della
-mesh deformata restituisce `0x506` (`GL_INVALID_FRAMEBUFFER_OPERATION`).
-
-**File e riga.** `toonz/sources/toonzlib/toonzscene.cpp`, l'overload
-`renderFrame(ras, row, xsh, placedRect, worldToPlacedAff)`, ramo
-`#if defined(MACOSX) || defined(LINUX) || defined(FREEBSD)` — la `fb->release()`
-in fondo al blocco.
-
-**Causa root.** Questa funzione e' **rientrante** e nessuno se n'era accorto.
-Per disegnare una colonna deformata dal Plastic si passa da
-`texture_utils::getTextureData(const TXsheet *, int)`, che per costruire la
-texture della sotto-scena richiama **questa stessa** `renderFrame`. La chiamata
-annidata crea il proprio `QOpenGLFramebufferObject`, lo lega, e alla fine fa
-`fb->release()` — che lega il framebuffer **0**, non quello di prima. In un
-contesto offscreen il framebuffer 0 e' incompleto, quindi da quel momento ogni
-disegno del render esterno fallisce.
-
-Il `glPushAttrib(GL_ALL_ATTRIB_BITS)` gia' presente **non copre il caso**: il
-framebuffer legato non e' stato di attributi e `glPopAttrib` non lo ripristina.
-
-**Fix applicato (Ztoryc, 2026-08-18).** `glGetIntegerv(GL_FRAMEBUFFER_BINDING)`
-prima del `glPushAttrib`, e `glBindFramebuffer(GL_FRAMEBUFFER, prev)` subito
-dopo la `fb->release()`.
-
-**Stato.** Diagnosticato e verificato su Ztoryc con strumentazione su file
-(`RasterPainter::onImage` + `texture_utils`), non per lettura del codice: il
-`0x506` e' stato misurato. **NON verificato su Tahoma2D stock**, ma il codice e'
-identico e non ha niente di nostro. Per riprodurlo a monte serve una scena con
-una colonna deformata dal Plastic **dentro una sotto-scena**, renderizzata
-fuori schermo (icona di scena / anteprima), su macOS o Linux.
-
-## Rhubarb trovato nel bundle per coincidenza (irrobustimento, non un difetto)
-
-**File e riga.** `toonz/sources/toonzlib/thirdparty.cpp`, `autodetectRhubarb()`.
-
-**Cosa succede.** Dei tre programmi esterni, Rhubarb e' l'UNICO la cui ricerca
-non nomina il bundle: `autodetectFFmpeg()` e `autodetectWhisper()` hanno la riga
-esplicita `applicationDirPath() + "/../Resources/..."` (macOS), Rhubarb no. Lo
-trova comunque, ma solo perche' `TEnv::getWorkingDirectory()` risolve a
-`Contents/Resources` — e ci risolve perche' e' dove sta la cartella dello stuff,
-non perche' qualcuno l'abbia deciso per Rhubarb.
-
-**Perche' proporlo.** Non c'e' un sintomo oggi: e' una dipendenza implicita fra
-due cose che non si sanno l'una dell'altra. Spostando la cartella dello stuff,
-Rhubarb sparirebbe e nessuno collegherebbe le due cose. Vale anche per
-Tahoma2D, dove il layout del bundle e' lo stesso (`tahomastuff` in Resources).
-
-**Fix applicato (Ztoryc, 2026-08-17).** Aggiunte le due righe che hanno gli
-altri due — `appDir + "/rhubarb"` e, su macOS, `../Resources/rhubarb`.
-
-**Stato.** Diagnosticato leggendo il codice, non da un sintomo. Da proporre come
-allineamento fra le tre funzioni, non come correzione di un difetto.
-
-## `portableStatus` non dichiarato: Tahoma2D 1.6.2 non compila su Linux
-
-**Sintomo.** Build Linux (gcc e clang) rotta:
-`tenv.cpp:308: error: 'portableStatus' was not declared in this scope`.
-
-**File e riga.** `toonz/sources/common/tapptools/tenv.cpp`, ramo
-`#elif defined(LINUX) || defined(FREEBSD)` di `setWorkingDirectory()`.
-
-**Causa root.** Il blocco che cerca la cartella portatile a partire dalla
-variabile d'ambiente `APPIMAGE` usa una variabile `portableStatus` che non
-esiste da nessuna parte. Il ramo e' compilato SOLO su Linux/FreeBSD, quindi
-su macOS e Windows non se ne accorge nessuno. Arriva dalla 1.6.2 (upstream
-«Fix AppImage working directory»).
-
-**Fix applicato (Ztoryc, 2026-08-17).** Si usa `TFileStatus(portableCheck)`
-direttamente, come fanno gli altri rami. Nello stesso punto e' stato corretto
-un secondo difetto **nostro**: cercava solo «tahomastuff», mentre la cartella
-portatile di Ztoryc si chiama «ztorycstuff» — l'AppImage non l'avrebbe
-trovata mai. Ora scorre `stuffNames` come gli altri rami e valorizza anche
-`m_stuffDirName`.
-
-**Stato.** Diagnosticato sulla CI Linux di Ztoryc (run 32021466547).
-NON verificato su Tahoma2D stock: se upstream la loro CI Linux e' verde,
-allora hanno un percorso di compilazione diverso e va capito prima di
-proporre. La parte da proporre e' SOLO la variabile non dichiarata — il
-nome della cartella e' roba Ztoryc.
-
-# Ztoryc → Tahoma2D — candidati PR upstream
-
-> ✅ **FONTE DI VERITÀ.** Lista di lavoro tecnica, da aggiornare **in tempo reale**
-> ogni volta che emerge un candidato (vedi la regola in AGENTS.md).
-> La versione discorsiva in inglese per la condivisione esterna è
-> `PR_CANDIDATES_SHARE_EN.md`, che si rigenera da qui quando serve — non il contrario.
-
-
-> Fix sviluppati in Ztoryc, abbastanza puliti da essere proposti a monte.
-> Estratti da AGENTS.md il 2026-07-20: erano il 40% di un file che viene caricato
-> a ogni sessione, mentre servono solo quando si prepara davvero una PR.
+> **One file, two halves.** Part 1 is the orientation: what this list is, how sure
+> we are of each item, and where it makes sense to start. Part 2 is the working
+> list itself. If you are reading this to help, Part 1 is enough to decide what
+> to pick up.
 >
-> **Workflow:** verificare ogni bug su Tahoma2D stock prima di aprire la PR.
-> Se riproducibile → aprire PR. Se già fixato a monte → rimuovere dalla lista.
+> This file replaces the earlier split between a technical working list and a
+> shareable English write-up: the two drifted apart, which is exactly the failure
+> mode a "source of truth" is supposed to prevent.
 
-## Come si prepara una PR (deciso 2026-08-04)
+---
 
-**Worktree di stock permanenti**, per non dover mai dire «funziona sul nostro
-binario» al posto di «riproducibile su stock»:
+## Part 1 — Read this first
 
-| worktree | branch | serve a |
+### What Ztoryc is
+
+Ztoryc is a fork of **Tahoma2D 1.6.x** that adds an integrated storyboard and
+animatic pipeline for 2D pre-production. Most of the work in the fork falls into
+two very different piles, and the difference matters for anything upstream:
+
+- work that happens to have been done *in* Ztoryc but is about **Tahoma2D's own
+  code** — crashes, memory, the Plastic (mesh-deformation) tool, the timeline,
+  the brush. None of it needs anything Ztoryc-specific to be useful;
+- work that only exists **because** of the storyboard pipeline, and which needs
+  the `.ztoryc` sidecar file to mean anything at all.
+
+The first pile is what this document is for. The second is listed too, in
+§ 2.3 — not as a proposal, but so nobody has to wonder whether it was
+overlooked.
+
+### How sure we are of each item
+
+Every bug fix carries one of three markers. They are about **evidence**, not
+about how good the fix is:
+
+| | meaning |
+|---|---|
+| ✅ | reproduced on **stock** Tahoma2D and fixed there — ready to become a PR |
+| ❓ | fixed in Ztoryc; the upstream code looks identical, but nobody has reproduced it on stock yet |
+| ⚠️ | the defect is readable in the code, but our trigger was Ztoryc-specific — best presented as hardening, not as a bug report |
+
+Right now the count is **4 ✅, 21 ❓, 4 ⚠️**. That ratio is the honest state of
+things: most of these were found while chasing something else, fixed, and moved
+on from. The code was checked against upstream (`git show <remote>/master:<file>`)
+but the *symptom* was not re-triggered on a clean build.
+
+### Where it makes sense to start
+
+**The four ✅ items are the ready ones** — they have a stock reproduction behind
+them, so they can go straight to a branch and a PR.
+
+**The most useful help is turning ❓ into ✅.** That work is: build stock, find a
+scene or a sequence of actions that triggers the symptom, confirm it, then the
+fix is a small diff we already have. It is unglamorous and it is the entire
+bottleneck — a fix nobody has reproduced upstream is a fix a maintainer has to
+take on faith, which is not a fair thing to ask.
+
+Two ❓ items are worth singling out because they affect **every macOS and Linux
+user**, not a corner case: **#5** (`lzoCompress` deadlock — silent hang saving
+`.tlv`) and **#17** (`memoryShortage()` is a stub returning `false`, so the image
+cache never evicts). If only two things get verified, those two.
+
+### How settled each feature is
+
+Certainty markers say whether a *bug* was reproduced. Features need a different
+question — **how much mileage does it have?** — so each one in § 2.2 carries one
+of these:
+
+| | meaning |
+|---|---|
+| 🟢 | settled — shipped a while ago and used since, no known gaps |
+| 🟡 | recent — shipped in the last release or two, little mileage yet |
+| 🔴 | **work in progress** — actively being developed, known gaps, shape may still change |
+
+This matters more than it looks. A 🔴 item is not a warning about quality, it is
+a warning about **timing**: proposing something upstream freezes its interface,
+and freezing an interface that is still moving is how a contribution becomes a
+burden for everyone. The rigging suite is the clearest case — see the note under
+§ 2.2.
+
+### The two kinds of features
+
+Features are split in Part 2 by a single test: **does it need the `.ztoryc`
+sidecar to exist?**
+
+- **§ 2.2 — portable.** Works on a plain Tahoma2D or OpenToonz scene. The
+  storyboard pipeline is not involved. These are genuinely proposable.
+- **§ 2.3 — Ztoryc-exclusive.** The storyboard, the animatic, the shot database.
+  These read and write `.ztoryc`, and porting them would mean porting the whole
+  data model. Listed for completeness only.
+
+Some items sit near the line and are marked where they do. The lip sync is the
+clearest example: the *engine* is general (see § 2.2), but the reason it is
+accurate is that the words come from the storyboard panels — and that part is
+not portable.
+
+---
+
+## Part 2 — The list
+
+### 2.1 — Bug fixes
+
+#### 🔴 High-impact
+
+1. ❓ **Vector fill: closed shapes "unfillable" until scene reload + Maximum Gap resets on frame change** — `common/tvectorimage/tvectorimage.cpp`, `include/tvectorimage.h`, `tnztools/filltool.cpp/.h`. Incremental region recompute leaves intersection data stale; only reload rebuilt it. Long-standing, community-documented. Fix: `TVectorImage::forceRegionsRecompute()` on fill-tool activate + frame change; gap slider made sticky. `021d6886d`. *(gap part verified; fill part needs a stock repro)*
+2. ❓ **`convertToExplicitHolds` turns sub-xsheets into IMPLICIT holds** — `toonzlib/txsheet.cpp` (~2732). Copy-paste bug (recurses with the inverse function). Code identical upstream — verify with a scene that has a sub-xsheet.
+3. ✅ **CRASH dragging the "Drawing #" handle of the Animate tool** — `tnztools/edittool.cpp`. Single-channel tool used the two-channel API → OOB heap write. Root cause found via lldb, reproduced on stock (upstream feature PR #2124).
+4. ⚠️ **`TUndoManager` use-after-free on reentrant `add()`** — `tcore/tundo.cpp`. `doAdd()`/`beginBlock()` truncate the redo branch without protecting the object whose `undo()`/`redo()` is running. Code identical upstream, but no stock repro (our trigger was Ztoryc code) → present as hardening. `c0e7c92bf`.
+5. ❓ **`lzoCompress`/`lzodecompress` deadlock on macOS/Linux** — `tcodec.cpp`. `QProcess::start()` forks; a signal during `malloc_fork_prepare` deadlocks (silent hang on .tlv save). Fix: block signals around `process.start()`. Affects all Mac/Linux users — high priority. `140d790ac`.
+6. ❓ **ImageManager cache leak after render** — `imagemanager.cpp`, `rendercommand.cpp`. All frames stay cached (~10 GB on 350-frame scenes). `be20f9512`.
+7. ✅ **TasksViewer crash on room switch** — `tasksviewer.cpp`. Empty destructor leaves a dangling pointer in `BatchesController`. Verified and fixed — ready for PR. `1569cf2cc`.
+8. ❓ **`requireColumnSoundTrack` allocates RAM proportional to audio duration** — 2h audio → ~1.3 GB per column. Cap `toFrame` to the video frame count. `69a8b9043`.
+9. ❓ **Save Sub-Scene As path corruption** — `toonzscene.cpp`, `iocommand.cpp`.
+10. ❓ **Wrong column-header thumbnail when sub-scenes share a name** — `icongenerator.cpp`. `XsheetIconRenderer::getId` uses a pointer instead of the name.
+11. ❓ **Set Key (Z) not showing the keyframe diamond on peg columns** — `cellselectioncommand.cpp`. Used `ColumnId(col)` instead of `xsh->getColumnObjectId(col)`.
+12. ❓ **Peg column width reset after delete** — `columnfan.cpp` (1 line). The column after a deleted peg inherits the reduced width. `b8ddea829`.
+13. ❓ **PSD first layer lost when loaded as sub-scene** — `txshsimplelevel.cpp`, `tiio_psd.cpp`. Affinity 16-bit PSD, empty Pascal names, group mode: `##`→`#` replace corrupts the path. `5b8eeb3c1`.
+
+#### 🟠 Medium
+
+14. ❓ **`getPreviewButtonStates` null crash** — `viewerpane.cpp`. Crash if `m_previewButton`/`m_subcameraButton` uninitialized. `d7453d1eb`.
+15. ❓ **Mesh sub-scenes saved to the wrong folder** — `meshifypopup.cpp`.
+16. ❓ **New Scene missing the save dialog** — `iocommand.cpp`.
+17. ❓ **`TSystem::memoryShortage()` always returns false on macOS/Linux** — `tsystempd.cpp`. A no-op (`return false`) → `TImageCache` never auto-evicts even near full RAM. Fix: `host_statistics64` (macOS) / `/proc/meminfo` (Linux). Affects all Mac/Linux users — high priority. `b79ba7d32`.
+18. ❓ **macOS "Unable to create a new document" on launch** — `BundleInfo.plist.in` (`NSQuitAlwaysKeepsWindows`, `NSApplicationSupportsSecureRestorableState`). `a7a822704`.
+19. ❓ **macOS CI deployment target** — needs `-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0` or the binary embeds the runner's `minos`. `940e895bc`.
+20. ❓ **AutoFill undo/redo (brush)** — the brush AutoFill wasn't undoable and refilled existing shapes; dedicated `AutoFillUndo` (before/after tiles) grouped with the stroke, and "new shapes only". `25ad78f53`, `toonzrasterbrushtool.cpp`. *(bug fix side of the AutoFill work; the color-picker part is a feature — see Part 2)*
+
+#### 🟡 Windows / MSVC compatibility
+
+21. ❓ **Alternative tokens `not`/`and`/`or` → `!`/`&&`/`||`** (48 sites). `105588c14`.
+22. ❓ **Local variable `near` renamed** — collides with the `windef.h` macro on Windows. `8a4dbc294`.
+
+#### 🆕 Added August 2026
+
+23. ❓ **`renderFrame` is re-entrant and leaves framebuffer 0 bound** (macOS/Linux/FreeBSD) — `toonzlib/toonzscene.cpp`, the `renderFrame(ras, row, xsh, placedRect, worldToPlacedAff)` overload. Drawing a Plastic-deformed column goes through `texture_utils::getTextureData(const TXsheet *, int)`, which builds the sub-xsheet's texture by calling **this same function** again. The nested call binds its own FBO and ends with `fb->release()`, which binds framebuffer **0** — not the previous one. In an offscreen context framebuffer 0 is incomplete, so every subsequent draw of the outer render fails with `GL_INVALID_FRAMEBUFFER_OPERATION` (0x506) and the image comes out **blank**, not merely missing the character. `glPushAttrib(GL_ALL_ATTRIB_BITS)` does not cover this: the framebuffer binding is not attribute state. Fix: read `GL_FRAMEBUFFER_BINDING` before, restore it after (via `QOpenGLContext::currentContext()->functions()`, since `glBindFramebuffer` is not declared by the system headers on Linux). Measured, not deduced — the `0x506` was logged. To reproduce upstream: a scene with a Plastic-deformed column **inside a sub-xsheet**, rendered offscreen (scene icon / thumbnail), on macOS or Linux.
+24. ❓ **`portableStatus` undeclared — Tahoma2D 1.6.2 does not compile on Linux** — `common/tapptools/tenv.cpp`, the `#elif defined(LINUX) || defined(FREEBSD)` branch of `setWorkingDirectory()`. The block that looks for the portable folder via `$APPIMAGE` uses a variable that does not exist anywhere. The branch compiles **only** on Linux/FreeBSD, so macOS and Windows never see it. Arrived with 1.6.2 ("Fix AppImage working directory"). Fix: use `TFileStatus(portableCheck)` directly, as the other branches do. *(Diagnosed on Ztoryc's Linux CI. If upstream's own Linux CI is green, they have a different build path and that should be understood before proposing.)*
+25. ⚠️ **Rhubarb is found in the bundle by coincidence** — `toonzlib/thirdparty.cpp`, `autodetectRhubarb()`. Of the three external programs, Rhubarb is the only one whose search never names the bundle: `autodetectFFmpeg()` and `autodetectWhisper()` have an explicit `applicationDirPath() + "/../Resources/..."` line, Rhubarb does not. It is found anyway, but only because `TEnv::getWorkingDirectory()` happens to resolve to `Contents/Resources`. No symptom today — it is an implicit dependency between two things that do not know about each other. Present as alignment between the three functions, not as a defect.
+
+---
+
+### 2.2 — Features that can go upstream as they are
+
+Nothing here needs the `.ztoryc` file. They operate on ordinary scenes, levels
+and xsheets.
+
+#### 🏳️ ZtoRig / SuperPlastic — rigging suite for the Plastic tool · 🔴 WIP
+
+The flagship. General animation features on the Plastic (mesh-deformation) tool,
+useful to anyone rigging cut-out characters in stock Tahoma2D/OpenToonz. Can be
+one large contribution or split.
+
+> 🔴 **Read this before picking any of it up.** The core (1–4) shipped in
+> **v0.11.0, July 2026**; joint correctives (5) are from **August 2026**.
+> Development is **deliberately paused** since 2026-08-14 — not abandoned, but
+> the author stopped to build an actual character with it, which is the right
+> order and also means the interface is still moving. Two defects are open,
+> found by using it rather than by inspection:
+> - sculpting a corrective on an **arm** does not produce one (unclear yet
+>   whether the corrective is not created or created and not shown);
+> - **Show SO** turns on with **Order** but does not turn off with it — a paired
+>   state that remembers how to switch on and not how to go back.
+>
+> Both are small. Neither is fixed. Anything proposed from this section should
+> wait for the pause to end, or be scoped to a piece that is demonstrably still.
+
+1. **Inverse Kinematics / pins** — keyframeable pins, foot/hand planting held per-frame (through in-betweens), free root via rigid-rig translation, multi-pin, clean bake-to-FK when leaving IK.
+2. **Keyframeable joint angle limits** — min/max bounds with a draggable in-viewer gizmo, animatable.
+3. **Squash & stretch controller on the skeleton** — Animate-tool-style gizmo (move/rotate/scale/shear about a keyframeable pivot) on top of the deformed skeleton, with a show/hide toggle.
+4. **Cross-level / multi-column skeletons** — treat hook-connected columns as one rig: unified view + selection, cross-column posing, unified FK (child roots act as ordinary chain joints), smarter picking at coincident joints.
+5. 🔴 **Joint correctives (pose-space deformation)** *(August 2026, newest of the five)* — corrective shapes driven by a joint's rotation, so an elbow or a shoulder keeps its silhouette through its range. Authored with a sculpt brush and edited as a **track in degrees** rather than a table, so you see *where* a corrective acts and *how much*, along the joint's rotation. Includes a stacking-order control.
+
+> ⚠️ **Strategic note:** work in progress and the project's competitive differentiator (the Harmony/Moho-direction work). Whether and when to upstream it is a business decision, not a technical one.
+
+#### 🔹 Lip sync · 🟡 recent (shipped v0.13.0–v0.13.1, August 2026)
+
+6. 🟡 **Forced alignment from a known script** — when the words are already known, a recogniser is not asked *what* was said but only *when*, which is a much easier question. The script becomes a closed vocabulary and the recogniser runs as a forced aligner; a proper noun it has never heard no longer derails the take. Measured against the spectrogram on our own recording (the /s/ of *questo*, the /f/ of *fa* — physical events, not another model's opinion): **Vosk 10 ms** mean error (0.2 frames), **Whisper 30 ms**, **Whisper+DTW 191 ms**. Engines: Vosk (Apache 2.0) for timing, whisper.cpp (MIT) as the fallback for languages Vosk has no model for, espeak-ng (GPLv3, invoked as a separate process, never linked) for phonemes → mouth shapes.
+   > **Where the line is:** the engine is portable. *Where the text comes from* is not — in Ztoryc it comes from the storyboard panels. Upstream would need a text source of its own (a per-shot field, an imported file). Tahoma2D already ships Rhubarb, which needs no script at all; this is the accuracy path for when a script exists.
+7. 🟡 **Add a language without rebuilding** — a preferences entry that installs a Vosk model downloaded by the user, stored next to personal settings rather than in the cache (which can be emptied). Every pass reports **which engine did the work**, so loose timing reads as a missing model instead of a broken feature.
+8. 🟡 **Mouth sets stored beside the level** — a character's viseme→drawing map lives in a file next to the level file, on one rule: *the map lives where the thing lives*. Importing a character into a scene brings its mouths along. A viseme is a **list** of targets, not one, because in cutout the mouth and the teeth change on the same frame.
+
+#### 🔹 Animation & timeline
+
+9. 🟢 **Keys Follow Exposure** (Harmony/Moho-style) — a visible toolbar toggle (`MI_ToggleKeyframesFollowExposure`) that makes keyframes follow cell exposure edits. Includes:
+   - **Combined cell + keyframe selection** — `TCellKeyframeSelection` (inherits `TCellSelection`): select and edit cells and keys together.
+   - Cell operations that carry the keyframes: **Reverse, Roll Up / Roll Down, Swing, Repeat, Time Stretch**.
+   - **"Edit Cels/Keys"** context submenu on **both** cells and keyframes.
+   - Level Extender (shrink) keyframe-undo fix.
+   - Files: `txsheet.cpp`, `xsheetdragtool.cpp`, `xshcellviewer.cpp`, `cellselectioncommand.cpp`, `timestretchpopup.cpp`, `duplicatepopup.cpp`.
+10. 🟢 **Main Audio toggle** — play the main xsheet's soundtrack while inside a sub-scene (`MI_ToggleMainAudio`).
+11. 🟢 **Zoom-to-cursor in the timeline** — the frame under the cursor stays fixed while zooming. `b8ddea829`.
+12. 🟢 **Per-xsheet In/Out markers** — separate play-range markers for the main xsheet vs each sub-scene. `subscenecommand.cpp`.
+13. 🟢 **Keyframe diamond grammar** *(v0.10.0)* — one source of truth for the diamond's colours and detection, so the xsheet, the timeline and the viewer cannot disagree about what kind of key a cell holds, plus a keyframe navigator in the viewer.
+14. 🟡 **Function editor usable on its own** *(August 2026)* — it no longer needs a "current curve" to stand up, and the interpolation handling (Auto Bezier, Flat, tangents, Rove) was straightened out.
+
+#### 🔹 Brush / painting
+
+15. 🟢 **AutoFill fill-style picker** — choose the colour AutoFill uses: "Next Style (N+1)" (default) or "Current Style", plus a dynamic palette picker listing all styles as `[N] StyleName` (rebuilds on palette/level change). `toonzrasterbrushtool.h/.cpp`, `tooloptions.cpp`.
+16. 🟡 **Tilt that follows the surface, not the screen** *(August 2026)* — with the elbow bent, a tablet's tilt axes do not line up with the screen axes, and the brush ends up shaped by how you are sitting rather than how you are drawing.
+
+#### 🔹 File handling
+
+17. 🟢 **Image-sequence recognition with `-` (hyphen) separator** — `frame-0006.jpg` (common from DaVinci, Blender and other exporters) recognised as a sequence, not a single level; guarded so `my-file.jpg` stays a single level. `common/tsystem/tfilepath.cpp`, `include/tfilepath.h`.
+
+---
+
+### 2.3 — Ztoryc-exclusive: **not** proposable
+
+These need the `.ztoryc` sidecar and the shot data model behind it. Porting one
+would mean porting the whole pipeline. Listed so nobody has to ask whether they
+were forgotten.
+
+- **Board room** — the shot grid: panels with dialogue, action and notes, camera-move notation drawn over the thumbnail (START/STOP rectangles, A→B letters, Pan/Tilt/Trk labels), light-direction gizmos, PDF and spreadsheet export.
+- **Automatic panel detection** — where a new panel begins inside a shot, and the `Panels/s` cap that keeps a fully animated level from producing one panel per frame.
+- **Animatic room** — NLE-style timeline over the main xsheet, audio-clocked playback, ripple edit, razor, real cross-dissolves rendered at render time, FCPXML export with transitions for DaVinci.
+- **Shot export** — exporting each shot as its own scene, optionally pre-populated from the breakdown (characters as sub-scenes, props and backgrounds as levels) and with lip sync columns already written; export to an external OpenToonz/Tahoma2D project.
+- **Production Tracker** — the shot database, the per-shot asset breakdown, Kitsu synchronisation, shot identity as *sequence + number*.
+- **Script panel** — screenplay import and the dialogue that feeds the panels.
+- **Scene roles** — storyboard / shot / character, with badges in the file browser.
+- **Paper import** — printing a numbered storyboard sheet, then importing the scanned or photographed drawings back into panels.
+
+---
+
+### 2.4 — How a PR is prepared here
+
+**Permanent stock worktrees**, so that "it works on our binary" is never said in
+place of "reproducible on stock":
+
+| worktree | branch | for |
 |---|---|---|
-| `/Volumes/ZioSam/tahoma2d-workspace/tahoma-stock` | da `upstream/master` | riprodurre e verificare su Tahoma2D pulito |
-| `/Volumes/ZioSam/tahoma2d-workspace/opentoonz-stock` | da `opentoonz/master` | idem su OpenToonz |
-
-Sono `git worktree`, non cloni: condividono l'object database, quindi non
-duplicano la storia su disco. Il bundle che producono (`Tahoma2D.app`,
-`OpenToonz.app`) è diverso da `Ztoryc.app`, quindi girano affiancati senza
-scontrarsi col lock di istanza singola. Remote `opentoonz` aggiunto il
-2026-08-04, push **DISABLED** come `upstream`.
-
-**Passi, in ordine:**
-1. `git worktree add -b pr/<nome> ../tahoma-stock-<nome> upstream/master`
-   (o riusare il worktree esistente cambiando branch).
-2. **Verificare che il bug esista davvero lì**, e su quale dei due progetti:
-   un difetto nato da un commit Tahoma non c'è in OT, e viceversa codice
-   antico e condiviso di solito c'è in entrambi. Si controlla senza compilare
-   con `git show <remote>/master:<file> | grep ...`.
-3. Applicare **solo** quella modifica, con i commenti riscritti in forma
-   neutra — via nomi di scene private, riferimenti a Franco, path locali.
-4. Compilare e collaudare **lì**.
-5. **Revisione automatica**: `/code-review ultra` sul branch della PR. La lancia
-   Franco, non l'agente (è a consumo e parte solo su sua richiesta). Pesca le
-   sviste meccaniche — un sito su otto dimenticato, un caso non gestito.
-6. **Revisione umana — Rodney**, uno dei manutentori di OpenToonz. **Dopo** la
-   revisione automatica, mai prima: mandargli qualcosa che una macchina avrebbe
-   scartato consuma la disponibilità di un volontario. Serve per le domande che
-   solo un umano con la storia del progetto può giudicare — è la forma di fix
-   che accetterebbero? tocca comportamenti su cui qualcuno fa affidamento? c'è
-   una ragione storica per cui è così?
-
-   **Come**: aprire la PR **sul fork** (`pr/<nome>` → `matitanimata/ztoryc:master`).
-   Si ottiene tutta l'interfaccia di revisione di GitHub — commenti riga per
-   riga, suggerimenti applicabili — **senza notificare i manutentori di
-   Tahoma2D**. Dato l'ok, si riapre (o si ridiriziona) verso upstream.
-
-   **Non su tutto**: i candidati grossi o quelli in codice **condiviso**
-   Tahoma+OT. Su questi Rodney non è solo un revisore, è chi potrebbe portarli
-   dentro anche in OpenToonz. Un fix Tahoma-only piccolo si può mandare diretto.
-
-   ⚠️ **Il messaggio a Rodney lo scrive e lo manda Franco.** L'agente prepara
-   branch, diff e descrizione; non manda comunicazioni a persone per suo conto.
-7. Push su `origin` (il fork), PR verso il progetto giusto.
-
-**Regola sul dimensionamento**: se un fix cresce mentre lo si prepara — e
-succede, perché questi difetti sono quasi sempre copiaincollati in più punti —
-**ridirlo a Franco**, perché la decisione «vado diretto o passo dal revisore»
-l'aveva presa su una dimensione diversa.
-
-- [ ] 🧩 **I comandi colonna (e il loro UNDO) risolvono l'xsheet da `TApp`**
-  (`toonz/columncommand.cpp`) — **diagnosticato il 2026-08-17, NON verificato su
-  stock.**
-
-  **Sintomo:** dentro una sotto-scena, i comandi che agiscono sulle colonne
-  operano sull'xsheet CORRENTE anche quando chi chiama intendeva un altro. E,
-  peggio, `DeleteColumnsUndo` risolve l'xsheet **al momento dell'undo**: se nel
-  frattempo si e' entrati in una sotto-scena diversa, l'annullamento ripristina
-  la colonna **nell'xsheet sbagliato**.
-
-  **Causa root:** `deleteColumnsWithoutUndo()` (e la famiglia ColumnCmd) fanno
-  `TApp::instance()->getCurrentXsheet()->getXsheet()` invece di ricevere
-  l'xsheet su cui devono agire. Nessuna variante accetta un xsheet.
-
-  **Come si e' trovato:** in Ztoryc l'animatic mostra le tracce audio del main
-  xsheet anche mentre si e' dentro uno shot, e cancellarne una da li' avrebbe
-  colpito la colonna sbagliata. La difesa attuale e' un messaggio che obbliga
-  l'utente a uscire dallo shot — cioe' qualcuno a monte ci era gia' finito
-  dentro e si e' protetto invece di risalire alla causa. Stessa forma del
-  difetto delle miniature qui sotto.
-
-  **Fix proposto:** parametrizzare comando e undo con l'xsheet bersaglio,
-  mantenendo l'attuale comportamento come default (xsheet corrente) per non
-  toccare i chiamanti esistenti.
-
-  **Da fare prima della PR:** riprodurre su stock — probabilmente basta
-  cancellare una colonna, entrare in una sotto-scena e annullare.
-
-- [ ] 🖼️ **Le miniature di una SOTTO-SCENA mostrano tutte il primo fotogramma**
-  (`toonzqt/icongenerator.cpp`, righe ~1467 e ~1552) — **diagnosticato il
-  2026-08-16, NON ancora verificato su stock.**
-
-  **Sintomo:** ogni fotogramma di una colonna sub-xsheet produce la stessa
-  immagine, quella della riga 0. Si vede nell'xsheet e ovunque si chiedano
-  anteprime per fotogramma di una sotto-scena.
-
-  **Causa root:** `XsheetIconRenderer` ha un parametro `int row = 0`, e
-  `IconGenerator::getIcon()` / `getSizedIcon()` **non lo passano mai** — e'
-  l'unico modo in cui la classe viene costruita (due siti, nessuno lo usa).
-  L'id di cache invece la riga ce l'ha, perche' e' calcolato con
-  `XsheetIconRenderer::getId(cl, fid.getNumber() - 1)`. Quindi la cache indicizza
-  correttamente per riga N immagini identiche: sembra funzionare, e restituisce
-  dieci volte la stessa.
-
-  Il difetto e' subdolo proprio per questo — con la cache che «funziona»,
-  guardando il codice della cache non si trova niente di storto.
-
-  **Fix applicato:** passare `fid.getNumber() - 1` come riga in entrambi i siti.
-  Una riga per sito, il parametro esisteva gia'.
-
-  **Come si e' trovato:** costruendo la scheda di mappatura delle bocche, dove
-  dieci anteprime della stessa sotto-scena devono mostrare dieci fotogrammi
-  diversi.
-
-  🎯 **CONFERMA, e cambia cosa si sta proponendo** (Franco, 2026-08-16: «in
-  tahoma non dava proprio anteprime se si sceglieva una sottoscena»). A monte
-  se ne erano ACCORTI, e invece di risalire alla causa hanno disattivato la
-  funzione: `lipsyncpopup.cpp` avvisa
-
-  > «Thumbnails are not available for sub-Xsheets. Please use the frame
-  > numbers for reference.»
-
-  e al posto delle anteprime disegna un rettangolo grigio con «SubXSheet Frame
-  N» (il ramo `if (m_cl)` in `paintEvent`).
-
-  Quindi la PR non e' «le miniature erano un po' storte»: e' **una funzione
-  disattivata che si riaccende**, e il fix e' una riga per sito. Vale la pena
-  proporre anche la rimozione dell'avviso e del segnaposto in `lipsyncpopup.cpp`
-  — ma come SECONDO commit, cosi' chi revisiona puo' prendere il fix e valutare
-  a parte il ripristino della funzione.
-
-  **Da fare prima della PR:** riprodurre su Tahoma2D stock e su OpenToonz —
-  il codice sembra antico e condiviso, quindi probabilmente c'e' in entrambi
-  (verificare con `git show <remote>/master:toonz/sources/toonzqt/icongenerator.cpp`).
-
-- [ ] 📝 **Commenti INVERTITI su `ANGLE` e `DISTANCE`** (`include/ext/plasticskeletondeformation.h`, righe ~139-140) — **candidato doppio, e non e' nostro**: identico in `upstream/master`, quindi presumibilmente da OpenToonz.
-
-  ```cpp
-  ANGLE = 0,  //!< Distance from parent vertex (delta)
-  DISTANCE,   //!< Angle with parent edge (delta)
-  ```
-
-  `ANGLE` e' documentato come distanza e `DISTANCE` come angolo. Chi legge i
-  commenti conclude l'opposto della verita'.
-
-  **Perche' conta per noi**: tutto il progetto di compensazione del template di
-  scheletro (retargeting, voce A3 di ANIMATIC_TASKS) poggia sul fatto che gli
-  ANGOLI si trasferiscano invariati e le DISTANZE vadano riscalate. Su questa
-  distinzione i commenti mentono.
-
-  ⚠️ **DIAGNOSTICATO, NON VERIFICATO**: e' proprio il tipo di riga su cui si
-  sbaglia al contrario. Prima di aprire la PR va letto **chi USA** i due
-  parametri (non chi li dichiara) e confermato quale sia quale. Trovato il
-  2026-08-16. Fix da una riga, rischio zero, ma inutile mandarlo se e' il
-  commento a essere giusto e la mia lettura sbagliata.
-
-- [ ] 🆕🎯 **`doDryCompute` e `doCompute` calcolano bbox DIVERSI: un fattore invertito** (`toonzlib/plasticdeformerfx.cpp`, righe ~302/310 contro ~520/527) — **candidato doppio: identico in Tahoma2D e in OpenToonz**, e non e' nostro. Trovato il 2026-08-13 leggendo il codice, **non ancora riprodotto**.
-
-  Le due funzioni calcolano la stessa quantita', `meshToTextureAff`, e differiscono per **una sola cosa: l'inversione del primo fattore.**
-  ```cpp
-  // doCompute (:302, :310)
-  const TAffine &imageToTextureAff = texInfo.m_affine;
-  meshToTextureAff = imageToTextureAff * worldTexLevelToTexLevelAff *
-                     worldTexLevelToWorldMeshAff.inv() * meshToWorldMeshAff;
-
-  // doDryCompute (:520, :525) — stesso valore, INVERTITO
-  const TAffine &textureToImageAff = texInfo.m_affine;
-  meshToTextureAff = textureToImageAff.inv() * worldTexLevelToTexLevelAff *
-                     worldImageToWorldMeshAff.inv() * meshToWorldMeshAff;
-  ```
-  Tutto il resto della catena e' identico (`m_texPlacement` e' lo stesso oggetto, ha solo due nomi diversi), e le due funzioni costruiscono `texInfo` allo stesso modo: copia di `info`, poi `buildTextureDataSl`/`buildTextureData`. Le uniche differenze in doCompute sono i flag di maschera, che non toccano `m_affine`.
-
-  **`texInfo.m_affine` NON e' l'identita'**, quindi la differenza e' reale: `buildTextureDataSl` gli assegna l'affine gestita completa per i livelli **PLI/vettoriali** (`info.m_affine = handledAff`), e per i **raster** una scala non banale ogni volta che si rimpicciolisce (`handledAff.a11 < worldLevelToLevelAff.a11`).
-
-  **Quale delle due e' giusta: `doCompute`.** Tre argomenti indipendenti:
-  1. `meshBBox` va intersecato con `texBBox`, che viene da `m_port->getBBox(frame, texBBox, texInfo)` — cioe' vive nello spazio di uscita della porta, che e' proprio `texInfo.m_affine` applicata. Per arrivarci si applica quell'affine, non la sua inversa.
-  2. Il **viewer** calcola l'analogo senza nessuna inversione (`toonzlib/stagevisitor.cpp:1761`).
-  3. Una passata *dry* esiste per dichiarare cio' che servira' alla passata vera: se dichiara una regione diversa, non sta facendo il suo mestiere.
-
-  **Eta' e diffusione**: `git log -L` porta la riga a prima del 2016 (la tocca solo `120a6e041`, il clang-format di massa di Shinya Kitaoka). Verificato con `git show <remote>/master:<file>`: **presente identica in `upstream/master` (Tahoma2D) e in `opentoonz/master`**. E' codice Toonz originale, non una regressione recente e non nostra.
-
-  **Impatto — da non gonfiare.** `doCompute` fa comunque `allocateAndCompute`, quindi i pixel vengono calcolati lo stesso: non e' un difetto visivo garantito. Il danno passa dalla **cache**, che e' cio' che la passata dry alimenta — e quindi sarebbe **dipendente dallo stato**. ⚠️ Questa e' la parte **non dimostrata**: e' un'ipotesi, non una diagnosi.
-
-  **Perche' vale la pena provarlo comunque, e subito**: la caccia al render sbagliato di sh110 (sospesa, quindici cause escluse) ha come vincolo piu' forte *«stesso binario, stessa scena, preview calda in entrambi i casi, a volte rende bene e a volte no»* — cioe' esattamente la firma di qualcosa che dipende dallo stato della cache. E quell'indagine si era fermata perche' **mancava un modo di ottenere un render buono a comando**: se questa e' la causa, correggerla fornisce proprio il controllo positivo che mancava.
-
-  **Prossimo passo**: togliere `.inv()` in `doDryCompute` sul worktree `tahoma-stock`, e vedere se sh110 cambia comportamento. **Non toccare il ramo di lavoro prima di quella prova** — cambiare il percorso di render di una scena che gia' sbaglia, senza un modo di verificare, confonde le acque invece di schiarirle.
-
-- [ ] 🆕🎯 **`doDryCompute` non imposta i flag di maschera che `doCompute` imposta — SOLO TAHOMA2D** (`toonzlib/plasticdeformerfx.cpp`, :262-265 contro :491). Trovato il 2026-08-13 subito dopo il candidato qui sopra, cercando se lo schema si ripetesse. Si ripete, ed e' **indipendente** dal primo: stessa coppia di funzioni, seconda incoerenza.
-  ```cpp
-  // doCompute (:262)                  // doDryCompute (:491)
-  TRenderSettings texInfo(info);       TRenderSettings texInfo(info);
-  texInfo.m_applyMask   = false;       // (niente)
-  texInfo.m_useMaskBox  = false;
-  texInfo.m_plasticMask = info.m_applyMask;
-  ```
-  **Origine**: `3488987d9` (manongjohn, 2023-10-07, *"Fix rendering plastic deformed mask"*), che ha aggiunto le maschere a `doCompute` **senza aggiornare `doDryCompute`**. Verificato: **OpenToonz non ha `m_plasticMask` da nessuna parte** in questo file — e' roba di Tahoma2D, quindi la PR va solo li'. Stessa forma del candidato sulle chiavi piu' sotto: un fix vero che ha lasciato indietro un chiamante.
-
-  **Perche' conta, ed e' il punto interessante**: `m_applyMask`, `m_useMaskBox` e `m_plasticMask` sono tutti e tre dentro **`TRenderSettings::operator==`** (`tnzbase/trasterfx.cpp:1298-1299`), insieme a `m_affine`. Quell'operatore e' l'**identita' con cui il render decide se un risultato in cache corrisponde. Quindi la passata dry chiede sotto un'identita' e la passata vera sotto un'altra**: la prova generale mette in scena uno spettacolo diverso da quello che va poi in scena.
-  Sommato al candidato precedente, `doDryCompute` diverge da `doCompute` su **due assi insieme**: la regione richiesta (affine invertita) e l'identita' con cui la si chiede (flag di maschera).
-
-  **Nota di onesta'**: sul solo comportamento visibile la differenza sembra annullarsi — l'unico punto che legge questi flag per decidere se disegnare (`toonzlib/tcolumnfx.cpp:999`, `isMask() && !m_applyMask && !m_plasticMask`) da' lo stesso esito nei due casi, perche' `m_plasticMask = info.m_applyMask` compensa. **L'effetto atteso e' quindi sulla cache, non sul disegno** — e resta un'ipotesi non misurata, esattamente come sopra.
-
-- [ ] **L'oggetto si SPOSTA cancellando una chiave, a valori di canale identici** (`toonz/keyframeselection.cpp` ×2, `toonzlib/stageobjectutil.cpp` ×2, `toonz/xsheetcmd.cpp`, `toonzlib/doubleparamcmd.cpp` ×2) — 🎯 **SOLO TAHOMA2D**, verificato: OpenToonz non ha il difetto (zero occorrenze del pattern nei quattro file). Nasce da `baecf7504` (manongjohn, 2026-04-19, *"Fix resetting center and offset on key delete"*), un fix che ha allargato troppo il tiro; **`upstream/master` a oggi non l'ha ancora corretto**.
-  **Sintomo**: si cancellano le prime chiavi di una serie per ripartire dalla posizione dell'ultima, e l'oggetto si sposta — **i valori alle chiavi restano identici**, il che manda fuori strada chiunque cerchi la causa nei canali. Succede con e senza percorso.
-  **Causa**: dopo ogni chiave rimossa il codice fa `TPointD center = pegbar->getCenter(row); if (center != TPointD()) pegbar->setCenter(row, center, true);`. L'overload a tre argomenti inoltra a quello a quattro come `setCenter(frame, center, CENTER, resetOrigin)`, quindi scrive `m_frameCenter = center` — **un valore diverso da quello che aveva** — e ricalcola `m_offset` da un piazzamento che ha appena azzerato. Né `m_frameCenter` né `m_offset` sono canali chiavati, e **entrambi entrano nel piazzamento**: su un percorso `position = puntoSpline - m_frameCenter`, e sempre `pos = m_offset + position`. Da qui il fatto che si veda con la spline e senza. Nota: **`m_frameCenter` non è nemmeno serializzato** nel `.tnz` (assente da `saveData`/`loadData`), quindi è stato volatile — sospetto adiacente **non verificato**: la stessa scena riaperta potrebbe piazzare diversamente un oggetto su percorso.
-  **Il blocco è copiaincollato in OTTO punti** (sette upstream + uno nostro nel Function Editor), che è il motivo per cui il primo tentativo sembrava non funzionare: il toggle della chiave non passa da `keyframeselection.cpp` ma da `UndoRemoveKeyFrame::redo()`. Due dei sette avevano già una guardia parziale (`!isKeyframe(frame)`), insufficiente. **Gli `undo()` che ripristinano il centro salvato sono corretti e NON vanno toccati** — il difetto sta solo nei percorsi che *eseguono* la rimozione.
-  **Fix**: un metodo solo su `TStageObject`, `resetFrameCenterIfUnanimated(double frame)`, che azzera **solo quando non resta nessuna chiave** — cioè il caso per cui il reset era stato scritto — e tutti i siti che lo chiamano al posto delle tre righe ripetute. **STATO: collaudato da Franco su entrambi i gesti** (cancellazione di una selezione di chiavi, e toggle della singola chiave) il 2026-08-04. ⚠️ Non ancora riprodotto sul worktree `tahoma-stock`: le funzioni in gioco (`setCenter`, `computeLocalPlacement`, i call site) sono **identiche riga per riga** a upstream, il che è un argomento forte ma non è la stessa cosa — da dire apertamente nella descrizione della PR se si invia prima di averlo fatto.
-
-- [ ] 🆕🎯 **CRASH incollando effetti al SECONDO paste — RISOLTO, e sta in ENTRAMBI i progetti** (`toonzqt/fxselection.cpp`, `FxSelection::replacePasteSelection()` ~riga 381). **Il candidato doppio piu' adatto da mandare per primo**: piccolo, autocontenuto, riga **identica in Tahoma2D e in OpenToonz**, nessuna divergenza nel nostro fork.
-  **Causa — un errore di una parola**: il ciclo prende il limite dalla COPIA e indicizza l'ORIGINALE.
-  ```cpp
-  QList<TFxP> selectedFxs(m_selectedFxs);   // copia
-  int i, size = selectedFxs.size();         // limite dalla copia
-  for (i = 0; i < size; ++i) {
-      ...
-      TFx *inFx = m_selectedFxs[i].getPointer();   // <-- indicizza la lista VIVA
-  ```
-  La copia era li' **solo** per leggerne la dimensione, non usata altrove: era stata fatta proprio per iterare in sicurezza. Durante il ciclo la selezione si accorcia (`replacePasteFxs` sostituisce nodi, e i gestori di `columnPasted` la ricostruiscono), quindi `m_selectedFxs[i]` viene letto **fuori dai limiti** — UB in `QList` — e ne esce un `TFxP` spazzatura che il costruttore dell'undo dereferenzia subito.
-  **Fix**: `selectedFxs[i]` invece di `m_selectedFxs[i]`. **Collaudato da Franco il 2026-08-04.**
-  **Nota diagnostica riutilizzabile**: `this` valeva **1** (`EXC_BAD_ACCESS address=0x21`, cioe' `[this+0x20]`). Un puntatore che vale 1 **non e' memoria liberata** — quella da valori sporchi ma plausibili, o zero. E' la firma di una **lettura fuori dai limiti** di un contenitore. Riconoscerlo ha portato al call site in un colpo, senza strumentare.
-  Resta **non confermato** (e reso irrilevante dal fix) il perche' esatto scatti al SECONDO paste e non al primo. Segnalato da Franco il 2026-08-04 alle 10:55 su `MaggiolataZombie/sh260`, log `Crash-20260804-105543.log`. SIGSEGV in `FxSelection::replacePasteSelection() + 396`, chiamata da `pasteSelection()` (voce di menu, quindi via `QAction::activate`).
-
-- [ ] 🆕 **Un effetto su una colonna si applica al RESTO DELLA SCENA dove la colonna finisce** — **NON DIAGNOSTICATO**, solo registrato. Segnalato da Franco il 2026-08-04 a fine sessione: ha un effetto di **trasparenza** su una colonna; **quando la colonna finisce** (oltre l'ultima cella) l'effetto «va a finire sulle altre colonne», applicandosi al resto della scena.
-  **Perche' e' verosimilmente un difetto di composizione e non di UI**: oltre l'ultima cella la colonna non ha immagine da dare in ingresso all'fx, e il nodo — se e' collegato al terminale dello xsheet — continua comunque a partecipare al compositing. Da guardare per primi: la gestione dei **terminal fx** (`FxDag::getTerminalFxs`) e cosa restituisce l'fx quando il suo input e' vuoto. **Ipotesi, non diagnosi.**
-  **Da fare prima di tutto**: stabilire se succede anche su **Tahoma2D stock** — il worktree `tahoma-stock` ora compila, e questa e' esattamente la domanda per cui e' stato costruito. Se e' di stock, e' quasi certamente anche di OpenToonz (compositing = codice antico e condiviso).
-  Priorita': **dopo i crash** (regola di Franco: i crash vengono prima), ma prima delle feature.
-
-- [ ] 🟢 **`TXsheet::loadData` LANCIA su un tag ignoto invece di saltarlo** (`toonzlib/txsheet.cpp`, ramo finale di `loadData`: `throw TException("xsheet, unknown tag: " + tagName)`) — **PR piccola e di principio, in ENTRAMBI i progetti**. Un formato estensibile non dovrebbe morire su un tag che non conosce, e il precedente sta **dentro la loro stessa libreria**: `TIStream::skipCurrentTag()` («ignora silenziosamente il contenuto del tag corrente») e' gia' usato in **dieci** `loadData` di `toonzlib` (`tstageobjecttree.cpp`, `cleanupparameters.cpp`, `txshmeshcolumn.cpp`, `vectorizerparameters.cpp`, ...). Con questo, un fork o un plugin puo' aggiungere dati senza spaccare l'app base.
-  **Come l'abbiamo scoperto** (2026-08-04): Ztoryc scrive un tag `inOutMarkers` dentro l'xsheet per i marker per-sotto-scena, e **Tahoma2D stock non apre nessuna scena Ztoryc in cui sia stato impostato un play range** — cioe' praticamente tutte. Il `.tnz` e' XML in chiaro: togliendo i blocchi `<inOutMarkers>…</inOutMarkers>` la scena si riapre, il che conferma la causa.
-  ⚠️ **Decisione di Franco (2026-08-04): si rimane cosi', i marker restano nel `.tnz`.** Motivo: l'**export verso progetto OT/Tahoma esiste gia'** ed e' quello il percorso per far uscire una scena da Ztoryc, quindi l'incompatibilita' del `.tnz` non blocca nulla nella pratica. Non spostare i marker nel `.ztoryc` senza ridiscuterlo.
-  **Relazione con la feature request sui marker per-xsheet**: sono due proposte **separate e indipendenti**. Questa vale a prescindere da noi e va presentata per se stessa — non come «fate spazio al nostro tag», che sarebbe il modo peggiore di chiederla.
-
-- [x] ❌ **NON E' UN BACO — chiuso il 2026-08-04.** «Un effetto che deborda sul resto della scena oltre la fine della colonna»: era il **Glow** che fa il suo mestiere. Segnalato da Franco il 2026-08-04 su `MaggiolataZombie/sh260`.
-  **Il cablaggio esatto**, letto dal `.tnz` (XML in chiaro): `colonna → STD_glowFx(419) → STD_fadeFx(418) → <terminal> → xsheet`. Il **fade e' un nodo TERMINALE**, elencato in `<fxnodes><terminal>` insieme ai `Toonz_columnFx`: non e' un effetto "dentro" la colonna, e' un ramo che confluisce nella composizione finale. La scena ne ha 8 di `STD_fadeFx`, 8 `STD_glowFx`, 2 `STD_blurFx`.
-  **Sintomo**: oltre l'ultima cella della colonna che lo alimenta, l'effetto «va a finire sulle altre colonne», applicandosi al resto della scena.
-  **Aggiramento trovato da Franco** (e vale come indizio): mettere una chiave con **trasparenza a 0** sul frame successivo alla fine della colonna. Quindi il nodo *continua a partecipare* alla composizione e tiene l'ultimo valore del parametro — non viene escluso quando il suo ingresso si svuota.
-  **NON e' in OpenToonz** (verificato da Franco nell'app). Quindi o l'ha introdotto Tahoma, o e' nostro. Diff `opentoonz/master`→`upstream/master`: `scenefx.cpp` +138/-17 (Tahoma ha aggiunto la nozione di **stop frame** e la gestione delle **maschere** proprio nei rami che decidono cosa fare a cella vuota), `tcolumnfx.cpp` +117/-21, `previewer.cpp` +239/-221.
-  **Escluso**: la nostra iniezione di dissolvenze in `scenefx.cpp` (125 righe) e' condizionata alle colonne di nota `XD-in`/`XD-out`, che in una scena esportata non esistono — e Franco lavorava su uno shot esportato con la trasparenza aggiunta dopo.
-  **SPIEGAZIONE**: `STD_glowFx` e' **l'unico fx della libreria che dichiara una porta-xsheet** (unico override di `getXsheetPort()` in tutto `stdfx/`). Regola in `scenefx.cpp` ~1530: «se l'fx dichiara una porta-xsheet e non ha nulla attaccato, la si considera connessa», e tutta la composizione sottostante gli viene infilata dentro. E' voluto — un bagliore deve comporsi SOPRA lo sfondo. Di conseguenza **tutto cio' che sta a VALLE del glow riceve l'intera scena composta**: il fade non sfumava la colonna, sfumava tutto. La fine della colonna non c'entra: finche' la colonna ha contenuto il risultato *sembra* giusto, appena si svuota resta solo lo sfondo sfumato.
-  `glowfx.cpp` e' **identico in Tahoma2D e OpenToonz** (zero righe di differenza): stesso comportamento nei due. Se in OT non si vedeva, li' la catena era diversa.
-  **Rimedio**: mettere il fade **PRIMA** del glow (`colonna → fade → glow`). L'aggiramento di Franco (chiave a trasparenza 0 oltre la fine) funziona ma tratta il sintomo.
-  **Lezione**: mezza sessione persa perche' si e' dato per scontato che fosse un difetto. La prima cosa da fare davanti a «un effetto si comporta in modo strano» e' **leggere il grafo degli fx nel `.tnz`** (XML in chiaro) e guardare chi dichiara una porta-xsheet.
-  **Da qui**: ricostruire il caso minimo in Ztoryc (colonna corta + glow + fade come terminale, seconda colonna piu' lunga), riprodurre, e **strumentare** l'assemblaggio dei terminali.
-
-- [ ] 🆕 **Tahoma2D: la Preview restituisce un render VUOTO, OpenToonz no** — **NON DIAGNOSTICATO**, indagine aperta il 2026-08-04. Colpisce **due Tahoma indipendenti** sulla stessa macchina — l'installato di Franco **e** il nostro `tahoma-stock` compilato, che ha una stuff dir tutta sua — mentre **OpenToonz renderizza correttamente**. ⚠️ **Conclusione RITIRATA**: avevo scritto «e' codice Tahoma», ma Franco ha precisato che **fino a stamattina funzionava**, e nella nostra build stock mancano anche delle icone nell'header dell'xsheet — segno che gli aggiramenti di CMake hanno prodotto un **bundle incompleto**. Cause probabili: il reset di `preferences.ini` sull'installazione di Franco (fatto dall'agente) e una build stock difettosa. **Rifare la build stock da zero prima di riaprire l'indagine.**
-  **Verificato con Franco**: occhio della preview **acceso** su entrambe le colonne, colonne **dentro l'inquadratura**. Scena nuova, progetto normale. Nessun messaggio su stdout/stderr (log: `/Volumes/ZioSam/tahoma2d-workspace/stock_preview.log`) — fallisce in silenzio.
-  **Bersaglio ristretto** (diff `opentoonz/master` → `upstream/master`): `previewer.cpp` **+239/-221 (riscritto)**, `scenefx.cpp` +138/-17, `tcolumnfx.cpp` +117/-21, `trenderer.cpp` +10/-1.
-  **Prossimo passo, dimezza la ricerca**: fare un **Output render** invece della Preview. Se l'Output funziona → e' `previewer.cpp`. Se falliscono entrambi → il difetto e' nella composizione (`scenefx`/`tcolumnfx`) ed e' molto piu' grave.
-  ⚠️ **Blocca il worktree `tahoma-stock` come banco di prova**: finche' non renderizza non si puo' verificare su stock nessun candidato che riguardi il render — compreso l'«effetto che deborda».
-  **Falsi indizi gia' esclusi**: il bottone camstand mancante nell'header (e' la preferenza *Column Header Layout*, non un baco) e il reset di `preferences.ini` causato dall'agente (l'anteprima e' vuota anche nella build con profilo nuovo).
-
-**🔴 Da verificare su Tahoma2D — bug fix ad alto impatto:**
-- [ ] **RENDER SBAGLIATO: la chiave di cache del Plastic Deformer ignora il piazzamento della colonna** (`toonz/sources/toonzlib/plasticdeformerfx.cpp`, `PlasticDeformerFx::getAlias`) — segnalato da Franco il 2026-08-05 su una scena di produzione con **sei personaggi in plastic**: renderizzando spariscono pezzi a caso e alcune parti compaiono **spostate rispetto a dove sono davvero**. `getAlias()` costruisce la chiave con cui il render mette in cache il tile usando **solo** l'alias della fx di input e la deformazione plastica serializzata. Ma `buildSceneFx` (`scenefx.cpp` ~riga 782) **divide il piazzamento locale della colonna fuori** dall'affine a valle e lo parcheggia in `plasticFx->m_texPlacement` (`pf.m_aff = pf.m_aff * m_texPlacement.inv()`, commento «absorb the dpi and local column placement affines»): quindi `info.m_affine`, che l'alias dell'input porta con se', **non lo contiene piu'**, e nessuno lo rimette nella chiave. Un personaggio che **tiene la posa** mentre la sua colonna si anima produce percio' la **stessa identica chiave a ogni frame**, e il render riusa il tile calcolato a un'altra posizione. Stessa cosa per la **cella di mesh** e il **dpi**, che alimentano `meshToTextureAff` e non arrivano alla chiave perche' la fx di input e' la *texture*, non la mesh. **Indizio che e' una dimenticanza e non una scelta**: nello stesso file esiste gia' `toString(const TAffine&)` (riga 49), scritto apposta per le chiavi — la nota parla di confronto e del problema di +0/-0 — e **non e' chiamato da nessuno**. Fix Ztoryc 2026-08-05: aggiunti alla chiave `m_col`, `m_texPlacement`, la cella di mesh (path + frame id) e il dpi. **Codice `getAlias` identico in upstream** (verificato con `git show upstream/master:toonz/sources/toonzlib/plasticdeformerfx.cpp`), quindi il difetto e' loro e non una nostra regressione. Costo del fix: meno riuso di cache dove il personaggio si muove a ogni frame — e' il prezzo della correttezza, il risultato li' e' genuinamente diverso.
-
-
-- [ ] **CORRUZIONE HEAP: un click su selezione vuota nell'xsheet** (`toonz/xshcellmover.cpp` — `LevelMoverTool::onClick` ~riga 595, `CellsMover::start` ~riga 63, `getCells` riga 139) — **il piu' grave trovato finora.** Una selezione di celle vuota vale `(0, 0, -1, -1)` (il default di `TCellSelection::Range`). `LevelMoverTool::onClick` legge i quattro indici **senza chiamare `isEmpty()`** e li passa a `CellsMover::start`, dove `m_rowCount = r1 - r0 + 1 = 0`; `m_cells` viene dimensionato a zero e `getCells()` ci indicizza dentro con `&cells[m_rowCount * i]`, che non e' controllato. **In debug ci sono gli assert `m_rowCount > 0` / `m_colCount > 0`; in RELEASE non vengono compilati** e il codice prosegue fino alla scrittura fuori posto. Su macOS l'allocatore la tollera in silenzio, su **Windows** finisce sulle strutture di controllo dell'heap → **`STATUS_HEAP_CORRUPTION 0xc0000374` in ntdll, processo ucciso all'istante**: nessun dialogo, nessun crash log, perche' e' un fail-fast che salta ogni handler. Repro utente: entrare in uno shot (che azzera la selezione) e cliccare su un frame. Riprodotto su due macchine, su 0.9 e 0.10 identico. Fix Ztoryc 2026-07-21 (`f40702e37`) a tre livelli: guardia in `onClick`, clamp difensivo in `start()`, e check su `m_undo` nullo in `onDrag`/`onRelease` (difetto latente separato: erano gia' dereferenziati senza controllo tra un rilascio e il click successivo, mentre `canMove()` guardava gia'). Trovato con build AddressSanitizer sulla repro reale — **ma e' stato l'assert a rivelarlo, non il sanitizer**. Codice identico in upstream: verificare su Tahoma2D stock in build RELEASE (in debug si ferma sull'assert e non corrompe).
-- [ ] **CRASH + corruzione scena: `stageObject()` del Plastic tool con la colonna CAMERA corrente** (`tnztools/plastictool.cpp` `stageObject()`/`sdFrame()`/`skeletonId()`/`invalidateXsheet()`) — `stageObject()` fa `xsh->getStageObject(TStageObjectId::ColumnId(column()))` senza guardia, ma `column()` vale **-1** quando la colonna corrente e' la camera (e transitoriamente durante i cambi di xsheet/room). Due danni: (a) `ColumnId(-1)` ha un `assert` che in **release e' rimosso**, e `-1` sborda dai bit dell'indice in quelli del TIPO dell'id → id corrotto; (b) `getStageObject(id, create=true)` **CREA** l'oggetto richiesto → uno zombie con id invalido entra nella pegbar table, `checkIntegrity()` lo segnala e `saveData` **lo serializza nella scena** come `<pegbar id="BadPegbar">`. Il file si re-infetta a ogni load (l'id non riparsabile torna NoneId → nuovo zombie). Poi `sdFrame()` deferenzia il risultato a nudo → SIGSEGV in `PlasticTool::onFrameSwitched` (verificato: crash entrando in uno shot col Plastic tool attivo). Fix a tre livelli: guardie null nel tool; `TStageObjectTree::getStageObject` **rifiuta di creare** oggetti con id di tipo invalido; `loadData`/`saveData` saltano i pegbar con id non riparsabile (che **guarisce** le scene gia' infette al salvataggio). Trovate 3 scene reali infette. Fixato in Ztoryc 2026-07-21. **Codice `stageObject()` identico in upstream** — verificare su stock selezionando la colonna camera col Plastic tool.
-- [ ] **CRASH: Explode Sub-Scene su una scena IMPORTATA, con l'assert nel posto sbagliato** (`toonz/subscenecommand.cpp`, `explodeStageObjects` ~riga 765 e `::explode` ~riga 1004) — **SIGSEGV riprodotto due volte da Franco** il 2026-08-04 (log `Crash-20260804-081728`, backtrace dentro l'`explode` anonimo chiamato da `SubsceneCmd::explode`), esplodendo una scena importata dentro un'altra come sotto-scena. I due stage object sono chiesti con **`create=false`** e dereferenziati subito; l'assert che li controlla sta **quattro usi piu' avanti** — `innerCol->getParams()`, `outerCol->assignParams()`, `outerCol->setDagNodePos()`, `innerCol->getDagNodePos()`, *poi* `assert(outerCol && innerCol)` — e in **release non viene compilato**. Chi l'ha scritto sapeva che potevano essere nulli e ha messo il controllo dopo. **Perche' proprio su una scena importata**: gli stage object si creano **su richiesta**, e una scena letta da file porta solo quelli che erano stati serializzati — una colonna mai trasformata non ne ha nessuno, cosa normalissima in un xsheet che arriva dall'esterno invece di essere costruito interattivamente. Fix Ztoryc `c9cd8d137`: `innerCol` trattato come legittimamente assente (senza parametri da travasare la colonna esce lo stesso e resta ai default), `outerCol` chiesto con `create=true` (e' l'albero nostro e la colonna e' appena inserita). **Secondo punto, e questo e' NOSTRO**: in `::explode` il risultato di `xsh->getStageObject(id)` era dereferenziato a nudo, e da quando l'albero **rifiuta di creare** oggetti con id di tipo invalido (guardia anti-`BadPegbar` del 2026-07-21, gia' in questa lista) quella puo' tornare 0 dove prima dava uno zombie: **il difetto silenzioso di upstream e' diventato un crash da noi**. Per una PR va detto, perche' su stock il sintomo e' diverso — li' il primo punto crasha uguale, il secondo no. ⚠️ **Diagnosticato, non riprodotto**: la scena sul disco e' una versione precedente e non contiene sotto-scene, quindi la lettura poggia su backtrace + codice. Prima di aprire la PR servirebbe una repro pulita (importare una scena salvata come sotto-scena e fare Explode).
-  **AGGIORNAMENTO 2026-08-04, stessa mattina: RIPRODOTTO sotto lldb e la causa e' un'ALTRA.** Il fix `c9cd8d137` (guardie in `explodeStageObjects` e in `::explode`) e' compilato, verificato dentro il binario (oggetto delle 08:28, link delle 08:35) e **il crash restava identico** — due repro alle 08:50. Diagnosi vera, con misura e non per lettura: SIGSEGV in `TStageObject::setParent` su `ldr x0, [x19, #0x70]`, `EXC_BAD_ACCESS address=0x70`, cioe' **`this` nullo** (non l'argomento, non `newParent`). Il chiamante e' `subscenecommand.cpp` righe 854-858, il ciclo *setting column parents*:
-  ```cpp
-  for (i = 0; i < subXsh->getColumnCount() && !onlyColumn; i++) {
-    TStageObjectId innerId = TStageObjectId::ColumnId(i);
-    TStageObject *innerCol = innerTree->getStageObject(innerId, false);
-    xsh->setStageObjectParent(ids[innerId], ids[innerCol->getParent()]);
-  }
-  ```
-  **La catena**: il ciclo che porta fuori le colonne **salta le colonne pegbar** (`if (innerColumn->getPegbarColumn()) continue;`), quindi per quelle `ids` non ha voce; questo ciclo invece scorre TUTTE le colonne, e `QMap::operator[]` su chiave assente **inserisce** un `TStageObjectId` di default — che e' `NoneId` — e lo passa come id della colonna da riappendere. `TXsheet::setStageObjectParent` fa `assert(id != NoneId)` e subito dopo `getStageObject(id)->setParent(parentId)` **senza guardia**: l'assert non e' compilato in release. L'albero rifiuta `NoneId` (guardia anti-BadPegbar del 2026-07-21) e restituisce 0 → deref. **Upstream il difetto c'e' identico** ma si manifesta come parenting sbagliato in silenzio, perche' li' l'albero CREA lo zombie invece di rifiutare: per la PR va presentato cosi', «operator[] che inserisce NoneId», non come crash.
-  **Fix Ztoryc — UN FILE SOLO**, `subscenecommand.cpp`: `if (!ids.contains(innerId)) continue;`, guardia su `innerCol`, e `ids.value()` invece di `operator[]` (che oltre a non inserire evita di sporcare `ids`, riletta due volte piu' sotto per il centro del gruppo).
-  ⚠️ **Due guardie difensive in `toonzlib` sono state scritte e poi RITIRATE** (`TXsheet::setStageObjectParent` e `TStageObject::setParent`, entrambe null-check dove un `assert` dichiara la precondizione senza difenderla in release). Motivo del ritiro, che vale come regola: **avrebbero nascosto proprio questo bug.** Con la guardia in `setStageObjectParent` l'Explode sarebbe «riuscito» saltando in silenzio il riassegnamento dei parent — scena sottilmente sbagliata invece di un crash che porta alla causa. E' lo stesso male dello zombie `BadPegbar`: silenzioso, quindi peggiore. Precedente concreto: le guardie di `c9cd8d137` in `explode`/`explodeStageObjects` hanno fatto SEMBRARE risolto un crash che non lo era, costando tre cicli di diagnosi. I due null-deref restano latenti e documentati qui, ma si guardano **quando e se** producono un difetto dimostrabile, non prima.
-  **STATO: RISOLTO e verificato** — repro rifatto sotto lldb sulla stessa scena (`MaggiolataZombie/sh260`, Explode dal menu dell'header di colonna): nessun crash, **e nessuna delle guardie difensive ha stampato**, cioe' il fix agisce alla causa e non maschera il sintomo.
-  **Lezione di metodo, da non ripetere**: tre diagnosi sbagliate prima di questa (`outerObj` nullo alla 594; `setParent(NoneId)`; `PegbarId(0)` che collide con `NoneId`), tutte per lettura del codice. Le ha smontate lldb: la prima perche' in build ottimizzata un `setDagNodePos` inline su `this` nullo e' UB e il compilatore lo puo' spostare o eliminare, quindi il crash affiora alla prima chiamata VERA e non al primo deref; la seconda perche' un `TStageObjectId` costruito di default **e'** esattamente `NoneId` e finisce nel ramo sicuro; la terza per aritmetica (`PEGBAR=5`, shift 28 → `0x50000000`, mai 0). Cio' che ha chiuso la questione sono state tre `fprintf` di marcatura piazzate ai call site sospetti piu' il disassemblato del simbolo `explode` — dentro cui `explodeStageObjects` e `bringObjectOut` sono **inlineate** (range di 9552 byte), motivo per cui il backtrace mostrava due frame `explode` allo stesso offset e sembrava una ricorsione.
-- [ ] **`assert(a <= b)` in `CellArea::getEaseHandles` su segmenti di 3 righe** (`toonz/xshcellviewer.cpp` ~riga 3790) — con `r1 - r0 == 3` i rami asimmetrici degenerano (p.es. con `e0 <= 1 < e1`: `a = r0+2` diventa **maggiore** di `b = r1-2`) → in debug l'app **abortisce dipingendo una scena legittima**, in release `tcrop` riceve un intervallo invertito e restituisce maniglie di ease sbagliate. Fix: clampare invece di asserire (se l'intervallo e' vuoto, usare l'estremo sensato). Fixato in Ztoryc 2026-07-21. Codice identico in upstream.
-- [ ] **KeyframeNavigator: i tre stati della chiave sono indistinguibili e il bottone "nessuna chiave" e' invisibile** (`stuff/config/qss/*/*.qss`, `toonzqt/keyframenavigator.cpp`) — i .qss di **tutti** i temi impostano `image: url('imgs/white/transparent.svg')` sui bottoni `#KeyNo`/`#KeyPartial`/`#KeyTotal`, quindi le icone `key_off`/`key_partial`/`key_on` assegnate alle QAction **non si vedono mai**: chiave parziale e chiave completa appaiono identiche (stesso quadrato arancione `#be7323`) e lo stato "nessuna chiave" e' un bottone completamente trasparente — cliccabile ma invisibile, lo trovi solo se sai che c'e'. Da decidere a monte se sia intenzionale (design a solo colore di fondo) o una regressione dei fogli di stile: in ogni caso l'informazione parziale/completo, che il codice calcola gia' (`isKeyframe` vs `isFullKeyframe`), va persa. In Ztoryc risolto disegnando le icone a codice e neutralizzando la regola qss con un foglio di stile inline sul widget. Segnalabile come issue prima che come PR.
-- [ ] **Vector fill: shape chiuse "unfillable" finché non ricarichi la scena + Maximum Gap che si resetta al cambio frame** (task 62; `common/tvectorimage/tvectorimage.cpp`, `include/tvectorimage.h`, `tnztools/filltool.cpp/.h`) — BUG 1: il ricalcolo regioni è incrementale (`m_isNewForFill`) e operazioni che spostano/rigenerano punti lasciano stale i dati di intersezione → il fill non trova la regione; solo il reload ricostruiva tutto (`recomputeRegionsIfNeeded` gated su `m_justLoaded`, unico caller `stagevisitor.cpp:970`). Fix: nuovo `TVectorImage::forceRegionsRecompute()` (stesso rebuild del load, colori preservati) chiamato dal FillTool su attivazione e cambio frame (guardia `isPlaying`). BUG 2: lo slider "Auto Close Gap" vettoriale veniva sovrascritto dalla tolerance per-immagine a ogni frame switch; ora `m_lastUserGapValue` propaga l'ultimo valore utente alle immagini ancora a tolerance default (1.15), quelle con tolerance custom la mantengono. Bug di lunga data ben documentato dalla community (fill che si ripara con save/reload). Fixato in Ztoryc sessione 2026-07-10, commit `021d6886d`.
-- [ ] **convertToExplicitHolds converte le sub-xsheet a IMPLICIT holds** (`toonzlib/txsheet.cpp` ~riga 2732) — dentro `convertToExplicitHolds` la ricorsione sulle child xsheet chiamava `convertToImplicitHolds()` (copy-paste dalla funzione inversa `convertToImplicitHolds`, che ha lo stesso blocco): convertendo una scena a explicit holds le sub-scene diventavano/restavano implicit → il comando `MI_ConvertToExplicitHolds` disattiva poi la preference implicit hold e il timing delle sub-scene va perso. Fix: ricorrere con `childXsh->convertToExplicitHolds(0)`. Codice identico in upstream (verificare su stock con una scena con sub-xsheet). Fixato in Ztoryc sessione 2026-07-04.
-- [ ] **Riconoscimento sequenze immagini con trattino come separatore** (`common/tsystem/tfilepath.cpp`, `include/tfilepath.h`) — Tahoma riconosce come frame di una sequenza solo i nomi con separatore `.` o `_` (es. `frame.0006.jpg`, `frame_0006.jpg`); un nome come `frame-0006.jpg` (trattino, comune in export di altri tool/DaVinci/Blender) viene letto come livello singolo `frame-0006`. Fix: helper `rfindFrameSep()` che accetta anche `-` alla pari di `.`/`_`, usato in tutte le funzioni di lettura (`getDots`/`getSepChar`/`getFrame`/`getWideName`/`getLevelNameW`) e scrittura (`withName`/`withFrame`, con preservazione del `-` nel round-trip frame→path), più la regex di `analyzePath`. **Sicuro**: la guardia esistente `isNumbers()` richiede SOLO cifre tra separatore ed estensione, quindi `my-file.jpg` resta un singolo (non diventa una sequenza). Feature/enhancement upstream a basso rischio e alto valore. Implementato in Ztoryc sessione 2026-06-21 (release 0.6.1). **Nota PR**: proporre con test su nomi misti (`a-b_0010.jpg`, `my_shot-0006.jpg`) per dimostrare la selezione del separatore più a destra valido.
-- [x] **CRASH trascinando la maniglia "Drawing #" dell'Animate tool** (`tnztools/edittool.cpp` `DragDrawingNumberTool::leftButtonDrag`) — **ROOT CAUSE TROVATA (lldb, 2026-06-21)**: il tool registra UN solo canale (`DragChannelTool(T_DrawingNumber,false)` -> `m_channels.size()==1`) ma il drag usava l'API a due canali `setValues(v0, getOldValue(1)+delta.y*factor)` (copiata dal tool di posizione), accedendo a `m_channels[1]` inesistente -> debug: `assert` in `TStageObjectValues::getValue` (stageobjectutil.cpp:147); release: OOB read+write -> corruzione heap -> trap `malloc`. **VERIFICATO su Tahoma2D stock** (feature PR upstream #2124, merge `67f0ef7f4`). Fix: usare l'API a canale singolo `setValue(v0)` (solo drag orizzontale cambia il drawing number). Candidato PR upstream ad alto impatto. Fixato in Ztoryc commit di sessione 2026-06-21.
-- [ ] **TUndoManager use-after-free su add() rientrante** (`tcore/tundo.cpp`) — `doAdd()`/`beginBlock()` troncano il ramo redo con `deleteUndo` senza proteggere l'oggetto il cui `undo()`/`redo()` è in esecuzione: se quel codice fa rientrare un `add()` nel manager, l'oggetto viene distrutto mentre il suo metodo sta girando (UB). Verificato 2026-06-10: codice identico in upstream. ⚠️ NON abbiamo una repro su stock (il nostro trigger era UndoBoardState, codice Ztoryc) — presentare come **hardening** con spiegazione del difetto leggibile dal codice, non come bug fix con repro. Scenari stock plausibili: undo() che emette notify*Changed → slot che pusha un undo (cfr. onColorStyleChanged rientrante, commit `8f8740628`). Fix: m_executing + deferred delete. Commit `c0e7c92bf`.
-- [ ] **lzoCompress/lzodecompress deadlock on macOS/Linux** (`tcodec.cpp`) — `QProcess::start()` chiama `fork()`; se un segnale arriva mentre `malloc_fork_prepare` tiene il lock e il signal handler alloca memoria Qt, il fork va in deadlock (hang silenzioso al salvataggio .tlv). Fix: `sigprocmask(SIG_BLOCK, &block_mask, &old_mask)` attorno a `process.start()` e ripristino dopo. Commit `140d790ac`. Interessa **tutti** gli utenti Mac e Linux — priorità alta.
-- [ ] **Import video estrae TUTTI i frame su disco, bloccando la UI** (`image/ffmpeg/tiio_ffmpeg.cpp` ~riga 431) — NON ANCORA FIXATO, solo diagnosticato. Caricare un video (mp4/mov/webm), tipico per un reference, alla prima richiesta di frame chiama `Ffmpeg::getFramesFromMovie()` senza argomento (`TLevelReaderMp4::load` → frame -1): ffmpeg estrae **ogni** frame come PNG (`In%04d`, formato `image2`) in una cartella cache, **sul thread UI** (`runFfmpeg(..., asyncProcess=false)` → `waitForFinished`). Per un reference di qualche minuto = migliaia di file scritti prima di vedere un frame; l'app sembra bloccata (timeout default infinito). Rivelatore: `getFramesFromMovie(int frame)` accetta già un parametro frame e c'è codice di seek `-ss` **commentato** → l'estrazione on-demand era prevista ma disabilitata. Fix: estrazione **incrementale e non bloccante** (solo i frame richiesti via `-ss`, fuori dal thread UI). Delicato: numerazione frame, accuratezza seek (keyframe vs frame esatto), coerenza cache; testare su codec diversi (h264/mov, vp9/webm). Affligge **ogni** utente Tahoma2D/OpenToonz che importa video. Segnalato da Franco 2026-07-20. Vedi memoria `project_video_import_slow`. Nota: due fragilità minori vicine — `Ffmpeg::checkFormat` cacha il rilevamento in una `static` a startup (ffmpeg configurato dopo l'avvio → video non importabile fino a riavvio), e default `ffmpegPath` vuoto → `process.start("/ffmpeg")` (path inesistente): un fallback al bundle sarebbe robusto.
-- [ ] **ImageManager cache leak after render** (`imagemanager.cpp`, `rendercommand.cpp`) — dopo il render tutti i frame rimangono in cache (osservato: 10 GB residui su scene da 350 frame). Fix: `ImageManager::clear()` sui builder al completamento. Commit `be20f9512`.
-- [x] **TasksViewer crash on room switch** (`tasksviewer.cpp`) — `~TasksViewer()` vuoto lascia puntatore dangling in `BatchesController::m_tasksTree`; la room successiva crasha in `QHeaderView::setModel()`. Fix: `setTasksTree(nullptr)` nel distruttore. Commit `1569cf2cc`. ✅ Verificato e fixato in Ztoryc — pronto per PR upstream.
-- [ ] **requireColumnSoundTrack alloca RAM proporzionale alla durata del file audio** — file audio da 2h → ~1.3 GB per colonna. Fix: cappare `toFrame` al frame count video. Commit `69a8b9043` (il pattern è nel core audio).
-- [ ] **Save Sub-Scene As path corruption** (`toonzscene.cpp`, `iocommand.cpp`) — il percorso della sub-scene viene corrotto al salvataggio.
-- [ ] **Wrong column header thumbnail when sub-scenes share a name** (`icongenerator.cpp`) — `XsheetIconRenderer::getId` usa puntatore invece del nome → thumbnail sbagliata.
-- [ ] **Set Key (Z) not showing keyframe diamond on peg columns** (`cellselectioncommand.cpp`) — usava `ColumnId(col)` invece di `xsh->getColumnObjectId(col)`.
-- [ ] **Peg column width reset after delete** (`columnfan.cpp`, 1 riga) — la colonna successiva alla peg eliminata ereditava la larghezza ridotta. Commit `b8ddea829`.
-- [ ] **PSD first layer lost when loaded as sub-scene** (`txshsimplelevel.cpp`, `tiio_psd.cpp`) — con PSD Affinity Designer 16-bit (nomi Pascal vuoti, import in group mode): il primo layer sparisce come "not found" quando la scena viene usata come sub-scene. Root cause: `getLevelPathAndSetNameWithPsdLevelName` rimpiazzava `##` → `#` in tutti i path PSD, trasformando `file##group.psd` (nome vuoto + group mode) nel path rotto `file#group.psd` dove "group" viene letto come nome layer → `getLevelIdByName("group")` → exception silenziosa. Fix in due parti: (1) il replace `##`→`#` ora scatta solo per token non-keyword; (2) reader fallback per path legacy già salvati con `#group`. Commit `5b8eeb3c1`.
-
-- [ ] **Interpolazione Linear che ricompare al posto della Default Interpolation** (`common/tparam/tdoubleparam.cpp` righe ~832/845/951/1231, `toonzlib/tstageobject.cpp` `moveKeyframe` riga 1163 + helper `setKeyframe` riga 258, `toonz/keyframedata.cpp` ~riga 165) — **SOLO DIAGNOSTICATO, non riprodotto.** Il campo `m_type` di una chiave descrive il segmento che la SEGUE, quindi l'ultima chiave di una curva non ne ha uno: il codice le assegna `Linear` come **segnaposto** (in `setKeyframe` con `atEnd`, in `deleteKeyframe` quando si cancella l'ultima, e in `loadData` su ogni scena caricata). Finche' resta ultima e' innocuo. Diventa un segmento VERO quando quella chiave smette di essere l'ultima per una strada che **copia** la chiave invece di crearla: `TStageObject::moveKeyframe` fa `setKeyframeWithoutUndo(dst, getKeyframe(src))` e l'helper `::setKeyframe` copia `m_type` verbatim; l'incolla di keyframe in mezzo ad altri sincronizza `m_prevType` ma lascia il `m_type` che arriva dagli appunti. La creazione normale e' invece corretta: `KeyframeSetter::createKeyframe` (`toonzlib/doubleparamcmd.cpp` righe 158-176) applica la preference `keyframeType` in tutti e tre i casi (prima, in mezzo, dopo). Verificato che la mappa combo→enum della preference e' giusta (Constant=1, Linear=2, SpeedInOut=3, EaseInOut=4), quindi NON e' un off-by-one. **FIX APPLICATO in Ztoryc 2026-08-02** (branch `feature/function-editor-ux`, non ancora committato) sui due percorsi che copiano: (1) `TStageObject::moveKeyframe` ora, per i soli canali in cui `src` ERA l'ultima chiave, sostituisce il segnaposto con la preference `keyframeType` (i canali in cui non era ultima conservano il tipo intatto); (2) l'incolla in mezzo a due chiavi assegna al tasto incollato anche `m_type` = tipo del segmento in cui atterra, stessa regola che `KeyframeSetter` applica gia' a una chiave inserita in uno span. **VERIFICATO con repro e diagnostica** il 2026-08-03: Franco l'ha riprodotto piu' volte e il log (`ZTORYC_KEYPASTE_DIAG`, poi rimossa) ha mostrato il fix all'opera — `AFTER: Angle=t4/p4 out=1.33 in=-7.80`, tipo corretto e maniglie diverse da zero. **La correzione di ieri (`d2dc6bd88`) era pero' solo META'**: sistemava il TIPO ma non l'easing, e le maniglie restavano a zero (la chiave copiata, da ultima, non governava alcun segmento) — un ease di ampiezza zero e' indistinguibile da una retta, per questo sembrava non fixato. Ed emergeva un secondo caso: l'incolla chiedeva la chiave precedente allo STAGE OBJECT, ma una chiave puo' essere PARZIALE, e con solo Y chiavato alla riga prima ogni altro canale veniva scartato dalla guardia `prevKey.m_isKeyframe`. Ora la domanda va al CANALE (`getPrevKeyframe`) e il tipo si applica via `KeyframeSetter::setType`, che calcola le maniglie da segmentWidth/3 e scrive `m_speedIn` sulla chiave successiva. **Da proporre a monte come commit unico `82ced5d94`** (piu' `d2dc6bd88` che lo precede): presentare solo il primo darebbe upstream una correzione a meta'. Resta noto e NON corretto un terzo punto: `TDoubleParam::deleteKeyframe` sovrascrive con Linear il tipo della nuova ultima chiave, distruggendo un ease impostato — innocuo finche' quella chiave resta ultima (il segnaposto non governa nulla) e riparato dalla preference appena si ricrea una chiave dopo, quindi lasciato stare per non toccare la semantica del core. Emerso da una segnalazione di Franco il 2026-08-02. Codice identico in upstream.
-
-- [ ] **SIGSEGV: `MovePointDragTool` cammina fuori da un `std::set` vuoto trascinando keyframe** (`toonzqt/functionpaneltools.cpp`, `drag()` ~riga 250 e `release()` ~riga 330) — in `drag()` il blocco che ripristina i drawing number e' guardato dalla **colonna** (`colId >= 0 && m_undoDrawings.find(colId) != end()`), mentre `click()` riempie `m_startFrames[i]` **solo** per la curva `W_DrawingNumber`: per ogni altra curva della stessa colonna il set resta VUOTO, e il ciclo `for (int j = 0; j < kCount; j++, sit++)` itera `kCount` volte senza mai confrontare `sit` con `end()` → deref fuori memoria. In `release()` la stessa famiglia: `sheet->getStageObject(c)->getId()` senza null-check, e `getStageObject` torna null sia per un parametro di fx sia per il `-1` di `getColumnIndexByCurve` quando la curva non e' fra i canali attivi. **Riprodotto e crashato** su Ztoryc il 2026-08-02 (scena testFunctionEditor, macOS 26.5 arm64): il crash log della release indicava solo `MovePointDragTool::drag`, l'istruzione vera l'ha data il disassemblato all'offset (+1356 e' il RITORNO di una `bl`, non il fault). Latente in upstream: li' il drag muove una sola curva per volta, quindi si centra molto piu' di rado — ma il codice e' identico e il percorso group-handle (`MovePointDragTool(panel, (TDoubleParam*)0)`, che prende tutti i canali attivi) lo espone gia' oggi. Fix Ztoryc: guardia su `W_DrawingNumber` + `sit != end()` + null-check su stObj.
-
-- [ ] **Dereferenziamenti di stage object non guardati — 19 siti in 8 file** (`tnztools/plastictool*.cpp`, `toonzqt/functionselection.cpp` + `functionsheet.cpp` + `functionpanel.cpp` + `stageschematicscene.cpp` + `stageobjectselection.cpp`, `toonz/keyframedata.cpp`) — Ztoryc `6bbc75d25`, 2026-08-03. **Da proporre come UNA PR**, non a pezzi: e' una famiglia sola e l'argomento sta nell'insieme. Tre crash reali dai log utente (28-31 lug) piu' il giro su tutti i chiamanti. I capofila: (1) `KeyframesDeleteUndo` — `doDelete()` **compatta** il vettore delle colonne saltando quelle inutilizzabili, poi quell'indice viene passato a `FunctionSheet::getStageObject()` che si aspetta un indice di colonna del foglio: legge l'oggetto sbagliato, e oltre il limite torna null ed e' dereferenziato — in costruttore, `undo()` e `redo()`, piu' un `release()` su `m_param` che il costruttore puo' aver lasciato null (SIGSEGV riprodotto due volte in 20 minuti); (2) `TKeyframeData::setKeyframes` — `assert(pegbar)` poi deref, **e in release l'assert non c'e'**; (3) 15 siti nel Plastic tool, dove `stageObject()` torna 0 sulla colonna camera (`column() == -1`) e durante gli scambi di xsheet. **Contesto per la PR**: molti di questi erano latenti finche' `TStageObjectTree::getStageObject` CREAVA l'oggetto richiesto; da quando rifiuta gli id invalidi (giusto: e' cosi' che nascevano i pegbar zombie `BadPegbar` serializzati nelle scene) la corruzione silenziosa e' diventata crash immediato. Upstream ha ancora il comportamento vecchio, quindi li' questi siti producono **zombie invece di crash** — il che rende la PR piu' facile da argomentare, non meno. Fix Ztoryc: cinque wrapper null-safe nel Plastic tool (`sdFrame(double)`, `invalidateStageObject()`, `updateStageObjectKeyframes()`, `currentDeformation()`, `setCurrentDeformation()`) piu' guardie esplicite altrove. Non verificato su Tahoma2D stock: i tre crash sono riprodotti su Ztoryc.
-
-- [ ] **`TInbetween` accoppia i tratti PER INDICE e tronca al piu' corto** (`common/tvrender/tinbetween.cpp`, `computeTransformation()` righe ~695-697) — **SOLO DIAGNOSTICATO leggendo il codice il 2026-08-03, non riprodotto su stock.** Le tre righe sono `strokeCount1 = getStrokeCount()` / `strokeCount2 = ...` / `if (strokeCount1 > strokeCount2) strokeCount1 = strokeCount2`: il tratto *i* della prima immagine viene interpolato col tratto *i* della seconda, e i tratti in eccesso vengono **ignorati in silenzio**. Interessa il comando Inbetween del menu Cells (`toonz/inbetweencommand.cpp`) su qualsiasi coppia di disegni che non abbia lo stesso numero di tratti nello stesso ordine — cioe' il caso normale quando il secondo disegno non nasce duplicando il primo. Il resto della classe e' invece **notevole e da non toccare**: `detectCorners` + `findBestSolution` accoppiano gli spigoli cercando il sottoinsieme migliore (con guardia combinatoria `isTooComplex`), poi ogni sotto-tratto fra due spigoli riceve una **affine propria** (traslazione/rotazione/scala attorno a un centroide) e le medie hanno **reiezione degli outlier** a 2.5 sigma. Vale la pena segnalarlo come issue prima che come PR, perche' la cura giusta (una corrispondenza dichiarata invece che dedotta dall'ordine) e' una scelta di design a monte, non una riga. Nota: il **disegno guidato** (`tnztools/toonzvectorbrushtool.cpp`, `doGuidedAutoInbetween`/`doFrameRangeStrokes`) gia' aggira il problema passando a `TInbetween` due immagini da **un tratto ciascuna**, con la coppia scelta dall'utente via stroke picker — quindi in Tahoma la soluzione esiste gia', ma solo dentro quel percorso e senza essere conservata.
-
-**🟠 Da verificare — bug fix medi:**
-- [ ] **`setCenter()` riceve il centro GREZZO e sposta il pivot** (`toonz/sources/tnztools/tooloptionscontrols.cpp` ~riga 1438, piu' `UndoChannelDelete::redo()` in `toonzlib/stageobjectutil.cpp`) — trovato il 2026-08-05 leggendo i conflitti del merge 1.6.2, **presente a monte, non da noi**. Il codice prende il centro con `getCenterAndOffset(center, offset)`, che restituisce il **membro grezzo `m_center`**, e lo passa a `setCenter(frame, center, true)`. Ma `setCenter` tratta quel parametro come centro **effettivo** e fa `c = centerPoint - getHandlePos(m_handle, frame)`: quindi `m_center` diventa `m_center - handlePos`. Con l'handle di default `B` vale (0,0) e non si nota; con qualunque altro handle (`A`, `C`, ... → `8*(h-'B')`) o con un hook di colonna (`H1`, `H2`, ...) il pivot **deriva di `-handlePos` a ogni cancellazione di canale**, sempre nello stesso verso. Il nostro `TStageObject::resetFrameCenterIfUnanimated` non ha il difetto perche' passa `getCenter(frame)` (= `m_center + handlePos`), che fa il round-trip esatto. **Diagnosi da lettura del codice, non ancora eseguita**: prima di aprire la PR va riprodotto su stock con un oggetto agganciato a un handle diverso da `B`. Nota di contesto: a monte la 1.6.2 usa questo come correzione al bug «l'oggetto si sposta cancellando una chiave», che noi abbiamo risolto diversamente (`6876cf4e5`, nove siti); la loro tocca **un solo sito** e non copre il percorso del toggle di chiave (`RemoveKeyframeUndo::redo()`).
-
-
-- [ ] **getPreviewButtonStates null crash** (`viewerpane.cpp`) — crash se `m_previewButton`/`m_subcameraButton` non inizializzati. Commit `d7453d1eb`.
-- [ ] **Mesh sub-scenes wrong folder** (`meshifypopup.cpp`)
-- [ ] **New Scene missing save dialog** (`iocommand.cpp`)
-- [ ] **TSystem::memoryShortage() always returns false on macOS/Linux** (`tsystempd.cpp`) — su Mac e Linux la funzione era un no-op (`return false`), quindi TImageCache non evictava mai automaticamente anche con RAM quasi piena. Fix: macOS con `host_statistics64`, Linux con `/proc/meminfo` (MemAvailable < 15% RAM fisica). Commit `b79ba7d32`. Candidato di alta priorità: affligge tutti gli utenti Mac e Linux da sempre.
-- [ ] **macOS "Unable to create a new document" on launch** (`BundleInfo.plist.in`) — `NSQuitAlwaysKeepsWindows=false` + `NSApplicationSupportsSecureRestorableState=true`. Commit `a7a822704`.
-- [ ] **macOS CI deployment target** — senza `-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0` il binary embeds `minos` uguale al runner. Commit `940e895bc`.
-
-**🟡 Da verificare — Windows/MSVC compatibility:**
-- [ ] `not`/`and`/`or` alternative tokens → `!`/`&&`/`||` (48 siti). Commit `105588c14`.
-- [ ] Variabile locale `near` → rinomina (collide con macro `windef.h`). Commit `8a4dbc294`.
-
-**🔵 Build/CI macOS:**
-- [ ] **`tahoma-buildlibgphoto2.sh`: il build di libgphoto2 fallisce e non se ne accorge nessuno** (`ci-scripts/osx/tahoma-buildlibgphoto2.sh`) — bersaglio verificato con `git show upstream/master:ci-scripts/osx/tahoma-buildlibgphoto2.sh`: **a monte lo script e' identico nella sostanza**, senza `set -e` e senza `--disable-nls` (a monte il branch e' `tahoma2d-version-2.5.34` e il prefisso `/usr/local`). Su macOS il `make` si ferma sul primo camlib (`ax203.la`) con `Undefined symbols: _libintl_dgettext`, perche' `camlibs/Makefile.am` del fork libgphoto2 linka i camlib solo contro `libgphoto2.la` e `libgphoto2_port.la` e mai contro `$(INTLLIBS)`, che invece `libgphoto2/Makefile.am` aggiunge. Su glibc passa inosservato (`dgettext` sta nella libc), su macOS il `libintl.h` di Homebrew lo riscrive in `libintl_dgettext`. **Le intestazioni pubbliche si installano in un SUBDIR successivo a `camlibs`**, quindi il sintomo che si vede e' `'gphoto2/gphoto2.h' file not found` durante la compilazione dell'applicazione — dieci minuti dopo, lontano dalla causa. Senza `set -e` lo script prosegue con `sudo make install` e **il passo di CI torna comunque zero**. Il difetto e' mascherato finche' la cache di Actions viene rinnovata; **le cache scadono dopo 7 giorni senza accessi**, quindi affiora al primo intervallo lungo fra due build. Da noi ha fatto uscire la 0.12.0 senza i DMG macOS. Fix Ztoryc `52ff4c16e`: `--disable-nls` + `set -euo pipefail` + verifica dell'header dopo l'install. **Verificato solo sulla nostra CI**, non ancora su un run di Tahoma2D stock: prima di aprire la PR va confermato che il loro branch 2.5.34 di libgphoto2 abbia lo stesso `camlibs/Makefile.am` (basta un `grep INTLLIBS`).
-
-**🟢 Feature request (proporre come discussione, non PR):**
-- [ ] **Function Editor: usabilita' (aggancio allo xsheet, ricerca, selezione multipla di curve e segmenti)** — **DA PROPORRE A ENTRAMBI, Tahoma2D e OpenToonz** (decisione di Franco, 2026-08-02). Implementato in Ztoryc su master, merge `5b90fc462`, commit `1bb802629` (feature) + `d2dc6bd88` (fix Linear, gia' elencato sopra). ~1600 righe in `toonzqt/` (functionpanel, functionpaneltools, functiontreeviewer, functionviewer, functionselection) + un cablaggio in `toonz/tpanels.cpp`. Nessun cambiamento al modello dati.
-
-  **Argomento per la proposta**: quasi tutto poggia su meccanismi gia' presenti e non accesi, non su codice nuovo. `setSelectionMode(NoSelection)` nel costruttore di FunctionTreeView mentre `TreeView::mousePressEvent` ha gia' un ramo `ExtendedSelection`; `setCurrentStageObject()` che salva un puntatore e non espande ne' scrolla, benche' la catena di segnali dallo xsheet arrivi gia' fin li'; `FunctionSelection` che tiene gia' i keyframe per PIU' curve (`QList<QPair<TDoubleParam*, QSet<int>>>`) mentre il grafico ne azzerava la selezione a ogni cambio di curva; `m_selectedSegment` come singolo `int`, con il menu del grafico che per giunta chiama `selectSegment()` — cioe' AZZERA la selezione — prima di applicare l'interpolazione.
-
-  **Voci**: aggancio xsheet->albero; ricerca per nome (composta col filtro animati, e che non disattiva le curve che nasconde); filtro "animated only" globale; multi-selezione nell'albero; menu di visibilita' con l'ambito nell'etichetta; interpolazione in blocco da albero e da grafico; selezione multipla di segmenti e di keyframe nel grafico; trascinamento e scalatura nel tempo su piu' curve (un solo pivot e rapporto); tasto destro che segue il segmento sotto il cursore; tratteggio per colonna + curva corrente piu' spessa; hint contestuali.
-
-  **Da preparare prima di aprire la discussione**: screenshot/gif del prima-dopo, e la lista delle modifiche di comportamento **esistente** (le due voci del menu cartella rinominate "List ..." per non avere due "Show All" con significati diversi; Ctrl+click che creava un keyframe spostato su Alt+click per liberare Ctrl alla selezione; il rettangolo che ora prende segmenti oltre alle chiavi). Sono i punti su cui upstream chiedera' conto.
-
-- [ ] **Strumenti sulle tangenti + generazione del percorso** — seconda ondata della stessa proposta Function Editor, **da presentare insieme a quella sopra**, non separatamente: rispondono al problema che la motiva (le curve «ondivaghe» quando si aggiungono breakdown per drag/lead/follow). File core: `toonzlib/doubleparamcmd.cpp` + `include/toonz/doubleparamcmd.h`, `toonzqt/functionselection.cpp` + `functionpanel.cpp`, `toonzlib/tstageobjectcmd.cpp` + `include/toonz/tstageobjectcmd.h`, `include/toonz/tstageobject.h`, `toonz/xsheetcmd.cpp` + `xshcellviewer.cpp` + `mainwindow.cpp` + `menubarcommandids.h`. Commit Ztoryc `7bbd80dfe` (tangenti) + `704cfa556` (undo di Rove).
-
-  **Il difetto di partenza, che vale come argomento**: le maniglie di ogni segmento sono calcolate da sole (`segmentWidth/3` in `KeyframeSetter::setType`), quindi a una chiave la pendenza in entrata e quella in uscita **non coincidono** — la curva ci arriva in un modo e riparte in un altro, poco visibile nel valore e uno scalino nella velocita'. E maniglie piu' lunghe del dislivello locale fanno **uscire** la curva dall'intervallo fra due chiavi.
-
-  **Voci** (menu contestuale del grafico): **Auto Bezier** — tangente dai vicini (Catmull-Rom), continua per costruzione, poi clampata perche' la curva non possa sorpassare (Fritsch-Carlson); e' l'Auto Clamped di Blender / l'Auto di Maya, e il nome viene da AE perche' in Blender «Smooth» e' un filtro che media i VALORI (e c'era gia' una voce "Smooth" a cinque righe di distanza, la Curve Shape di OpenToonz). **Flat** — tangente orizzontale, per marcare un estremo. **Copy/Paste Tangents** — copia la FORMA (maniglie come frazione della larghezza e del dislivello del segmento). **Even Speed Along Path** — roving one-shot su `posPath`. Piu' l'opzione *Auto Bezier Tangents While Setting Keys* in Preferences → Animation, agganciata a `createKeyframe`, che ricalcola anche le due chiavi vicine.
-
-  **Perche' il roving e' esatto e non approssimato**: `T_Path` e' documentato in `tstageobject.h` come «position along the spline, as a PERCENTAGE OF THE LENGTH», quindi su quel canale velocita' costante del valore **e'** velocita' costante lungo il percorso. E' one-shot di proposito: nessun flag sul keyframe, quindi il formato file non cambia e niente deve ricalcolarsi da solo.
-
-  **Correzione 2026-08-03, emersa provando insieme i due comandi**: il Rove metteva le chiavi nei frame giusti e lasciava intatta l'interpolazione, quindi manteneva la promessa **sulle chiavi e non fra le chiavi** — la curva usciva dalla retta su cui erano appena state disposte. Causa: `TStageObject::moveKeyframe` ricopia le maniglie alla lettera (`TDoubleParam::setKeyframe` non le rinormalizza), quindi descrivevano ancora la spaziatura VECCHIA. Ora `distributeSelectedEvenly` porta a **Linear** i segmenti dello span rovato — velocita' costante non e' un'interpolazione qualunque con le chiavi in posizione, **e' la retta**. Linear e non auto bezier di proposito, benche' con le chiavi tutte sulla retta l'auto bezier la riprodurrebbe: cosi' restano raggiungibili entrambe le letture — Rove da solo = velocita' costante netta, Rove **poi** Auto Bezier = velocita' costante con ease alle due estremita' (il roving-con-easy-ease di After Effects). Se fosse il Rove ad applicare le tangenti da se', la versione senza ease non si potrebbe piu' ottenere. Solo sulla curva posPath: il comando e' abilitato solo su selezioni posPath (`isSelectionOnPosPath`) e l'ease su rotazione o zoom alle stesse chiavi non gli compete. Resta esatto a meno di mezzo frame, perche' le chiavi stanno su frame interi.
-
-  **Sulle tangenti agli ESTREMI** (cambiato lo stesso giorno, tocca l'Auto Bezier del grafico e non solo il percorso): la prima e l'ultima chiave ora prendono tangente **piatta** invece della pendenza del segmento adiacente. Il motivo non e' l'allineamento a Blender/Maya ma la coerenza della regola con se stessa: fuori dalla prima e dall'ultima chiave il valore e' **tenuto**, quindi la pendenza in arrivo alla prima e' zero, e dargli quella del segmento metterebbe uno scalino di velocita' — da fermo a pieno regime — proprio dove e' piu' grosso, che e' il difetto per cui l'Auto Bezier esiste. Effetto collaterale voluto: su una curva di **due sole chiavi** l'Auto Bezier ora da' un ease in/out completo invece di una retta. Eccezione nota e deliberatamente non gestita: su una curva **ciclata** il valore non si ferma all'ultima chiave ma riavvolge alla prima, e li' la tangente andrebbe letta dall'altro capo.
-
-  **Generate Path from Keys** (2026-08-03, `TStageObjectCmd::generatePathFromKeys`) — deliberatamente **non** nel menu del grafico ma in quello della colonna keyframe dell'xsheet: prende un OGGETTO e ne cambia il modo di muoversi, non tocca una curva sola. Tre chiavi x/y fanno un movimento con un ANGOLO alla chiave centrale quando si voleva un arco; disegnare la spline a mano per averlo e' scomodo abbastanza da far restare le motion path inutilizzate. Costruisce la spline che passa per le posizioni delle chiavi, ci aggancia l'oggetto e converte le chiavi in `posPath` alla percentuale di lunghezza di ciascun punto — stessa matematica dell'Auto Bezier, nello spazio invece che nel tempo, clamp compreso (maniglia a un terzo della piu' CORTA delle due corde adiacenti). Le curve x e y restano intatte perche' su un percorso **non vengono lette affatto** (`computeLocalPlacement` fa uno switch sullo stato), quindi staccare la spline riporta il movimento originale.
-
-  **Due note tecniche per chi prepara la PR**: (1) uno stroke Toonz e' a QUADRATICHE e un punto di controllo utente e' ogni quarto punto grezzo (un segmento = due quadratiche, `[P,H0,M,H1,P']` con `M=(H0+H1)/2`) — rispettare quel layout e' cio' che rende la spline generata **normale**, rileggibile e modificabile col Control Point Editor; (2) su un percorso il piazzamento e' `puntoSpline - frameCenter`, quindi la curva va traslata di `frameCenter` o l'oggetto si sposta — serve un getter `TStageObject::getFrameCenter()`, che upstream non ha.
-
-  **Preset di easing** (2026-08-04, `KeyframeSetter::setEasePreset` in `toonzlib/doubleparamcmd.cpp` + `include/toonz/doubleparamcmd.h`, `FunctionSelection::applyEasePreset` in `toonzqt/functionselection.cpp` + header, submenu in `toonzqt/functionpanel.cpp`) — le quindici curve nominate del vocabolario motion design (Sine/Quad/Cubic/Quart/Expo x In/Out/In-Out) nel menu contestuale del grafico, sotto **Ease Presets**, in submenu per famiglia. Sono i **numeri pubblicati** da easings.net e da CSS, presi come sono e non riderivati: chi sa che faccia ha un «ease out cubic» deve ritrovarla identica. Complemento dell'Auto Bezier e non un suo doppione — l'Auto Bezier deduce una forma DALL'animazione, questi la impongono perche' e' quella forma.
-  **Tre cose che decidono l'implementazione**: (1) un preset e' un cubic-bezier nel quadrato unitario, quindi le maniglie sono `P1*(dt,dv)` e `(P2-1)*(dt,dv)` — **frazioni** del segmento, il che e' cio' che rende un preset un preset: stesso carattere su sei frame e su sessanta. Il conto combacia con la costruzione dell'evaluator (`getSpeedInOutValue` fa `p1 = p0 + speedOut`, `p2 = p3 + speedIn`), quindi la resa e' la definizione CSS esatta, non un'approssimazione; con `x1, x2 ∈ [0,1]` non scatta mai `truncateSpeeds`. (2) I segmenti diventano **SpeedInOut**: l'EaseInOut memorizza una QUANTITA' di ease e la forma la decide da se', quindi non puo' portare una curva nominata. (3) Le **maniglie linkate vengono slinkate** sulle chiavi scritte — il link impone la collinearita' fra i due lati di una chiave, e una forma per-segmento e' esattamente la richiesta che non lo siano: tenendolo, applicare un preset a un segmento avrebbe risagomato in silenzio quello accanto.
-  **Ambito**: segmenti selezionati → quelli e basta; chiavi selezionate → tutti i segmenti che le toccano, cioe' la stessa lettura della selezione che gia' fanno Auto Bezier e Flat, perche' due comandi nello stesso menu non possono avere idee diverse su cosa sia «la selezione». Nel primo ramo i segmenti **non** si possono ricavare dalle chiavi: selezionare un segmento seleziona anche i suoi due estremi, e rileggerli spanderebbe l'ease sui segmenti al di la' di essi.
-  **Nomenclatura, trappola vera**: «In» e «Out» vogliono dire **il contrario** nelle due tradizioni — in `functionsegmentviewer.cpp` «Ease Out» e' la maniglia che esce dalla PRIMA chiave del segmento, mentre `easeInQuad` nel mondo CSS e' la **partenza lenta**. Le voci quindi dicono l'effetto accanto al nome: *In (slow start)*, *Out (slow end)*, *In-Out (slow both ends)*. Chi prepara la PR upstream non tocchi questo punto senza deciderlo di nuovo: e' l'unica cosa che rende il menu non ambiguo.
-  **Esplicitamente FUORI: overshoot e bounce.** Non sono forme di maniglia, richiedono di GENERARE keyframe — feature diversa e piu' grande, con altre conseguenze su undo, roving e selezione di segmenti.
-  **STATO: scritto e compilato il 2026-08-04, NON ancora collaudato da Franco nell'app.** Matematica verificata a mano sui casi limite (Quad In/Out/In-Out, Expo In) contro la costruzione dei punti dell'evaluator.
-
-  **Canali INERTI segnalati nel Function Editor** (`toonzqt/functiontreeviewer.cpp` + `include/toonzqt/functiontreeviewer.h`, `toonzqt/functionpanel.cpp` + `include/toonzqt/functionpanel.h`) — nato da un incaglio reale: Franco ha guardato la curva X di un oggetto appena messo su un percorso, l'ha trovata malfatta e ha segnalato un difetto delle tangenti che non c'era. Su un percorso **x e y non vengono lette affatto**, ma le loro curve restano in lista e si disegnano identiche a quelle vive, quindi si finisce per modificare una traiettoria che non significa piu' niente. Nuovo `FunctionTreeModel::Channel::isInert()`: x e y quando l'oggetto e' su un percorso, posPath quando non lo e'. **Il criterio non e' riscritto a mano** — chiede `isPathEnabled()` all'oggetto, lo stesso identico test di `computeLocalPlacement` (da dove viene la posizione) e di `updateKeyframes` (di chi sono le chiavi), quindi albero e motore non possono divergere. Riconoscimento **per puntatore** e non per nome, perche' i nomi nell'albero sono tradotti. Resa: testo sbiadito nell'albero + tooltip che spiega perche' (e che staccando il percorso il movimento torna), e curva sbiadita nel grafico. Due trappole evitate: il **quadratino** di colore e' lasciato stare perche' grigio significa gia' «non mostrata nel grafico», domanda diversa; e la sfumatura della curva e' **moltiplicativa** sull'alpha, perche' assegnarne una fissa faceva uscire una curva inerte non-corrente **piu' chiara** delle vive accanto (le non-correnti partono gia' da alpha 180). Non nascosti, solo marcati: nascondere renderebbe invisibile che l'annullamento e' li'.
-
-  **STATO: geometria verificata numericamente** (passaggio esatto per i punti, continuita' al giunto interno e attraverso i punti di controllo, punto medio coincidente col cubico, sforamento max 0.08% della spezzata) **e tangenti verificate con diagnostica sulla scena reale** — maniglie coincidenti con la formula alla terza cifra decimale, collineari ai due lati, estremi piatti, nessuno sforamento sui valori di controllo di Bezier. Diagnostica poi **rimossa**. Collaudato da Franco nell'app il 2026-08-03.
-- [ ] **Il parenting a un hook non eredita l'ORIENTAMENTO dell'osso** (`toonzlib/tstageobject.cpp`, `computeLocalPlacement` ~riga 1884; posizione risolta in `toonzlib/xshhandlemanager.cpp` `XshHandleManager::getHandlePos` ~riga 80) — **NON e' un bug di Tahoma2D: e' il comportamento storico**, e va proposto come discussione/opzione, non come correzione. Oggi `pos += m_parent->getHandlePos(m_parentHandle, frame)` aggiunge l'hook del padre come **sola traslazione**; `getHandlePos` restituisce un `TPointD`, quindi un vertice di mesh consegnato come punto nudo non puo' dire in che direzione punti l'osso che ci passa. Per un personaggio plastico diviso su piu' colonne non basta: **piegando il busto la colonna del braccio mantiene il proprio orientamento**, e se i limiti d'angolo del giunto seguono il corpo (come devono) il braccio si ritrova FUORI dai propri bound — alla manipolazione successiva il clamp continuity-first lo richiama dentro di scatto. Su un rig single level il problema non esiste perche' e' tutto lo stesso scheletro. Nota: `TStageObject::solvePlasticCharacter` **la rotazione ce l'ha gia'**, perche' cuce la radice della colonna figlia sul vertice-hook del padre come osso vero (`j.parent = c.hookVertexDense`) — quindi la macchina esiste, ma vive nel solve e non nel piazzamento, che e' cio' che viewer e render condividono. Fix Ztoryc 2026-07-27: il figlio agganciato a un vertice di una mesh **plastica** eredita anche di quanto l'osso di quel vertice ha ruotato dalla posa di riposo (`makeRotation(ang + hookAng)`), con guardia stretta — un hook ordinario su un disegno normale non ha ne' osso ne' deformazione e si comporta esattamente come prima. Interruttore `ZTORYC_NO_HOOK_ROT` per l'A/B. **STATO: RISOLTO e verificato da Franco il 2026-07-27**, rig multi-colonna reale, con cinematica accesa e spenta. La chiave e' una **condizione**, non la formula: il piazzamento eredita la rotazione dell'osso-hook **solo quando l'IK plastica e' SPENTA**. Con l'IK accesa l'arto ruota gia', perche' `solvePlasticCharacter` cuce la radice della colonna figlia sul vertice di attacco del padre e la tratta come un osso vero — farlo anche nel piazzamento applica la rotazione due volte, e la seconda finisce dove il write-back cross-level non puo' vederla (`crossLevelIK_animate` calcola gli angoli nel piazzamento **congelato al press**). Misurato: posare una gamba col pin passava da «identico al single level» a quasi ingestibile, col giunto che percorreva un quarto di quanto richiesto (`gain=0.24`). I due casi non si sovrappongono mai — `crossLevelIK` gira solo con l'IK accesa — quindi la condizione E' l'intero fix. Interruttore `ZTORYC_NO_HOOK_ROT` per spegnerlo. Commit Ztoryc `d7c02aba5`.
-  **Per la PR upstream**: resta un cambio di significato del parenting a hook, quindi va comunque proposto dietro un'opzione esplicita. E va presentato insieme al fix gemello sui limiti d'angolo (stesso commit): un giunto appeso alla radice del proprio scheletro misura i propri bound contro l'asse X del MONDO, e su rig multi-colonna il bound quindi non segue il corpo. Lo scostamento va applicato in **quattro** posti (`updateAngle`, `updatePosition`, `writeBackAnglesFor_animate`, e i **due** disegni distinti dei limiti: il ventaglio e l'overlay a linee 1e4) — se anche uno solo resta indietro il difetto e' visibile a schermo. Nota per chi prepara la PR: un primo tentativo aggiungeva ANCHE uno scostamento ai limiti d'angolo (`parentColumnRefDirs_animate` nel clamp) — **e' sbagliato e va ritirato**: se la colonna ruota, lo spazio locale ruota con lei e i bound seguono gia'; sommare lo scostamento conta la rotazione due volte. Per una PR upstream servirebbe comunque dietro un'opzione esplicita, perche' cambia il significato del parenting a hook per chiunque.
-- **Per-xsheet In/Out markers** (`subscenecommand.cpp`) — marker separati per xsheet principale e sub-scene.
-- **Zoom-to-cursor nella timeline** — il frame sotto il cursore rimane fisso durante lo zoom. Commit `b8ddea829`.
-4. Commit format — Conventional Commits:
-- `feat:` new feature
-- `fix:` bug fix
-- `refactor:` code restructure, no behavior change
-- `docs:` documentation only
-- `chore:` build, config, tooling
+| `tahoma-stock` | from `upstream/master` | reproducing and verifying on clean Tahoma2D |
+| `opentoonz-stock` | from `opentoonz/master` | the same on OpenToonz |
+
+They are `git worktree`s, not clones: they share the object database. The bundles
+they produce (`Tahoma2D.app`, `OpenToonz.app`) differ from `Ztoryc.app`, so they
+run side by side without fighting over the single-instance lock. Both remotes
+have push **DISABLED**.
+
+**Steps, in order:**
+
+1. `git worktree add -b pr/<name> ../tahoma-stock-<name> upstream/master`.
+2. **Check the bug is actually there**, and in which of the two projects: a defect
+   introduced by a Tahoma commit is not in OpenToonz, and vice versa; old shared
+   code is usually in both. This can be checked without compiling —
+   `git show <remote>/master:<file> | grep ...`.
+3. Apply **only** that change, with comments rewritten neutrally — no private
+   scene names, no local paths, no references to internal conversations.
+4. Build and test **there**.
+5. **Automated review** on the PR branch, to catch the mechanical slips: one call
+   site out of eight forgotten, a case left unhandled.
+6. **Human review** — *after* the automated one, never before. Sending a
+   volunteer something a machine would have caught spends their goodwill. This is
+   for the questions only someone with the project's history can answer: is this
+   the shape of fix they would accept? does it touch behaviour somebody relies
+   on? is there a historical reason it is written that way?
+
+   **How:** open the PR **on the fork** (`pr/<name>` → `matitanimata/ztoryc:master`).
+   That gives the whole GitHub review interface — line comments, applicable
+   suggestions — **without notifying the Tahoma2D maintainers**. Once it is
+   agreed, it is redirected upstream.
