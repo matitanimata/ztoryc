@@ -58,12 +58,13 @@ for user_home in /home/*; do
     cp -a "$USER_TAHOMA/tahomastuff/profiles" "$TMP_RESCUE/tahomastuff/"
   fi
 
-  # Remove all contents except sandbox and profiles
+  # Remove everything (sandbox/profiles were already saved above and get
+  # restored below; excluding them from a single "find -exec rm -rf {} +"
+  # is unsafe because the parent "tahomastuff" dir still matches and its
+  # deletion can race with the exclusion, aborting the script under set -e)
   echo "Cleaning $USER_TAHOMA..."
-  find "$USER_TAHOMA" -mindepth 1 \
-    ! -path "$USER_TAHOMA/tahomastuff/sandbox*" \
-    ! -path "$USER_TAHOMA/tahomastuff/profiles*" \
-    -exec rm -rf {} + 2>/dev/null
+  rm -rf "$USER_TAHOMA"
+  mkdir -p "$USER_TAHOMA"
 
   # Copy all content from /etc/skel to user's Ztoryc directory
   echo "Copying from $SRC..."
