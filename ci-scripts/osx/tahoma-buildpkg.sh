@@ -215,14 +215,30 @@ then
    fi
 fi
 
-if [ ! -d $TOONZDIR/Ztoryc.app/Contents/Frameworks/libgphoto2 ]
+# I plugin di libgphoto2 (IOLIBS/CAMLIBS) NON vanno in Contents/Frameworks:
+# sono directory versionate piene di .so, e codesign le scambia per bundle
+# annidati malformati ("bundle format unrecognized, invalid, or unsuitable
+# in subcomponent .../libgphoto2_port/0.12.2"). Finche' stavano li', la firma
+# del BUNDLE non poteva riuscire, l'app restava con "Sealed Resources=none",
+# Gatekeeper la dichiarava DANNEGGIATA e l'utente doveva lanciare "xattr -cr"
+# da Terminale. In Contents/Resources vengono sigillati come dati e la firma
+# passa. Verificato su Mac Pro Intel il 2026-08-18: con questo cambio compare
+# "Apri comunque" e l'app parte senza Terminale.
+# ATTENZIONE: questo percorso e' accoppiato a quello che l'app mette in
+# IOLIBS/CAMLIBS all'avvio (toonz/sources/stopmotion/gphotocam.cpp).
+# Se si sposta la cartella, va spostato anche li' o le fotocamere spariscono.
+GPHOTO_DST="$TOONZDIR/Ztoryc.app/Contents/Resources"
+# Ripulisce la posizione vecchia, per build incrementali e cache CI.
+rm -rf "$TOONZDIR/Ztoryc.app/Contents/Frameworks/libgphoto2" \
+       "$TOONZDIR/Ztoryc.app/Contents/Frameworks/libgphoto2_port"
+if [ ! -d "$GPHOTO_DST/libgphoto2" ]
 then
-   echo ">>> Copying libghoto2 supporting directories to Ztoryc.app/Contents/Frameworks"
-   cp -R "$BREW_PREFIX/lib/libgphoto2" $TOONZDIR/Ztoryc.app/Contents/Frameworks
-   cp -R "$BREW_PREFIX/lib/libgphoto2_port" $TOONZDIR/Ztoryc.app/Contents/Frameworks
+   echo ">>> Copying libghoto2 supporting directories to Ztoryc.app/Contents/Resources"
+   cp -R "$BREW_PREFIX/lib/libgphoto2" "$GPHOTO_DST"
+   cp -R "$BREW_PREFIX/lib/libgphoto2_port" "$GPHOTO_DST"
 
-   rm -f $TOONZDIR/Ztoryc.app/Contents/Frameworks/libgphoto2/print-camera-list
-   find "$TOONZDIR/Ztoryc.app/Contents/Frameworks"/libgphoto2* -name '*.la' -exec rm -f {} \; 2>/dev/null || true
+   rm -f "$GPHOTO_DST/libgphoto2/print-camera-list"
+   find "$GPHOTO_DST"/libgphoto2* -name '*.la' -exec rm -f {} \; 2>/dev/null || true
 fi
 
 # dSYM generation is slow (dsymutil per helper binary). CI sets SKIP_DSYM_IN_PACKAGE=1
@@ -707,9 +723,36 @@ ztoryc_verify_codesign() {
 echo ">>> Re-sealing Mach-O files with ad-hoc signatures (no certificate, no --deep)"
 rm -rf Ztoryc.app/Contents/_CodeSignature 2>/dev/null || true
 ztoryc_adhoc_sign_macho_files
-rm -rf Ztoryc.app/Contents/_CodeSignature 2>/dev/null || true
+
+# Firmare i singoli Mach-O NON BASTA: senza una firma sul BUNDLE l'app esce con
+# "Sealed Resources=none" e codesign --verify fallisce con "code has no resources
+# but signature indicates they must be present". Gatekeeper non riesce a valutarla,
+# la considera DANNEGGIATA e NON offre "Apri comunque": l'utente e' costretto a
+# "xattr -cr" da Terminale. E' il motivo per cui ogni release finora ha dovuto
+# documentare quel comando.
+# NB: NON rimuovere _CodeSignature dopo questo passo — e' proprio il sigillo.
+echo ">>> Sealing the app bundle (ad-hoc)"
+if ! _bundle_sign_out="$(codesign --force --sign - --timestamp=none --identifier io.github.ztoryc.Ztoryc Ztoryc.app 2>&1)"; then
+   echo "$_bundle_sign_out"
+   echo "ERROR: failed to ad-hoc sign the app bundle"
+   echo "       Se dice 'bundle format unrecognized ... in subcomponent', c'e' una"
+   echo "       directory in Contents/Frameworks che codesign scambia per un bundle."
+   exit 1
+fi
+
 echo ">>> Verifying portable bundle code signatures"
 ztoryc_verify_codesign
+
+# Verifica del sigillo del bundle, separata da ztoryc_verify_codesign che guarda
+# i singoli Mach-O. E' QUESTA a decidere se l'utente finale dovra' aprire il
+# Terminale, quindi deve far fallire la build, non limitarsi ad avvisare.
+echo ">>> Verifying the app bundle seal"
+if ! _bundle_verify_out="$(codesign --verify --strict Ztoryc.app 2>&1)"; then
+   echo "$_bundle_verify_out"
+   echo "ERROR: the app bundle seal is invalid — users would have to run 'xattr -cr'"
+   exit 1
+fi
+codesign -dvvv Ztoryc.app 2>&1 | grep -E "Sealed Resources|flags="
 
 if [ "${SKIP_DMG:-0}" = "1" ]; then
    echo ">>> SKIP_DMG=1 — skipping portable DMG (bundle: $REPO_ROOT/$TOONZDIR/Ztoryc.app)"

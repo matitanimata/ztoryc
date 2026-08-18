@@ -10,6 +10,7 @@
 #include "toonz/stage.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 
 #if defined(_WIN32)
@@ -79,6 +80,38 @@ GPhotoCam::GPhotoCam() {
   m_cameraListDetected  = NULL;
   m_camera              = NULL;
   m_cameraImageFilePath = new CameraFilePath;
+
+#ifdef Q_OS_MAC
+  // libgphoto2 ha i percorsi dei suoi plugin COMPILATI DENTRO, e puntano al
+  // prefisso Homebrew della macchina di build (/usr/local/lib/libgphoto2_port/
+  // <ver> per la build Intel). Su un Mac dell'utente, che Homebrew non ce l'ha,
+  // quel percorso non esiste: nessun driver viene caricato e l'app non trova
+  // NESSUNA fotocamera, in silenzio e senza errori.
+  // I plugin li spediamo dentro il bundle (ci-scripts/osx/tahoma-buildpkg.sh li
+  // copia in Contents/Resources), ma la libreria non li cerca li' da sola: senza
+  // IOLIBS/CAMLIBS restano lettera morta. Vanno impostate PRIMA delle due
+  // gp_*_list_load() qui sotto, che e' il momento in cui vengono lette.
+  // Il numero di versione nel percorso lo si CERCA invece di scriverlo: a
+  // scriverlo, il primo aggiornamento di libgphoto2 farebbe sparire le
+  // fotocamere senza che nulla lo segnali.
+  {
+    const QDir resDir(QCoreApplication::applicationDirPath() +
+                      QStringLiteral("/../Resources"));
+    auto pluginDir = [&resDir](const QString &libName) -> QString {
+      QDir d(resDir.absoluteFilePath(libName));
+      if (!d.exists()) return QString();
+      const QStringList vers =
+          d.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+      if (vers.isEmpty()) return QString();
+      // Se per qualche motivo ce ne fosse piu' d'una, si prende la piu' alta.
+      return QDir::cleanPath(d.absoluteFilePath(vers.last()));
+    };
+    const QString ioLibs  = pluginDir(QStringLiteral("libgphoto2_port"));
+    const QString camLibs = pluginDir(QStringLiteral("libgphoto2"));
+    if (!ioLibs.isEmpty()) qputenv("IOLIBS", QFile::encodeName(ioLibs));
+    if (!camLibs.isEmpty()) qputenv("CAMLIBS", QFile::encodeName(camLibs));
+  }
+#endif
 
   m_gpContext = gp_context_new();
   gp_log_add_func(GP_LOG_DEBUG, logdump, NULL);

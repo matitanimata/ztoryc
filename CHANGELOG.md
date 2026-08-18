@@ -1,3 +1,95 @@
+## [2026-08-18b] — le release macOS non chiedono piu' il Terminale
+
+Partita da una domanda di sfuggita («come si notarizza un'app?») e finita a
+scoprire perche' **ogni release macOS fin qui costringeva l'utente a lanciare
+`xattr -cr` da Terminale**. Non era, come credevamo, «l'app non e' notarizzata»:
+era una firma **malformata**, che e' un caso peggiore e soprattutto diverso.
+
+La distinzione che spiega tutto sono i **tre stati di Gatekeeper**: firmata e
+notarizzata si apre e basta; firmata Developer ID ma non notarizzata mostra
+**«Apri comunque»**; firmata ad-hoc **ma valida** mostra «Apri comunque» lo
+stesso. Solo una firma **rotta** fa dichiarare l'app DANNEGGIATA, e li' il
+pulsante non compare: resta solo il Terminale. Ztoryc era in quest'ultimo stato,
+e bastava uscirne — senza i 99 $/anno di Apple Developer Program.
+
+### Fixed — il bundle non veniva mai sigillato (`ci-scripts/osx/tahoma-buildpkg.sh`)
+`ztoryc_adhoc_sign_macho_files()` firmava i singoli Mach-O e, per l'eseguibile
+principale, una **copia temporanea** del binario. Il bundle come tale non veniva
+firmato mai: l'app usciva con `Sealed Resources=none` e `codesign --verify`
+falliva con *code has no resources but signature indicates they must be present*.
+Ora il bundle si firma davvero, `_CodeSignature` non viene piu' cancellato dopo
+(era proprio il sigillo che si buttava), e il sigillo si **verifica facendo
+fallire la build** se non regge. Quel controllo decide se l'utente finale dovra'
+aprire il Terminale: non poteva restare un avviso che scorre via — ed e'
+esattamente cosi' che il difetto e' sopravvissuto a tutte le release.
+
+### Fixed — i plugin gphoto impedivano di firmare (stesso file)
+Firmare il bundle **non riusciva** finche' `Contents/Frameworks` conteneva
+`libgphoto2/` e `libgphoto2_port/`: directory versionate piene di `.so` che
+codesign scambia per bundle annidati malformati (*bundle format unrecognized …
+in subcomponent .../0.12.2*). Era questo a spingere verso l'aggiramento
+file-per-file. Spostate in `Contents/Resources`, la firma passa.
+
+**Sono entrambe regressioni nostre, non migliorie.** Tahoma2D stock fa gia' le
+cose giuste su tutti e due i fronti — mette i plugin in `Contents/Resources`
+(righe 118-125) e firma il bundle con `codesign --deep`. Ztoryc era divergiuto
+da monte in silenzio. Per questo **non sono candidati upstream**.
+
+### Fixed — il supporto fotocamere non ha mai funzionato (`stopmotion/gphotocam.cpp`)
+Scoperta collaterale della stessa indagine. libgphoto2 ha i percorsi dei plugin
+**compilati dentro** e puntano al prefisso Homebrew della macchina di build
+(`strings` sulla dylib spedita: `/usr/local/lib/libgphoto2_port/0.12.2`), e
+nessuno impostava `IOLIBS`/`CAMLIBS`. Su un Mac senza Homebrew li' i driver non
+si caricano e **nessuna fotocamera viene mai rilevata**, senza errori ne' log:
+sembra semplicemente che non ce ne sia una attaccata. Ora le due variabili si
+impostano nel costruttore, prima delle `gp_*_list_load()` che e' il momento in
+cui vengono lette, **cercando** la sottocartella di versione invece di scriverla
+— scritta a mano, il primo aggiornamento di libgphoto2 farebbe sparire di nuovo
+le fotocamere in silenzio. Sotto `Q_OS_MAC`: Linux e Windows non sono toccati.
+
+### Verified — provato sul campo, non dedotto
+DMG 0.13.1 Intel scaricato dalla release vera, plugin spostati, bundle firmato:
+`verify exit=0`, `Sealed Resources version=2, 2372 file`. Reimpacchettato e
+provato da Franco sul **Mac Pro late 2013**, macchina pulita senza ambiente di
+sviluppo: **compare «Apri comunque» e l'app parte senza Terminale**.
+
+⚠️ Per un test del genere il file va scaricato **dal browser**: preso via sync di
+Drive non ha l'attributo di quarantena, si aprirebbe comunque e non dimostrerebbe
+nulla.
+
+Non verificato: che sia la **CI** a produrre il DMG cosi' (il reimpacchettamento
+l'ho fatto a mano — ma ora la build fallisce se il sigillo non regge, quindi lo
+sapremo al prossimo rilascio invece che dagli utenti); e il fix fotocamere, che
+compila ma **non e' mai stato provato con una macchina fotografica attaccata**.
+
+### Upstream candidates
+- **#26** — i plugin libgphoto2 spediti ma mai trovati (`gphotocam.cpp`).
+  Stock ha zero occorrenze di `IOLIBS`/`CAMLIBS` e lo stesso layout, quindi
+  dovrebbe essere affetto uguale. Da confermare con una fotocamera vera prima di
+  proporlo: Tahoma2D compila un suo fork di libgphoto2 che potrebbe avere una
+  patch sui percorsi che non abbiamo letto.
+
+### Notes — due cose emerse e non risolte
+- **La build Intel dichiara Monterey ma richiede Sequoia.** L'eseguibile ha
+  `minos 12.0`, ma fra le librerie impacchettate 10 pretendono macOS **15.0** e
+  28 pretendono **14.0** — arrivano da Homebrew del runner `macos-15-intel`. Chi
+  ha un Mac Intel con Ventura o Sonoma, perfettamente supportati da Apple,
+  scarica il DMG e trova un'app che non parte. Mai documentato, mai segnalato
+  (di utenti Intel ce ne sono pochi). Si aggiusta costruendo su un runner piu'
+  vecchio o forzando le dipendenze a un target piu' basso.
+- **Lo script LOCALE `build_and_deploy.sh` ha un difetto diverso e ancora
+  aperto**: li' e' `ztorycstuff` nella RADICE del bundle a rompere la firma, e lo
+  schema «sposto fuori → firmo → rimetto dentro» non puo' funzionare per
+  costruzione, perche' l'ultimo passo annulla sempre il penultimo. Riguarda solo
+  la copia di sviluppo, non le release. Da sistemare portandolo al layout della
+  CI.
+
+### Notes — fuori progetto
+La sessione e' partita da lavoro di scrivania, non di Ztoryc: installazione di
+AeroSpace 0.21.3-Beta con config e sfondo delle scorciatoie, e la distinzione fra
+Jellyfin Server (che e' un servizio senza finestre, `LSUIElement=1`) e Jellyfin
+Media Player, che e' il client vero.
+
 ## [2026-08-18] — le sotto-scene tornano nell'anteprima, e un pannello e' un disegno
 
 Sessione tutta di diagnostica strumentata: tre correzioni «ragionate» erano
