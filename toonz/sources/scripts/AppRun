@@ -14,4 +14,4 @@ echo "IOLIBS: $IOLIBS"
 export QT_PLUGIN_PATH="$(readlink -f "$(dirname "$(find "${APPDIR}" -type d -path '*/plugins/platforms' 2>/dev/null)" 2>/dev/null)" 2>/dev/null)"
 echo "QT_PLUGIN_PATH=$QT_PLUGIN_PATH"
 
-$APPDIR/usr/bin/Tahoma2D "$@"
+$APPDIR/usr/bin/Ztoryc "$@"

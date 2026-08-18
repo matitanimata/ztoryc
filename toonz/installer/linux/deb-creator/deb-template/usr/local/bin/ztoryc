@@ -1,4 +1,35 @@
 #!/bin/bash
-set -e
 
-exec /usr/local/bin/tahoma2d "$@"
+# ======================================================================
+# File:       ztoryc
+# Purpose:    Script to start Ztoryc installed from the .deb
+# Supported:  Debian and derivatives
+# ======================================================================
+
+FILE="$HOME/.local/share/Ztoryc"
+
+if [ ! -d "$FILE" ]; then
+    echo "Creating directory $FILE..."
+    mkdir -p "$FILE"
+    if [ -d "/etc/skel/.local/share/Ztoryc/" ]; then
+        cp -r /etc/skel/.local/share/Ztoryc/* "$FILE" || {
+            echo "Error: File copy failed." >&2
+            exit 1
+        }
+    else
+        echo "Error: The source directory does not exist." >&2
+        exit 1
+    fi
+    ztoryc-permissions
+fi
+
+echo "Starting Ztoryc from $FILE..."
+cd "$FILE" || {
+    echo "Error: Cannot change to directory $FILE." >&2
+    exit 1
+}
+./AppRun "$@" || {
+    echo "Error: AppRun execution failed." >&2
+    exit 1
+}
+ztoryc-permissions

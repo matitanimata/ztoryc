@@ -1,4 +1,24 @@
 #!/bin/bash
-set -e
 
-exec /usr/local/bin/tahoma-permissions "$@"
+# ======================================================================
+# File:       ztoryc-permissions
+# Purpose:    Script to fix permissions in Ztoryc installed from the .deb
+# Supported:  Debian and derivatives
+# ======================================================================
+
+if [ -d "$HOME/.config/Ztoryc" ]; then
+  find "$HOME/.local/share/Ztoryc" -type d ! -perm 755 -exec chmod 755 {} +
+  find "$HOME/.local/share/Ztoryc" -type f ! -perm 644 -exec chmod 644 {} +
+
+  find "$HOME/.config/Ztoryc" -type d ! -perm 755 -exec chmod 755 {} +
+  find "$HOME/.config/Ztoryc" -type f ! -perm 644 -exec chmod 644 {} +
+
+  [ ! -x "$HOME/.local/share/Ztoryc/AppRun" ] && chmod +x "$HOME/.local/share/Ztoryc/AppRun"
+
+  find "$HOME/.local/share/Ztoryc/usr/bin" -type f ! -name "qt.conf" ! -perm /u+x -exec chmod +x {} +
+  [ -x "$HOME/.local/share/Ztoryc/usr/bin/qt.conf" ] && chmod -x "$HOME/.local/share/Ztoryc/usr/bin/qt.conf"
+
+  find "$HOME/.local/share/Ztoryc/ffmpeg" -type f ! -perm /u+x -exec chmod +x {} +
+
+  [ ! -x "$HOME/.local/share/Ztoryc/rhubarb/rhubarb" ] && chmod +x "$HOME/.local/share/Ztoryc/rhubarb/rhubarb"
+fi
