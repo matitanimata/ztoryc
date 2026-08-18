@@ -494,12 +494,23 @@ pre-release e NON cancellata (sorgente espeak, GPLv3).
 Binari: Linux da `a4bc8655c`, macOS e Windows da `b7cdb1a60`. L'unica differenza
 e' la macro di esportazione che serve solo a Windows — detto in fondo alle note.
 
-**Resta una sola cosa aperta: il CONTROLLO SPONSOR**, saltato perche' il token
-`gh` di questa macchina non ha lo scope `read:user` e la dashboard va aperta a
-mano. Le note della 0.13.1 ringraziano gli stessi due nomi della 0.13.0
-(Slam Rockwell, Rodney Baker). Se dal 17/08 e' arrivato qualcuno va aggiunto
-**in tre posti**: `SUPPORTERS.md`, le note della release (`gh release edit`), e
-la schermata About (`aboutpopup.cpp`, a mano — per lo stesso motivo del token).
+**Controllo sponsor: FATTO da Franco il 2026-08-19** — nessuno nuovo dalla
+0.13.0, i ringraziamenti restano Slam Rockwell e Rodney Baker. (Il token `gh`
+di questa macchina non ha lo scope `read:user`: la dashboard la deve aprire lui.
+Se in futuro arriva qualcuno va aggiunto in **tre** posti — `SUPPORTERS.md`, le
+note della release, e la schermata About in `aboutpopup.cpp`.)
+
+**Asset Linux in sostituzione** (2026-08-19): Franco ha deciso di NON bumpare a
+0.13.2 ma di rimpiazzare i pacchetti Linux della 0.13.1 — non l'aveva ancora
+annunciata e l'aveva scaricata solo lui. Ci lavora un'altra sessione di Claude
+sul Dell: icona di Ztoryc al posto di quella di Tahoma, e lo script del `.deb`
+che lanciava Tahoma2D invece di Ztoryc.
+
+⚠️ **Quando gli asset Linux sono stati sostituiti, aggiornare la riga in fondo
+alle note della release** che dice da quali commit vengono i binari: dira'
+ancora `a4bc8655c` per Linux, che non sara' piu' vero.
+
+**Provati da Franco e a posto:** Windows e macOS Intel.
 
 ### ✅ CHIUSI IL 2026-08-18
 

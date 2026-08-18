@@ -113,6 +113,32 @@ scorciatoie, non il menu in cui finisce: `menubar.cpp:463` lo mette nel menu
 Scene. I menu di primo livello sono File, Edit, Scene, Level, Cells, Play,
 Render, Cleanup, View, Workflow, Panels, Help. Il commento ora lo dice.
 
+### Linux — la mattina dopo (2026-08-19), lavoro di Claudell sul Dell
+
+Franco ha aperto una sessione di Claude **sul Dell** e le ha fatto sistemare
+l'impacchettamento Linux, che dal Mac non si vede e non si prova:
+
+- l'icona installata era **quella di Tahoma2D col nome di Ztoryc**
+  (`install(FILES tahoma2d_logo_128.png ... RENAME org.ztoryc.Ztoryc.png)`): il
+  `.desktop` trovava il nome giusto e il desktop disegnava il logo sbagliato;
+- lo script di avvio del `.deb` **lanciava Tahoma2D invece di Ztoryc**;
+- il `postinst` del `.deb` poteva fallire reinstallando sopra dati esistenti.
+
+Franco ha deciso di **NON rilasciare una 0.13.2** ma di **sostituire i pacchetti
+Linux della 0.13.1**, che non era ancora annunciata e aveva scaricato solo lui
+(il bump a 0.13.2 e' stato revertato, `898187879`). Note di rilascio aggiornate
+di conseguenza: le tre correzioni sono elencate, e la riga sulla provenienza dei
+binari ora dice macOS/Windows da `b7cdb1a60`, Linux da `898187879` col `.deb`
+patchato (`4a922b8f9`).
+
+> ⚠️ **Lezione, e ora e' una regola in memoria.** Dal Mac ho tentato di
+> correggere io l'icona mentre Claudell ci stava gia' lavorando: un `git add`
+> fallito su un pathspec ha comunque prodotto un commit (il `git commit` era
+> sulla riga dopo, senza `&&`) che cancellava i due PNG **lasciando** il CMake
+> che li installa — build Linux rotta in configurazione. L'ha salvata solo il
+> push rifiutato perche' il remoto era avanti. Quando c'e' un'altra sessione su
+> quei file: stare fermi, e comunque `git fetch` PRIMA di committare.
+
 ### Upstream candidates
 
 - **`renderFrame` rientrante lascia legato il framebuffer 0** (macOS/Linux/
