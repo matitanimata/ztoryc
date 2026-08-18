@@ -1,3 +1,61 @@
+## [2026-08-18c] — le tavole di carta diventano livelli
+
+Sessione nata da una domanda («riusciresti a scomporre delle scansioni in
+livelli interfacciandoti con Affinity o Krita?») e finita con una pipeline che
+funziona. La risposta alla domanda era **no** per la strada immaginata — Affinity
+non ha nessuna automazione, e guidarne l'interfaccia a colpi di mouse sarebbe
+piu' lento che fare a mano — e **si'** per un'altra: elaborare le scansioni
+direttamente e restituire un file gia' stratificato.
+
+### Added — pipeline scansione → PSD stratificato
+In `/Volumes/ZioSam/tahoma2d-workspace/reference/ch-layers/` (fuori dal repo).
+Provata su `princenerentolo.tiff`, 4096x3057 da Fuji X-E2 su stativo:
+**19 livelli, 3 gruppi-sequenza, fotogrammi registrati**.
+
+Due decisioni hanno fatto la differenza. La prima: **non riconoscere il colore
+ma riempire i contorni chiusi.** Il primo tentativo ricavava la trasparenza da
+luminosita' e saturazione, e il **giallo chiaro spariva** — chiaro quanto la
+carta e poco saturo. Fidandosi solo del contorno nero e riempiendo cio' che
+racchiude, il giallo non deve piu' essere riconosciuto: basta che sia
+circondato. La seconda: **una dilatazione temporanea solo per decidere i
+raggruppamenti**, mai per la maschera vera, cosi' le ciglia restano attaccate al
+loro occhio senza ingrassare i contorni.
+
+### Fixed — scritto uno scrittore PSD nostro, `pytoshop` ne produceva tre difettosi
+- record di maschera lungo **36 byte su ogni livello** senza i canali -2/-3 →
+  Affinity apriva lamentando «dati maschera mancanti»;
+- livelli-divisore dei gruppi con **zero canali** → **Krita rifiutava il file**;
+- divisore scritto **senza nome** → **Ztoryc non avrebbe mai chiuso i gruppi**,
+  perche' `psdsettingspopup.cpp:79` li chiude solo su un livello chiamato
+  esattamente `</Layer group>`. Gli altri due programmi non se ne accorgono:
+  questo si sarebbe visto solo importando.
+
+Lo scrittore nostro sono ~160 righe senza dipendenze. Un difetto **mio** preso
+per strada: traslando un livello arrotondavo i quattro bordi separatamente, e
+con uno scostamento frazionario il rettangolo cambiava di un pixel mentre i dati
+dei canali restavano della misura vecchia → PSD corrotto. L'ha trovato la
+rilettura con `psd-tools`, che ha trovato anche una tela trasposta.
+
+### Added — registrazione dei fotogrammi e tavola-modello
+Dentro un gruppo i fotogrammi vengono portati su un unico punto di registro:
+sul foglio ogni bocca sta dove capita, e senza allineamento la sequenza
+saltellerebbe per lo schermo.
+
+Consegnata a Franco la **tavola-modello A4** (`tavola_personaggio_A4.pdf`),
+tutta in ciano chiaro perche' si filtri via da sola, con crocini di registro
+agli angoli e un puntino di registro in ogni cella di sequenza.
+
+### Notes
+Deciso che **diventera' una funzione di Ztoryc, non un'app separata**: OpenCV
+4.1 e' gia' dipendenza obbligatoria, quindi il porting non ne aggiunge, mentre
+un prodotto a se' vorrebbe un secondo giro di build/firma/distribuzione su tre
+sistemi. Ma **non adesso**: prima il Python fa da laboratorio, poi il template,
+poi il pannello. E il prodotto vero non e' l'algoritmo, sono ~200 righe: e'
+l'interfaccia per correggere in fretta cio' che il riconoscimento sbaglia.
+
+Restano aperti, annotati in ANIMATIC_TASKS: la build Intel che dichiara Monterey
+ma pretende Sequoia, e la firma invalida di `build_and_deploy.sh` in locale.
+
 ## [2026-08-18b] — le release macOS non chiedono piu' il Terminale
 
 Partita da una domanda di sfuggita («come si notarizza un'app?») e finita a

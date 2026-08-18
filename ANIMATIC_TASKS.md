@@ -485,6 +485,52 @@ nella sub-scene corretta.
 
 ## Priority Order
 
+### 🆕 APERTI DAL 2026-08-18 (sera)
+
+**1. Scansioni di personaggio → livelli, dentro Ztoryc.** La pipeline FUNZIONA
+gia' in Python: `/Volumes/ZioSam/tahoma2d-workspace/reference/ch-layers/`.
+Toglie la carta, separa gli elementi in componenti connesse, raggruppa le
+sequenze e scrive un PSD con i gruppi che Ztoryc importa come fotogrammi.
+Provata sulla tavola `princenerentolo.tiff`: 19 livelli, 3 gruppi, fotogrammi
+registrati fra loro.
+
+Deciso con Franco che **non sara' un'app separata ma una funzione di Ztoryc**:
+OpenCV 4.1 e' gia' dipendenza obbligatoria (`sources/CMakeLists.txt:371`) e tutto
+cio' che serve e' OpenCV di base, quindi il porting in C++ non aggiunge
+dipendenze — mentre un'app a se' vorrebbe un secondo giro di build, firma e
+distribuzione su tre sistemi.
+
+**Ordine dei tempi, deciso: NON portare in C++ adesso.** Prima il Python fa da
+laboratorio su altre tavole vere, poi il template, e solo dopo il pannello.
+Portarlo prima congelerebbe una ricetta ancora in movimento.
+
+⚠️ **Il prodotto non e' l'algoritmo** (sono ~200 righe) ma l'interfaccia di
+correzione: il riconoscimento sbagliera' sempre qualcosa, e oggi gli scarti li
+ha tolti Claude a mano compilando una tabella. Serve poter riassegnare un nome,
+unire due pezzi o buttare una sbavatura in dieci secondi.
+
+Template consegnato a Franco il 2026-08-18: `tavola_personaggio_A4.pdf`, tutto
+in ciano chiaro (si filtra dal canale rosso), crocini di registro agli angoli e
+un puntino di registro in ogni cella di sequenza. I "due livelli" su carta sono
+due colori: grafite = disegno, matita BLU = crocino di destinazione (dove va la
+bocca sul viso), che riempie in automatico il `DESTINAZIONE` dello script.
+
+**2. La build Intel dichiara Monterey ma richiede Sequoia.** L'eseguibile ha
+`minos 12.0`, ma delle librerie impacchettate 10 pretendono macOS **15.0** e 28
+pretendono **14.0**: vengono da Homebrew del runner `macos-15-intel`. Chi ha un
+Mac Intel con Ventura o Sonoma scarica il DMG e trova un'app che non parte. Mai
+documentato, mai segnalato. Si aggiusta costruendo su un runner piu' vecchio o
+forzando le dipendenze a un deployment target piu' basso. **Le note di rilascio
+dicono «macOS 12+» e al momento non e' vero.**
+
+**3. `build_and_deploy.sh` (solo locale) lascia la firma invalida.** Difetto
+diverso da quello gia' corretto nella CI: li' e' `ztorycstuff` nella RADICE del
+bundle, e lo schema «sposto fuori → firmo → rimetto dentro» non puo' funzionare
+per costruzione, perche' l'ultimo passo annulla sempre il penultimo. Riguarda
+solo la copia di sviluppo. Si risolve portandolo al layout della CI
+(`Contents/Resources`).
+
+
 ### ✅ RILASCIO 0.13.1 — COMPLETO (verificato il 2026-08-19 mattina)
 
 <https://github.com/matitanimata/ztoryc/releases/tag/v0.13.1> — **nove asset su
