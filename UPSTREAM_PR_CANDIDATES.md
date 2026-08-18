@@ -4,10 +4,6 @@
 > we are of each item, and where it makes sense to start. Part 2 is the working
 > list itself. If you are reading this to help, Part 1 is enough to decide what
 > to pick up.
->
-> This file replaces the earlier split between a technical working list and a
-> shareable English write-up: the two drifted apart, which is exactly the failure
-> mode a "source of truth" is supposed to prevent.
 
 ---
 
