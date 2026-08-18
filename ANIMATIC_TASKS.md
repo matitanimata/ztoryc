@@ -560,43 +560,6 @@ dato non lo scrive l'utente ma `classifyCameraMove()`.
 
 ---
 
-### (storico) IL PRIMO LAVORO DELLA SESSIONE 2026-08-17 sera
-
-**1. Le sotto-scene non si vedono nell'anteprima dei pannelli del Board.**
-Nel viewer e nell'animatic si vedono; nell'anteprima no, con gli occhietti
-accesi e i personaggi esposti dal primo fotogramma.
-
-Gia' ESCLUSO leggendo il codice — non rifarlo:
-- la visibilita' (occhi accesi, e il filtro `isCamstandVisible()` e' lo stesso
-  nei due percorsi);
-- `forSceneIcon` (tocca solo la deformazione plastica, `stagevisitor.cpp:926`);
-- il filtro «solo colonna corrente» (`m_singleColumnEnabled` e' falso qui);
-- la cache del render dei pannelli (chiave ora con il contenuto, e comunque il
-  render fresco non li disegna).
-I due percorsi chiamano lo STESSO `Stage::visit`, che in `addCell`
-(`stage.cpp:538`) ricorre nelle sotto-scene.
-
-➡️ **Prossimo passo: STRUMENTARE `stage.cpp`** — quanti player raccoglie il
-render dell'anteprima e a quale livello di annidamento — scrivendo su file
-(l'app parte dal Finder, stderr non lo legge nessuno). NON leggere ancora il
-codice: oggi tre correzioni «ragionate» sono state buttate, e ogni volta e'
-stata la diagnostica a chiudere la questione in un colpo.
-
-**2. Da DECIDERE INSIEME, non da dedurre: quanti pannelli fa una sotto-scena.**
-Una colonna che espone una sotto-scena cambia fotogramma a ogni riga, e
-generava 151 pannelli su uno shot da 151. Le ho escluse dal rilevamento.
-Franco, 2026-08-17: *«e' anche peggiorata visto che ora non vede neanche i
-panel per ogni frame come dovrebbe»*. Quindi la regola giusta e' una terza:
-forse un pannello per ogni cambio di DISEGNO dentro la sotto-scena. Chiedere
-prima di scrivere codice.
-
-**3. Poi rilasciare la 0.13.1** (c'e' dentro un crash risolto) e **marcare la
-0.13.0 come pre-release** — NON cancellarla: contiene
-`espeak-ng-1.52.0-source.tar.gz`, il sorgente corrispondente ai binari che
-qualcuno ha gia' scaricato, e siamo obbligati a continuare a offrirlo (GPLv3).
-
----
-
 ### 🛑 SOSPESI PER DECISIONE DI FRANCO — non riproporli
 
 > Leggere PRIMA di proporre qualsiasi cosa. Sono voci ancora aperte piu' in
