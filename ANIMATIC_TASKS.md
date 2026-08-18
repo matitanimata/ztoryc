@@ -485,6 +485,22 @@ nella sub-scene corretta.
 
 ## Priority Order
 
+### ✅ RILASCIO 0.13.1 — COMPLETO (verificato il 2026-08-19 mattina)
+
+<https://github.com/matitanimata/ztoryc/releases/tag/v0.13.1> — **nove asset su
+nove**, note bilingui applicate, pubblica e non pre-release. La 0.13.0 resta
+pre-release e NON cancellata (sorgente espeak, GPLv3).
+
+Binari: Linux da `a4bc8655c`, macOS e Windows da `b7cdb1a60`. L'unica differenza
+e' la macro di esportazione che serve solo a Windows — detto in fondo alle note.
+
+**Resta una sola cosa aperta: il CONTROLLO SPONSOR**, saltato perche' il token
+`gh` di questa macchina non ha lo scope `read:user` e la dashboard va aperta a
+mano. Le note della 0.13.1 ringraziano gli stessi due nomi della 0.13.0
+(Slam Rockwell, Rodney Baker). Se dal 17/08 e' arrivato qualcuno va aggiunto
+**in tre posti**: `SUPPORTERS.md`, le note della release (`gh release edit`), e
+la schermata About (`aboutpopup.cpp`, a mano — per lo stesso motivo del token).
+
 ### ✅ CHIUSI IL 2026-08-18
 
 **1. Le sotto-scene nell'anteprima dei pannelli — RISOLTO** (commit `a501495d3`).

@@ -548,8 +548,7 @@ con l'altro compilatore, utile solo se la gcc dà problemi.
 pushare un tag fa partire la CI ordinaria, non una release. Verificato il
 2026-08-04 — questa sezione diceva il contrario ed era sbagliata.
 
-**Tutti e tre insieme**, Linux compreso (prima era descritto come un passo a
-parte, ed e' il motivo per cui la 0.11.0 e' uscita senza binari Linux):
+**Tutti e tre insieme**, Linux compreso — un comando solo, non tre passi:
 
 ```bash
 for w in macOS_build.yml windows_build.yml linux_build.yml; do
@@ -560,18 +559,43 @@ done
 Il tag git si puo' comunque creare, come segnalibro nella storia, ma non e' cio'
 che pubblica.
 
-**Linux va lanciato a parte** (dal 2026-07-27 il workflow ha il job
-`publish-release`, ma `linux_build.yml` è `workflow_dispatch` — sul tag **non**
-parte da solo):
+> 🚨 **NON PUSHARE SU `master` MENTRE LA BUILD macOS DEL RILASCIO GIRA.**
+> `macOS_build.yml` parte **anche sui push** (`on: push: branches:`) e ha
+> ```yaml
+> concurrency:
+>   group: ztoryc-macos-${{ github.ref }}-${{ matrix.suffix }}
+>   cancel-in-progress: true
+> ```
+> Il gruppo e' indicizzato **solo sul ref**, non sull'evento: quindi un push
+> qualsiasi fa partire una run nuova che **annulla quella del rilascio**, anche
+> se e' a cinquanta minuti e sta per pubblicare. `windows_build.yml` e
+> `linux_build.yml` hanno **solo** `workflow_dispatch` e non ne soffrono — per
+> questo il sintomo e' che sparisce SOLO macOS, e sembra un caso.
+>
+> Successo il 2026-08-18 pushando una correzione Windows mentre la macOS del
+> rilascio girava. Se serve pushare qualcosa a meta' rilascio: prima si aspetta
+> che macOS abbia finito, oppure si mette in conto di rilanciarla.
 
-```bash
-gh workflow run linux_build.yml -f publish_release=true -f release_tag=v0.X.Y
-```
+> Questa sezione descriveva Linux come **un passo a parte**, da lanciare con un
+> secondo comando dopo gli altri due. Era un residuo: le tre righe qui sopra lo
+> lanciano gia'. Chi seguiva la checklist alla lettera lo lanciava due volte, o
+> — leggendo di corsa — nessuna.
 
-Produce quattro asset: `Ztoryc-linux-{gcc,clang}.{tar.gz,deb}`. Verificare che
-siano davvero comparsi nella release (`gh release view v0.X.Y`) prima di
-annunciarla: la **0.11.0** è uscita senza binari Linux perché il job è arrivato
-otto ore dopo la pubblicazione.
+**Linux ci mette molto piu' degli altri due.** Misurato il 2026-08-18:
+Windows ~49 min, macOS ~53, **Linux ~97**. Cioe' la release NASCE quando
+finiscono i primi due, e i quattro pacchetti Linux arrivano circa
+tre quarti d'ora dopo. Produce
+`Ztoryc-linux-{gcc,clang}.{tar.gz,deb}`.
+
+⚠️ **Non annunciare la release prima di aver verificato che ci siano tutti e
+nove gli asset** (`gh release view v0.X.Y`). Chi guarda nella finestra di mezzo
+vede solo macOS e Windows e pensa che Linux sia stato dimenticato.
+
+> Perche' la **0.11.0** usci' senza binari Linux: **la CI Linux non esisteva
+> ancora**. E' stata impostata dopo, in una sessione dedicata sulla partizione
+> Pop!_OS del Dell. (Questa nota diceva «il job e' arrivato otto ore dopo la
+> pubblicazione»: sbagliato, e faceva sembrare un problema di tempi una cosa che
+> era di infrastruttura mancante — corretto da Franco il 2026-08-18.)
 
 -----
 
