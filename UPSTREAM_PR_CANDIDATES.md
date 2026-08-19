@@ -121,7 +121,7 @@ not portable.
 17. ❓ **`TSystem::memoryShortage()` always returns false on macOS/Linux** — `tsystempd.cpp`. A no-op (`return false`) → `TImageCache` never auto-evicts even near full RAM. Fix: `host_statistics64` (macOS) / `/proc/meminfo` (Linux). Affects all Mac/Linux users — high priority. `b79ba7d32`.
 18. ❓ **macOS "Unable to create a new document" on launch** — `BundleInfo.plist.in` (`NSQuitAlwaysKeepsWindows`, `NSApplicationSupportsSecureRestorableState`). `a7a822704`.
 19. ❓ **macOS CI deployment target** — needs `-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0` or the binary embeds the runner's `minos`. `940e895bc`.
-20. ❓ **AutoFill undo/redo (brush)** — the brush AutoFill wasn't undoable and refilled existing shapes; dedicated `AutoFillUndo` (before/after tiles) grouped with the stroke, and "new shapes only". `25ad78f53`, `toonzrasterbrushtool.cpp`. *(bug fix side of the AutoFill work; the color-picker part is a feature — see Part 2)*
+20. ❓ **AutoFill undo/redo (brush)** *(⚠️ same dependency as #15 for OpenToonz.)* — the brush AutoFill wasn't undoable and refilled existing shapes; dedicated `AutoFillUndo` (before/after tiles) grouped with the stroke, and "new shapes only". `25ad78f53`, `toonzrasterbrushtool.cpp`. *(bug fix side of the AutoFill work; the color-picker part is a feature — see Part 2)*
 
 #### 🟡 Windows / MSVC compatibility
 
@@ -188,18 +188,39 @@ one large contribution or split.
    - Files: `txsheet.cpp`, `xsheetdragtool.cpp`, `xshcellviewer.cpp`, `cellselectioncommand.cpp`, `timestretchpopup.cpp`, `duplicatepopup.cpp`.
 10. 🟢 **Main Audio toggle** — play the main xsheet's soundtrack while inside a sub-scene (`MI_ToggleMainAudio`).
 11. 🟢 **Zoom-to-cursor in the timeline** — the frame under the cursor stays fixed while zooming. `b8ddea829`.
-12. 🟢 **Per-xsheet In/Out markers** — separate play-range markers for the main xsheet vs each sub-scene. `subscenecommand.cpp`.
+12. 🟢 **Per-xsheet In/Out markers** — separate play-range markers for the main xsheet vs each sub-scene.
+
+    **How it works** *(written out for Rodney, who asked on 2026-08-18)*. Upstream, the play range is a single **global GUI state** (`XsheetGUI::get/setPlayRange`). Nothing is attached to the xsheet, so entering a sub-xsheet and coming back leaves whatever range the GUI last held: the main xsheet's range gets clobbered by the sub-scene's, and vice versa. Three pieces fix it.
+
+    1. **Storage on the xsheet itself** — `TXsheet` gains `m_markerIn`/`m_markerOut` plus `getInOutMarkers()`, `setInOutMarkers()`, `hasInOutMarkers()` (`include/toonz/txsheet.h:179, 666-675`). The convention that makes it work is **`m_markerOut == -1` means "unset"**: it distinguishes "no range" from a real range, so a disabled range does not come back as a bogus `-1/-2` after reload — it falls back to automatic.
+    2. **Serialised into the `.tnz`** — read at `toonzlib/txsheet.cpp:1893`, written at `:1965` as `os.child("inOutMarkers") << m_markerIn << m_markerOut`, and **only when `m_markerOut >= 0`**. So markers survive save+reload for every (sub-)xsheet, and scenes without the tag simply have none. Compatible in both directions.
+    3. **Save/restore at the sub-scene boundary** — `subscenecommand.cpp`, in `openSubXsheet()` and `closeSubXsheet()`. On leaving an xsheet the current GUI range is written both to a session map (`s_frameRangeMap`, keyed by `TXsheet*`) and to the persistent markers; on entering, the range is restored with the **persistent markers taking priority**. They must take priority because a raw pointer is not stable across a load, so the session map alone cannot work after reopening a scene.
+
+    **Note on "does it behave differently in storyboard mode?"** No — there is no mode branch. It is the same three-level chain everywhere: **persistent markers → session cache → automatic fallback**. Once a sub-xsheet has explicit markers they win, and they stay put in every mode. The only place where markers appear to "move by themselves" is the **third** branch, which runs only for a sub-xsheet that never had explicit markers.
+
+    ⚠️ **What a clean port must strip — two things, both in that fallback branch.**
+    1. `openSubXsheet()` extends `markOut` by the length of any sound-text column named `XD-in` / `XD-out`. That is Ztoryc animatic cross-dissolve bookkeeping, meaningless upstream.
+    2. It calls `shotColPtr->getRange(r0, r1, /*ignoreLastStop=*/true)`. That flag exists because `ZtoryModel::resequenceXsheet()` parks a trailing Stop Frame Hold at `r1+1` of every shot column to block implicit-hold bleed; without the flag the duration is inflated by one and the mark-out lands one frame past the content. **Upstream has no such trailing hold**, so the flag should not be passed. The `ignoreLastStop` parameter itself is **not** a Ztoryc addition — it already exists in Tahoma2D stock (`include/toonz/txshcolumn.h:154, 240`), but **not in OpenToonz**, so an OT port must use plain `getRange()`. What is Ztoryc-specific is only the *reason* we pass `true`.
+
+    Strip both and the fallback becomes simply "full duration of the cell block in the parent", which is the sensible upstream behaviour.
+
+    **Do NOT bundle the storyboard duration syncing into this candidate.** In Ztoryc two things look like "the markers follow the shot", and only one of them is this feature:
+    - *Lengthen a shot in the timeline → the sub-scene's mark-out follows.* This is **not** a write to the markers: it is the fallback above recomputing `markOut` from the parent column on the next `openSubXsheet()`. It therefore happens **only while that sub-xsheet has no explicit markers**. Once markers are set, priority 1 wins and lengthening the shot merely clamps them (`qBound` to the frame count).
+    - *"Match shot duration" → the timeline follows the sub-scene.* The opposite direction, and it never touches the markers at all: `StoryboardPanel::onMatchDuration()` rewrites the main column's cells to `childLevel->getXsheet()->getFrameCount()`. Pure Ztoryc storyboard code, outside the scope of this candidate.
+
+    For completeness, markers are written in exactly three places: `open/closeSubXsheet()` (the boundary sync), and `iocommand.cpp:1674` on save — the latter covers setting a range and saving **without ever entering or leaving a sub-scene**, which is otherwise the only moment they would get synced. A port needs that third one too, or ranges silently fail to persist in the simplest workflow of all.
 13. 🟢 **Keyframe diamond grammar** *(v0.10.0)* — one source of truth for the diamond's colours and detection, so the xsheet, the timeline and the viewer cannot disagree about what kind of key a cell holds, plus a keyframe navigator in the viewer.
 14. 🟡 **Function editor usable on its own** *(August 2026)* — it no longer needs a "current curve" to stand up, and the interpolation handling (Auto Bezier, Flat, tangents, Rove) was straightened out.
 
 #### 🔹 Brush / painting
 
-15. 🟢 **AutoFill fill-style picker** — choose the colour AutoFill uses: "Next Style (N+1)" (default) or "Current Style", plus a dynamic palette picker listing all styles as `[N] StyleName` (rebuilds on palette/level change). `toonzrasterbrushtool.h/.cpp`, `tooloptions.cpp`.
-16. 🟡 **Tilt that follows the surface, not the screen** *(August 2026)* — with the elbow bent, a tablet's tilt axes do not line up with the screen axes, and the brush ends up shaped by how you are sitting rather than how you are drawing.
+15. 🟢 **AutoFill fill-style picker** *(⚠️ blocked for OpenToonz: OT has no Auto Fill / Vector Auto Close yet — those must be ported from Tahoma2D first. Rodney, 2026-08-18. Can go to **Tahoma2D** directly.)* — choose the colour AutoFill uses: "Next Style (N+1)" (default) or "Current Style", plus a dynamic palette picker listing all styles as `[N] StyleName` (rebuilds on palette/level change). `toonzrasterbrushtool.h/.cpp`, `tooloptions.cpp`.
+16. 🟡 **Tilt that follows the surface, not the screen** *(⚠️ same for OpenToonz: OT has no pen-tilt support yet. Rodney, 2026-08-18. Tahoma2D directly is fine.)* *(August 2026)* — with the elbow bent, a tablet's tilt axes do not line up with the screen axes, and the brush ends up shaped by how you are sitting rather than how you are drawing.
 
 #### 🔹 File handling
 
-17. 🟢 **Image-sequence recognition with `-` (hyphen) separator** — `frame-0006.jpg` (common from DaVinci, Blender and other exporters) recognised as a sequence, not a single level; guarded so `my-file.jpg` stays a single level. `common/tsystem/tfilepath.cpp`, `include/tfilepath.h`.
+17. ✅ **TAKEN UPSTREAM by Rodney Baker, 2026-08-18** — [OT-Dev PR #91](https://github.com/OpenAnimationLibrary/opentoonz-dev/pull/91), *Recognize hyphen-separated image sequences*, +50/-45 on `tfilepath.cpp` and `tfilepath.h`. **Do not re-propose.** His port is the SAME design as ours — identical `rfindFrameSep(str, i, underscoreAllowed)` helper, same legacy priority for `.`, same rightmost-of-`-`/`_` rule, same call-site rewrites; the only difference is `jh > ju ? jh : ju` instead of `std::max(ju, jh)`. So the next upstream merge of `tfilepath.cpp` should be clean — but **check that file first anyway**, because a bad conflict resolution there breaks level-name recognition everywhere and does not fail loudly.
+    Original entry: 🟢 **Image-sequence recognition with `-` (hyphen) separator** — `frame-0006.jpg` (common from DaVinci, Blender and other exporters) recognised as a sequence, not a single level; guarded so `my-file.jpg` stays a single level. `common/tsystem/tfilepath.cpp`, `include/tfilepath.h`.
 
 ---
 
