@@ -510,6 +510,46 @@ distribuzione su tre sistemi.
 laboratorio su altre tavole vere, poi il template, e solo dopo il pannello.
 Portarlo prima congelerebbe una ricetta ancora in movimento.
 
+**2026-08-22 — il porting si spezza in due, approvato da Franco.** Domanda sua:
+«e' pensabile inserirlo dentro Ztoryc e fare tutto li', saltando il passaggio in
+Photoshop?». Risposta emersa guardando il codice: **Photoshop non e' nel giro**
+— il PSD lo scrive un writer nostro in `puppetoonz_core.py`, quindi togliendolo
+si toglie un file intermedio, non un'applicazione. Il passaggio che costa
+davvero e' un altro, e si toglie **subito e senza C++**:
+
+- **PRIMO PASSO (Python, adesso): Puppetoonz scrive il `.zmouth`.** La mappa
+  delle bocche di Ztoryc e' gia' progettata intorno al PSD a gruppi che
+  Puppetoonz produce — `ztorymouthmap.h` cita testualmente
+  `CH_giornalista#7#group.psd -> CH_giornalista#7#group.zmouth`. Ma oggi quella
+  mappa si compila a mano dopo l'import, mentre Puppetoonz **sa gia'** che
+  quella casella e' il viseme `AI`: glielo dice il template, che le nomina
+  `01 AI`, `02 E`, `03 ETC`… con lo stesso vocabolario di Preston Blair. Il
+  `.zmouth` e' XML semplice (`ownerPath.withType("zmouth")`), scriverlo da
+  Python e' mezza giornata. Fronte e profilo diventano due set distinti perche'
+  sono gia' due gruppi distinti.
+  ⚠️ Da verificare con un import vero: il numero in `#7#group` lo assegna il
+  loader PSD (`psdsettingspopup.cpp:404`), e Puppetoonz deve saperlo prevedere.
+- **SECONDO PASSO (C++, quando l'interfaccia smette di muoversi): il pannello.**
+  Il guadagno vero non e' saltare il PSD, e' poter correggere un pezzo con gli
+  **strumenti di disegno di Ztoryc** invece dei tre pulsanti di Puppetoonz.
+  Il porting non e' un salto nel buio: `ztorypapersheet.cpp` sono gia' 710 righe
+  di OpenCV in C++ dentro Ztoryc, e fanno **gia' il riconoscimento dei crocini**
+  che a Puppetoonz manca (voce aperta nel suo TODO).
+
+  Il rischio se si porta prima e' preciso: due interfacce di correzione, e gli
+  esperimenti si continuano a fare in quella che si modifica in dieci minuti,
+  non in quella che chiede una compilazione. Cioe' si paga il porting e non si
+  smette di usare il Python. Vale ancora di piu' oggi: la modifica delle caselle
+  e' di ieri, e restano aperte due voci che toccano l'ossatura dei dati (piu'
+  scansioni sullo stesso personaggio rompe l'assunto «un elemento = un'etichetta»;
+  i crocini cambiano come si assegnano le caselle).
+
+⚠️ **Il `.zmouth` non viaggia con il personaggio esportato**, e riguarda
+entrambi i passi. Sta scritto in testa a `ztorymouthmap.h`: l'export dello
+storyboard raccoglie il file del livello e basta (`storyboardpanel.cpp` ~5855),
+`TXshSimpleLevel::getFiles()` non lo elenca. Senza questo il personaggio arriva
+con le bocche e senza le istruzioni per usarle.
+
 ⚠️ **Il prodotto non e' l'algoritmo** (sono ~200 righe) ma l'interfaccia di
 correzione: il riconoscimento sbagliera' sempre qualcosa, e oggi gli scarti li
 ha tolti Claude a mano compilando una tabella. Serve poter riassegnare un nome,
