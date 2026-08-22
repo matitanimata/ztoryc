@@ -1,3 +1,89 @@
+## [2026-08-22b] — Puppetoonz: le caselle si adattano al disegno, non viceversa
+
+Tutto in `matitanimata/puppetoonz` (branch `main`), niente su Ztoryc.
+
+### Added — modificare la griglia a mano, e modelli con un nome
+Franco: *«imposto quante caselle mi servono, ma poi devo poterle adattare e
+ridimensionare»*. Il pannello delle impostazioni decide **quante** caselle;
+il nuovo modo **«Modifica caselle»** decide **quanto sono grandi**. Le due
+cose non si deducono l'una dall'altra: la larghezza giusta di una casella
+dipende dal disegno che ci va dentro, e quello lo sa solo chi l'ha disegnato.
+
+Si clicca una casella e compare il riquadro con le otto maniglie, come per un
+livello — Maiusc per sceglierne piu' d'una, frecce per un pixel, rettangolo
+sul vuoto per prenderne tante. Gli angoli sono **liberi sui due assi**, al
+contrario dei livelli: una casella si allarga per far stare un braccio senza
+dover crescere anche in altezza (Maiusc per la proporzionale). Nome, gruppo e
+indice non si toccano mai — cambia solo la misura, che e' la garanzia che
+Franco ha chiesto («l'importante e' che sia rispettato il contenuto previsto»).
+
+**Modelli salvati col loro nome** in `Documenti/Puppetoonz/templates`, elencati
+nel menu «Modelli ▾». Un modello si puo' creare anche senza scansione aperta:
+la tavola si stampa prima di disegnarci sopra.
+
+### Modified — `template_gen` spezzato in due, ed e' il lavoro vero
+Il modulo era scritto perche' disegno e mappa nascessero dalla **stessa riga**:
+garanzia forte, e incompatibile con lo spostare una casella a mano. Ora sono
+`disponi(cfg) -> mappa` e `disegna(mappa, base)`. L'invariante resta, col verso
+invertito: **il foglio nasce dalla mappa**, quindi salvando un modello il PDF si
+rifa' e continua a raccontare la stessa griglia di quello che il programma cerca.
+La A4 rigenerata dal codice nuovo e' **identica pixel per pixel** a quella
+committata (misurato, non dedotto).
+
+La geometria delle modifiche (`sposta_celle`, `scala_celle`, `sovrapposizioni`,
+`aggiorna_ancore`) sta in `template_gen`, che resta **senza una riga di Qt**:
+e' la parte che un domani si riscrive in C++.
+
+### Fixed — due difetti trovati mentre si costruiva, nessuno leggendo il codice
+1. **I nomi delle caselle non sono unici.** `01 AI` esiste sia fra le bocche
+   frontali sia fra quelle di profilo, `01 1` in tutt'e due le righe di
+   palpebre: **18 collisioni** sulla A4 predefinita. `costruisci_da_template`
+   indicizzava per nome, quindi le due righe collassavano in un gruppo solo e
+   meta' dei fotogrammi finiva nel posto sbagliato. La chiave e' `(gruppo,
+   nome)`. Su tavola intonsa ora: 14+14 bocche, 4+4 palpebre, distinte.
+   Scoperto confrontando la mappa vecchia con quella nuova — il confronto per
+   nome dava 18 «differenze» che non c'erano, e la bugia era nella chiave.
+2. **Riaprendo un `.ptz` il template non era piu' correggibile**: la mappa
+   grezza non veniva salvata, quindi si vedeva ma non si poteva ne' spostare
+   ne' scalare ne' correggere. Ora il progetto se la porta dietro.
+
+Piu' due che la modifica manuale avrebbe creato e sono stati chiusi prima:
+gli **ancoraggi** ora conoscono la casella su cui poggiano e la sua frazione,
+quindi allargando un corpo la spalla resta sulla spalla; e un crocino
+**trascinato a mano** si stacca (`libera`) e non torna piu' alla posizione
+generica al primo ricalcolo della griglia.
+
+### Fixed — le mappe gia' salvate si ridisegnano per intero
+Le mappe scritte prima della separazione contengono **solo la geometria**: le
+scritte non avevano motivo di finire nel file quando nascevano dalla stessa
+riga. Ridisegnarle alla lettera avrebbe prodotto un foglio senza titoli, senza
+fonemi e senza crocini di registro — **in silenzio**. `aggiorna()` le porta al
+formato corrente rifacendo la disposizione dalla configurazione salvata e
+prendendone solo le scritte; la geometria resta quella del file, adattamenti a
+mano compresi. Misurato: senza migrazione si perdeva **un quarto dei segni**
+(163049 pixel di inchiostro contro 216875).
+
+### Notes — un falso allarme che vale come indicazione
+Franco: *«mi pare che non funzioni piu' la selezione rettangolare»*. Non era
+rotta: era acceso **«Sposta»**, dove il trascinamento muove i pezzi. Ma c'era
+un secondo modo che mangiava lo stesso gesto senza dire niente — «Modifica
+caselle», nuovo di oggi. Da li' due aggiunte:
+- in modo caselle il trascinamento sul vuoto ora apre il rettangolo **sulle
+  caselle**, invece di essere un gesto morto;
+- il modo attivo **si vede sulla tela**, non solo nello stato di un bottone
+  della barra che nessuno guarda mentre lavora.
+
+Collaudo da **19 a 37 prove**, e `test_smoke.py` ora si lancia anche senza
+argomenti: si disegna da se' una scansione finta (una macchia per casella).
+Prima serviva una scansione vera che non e' in repo, quindi di fatto non lo
+lanciava nessuno.
+
+### Notes — il backup non copre Puppetoonz
+Il passo `rsync` di «sessione chiusa» sincronizza
+`tahoma2d-workspace/tahoma2d/`. **Puppetoonz sta accanto, non dentro**: non
+viene copiato in `~/ZtorYc/tahoma2d-workspace_local/`. Per ora l'unica copia
+fuori dal disco ZioSam e' il push su GitHub.
+
 ## [2026-08-22] — nasce Puppetoonz, e una voce della lista parte per davvero
 
 ### Added — Puppetoonz, repo suo
