@@ -487,8 +487,14 @@ nella sub-scene corretta.
 
 ### 🆕 APERTI DAL 2026-08-18 (sera)
 
-**1. Scansioni di personaggio → livelli, dentro Ztoryc.** La pipeline FUNZIONA
-gia' in Python: `/Volumes/ZioSam/tahoma2d-workspace/reference/ch-layers/`.
+**1. Scansioni di personaggio → livelli. ORA E' UN'APP CON UN REPO SUO:
+`matitanimata/puppetoonz` (privato).** Si chiama **Puppetoonz**, sta in
+`/Volumes/ZioSam/tahoma2d-workspace/puppetoonz/`, si avvia con
+`Puppetoonz.command` e ha il suo `TODO.md`. Le voci sotto restano valide come
+storia e come indicazioni per il porting in C++, ma il lavoro quotidiano si fa
+li'. Il vecchio laboratorio (`reference/ch-layers/`) non e' stato toccato.
+
+La pipeline FUNZIONA gia' in Python: `/Volumes/ZioSam/tahoma2d-workspace/reference/ch-layers/`.
 Toglie la carta, separa gli elementi in componenti connesse, raggruppa le
 sequenze e scrive un PSD con i gruppi che Ztoryc importa come fotogrammi.
 Provata sulla tavola `princenerentolo.tiff`: 19 livelli, 3 gruppi, fotogrammi

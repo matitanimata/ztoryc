@@ -1,3 +1,61 @@
+## [2026-08-22] — nasce Puppetoonz, e una voce della lista parte per davvero
+
+### Added — Puppetoonz, repo suo
+Lo strumento che scompone le tavole di personaggio ha smesso di essere un
+laboratorio ed e' diventato un programma: **`matitanimata/puppetoonz`**,
+privato, in `/Volumes/ZioSam/tahoma2d-workspace/puppetoonz/`. BSD 3-Clause,
+README, `TODO.md`, e un lanciatore che si prepara l'ambiente da solo.
+
+Il nucleo (`puppetoonz_core.py`) resta **senza una riga di Qt**: e' la parte
+che un domani si riscrive in C++ come pannello di Ztoryc, e tenerla pulita
+dall'interfaccia rende quel porting una traduzione invece di un'archeologia.
+
+**Cosa fa in piu' rispetto al 18:** progetti salvabili (`.ptz` — dentro ci sono
+alpha e mappa delle etichette, che NON sono ricalcolabili perche' contengono
+unioni, tagli e richiusure fatte a mano); taglio manuale lungo una linea, per i
+pezzi che la chiusura del tratto ha saldato e che nessun parametro separa;
+strumento scala che arriva anche nel PSD ricampionando il ritaglio; template
+configurabile e di **formato libero** (un template digitale non si stampa,
+quindi non deve stare in un A4) con pannello delle impostazioni; tela
+ingrandibile, perche' assemblare un personaggio chiede spazio fuori dal foglio.
+
+### Fixed — tre difetti trovati da Franco usandolo davvero
+- **Due selezioni parallele.** Elenco e tela erano indipendenti: lo spostamento
+  leggeva l'una, l'eliminazione l'altra. Da qui il non riuscire a muovere il
+  pezzo appena cliccato, e il vedere evidenziata una sporcatura mentre si
+  cancellava una gamba. Ora sono due modi di scegliere la stessa cosa.
+- **Riordinare cambiava solo il pannello**: `sposta_voce` non ricalcolava
+  l'ordine di disegno, quindi sullo stage non succedeva niente.
+- **I nomi automatici non seguivano i numeri**: dopo un'unione o un taglio la
+  riga continuava a chiamarsi `el 36` mentre i suoi id erano altri.
+
+### Upstream — la voce 17 e' partita, e la 12 risponde a una domanda
+Rodney Baker ha portato a monte il **riconoscimento delle sequenze col
+trattino** ([OT-Dev #91](https://github.com/OpenAnimationLibrary/opentoonz-dev/pull/91)),
+citando `matitanimata/ztoryc` come fonte. La sua port e' la **stessa identica
+soluzione** della nostra — stesso helper `rfindFrameSep`, stessa priorita' al
+punto, stessa regola del separatore piu' a destra — quindi il prossimo merge da
+monte su `tfilepath.cpp` non dovrebbe dare conflitti. Voce segnata come presa
+in carico, per non riproporla.
+
+La **voce 12** (marker In/Out per-xsheet) e' stata scritta per esteso perche'
+Rodney aveva chiesto di capire l'implementazione: la catena a tre livelli, la
+convenzione `markerOut == -1`, e tre cose che una port pulita deve sapere —
+vanno tolti `XD-in`/`XD-out` e `ignoreLastStop`; quel flag esiste in Tahoma2D
+ma **non in OpenToonz**; e la sincronizzazione delle durate della Board room
+non va impacchettata nel candidato, perche' sono due meccanismi diversi e solo
+uno tocca i marker.
+
+Annotate anche le dipendenze segnalate da lui: verso OpenToonz le voci 15, 16 e
+20 sono bloccate finche' OT non ha Auto Fill / Vector Auto Close e il tilt.
+
+### Notes
+Il difetto delle scansioni `XE2N2127.JPG` **non** e' risolto da quella PR: li'
+le cifre sono attaccate al nome senza separatore, e allargare la regola a quel
+caso trasformerebbe un livello chiamato `sh010` in livello `sh` fotogramma
+`010`. La scelta resta fra rinominare i file e confinare la regola alla
+modalita' *Sequence* scelta a mano.
+
 ## [2026-08-18c] — le tavole di carta diventano livelli
 
 Sessione nata da una domanda («riusciresti a scomporre delle scansioni in
