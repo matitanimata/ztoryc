@@ -129,12 +129,29 @@ the startup page (§5) and the Production Tracker's *Project* tab (§12).
 
 ## 8. The Board — texts, panels, arrows
 
-In **Animatic mode** the Board panel is the grid of shots.
-- **Insert text** into the board cells (dialog/action/notes for each panel).
-- **Panels auto-creation** — panels are created automatically from the drawings
-  you make inside a shot (one panel per drawing/exposure).
-- **Arrows / annotations** — draw arrows and annotations over a panel to indicate
-  motion or staging.
+In **Animatic mode** the Board panel is the grid of shots. **Insert text** into
+the board cells — dialogue, action and notes for each panel.
+
+### Panels auto-creation
+
+Panels appear by themselves from what you draw inside a shot. The rule is that
+**a panel is a drawing, not a frame**:
+
+- the exposed drawing is looked for **inside the sub-scenes** (up to three levels
+  down), so a rigged character holding a pose does not start a new panel just
+  because the sub-scene is running;
+- **column keys** and **camera moves** always start one;
+- a level in **full animation** would otherwise produce a panel per frame, so it
+  gets a regular grid instead, at the rate of **Panels/s** in the Board toolbar
+  (1–24, default 1). It is a *maximum*: slower levels still get a panel per
+  drawing change.
+
+### Arrows
+
+The **Ztoryc Arrows** panel (*Panels → Ztoryc Arrows*) is a library of
+directional arrows to drop over a panel and show movement or staging. You can
+point it at **your own folder** of arrow images and reload the library, so a
+studio can use its own set.
 
 ## 9. Shots & sequences operations
 
@@ -152,11 +169,21 @@ Shots can be grouped into **sequences** (see numbering in §5); reorder by drag.
 - **Add audio track** — work with **one or more** tracks.
 - **Record** a guide track directly from the audio recorder (right side, Animatic mode).
 - **Audio track options** — name, **volume**, **solo/mute**, waveform display.
+- **Edit the audio in place** — *Razor*, *Trim*, *Move*, *Paste* and *Delete* on
+  a clip, from its right-click menu; *Add Audio Track* and *Delete Audio Track*
+  manage the tracks themselves.
 - **Main audio toggle** (shot editing mode) — hear the shot's slice of audio.
 
 ## 11. Animatic timeline — editing
 
-- **Transitions** — cross-dissolve between adjacent shots (overlap frames).
+- **Transitions** — a **cross-dissolve** between two adjacent shots. Move the
+  pointer over the **seam** between them (the cursor splits) and **drag** to add
+  one, or drag it back to zero to remove it; the length reads on the block as
+  `dissolve 12f`. From the right edge of a shot, hold **⌥ Option** (Alt on
+  Windows and Linux) and drag to open a dissolve without leaving the trim.
+  The dissolve is **real**: you see it in the animatic viewer, it renders into
+  the exported video, and it travels to your editing software as a genuine
+  transition in the `.fcpxml` (§20).
 - **Editing tools** — **razor** (split a shot), **roll** edit, ripple, slide, merge.
 - **Modifying track heights** — drag the lower edge of a video/audio track; heights
   are remembered.
@@ -237,12 +264,35 @@ script stays available with the project so you can reference it while boarding.
 
 ## 15. Shot editing — drawing, camera, light
 
-Inside a shot (double-click to enter):
-- **Poses, levels, animation** with Tahoma2D's drawing tools.
-- **Camera movement** — animate the camera **here**, inside the sub-scene (never
-  from the animatic).
-- **Light direction arrow** — a gizmo to set the light direction for the panel,
-  with its own options.
+Inside a shot (double-click to enter) you draw **poses, levels and animation**
+with Tahoma2D's tools.
+
+### Camera movement
+
+The camera is animated **here**, inside the sub-scene — never from the animatic
+timeline. The board then shows the move instead of hiding it: the panel is drawn
+with the framing **backed out** far enough to cover both the START and the STOP
+of the move, with the classic rectangles, arrows and A→B lettering over it. A
+shot with two moves gets two panels, lettered in order.
+
+**Show camera-move labels (Trk In, Pan…)** turns the type label on and off.
+
+### Light direction
+
+A panel can carry a **light direction**: a 3D conic arrow you drag over the
+drawing. It is not just an angle —
+
+- **depth** runs from the background to the camera, so you can say the light
+  comes from behind the subject or from beside the lens;
+- **spread** is the opening angle of the beam, from a narrow spot to a wide wash;
+- **Light colour (temperature)** sets the colour.
+
+While you drag you get the sun glyph, the translucent beam and a readout of
+angle, depth and spread. **Show light-direction arrows** (**L**) toggles them
+for the whole board, and **Remove Light Direction** clears the one on the panel.
+
+The arrow is **baked into the board thumbnails and the storyboard PDF**, so
+whoever lights the shot gets the instruction with the drawing.
 
 ## 16. ZtoRig — poses, correctives, mouths
 
@@ -495,12 +545,29 @@ nella pagina di avvio (§5) e nel tab *Project* del Production Tracker (§12).
 
 ## 8. Il Board — testi, panel, frecce
 
-In **modalità Animatic** il Board panel è la griglia degli shot.
-- **Inserisci testo** nelle celle del board (dialogo/azione/note per ogni panel).
-- **Auto-creazione dei panel** — i panel vengono creati automaticamente dai disegni
-  che fai dentro uno shot (un panel per disegno/esposizione).
-- **Frecce / annotazioni** — disegna frecce e annotazioni sopra un panel per
-  indicare movimento o staging.
+In **Modalità Animatic** il panel Board è la griglia degli shot. **Inserisci
+testo** nelle celle del board — dialogo, azione e note per ogni panel.
+
+### Creazione automatica dei panel
+
+I panel nascono da soli da quello che disegni dentro uno shot. La regola è che
+**un panel è un disegno, non un fotogramma**:
+
+- il disegno esposto si cerca **dentro le sotto-scene** (fino a tre livelli di
+  profondità), così un personaggio riggato che tiene la posa non apre un panel
+  nuovo solo perché la sotto-scena sta scorrendo;
+- le **chiavi di colonna** e i **movimenti di camera** ne aprono sempre uno;
+- un livello in **animazione piena** produrrebbe altrimenti un panel per
+  fotogramma, quindi riceve invece una griglia regolare, al ritmo di
+  **Panels/s** nella barra del Board (1–24, predefinito 1). È un *massimo*: i
+  livelli più lenti continuano ad avere un panel per cambio di disegno.
+
+### Frecce
+
+Il panel **Ztoryc Arrows** (*Panels → Ztoryc Arrows*) è una libreria di frecce
+direzionali da posare su un panel per indicare movimento o staging. Puoi
+puntarlo a una **cartella tua** di frecce e ricaricare la libreria, così uno
+studio può usare il proprio set.
 
 ## 9. Operazioni su shot e sequenze
 
@@ -519,11 +586,22 @@ con il drag.
 - **Aggiungi traccia audio** — lavora con **una o più** tracce.
 - **Registra** un audio guida dal record audio (a destra, modalità Animatic).
 - **Opzioni traccia audio** — nome, **volume**, **solo/mute**, visualizzazione waveform.
+- **Modifica l'audio sul posto** — *Razor*, *Trim*, *Move*, *Paste* e *Delete*
+  su un clip, dal menu col tasto destro; *Add Audio Track* e *Delete Audio
+  Track* gestiscono le tracce.
 - **Toggle Main audio** (shot editing mode) — ascolti la porzione audio dello shot.
 
 ## 11. Timeline animatic — editing
 
-- **Transizioni** — cross-dissolve tra shot adiacenti (frame di sovrapposizione).
+- **Transizioni** — una **dissolvenza incrociata** fra due shot adiacenti.
+  Porta il puntatore sulla **giunzione** fra i due (il cursore si sdoppia) e
+  **trascina** per aggiungerla, o riportala a zero per toglierla; la durata si
+  legge sul blocco come `dissolve 12f`. Dal bordo destro di uno shot, tieni
+  **⌥ Option** (Alt su Windows e Linux) e trascina per aprire una dissolvenza
+  senza uscire dal trim.
+  La dissolvenza è **vera**: la vedi nel viewer dell'animatic, viene
+  renderizzata nel video esportato, e arriva al tuo software di montaggio come
+  transizione autentica dentro l'`.fcpxml` (§20).
 - **Editing tools** — **razor** (taglia uno shot), **roll** edit, ripple, slide, merge.
 - **Modifica altezza tracce** — trascina il bordo inferiore di una traccia
   video/audio; le altezze vengono ricordate.
@@ -606,12 +684,36 @@ script resta disponibile col progetto, così puoi consultarlo mentre lavori al b
 
 ## 15. Shot editing — disegno, camera, luce
 
-Dentro uno shot (doppio click per entrarci):
-- **Pose, livelli, animazione** con gli strumenti di disegno di Tahoma2D.
-- **Movimento di camera** — anima la camera **qui**, dentro la sotto-scena (mai
-  dall'animatic).
-- **Freccia direzione luce** — un gizmo per impostare la direzione della luce del
-  panel, con le sue opzioni.
+Dentro uno shot (doppio click per entrarci) disegni **pose, livelli e
+animazione** con gli strumenti di Tahoma2D.
+
+### Movimento camera
+
+La camera si anima **qui**, dentro la sotto-scena — mai dalla timeline
+dell'animatic. Il board poi il movimento lo mostra invece di nasconderlo: il
+panel viene disegnato con l'inquadratura **allargata** quanto basta a contenere
+sia lo START sia lo STOP del movimento, con sopra i classici rettangoli, le
+frecce e le lettere A→B. Uno shot con due movimenti dà due panel, letterati in
+ordine.
+
+**Show camera-move labels (Trk In, Pan…)** accende e spegne l'etichetta del tipo.
+
+### Direzione della luce
+
+Un panel può portarsi dietro una **direzione della luce**: una freccia conica in
+3D che trascini sopra il disegno. Non è solo un angolo —
+
+- la **profondità** va dal fondale alla camera, così puoi dire che la luce viene
+  da dietro il soggetto oppure da accanto all'obiettivo;
+- l'**apertura** è l'angolo del fascio, dallo spot stretto alla luce diffusa;
+- **Light colour (temperature)** ne imposta il colore.
+
+Mentre trascini compaiono il solicello, il fascio traslucido e la lettura di
+angolo, profondità e apertura. **Show light-direction arrows** (**L**) le accende
+e spegne su tutto il board, e **Remove Light Direction** toglie quella del panel.
+
+La freccia viene **impressa nelle thumbnail del board e nel PDF dello
+storyboard**, così chi illumina lo shot riceve l'indicazione insieme al disegno.
 
 ## 16. ZtoRig — pose, correttive, bocche
 
