@@ -517,18 +517,24 @@ Photoshop?». Risposta emersa guardando il codice: **Photoshop non e' nel giro**
 si toglie un file intermedio, non un'applicazione. Il passaggio che costa
 davvero e' un altro, e si toglie **subito e senza C++**:
 
-- **PRIMO PASSO (Python, adesso): Puppetoonz scrive il `.zmouth`.** La mappa
-  delle bocche di Ztoryc e' gia' progettata intorno al PSD a gruppi che
-  Puppetoonz produce — `ztorymouthmap.h` cita testualmente
-  `CH_giornalista#7#group.psd -> CH_giornalista#7#group.zmouth`. Ma oggi quella
-  mappa si compila a mano dopo l'import, mentre Puppetoonz **sa gia'** che
-  quella casella e' il viseme `AI`: glielo dice il template, che le nomina
-  `01 AI`, `02 E`, `03 ETC`… con lo stesso vocabolario di Preston Blair. Il
-  `.zmouth` e' XML semplice (`ownerPath.withType("zmouth")`), scriverlo da
-  Python e' mezza giornata. Fronte e profilo diventano due set distinti perche'
-  sono gia' due gruppi distinti.
-  ⚠️ Da verificare con un import vero: il numero in `#7#group` lo assegna il
-  loader PSD (`psdsettingspopup.cpp:404`), e Puppetoonz deve saperlo prevedere.
+- ✅ **PRIMO PASSO — FATTO il 2026-08-27: Puppetoonz scrive il `.zmouth`.**
+  Esportando nascono `CH_nome#51#group.zmouth` accanto al PSD, con i viseme
+  gia' assegnati: la tavola sa che `01 AI` e' `AI`. Le venti caselle si
+  dividono in due `<mouthSet>` sulla regola del **ripetersi** di un viseme, non
+  su un conteggio fisso. Le palpebre non ne prendono uno.
+  **La domanda aperta aveva una risposta migliore del previsto:** il numero in
+  `#7#group` non lo assegna il caricatore, e' la posizione del record nel file —
+  scriviamo `lsct` ma non `lyid`, e senza `lyid` il lettore ripiega su `i + 1`.
+  Quindi lo decidiamo noi, e arriva da `mappa_out` di `scrivi_psd` invece che da
+  un secondo conteggio che divergerebbe al primo fotogramma saltato.
+  Trovato con una **sonda compilata contro le librerie vere di Ztoryc**, che ha
+  anche scoperto che i fotogrammi di un gruppo arrivavano **all'incontrario**
+  (`01 AI` era il fotogramma 14) — raddrizzato.
+  La tavola ora ha **dieci viseme per espressione** (aggiunti `WQ` e `REST`,
+  raddoppiati `O` e `U`): venti caselle, 12,9 x 16,9 mm l'una.
+  ⚠️ **Da guardare prima di stampare:** sono piu' alte che larghe, mentre una
+  bocca e' il contrario. Due righe da dieci le porterebbero a 27,5 mm.
+
 - **SECONDO PASSO (C++, quando l'interfaccia smette di muoversi): il pannello.**
   Il guadagno vero non e' saltare il PSD, e' poter correggere un pezzo con gli
   **strumenti di disegno di Ztoryc** invece dei tre pulsanti di Puppetoonz.
@@ -544,10 +550,16 @@ davvero e' un altro, e si toglie **subito e senza C++**:
   scansioni sullo stesso personaggio rompe l'assunto «un elemento = un'etichetta»;
   i crocini cambiano come si assegnano le caselle).
 
-⚠️ **Il `.zmouth` non viaggia con il personaggio esportato**, e riguarda
-entrambi i passi. Sta scritto in testa a `ztorymouthmap.h`: l'export dello
-storyboard raccoglie il file del livello e basta (`storyboardpanel.cpp` ~5855),
-`TXshSimpleLevel::getFiles()` non lo elenca. Senza questo il personaggio arriva
+⚠️ **Il `.zmouth` non viaggia con il personaggio esportato — ANCORA APERTO**, e
+adesso pesa di piu', perche' Puppetoonz ne produce a ogni export. L'export dello
+storyboard raccoglie il file del livello e basta (`storyboardpanel.cpp` ~5855) e
+non consulta `getFiles()`: verificato il 2026-08-27, in quel file «zmouth» non
+compare.
+> Il resto della catena invece e' a posto: `TXshSimpleLevel::getFiles()` e
+> `copyFiles()` lo conoscevano gia', e il 2026-08-27 sono stati sistemati anche
+> `renameFiles()` e `removeFiles()` — rinominare un livello di bocche perdeva la
+> mappa in silenzio. I posti da tenere allineati sono **quattro**, non due come
+> diceva il commento. Senza questo il personaggio arriva
 con le bocche e senza le istruzioni per usarle.
 
 ⚠️ **Il prodotto non e' l'algoritmo** (sono ~200 righe) ma l'interfaccia di

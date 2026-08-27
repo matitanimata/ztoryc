@@ -1,3 +1,94 @@
+## [2026-08-27] — Puppetoonz sa gia' quale bocca e' quale, e smette di dirlo all'incontrario
+
+Il grosso e' in `matitanimata/puppetoonz` (branch `main`); su Ztoryc un file solo.
+
+### Added — il `.zmouth` lo scrive Puppetoonz, non piu' l'utente a mano
+Esportando, accanto al PSD nascono `CH_giornalista#51#group.zmouth` e
+`#29#group.zmouth`: la mappa dei viseme che finora si compilava a mano dopo
+l'import. Non e' un indovinello — la tavola **sa** che quella casella e' `AI`,
+perche' l'ha chiamata `01 AI`.
+
+Un file per gruppo, perche' e' un file per LIVELLO e ogni gruppo del PSD diventa
+un livello suo: fronte e profilo sono gia' separati dal fatto di essere due
+gruppi. Le venti caselle si dividono in due `<mouthSet>` — la regola e' il
+**ripetersi** di un viseme, non un conteggio fisso, cosi' chi ne disegna meno o
+ne aggiunge una non spezza nel posto sbagliato. L'espressione si scrive `1` e
+`2`: la tavola non dice QUALE sia, e inventarlo qui sarebbe scrivere una cosa
+che non sappiamo. Le palpebre non prendono nessun `.zmouth`: non sono viseme, e
+un file li' direbbe una cosa falsa.
+
+### Fixed — il numero in `#7#group` lo decidiamo NOI, e si e' scoperto misurando
+Era la domanda che il TODO metteva per prima («se non lo si sa prevedere, il
+file finisce accanto a un livello che non esiste e non se ne accorge nessuno»).
+Non lo assegna il caricatore PSD: e' la **posizione del record nel file**,
+perche' scriviamo il blocco `lsct` ma non `lyid`, e senza `lyid` il lettore
+ripiega su `i + 1` (`psd.cpp:311`).
+
+Trovato compilando una **sonda contro le librerie vere di Ztoryc**
+(`TPSDReader`/`TPSDParser`, gli stessi oggetti che usa l'import) e dandole in
+pasto un PSD nostro. Per questo il numero arriva da `mappa_out` di `scrivi_psd`
+e non da un secondo conteggio: un fotogramma saltato perche' vuoto sposta tutto
+quello che segue, e un conteggio parallelo non se ne accorgerebbe.
+
+### Fixed — i fotogrammi arrivavano all'incontrario, e non lo cercava nessuno
+La sonda ha tirato fuori un difetto che nessuna lettura del codice mostrava:
+`scrivi_psd` scriveva i fotogrammi di un gruppo invertiti, e Ztoryc li numera
+nell'ordine dei record, che nel PSD vanno dal basso in alto. Risultato:
+**`01 AI` diventava il fotogramma 14** e `14 U` il primo. Le bocche se la
+sarebbero cavata — il `.zmouth` punta a numeri espliciti — ma le **palpebre** e
+ogni altra sequenza no, e nessun file le guida. Raddrizzato (decisione di
+Franco). Prezzo: in Photoshop il primo fotogramma di un gruppo sta in fondo
+invece che in cima.
+
+### Fixed (Ztoryc) — rinominare un livello di bocche perdeva la sua mappa
+`TXshSimpleLevel::getFiles()` e `copyFiles()` conoscevano il `.zmouth`;
+`renameFiles()` e `removeFiles()` no. Rinominando, il livello cambiava nome e la
+mappa restava indietro con quello vecchio: **nessun errore, nessun file
+mancante** — semplicemente il personaggio smetteva di avere le bocche mappate.
+Cancellando, restava un file orfano pronto a riattaccarsi al primo livello che
+riprendesse quel nome.
+
+Il commento che avvisava del tranello diceva che l'elenco e' «il GEMELLO di
+quello in `getFiles()`»: i posti sono **quattro**, ed e' esattamente per questo
+che il `.zmouth` era finito in due su quattro. Corretto.
+
+Provato chiamando davvero le due funzioni da una sonda, non per ispezione — il
+rischio vero era `withType("zmouth")` su un nome che contiene `#51#group`, e
+regge.
+
+### Modified — la tavola ha dieci viseme per espressione, non sette
+Prima erano sette piu' sette, con `O` in una meta' e `U` nell'altra perche' le
+bocche tonde si assomigliano. Ma il template non deve decidere per chi disegna
+(Franco: *«essendo un template forse metterle doppie nel caso in cui si
+volessero differenziare»*). Ora ogni espressione ha tutti e dieci —
+`AI E ETC MBP L FV O U` **`WQ REST`** — e chi non le vuole differenziare duplica
+il livello. Mancavano `WQ` e `REST`, che Ztoryc si aspetta: senza `REST` il
+labiale non ha la bocca chiusa fra una parola e l'altra.
+
+Venti caselle per riga: **12,9 x 16,9 mm** l'una sull'A4. ⚠️ Sono piu' alte che
+larghe, mentre una bocca e' il contrario — **da guardare prima di stampare**.
+Due righe da dieci le riporterebbero a 27,5 mm, al prezzo di un 20% di altezza
+del foglio tolto ai corpi. PDF, PNG e JSON rigenerati.
+
+### Notes — due trappole per chi compila sonde
+- **Le dylib nella RADICE del workspace sono del 14 marzo.** Avanzi. Quelle vere
+  stanno in `tnzcore/`, `toonzlib/`, `image/`, e l'install name e'
+  `@executable_path`, quindi la sonda carica quella che le sta accanto. Ha fatto
+  concludere per un minuto «la correzione non funziona»: funzionava, la sonda
+  provava il codice di marzo. Le verifiche fatte prima di accorgersene sono
+  state **rifatte** contro le librerie di oggi: identiche.
+- Il collaudo di Puppetoonz inchiodava `14` a mano e si e' rotto cambiando la
+  tavola, sembrando un difetto del codice. Ora il numero lo chiede al template.
+  54/54, con sei controlli nuovi sul `.zmouth`.
+
+### Notes — nella stessa giornata, prima di questa sessione
+Quattro commit gia' sul repo, non ancora raccontati qui: tre di **manuale**
+(`ebf82b733`, `602f11974`, `93019b7e1` — ZtoRig, lip sync, carta, export verso
+Tahoma2D/OpenToonz e montaggio DaVinci, pannelli automatici, frecce,
+transizioni, camera, direzione della luce; e le due room che non sono piu'
+«dalla prossima release») e uno di **i18n** (`ea64fda3f`): il pannello delle
+frecce parlava italiano dentro un'app inglese.
+
 ## [2026-08-22b] — Puppetoonz: le caselle si adattano al disegno, non viceversa
 
 Tutto in `matitanimata/puppetoonz` (branch `main`), niente su Ztoryc.

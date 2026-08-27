@@ -2398,10 +2398,14 @@ void TXshSimpleLevel::copyFiles(const TFilePath &dst, const TFilePath &src) {
   // palette. Per QUALSIASI tipo di livello, non solo tlv: un personaggio puo'
   // essere vettoriale, smart raster o un gruppo di PSD.
   //
-  // ⚠️ Questo elenco e' scritto a mano ed e' il GEMELLO di quello in
-  // getFiles(): i due gia' non concordano (qui ci sono anche .plt e la
-  // cartella _files, la' no). Chi aggiunge un file che appartiene al livello
-  // deve toccarli entrambi, o il file viaggia in un percorso e non nell'altro.
+  // ⚠️ Questo elenco e' scritto a mano ed e' uno di QUATTRO che devono dire la
+  // stessa cosa: copyFiles(), renameFiles(), removeFiles(), getFiles(). Non
+  // concordano gia' fra loro (qui ci sono anche .plt e la cartella _files,
+  // altrove no). Chi aggiunge un file che appartiene al livello deve toccarli
+  // tutti e quattro, o il file viaggia in un percorso e non negli altri — al
+  // .zmouth e' successo davvero: copiato e elencato, ma non rinominato ne'
+  // cancellato, e rinominare un livello di bocche perdeva la mappa in
+  // silenzio (2026-08-27).
   {
     const TFilePath srcMouths =
         src.getParentDir() + TFilePath(src.getWideName() + L".zmouth");
@@ -2431,6 +2435,16 @@ void TXshSimpleLevel::renameFiles(const TFilePath &dst, const TFilePath &src) {
   if (dst.getType() == "tlv")
     TSystem::renameFile(dst.withType("tpl"), src.withType("tpl"));
 
+  // Ztoryc: la mappatura delle bocche segue il livello anche quando cambia
+  // nome. Senza questo il livello si rinominava e il .zmouth restava indietro
+  // col nome vecchio: nessun errore, nessun file mancante da nessuna parte —
+  // semplicemente il personaggio smetteva di avere le bocche mappate.
+  {
+    const TFilePath srcMouths = src.withType("zmouth");
+    if (TFileStatus(srcMouths).doesExist())
+      TSystem::renameFile(dst.withType("zmouth"), srcMouths);
+  }
+
   const TFilePath &srcHookFile = TXshSimpleLevel::getExistingHookFile(src);
   if (!srcHookFile.isEmpty()) {
     const TFilePath &dstHookFile = getHookPath(dst);
@@ -2449,6 +2463,14 @@ void TXshSimpleLevel::removeFiles(const TFilePath &fp) {
   if (fp.getType() == "tlv") {
     TFilePath tpl = fp.withType("tpl");
     if (TFileStatus(tpl).doesExist()) TSystem::moveFileToRecycleBin(tpl);
+  }
+
+  // Ztoryc: se ne va anche la mappatura delle bocche. Restando indietro
+  // sarebbe un file orfano che ricompare addosso al PRIMO livello che riprende
+  // quel nome, portandogli i viseme di un personaggio che non c'e' piu'.
+  {
+    TFilePath zmouth = fp.withType("zmouth");
+    if (TFileStatus(zmouth).doesExist()) TSystem::moveFileToRecycleBin(zmouth);
   }
 
   // Delete ALL hook files (ie from every Toonz version)
