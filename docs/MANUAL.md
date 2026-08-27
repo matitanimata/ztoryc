@@ -6,6 +6,8 @@
 > Ztoryc is an open-source storyboard & animatic pipeline built on Tahoma2D 1.6.
 > Ztoryc è una pipeline open-source di storyboard e animatic costruita su Tahoma2D 1.6.
 
+> 📌 Written for **Ztoryc 0.13.1**. / Aggiornato alla **0.13.1**.
+
 > 💬 **Need help?** Join the [Ztoryc Discord](https://discord.gg/ZP2gqQwmDb) — questions, bug reports and
 > release announcements.
 > 💬 **Serve aiuto?** Entra nel [Discord di Ztoryc](https://discord.gg/ZP2gqQwmDb) — domande, segnalazioni e
@@ -46,10 +48,9 @@ top of the window.
   almost everything needed to build the storyboard. **X** is for people who prefer
   the **X-sheet**, **T** for people who prefer the **timeline**. (See §4.)
 - **Browser** — a file explorer to **import assets** and **open projects**.
-- **Production Tracker** — task tracking, team, assets, Kitsu *(dedicated room from
-  the next release)*. See §12.
-- **Thumbnails** — rough-sketch the whole board on one canvas *(dedicated room from
-  the next release)*. See §13.
+- **Production Tracker** — task tracking, team, assets, Kitsu. See §12.
+- **Thumbnails** — rough-sketch the whole board on one canvas, on screen or on
+  paper. See §13.
 
 ## 4. The two modes of Ztoryc X / T
 
@@ -161,7 +162,7 @@ Shots can be grouped into **sequences** (see numbering in §5); reorder by drag.
   are remembered.
 - **Match shot duration** toggle (shot editing mode) — see §4.
 
-## 12. Production Tracker room *(dedicated room from the next release)*
+## 12. Production Tracker room
 
 A Kitsu-style matrix: **rows = shots, columns = tasks**. Each cell shows the task
 **status** with its Kitsu colour (Todo / Ready / WIP / WFA / Retake / Done). Tabs:
@@ -201,7 +202,7 @@ A Kitsu-style matrix: **rows = shots, columns = tasks**. Each cell shows the tas
    admin/manager role)*.
 4. **Push shots to Kitsu →** — send the shot list up (push-only: never pulled back).
 
-## 13. Thumbnails room *(dedicated room from the next release)*
+## 13. Thumbnails room
 
 One large gridded canvas to rough-sketch the **whole** board quickly. Draw
 thumbnails, then **Export to Board**: each panel becomes a real shot (sub-scene +
@@ -210,6 +211,24 @@ camera moves). Includes a transform tool (move/copy/scale/rotate + lasso),
 undo/redo and wheel-zoom.
 
 ![Thumbnails room](screenshotDemo/02_THUMBS.png)
+
+### From paper and back
+
+The room also works **on paper**.
+
+- **Print Thumbnail Sheet** — an A4 PDF of the grid, either **blank to draw on**
+  or **carrying the thumbnails you already have**.
+- Draw on it, then bring it back: **import a photo or a scan** — the sheet is
+  de-warped and cropped, and each panel drops into its cell — or **shoot it with
+  a webcam or a capture card** and import straight from the camera.
+
+Two things worth knowing. The sheet must have been printed for the **same number
+of columns** as the room: rows simply grow, but a column is never split across
+pages. And panels land in **capture order**, not by the page number printed on
+the sheet — blank sheets are made to be photocopied, so every copy carries the
+same code. Empty cells never overwrite what is already there, and panels drawn
+too faint to be detected are skipped and listed by name, so you can go over them
+darker and shoot again.
 
 ## 14. Load script
 
@@ -225,7 +244,56 @@ Inside a shot (double-click to enter):
 - **Light direction arrow** — a gizmo to set the light direction for the panel,
   with its own options.
 
-## 16. What's new vs Tahoma2D
+## 16. ZtoRig — poses, correctives, mouths
+
+*Panels → ZtoRig.* The rigging side of Ztoryc, for characters built on a
+**plastic skeleton**. It does not replace the Plastic tool: it sits on top of it
+and remembers what you build. Three tabs.
+
+**Poses** — record the current pose as a named **action**, then reuse it. Every
+frame carries a *strength*: `0` is the rest pose, `1` the pose exactly as
+recorded. Values outside `0…1` are allowed on purpose — that is how you push
+past the extreme, or pull back from it. An action can be limited to one skeleton
+or offered to all of them.
+
+**Correctives** — a joint that folds badly gets a **sculpted** correction driven
+by the **angle of the joint itself**: the elbow fixes its own shape as it bends,
+without a key anywhere. Deleting a corrective loses the sculpted shape.
+
+**Mouths** — the mouth sets used by the lip sync (§17). A level can hold
+**several sets** — the same mouth drawn happy and sad — and a set is saved
+**next to the level**, so it travels with the character: an animator who imports
+the sub-scene gets the drawings *and* the instructions for using them.
+
+> ZtoRig is the youngest part of Ztoryc and still moving.
+
+## 17. Lip sync
+
+Three separate commands, and the separation is deliberate: the **timing** comes
+from the sound, the **mapping** belongs to the drawings and is done once per
+character, and **which set** to use changes every time the character turns.
+
+**1 — Generate the phoneme columns.** *Xsheet → Lip Sync…* for the shot you are
+inside, or *Xsheet → Generate Lip Sync Columns…* for several shots at once,
+picked from the Board.
+- If the dialogue is **written in the panels**, the words are *aligned* to the
+  recording: the text says what was said, and the engine only has to time it.
+  This needs the **language** — the models are one per language.
+- With nothing written, choose **Sound only (Rhubarb)**, which reads the shape
+  of the waveform instead. Less precise, but it asks for nothing.
+
+**2 — Map the mouths.** In ZtoRig's *Mouths* tab (§16), once per character.
+
+**3 — Assign Mouth Drawings…** *(Xsheet menu)* — say which mapped set to use on
+which stretch of the shot.
+
+> ⚠️ This is **not** Tahoma2D's *Apply Lip Sync to Column*, which is the Rhubarb
+> command and does a different job. This one assigns the **drawings**.
+
+The lip sync window stays open and follows what you do: map a character in
+ZtoRig and come back — the rows update by themselves.
+
+## 18. What's new vs Tahoma2D
 
 **Keyframe operations** (on the selected keys)
 - **Keys Follow Exposure** — when on, selecting cells also selects the keys above
@@ -241,7 +309,7 @@ Inside a shot (double-click to enter):
 - **AutoFill on Smart Raster** — fill closed areas on smart-raster levels.
 - **Image sequences with `-`** — `frame-0006.jpg` (hyphen) is read as a sequence.
 
-## 17. Reading keyframes — the diamond
+## 19. Reading keyframes — the diamond
 
 A rigged character has **two independent things** that can be keyed: the **column
 transform** (position, rotation, scale…) and the **plastic pose** (the skeleton's
@@ -264,7 +332,7 @@ click will do.
 
 ---
 
-## 18. Export
+## 20. Export
 
 - **Export spreadsheet** — `.xlsx` production worksheet (per-scene or whole project).
 - **Export storyboard PDF** — printable board (optional custom studio logo).
@@ -309,10 +377,9 @@ alto.
   praticamente tutto ciò che serve per realizzare lo storyboard. **X** è per chi
   preferisce l'**X-sheet**, **T** per chi preferisce la **timeline**. (Vedi §4.)
 - **Browser** — un file explorer per **importare asset** e **aprire progetti**.
-- **Production Tracker** — tracking task, team, asset, Kitsu *(room dedicata dalla
-  prossima release)*. Vedi §12.
-- **Thumbnails** — schizza l'intero board su un'unica tela *(room dedicata dalla
-  prossima release)*. Vedi §13.
+- **Production Tracker** — tracking task, team, asset, Kitsu. Vedi §12.
+- **Thumbnails** — schizza l'intero board su un'unica tela, a schermo o su
+  carta. Vedi §13.
 
 ## 4. Le due modalità di Ztoryc X / T
 
@@ -424,7 +491,7 @@ con il drag.
   video/audio; le altezze vengono ricordate.
 - **Toggle Match shot duration** (shot editing mode) — vedi §4.
 
-## 12. Room Production Tracker *(room dedicata dalla prossima release)*
+## 12. Room Production Tracker
 
 Una matrice in stile Kitsu: **righe = shot, colonne = task**. Ogni cella mostra lo
 **status** del task col colore Kitsu (Todo / Ready / WIP / WFA / Retake / Done).
@@ -464,7 +531,7 @@ Tab: **Shots · Project · Team · Assets · Workflows**.
    admin/manager)*.
 4. **Push shots to Kitsu →** — invia la lista shot (solo push: mai riscaricata).
 
-## 13. Room Thumbnails *(room dedicata dalla prossima release)*
+## 13. Room Thumbnails
 
 Un'unica grande tela a griglia per schizzare velocemente **tutto** il board.
 Disegni le thumbnail, poi **Export to Board**: ogni panel diventa uno shot reale
@@ -473,6 +540,26 @@ panoramica** (un'unica immagine larga per i movimenti di camera). Include transf
 tool (move/copy/scale/rotate + lazo), undo/redo e zoom con la rotella.
 
 ![Room Thumbnails](screenshotDemo/02_THUMBS.png)
+
+### Dalla carta e ritorno
+
+La room funziona anche **su carta**.
+
+- **Print Thumbnail Sheet** — un PDF A4 della griglia, o **vuoto da disegnare**
+  oppure **con le thumbnail che hai già**.
+- Ci disegni sopra, poi lo riporti dentro: **importi una foto o una scansione**
+  — il foglio viene raddrizzato e ritagliato, e ogni panel finisce nella sua
+  casella — oppure lo **riprendi con una webcam o una scheda di acquisizione** e
+  importi direttamente dalla telecamera.
+
+Due cose da sapere. Il foglio dev'essere stato stampato per lo **stesso numero di
+colonne** della room: le righe crescono e basta, ma una colonna non si spezza mai
+fra due pagine. E i panel si posano **nell'ordine in cui li acquisisci**, non
+secondo il numero di pagina stampato sul foglio — i fogli vuoti sono fatti per
+essere fotocopiati, quindi ogni copia porta lo stesso codice. Le caselle vuote
+non sovrascrivono mai quello che c'è già, e i panel disegnati troppo chiari per
+essere riconosciuti vengono saltati ed elencati per nome, così puoi ripassarli
+più scuri e riprendere il foglio.
 
 ## 14. Caricare lo script
 
@@ -488,7 +575,58 @@ Dentro uno shot (doppio click per entrarci):
 - **Freccia direzione luce** — un gizmo per impostare la direzione della luce del
   panel, con le sue opzioni.
 
-## 16. Novità rispetto a Tahoma2D
+## 16. ZtoRig — pose, correttive, bocche
+
+*Panels → ZtoRig.* La parte di rigging di Ztoryc, per i personaggi costruiti su
+uno **scheletro plastic**. Non sostituisce il Plastic tool: ci sta sopra e si
+ricorda quello che costruisci. Tre tab.
+
+**Poses** — registri la posa corrente come **azione** con un nome, e poi la
+riusi. Ogni fotogramma porta una *forza*: `0` è la posa a riposo, `1` la posa
+esattamente com'è stata registrata. I valori fuori da `0…1` sono ammessi
+apposta — è così che spingi oltre l'estremo, o che tiri indietro. Un'azione può
+essere limitata a uno scheletro solo oppure offerta a tutti.
+
+**Correctives** — una giuntura che si piega male si corregge **scolpendola**, e
+la correzione è guidata dall'**angolo della giuntura stessa**: il gomito si
+aggiusta da sé mentre si piega, senza una chiave da nessuna parte. Cancellare
+una correttiva perde la forma scolpita.
+
+**Mouths** — i set di bocche che usa il lip sync (§17). Un livello può tenerne
+**più d'uno** — la stessa bocca disegnata felice e triste — e un set si salva
+**accanto al livello**, così viaggia col personaggio: chi importa la sotto-scena
+si porta dietro i disegni *e* le istruzioni per usarli.
+
+> ZtoRig è la parte più giovane di Ztoryc, e si sta ancora muovendo.
+
+## 17. Lip sync
+
+Tre comandi separati, e la separazione è voluta: il **tempo** viene dal suono,
+la **mappatura** appartiene ai disegni e si fa una volta per personaggio, e
+**quale set** usare cambia ogni volta che il personaggio si gira.
+
+**1 — Genera le colonne dei fonemi.** *Xsheet → Lip Sync…* per lo shot in cui
+sei dentro, oppure *Xsheet → Generate Lip Sync Columns…* per più shot insieme,
+presi dal Board.
+- Se il dialogo è **scritto nei panel**, le parole vengono *allineate* alla
+  registrazione: il testo dice cosa è stato detto, e al motore resta solo da
+  cronometrarlo. Serve la **lingua** — i modelli sono uno per lingua.
+- Se non c'è niente di scritto, scegli **Sound only (Rhubarb)**, che guarda
+  invece la forma dell'onda. Meno preciso, ma non chiede nulla.
+
+**2 — Mappa le bocche.** Nel tab *Mouths* di ZtoRig (§16), una volta per
+personaggio.
+
+**3 — Assign Mouth Drawings…** *(menu Xsheet)* — dici quale set mappato usare su
+quale tratto dello shot.
+
+> ⚠️ **Non** è *Apply Lip Sync to Column* di Tahoma2D, che è il comando di
+> Rhubarb e fa un altro lavoro. Questo assegna i **disegni**.
+
+La finestra del lip sync resta aperta e segue quello che fai: mappi un
+personaggio in ZtoRig e torni indietro — le righe si aggiornano da sole.
+
+## 18. Novità rispetto a Tahoma2D
 
 **Operazioni sulle chiavi** (sulle chiavi selezionate)
 - **Keys Follow Exposure** — se attivo, selezionando le celle selezioni anche le
@@ -504,7 +642,7 @@ Dentro uno shot (doppio click per entrarci):
 - **AutoFill sullo Smart Raster** — riempie le aree chiuse sui livelli smart-raster.
 - **Sequenze immagini con `-`** — `frame-0006.jpg` (trattino) letto come sequenza.
 
-## 17. Leggere le chiavi — il diamante
+## 19. Leggere le chiavi — il diamante
 
 Un personaggio riggato ha **due cose indipendenti** su cui puoi mettere delle chiavi: la
 **trasformazione di colonna** (posizione, rotazione, scala…) e la **posa plastic** (la
@@ -528,7 +666,7 @@ leggere lo stato corrente e cosa farà il click.
 
 ---
 
-## 18. Export
+## 20. Export
 
 - **Export spreadsheet** — worksheet di produzione `.xlsx` (per-scena o intero progetto).
 - **Export storyboard PDF** — board stampabile (logo studio personalizzato opzionale).
