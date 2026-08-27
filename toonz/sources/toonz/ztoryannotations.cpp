@@ -173,14 +173,14 @@ void ZtoryCameraMovesPanel::insertArrowFromFile(const TFilePath &pliPath) {
   if (!scene || !subXsh ||
       scene->getChildStack()->getAncestorCount() == 0) {
     DVGui::warning(
-        tr("Apri prima uno shot in SHOTEDITOR (doppio click su uno shot nel "
-           "Board)."));
+        tr("Open a shot first: double-click a shot in the Board to go "
+           "inside it."));
     return;
   }
 
   TVectorImageP srcVi = loadArrowImage(pliPath);
   if (!srcVi || srcVi->getStrokeCount() == 0) {
-    DVGui::warning(tr("Impossibile leggere la freccia: %1")
+    DVGui::warning(tr("Could not read the arrow: %1")
                        .arg(QString::fromStdWString(pliPath.getWideName())));
     return;
   }
@@ -311,7 +311,7 @@ void ZtoryCameraMovesPanel::rebuildLibrary() {
 
   if (idx == 0) {
     QLabel *empty = new QLabel(
-        tr("Nessuna freccia trovata.\nAggiungi dei .pli alla cartella libreria."));
+        tr("No arrows found.\nAdd some .pli files to the library folder."));
     empty->setWordWrap(true);
     empty->setStyleSheet("color:#999;font-size:11px;");
     m_grid->addWidget(empty, 0, 0, 1, cols);
@@ -321,7 +321,7 @@ void ZtoryCameraMovesPanel::rebuildLibrary() {
 void ZtoryCameraMovesPanel::chooseUserFolder() {
   QString cur = QSettings().value("Ztoryc/ArrowsFolder").toString();
   QString dir = QFileDialog::getExistingDirectory(
-      this, tr("Scegli cartella frecce personali"), cur);
+      this, tr("Choose your arrows folder"), cur);
   if (dir.isEmpty()) return;
   QSettings().setValue("Ztoryc/ArrowsFolder", dir);
   rebuildLibrary();
@@ -357,13 +357,13 @@ ZtoryCameraMovesPanel::ZtoryCameraMovesPanel(QWidget *parent) : TPanel(parent) {
 
   // Footer: choose user folder + refresh
   QHBoxLayout *foot = new QHBoxLayout();
-  QPushButton *folderBtn = new QPushButton(tr("Cartella personale…"), root);
+  QPushButton *folderBtn = new QPushButton(tr("Custom folder…"), root);
   folderBtn->setFixedHeight(26);
   connect(folderBtn, &QPushButton::clicked, this,
           &ZtoryCameraMovesPanel::chooseUserFolder);
   QPushButton *refreshBtn = new QPushButton(tr("↻"), root);
   refreshBtn->setFixedSize(26, 26);
-  refreshBtn->setToolTip(tr("Ricarica libreria"));
+  refreshBtn->setToolTip(tr("Reload the library"));
   connect(refreshBtn, &QPushButton::clicked, this,
           [this] { rebuildLibrary(); });
   foot->addWidget(folderBtn, 1);
