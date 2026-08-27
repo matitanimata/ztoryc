@@ -334,12 +334,50 @@ click will do.
 
 ## 20. Export
 
-- **Export spreadsheet** — `.xlsx` production worksheet (per-scene or whole project).
-- **Export storyboard PDF** — printable board (optional custom studio logo).
-- **Export animatic** — render the timed animatic to video.
-- **Export shots as `.tnz` layouts** — each shot to a standalone `.tnz`, inheriting
-  project metadata and named with the token pattern
-  (`{PROD}_{CODE}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}`).
+Everything lives under *File → Export*.
+
+**Production Spreadsheet (XLSX / CSV)…** — the production worksheet, per-scene or
+for the whole project.
+
+**Storyboard PDF…** — the printable board, with an optional studio logo.
+
+**Shots / Scenes…** — each shot to a standalone `.tnz`, inheriting the project
+metadata and named with the token pattern
+(`{PROD}_{CODE}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}`).
+
+### Shots to New Project… — handing the work to an animator
+
+Exports the shots as a **complete, self-contained project**, with the assets they
+need copied in. The dialog asks two things.
+
+**Target application** — who is going to open it:
+- **Ztoryc** — everything as it is.
+- **Tahoma2D** — strips the Ztoryc-only In/Out markers and writes a
+  `tahomaproject.xml`, so **stock Tahoma2D** recognises the project.
+- **OpenToonz** — converts the exported scenes to **explicit holds** and writes
+  an OpenToonz-readable project file.
+
+**Asset organization** — where the exported scenes keep the material they use:
+project folders (`drawings`, `extras`…), scene sub-folders inside those, or an
+assets folder next to each scene. Leave *Customize asset folders* unchecked and
+the exported project simply inherits the current one's layout.
+
+### Animatic… — video, and the edit for your NLE
+
+**Export mode** decides the shape of the output:
+- **Full animatic** — every shot in sequence, one file.
+- **Shot range** — the same, limited to a stretch.
+- **One clip per shot** — one file per shot. This is the mode an editor wants.
+
+With per-shot clips you also get:
+- **Also export editing timeline (.fcpxml)** — an edit that places the clips on
+  a timeline, ready to import into **DaVinci Resolve**, **Premiere Pro** or
+  **Final Cut Pro**. The clips are referenced by name, so the NLE finds them next
+  to the file. The dissolves you set in the animatic come across as real
+  transitions. *(Only available with **One clip per shot**: the timeline
+  references those clips.)*
+- **Upload clips to Kitsu after export** — each clip goes to its shot's task,
+  matched by name and `{TASK}` code, and the task is set to **WFA**.
 
 ---
 
@@ -668,9 +706,48 @@ leggere lo stato corrente e cosa farà il click.
 
 ## 20. Export
 
-- **Export spreadsheet** — worksheet di produzione `.xlsx` (per-scena o intero progetto).
-- **Export storyboard PDF** — board stampabile (logo studio personalizzato opzionale).
-- **Export animatic** — renderizza l'animatic a tempo in video.
-- **Export shots come layout `.tnz`** — ogni shot in un `.tnz` standalone, eredita i
-  metadati di progetto ed è nominato col pattern a token
-  (`{PROD}_{CODE}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}`).
+Sta tutto sotto *File → Export*.
+
+**Production Spreadsheet (XLSX / CSV)…** — il foglio di lavoro di produzione, per
+scena o per l'intero progetto.
+
+**Storyboard PDF…** — il board stampabile, con logo dello studio opzionale.
+
+**Shots / Scenes…** — ogni shot in un `.tnz` autonomo, che eredita i metadati di
+progetto ed è nominato col pattern a token
+(`{PROD}_{CODE}_{EP}_{SEQ}_{SHOT}_{TASK}_V{VER:02}`).
+
+### Shots to New Project… — consegnare il lavoro a un animatore
+
+Esporta gli shot come **progetto completo e autosufficiente**, con dentro copiati
+gli asset che servono. Il dialogo chiede due cose.
+
+**Target application** — chi lo aprirà:
+- **Ztoryc** — tutto com'è.
+- **Tahoma2D** — toglie i marker In/Out che esistono solo in Ztoryc e scrive un
+  `tahomaproject.xml`, così **Tahoma2D originale** riconosce il progetto.
+- **OpenToonz** — converte le scene esportate a **hold espliciti** e scrive un
+  file di progetto leggibile da OpenToonz.
+
+**Asset organization** — dove le scene esportate tengono il materiale che usano:
+cartelle di progetto (`drawings`, `extras`…), sotto-cartelle per scena dentro
+quelle, oppure una cartella di asset accanto a ogni scena. Lasciando *Customize
+asset folders* non spuntato, il progetto esportato eredita e basta la
+disposizione di quello corrente.
+
+### Animatic… — il video, e il montaggio per il tuo NLE
+
+**Export mode** decide la forma di quello che esce:
+- **Full animatic** — tutti gli shot in sequenza, un file solo.
+- **Shot range** — lo stesso, limitato a un tratto.
+- **One clip per shot** — un file per shot. È la modalità che serve a un montatore.
+
+Con i clip separati per shot arrivano anche:
+- **Also export editing timeline (.fcpxml)** — un montaggio che dispone i clip su
+  una timeline, pronto da importare in **DaVinci Resolve**, **Premiere Pro** o
+  **Final Cut Pro**. I clip sono referenziati per nome, quindi l'NLE li trova
+  accanto al file. Le dissolvenze impostate nell'animatic arrivano come
+  transizioni vere. *(Disponibile solo con **One clip per shot**: la timeline
+  fa riferimento a quei clip.)*
+- **Upload clips to Kitsu after export** — ogni clip va al task del suo shot,
+  associato per nome e codice `{TASK}`, e il task passa a **WFA**.
