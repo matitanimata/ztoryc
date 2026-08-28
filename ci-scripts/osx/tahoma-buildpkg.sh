@@ -697,16 +697,22 @@ ztoryc_verify_codesign() {
    while IFS= read -r -d '' _mf; do
       ztoryc_is_macho_file "$_mf" || continue
       if [ "$_mf" = "$_main" ]; then
-         # codesign treats the main executable path as the whole .app bundle.
-         # Verify a copy so we validate the Mach-O page hashes, not resources.
-         _tmp_main="$(mktemp "$REPO_ROOT/toonz/build/.ztoryc_main_verify.XXXXXX")"
-         cp "$_mf" "$_tmp_main"
-         if ! codesign -v "$_tmp_main" >/dev/null 2>&1; then
-            echo "ERROR: invalid Mach-O code signature: $_mf"
-            codesign -v "$_tmp_main" 2>&1 | sed 's/^/       /'
-            _fail=1
-         fi
-         rm -f "$_tmp_main"
+         # L'ESEGUIBILE PRINCIPALE NON SI VERIFICA QUI, e non si verifica da solo.
+         #
+         # Prima lo si copiava a parte per controllarne le pagine senza tirarsi
+         # dietro le risorse. Aveva senso finche' veniva firmato da solo — ma da
+         # quando il bundle viene SIGILLATO (il passo qui sotto, che e' cio' che
+         # ha tolto agli utenti l'obbligo di lanciare xattr -cr), la sigillatura
+         # RIFIRMA questo eseguibile legandolo all'Info.plist del bundle. Una
+         # copia isolata non ha piu' quell'Info.plist accanto, quindi codesign
+         # risponde "invalid Info.plist (plist or signature have been modified)"
+         # e la build fallisce su una firma che in realta' e' corretta.
+         # Successo davvero, e ha fatto fallire la 0.13.2 su tutt'e due le
+         # architetture (2026-08-28).
+         #
+         # A questo eseguibile ci pensa la verifica del SIGILLO del bundle,
+         # subito dopo la chiamata a questa funzione: e' quella la prova che
+         # conta per l'utente finale.
          continue
       fi
       if ! codesign -v "$_mf" >/dev/null 2>&1; then
