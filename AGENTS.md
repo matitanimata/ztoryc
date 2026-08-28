@@ -597,6 +597,31 @@ con l'altro compilatore, utile solo se la gcc dà problemi.
 *On Debian/Ubuntu use the `.deb` package; elsewhere the portable `.tar.gz`. Of the two builds, take the **gcc** one — `clang` is the same application built with the other compiler, useful only if the gcc build misbehaves.*
 ```
 
+### 4-bis. Una correzione al CONFEZIONAMENTO si verifica solo con una build vera
+
+Provarla a mano su un pacchetto gia' costruito **non basta**: non attraversa il
+percorso che attraversano gli utenti.
+
+> Aggiunto il 2026-08-29 perche' e' costato una release. Il commit `9abbd5ff5`
+> (quello che ha tolto l'obbligo di `xattr -cr`) era stato collaudato scaricando
+> un DMG della 0.13.1, rifirmandolo a mano e provandolo su un Mac pulito:
+> funzionava. Ma aveva sistemato **la firma e non la verifica** — il controllo
+> esaminava ancora l'eseguibile principale isolato dal bundle, mentre la nuova
+> sigillatura lo lega all'`Info.plist`. La 0.13.2 e' fallita su tutt'e due le
+> architetture macOS, e la release e' rimasta pubblica e incompleta per un'ora
+> e mezza. Corretto in `24d9aa9a5`.
+
+Quindi: se una modifica tocca `ci-scripts/`, la firma, il DMG o l'installer, si
+mette in conto **una tornata di CI in piu'** prima di considerarla fatta. E la
+prova finale si fa sull'artefatto pubblicato:
+
+```bash
+gh release download vX.Y.Z -p "*osx-silicon.dmg"
+# montare, poi:
+codesign --verify --deep --strict /Volumes/Ztoryc/Ztoryc.app; echo "exit=$?"
+```
+`exit=0` e' cio' che fa comparire «Apri comunque» invece di «app danneggiata».
+
 ### 5. Trigger CI
 
 ⚠️ **Il tag NON pubblica niente.** I workflow hanno solo `workflow_dispatch`:
