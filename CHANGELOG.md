@@ -1,3 +1,96 @@
+## [2026-08-28] — Puppetoonz: l'annullamento non ha piu' buchi, e le caselle si aggiungono a mano
+
+Tutto in `matitanimata/puppetoonz` (branch `main`, commit `5eb41cd`). Su Ztoryc
+non e' stata toccata una riga. Obiettivo dichiarato da Franco: chiuderlo
+abbastanza da usarlo davvero in questi giorni, non renderlo perfetto — e il
+prodotto vero non e' l'algoritmo, che sono duecento righe, ma l'interfaccia di
+correzione: il riconoscimento sbagliera' sempre qualcosa, e serve poter
+riassegnare un nome o buttare una sbavatura in dieci secondi.
+
+### Fixed — rinomina e occhietto entrano nella pila dell'annullamento
+Erano le ultime due operazioni rimaste fuori, ed erano annotate come tali dal
+2026-08-22. La rinomina in particolare e' **la correzione piu' frequente che
+c'e'** — e era l'unica che non si potesse ritirare, mentre il nome finisce
+dritto nel PSD e nel `.zmouth`.
+
+Due tranelli, e sono il motivo per cui la voce era rimasta li' cinque giorni:
+
+1. **`itemChanged` scatta anche quando e' il PROGRAMMA a rifare l'elenco.**
+   Annotare senza distinguere i due casi avrebbe riempito la pila di passi
+   fantasma: ⌘Z che torna indietro senza far vedere niente, tante volte quante
+   sono le voci toccate. Risolto con un contatore di guardia
+   (`_ricostruzione()`) attorno alle quattro ricostruzioni — `_livelli_automatici`,
+   `_rimappa_albero`, `_carica_struttura`, e l'albero di `costruisci_da_template`.
+2. **`itemChanged` arriva DOPO la modifica**, quindi l'istantanea non puo'
+   fotografare l'elenco com'e' in quel momento: sarebbe gia' lo stato nuovo, e
+   annullare non farebbe niente. Lo stato *prima* viene da `_ultima_struttura`,
+   rinfrescata a ogni `_agg_stato()`. E' l'unico punto della pila che funziona
+   cosi'.
+
+Da qui l'invariante da non rompere: **ogni modifica all'elenco deve finire in
+`_agg_stato()`.** `sposta_voce()` chiamava solo `_agg_ordine()` ed e' stata
+allineata.
+
+### Added — «Aggiungi casella qui» e «Togli la casella», col tasto destro
+In modo «Modifica caselle». La casella nasce dove hai cliccato, grande quanto
+quella scelta, e si aggiusta con le maniglie come tutte le altre. Il dialogo
+chiede nome, gruppo (anche uno nuovo: si scrive) e posizione nella sequenza.
+
+Finora il pannello delle impostazioni decideva QUANTE caselle e ridisponeva
+tutto da capo: per averne una in piu' proprio li' — un braccio, un viseme, una
+palpebra — bisognava buttare via tutti gli adattamenti gia' fatti.
+
+La parte delicata non era disegnarla ma tenere d'accordo **nome, gruppo e
+indice**, perche' l'indice decide l'ordine dei fotogrammi. Tre regole, tutte in
+`template_gen` (che e' senza Qt: la geometria sta li' perche' e' la parte che un
+domani si riscrive in C++):
+
+- si rinumera **solo se tutto il gruppo** usa nomi numerati. Basta un nome
+  scelto a mano e non si tocca niente: il nome finisce nel PSD e nel `.zmouth`,
+  l'indice no;
+- entrando in un gruppo numerato, la casella nuova **si prende il numero da
+  sola**. Senza, sarebbe lei l'unico nome senza cifre e la regola qui sopra si
+  bloccherebbe proprio su di lei — cioe' infilarne una in mezzo non
+  rinumererebbe mai niente. Trovato dal collaudo, non a tavolino;
+- togliendo una casella, gli ancoraggi che la nominavano si **svuotano invece di
+  sparire**: rimettendola, un crocino gia' spostato a mano sulla spalla giusta
+  torna buono da solo.
+
+### Fixed — l'allarme rosso delle sovrapposizioni non si accendeva piu'
+`_celle_cambiate` finiva con `_applica_tpl()`, e infilarci in mezzo i metodi
+nuovi l'aveva spinto dentro il metodo seguente. Dopo un trascinamento,
+`celle_male` non veniva piu' ricalcolato: due caselle sovrapposte si rubano i
+pezzi, e senza avviso ce ne si accorge solo alla costruzione, coi livelli gia'
+sbagliati.
+
+**Preso dal collaudo, non a occhio**, ed e' la lezione: avevo letto quel metodo
+con un `sed` il cui intervallo tagliava esattamente una riga prima della fine, e
+avevo concluso che finisse dov'era finita la lettura. Il collaudo era passato
+54/54 prima e 59/60 dopo — un solo test, e diceva la cosa giusta.
+
+### Notes — decisioni e cose annotate
+- **Il porting in C++ dentro Ztoryc NON si fa adesso** (decisione di Franco,
+  ribadita): il Python resta il laboratorio finche' la ricetta si muove ancora.
+  Portarlo prima congelerebbe un'interfaccia che sta ancora cambiando, e si
+  finirebbe per pagare il porting continuando a usare il Python.
+- **Le venti caselle per riga restano.** Erano la decisione aperta: 12,9 x 16,9
+  mm, piu' alte che larghe mentre una bocca e' il contrario. Due righe da dieci
+  le porterebbero a 26,9 mm, ma i corpi passerebbero da 126 a 82 mm di altezza —
+  un terzo in meno, perche' le righe raddoppiano su entrambi i gruppi. Franco:
+  «a occhio mi pare sia utilizzabile cosi' com'e', lo provo e vediamo».
+  Se dessero fastidio, meta' del costo si recupera portando `bocche_profilo` a
+  10, o generando la tavola in `formato="LIBERO"`.
+- **Idea nuova, scritta nel TODO: template su piu' pagine**, per i turn around
+  completi (oggi la tavola ha fronte e profilo, e gia' cosi' le caselle sono
+  strette). Va di pari passo con «Aggiungi scansione» — e' la stessa mappa `lab`
+  che smette di essere unica — e coi crocini di registro, che li' diventano
+  necessari e non piu' un lusso: sono loro a dire QUALE pagina si sta guardando.
+- Tolto dal TODO l'avvertimento su `renameFiles()`/`removeFiles()` che non
+  conoscevano il `.zmouth`: **superato**, risolto in Ztoryc il 2026-08-27
+  (`6f8f016bb`). Era scritto come aperto e avrebbe fatto rifare il lavoro.
+
+Collaudo: **67/67** (`test_smoke.py`, 13 prove nuove).
+
 ## [2026-08-27] — Puppetoonz sa gia' quale bocca e' quale, e smette di dirlo all'incontrario
 
 Il grosso e' in `matitanimata/puppetoonz` (branch `main`); su Ztoryc un file solo.
