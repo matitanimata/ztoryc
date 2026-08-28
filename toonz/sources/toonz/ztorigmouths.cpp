@@ -22,6 +22,7 @@
 #include <QHash>
 #include <QSet>
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -213,6 +214,13 @@ ZtoRigMouthsTab::ZtoRigMouthsTab(QWidget *parent) : QWidget(parent) {
            "are listed first and marked — the others are just the scene's\n"
            "levels, since nothing in the name says which one is the mouth."));
     row->addWidget(m_levelCombo, 1);
+    m_onlyMapped = new QCheckBox(tr("only mouth levels"), this);
+    m_onlyMapped->setToolTip(
+        tr("Show only levels that already have a mouth mapping — the ones\n"
+           "marked with a dot. Turn it off to map a new level: a level that\n"
+           "has never been mapped has no mapping yet, so it would be the\n"
+           "first one hidden."));
+    row->addWidget(m_onlyMapped);
     lay->addLayout(row);
   }
 
@@ -336,6 +344,8 @@ ZtoRigMouthsTab::ZtoRigMouthsTab(QWidget *parent) : QWidget(parent) {
 
   connect(m_levelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &ZtoRigMouthsTab::onLevelChanged);
+  connect(m_onlyMapped, &QCheckBox::toggled, this,
+          [this](bool) { refreshLevelCombo(); });
   connect(m_setCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
           &ZtoRigMouthsTab::onSetChanged);
   connect(m_newBt, &QPushButton::clicked, this, &ZtoRigMouthsTab::onNewSet);
@@ -512,6 +522,11 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
       if (TXshLevel *lv = ls->getLevel(i))
         sig += "|" + QString::fromStdWString(lv->getName());
   }
+  // ⚠️ Anche il FILTRO decide il contenuto della tendina, quindi fa parte della
+  // firma. Senza, spuntare la casella non cambia scena ne' livelli, la guardia
+  // qui sotto esce subito e non si ricostruisce niente: il filtro sembra rotto
+  // mentre e' solo la cache che non sa di doverlo considerare.
+  sig += (m_onlyMapped && m_onlyMapped->isChecked()) ? "|mapped" : "|all";
   if (sig == m_levelsSignature && m_levelCombo->count() > 0) return;
   // Cambiati i livelli, cio' che si sapeva dei loro file non vale piu'.
   if (sig != m_levelsSignature) m_mapCache.clear();
@@ -572,8 +587,12 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
   for (const auto &p : mapped)
     m_levelCombo->addItem("● " + p.first,
                           QVariant::fromValue(quintptr(p.second)));
-  for (const auto &p : others)
-    m_levelCombo->addItem(p.first, QVariant::fromValue(quintptr(p.second)));
+  // Col filtro acceso ci si ferma ai mappati: sono gli unici su cui il pallino
+  // dice qualcosa di certo. Gli altri restano un elenco della scena, utile solo
+  // quando si sta cercando un livello DA mappare.
+  if (!m_onlyMapped || !m_onlyMapped->isChecked())
+    for (const auto &p : others)
+      m_levelCombo->addItem(p.first, QVariant::fromValue(quintptr(p.second)));
   m_filling = false;
 
   const bool any = m_levelCombo->count() > 0;
@@ -832,7 +851,14 @@ void ZtoRigMouthsTab::loadSet(int index) {
   m_currentSetName   = ms.name;
   for (int i = 0; i < 10; i++) m_targets[i] = ms.mouths[i];
   m_filling = true;
-  m_setCombo->setCurrentIndex(index);
+  // ⚠️ NON usare \p index: e' la posizione dentro m_map.sets, cioe' fra i set
+  // DI QUESTO LIVELLO, mentre la tendina elenca i set di TUTTA la scena. Le due
+  // numerazioni coincidevano finche' la tendina mostrava solo il livello
+  // corrente; da quando le si e' allargate (2026-08-16) usare l'una per l'altra
+  // riporta la tendina su un set di un ALTRO personaggio: carica giusto e mostra
+  // sbagliato. setRow() cerca per nome E livello, che e' l'unica chiave vera.
+  const int row = setRow(ms.name);
+  if (row >= 0) m_setCombo->setCurrentIndex(row);
   m_filling = false;
   // Rirendere, non solo riquadrare: cambiare set cambia tutti e dieci i
   // fotogrammi, quindi le sorgenti non sono piu' quelle.

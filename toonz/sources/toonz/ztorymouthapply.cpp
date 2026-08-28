@@ -273,6 +273,14 @@ QVector<MouthApplyTarget> ZtoryMouthApply::findTargets(ToonzScene *scene) {
   for (MouthApplyTarget &t : out) {
     if (!t.map.sets.isEmpty() || t.subScene.isEmpty()) continue;
     ZtoryModel *model = ZtoryModel::instance();
+    // ⚠️ Si raccolgono TUTTI i candidati invece di fermarsi al primo.
+    // L'aggancio e' il solo NOME della sotto-scena, e i nomi generici non sono
+    // rari: «sub» e' quello di default. Se due personaggi hanno una sotto-scena
+    // che si chiama allo stesso modo, quel nome non identifica nessuno dei due,
+    // e prendere il primo dell'elenco mette in mano all'utente le bocche di un
+    // altro personaggio senza che niente lo segnali (Franco, lavorando sul
+    // lupo si e' visto proporre i set di SOFIA).
+    QVector<QPair<QString, MouthMap>> candidates;
     for (const Asset &a : model->assets()) {
       if (a.type.compare("Character", Qt::CaseInsensitive) != 0) continue;
       const QString libScene = model->resolveAssetFile(a);
@@ -281,9 +289,16 @@ QVector<MouthApplyTarget> ZtoryMouthApply::findTargets(ToonzScene *scene) {
       if (!ZtoryMouthMap::load(TFilePath(libScene.toStdWString()), t.subScene, m))
         continue;
       if (m.sets.isEmpty()) continue;
-      t.map   = m;
-      t.label = QObject::tr("%1  (sub-scene, from %2)").arg(t.subScene, a.name);
-      break;
+      candidates.push_back(qMakePair(a.name, m));
+    }
+    // Uno solo = il nome individua davvero quel personaggio: e' il caso per cui
+    // la catena e' stata fatta. Piu' d'uno = ambiguo, e si preferisce non
+    // ereditare niente: la sotto-scena resta senza set e si mappa a mano
+    // scegliendo il livello, invece di ereditare la bocca sbagliata.
+    if (candidates.size() == 1) {
+      t.map   = candidates.first().second;
+      t.label = QObject::tr("%1  (sub-scene, from %2)")
+                    .arg(t.subScene, candidates.first().first);
     }
   }
 

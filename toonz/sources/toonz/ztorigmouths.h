@@ -35,6 +35,7 @@
 #include <QWidget>
 #include <QVector>
 
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QPushButton;
@@ -114,6 +115,10 @@ private:
   bool eventFilter(QObject *obj, QEvent *event) override;
 
   QComboBox   *m_levelCombo = nullptr;
+  //! Nasconde dalla tendina i livelli che una mappa non ce l'hanno.
+  //! Spenta quando si deve mappare un livello nuovo, che per definizione
+  //! non ha ancora niente e quindi sarebbe il primo a sparire.
+  QCheckBox   *m_onlyMapped = nullptr;
   QComboBox   *m_setCombo   = nullptr;
   QPushButton *m_newBt      = nullptr;
   QPushButton *m_saveBt     = nullptr;
