@@ -483,6 +483,31 @@ git diff <last-tag>..HEAD --stat
 - **Dev-only** — fix interno a feature non ancora rilasciata (menzione breve o ometti)
 - **Tahoma2D PR candidate** — fix in file core condivisi (segnala nella sezione Upstream)
 
+### 1-bis. Guardare le PR e le segnalazioni aperte — OBBLIGATORIO
+
+```bash
+gh pr list --repo matitanimata/ztoryc --state open
+gh issue list --repo matitanimata/ztoryc --state open   # oggi le issue sono disabilitate
+```
+
+> Aggiunto il 2026-08-28 perche' era gia' successo: la **PR #3** di WizzerWorks
+> (cinque righe di CMake per Linux, fatte bene) e' rimasta aperta **un mese
+> senza un solo commento**, ed e' saltata fuori solo perche' Franco se l'e'
+> ricordata mentre si preparava il rilascio. Un contributo esterno ignorato per
+> un mese e' il modo piu' efficace di non riceverne un secondo.
+
+Per ognuna, decidere **prima** di scrivere le note:
+- **entra in questa release?** allora si merge PRIMA di lanciare la CI, e la si
+  cita nelle note col ringraziamento a chi l'ha mandata;
+- **non entra?** si RISPONDE lo stesso, dicendo quando la si guardera'. Il costo
+  di un commento e' trenta secondi; quello del silenzio e' un collaboratore in
+  meno.
+
+⚠️ **Una PR che tocca il sistema di compilazione non si merge nell'ora prima di
+un rilascio**, soprattutto se l'autore dichiara di averla provata su un solo
+sistema: si rilascia, poi si merge e si fanno girare i tre workflow per
+verificarla davvero.
+
 ### 2. Bump versione
 
 ```bash
