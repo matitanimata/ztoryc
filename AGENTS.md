@@ -534,6 +534,22 @@ macOS, Windows e Linux sotto vanno in entrambe le lingue.
 La sezione macOS è obbligatoria in ogni release perché l'app non è notarizzata:
 
 ```markdown
+**macOS — requisiti / requirements:**
+Serve **macOS 15 (Sequoia) o successivo**, sia Intel sia Apple Silicon.
+L'eseguibile dichiara `minos 12.0` ma e' falso: le librerie impacchettate da
+Homebrew sui runner della CI pretendono di piu' — misurato sulla 0.13.1, Intel
+28 librerie a 14.0 e 12 a 15.0, Apple Silicon 40 a 15.0. Su un sistema
+precedente l'app **non si avvia**, senza un messaggio che spieghi perche'.
+
+*Requires **macOS 15 (Sequoia) or later**, on both Intel and Apple Silicon.
+The executable declares `minos 12.0` but that is wrong: the Homebrew libraries
+bundled by the CI runners require more. On an older system the app **will not
+launch**, with no message explaining why.*
+
+> ⚠️ Questa riga va tenuta VERA: si rimisura a ogni cambio di runner con
+> `otool -l` sulle dylib accanto all'eseguibile dentro il DMG, non sul build
+> locale (che ha i minimi della macchina di chi compila, non della CI).
+
 **macOS — prima apertura / first launch:**
 L'app non è notarizzata. Dopo aver copiato `Ztoryc.app` in `/Applications`:
 ```bash
