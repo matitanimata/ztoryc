@@ -27,6 +27,7 @@
 #include <QVector>
 #include <QMap>
 #include <QHash>
+#include <QJsonObject>
 #include <QSet>
 #include <QPair>
 
@@ -398,6 +399,10 @@ private:
   void pushEnsureEpisode();
   void pushLoadSequences();
   void pushLoadShots();
+  // Corpo del PUT/POST con il 'data' di Kitsu preservato: Zou SOSTITUISCE
+  // l'intero campo, quindi senza fondere si cancellano i metadati che
+  // vivono solo la' (spoglio, categorie, note del produttore).
+  QJsonObject pushBodyFor(const KitsuShotPush &sh, const QString &shotId) const;
   void pushProcessNext();
   void pushFail(const QString &message);
 
@@ -408,6 +413,7 @@ private:
   QVector<KitsuShotPush>     m_pushQueue;
   QHash<QString, QString>    m_pushSeqIds;   // seqName  -> sequence id
   QHash<QString, QString>    m_pushShotIds;  // "seqId/shotName" -> shot id
+  QHash<QString, QJsonObject> m_pushShotData;  // shot id -> data gia' su Kitsu
   QHash<QString, QString>    m_pushResolved; // "seq\nlabel" -> resolved kitsu shot id
   int m_pushIndex   = 0;
   int m_pushCreated = 0;

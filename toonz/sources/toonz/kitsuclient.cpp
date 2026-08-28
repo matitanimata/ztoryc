@@ -25,21 +25,37 @@ const char *kGroupHasPwd   = "Ztoryc/Kitsu/PasswordSaved";
 // Pull a human-readable message out of an error reply (Zou answers with a JSON
 // body { "message": ... } on most failures); fall back to Qt's error string.
 QString errorMessage(QNetworkReply *reply, const QByteArray &body) {
+  QString msg;
   QJsonParseError perr;
   QJsonDocument doc = QJsonDocument::fromJson(body, &perr);
-  if (perr.error == QJsonParseError::NoError && doc.isObject()) {
-    const QJsonObject o = doc.object();
-    const QString msg   = o.value("message").toString();
-    if (!msg.isEmpty()) return msg;
-  }
-  return reply->errorString();
+  if (perr.error == QJsonParseError::NoError && doc.isObject())
+    msg = doc.object().value("message").toString();
+  if (msg.isEmpty()) msg = reply->errorString();
+
+  // Senza la richiesta che ha fallito un errore come "The requested URL was not
+  // found on the server" non dice niente: puo' venire da una qualsiasi delle
+  // rotte del push. Metodo, percorso e codice HTTP rendono l'errore diagnostico.
+  const QVariant verb = reply->request().attribute(QNetworkRequest::CustomVerbAttribute);
+  const QVariant code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
+  QString dove = reply->request().url().path();
+  if (!verb.isNull()) dove = verb.toString() + " " + dove;
+  if (code.isValid()) dove += " [" + QString::number(code.toInt()) + "]";
+  // Su una riga sola: il pannello che mostra l'errore non ne manda a capo,
+  // e una seconda riga verrebbe semplicemente tagliata via.
+  return dove.isEmpty() ? msg : msg + "  --  " + dove;
 }
 }  // namespace
 
 //----------------------------------------------------------------------------
 
 KitsuClient::KitsuClient(QObject *parent)
-    : QObject(parent), m_nam(new QNetworkAccessManager(this)) {}
+    : QObject(parent), m_nam(new QNetworkAccessManager(this)) {
+  // Qt 5.15 non segue i redirect (ManualRedirectPolicy): un server dietro
+  // Cloudflare con "Always Use HTTPS" risponde 301 a un URL scritto http://, e
+  // senza questa riga la richiesta muore con un errore che non spiega niente.
+  // NoLessSafe accetta la promozione http->https e rifiuta il contrario.
+  m_nam->setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
+}
 
 KitsuClient::~KitsuClient() = default;
 
@@ -376,6 +392,7 @@ void KitsuClient::pushShots(const QString &projectId, const QString &episodeName
   m_pushQueue       = shots;
   m_pushSeqIds.clear();
   m_pushShotIds.clear();
+  m_pushShotData.clear();
   m_pushResolved.clear();
   m_pushEpisodeId.clear();
   m_pushIndex = m_pushCreated = m_pushUpdated = 0;
@@ -430,7 +447,11 @@ void KitsuClient::pushLoadSequences() {
       if (m_pushTvshow && !m_pushEpisodeId.isEmpty() &&
           o.value("parent_id").toString() != m_pushEpisodeId)
         continue;
-      m_pushSeqIds.insert(o.value("name").toString(), o.value("id").toString());
+      // Chiave in minuscolo: Kitsu e Ztoryc possono scrivere lo stesso nome
+      // con maiuscole diverse (SQ01 / sq01) e senza normalizzare si creano
+      // sequenze e shot doppioni invece di riagganciarsi a quelli esistenti.
+      m_pushSeqIds.insert(o.value("name").toString().toLower(),
+                          o.value("id").toString());
     }
     pushLoadShots();
   });
@@ -446,12 +467,32 @@ void KitsuClient::pushLoadShots() {
     if (reply->error() != QNetworkReply::NoError) { pushFail(errorMessage(reply, b)); return; }
     for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
       const QJsonObject o = v.toObject();
+      const QString shotId = o.value("id").toString();
       m_pushShotIds.insert(
-          o.value("parent_id").toString() + "/" + o.value("name").toString(),
-          o.value("id").toString());
+          o.value("parent_id").toString() + "/" + o.value("name").toString().toLower(),
+          shotId);
+      m_pushShotData.insert(shotId, o.value("data").toObject());
     }
     pushProcessNext();
   });
+}
+
+QJsonObject KitsuClient::pushBodyFor(const KitsuShotPush &sh,
+                                    const QString &shotId) const {
+  // Si parte dal 'data' che lo shot ha gia' su Kitsu e vi si sovrascrivono solo
+  // le chiavi di cui Ztoryc e' padrone. Tutto il resto sopravvive al push.
+  QJsonObject data = m_pushShotData.value(shotId);
+  data["frame_in"]  = QString::number(sh.frameIn);
+  data["frame_out"] = QString::number(sh.frameOut);
+  QJsonObject body;
+  body["nb_frames"] = sh.nbFrames;
+  body["data"]      = data;
+  // Il NOME lo scrive solo chi crea lo shot. Su uno shot che esiste gia' Kitsu
+  // e' l'autorita': in una produzione con piu' persone che pushano, rimandare
+  // il nome vorrebbe dire che l'ultimo che sincronizza rinomina gli shot a
+  // tutti gli altri. Ztoryc resta padrone di durata e timecode, non del nome.
+  if (shotId.isEmpty()) body["name"] = sh.name;
+  return body;
 }
 
 void KitsuClient::pushProcessNext() {
@@ -466,26 +507,36 @@ void KitsuClient::pushProcessNext() {
   const KitsuShotPush sh = m_pushQueue[m_pushIndex];
   const QString resolvedKey = sh.seq + "\n" + sh.name;
 
-  // Common body (name/frames/timecode). Ztoryc is master on structure, so a PUT
-  // also renames the Kitsu shot back to Ztoryc's name if it diverged.
-  QJsonObject data;
-  data["frame_in"]  = QString::number(sh.frameIn);
-  data["frame_out"] = QString::number(sh.frameOut);
-  QJsonObject body;
-  body["name"]      = sh.name;
-  body["nb_frames"] = sh.nbFrames;
-  body["data"]      = data;
+  // Il corpo si costruisce per singolo shot, perche' il 'data' da preservare
+  // dipende da QUALE shot di Kitsu si sta per aggiornare: vedi pushBodyFor().
+  // Su uno shot esistente il nome NON viene toccato: e' Kitsu l'autorita'.
 
   // 1) Known Kitsu shot id → update THAT shot directly (rename-proof): no name
   //    lookup, so a shot renamed in Kitsu isn't duplicated.
   if (!sh.kitsuShotId.isEmpty()) {
+    const QJsonObject body = pushBodyFor(sh, sh.kitsuShotId);
     QNetworkReply *ur = authPut("/api/data/shots/" + sh.kitsuShotId,
                                 QJsonDocument(body).toJson(QJsonDocument::Compact));
     connect(ur, &QNetworkReply::finished, this,
             [this, ur, resolvedKey, id = sh.kitsuShotId]() {
               ur->deleteLater();
               const QByteArray ub = ur->readAll();
-              if (ur->error() != QNetworkReply::NoError) { pushFail(errorMessage(ur, ub)); return; }
+              if (ur->error() != QNetworkReply::NoError) {
+                // 404 = lo shot a cui puntava l'id memorizzato non esiste piu'
+                // (cancellato da Kitsu, cosa che un produttore fa di routine).
+                // Far fallire l'intero push per questo e' sproporzionato:
+                // si dimentica l'id morto e si riprova lo stesso shot per nome,
+                // che al massimo lo ricrea.
+                const int code =
+                    ur->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                if (code == 404 && m_pushIndex < m_pushQueue.size()) {
+                  m_pushQueue[m_pushIndex].kitsuShotId.clear();
+                  pushProcessNext();
+                  return;
+                }
+                pushFail(errorMessage(ur, ub));
+                return;
+              }
               m_pushResolved[resolvedKey] = id;
               ++m_pushUpdated;
               ++m_pushIndex;
@@ -495,7 +546,7 @@ void KitsuClient::pushProcessNext() {
   }
 
   // Ensure the sequence exists before we can place a shot under it.
-  if (!m_pushSeqIds.contains(sh.seq)) {
+  if (!m_pushSeqIds.contains(sh.seq.toLower())) {
     emit shotsPushProgress(tr("Creating sequence %1…").arg(sh.seq));
     QJsonObject body;
     body["name"] = sh.seq;
@@ -508,16 +559,18 @@ void KitsuClient::pushProcessNext() {
       cr->deleteLater();
       const QByteArray cb = cr->readAll();
       if (cr->error() != QNetworkReply::NoError) { pushFail(errorMessage(cr, cb)); return; }
-      m_pushSeqIds.insert(seq, QJsonDocument::fromJson(cb).object().value("id").toString());
+      m_pushSeqIds.insert(seq.toLower(),
+                          QJsonDocument::fromJson(cb).object().value("id").toString());
       pushProcessNext();  // retry the same shot now that its sequence exists
     });
     return;
   }
 
-  const QString seqId = m_pushSeqIds.value(sh.seq);
-  const QString key   = seqId + "/" + sh.name;
+  const QString seqId = m_pushSeqIds.value(sh.seq.toLower());
+  const QString key   = seqId + "/" + sh.name.toLower();
   if (m_pushShotIds.contains(key)) {
     const QString id = m_pushShotIds.value(key);
+    const QJsonObject body = pushBodyFor(sh, id);
     QNetworkReply *ur = authPut("/api/data/shots/" + id,
                                 QJsonDocument(body).toJson(QJsonDocument::Compact));
     connect(ur, &QNetworkReply::finished, this, [this, ur, resolvedKey, id]() {
@@ -530,6 +583,7 @@ void KitsuClient::pushProcessNext() {
       pushProcessNext();
     });
   } else {
+    QJsonObject body = pushBodyFor(sh, QString());
     body["sequence_id"] = seqId;
     QNetworkReply *cr =
         authPost("/api/data/projects/" + m_pushProjectId + "/shots",
