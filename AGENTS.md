@@ -5,6 +5,19 @@
 > In the code repo (`/Volumes/ZioSam/tahoma2d-workspace/tahoma2d/`) CLAUDE.md is a
 > symlink to this file, or a copy of it.
 
+> ⚠️ **Qui c'e' solo Ztoryc.** Le regole della macchina — dischi, Anymatix e i
+> modelli, Kitsu, `git add -A`, i symlink a Drive, come si parla con Franco —
+> stanno in **`~/.claude/CLAUDE.md`**, che viene caricato in ogni sessione
+> qualunque sia la cartella. **Non riscriverle qui**: erano in due posti e ne
+> abbiamo gia' visto il costo con `PR_CANDIDATES_SHARE_EN.md` (due file che si
+> scollano, e nessuno dei due e' piu' la fonte di verita').
+>
+> Gli **altri progetti si aprono nella loro cartella**, non da qui:
+> Puppetoonz in `tahoma2d-workspace/puppetoonz`, filorosso in
+> `/Volumes/ZioSam/WIP/filorosso`, il video musicale «un anno di te» in `WIP/`.
+> Ognuno ha il suo `CLAUDE.md` e il suo «sessione chiusa». La mappa completa,
+> con gli incroci e chi ne e' il padrone, e' in `~/.claude/CLAUDE.md`.
+
 -----
 
 ## Project Overview
@@ -621,6 +634,27 @@ gh release download vX.Y.Z -p "*osx-silicon.dmg"
 codesign --verify --deep --strict /Volumes/Ztoryc/Ztoryc.app; echo "exit=$?"
 ```
 `exit=0` e' cio' che fa comparire «Apri comunque» invece di «app danneggiata».
+
+> ⚠️ **Si verifica il DMG MONTATO, mai una copia installata e gia' avviata.**
+> Su `/Applications/Ztoryc.app` la verifica fallisce **sempre**, anche quando la
+> release e' perfetta: al primo avvio `TProject::createSandboxIfNeeded()`
+> (`toonzlib/tproject.cpp:1211`) crea il progetto sandbox in
+> `TEnv::getStuffDir() + "sandbox"`, che in una build portable macOS sta
+> **dentro `Contents/Resources`** — l'app scrive nel proprio bundle e rompe il
+> sigillo. Si riconosce dal messaggio: `codesign` elenca `file added:`
+> (`ztorycproject.xml` e gli `scenes.xml` delle sottocartelle) e nessun
+> `file modified`.
+>
+> E' codice stock OpenToonz, non una regressione Ztoryc, e per l'utente non e'
+> un problema: Gatekeeper valuta l'app al **primo lancio**, prima che scriva,
+> e una volta ammessa non ci ritorna sopra. Resta latente per una
+> *rivalutazione* (copia su un altro Mac), che oggi fallirebbe.
+>
+> Il pericolo e' qui in checklist: verificare la copia comoda invece del DMG
+> fa concludere che un rilascio buono e' rotto. E' la stessa forma dell'errore
+> che e' costato la 0.13.2 — la verifica giusta sull'artefatto sbagliato.
+> Constatato il 2026-08-29 sulla 0.13.2 installata: DMG montato `exit=0`,
+> `/Applications` fallita, stesso bundle.
 
 ### 5. Trigger CI
 

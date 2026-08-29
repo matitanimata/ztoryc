@@ -1,3 +1,122 @@
+## [2026-08-29b] — Anymatix, le regole per progetto, e un muro hardware sul Dell
+
+Sessione senza una riga di C++: infrastruttura, documentazione e una prova di
+stile per filorosso. Le cose fatte stanno quasi tutte **fuori** da questo repo.
+
+### Le regole vivono dove si lavora (era il difetto vero)
+
+In tutto il setup esisteva **un solo `CLAUDE.md`**, quello di Ztoryc. Ne' Puppetoonz,
+ne' filorosso, ne' il livello utente ne avevano uno — quindi una sessione aperta
+altrove **non riceveva nessuna regola**, e l'unico modo di lavorare con un Claude
+informato era aprirlo in `tahoma2d/`. Non era una scelta di archiviazione: era
+meccanica. Da qui l'impressione che tutto stesse «sotto Ztoryc».
+
+Ora sono quattro:
+
+- **`~/.claude/CLAUDE.md`** (nuovo) — la macchina: i tre dischi, Anymatix e i
+  modelli, Kitsu, `git add -A`, i symlink a Drive, come si parla con Franco. Viene
+  caricato in **ogni** sessione, ovunque. Dentro c'e' anche la **mappa delle quattro
+  case con i tre incroci e il loro padrone**: il `.zmouth` e' di Puppetoonz che lo
+  produce, il pacchetto export-to-AI si sviluppa in Ztoryc ma lo giudica filorosso,
+  Kitsu sta sopra a tutti.
+- **`AGENTS.md`** — sfoltito: la sezione Anymatix e' salita al livello utente, e in
+  testa c'e' un avviso che qui c'e' solo Ztoryc.
+- **`puppetoonz/CLAUDE.md`** (nuovo, **non ancora committato**) — avvio, collaudo,
+  i cinque file, il contratto `.zmouth`, e un «sessione chiusa» suo: `push origin
+  main`, aggiorna `TODO.md`, **niente rsync**.
+- **`WIP/filorosso/CLAUDE.md`** (nuovo) — non ripete il `README.md`, che e' gia'
+  ottimo; dice cio' che il README non puo' sapere.
+
+### ANIMATIC_TASKS: tre voci corrette, e una regola di redazione
+
+Delle tre voci del blocco «APERTI DAL 2026-08-18», **una sola era davvero aperta**:
+
+1. **`.zmouth` non esportato → NON era aperto**, e la voce era sbagliata *quando e'
+   stata scritta*. L'export chiama `copyFiles()` (`storyboardpanel.cpp:6630` e
+   `:7159`, dal 2026-07-06), e `copyFiles()` copia il `.zmouth` dal 2026-08-16
+   (`e0ac9527b`). Il file non ha commit dal 26 agosto.
+2. **minos 12.0 / macOS 15 → e' una DECISIONE gia' presa**, non un difetto aperto.
+3. **firma locale invalida → vera, ma cosmetica**, e la correzione proposta non
+   basterebbe: anche col layout della CI il sigillo si rompe al primo avvio, perche'
+   `TProject::createSandboxIfNeeded()` (`tproject.cpp:1211`) scrive il progetto
+   sandbox dentro `Contents/Resources`.
+
+> **📏 Regola nuova in testa al blocco: una voce dice COME e' stata verificata, o
+> non vale.** E **un `grep` di un nome NON e' una verifica di comportamento**: se la
+> domanda e' «questo percorso fa X», si guarda **quale funzione chiama**, perche' il
+> codice delega e la delega non contiene la parola cercata. E' cosi' che la voce sul
+> `.zmouth` e' rimasta aperta per sbaglio dal 27 al 29 agosto.
+
+### Release checklist § 4-bis
+
+Aggiunta l'avvertenza: **la firma si verifica sul DMG montato, mai su una copia
+installata**. Su `/Applications` la verifica fallisce **sempre**, anche con una
+release perfetta, perche' al primo avvio l'app scrive il progetto sandbox dentro
+il proprio bundle. E' la stessa forma dell'errore che e' costato la 0.13.2: la
+verifica giusta sull'artefatto sbagliato.
+
+### Anymatix
+
+- **Destinazione dei modelli messa in sicurezza.** Due `extra_model_paths.yaml` con
+  due `is_default: true` erano un conflitto che vinceva l'ultimo caricato. Quello di
+  ZioSam ora ha `false`: miniVip resta `paths[0]` **qualunque ordine scelga
+  Anymatix** (verificato invertendo i caricamenti). Decisione di Franco: si scarica
+  sul disco veloce, e **quando si riempie si fa pulizia, non si sposta la
+  destinazione**.
+- **Cancellato `ltx-2-19b-dev-fp8`**: dichiarati 27 GB nel sidecar, 141 MB sul disco
+  — lo **0,5%**. Anymatix la dimensione attesa se l'era segnata ma non la verificava.
+- **Report di 9 difetti per il dev** (Vincenzo), in italiano, pronto da mandare. I
+  due piu' gravi riguardano la via SSH: la voce in `~/.ssh/config` scritta **senza
+  `IdentityFile`** (quindi nessuna chiave viene offerta e il collegamento non riesce
+  MAI), e un crash del processo remoto riportato all'utente come **«network may be
+  down»**.
+
+### ❌ Il Dell e' fuori dal piano — muro hardware
+
+Era previsto come «il mulino gratuito»: passate ControlNet notturne e addestramento
+LoRA, lenti ma senza contatore. **Non e' possibile.**
+
+Il bootstrap remoto e' filato liscio (11 GB, CUDA verificata sulla RTX 2060), ma
+ComfyUI muore a ogni avvio con **`SIGILL`**: lo Xeon X5670 e' del 2010 e **non ha
+AVX** (`sse4_1 sse4_2`, niente altro), che le ruote Python attuali danno per
+scontato. Il processo arriva agli import di scipy e muore — **la GPU non viene mai
+nemmeno sfiorata**. Nessuna configurazione aggira l'assenza di un'istruzione nel
+processore.
+
+Il Dell resta la macchina delle build Windows e Linux.
+
+### filorosso
+
+- **Meta' del progetto stava in Drive** e nessuno dei due posti lo sapeva: 48 foto,
+  il dossier, le reference. Ora e' collegato all'albero di lavoro con **tre
+  symlink**, e la regola e' scritta: *cio' che ha fatto una persona e non si puo'
+  rifare sta in Drive; cio' che rigenera la macchina sta in locale*.
+- **Proposta di stile Cartoon Network / Gumball** da una foto vera, con
+  `gemini-3-pro-image` via Kling: **33 secondi, 40 crediti, usabile al primo colpo**.
+- **Foglio proposte rifatto a sei in A3 orizzontale**, 300 DPI, 420×297 mm esatti,
+  piu' PDF. Ricostruito dai PNG originali (identificati per somiglianza) invece che
+  dai ritagli a 840 px del foglio vecchio, che in stampa si sarebbero visti.
+
+### `DESIGN_export_to_ai.md` (nuovo)
+
+La pipeline in sette passi con chi li esegue, e **ogni affermazione marcata ✅
+misurata o 🔵 da validare**. Dentro anche: `TrainLoraNode` esiste dentro ComfyUI
+(non serve kohya); **WanMove NON copia il movimento da un video** (sintetizza
+percorsi da coordinate — verificato leggendo lo schema del nodo, non dedotto dal
+nome); il bivio del video fra via API (Seedance, Veo, Kling a crediti comfy.org) e
+via aperta (Wan, LTX su RunPod), che **non e' di potenza ma di controllo**, perche'
+a Seedance la propria LoRA non si puo' dare. E **LongCat-Video-Avatar** fra le cose
+da provare per il lipsync — MIT, generalizza dichiaratamente all'anime, VRAM non
+dichiarata da nessuna parte.
+
+### Note — cinque diagnosi sbagliate, tutte della stessa forma
+
+Triton, la memoria «esaurita», un 403 di civitai, il silenzio di sette mesi sul
+Dell, e `pgrep` che contava se stesso: **ogni volta ho dedotto da un indizio invece
+di misurare**, e ogni volta la risposta era a una misura di distanza. Quattro le ho
+corrette da solo, una l'ha corretta Franco. La regola di redazione nuova in
+ANIMATIC_TASKS nasce da qui, e non e' burocrazia.
+
 ## [2026-08-29] — Puppetoonz: il giro della correzione, e quattro fastidi trovati usandolo
 
 Tutto in `matitanimata/puppetoonz` (branch `main`, fino a `27a1ef3`). Su Ztoryc

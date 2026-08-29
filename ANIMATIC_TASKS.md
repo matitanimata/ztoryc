@@ -487,6 +487,22 @@ nella sub-scene corretta.
 
 ### 🆕 APERTI DAL 2026-08-18 (sera)
 
+> 📏 **Una voce di questo blocco dice COME e' stata verificata, o non vale.**
+> Le sessioni nuove leggono questo elenco e lo prendono per buono: una voce
+> sbagliata costa piu' di una voce mancante, perche' manda a lavorare su un
+> problema che non c'e'. Quindi ogni «APERTO» porta con se' il metodo, non solo
+> l'esito — e chi legge puo' fidarsi in proporzione al metodo.
+>
+> **Un `grep` di un nome NON e' una verifica di comportamento.** Se la domanda
+> e' «questo percorso fa la cosa X?», si guarda **quale funzione chiama**: il
+> codice delega, e la delega non contiene la parola che stai cercando. E' cosi'
+> che la voce sul `.zmouth` e' rimasta aperta per sbaglio dal 2026-08-27 al
+> 2026-08-29, ed e' costata mezza sessione (riaperta e richiusa due volte).
+>
+> Le decisioni di NON fare una cosa si segnano ✅ **DECISA** e restano qui: non
+> sono difetti aperti, e riproporle fa perdere tempo a Franco. Vale anche il
+> blocco `🛑 SOSPESI` piu' in alto.
+
 **1. Scansioni di personaggio → livelli. ORA E' UN'APP CON UN REPO SUO:
 `matitanimata/puppetoonz` (privato).** Si chiama **Puppetoonz**, sta in
 `/Volumes/ZioSam/tahoma2d-workspace/puppetoonz/`, si avvia con
@@ -550,17 +566,34 @@ davvero e' un altro, e si toglie **subito e senza C++**:
   scansioni sullo stesso personaggio rompe l'assunto «un elemento = un'etichetta»;
   i crocini cambiano come si assegnano le caselle).
 
-⚠️ **Il `.zmouth` non viaggia con il personaggio esportato — ANCORA APERTO**, e
-adesso pesa di piu', perche' Puppetoonz ne produce a ogni export. L'export dello
-storyboard raccoglie il file del livello e basta (`storyboardpanel.cpp` ~5855) e
-non consulta `getFiles()`: verificato il 2026-08-27, in quel file «zmouth» non
-compare.
-> Il resto della catena invece e' a posto: `TXshSimpleLevel::getFiles()` e
-> `copyFiles()` lo conoscevano gia', e il 2026-08-27 sono stati sistemati anche
-> `renameFiles()` e `removeFiles()` — rinominare un livello di bocche perdeva la
-> mappa in silenzio. I posti da tenere allineati sono **quattro**, non due come
-> diceva il commento. Senza questo il personaggio arriva
-con le bocche e senza le istruzioni per usarle.
+✅ **Il `.zmouth` VIAGGIA con il personaggio esportato — NON era aperto**
+(verificato il 2026-08-29). La voce precedente diceva il contrario ed era
+sbagliata **gia' quando e' stata scritta**.
+
+Le prove:
+- l'export dello storyboard chiama `TXshSimpleLevel::copyFiles()` in due punti
+  (`storyboardpanel.cpp:6630` e `:7159`), nati il **2026-07-06** (`48cb39150`);
+- `copyFiles()` copia il `.zmouth` dal **2026-08-16** (`e0ac9527b`), per
+  qualsiasi tipo di livello, non solo tlv;
+- `storyboardpanel.cpp` non ha commit dal 26 agosto, quindi il 27 era gia' cosi'.
+- Le altre due `TSystem::copyFile` (righe 6632 e 7162) sono ripieghi che
+  scattano solo se `copyFiles` e' fallita, e la 7207 e' il sidecar `.ztoryc`.
+
+> ⚠️ **Perche' era stato dato per aperto: `grep zmouth storyboardpanel.cpp`
+> non trova niente.** Ed e' vero — ma non deve trovare niente, perche' il
+> pannello **delega** a `copyFiles()`. Cercare una stringa in un file non vede
+> una delega, e una verifica cosi' produce un falso positivo che poi vive nella
+> lista per giorni. Se il sospetto e' «questo percorso non porta il file X»,
+> si guarda **quale funzione di copia chiama**, non se il nome di X compare.
+>
+> Costo reale: il 2026-08-29 questa voce e' stata riaperta e richiusa due volte
+> nella stessa sessione prima di arrivare alla prova. Se ricompare il dubbio,
+> la risposta e' qui — non ricontrollare.
+
+Il resto della catena era gia' a posto: `getFiles()` e `copyFiles()` lo
+conoscevano, e il 2026-08-27 sono stati sistemati anche `renameFiles()` e
+`removeFiles()` — rinominare un livello di bocche perdeva la mappa in silenzio.
+I posti da tenere allineati sono **quattro**, non due come diceva il commento.
 
 ⚠️ **Il prodotto non e' l'algoritmo** (sono ~200 righe) ma l'interfaccia di
 correzione: il riconoscimento sbagliera' sempre qualcosa, e oggi gli scarti li
@@ -573,7 +606,42 @@ un puntino di registro in ogni cella di sequenza. I "due livelli" su carta sono
 due colori: grafite = disegno, matita BLU = crocino di destinazione (dove va la
 bocca sul viso), che riempie in automatico il `DESTINAZIONE` dello script.
 
-**2. La build Intel dichiara Monterey ma richiede Sequoia.** L'eseguibile ha
+**2. ✅ DECISA (non e' un difetto aperto) — NON E' SOLO INTEL: ENTRAMBE
+le build richiedono macOS 15.** La decisione e' in fondo alla voce: si
+aggiornano i REQUISITI, non si insegue la correzione. Ricontrollata il
+2026-08-29: la riga e' gia' nella checklist di AGENTS.md § «macOS —
+requisiti», in entrambe le lingue. **Non riproporla.**
+MISURATO sul DMG della 0.13.1 il 2026-08-28, non stimato — e la voce come era
+scritta prima sottostimava il problema, perche' incolpava il runner
+`macos-15-intel` di una cosa che succede identica su Apple Silicon:
+
+| | librerie a 14.0 | a 15.0 | minimo vero |
+|---|---|---|---|
+| Intel | 28 | 12 | **macOS 15** |
+| Apple Silicon | — | 40 | **macOS 15** |
+
+I due eseguibili dichiarano entrambi `minos 12.0`, ed e' falso in entrambi. Chi
+sta su Sonoma o precedenti scarica un'app che **non parte, su qualsiasi Mac**.
+
+Le librerie a 15.0 sono `libzstd`, `liblzma`, `liblz4`, `libpcre2` (che serve a
+Qt), `libquadmath`, `libltdl`: roba di base tirata dentro da Homebrew, non peso
+morto rimovibile. Le X11 in `Resources/ffmpeg/libs/` invece **non** c'entrano —
+stanno in Resources, non le carica nessuno all'avvio, le usa ffmpeg come
+processo a parte.
+
+**Non si sistema con poco** (valutato con Franco, 2026-08-28): vorrebbe un
+runner piu' vecchio, se GitHub ne offre ancora uno Intel, oppure ricompilare
+quaranta dipendenze dal sorgente con un deployment target piu' basso.
+**Decisione: si aggiornano i REQUISITI invece di inseguire la correzione** — la
+riga sta nella checklist di rilascio in AGENTS.md, sezione «macOS — requisiti».
+
+**Come rimisurare** (a ogni cambio di runner): `otool -l` sulle dylib accanto
+all'eseguibile DENTRO IL DMG. Non sul build locale, che porta i minimi della
+macchina di chi compila e non della CI — misurarlo li' da numeri diversi e
+fuorvianti.
+
+**Il testo ORIGINALE della voce, per memoria:**
+La build Intel dichiara Monterey ma richiede Sequoia. L'eseguibile ha
 `minos 12.0`, ma delle librerie impacchettate 10 pretendono macOS **15.0** e 28
 pretendono **14.0**: vengono da Homebrew del runner `macos-15-intel`. Chi ha un
 Mac Intel con Ventura o Sonoma scarica il DMG e trova un'app che non parte. Mai
@@ -587,6 +655,25 @@ bundle, e lo schema «sposto fuori → firmo → rimetto dentro» non puo' funzi
 per costruzione, perche' l'ultimo passo annulla sempre il penultimo. Riguarda
 solo la copia di sviluppo. Si risolve portandolo al layout della CI
 (`Contents/Resources`).
+
+> **Confermata il 2026-08-29, ma vale meno di come suona, e la correzione
+> proposta non basta.** Misurato: lo script *firma davvero* (riga 447) e
+> *verifica* (452) — il sigillo c'e', `Contents/_CodeSignature/CodeResources`.
+> Solo che dura poco: lo script rimette `ztorycstuff` dopo aver firmato, e in
+> piu' **ogni `ninja` successivo rilinka l'eseguibile dentro il bundle** e lo
+> lascia piu' recente del sigillo. Un bundle nell'albero di build non puo'
+> avere un sigillo valido, ed e' senza conseguenze: l'app parte lo stesso.
+>
+> **E il layout della CI non risolverebbe comunque.** La copia rilasciata ha
+> gia' `ztorycstuff` in `Contents/Resources`, e il sigillo le si rompe uguale
+> al primo avvio, perche' `TProject::createSandboxIfNeeded()`
+> (`toonzlib/tproject.cpp:1211`) scrive il progetto sandbox li' dentro. Chi
+> prende in mano questa voce sappia che ottiene un deploy piu' pulito, **non**
+> un sigillo che dura.
+>
+> L'unica conseguenza pratica e' in checklist, ed e' gia' scritta in AGENTS.md
+> § 4-bis: la firma si giudica **sul DMG montato**, mai sulla copia locale
+> ne' su `/Applications`.
 
 
 ### ✅ RILASCIO 0.13.1 — COMPLETO (verificato il 2026-08-19 mattina)
@@ -671,6 +758,21 @@ dato non lo scrive l'utente ma `classifyCameraMove()`.
 > gli fa perdere tempo. Si riaprono solo se **lui** le riapre, o se il sintomo
 > ricapita da solo lavorando.
 
+
+- **La tendina delle bocche mostra i livelli di tutti i personaggi — SI LASCIA
+  COSI'** (Franco, 2026-08-28, dopo aver visto i set di SOFIA mentre lavorava
+  sul lupo): *«quando le mappo lo faccio nella scena del singolo character
+  quindi non dovrebbe essere una situazione che si verifica troppo spesso e
+  visto che i set hanno anche il nome del personaggio potremmo lasciarlo
+  cosi'»*. Cioe': la mescolanza c'e', ma si vede solo in una scena con piu'
+  personaggi mappati insieme, che non e' come si lavora. **Non riproporre il
+  raggruppamento per personaggio nella tendina.**
+  Quello che invece E' stato corretto (commit `df4df3a1a`): una sotto-scena non
+  eredita piu' la mappa di un omonimo, e c'e' la casella «only mouth levels».
+  Resta aperto, ma come lavoro a se' e non come difetto: **collegare la
+  sotto-scena al `characterUuid` registrandolo all'import** — oggi non si puo'
+  dedurre, `TXshChildLevel` ha solo nome e icona e i `<target>` del `.zmouth`
+  sono soli numeri di fotogramma.
 - **I crash e i problemi sulle SCENE VECCHIE** (2026-08-14): *«per quanto
   riguarda i crash e i problemi con scene vecchie lascerei stare, vediamo se
   ricapita lavorandoci»*. Coperti da questa decisione:
