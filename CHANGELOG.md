@@ -1,3 +1,84 @@
+## [2026-08-29] — Puppetoonz: il giro della correzione, e quattro fastidi trovati usandolo
+
+Tutto in `matitanimata/puppetoonz` (branch `main`, fino a `27a1ef3`). Su Ztoryc
+non e' stata toccata una riga. **Nessuna di queste cose veniva dalla lista**:
+sono venute fuori provando il programma davvero, ed e' esattamente cio' che
+doveva succedere — il prodotto vero non e' l'algoritmo ma l'interfaccia di
+correzione, e quella si giudica solo usandola.
+
+### Fixed — il foglio-guida raccontava la griglia dell'ultimo salvataggio
+Ridimensionata una casella, **fuori** dal modo «Modifica caselle» si vedevano i
+riquadri dov'erano prima; **dentro** no, perche' li' sopra ci si disegnano quelli
+veri. Sembrava che rientrando nella modalita' si aggiustassero da soli. Il `.png`
+sotto i pezzi si ricaricava solo a creazione, apertura e salvataggio del modello.
+
+`foglio()` esce da `disegna()` e restituisce l'immagine **senza scriverla**: il
+foglio-guida si rifa' da li' a ogni cambiamento della mappa. `.pdf` e `.json`
+restano quelli salvati — riscriverli a ogni ritocco vorrebbe dire salvare il
+modello dell'utente senza che l'abbia chiesto. Con 120 ms di ritardo, perche' le
+frecce mandano un cambiamento per battuta e un A4 a 300 dpi sono 26 MB per
+ridisegno (misurato: 25 ms l'uno).
+
+I posti che ricaricavano il `.png` stantio erano **tre**, non due: il terzo,
+`apri_progetto`, e' saltato fuori solo mentre si sistemavano gli altri.
+
+### Fixed — lo sfondo bicolore
+Segnalato allargando la tela, e piu' fastidioso ancora aggiungendo caselle fuori
+dal foglio. Non era il colore della tela: era il foglio-guida che si portava
+dietro **la sua carta bianca**, disegnata al 55% — quindi chiaro dove c'era il
+foglio e scuro fuori. Ora la tela ha direttamente quel colore (`CARTA`), e del
+foglio si disegnano solo le righe: il bianco diventa trasparente.
+
+### Added — la tela sceglie il livello, come in Photoshop e Krita
+Scegliendo un pezzo sulla tela si sceglie il livello a cui appartiene
+nell'elenco: il gruppo si apre e l'elenco ci scorre sopra. Era **il contrario**,
+e di proposito — cliccare sulla tela AZZERAVA la scelta nell'elenco, perche'
+tenendoli indipendenti si finiva per spostare il pezzo evidenziato nell'elenco
+invece di quello scelto sulla tela.
+
+La sincronia va fatta a **segnali spenti**, o `_evidenzia_da_elenco` risponde
+azzerando la selezione della tela e i due si rimpallano; e `evidenziati` resta
+vuoto, perche' a decidere che cosa si sposta resta la tela e non l'eco che ne
+arriva nell'elenco. Collaudo su tutt'e due i versi.
+
+Cosi' il giro della correzione piu' frequente e' **clic sul pezzo → doppio clic
+sul nome → scrivi → ⌘Z se sbagli** — e il ⌘Z sui nomi e' di ieri.
+
+### Added — «Recenti»
+Gli ultimi 12 progetti aperti *o salvati*, il piu' fresco in cima, senza
+doppioni, in `Documenti/Puppetoonz/recenti.json`. `apri_progetto` si divide in
+due: la finestra di scelta da una parte, il lavoro dall'altra.
+
+> Trappola evitata: **non** dare ad `apri_progetto` un parametro opzionale.
+> `QAction.triggered` passa un booleano, che finirebbe dentro il percorso.
+
+### Added — il template impara i gruppi
+Raggruppando dei pezzi, le caselle sotto di loro entrano nel gruppo con loro e ne
+prendono il nome (`gruppo N_01`, `_02`…): la prossima scansione con lo stesso
+modello li ritrova gia' raggruppati, invece di farli raggruppare un'altra volta a
+mano. Il modello **non si salva da solo** — resta segnato da salvare.
+
+Una casella che veniva da un altro gruppo lo lascia, e quel gruppo si rinumera:
+restarci in due sarebbe un fotogramma in due sequenze insieme. Due pezzi nella
+stessa casella restano un fotogramma solo, com'e' giusto — ci sono cascato
+scrivendo il collaudo, avevo scelto due pezzi che stavano tutt'e due nel corpo
+frontale.
+
+### Added — «Mostra gruppi»
+Riquadro tratteggiato attorno alle caselle di una stessa sequenza. Nato **sempre
+acceso** in modo caselle, spostato dietro un interruttore **spento di sua
+iniziativa** su indicazione di Franco: la griglia ha gia' una sessantina di
+riquadri, e un secondo strato di righe che nessuno ha chiesto confonde invece di
+aiutare. Acceso, si vede sempre e non solo in modo caselle.
+
+### Notes
+- Le venti caselle per riga **restano** (decisione di ieri, confermata provando).
+- Un dubbio di lettura chiesto invece di indovinato: «le caselle prendono il nome
+  del gruppo» poteva voler dire le caselle del template o le voci dell'elenco —
+  la seconda gia' funzionava. Era la prima.
+
+Collaudo: **81/81** (`test_smoke.py`, 11 prove nuove oggi).
+
 ## [2026-08-28] — Puppetoonz: l'annullamento non ha piu' buchi, e le caselle si aggiungono a mano
 
 Tutto in `matitanimata/puppetoonz` (branch `main`, commit `5eb41cd`). Su Ztoryc
