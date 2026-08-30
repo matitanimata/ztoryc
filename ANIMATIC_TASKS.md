@@ -517,8 +517,8 @@ pacchetto Windows: Kitsu, controllo aggiornamenti, qualunque cosa.
 Non ce ne eravamo accorti perche' **Kitsu lo abbiamo sempre provato dal Mac**,
 dove il TLS e' di sistema e non serve spedire niente.
 
-**Correzione preparata, NON ancora committata** (in attesa della conferma di
-Simona sulle DLL):
+**Correzione COMMITTATA** (`d47d62479`) **e VERIFICATA su Windows** il
+2026-08-30 sulla macchina di Franco. Il metodo sta nel riquadro qui sotto:
 - `thirdparty/openssl/bin/x64/` — `libssl-1_1-x64.dll` e
   `libcrypto-1_1-x64.dll`, versionate come si fa gia' per `freeglut` e `glew`,
   con licenza e `README.md`
@@ -539,6 +539,51 @@ Simona sulle DLL):
 > failed» e sembra un problema di rete o di certificato. La verifica decisiva e'
 > stata cercare OpenSSL negli script di confezionamento — non nel codice
 > dell'applicazione, che e' corretto.
+
+> **COME E' STATA VERIFICATA** (2026-08-30, macchina Windows di Franco, portable
+> `C:\portables\Ztoryc`, build del 21 luglio):
+> 1. **Difetto riprodotto qui**: nessuna delle due installazioni portable aveva
+>    le DLL, e `thirdparty/qt/5.15.2_wintab/msvc2019_64/bin/qtdiag.exe` — cioe'
+>    il **nostro** Qt, non un Qt qualsiasi — stampava `SSL is not supported.`
+> 2. **Nomi giusti**: il `Qt5Network.dll` **installato** contiene le stringhe
+>    `libssl-1_1-x64` e `libcrypto-1_1-x64` e cita `OPENSSL_init_ssl`. Il
+>    supporto SSL dentro Qt non e' mai mancato: mancavano le librerie.
+> 3. **DLL giuste**: messe accanto a `qtdiag.exe`, quella riga diventa
+>    `Using "OpenSSL 1.1.1w  11 Sep 2023", version: 0x1010117f`. Se fossero
+>    state 3.x, o a 32 bit, non si sarebbero caricate e la riga sarebbe rimasta
+>    la prima.
+> 4. **sha256 delle due DLL identici** a quelli dichiarati in
+>    `thirdparty/openssl/README.md`.
+> 5. **End-to-end**: Franco si e' collegato a Kitsu dal portable con le DLL
+>    accanto. Due controlli perche' il collegamento riuscito **da solo non
+>    prova niente**: (a) l'indirizzo usato era davvero cifrato —
+>    `HKCU\Software\Ztoryc\...\Kitsu\BaseUrl = https://kitsu.ztoryc.org` — e il
+>    client non impone lo schema (`kitsuclient.cpp:145`), tanto che il valore di
+>    ripiego e' `http://localhost:8012`; (b) il processo vivo **aveva caricato**
+>    `libssl-1_1-x64.dll` e `libcrypto-1_1-x64.dll`, e Windows mappa una DLL solo
+>    quando qualcuno la chiede — l'unico che la chiede e' `Qt5Network` per aprire
+>    un socket cifrato.
+>
+> ⚠️ **RESTA DA VERIFICARE: il confezionamento.** La copia nel `.bat` e il
+> controllo che fa fallire la build se le DLL mancano non sono stati provati —
+> vogliono una build Windows vera. Quello che e' provato e' che **le DLL spedite
+> sono quelle giuste e che con loro l'HTTPS funziona**.
+
+**0-bis. 🔒 La password di Kitsu e' scritta IN CHIARO nel registro di Windows.**
+Trovata il 2026-08-30 leggendo il registro per un'altra ragione (controllare che
+l'indirizzo di Kitsu fosse `https://`), quindi **non e' un'ispezione teorica**:
+la password era li' in chiaro, leggibile senza strumenti.
+
+`kitsuclient.cpp:102` salva con `QSettings::setValue` e basta, e la riga 22
+porta gia' il commento «local convenience only»: e' una scorciatoia presa
+consapevolmente, non una svista — ma su una macchina condivisa e' un difetto. Su Windows finisce
+in `HKCU\Software\Ztoryc\...\Kitsu\Password`, quindi la legge chiunque abbia
+accesso all'utente, e finisce nei backup del profilo. Vale anche per Simona, che
+la password se la salva sul suo computer.
+
+Dove andrebbe messa invece: **Credential Manager** su Windows (`CredWriteW`),
+**portachiavi** su macOS. In alternativa minima, non offrire affatto «ricorda la
+password».
 
 **1. Scansioni di personaggio → livelli. ORA E' UN'APP CON UN REPO SUO:
 `matitanimata/puppetoonz` (privato).** Si chiama **Puppetoonz**, sta in
