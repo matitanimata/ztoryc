@@ -465,6 +465,32 @@ When the user says **"sessione chiusa"**, automatically:
    > legge da Drive e scrive nel repo. Drive è già aggiornato automaticamente
    > da ogni scrittura via `~/ZtorYc/`. Non serve un passo separato per Drive.
 
+   > ⚠️ **PRIMA di questo `cp`, guardare se i documenti sono stati modificati da
+   > un'altra macchina.** Il `cp` va **Drive → repo**: se nel frattempo qualcuno
+   > ha committato una modifica a `CHANGELOG.md` o `ANIMATIC_TASKS.md` **dal
+   > repo** (tipicamente la macchina **Windows**, dove sono file normali e non
+   > symlink), questo passo gliela **cancella in silenzio** — Drive non l'ha mai
+   > vista, quindi la sovrascrive con la versione vecchia.
+   >
+   > Controllo, prima del `cp`:
+   > ```bash
+   > cd /Volumes/ZioSam/tahoma2d-workspace/tahoma2d
+   > git log --oneline -5 -- CHANGELOG.md ANIMATIC_TASKS.md
+   > ```
+   > Se c'è un commit che **non** viene da questa sessione, fare prima il giro
+   > **contrario** (repo → Drive), scrivendo *attraverso* il symlink:
+   > ```bash
+   > cat CHANGELOG.md      > ~/ZtorYc/CHANGELOG.md
+   > cat ANIMATIC_TASKS.md > ~/ZtorYc/ANIMATIC_TASKS.md
+   > ```
+   > e solo dopo riprendere da qui. Mai `mv`: sostituirebbe il symlink.
+   >
+   > **Perché è una trappola vera e non teorica:** la macchina Windows è quella
+   > che collauda, quindi è proprio lì che nascono le verifiche da scrivere
+   > accanto alle voci — ed è l'unica che non può aggiornare Drive, perché lì
+   > questi file non sono symlink. Successo il 2026-08-30 con la voce del TLS
+   > (commit `22a498632`, verifica scritta da Windows).
+
 5. Confirm to the user: commit hash + files synced.
 
 > **Why two locations:** Cowork (Claude desktop app) reads from `~/ZtorYc/` because
