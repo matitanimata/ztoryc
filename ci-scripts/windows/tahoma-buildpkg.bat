@@ -75,6 +75,18 @@ echo "QT_PATH=%QT_PATH%"
 
 %QT_PATH%\bin\windeployqt.exe Ztoryc\Ztoryc.exe --opengl
 
+REM Qt fa HTTPS solo se trova OpenSSL, e windeployqt NON lo copia: le librerie
+REM TLS non fanno parte di Qt. Senza queste due DLL ogni connessione cifrata
+REM muore con "TLS initialization failed" — Kitsu compreso. Qt 5.15.2 vuole
+REM la serie 1.1.1, con questi nomi esatti; la 3.x ha altra ABI e non va.
+echo ">>> Copy OpenSSL DLLs (TLS support for Qt)"
+copy /Y ..\..\thirdparty\openssl\bin\x64\libssl-1_1-x64.dll Ztoryc
+copy /Y ..\..\thirdparty\openssl\bin\x64\libcrypto-1_1-x64.dll Ztoryc
+if not exist Ztoryc\libssl-1_1-x64.dll (
+   echo ERROR: OpenSSL DLLs missing — the build would ship without HTTPS.
+   exit /b 1
+)
+
 
 IF EXIST ..\..\thirdparty\apps\ffmpeg\bin (
    echo ">>> Copying FFmpeg to Ztoryc\ffmpeg"

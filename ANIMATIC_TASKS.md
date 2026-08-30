@@ -503,6 +503,43 @@ nella sub-scene corretta.
 > sono difetti aperti, e riproporle fa perdere tempo a Franco. Vale anche il
 > blocco `🛑 SOSPESI` piu' in alto.
 
+**0. 🔴 SU WINDOWS MANCA IL TLS — nessuna connessione HTTPS funziona.**
+Scoperto il 2026-08-30 da Simona Manganaro (storyboard di filorosso), che non
+riusciva a collegarsi a Kitsu: `TLS initialization failed`.
+
+**Non e' un problema di Kitsu.** Qt fa HTTPS solo se trova OpenSSL, e
+`windeployqt` **non lo copia** — le librerie TLS non fanno parte di Qt. Nei
+nostri script di confezionamento OpenSSL non compariva da nessuna parte
+(verificato con `grep -rn -i openssl ci-scripts/ .github/workflows/`: zero
+occorrenze). Quindi **ogni** chiamata a un indirizzo `https://` moriva sul
+pacchetto Windows: Kitsu, controllo aggiornamenti, qualunque cosa.
+
+Non ce ne eravamo accorti perche' **Kitsu lo abbiamo sempre provato dal Mac**,
+dove il TLS e' di sistema e non serve spedire niente.
+
+**Correzione preparata, NON ancora committata** (in attesa della conferma di
+Simona sulle DLL):
+- `thirdparty/openssl/bin/x64/` — `libssl-1_1-x64.dll` e
+  `libcrypto-1_1-x64.dll`, versionate come si fa gia' per `freeglut` e `glew`,
+  con licenza e `README.md`
+- `ci-scripts/windows/tahoma-buildpkg.bat` — le copia dopo `windeployqt`, **con
+  un controllo che fa fallire la build se mancano**
+
+⚠️ **Qt 5.15.2 vuole OpenSSL 1.1.1**, non la 3.x: nomi diversi e altra ABI.
+
+> **Debito noto:** la 1.1.1 e' fuori supporto dal settembre 2023 e la `1.1.1w`
+> e' l'ultima mai rilasciata. Stiamo spedendo una libreria di crittografia non
+> piu' mantenuta. Si chiude **solo aggiornando Qt**, non cambiando le DLL.
+
+> **Rimedio immediato** per un'installazione gia' fatta: copiare le due DLL
+> accanto a `Ztoryc.exe` e riavviare. Niente installazioni, niente variabili
+> d'ambiente.
+
+> **Come si e' arrivati alla causa:** il messaggio dice «TLS initialization
+> failed» e sembra un problema di rete o di certificato. La verifica decisiva e'
+> stata cercare OpenSSL negli script di confezionamento — non nel codice
+> dell'applicazione, che e' corretto.
+
 **1. Scansioni di personaggio → livelli. ORA E' UN'APP CON UN REPO SUO:
 `matitanimata/puppetoonz` (privato).** Si chiama **Puppetoonz**, sta in
 `/Volumes/ZioSam/tahoma2d-workspace/puppetoonz/`, si avvia con
