@@ -11,6 +11,8 @@
 #include <QUrl>
 #include <QFile>
 #include <QFileInfo>
+#include "ztorysecret.h"
+
 #include <QDir>
 #include <QMimeDatabase>
 #include <algorithm>
@@ -19,7 +21,10 @@ namespace {
 const char *kGroupBaseUrl  = "Ztoryc/Kitsu/BaseUrl";
 const char *kGroupLocalUrl = "Ztoryc/Kitsu/LocalUrl";  // optional upload endpoint
 const char *kGroupEmail    = "Ztoryc/Kitsu/Email";
-const char *kGroupPassword = "Ztoryc/Kitsu/Password";  // local convenience only
+// Legacy: passwords used to be written here in plain text. Kept only so
+// loadSettings() can move an old value into the keychain and delete it.
+const char *kGroupPassword = "Ztoryc/Kitsu/Password";
+const char *kSecretService = "Ztoryc/Kitsu";
 const char *kGroupHasPwd   = "Ztoryc/Kitsu/PasswordSaved";
 
 // Pull a human-readable message out of an error reply (Zou answers with a JSON
@@ -88,7 +93,24 @@ void KitsuClient::loadSettings() {
   setLocalUrl(s.value(kGroupLocalUrl).toString());
   m_email         = s.value(kGroupEmail).toString();
   m_passwordSaved = s.value(kGroupHasPwd, false).toBool();
-  if (m_passwordSaved) m_password = s.value(kGroupPassword).toString();
+  if (!m_passwordSaved || m_email.isEmpty()) return;
+
+  // Until 0.13.2 the password sat in QSettings as readable text — the registry
+  // on Windows. Move any leftover into the keychain on first run and delete it:
+  // keeping the readable copy next to the safe one would defeat the change.
+  const QString legacy = s.value(kGroupPassword).toString();
+  if (!legacy.isEmpty()) {
+    m_passwordSaved = ZtorySecret::store(kSecretService, m_email, legacy);
+    if (m_passwordSaved) m_password = legacy;
+    s.remove(kGroupPassword);
+    s.setValue(kGroupHasPwd, m_passwordSaved);
+    return;
+  }
+
+  m_password = ZtorySecret::retrieve(kSecretService, m_email);
+  // Gone from the keychain (another machine, or the user cleared it): stop
+  // claiming it is remembered, or the dialog shows "saved" over nothing.
+  if (m_password.isEmpty()) m_passwordSaved = false;
 }
 
 void KitsuClient::saveSettings(bool savePassword) {
@@ -96,12 +118,20 @@ void KitsuClient::saveSettings(bool savePassword) {
   s.setValue(kGroupBaseUrl, m_baseUrl);
   s.setValue(kGroupLocalUrl, m_localUrl);
   s.setValue(kGroupEmail, m_email);
-  m_passwordSaved = savePassword;
-  s.setValue(kGroupHasPwd, savePassword);
-  if (savePassword)
-    s.setValue(kGroupPassword, m_password);
-  else
-    s.remove(kGroupPassword);
+  // Never written to QSettings again. Removing it unconditionally means an
+  // upgrade cleans up the old plain-text value even for someone who never
+  // reopens the dialog with "remember" ticked.
+  s.remove(kGroupPassword);
+
+  // store() failing is not an error to report: it means there is nowhere safe
+  // to keep the password, so we simply do not remember it.
+  if (savePassword && !m_email.isEmpty()) {
+    m_passwordSaved = ZtorySecret::store(kSecretService, m_email, m_password);
+  } else {
+    ZtorySecret::remove(kSecretService, m_email);
+    m_passwordSaved = false;
+  }
+  s.setValue(kGroupHasPwd, m_passwordSaved);
 }
 
 //----------------------------------------------------------------------------

@@ -7,6 +7,8 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLineEdit>
+#include "ztorysecret.h"
+
 #include <QCheckBox>
 #include <QSpinBox>
 #include <QPushButton>
@@ -102,8 +104,18 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
   m_urlEdit->setText(m_client->baseUrl());
   m_localUrlEdit->setText(m_client->localUrl());
   m_emailEdit->setText(m_client->email());
-  // Default "remember" to ON for convenience (typically a local/studio instance).
-  m_savePwd->setChecked(true);
+  // Default "remember" to ON for convenience (typically a local/studio instance)
+  // — but only where there is a keychain to put it in. Offering it elsewhere
+  // would promise something we deliberately refuse to do (see ztorysecret.h).
+  if (ZtorySecret::isAvailable())
+    m_savePwd->setChecked(true);
+  else {
+    m_savePwd->setChecked(false);
+    m_savePwd->setEnabled(false);
+    m_savePwd->setToolTip(
+        tr("No system keychain available on this platform, so the password "
+           "cannot be stored safely and is not kept."));
+  }
   if (m_client->hasSavedPassword())
     m_pwdEdit->setPlaceholderText(tr("•••••• (saved)"));  // signal it's remembered
 

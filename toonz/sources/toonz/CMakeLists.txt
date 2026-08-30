@@ -174,6 +174,7 @@ set(HEADERS
     ztorycharacter.h
     ztorymouthmap.h
     ztorymouthapply.h
+    ztorysecret.h
     celldata.h
     cellkeyframedata.h
     cellkeyframeselection.h
@@ -275,6 +276,7 @@ set(SOURCES
     ztorymouthapplypopup.cpp
     ztorigmouths.cpp
     kitsuclient.cpp
+    ztorysecret.cpp
     kitsuconnectdialog.cpp
     ztoryanimatic.cpp
     ztoryannotations.cpp
@@ -664,6 +666,17 @@ target_link_libraries(Ztoryc ZLIB::ZLIB)
 
 # QXlsx (vendored, MIT) — production worksheet export (.xlsx with thumbnails).
 target_link_libraries(Ztoryc QXlsx::QXlsx)
+
+# System keychain — ztorysecret.cpp keeps the Kitsu password out of QSettings,
+# which stores it as readable text (the registry on Windows). Credential Manager
+# lives in advapi32; on macOS it is the Security framework. Nothing to link
+# elsewhere: without a keychain the file compiles to functions that refuse.
+if(BUILD_ENV_MSVC OR BUILD_TARGET_WIN)
+    target_link_libraries(Ztoryc advapi32)
+elseif(BUILD_ENV_APPLE)
+    find_library(SECURITY_LIB Security)
+    target_link_libraries(Ztoryc ${SECURITY_LIB})
+endif()
 
 # libmypaint — the Thumbnail room canvas (ztorythumbnailcanvas.cpp) instantiates
 # mypaint::Brush, whose inline methods call libmypaint C functions directly. The
