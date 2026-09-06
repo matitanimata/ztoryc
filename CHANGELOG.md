@@ -1,3 +1,63 @@
+## [2026-09-07] — il PDF della griglia thumbnail non era rotto: era Drive
+
+Sessione di sola diagnosi, **nessuna modifica al codice**. Segnalazione: il PDF
+del foglio per disegnare i thumbnail (`ZtoryPaperSheet::printSheet`) veniva
+rifiutato da Procreate su iPad come «formato non valido o danneggiato».
+
+### Notes
+
+**Il PDF e' sano.** Verificato su un foglio vero (`SB_test_sheet.pdf`, 2
+settembre; `ztorypapersheet.cpp` non ha commit dopo `2fff31dc2`, quindi e'
+rappresentativo):
+
+- **MuPDF** lo apre senza un warning;
+- **`CGPDFDocument`** e **`PDFDocument`** (PDFKit) lo aprono e ne rendono la
+  miniatura — e' lo stesso motore PDF che gira su iOS. Provati con una sonda
+  Swift compilata sul posto, non dedotti;
+- xref: 27 voci, ogni offset verificato byte per byte contro l'intestazione
+  dell'oggetto puntato;
+- `/Length` di ogni stream (sono riferimenti **indiretti**, `10 0 R`) corretti;
+- content stream: solo operatori standard, nessun pattern fantasma malgrado il
+  `/PCSp` dichiarato nelle risorse e mai usato.
+
+**La causa era il segnaposto di Google Drive.** Su iPad, File mostra un
+segnaposto e scarica il contenuto solo quando qualcuno lo apre davvero:
+l'anteprima di sistema lo fa, l'importatore di Procreate no e dichiara il file
+non valido. Scaricato in locale, si apre. Lo dice anche l'assistenza di
+Procreate: un file su un servizio cloud va prima salvato in File o Foto.
+
+**Come si e' arrivati alla causa — il controllo banale.** Sono state costruite
+sei varianti dello stesso foglio: originale Qt, riscritta da MuPDF, riscritta
+da CoreGraphics, senza logo, col tag di subset del font corretto, e una
+**rasterizzata** (una sola immagine, niente font ne' vettori). Procreate le ha
+rifiutate **sei su sei**. Un rifiuto che colpisce anche la variante costruita
+per non poter fallire non e' un giudizio sul contenuto: il file non arriva.
+Senza quella variante nel gruppo la sessione sarebbe finita a correggere un PDF
+che non aveva niente da correggere. Regola annotata in memoria.
+
+### Da sapere, se un domani riemerge
+
+Qt scrive una **vera irregolarita' formale** nei font: `/BaseFont
+/HelveticaNeue` senza il tag di subset `QPAAAA+`, che invece mette in
+`/FontName` del FontDescriptor. La specifica lo vuole su entrambi. CoreGraphics,
+PDFKit e MuPDF se ne infischiano ed e' innocua **qui**, ma sembrava la risposta.
+Se un altro programma rifiutera' i nostri PDF, e' il primo posto dove guardare.
+
+Spiegato anche il blocco XMP di Adobe dentro la JPEG del logo: arriva dal chunk
+`iTXt` di `Resources/ztoryc_about.png`, che Qt riporta nel COM del JPEG quando
+riscrive l'immagine. Innocuo.
+
+### Deciso da Franco
+
+- **Non si tocca niente.** Nessuna correzione al PDF: non c'era un difetto.
+- **Export del foglio come PNG: NON si fa.** Era stato proposto come comodita'
+  (eviterebbe il giro «scarica in locale, poi importa» quando il foglio passa
+  da Drive all'iPad, e i marker del reimport funzionano identici su un PNG).
+  Franco: «lascia tutto come sta». Non riproporlo.
+
+La cartella con le sei varianti piu' PNG e JPEG resta in
+`~/Desktop/ProcreatePDF_test/`.
+
 ## [2026-08-29b] — Anymatix, le regole per progetto, e un muro hardware sul Dell
 
 Sessione senza una riga di C++: infrastruttura, documentazione e una prova di
