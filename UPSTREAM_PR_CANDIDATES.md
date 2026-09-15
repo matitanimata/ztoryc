@@ -164,13 +164,13 @@ not portable.
   `toonzqt/styleeditor.cpp` (`updateTabBar()`, `setPage()`, header). The tab bar
   has exactly three shapes: all five tabs (Color, Raster, Texture, Vector,
   Settings), Color only, or Color+Settings. A panel whose palette holds nothing
-  but MyPaint brushes needs **Raster + Settings** and cannot get it — so it has
+  but MyPaint brushes needs **Color + Raster + Settings** and cannot get it — so it has
   to show Color / Texture / Vector, where one click REPLACES a MyPaint style
   with a style of another type. The brush then quietly stops being a brush.
-  **Fix:** a fourth mode (`enableRasterAndSettingsOnly()`), plus the matching
-  branch in `setPage()`. ⚠️ The tab→page mapping is **not** 1:1 and that is
-  where this is easy to get wrong: the Settings page is second-to-last in the
-  stack (the last one is blank), not second.
+  **Fix:** a fourth mode (`enableBrushPagesOnly()`), plus the matching branch in
+  `setPage()`. ⚠️ The tab→page mapping is **not** 1:1 and that is
+  where this is easy to get wrong: Color and Raster are pages 0 and 1, but the
+  Settings page is second-to-last in the stack (the last one is blank).
   **Why it matters upstream:** any panel hosting a brush-only palette wants
   this; it pairs with the `setPaletteHandle()` fix above.
   *(Written and built here; wants a stock Tahoma build to confirm the other

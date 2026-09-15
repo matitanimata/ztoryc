@@ -5016,8 +5016,9 @@ void StyleEditor::onMyPaintClearSearch() {
 
 void StyleEditor::updateTabBar() {
   m_styleBar->clearTabBar();
-  if (m_enabled && m_enabledRasterAndSettings) {
-    // Brushes and their parameters, nothing else.
+  if (m_enabled && m_enabledBrushPages) {
+    // The ink, the brush library, and the brush's parameters.
+    m_styleBar->addSimpleTab(tr("Color"));
     m_styleBar->addSimpleTab(tr("Raster"));
     m_styleBar->addSimpleTab(tr("Settings"));
     m_tabBarContainer->layout()->update();
@@ -5490,10 +5491,10 @@ void StyleEditor::onColorChanged(const ColorModel &color, bool isDragging) {
 
 //-----------------------------------------------------------------------------
 
-void StyleEditor::enableRasterAndSettingsOnly(bool on) {
-  if (m_enabledRasterAndSettings == on) return;
-  m_enabledRasterAndSettings = on;
-  m_enabled                  = m_enabled || on;
+void StyleEditor::enableBrushPagesOnly(bool on) {
+  if (m_enabledBrushPages == on) return;
+  m_enabledBrushPages = on;
+  m_enabled           = m_enabled || on;
   updateTabBar();
 }
 
@@ -5558,10 +5559,12 @@ void StyleEditor::onNewStyleClicked() { applyButtonClicked(); }
 //-----------------------------------------------------------------------------
 
 void StyleEditor::setPage(int index) {
-  if (m_enabledRasterAndSettings) {
-    // Two tabs, and they are not pages 0 and 1: tab 0 is the Raster page, tab 1
-    // is the Settings page, which lives second-to-last (the last is blank).
+  if (m_enabledBrushPages) {
+    // Three tabs, and the mapping is NOT 1:1: Color and Raster are pages 0 and
+    // 1, but Settings lives second-to-last in the stack (the last is blank).
     if (index <= 0) {
+      m_styleChooser->setCurrentIndex(StyleEditorTab::Color);
+    } else if (index == 1) {
       m_rasterPages[0]->loadItems();
       m_styleChooser->setCurrentIndex(StyleEditorTab::Raster);
     } else {

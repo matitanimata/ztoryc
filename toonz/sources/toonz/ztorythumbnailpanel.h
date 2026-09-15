@@ -65,9 +65,6 @@ private:
   void rebuildBrushStrip();
   // Right-click on a brush: replace it with another .myb, or drop it.
   void showBrushContextMenu(int id, const QPoint &globalPos);
-  // Ask for a .myb and return its path ("" if cancelled); starts in the
-  // MyPaint library folder.
-  QString pickBrushFile(const QString &title);
 
   ZtoryThumbnailCanvas *m_canvas = nullptr;
   QButtonGroup *m_brushGroup     = nullptr;

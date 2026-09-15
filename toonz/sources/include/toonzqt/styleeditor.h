@@ -903,12 +903,11 @@ class DVAPI StyleEditor final : public QWidget, public SaveLoadQSettings {
   //!  may be not <I>automatically applied</I>.
   bool m_enabled;
   bool m_enabledOnlyFirstTab;
-  // Show only "Raster" and "Settings": browse the MyPaint brush library and
-  // edit the brush's parameters, with no Color / Texture / Vector pages.  For a
-  // panel whose palette holds nothing but MyPaint brushes those pages are worse
-  // than noise — picking from one REPLACES the style with another type, and a
-  // brush silently stops being a brush.
-  bool m_enabledRasterAndSettings = false;
+  // Show only the pages that make sense for a palette of brushes: Color (the
+  // ink), Raster (the MyPaint library) and Settings (the brush's parameters).
+  // Texture and Vector are left out because picking from them REPLACES the
+  // style with one of another type, and a brush silently stops being a brush.
+  bool m_enabledBrushPages = false;
   bool m_enabledFirstAndLastTab;
   bool m_colorPageIsVertical = true;
 
@@ -950,9 +949,9 @@ public:
 
   void setPaletteHandle(TPaletteHandle *paletteHandle);
 
-  // Restrict the editor to brush browsing + brush parameters: only the Raster
-  // and Settings tabs (see m_enabledRasterAndSettings).
-  void enableRasterAndSettingsOnly(bool on);
+  // Restrict the editor to the pages a brush palette needs: Color, Raster and
+  // Settings (see m_enabledBrushPages).
+  void enableBrushPagesOnly(bool on);
   TPaletteHandle *getPaletteHandle() const { return m_paletteHandle; }
 
   void setLevelHandle(TXshLevelHandle *levelHandle) {

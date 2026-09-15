@@ -434,22 +434,14 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
 
 //=============================================================================
 
-QString ZtoryThumbnailPanel::pickBrushFile(const QString &title) {
-  QString start;
-  for (const TFilePath &d : TMyPaintBrushStyle::getBrushesDirs()) {
-    QString r = QString::fromStdWString(d.getWideString());
-    if (QFileInfo::exists(r)) { start = r; break; }
-  }
-  // Absolute path on purpose: resolveBrushFile() passes absolute paths through
-  // unchanged, so a brush kept outside the MyPaint library works too.
-  return QFileDialog::getOpenFileName(this, title, start,
-                                      tr("MyPaint brushes (*.myb)"));
-}
-
 void ZtoryThumbnailPanel::showBrushContextMenu(int id, const QPoint &globalPos) {
   if (id < 0 || id >= brushCount()) return;
   QMenu menu(this);
-  QAction *replace   = menu.addAction(tr("Replace Brush…"));
+  // "Edit" and "replace" are the same act now: inside the editor, choosing from
+  // the library IS the replacement, and the same dialog also tunes the brush.
+  // One entry, and the menu keeps it discoverable for anyone who never tries a
+  // double-click.
+  QAction *edit      = menu.addAction(tr("Edit Brush…"));
   QAction *duplicate = menu.addAction(tr("Duplicate Brush"));
   QAction *remove    = menu.addAction(tr("Remove Brush"));
   // The first five slots are the room's standard ones: replaceable, not
@@ -464,15 +456,14 @@ void ZtoryThumbnailPanel::showBrushContextMenu(int id, const QPoint &globalPos) 
   QAction *chosen = menu.exec(globalPos);
   if (!chosen) return;
 
-  if (chosen == replace) {
-    const QString f = pickBrushFile(tr("Replace with MyPaint brush"));
-    if (f.isEmpty()) return;
-    // Swap the tip, keep the slot: a fresh style from the chosen .myb, put
-    // back at the same palette id so the strip order does not move.
-    const std::vector<int> ids = brushStyleIds();
-    auto *st = new TMyPaintBrushStyle(TFilePath(f.toStdWString()));
-    st->setName(QFileInfo(f).baseName().toStdWString());
-    m_brushPalette->setStyle(ids[id], st);
+  if (chosen == edit) {
+    m_currentPreset = id;
+    m_canvas->setBrushStyle(styleAt(id));
+    syncSizeSliderToPreset();
+    syncColorToPreset();
+    rebuildBrushStrip();
+    openBrushEditor();
+    return;  // the editor writes and saves through onBrushStyleEdited()
   } else if (chosen == duplicate) {
     // A variant of this brush, tweaks included — the intent that "+"
     // deliberately does not assume.
@@ -630,11 +621,12 @@ void ZtoryThumbnailPanel::openBrushEditor() {
     auto *ed = new StyleEditor(TApp::instance()->getPaletteController(),
                                m_brushEditor);
     ed->setPaletteHandle(m_brushHandle);
-    // Only the pages that mean something for a palette of brushes.  The Color /
-    // Texture / Vector pages would let a click REPLACE a MyPaint style with
-    // another type — the brush would quietly stop being a brush and vanish from
-    // the strip, which finds them by type.
-    ed->enableRasterAndSettingsOnly(true);
+    // Only the pages that mean something for a palette of brushes: the ink, the
+    // library, the parameters.  Texture and Vector are left out because a click
+    // there REPLACES the MyPaint style with one of another type — the brush
+    // would quietly stop being a brush and vanish from the strip, which finds
+    // them by type.
+    ed->enableBrushPagesOnly(true);
     lay->addWidget(ed);
     m_brushEditor->resize(420, 660);
   }
