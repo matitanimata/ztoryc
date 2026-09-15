@@ -9,6 +9,15 @@
 
 class StoryboardPanel;
 
+// The first Board panel alive, or nullptr.  Needed by panels that mutate the
+// storyboard from outside it (Thumbnail room export, Animatic) and therefore
+// have to register their undo against a Board.
+//
+// NOTE: ztoryanimatic.cpp and ztorymonitorpanel.cpp each carry their own static
+// copy of this, written before there was a shared home for it.  They are
+// identical; new callers should use this one rather than making a fourth.
+StoryboardPanel *ztoryFindBoardPanel();
+
 // Snapshot of a single shot's state for undo/redo.
 // TXshLevelP keeps the child level alive even after the xsheet column is deleted.
 struct ZtoryShotSnap {

@@ -1,3 +1,114 @@
+## [2026-09-15] — la colonna di uno shot non e' il suo indice, e la Thumbs room non frena piu'
+
+Quattro difetti, tre della stessa famiglia. Tutti nati da una segnalazione di
+Franco su una scena vera (`CS2605CA_UGC/scenes/SB_.tnz`, Cartoon School) e tutti
+riprodotti prima di essere corretti.
+
+### Fixed
+
+**La numerazione degli shot si sfasciava esportando dalla Thumbs room.** Gli
+shot uscivano `sh300 · sh290 · sh300 · sh310 …`, numeri alti in posizioni basse,
+con duplicati. Il fatto che ha ribaltato la lettura: **il modello numerava
+giusto** — nella scena i livelli sono `sh020 … sh320` in fila, e li scrive
+`addShotFromRasters` subito dopo `generateShotLabel()`. Sbagliati erano solo i
+nomi delle colonne.
+Causa: `StoryboardPanel::updateColumnName` scriveva su `ColumnId(si)` —
+`int col = si; // la colonna corrisponde all indice dello shot`. Falso:
+`refreshFromScene()` salta ogni colonna che non e' una sotto-scena, ed e' per
+quello che esiste `shot.data.xsheetColumn`. La scena ha `Col1` = shot,
+`Col2`/`Col3` = le due colonne audio, `Col4…` = gli altri 31 shot.
+Perche' una riga rovinava TUTTA la numerazione: **lettura e scrittura non erano
+d'accordo su quale colonna sia di quale shot.** La lettura era gia' corretta;
+il nome della colonna e' insieme l'uscita e l'ingresso, quindi una scrittura
+sfasata tornava indietro come verita' al refresh successivo e l'insieme marciava
+di una tacca ogni volta. In modo **Auto #** non si vede (l'etichetta si
+ricalcola dalla posizione): serve **Keep #**.
+Misurato con una sonda nei due `updateColumnName`: **96 chiamate, 93 sfasate**.
+Dopo: shot 1 → `Col4`, shot 31 → `Col34` (prima `Col2` e `Col32`).
+
+**Un undo qualsiasi del Board duplicava 31 shot.** Stessa famiglia, in
+`restoreFromSnapshot`, e non in un punto ma in **tre**: contava le colonne di
+shot come «le prime fino al primo audio» (ne trovava 1 invece di 32),
+reinseriva all'indice `i` invece che alla colonna registrata, e poi riscriveva
+`shot.data.xsheetColumn = i` propagando la colonna sbagliata a valle.
+Confermato da Franco sulla scena vera **prima** di toccare il codice — e' codice
+che in passato ha gia' cancellato uno storyboard intero, e i commenti dentro
+sono il racconto di due incidenti.
+Ora le colonne di shot si leggono da `m_shots` (la stessa fonte di
+`captureSnapshot`) prima di azzerarlo, si rimuovono da destra, e si
+reinseriscono alla colonna registrata. Resta coperto lo shot «vuoto» di sole
+celle rosse, per cui quel codice era stato scritto.
+
+**L'export dalla Thumbs room non registrava nessun undo.** `addShotFromRasters`
+non aveva un solo riferimento a `TUndoManager`, mentre ogni altro percorso che
+crea uno shot ne ha uno. Non era solo «l'undo non fa niente»: **faceva
+qualcos'altro**, disfacendo in silenzio l'ultima pennellata o l'ultima modifica
+al Board. Ora usa la stessa macchina di Merge/Paste/Delete (`captureSnapshot` +
+`UndoBoardState`) tramite due metodi nuovi del Board, `beginExternalEdit()` /
+`endExternalEdit()`. Aggiunto `ztoryFindBoardPanel()` **condiviso** in
+`ztoryundo.h`: quell'helper era gia' copiato in `ztoryanimatic.cpp` e
+`ztorymonitorpanel.cpp` e non se n'e' fatta una terza.
+
+**Il disegno nella Thumbs room rallentava man mano che si disegnava**
+(segnalato da un utente Windows 11). Due cause, misurate entrambe con l'encoder
+e il painter veri, non stimate:
+- il salvataggio automatico **ricodificava tutto il canvas sul thread
+  dell'interfaccia**: 71 ms a 4×4, **270 ms a 4×26** (1920×7020), 515 ms a 4×52,
+  su un M4. Il timer si riarma a fine tratto, quindi scattava **quando ti
+  fermi** — e la punta che ripartiva cadeva dentro quella finestra. Ora la
+  codifica e la scrittura stanno su un worker; al thread UI resta solo la copia
+  staccata del raster: **282 ms → 5 ms**.
+- `strokeTo()` chiamava `update()` **senza rettangolo**: ogni evento della
+  tavoletta, cento e passa al secondo, ridipingeva tutta la finestra. Ora
+  ridipinge solo la zona toccata, che il pennello gia' dichiara via
+  `askWrite()`: **1,6 ms → 0,005 ms**, circa 300 volte meno, a ogni zoom.
+  `endStroke()` fa ancora un ridisegno pieno come rete di sicurezza.
+
+**Il canvas si salva su file temporaneo e poi si rinomina.** Prima il PNG
+vecchio veniva **cancellato prima** della codifica: per un terzo di secondo — e
+crescendo — la scena restava senza canvas, e un crash li' in mezzo perdeva i
+disegni. Ora la finestra e' la rinomina. Il nome temporaneo non corrisponde al
+filtro con cui `persistLoad` cerca il canvas, quindi un file scritto a meta' non
+puo' essere scambiato per quello buono.
+
+**Il portachiavi su macOS: verificato** (la correzione era di `de098ab02`, ma
+solo il ramo MSVC era provato). `ztorysecret.cpp` compila senza warning con
+clang, i quattro simboli `SecItem*` risolvono contro `Security.framework`, e una
+sonda linkata **all'oggetto vero** dell'app supera otto controlli sul
+portachiavi di sistema: giro completo, UTF-8, `SecItemUpdate` che sostituisce
+invece di affiancare, cancellazione doppia innocua.
+
+### Notes
+
+**Metodo, due volte la stessa lezione.** Due diagnosi sono partite sbagliate
+perche' ho *filtrato* l'evidenza invece di guardarla: un istogramma dei tag del
+`.tnz` limitato ai 40 piu' frequenti mi ha fatto dire che le colonne audio non
+c'erano (erano due, sotto la soglia), e un `ninja | grep | head -15` mi ha fatto
+dire «compila pulito» mentre l'errore stava sotto i warning del linker. In
+entrambi i casi la correzione e' stata **contare tutto**, non guardare i primi.
+
+**Dove NON era il problema.** Il ridisegno non cresce con le pagine (Qt ritaglia
+davvero alla regione visibile: 0,3–1,6 ms a 4 righe come a 52) e l'undo del
+pennello e' gia' a tessere 256×256 copy-on-write. Scagionati e non toccati.
+
+### Deciso da Franco
+
+- **Un disegno non attraversa mai due pagine** (2026-09-15). E' la decisione che
+  rende possibile il raster per pagina: un panorama sta dentro il foglio.
+- **Il difetto della password sotto una email cambiata NON si corregge**:
+  *«lascia cosi', se voglio eliminare la vecchia lo faccio dall'app»*.
+
+### Aperto
+
+**Il raster unico non regge l'obiettivo.** Numeri di Franco: 26' × 16 shot/min ×
+3 panel = **1248 vignette** = 4×312 = `1920×84240` = **617 MB** di raster,
+codifica ~3,2 s sul M4, picco ~1,2 GB durante il salvataggio, e la copia sul
+thread UI risale da 5 a ~60 ms — cioe' il ritardo appena tolto tornerebbe da
+un'altra strada. In piu' `addRow` copia tutto il raster a ogni riga aggiunta.
+**Il salvataggio per pagine da solo non basta: il muro e' il raster unico.**
+La forma giusta e' **un raster per pagina** (1920×1350, 10 MB, codifica ~52 ms,
+costante), con in RAM solo le pagine vicine a dove si lavora.
+
 ## [2026-09-07] — il PDF della griglia thumbnail non era rotto: era Drive
 
 Sessione di sola diagnosi, **nessuna modifica al codice**. Segnalazione: il PDF
@@ -57,6 +168,83 @@ riscrive l'immagine. Innocuo.
 
 La cartella con le sei varianti piu' PNG e JPEG resta in
 `~/Desktop/ProcreatePDF_test/`.
+
+## [2026-08-30] — su Windows non c'era nessun HTTPS, e la password stava in chiaro
+
+Sessione sulla macchina Windows di Franco, nata da una segnalazione di **Simona
+Manganaro** (storyboard di filorosso): non riusciva a collegarsi a Kitsu,
+`TLS initialization failed`.
+
+### Fixed
+
+**Mancava OpenSSL nel pacchetto Windows: ogni `https://` moriva** (`d47d62479`).
+Non era un problema di Kitsu. Qt fa HTTPS solo se trova OpenSSL a runtime, e
+`windeployqt` **non lo copia** — le librerie TLS non fanno parte di Qt. Nei
+nostri script di confezionamento OpenSSL non compariva da nessuna parte
+(`grep -rn -i openssl ci-scripts/ .github/workflows/`: zero occorrenze). Quindi
+moriva **tutto** quello che parlava cifrato: Kitsu, il controllo aggiornamenti,
+qualunque cosa.
+
+- `thirdparty/openssl/bin/x64/` — `libssl-1_1-x64.dll` e `libcrypto-1_1-x64.dll`
+  versionate come si fa gia' per `freeglut` e `glew`, con licenza e `README.md`
+  che dichiara gli sha256;
+- `ci-scripts/windows/tahoma-buildpkg.bat` — le copia dopo `windeployqt`, **con
+  un controllo che fa fallire la build se mancano**.
+
+⚠️ **Qt 5.15.2 vuole OpenSSL 1.1.1**, non la 3.x: nomi diversi e altra ABI.
+**Debito noto:** la 1.1.1 e' fuori supporto dal settembre 2023 e la `1.1.1w` e'
+l'ultima mai rilasciata — stiamo spedendo una libreria di crittografia non piu'
+mantenuta, e si chiude **solo aggiornando Qt**, non cambiando le DLL.
+
+**La password di Kitsu non sta piu' in chiaro: va nel portachiavi di sistema**
+(`de098ab02`). `kitsuclient.cpp:102` salvava con `QSettings::setValue` e basta —
+su Windows vuol dire il registro, `HKCU\Software\Ztoryc\...\Kitsu\Password`,
+leggibile da chiunque abbia accesso all'utente e presente in ogni backup del
+profilo. La riga 22 portava gia' il commento «local convenience only»: una
+scorciatoia presa consapevolmente, non una svista — ma Simona la password se la
+salva sul suo computer, e li' la scorciatoia non va bene.
+
+`ztorysecret.h/.cpp`, tre funzioni sopra il portachiavi di sistema: Credential
+Manager su Windows (`CredWriteW/CredReadW/CredDeleteW`, advapi32), Keychain
+Services su macOS (`SecItem*`, non le `SecKeychain*` deprecate). Dove un
+portachiavi non c'e' (Linux) `store()` **rifiuta** invece di ripiegare sul testo
+in chiaro — una password che non sappiamo proteggere non la teniamo — e il
+dialogo disabilita «Remember password» quando `isAvailable()` e' falso, invece
+di promettere una cosa che poi non fa. La migrazione fa pulizia da sola:
+`loadSettings` sposta il valore vecchio nel portachiavi e lo **cancella**,
+`saveSettings` rimuove la chiave vecchia **sempre**, anche quando non si salva
+niente, cosi' la password in chiaro sparisce anche a chi il dialogo non lo
+riapre mai.
+
+### Notes
+
+**Come si e' arrivati alla causa del TLS.** Il messaggio «TLS initialization
+failed» sembra un problema di rete o di certificato. La verifica decisiva e'
+stata cercare OpenSSL **negli script di confezionamento**, non nel codice
+dell'applicazione — che era corretto e non e' stato toccato.
+
+**La password e' saltata fuori per caso, ed e' il motivo per cui la voce e'
+credibile:** il registro lo si stava leggendo per un'altra ragione, controllare
+che il `BaseUrl` di Kitsu fosse davvero `https://`. Non e' un'ispezione teorica,
+la password era li'.
+
+**Cosa e' verificato e cosa no** — il TLS e' stato provato end-to-end sulla
+macchina Windows di Franco (portable del 21 luglio): `qtdiag.exe` del **nostro**
+Qt passa da `SSL is not supported.` a `Using "OpenSSL 1.1.1w"`, sha256 delle DLL
+uguali a quelli dichiarati, e il processo vivo **aveva caricato** le due librerie
+— Windows mappa una DLL solo quando qualcuno la chiede, e l'unico che la chiede
+e' `Qt5Network` per aprire un socket cifrato. **Non** e' provato il
+confezionamento: la copia nel `.bat` e il controllo di fallimento vogliono una
+build CI vera (AGENTS.md § 4-bis). Del portachiavi era provata solo la
+compilazione MSVC.
+
+### Modified
+
+`AGENTS.md` (`2b2646757`): il `cp` di fine sessione va **Drive → repo**, quindi
+puo' cancellare in silenzio quello che ha scritto la macchina **Windows**, dove
+questi file sono normali e non symlink. Aggiunto il controllo da fare prima
+(`git log --oneline -5 -- CHANGELOG.md ANIMATIC_TASKS.md`) e il giro contrario.
+Successo davvero, con la voce del TLS (`22a498632`).
 
 ## [2026-08-29b] — Anymatix, le regole per progetto, e un muro hardware sul Dell
 

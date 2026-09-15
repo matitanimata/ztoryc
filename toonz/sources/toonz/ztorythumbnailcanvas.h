@@ -39,6 +39,7 @@
 
 class QTimer;
 class QScrollBar;
+class QThreadPool;
 class TFilePath;
 
 #include "mypainttoonzbrush.h"  // RasterController, MyPaintToonzBrush
@@ -142,6 +143,9 @@ private slots:
   // clears the canvas if the scene has none.  Save is debounced after edits.
   void persistLoad();
   void persistSave();
+  // The worker finished writing: release the slot and honour any edit that
+  // arrived while it was busy.
+  void onPersistSaveFinished();
 
 public:
 
@@ -320,9 +324,29 @@ private:
   double m_dragStartScale = 1.0, m_dragStartAngle = 0.0;
   QPointF m_dragStartCenter;
 
+  // What the brush has touched since the last repaint, in RASTER coordinates
+  // (bottom-up).  strokeTo() used to call update() with no rectangle, so every
+  // tablet event — a hundred-odd per second — repainted the whole widget; this
+  // narrows it to the dab.  Filled by askWrite(), which the brush already calls
+  // before writing, so the information costs nothing to collect.
+  QRect m_strokeDirty;
+
+  // Raster rect -> widget rect, for the partial repaint above.
+  QRect rasterRectToWidget(const QRect &r) const;
+
   // Persistence
   QTimer *m_saveTimer = nullptr;  // debounced autosave after edits
   QString m_persistKey;           // scene identity currently loaded from disk
+  // The autosave re-encodes the WHOLE canvas, and that cost grows with every
+  // page: measured 71 ms at 4x4 but 270 ms at 4x26 (1920x7020) and 515 ms at
+  // 4x52 — on an M4, so more on a slower machine.  On the UI thread it lands as
+  // a freeze exactly where the user pauses and puts the pen back down, which is
+  // the reported "the more thumbs you draw the more the stroke lags".  So the
+  // encode and the write happen on a worker; the UI thread only takes a
+  // detached copy of the surface (a memcpy, ~10 ms at this size).
+  QThreadPool *m_savePool = nullptr;  // exactly one worker, so saves serialise
+  bool m_saveRunning = false;         // a worker is encoding right now
+  bool m_saveQueued  = false;         // an edit arrived while it was running
 
   // Undo / redo
   std::vector<Snapshot> m_undo, m_redo;

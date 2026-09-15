@@ -27,6 +27,8 @@
 #include <QRegExp>
 #include <QFile>
 #include <QTextStream>
+#include <QThreadPool>
+#include <QRunnable>
 #include <QPolygonF>
 #include <QLineF>
 #include <QApplication>
@@ -36,6 +38,88 @@
 #include <cmath>
 
 //=============================================================================
+
+namespace {
+
+// The canvas write, with no dependency on the widget: it owns its pixels, so it
+// is safe to run on a worker while the user keeps drawing on the live raster.
+void writeThumbCanvas(const QImage &img, const QString &dirStr, int cols,
+                      int rows, const QVector<QRect> &merges) {
+  QDir qd(dirStr);
+  if (!qd.exists() && !qd.mkpath(".")) return;
+
+  const QString finalName =
+      QString("_ztorythumbs_%1x%2.png").arg(cols).arg(rows);
+  const QString finalPath = dirStr + "/" + finalName;
+  // Write beside it and rename, instead of deleting the old file first.  The
+  // old way left the scene with NO canvas for the whole encode — a third of a
+  // second at 4x26, and growing — so a crash or a pulled cable in that window
+  // lost the drawings outright.  The temporary name deliberately does NOT match
+  // persistLoad()'s "_ztorythumbs_*x*.png" glob, so a half-written file can
+  // never be mistaken for the canvas.  It also stops the delete/recreate churn
+  // from re-uploading the whole file on a cloud-synced project folder.
+  const QString tmpPath = dirStr + "/.ztorythumbs_writing.png";
+  QFile::remove(tmpPath);
+  if (!img.save(tmpPath, "PNG")) return;  // keep the previous canvas
+  QFile::remove(finalPath);
+  if (!QFile::rename(tmpPath, finalPath)) {
+    QFile::remove(tmpPath);
+    return;
+  }
+
+  // One canvas per scene: drop canvases saved at a DIFFERENT grid size.
+  // persistLoad() takes the most recent match, so a stale one left over from
+  // another row count would win after a row is removed.
+  for (const QString &old :
+       qd.entryList(QStringList() << "_ztorythumbs_*x*.png", QDir::Files))
+    if (old != finalName) qd.remove(old);
+
+  // Merged regions in a tiny sidecar ("col row w h" per line).
+  const QString mergesFile = dirStr + "/_ztorythumbs_merges.txt";
+  if (merges.isEmpty()) {
+    QFile::remove(mergesFile);
+  } else {
+    QFile mf(mergesFile);
+    if (mf.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      QTextStream ts(&mf);
+      for (const QRect &m : merges)
+        ts << m.x() << ' ' << m.y() << ' ' << m.width() << ' ' << m.height()
+           << '\n';
+    }
+  }
+}
+
+// Carries its own copy of everything it needs, so nothing it touches can be
+// mutated (or destroyed) by the UI thread while it runs.
+class ThumbCanvasSaveTask final : public QRunnable {
+public:
+  ThumbCanvasSaveTask(QImage img, QString dir, int cols, int rows,
+                      QVector<QRect> merges, QObject *canvas)
+      : m_img(std::move(img))
+      , m_dir(std::move(dir))
+      , m_cols(cols)
+      , m_rows(rows)
+      , m_merges(std::move(merges))
+      , m_canvas(canvas) {
+    setAutoDelete(true);
+  }
+  void run() override {
+    writeThumbCanvas(m_img, m_dir, m_cols, m_rows, m_merges);
+    // Queued: the slot runs on the UI thread.  The canvas is guaranteed to
+    // outlive this call because its destructor waits on the pool.
+    QMetaObject::invokeMethod(m_canvas, "onPersistSaveFinished",
+                              Qt::QueuedConnection);
+  }
+
+private:
+  QImage m_img;
+  QString m_dir;
+  int m_cols, m_rows;
+  QVector<QRect> m_merges;
+  QObject *m_canvas;
+};
+
+}  // namespace
 
 ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   setFocusPolicy(Qt::StrongFocus);
@@ -80,6 +164,10 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
           &ZtoryThumbnailCanvas::onSceneChanged);
 
   // Persistence: debounced autosave after edits, reload on scene switch.
+  // One worker, owned by this widget: saves serialise, and ~ZtoryThumbnailCanvas
+  // can wait on it so a write is never abandoned half-done.
+  m_savePool = new QThreadPool(this);
+  m_savePool->setMaxThreadCount(1);
   m_saveTimer = new QTimer(this);
   m_saveTimer->setSingleShot(true);
   m_saveTimer->setInterval(700);
@@ -95,8 +183,23 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
 }
 
 ZtoryThumbnailCanvas::~ZtoryThumbnailCanvas() {
-  // Flush any pending edit so closing the app never loses the canvas.
-  if (m_saveTimer && m_saveTimer->isActive()) persistSave();
+  // Flush any pending edit so closing the app never loses the canvas.  Three
+  // cases, and all of them must end with the newest pixels on disk:
+  //   - the debounce is still armed  -> there is an unsaved edit;
+  //   - a worker is mid-write        -> wait for it;
+  //   - an edit landed while it wrote -> m_saveQueued, and the slot that would
+  //     have honoured it will never run, because there is no event loop here.
+  // So: wait for the worker, then write synchronously if anything is pending.
+  const bool pending =
+      (m_saveTimer && m_saveTimer->isActive()) || m_saveQueued;
+  if (m_savePool) m_savePool->waitForDone();
+  if (pending && m_ras) {
+    TFilePath dir = persistDir();
+    if (!dir.isEmpty())
+      writeThumbCanvas(rasterToQImage(m_ras, /*premultiplied=*/false),
+                       QString::fromStdWString(dir.getWideString()), m_cols,
+                       m_rows, m_merges);
+  }
   delete m_brush;
   delete m_style;
 }
@@ -619,34 +722,34 @@ void ZtoryThumbnailCanvas::persistSave() {
   if (!m_ras) return;
   TFilePath dir = persistDir();
   if (dir.isEmpty()) return;
-  QString dirStr = QString::fromStdWString(dir.getWideString());
-  QDir qd(dirStr);
-  if (!qd.exists()) qd.mkpath(".");
 
-  // One canvas per scene: drop any previous size-tagged PNG before writing.
-  for (const QString &old :
-       qd.entryList(QStringList() << "_ztorythumbs_*.png", QDir::Files))
-    qd.remove(old);
-
-  QImage img = rasterToQImage(m_ras, /*premultiplied=*/false);
-  QString file =
-      dirStr + QString("/_ztorythumbs_%1x%2.png").arg(m_cols).arg(m_rows);
-  img.save(file, "PNG");
-
-  // Merged regions in a tiny sidecar ("col row w h" per line).
-  const QString mergesFile = dirStr + "/_ztorythumbs_merges.txt";
-  if (m_merges.isEmpty()) {
-    QFile::remove(mergesFile);
-  } else {
-    QFile mf(mergesFile);
-    if (mf.open(QIODevice::WriteOnly | QIODevice::Text)) {
-      QTextStream ts(&mf);
-      for (const QRect &m : m_merges)
-        ts << m.x() << ' ' << m.y() << ' ' << m.width() << ' ' << m.height()
-           << '\n';
-    }
+  // Never run two encodes at once: at this size they would queue up behind the
+  // pen and the last one to land would not necessarily be the newest canvas.
+  // Remember instead that there is something newer to write.
+  if (m_saveRunning) {
+    m_saveQueued = true;
+    return;
   }
-  m_persistKey = sceneKey();  // we now hold this scene's canvas on disk
+
+  // rasterToQImage() with mirrored=true returns a DETACHED image (QImage::
+  // mirrored() copies), so the worker never reads the live raster.  This copy
+  // is the only part the UI thread still pays for.
+  QImage img = rasterToQImage(m_ras, /*premultiplied=*/false);
+
+  m_saveRunning = true;
+  m_saveQueued  = false;
+  m_persistKey  = sceneKey();  // this scene's canvas is (about to be) on disk
+  m_savePool->start(new ThumbCanvasSaveTask(
+      std::move(img), QString::fromStdWString(dir.getWideString()), m_cols,
+      m_rows, m_merges, this));
+}
+
+void ZtoryThumbnailCanvas::onPersistSaveFinished() {
+  m_saveRunning = false;
+  if (m_saveQueued) {
+    m_saveQueued = false;
+    persistSave();  // an edit landed mid-write: the canvas on disk is stale
+  }
 }
 
 void ZtoryThumbnailCanvas::persistLoad() {
@@ -835,12 +938,28 @@ void ZtoryThumbnailCanvas::beginStroke(const QPointF &widgetPos, double pressure
   update();
 }
 
+// Raster is bottom-up, the widget is top-down: mirror Y about the grid height,
+// then apply zoom and pan exactly as worldToWidget() does.
+QRect ZtoryThumbnailCanvas::rasterRectToWidget(const QRect &r) const {
+  const QPointF tl = worldToWidget(QPointF(r.left(), gridH() - r.bottom() - 1));
+  const QPointF br = worldToWidget(QPointF(r.right() + 1, gridH() - r.top()));
+  // A pixel of margin each way absorbs the rounding and the painter's smoothing,
+  // which can tint the pixel just outside the dab.
+  return QRectF(tl, br).toAlignedRect().adjusted(-2, -2, 2, 2);
+}
+
 void ZtoryThumbnailCanvas::strokeTo(const QPointF &widgetPos, double pressure) {
   if (!m_stroking || !m_brush) return;
   double dtime = m_timer.nsecsElapsed() * 1e-9;
   m_timer.restart();
   m_brush->strokeTo(widgetToRaster(widgetPos), pressure, 0.0, 0.0, dtime);
-  update();
+  // Repaint the dab, not the window.  If the brush wrote nothing this move
+  // there is nothing to show; if it wrote without announcing it (it always
+  // announces — askWrite is the documented contract) the full update() at
+  // endStroke() puts it right when the pen lifts.
+  if (m_strokeDirty.isNull()) return;
+  update(rasterRectToWidget(m_strokeDirty));
+  m_strokeDirty = QRect();
 }
 
 void ZtoryThumbnailCanvas::endStroke() {
@@ -850,7 +969,8 @@ void ZtoryThumbnailCanvas::endStroke() {
   m_brush    = nullptr;
   m_stroking = false;
   endStrokeRecording();  // turn the touched tiles into one undo entry
-  update();
+  m_strokeDirty = QRect();
+  update();  // safety net: one full repaint per stroke, not per tablet event
   schedulePersistSave();
 }
 
@@ -1432,11 +1552,19 @@ void ZtoryThumbnailCanvas::endStrokeRecording() {
 // The brush calls this before writing \a rect: save the untouched pixels of any
 // tile it overlaps, once.  This is the whole stroke undo cost.
 bool ZtoryThumbnailCanvas::askWrite(const TRect &rect) {
-  if (!m_recordingStroke || !m_ras) return true;
+  if (!m_ras) return true;
   const int rx0 = std::max(0, rect.x0), ry0 = std::max(0, rect.y0);
   const int rx1 = std::min(m_ras->getLx() - 1, rect.x1);
   const int ry1 = std::min(m_ras->getLy() - 1, rect.y1);
   if (rx0 > rx1 || ry0 > ry1) return true;
+
+  // Remember what is about to change so strokeTo() can repaint just this.
+  // Collected even when the undo recorder is off: the repaint has to be right
+  // regardless of whether the change is undoable.
+  const QRect dab(rx0, ry0, rx1 - rx0 + 1, ry1 - ry0 + 1);
+  m_strokeDirty = m_strokeDirty.isNull() ? dab : m_strokeDirty.united(dab);
+
+  if (!m_recordingStroke) return true;
 
   for (int ty = ry0 / kUndoTile; ty <= ry1 / kUndoTile; ++ty)
     for (int tx = rx0 / kUndoTile; tx <= rx1 / kUndoTile; ++tx) {

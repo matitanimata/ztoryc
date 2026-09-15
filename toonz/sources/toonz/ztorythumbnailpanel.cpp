@@ -6,6 +6,8 @@
 #include "toonz/mypaintbrushstyle.h"  // getBrushesDirs()
 
 #include "ztorymodel.h"    // addShotFromRasters
+#include "ztoryundo.h"     // ztoryFindBoardPanel — undo for the export
+#include "storyboardpanel.h"
 #include "ztoryshotops.h"  // cameraRes, cameraAspect
 #include "ztorypapersheet.h"     // printSheet / importSheet (paper import)
 #include "ztorypapercapture.h"   // webcam capture dialog
@@ -459,7 +461,14 @@ void ZtoryThumbnailPanel::exportSelectionToBoard() {
     frames.push_back(frame);
   }
 
+  // Register the undo the same way every other shot-creating command does.
+  // Without this the export left NOTHING on the undo stack: Cmd+Z could not
+  // remove a shot exported by mistake, and — worse — it silently undid whatever
+  // came before instead (the last brush stroke, the last Board edit).
+  StoryboardPanel *board = ztoryFindBoardPanel();
+  if (board) board->beginExternalEdit();
   ZtoryModel::instance()->addShotFromRasters(QString(), frames);
+  if (board) board->endExternalEdit(tr("Export Panels to Board"));
   m_canvas->clearSelection();
   DVGui::info(tr("Exported %1 panel(s) to the Board as one shot.")
                   .arg((int)frames.size()));

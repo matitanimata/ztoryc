@@ -329,6 +329,15 @@ public:
   void refreshFromScene();
   std::vector<ZtoryShotSnap> captureSnapshot();
   void restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap);
+
+  // Undo for an edit made from OUTSIDE the Board — today the Thumbnail room's
+  // "export panels as a shot", which goes straight to ZtoryModel and so never
+  // passed through any of the Board's own undo sites.  Wrap the call:
+  //     beginExternalEdit(); ...mutate...; endExternalEdit(tr("..."));
+  // The before/after snapshots and the undo item are exactly the ones Merge,
+  // Paste and Delete Shot already use — the Board has one undo story, not two.
+  void beginExternalEdit();
+  void endExternalEdit(const QString &label);
   // Global "New Shot After Current" command (MI_ZtoryNewShotAfter): adds a
   // shot after the selected/open one and, if invoked from inside a sub-scene,
   // enters the new shot directly so drawing can continue without leaving
@@ -411,6 +420,7 @@ private:
   // Text-field undo: snapshot taken on focusIn, pushed on focusOut.
   bool m_textEditing = false;
   std::vector<ZtoryShotSnap> m_textUndoBefore;
+  std::vector<ZtoryShotSnap> m_externalBefore;  // see beginExternalEdit()
 
 public:
   // Le scelte che i due popup di export raccogliono e che il ciclo applica a

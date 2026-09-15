@@ -124,6 +124,7 @@
 #include <QColorDialog>
 #include <QEventLoop>
 #include <cmath>
+#include <algorithm>  // sort/unique on the shot-column list in restoreFromSnapshot
 
 // Definita piu' sotto, accanto a refreshSpeakersLabel(): serve al costruttore
 // del campo dialogo, che viene prima.
@@ -2516,7 +2517,23 @@ void StoryboardPanel::updateColumnName(int si) {
   // the sub-scene were getting labeled "SH010", "SH020" etc.).
   TXsheet *xsh = scene->getChildStack()->getTopXsheet();
   if (!xsh) return;
-  int col = si; // la colonna corrisponde all indice dello shot
+  // The shot index is NOT the column index: refreshFromScene() skips every
+  // column that does not hold a sub-scene (`if (!cl) continue`), so a sound
+  // column — or any other non-shot column — shifts every shot after it.  That
+  // is why shot.data.xsheetColumn exists; using `si` writes the label onto a
+  // different shot's column, or onto the audio column.
+  //
+  // It corrupts more than one name, because the label is both the output and
+  // the INPUT: refreshFromScene() re-derives each shot's label from its column
+  // name, so a shifted write comes back as truth on the next refresh and the
+  // whole set marches one notch further every time.  Measured on CS2605CA_UGC
+  // (Col1 = shot, Col2/Col3 = the two sound columns, Col4… = the other shots):
+  // 31 shots out of 32 were writing two columns to the left.
+  int col = m_shots[si].data.xsheetColumn;
+  // A shot with no column yet has nothing to name.  Never fall back to `si`:
+  // that is the bug, and a negative id would reach ColumnId(-1), which this
+  // codebase has already paid for three times (the "pegbar zombie" crashes).
+  if (col < 0 || col >= xsh->getColumnCount()) return;
   TStageObject *obj = xsh->getStageObjectTree()->getStageObject(TStageObjectId::ColumnId(col), false);
   if (obj) {
     obj->setName(m_shots[si].data.label().toStdString());
@@ -5053,60 +5070,65 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
   disconnect(app->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
              this, &StoryboardPanel::onXsheetChanged);
 
+  // WHICH columns the shots occupy — read from the Board's own list, the same
+  // source captureSnapshot() used, and BEFORE clearShots() throws it away.
+  //
+  // They are NOT necessarily the leading ones.  refreshFromScene() skips every
+  // column that is not a sub-scene, so a sound column between two shots — a
+  // storyboard with a voice track, i.e. the normal case — leaves the shots
+  // spread around it.  The previous version counted "leading columns up to the
+  // first audio one": measured on CS2605CA_UGC (Col1 shot, Col2/Col3 audio,
+  // Col4… shots) that found ONE shot instead of 32, removed a single column and
+  // re-inserted the whole snapshot on top of the 31 survivors — every shot
+  // duplicated.  Confirmed by Franco on the real scene before this was changed.
+  //
+  // It still covers what that version was written for: an *empty* shot (only
+  // empty/red cells, a valid Ztoryc state) has no child-level cell, but it IS
+  // in m_shots and carries its column, so it is removed like any other.
+  std::vector<int> shotCols;
+  shotCols.reserve(m_shots.size());
+  for (const Shot &sh : m_shots)
+    if (sh.data.xsheetColumn >= 0) shotCols.push_back(sh.data.xsheetColumn);
+  std::sort(shotCols.begin(), shotCols.end());
+  shotCols.erase(std::unique(shotCols.begin(), shotCols.end()), shotCols.end());
+
   clearShots();
 
-  // Remove all current shot columns. Shot columns are always first; audio (and
-  // any other real, non-sub-scene level) columns follow.
-  //
-  // BUG FIX (undo of Delete Shot duplicated every shot): the old detection
-  // classified a column as a shot only if it held a child-level cell, and broke
-  // at the first column that didn't. But an *empty* shot — a shot made only of
-  // empty/red cells, a valid Ztoryc state (duration counts empty cells) — has no
-  // child-level cell, so the loop stopped early and removed too few columns. The
-  // snapshot re-insert below then added the full set on top of the survivors,
-  // duplicating every shot past the empty one (data corruption: cloned
-  // sub-scenes). Instead, treat every leading column as a removable shot until
-  // the first audio column or the first column carrying a non-sub-scene level.
-  int currentShotCols = 0;
-  for (int c = 0; c < xsh->getColumnCount(); c++) {
-    TXshColumn *column = xsh->getColumn(c);
-    if (column && column->getSoundColumn()) break;  // audio ends the shot region
-    bool hasRealLevel = false;  // a non-sub-scene level → not a shot column
-    int fc            = xsh->getFrameCount();
-    for (int r = 0; r <= fc; r++) {
-      TXshCell cell = xsh->getCell(r, c);
-      if (cell.isEmpty() || !cell.m_level) continue;
-      if (!cell.m_level->getChildLevel()) { hasRealLevel = true; break; }
-    }
-    if (hasRealLevel) break;
-    currentShotCols++;  // child-level shot OR empty/red-cell placeholder shot
-  }
-  // Remove from left repeatedly (indices shift left each time).
-  for (int i = 0; i < currentShotCols; i++)
-    xsh->removeColumn(0);
+  // Remove from the RIGHT, so the indices still to be removed stay valid.
+  for (auto it = shotCols.rbegin(); it != shotCols.rend(); ++it)
+    if (*it < xsh->getColumnCount()) xsh->removeColumn(*it);
 
   // Re-insert columns from snapshot.
-  qWarning("[ZTORY] restore: removed %d shot cols", currentShotCols);
+  qWarning("[ZTORY] restore: removed %d shot cols", (int)shotCols.size());
   for (int i = 0; i < (int)snap.size(); i++) {
     const ZtoryShotSnap &s = snap[i];
     if (!s.level || !s.level->getChildLevel()) continue;
-    xsh->insertColumn(i);
+    // Back into the column it came from, so the columns that are NOT shots
+    // (audio) keep their place in the running order.  snap is in column order,
+    // and the non-shot columns are still where they were, so inserting in
+    // ascending order reproduces the original layout exactly.
+    int col = s.data.xsheetColumn;
+    if (col < 0 || col > xsh->getColumnCount()) col = xsh->getColumnCount();
+    xsh->insertColumn(col);
     bool okSet = true;
     for (int r = 0; r < s.duration; r++)
-      okSet &= xsh->setCell(r, i, TXshCell(s.level.getPointer(), TFrameId(r + 1)));
+      okSet &= xsh->setCell(r, col, TXshCell(s.level.getPointer(), TFrameId(r + 1)));
     qWarning("[ZTORY] restore: col %d dur=%d setCell ok=%d cellChild=%d",
-             i, s.duration, okSet ? 1 : 0,
-             (!xsh->getCell(0, i).isEmpty() &&
-              xsh->getCell(0, i).m_level &&
-              xsh->getCell(0, i).m_level->getChildLevel()) ? 1 : 0);
+             col, s.duration, okSet ? 1 : 0,
+             (!xsh->getCell(0, col).isEmpty() &&
+              xsh->getCell(0, col).m_level &&
+              xsh->getCell(0, col).m_level->getChildLevel()) ? 1 : 0);
   }
   xsh->updateFrameCount();
 
   // Rebuild Board state from snapshot data.
   for (int i = 0; i < (int)snap.size(); i++) {
     Shot shot;
-    shot.data              = snap[i].data;
-    shot.data.xsheetColumn = i;
+    shot.data = snap[i].data;
+    // Keep the column recorded in the snapshot: overwriting it with `i` was the
+    // same "shot index == column index" assumption as above, and it fed a wrong
+    // column to everything downstream — updateColumnName() included, which is
+    // how a shot ends up renaming a sound column.
     m_shots.push_back(std::move(shot));
     for (int pi = 0; pi < (int)snap[i].data.panels.size(); pi++)
       addPanelWidget(i, pi);
@@ -5132,6 +5154,34 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
   // Re-anchor the path after clearShots() cleared it.
   m_currentZtoryPath = ztoryPath();
   saveZtoryc();
+}
+
+// Declared in ztoryundo.h — defined here because this is the file that knows
+// what a StoryboardPanel is.
+StoryboardPanel *ztoryFindBoardPanel() {
+  for (QWidget *w : QApplication::allWidgets())
+    if (auto *b = qobject_cast<StoryboardPanel *>(w)) return b;
+  return nullptr;
+}
+
+// ── Undo for edits made from outside the Board ───────────────────────────────
+
+void StoryboardPanel::beginExternalEdit() {
+  m_externalBefore = captureSnapshot();
+}
+
+void StoryboardPanel::endExternalEdit(const QString &label) {
+  // Nothing was captured (no matching begin): registering half an undo item
+  // would be worse than none — undoing it would restore an empty Board.
+  if (m_externalBefore.empty()) return;
+  auto before = std::move(m_externalBefore);
+  m_externalBefore.clear();
+  auto after = captureSnapshot();
+  // The mutation emitted modelReset(), so refreshFromScene() has already run
+  // and the Board is in its final state by the time we get here.
+  if (after.size() == before.size()) return;  // nothing actually changed
+  TUndoManager::manager()->add(
+      new UndoBoardState(this, label, std::move(before), std::move(after)));
 }
 
 // ── UndoBoardState ────────────────────────────────────────────────────────────

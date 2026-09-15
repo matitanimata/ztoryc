@@ -503,6 +503,101 @@ nella sub-scene corretta.
 > sono difetti aperti, e riproporle fa perdere tempo a Franco. Vale anche il
 > blocco `🛑 SOSPESI` piu' in alto.
 
+🔴 **IN PIEDI — il raster unico della Thumbs room non regge l'obiettivo di
+produzione.** Non e' un difetto: e' un limite di struttura, con i numeri in mano.
+
+Obiettivo dichiarato da Franco (2026-09-15): **26' di storyboard, 16 shot al
+minuto, 3 panel per shot** = 1248 vignette = griglia 4×312 = `1920×84240`.
+
+| | oggi (4×26) | obiettivo (4×312) |
+|---|---|---|
+| raster in RAM | 51 MB | **617 MB** |
+| codifica PNG | 270 ms | **~3,2 s** (M4) |
+| copia sul thread UI | 5 ms | **~60 ms** |
+| picco RAM nel salvataggio | 100 MB | **~1,2 GB** |
+
+⚠️ **Il salvataggio per pagine DA SOLO non basta**, ed e' il motivo per cui la
+voce e' scritta cosi': risolverebbe la codifica e lascerebbe gli altri tre
+numeri. Guardare il terzo — la copia che resta sul thread UI risale da 5 a 60 ms,
+cioe' **il ritardo appena tolto tornerebbe da un'altra strada**. Peggio: `addRow`
+copia tutto il raster a ogni riga aggiunta (alla riga 312 e' una memcpy da
+617 MB), e 617 MB contigui su un portatile Windows sono un'allocazione fragile,
+non solo grossa.
+
+**La forma giusta: un raster PER PAGINA.** 1920×1350, ~10 MB, codifica ~52 ms —
+**costante**, qualunque sia la lunghezza dello storyboard. In RAM solo le pagine
+vicine a dove si lavora (~63 pagine in totale), le altre caricate quando servono.
+
+✅ **DECISIONE DI FRANCO che rende il progetto possibile (2026-09-15): «un
+disegno non attraversa mai due pagine».** Una pagina e' un foglio fisico, quelli
+che si disegnano su Procreate e si importano. Quindi il panorama — il motivo per
+cui il raster era stato fatto contiguo — sta **dentro la pagina** e sopravvive.
+Senza questa risposta il progetto avrebbe una forma completamente diversa.
+
+> **Se e quando si fa, la parte pericolosa e' una sola: cosa marca «sporco».**
+> Oltre al pennello ci sono ~10 strade che scrivono sul raster (`addRow`,
+> `applyImportedCells`, `commitFloat`, `cancelFloat`, `liftFloatLasso`, incolla,
+> pulisci, reflow dell'aspetto camera, ripristino dell'undo). Se una non marca la
+> sua zona, quella modifica **non viene mai salvata** — niente crash, niente
+> messaggio, te ne accorgi domani.
+> **Rovesciare il valore predefinito:** salva TUTTO, tranne quando si sa con
+> certezza che e' stata solo una pennellata. Cosi' una strada dimenticata costa
+> **prestazioni, non dati**. La via stretta del pennello e' gia' collaudata: e'
+> la stessa informazione (`askWrite`) su cui gira il ridisegno parziale, e Franco
+> ha confermato che il segno e' pulito.
+
+✅ **RISOLTO 2026-09-15 — la numerazione degli shot si sfasciava: una colonna
+audio in mezzo bastava.** Segnalato da Franco su una scena vera
+(`CS2605CA_UGC/scenes/SB_.tnz`, Cartoon School): importate 5 pagine di thumbnail
+da Procreate senza problemi, ma gli shot esportati venivano numerati
+`sh300 · sh290 · sh300 · sh310 · sh300 …` — valori che rimbalzano fra due
+vicini e si duplicano.
+
+**Il modello numerava GIUSTO.** E' il fatto che ribalta la lettura del sintomo:
+nella scena i livelli sono `sh020 … sh320`, uno per export, in fila. Quei nomi
+li scrive `addShotFromRasters` subito dopo `generateShotLabel()`, quindi
+l'etichetta nasceva corretta tutte e 31 le volte. Sbagliati erano solo i nomi
+delle colonne e il `.ztoryc`.
+
+**Causa: `StoryboardPanel::updateColumnName` scriveva su `ColumnId(si)`** —
+`int col = si; // la colonna corrisponde all indice dello shot`. Quel commento
+era una supposizione, e il codice lì intorno dice che è falsa:
+`refreshFromScene()` salta ogni colonna che non contiene una sotto-scena
+(`if (!cl) continue`) ed è per questo che esiste `shot.data.xsheetColumn`.
+
+**Perché una riga sbagliata rovinava TUTTA la numerazione, e non un nome solo:
+lettura e scrittura non erano d'accordo su quale colonna sia di quale shot.**
+La lettura era già giusta (riga 4661 usa `xsheetColumn`), la scrittura no. E il
+nome della colonna è insieme l'uscita e l'ingresso — `refreshFromScene`
+ri-deduce l'etichetta dal nome della colonna — quindi una scrittura sfasata
+tornava indietro come verità al refresh successivo, e l'insieme marciava di una
+tacca ogni volta, finché i valori non si accatastavano in cima alla serie. Da
+qui il rimbalzo e i duplicati. In modo **Auto #** non si vede (l'etichetta si
+ricalcola dalla posizione): serve **Keep #**.
+
+**MISURATA, non dedotta.** Sonda `qWarning` nei due `updateColumnName`, scena
+aperta davvero: **96 chiamate, 93 sfasate**. La scena ha
+`Col1` = shot, `Col2`+`Col3` = le due colonne audio (`CASCINA voci`,
+`CASCINA effetti`), `Col4…` = gli altri 31 shot — quindi ogni shot dall'indice 1
+in poi scriveva **due colonne a sinistra**, sulle colonne audio e su quelle
+degli shot precedenti.
+
+**Correzione:** si usa `m_shots[si].data.xsheetColumn`, con `return` se è fuori
+range. **Niente ripiego su `si`**: quello è il difetto, e un id negativo
+arriverebbe a `ColumnId(-1)`, che in questo repo è già costato tre crash (la
+famiglia «pegbar zombie»). Verificata con la stessa sonda sulla copia della
+scena: shot 1 → `Col4`, shot 31 → `Col34` (prima `Col2` e `Col32`).
+
+⚠️ **Manca la conferma di Franco sul giro vero**: export dalla Thumbs room in
+modo **Keep #**, che è il percorso da cui è nata la segnalazione. Quello che è
+provato è che la colonna bersaglio adesso è quella giusta.
+
+> **Non è candidato upstream:** `storyboardpanel.cpp` è un file solo Ztoryc.
+
+> **Nota sulla scena di Franco:** il suo `SB_.ztoryc` è già tornato a posto
+> (`sh010 … sh320`, zero duplicati) — riaprire la scena in **Auto #** rinumera
+> per posizione, e l'ordine degli shot non era mai stato toccato.
+
 **0. 🔴 SU WINDOWS MANCA IL TLS — nessuna connessione HTTPS funziona.**
 Scoperto il 2026-08-30 da Simona Manganaro (storyboard di filorosso), che non
 riusciva a collegarsi a Kitsu: `TLS initialization failed`.
@@ -569,21 +664,85 @@ dove il TLS e' di sistema e non serve spedire niente.
 > vogliono una build Windows vera. Quello che e' provato e' che **le DLL spedite
 > sono quelle giuste e che con loro l'HTTPS funziona**.
 
-**0-bis. 🔒 La password di Kitsu e' scritta IN CHIARO nel registro di Windows.**
-Trovata il 2026-08-30 leggendo il registro per un'altra ragione (controllare che
-l'indirizzo di Kitsu fosse `https://`), quindi **non e' un'ispezione teorica**:
-la password era li' in chiaro, leggibile senza strumenti.
+**0-bis. ✅ CORRETTA — la password di Kitsu era scritta IN CHIARO nel registro
+di Windows.** Commit `de098ab02`, 2026-08-30. La voce resta qui perché il
+percorso macOS non era ancora stato compilato quando è stata scritta: vedi
+«cosa manca» in fondo.
 
-`kitsuclient.cpp:102` salva con `QSettings::setValue` e basta, e la riga 22
-porta gia' il commento «local convenience only»: e' una scorciatoia presa
-consapevolmente, non una svista — ma su una macchina condivisa e' un difetto. Su Windows finisce
-in `HKCU\Software\Ztoryc\...\Kitsu\Password`, quindi la legge chiunque abbia
-accesso all'utente, e finisce nei backup del profilo. Vale anche per Simona, che
-la password se la salva sul suo computer.
+**Com'era.** Trovata il 2026-08-30 leggendo il registro per un'altra ragione
+(controllare che l'indirizzo di Kitsu fosse `https://`), quindi **non era
+un'ispezione teorica**: la password era li' in chiaro, leggibile senza
+strumenti. `kitsuclient.cpp:102` salvava con `QSettings::setValue` e basta, e la
+riga 22 portava gia' il commento «local convenience only» — una scorciatoia
+presa consapevolmente, non una svista, ma su una macchina condivisa un difetto.
+Su Windows finiva in `HKCU\Software\Ztoryc\...\Kitsu\Password`: la leggeva
+chiunque avesse accesso all'utente, e se la portava dietro ogni backup del
+profilo. Valeva anche per Simona, che la password se la salva sul suo computer.
 
-Dove andrebbe messa invece: **Credential Manager** su Windows (`CredWriteW`),
-**portachiavi** su macOS. In alternativa minima, non offrire affatto «ricorda la
-password».
+**Com'è adesso.** `ztorysecret.h/.cpp` — tre funzioni sopra il portachiavi di
+sistema: **Credential Manager** su Windows (`CredWriteW/CredReadW/CredDeleteW`,
+advapi32), **Keychain Services** su macOS (`SecItem*`, non le `SecKeychain*`
+deprecate). Dove un portachiavi non c'è (Linux) `store()` **rifiuta** invece di
+ripiegare sul testo in chiaro, e il dialogo disabilita «Remember password»
+quando `isAvailable()` è falso, invece di promettere una cosa che poi non fa.
+
+**La migrazione fa pulizia da sola:** `loadSettings` sposta nel portachiavi il
+valore vecchio trovato in `QSettings` e poi lo **cancella**; `saveSettings`
+rimuove la chiave vecchia **sempre**, anche quando non si salva niente — cosi'
+la password in chiaro sparisce anche a chi il dialogo non lo riapre mai.
+
+> ✅ **Il percorso macOS ora è verificato — compila e collega** (2026-09-15, su
+> questo Mac). Il commit dichiarava verificato solo MSVC 2022; mancavano il ramo
+> Apple e il collegamento dell'applicazione intera. Misurato adesso:
+> `ztorysecret.cpp.o` compila con **zero warning** anche con clang, la build
+> completa esce `exit=0`, e nel binario finito i quattro simboli `_SecItemAdd`,
+> `_SecItemCopyMatching`, `_SecItemDelete`, `_SecItemUpdate` risolvono contro
+> `/System/Library/Frameworks/Security.framework` (letto con `nm -u` e
+> `otool -L`, non dedotto dal CMakeLists).
+>
+> ✅ **E il portachiavi risponde davvero** (2026-09-15). Provato con una **sonda
+> linkata all'oggetto vero** — `toonz/CMakeFiles/Ztoryc.dir/ztorysecret.cpp.o`,
+> quello che finisce nell'app, non una copia del sorgente. Otto controlli, otto
+> passati: `retrieve()` su una voce inesistente torna vuoto senza esplodere;
+> `store()` scrive; `retrieve()` rida' la stessa password **UTF-8 compresa**
+> (accenti ed emoji); un secondo `store()` passa per `SecItemUpdate` e
+> **sostituisce** invece di affiancare; `remove()` cancella; `remove()` due volte
+> non esplode. La sonda non ha lasciato niente nel portachiavi (verificato con
+> `security find-generic-password`).
+>
+> ⚠️ **COSA MANCA ANCORA: solo il giro dentro l'applicazione.** Resta da provare
+> il dialogo vero — salvare la password, riavviare Ztoryc, e controllare con
+> **Accesso Portachiavi** che sia li' e **non** in
+> `~/Library/Preferences/*Ztoryc*.plist`. E lo stesso su Windows, dove va
+> verificata anche la **migrazione**: chi ha gia' la password nel registro deve
+> vedersela sparire da `HKCU` al primo avvio. Quello che il portachiavi fa la
+> sua parte e' ormai misurato; quello che manca e' il cablaggio.
+
+✅ **DECISA — NON si corregge: cambiare email lascia la vecchia password nel
+portachiavi, e va bene cosi'** (Franco, 2026-09-15): *«lascia cosi', se voglio
+eliminare la vecchia lo faccio dall'app»* — cioe' a mano da Accesso Portachiavi
+su macOS, da Credential Manager su Windows. **Non riproporre la correzione.**
+Resta scritto qui sotto cos'e', perche' se un domani salta fuori come sintomo
+(«ho tolto la spunta e la password c'e' ancora») la risposta e' gia' pronta e
+non e' un difetto nuovo.
+
+**Cos'e'.** Non e' ipotesi, e' la lettura del
+percorso: `kitsuconnectdialog.cpp:337` chiama `setEmail()` col valore nuovo
+**prima** di `saveSettings()` alla riga 341, quindi `saveSettings` conosce solo
+l'email nuova. La voce salvata sotto quella vecchia non la cancella nessuno —
+`loadSettings` legge solo l'email corrente.
+
+Il caso che fa male non e' il cambio di email ma **togliere la spunta «remember
+password» cambiando anche l'email**: il ramo `else` fa
+`ZtorySecret::remove(kSecretService, m_email)` sull'email **nuova**, che una voce
+non ce l'ha, mentre quella vecchia — l'unica che una password ce l'ha davvero —
+sopravvive. L'utente ha appena detto «non ricordarla» e la password resta.
+
+Non e' il difetto di partenza — nel portachiavi la password e' **protetta, non in
+chiaro**, quindi la voce 0-bis resta risolta. E' una promessa non mantenuta, non
+una fuga di dati, ed e' per questo che la decisione di lasciarla sta in piedi:
+la pulizia a mano si fa in dieci secondi e la si fa una volta ogni cambio di
+account, che non e' una cosa che capita.
 
 **1. Scansioni di personaggio → livelli. ORA E' UN'APP CON UN REPO SUO:
 `matitanimata/puppetoonz` (privato).** Si chiama **Puppetoonz**, sta in
