@@ -217,7 +217,10 @@ ZtoryThumbnailCanvas::~ZtoryThumbnailCanvas() {
 
 void ZtoryThumbnailCanvas::setBrushStyle(TMyPaintBrushStyle *style) {
   if (!style) return;
-  m_style = style;  // borrowed: the palette owns it
+  // Take a reference: see m_styleRef.  Without it the next parameter edit in
+  // the Style Editor frees this object under us.
+  m_styleRef = style;
+  m_style    = style;
   // The cursor circle needs the radius without starting a stroke, and the
   // style's own modified value is the whole truth now.
   m_brushBaseRadiusLog =

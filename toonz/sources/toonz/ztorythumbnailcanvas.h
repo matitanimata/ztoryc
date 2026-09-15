@@ -20,6 +20,7 @@
 // opaque white, kneaded = low-opacity white that lightens gradually.
 
 #include "traster.h"
+#include "tcolorstyles.h"  // TColorStyleP — the brush style is ref-counted
 #include "tpixel.h"
 
 #include <QWidget>
@@ -322,7 +323,16 @@ private:
   double m_brushBaseRadiusLog = 2.0;  // cached RADIUS_LOGARITHMIC of the brush
 
   // Active tool
-  TMyPaintBrushStyle *m_style = nullptr;
+  // OWNING reference, not a borrowed pointer.  The style belongs to the brush
+  // palette, and the Style Editor REPLACES the style when it applies a change
+  // (setOldStyleToStyle + notifyColorStyleChanged): a raw pointer here became
+  // dangling the moment a parameter was edited, and the very next repaint read
+  // the radius out of freed memory — SIGSEGV in paintEvent, which is exactly
+  // what happened on 2026-09-16 (Crash-20260916-010115.log).  Holding a
+  // reference keeps the old object alive until setBrushStyle() is handed the
+  // new one by onBrushStyleEdited().
+  TColorStyleP m_styleRef;
+  TMyPaintBrushStyle *m_style = nullptr;  // m_styleRef, already downcast
   QString m_styleFile;                     // file currently loaded in m_style
   QString m_brushFile = "classic/pencil.myb";
   TPixel32 m_color    = TPixel32(0, 0, 0, 255);

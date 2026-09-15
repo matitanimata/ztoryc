@@ -4518,14 +4518,30 @@ StyleEditor::~StyleEditor() {
 }
 
 //-----------------------------------------------------------------------------
-/*
-void StyleEditor::setPaletteHandle(TPaletteHandle* paletteHandle)
-{
-        if(m_paletteHandle != paletteHandle)
-                m_paletteHandle = paletteHandle;
-        onStyleSwitched();
+void StyleEditor::setPaletteHandle(TPaletteHandle *paletteHandle) {
+  // This was declared in the header but its body was commented out, so the
+  // symbol did not exist and anyone calling it found out from the linker.  The
+  // commented version also only swapped the pointer: the handle's signals are
+  // wired in showEvent() and dropped in hideEvent(), so a swap while the editor
+  // is on screen left it showing one palette and listening to another.
+  //
+  // Move the connections when there are connections to move; while hidden
+  // there are none and showEvent() will wire whatever handle is current by then.
+  if (!paletteHandle || m_paletteHandle == paletteHandle) return;
+
+  const bool wired = isVisible();
+  if (wired) disconnect(m_paletteHandle, 0, this, 0);
+  m_paletteHandle = paletteHandle;
+  if (wired) {
+    connect(m_paletteHandle, SIGNAL(colorStyleSwitched()),
+            SLOT(onStyleSwitched()));
+    connect(m_paletteHandle, SIGNAL(colorStyleChanged(bool)),
+            SLOT(onStyleChanged(bool)));
+    connect(m_paletteHandle, SIGNAL(paletteSwitched()), this,
+            SLOT(onStyleSwitched()));
+  }
+  onStyleSwitched();
 }
-*/
 //-----------------------------------------------------------------------------
 
 QFrame *StyleEditor::createBottomWidget() {
@@ -5000,6 +5016,14 @@ void StyleEditor::onMyPaintClearSearch() {
 
 void StyleEditor::updateTabBar() {
   m_styleBar->clearTabBar();
+  if (m_enabled && m_enabledRasterAndSettings) {
+    // Brushes and their parameters, nothing else.
+    m_styleBar->addSimpleTab(tr("Raster"));
+    m_styleBar->addSimpleTab(tr("Settings"));
+    m_tabBarContainer->layout()->update();
+    setPage(0);
+    return;
+  }
   if (m_enabled && !m_enabledOnlyFirstTab && !m_enabledFirstAndLastTab) {
     m_styleBar->addSimpleTab(tr("Color"));
     m_styleBar->addSimpleTab(tr("Raster"));
@@ -5466,6 +5490,13 @@ void StyleEditor::onColorChanged(const ColorModel &color, bool isDragging) {
 
 //-----------------------------------------------------------------------------
 
+void StyleEditor::enableRasterAndSettingsOnly(bool on) {
+  if (m_enabledRasterAndSettings == on) return;
+  m_enabledRasterAndSettings = on;
+  m_enabled                  = m_enabled || on;
+  updateTabBar();
+}
+
 void StyleEditor::enable(bool enabled, bool enabledOnlyFirstTab,
                          bool enabledFirstAndLastTab) {
   if (m_enabled != enabled || m_enabledOnlyFirstTab != enabledOnlyFirstTab ||
@@ -5527,6 +5558,17 @@ void StyleEditor::onNewStyleClicked() { applyButtonClicked(); }
 //-----------------------------------------------------------------------------
 
 void StyleEditor::setPage(int index) {
+  if (m_enabledRasterAndSettings) {
+    // Two tabs, and they are not pages 0 and 1: tab 0 is the Raster page, tab 1
+    // is the Settings page, which lives second-to-last (the last is blank).
+    if (index <= 0) {
+      m_rasterPages[0]->loadItems();
+      m_styleChooser->setCurrentIndex(StyleEditorTab::Raster);
+    } else {
+      m_styleChooser->setCurrentIndex(m_styleChooser->count() - 2);
+    }
+    return;
+  }
   if (!m_enabledFirstAndLastTab) {
     if (index == StyleEditorTab::Texture)
       m_texturePages[0]->loadItems();

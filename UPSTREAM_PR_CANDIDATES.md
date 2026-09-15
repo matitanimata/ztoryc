@@ -138,6 +138,44 @@ not portable.
 
 ---
 
+#### ✨ New (2026-09-16)
+
+- ✅ **`StyleEditor::setPaletteHandle()` is declared but has no body** —
+  `toonzqt/styleeditor.cpp:4522`. The declaration is public in the header, so
+  the call compiles and only the LINKER says the symbol does not exist: anyone
+  trying to point a Style Editor at a palette of their own finds out the hard
+  way. The commented-out body also shows why it was disabled — it swapped the
+  pointer and called `onStyleSwitched()` **without moving the signal
+  connections**, which `showEvent()` binds to the handle and `hideEvent()`
+  drops; swapping while visible left the editor showing one palette and
+  listening to another.
+  **Fix:** implement it properly — disconnect from the old handle and reconnect
+  to the new one *when the editor is on screen*, do nothing when it is hidden
+  (showEvent will wire whatever handle is current by then), then
+  `onStyleSwitched()`.
+  **Why it matters upstream:** it is what lets a panel host its own Style Editor
+  on its own `TPaletteHandle` instead of hijacking the application's shared one
+  — no state to restore, no way to break drawing elsewhere. Ztoryc's Thumbnail
+  room brush palette is the first consumer; the need is general.
+  *(Written and built here; wants a stock Tahoma build to confirm nothing else
+  depends on the symbol being absent.)*
+
+- ✅ **`StyleEditor` cannot show "brush browser + brush parameters"** —
+  `toonzqt/styleeditor.cpp` (`updateTabBar()`, `setPage()`, header). The tab bar
+  has exactly three shapes: all five tabs (Color, Raster, Texture, Vector,
+  Settings), Color only, or Color+Settings. A panel whose palette holds nothing
+  but MyPaint brushes needs **Raster + Settings** and cannot get it — so it has
+  to show Color / Texture / Vector, where one click REPLACES a MyPaint style
+  with a style of another type. The brush then quietly stops being a brush.
+  **Fix:** a fourth mode (`enableRasterAndSettingsOnly()`), plus the matching
+  branch in `setPage()`. ⚠️ The tab→page mapping is **not** 1:1 and that is
+  where this is easy to get wrong: the Settings page is second-to-last in the
+  stack (the last one is blank), not second.
+  **Why it matters upstream:** any panel hosting a brush-only palette wants
+  this; it pairs with the `setPaletteHandle()` fix above.
+  *(Written and built here; wants a stock Tahoma build to confirm the other
+  three modes are untouched.)*
+
 ### 2.2 — Features that can go upstream as they are
 
 Nothing here needs the `.ztoryc` file. They operate on ordinary scenes, levels

@@ -10,6 +10,9 @@
 #include "toonz/toonzfolders.h"
 #include "tsystem.h"
 #include "tstream.h"
+#include <QDialog>
+#include <QEvent>
+#include "toonzqt/styleeditor.h"
 #include "toonzqt/dvscrollwidget.h"  // brush strip overflow
 #include "ztoryundo.h"     // ztoryFindBoardPanel — undo for the export
 #include "storyboardpanel.h"
@@ -446,8 +449,9 @@ QString ZtoryThumbnailPanel::pickBrushFile(const QString &title) {
 void ZtoryThumbnailPanel::showBrushContextMenu(int id, const QPoint &globalPos) {
   if (id < 0 || id >= brushCount()) return;
   QMenu menu(this);
-  QAction *replace = menu.addAction(tr("Replace Brush…"));
-  QAction *remove  = menu.addAction(tr("Remove Brush"));
+  QAction *replace   = menu.addAction(tr("Replace Brush…"));
+  QAction *duplicate = menu.addAction(tr("Duplicate Brush"));
+  QAction *remove    = menu.addAction(tr("Remove Brush"));
   // The first five slots are the room's standard ones: replaceable, not
   // removable.  They are the places a storyboard artist reaches for without
   // looking, and a strip that shifts under the fingers is worse than a brush
@@ -469,6 +473,16 @@ void ZtoryThumbnailPanel::showBrushContextMenu(int id, const QPoint &globalPos) 
     auto *st = new TMyPaintBrushStyle(TFilePath(f.toStdWString()));
     st->setName(QFileInfo(f).baseName().toStdWString());
     m_brushPalette->setStyle(ids[id], st);
+  } else if (chosen == duplicate) {
+    // A variant of this brush, tweaks included — the intent that "+"
+    // deliberately does not assume.
+    if (TMyPaintBrushStyle *src = styleAt(id)) {
+      auto *copy = new TMyPaintBrushStyle(*src);
+      copy->setName((QString::fromStdWString(src->getName()) + tr(" copy"))
+                        .toStdWString());
+      m_brushPalette->addStyle(copy);
+      m_currentPreset = brushCount() - 1;
+    }
   } else if (chosen == remove) {
     const std::vector<int> ids = brushStyleIds();
     // TPalette has no "erase style": turning it into a plain colour takes it
@@ -580,6 +594,59 @@ void ZtoryThumbnailPanel::saveBrushPalette() const {
   StudioPalette::instance()->save(fp, m_brushPalette.getPointer());
 }
 
+bool ZtoryThumbnailPanel::eventFilter(QObject *watched, QEvent *e) {
+  // Double-click on a brush button: open the editor on that brush.  A single
+  // click stays what it always was — pick it and draw.
+  if (e->type() == QEvent::MouseButtonDblClick) {
+    const QVariant idx = watched->property("ztoryBrushIndex");
+    if (idx.isValid()) {
+      const int i = idx.toInt();
+      if (i >= 0 && i < brushCount()) {
+        m_currentPreset = i;
+        m_canvas->setBrushStyle(styleAt(i));
+        syncSizeSliderToPreset();
+        syncColorToPreset();
+        openBrushEditor();
+      }
+      return true;
+    }
+  }
+  return TPanel::eventFilter(watched, e);
+}
+
+void ZtoryThumbnailPanel::openBrushEditor() {
+  if (!m_brushPalette || !m_brushHandle) return;
+  if (!m_brushEditor) {
+    m_brushEditor = new QDialog(this);
+    m_brushEditor->setWindowTitle(tr("Brushes"));
+    auto *lay = new QVBoxLayout(m_brushEditor);
+    lay->setContentsMargins(0, 0, 0, 0);
+    // Tahoma's own editor: its MyPaint page browses the whole brush library and
+    // its settings page edits the brush's parameters and input curves.  Built
+    // against the application's PaletteController — it needs one — but pointed
+    // at OUR handle, so it edits this room's palette and never the palette the
+    // rest of the application is working on.  Nothing to put back on the way
+    // out, and no way to break drawing in the other rooms.
+    auto *ed = new StyleEditor(TApp::instance()->getPaletteController(),
+                               m_brushEditor);
+    ed->setPaletteHandle(m_brushHandle);
+    // Only the pages that mean something for a palette of brushes.  The Color /
+    // Texture / Vector pages would let a click REPLACE a MyPaint style with
+    // another type — the brush would quietly stop being a brush and vanish from
+    // the strip, which finds them by type.
+    ed->enableRasterAndSettingsOnly(true);
+    lay->addWidget(ed);
+    m_brushEditor->resize(420, 660);
+  }
+  // Open on the brush the strip has selected, so it edits the one just used.
+  const std::vector<int> ids = brushStyleIds();
+  if (m_currentPreset >= 0 && m_currentPreset < (int)ids.size())
+    m_brushHandle->setStyleIndex(ids[m_currentPreset], true);
+  m_brushEditor->show();
+  m_brushEditor->raise();
+  m_brushEditor->activateWindow();
+}
+
 void ZtoryThumbnailPanel::onBrushStyleEdited() {
   // The editor wrote into the style the canvas is holding: refresh the cached
   // radius and cursor, follow the size and colour in the toolbar, redraw the
@@ -645,6 +712,10 @@ void ZtoryThumbnailPanel::rebuildBrushStrip() {
     const bool erases =
         st->getBaseValue(MYPAINT_BRUSH_SETTING_ERASER) > 0.5f;
     btn->setToolTip(erases ? tr("%1 (eraser)").arg(name) : name);
+    // Double-click reopens the editor on THIS brush: tweak its parameters or
+    // swap it for another one from the library.
+    btn->installEventFilter(this);
+    btn->setProperty("ztoryBrushIndex", i);
     btn->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(btn, &QWidget::customContextMenuRequested, this,
             [this, i, btn](const QPoint &pos) {
@@ -659,19 +730,32 @@ void ZtoryThumbnailPanel::rebuildBrushStrip() {
   // of being pushed off by them.
   auto *addBrush = new QToolButton(m_brushStrip);
   addBrush->setText("+");
-  addBrush->setToolTip(tr("Add a brush from the library…"));
+  addBrush->setToolTip(tr("Add a brush and set it up…"));
   connect(addBrush, &QToolButton::clicked, this, [this] {
-    const QString f = pickBrushFile(tr("Add MyPaint brush"));
-    if (f.isEmpty()) return;
-    auto *st = new TMyPaintBrushStyle(TFilePath(f.toStdWString()));
-    st->setName(QFileInfo(f).baseName().toStdWString());
+    // Add the slot first, then open the editor on it: the editor's brush page
+    // REPLACES the selected style, so there has to be a new slot for it to
+    // replace — otherwise browsing would overwrite the brush in use.  The new
+    // slot starts as a copy of the current brush, so it is something usable
+    // even if the dialog is closed without choosing.
+    // Start from the same tip at its FACTORY values, not from a copy of the
+    // current brush's tweaks: "add a brush" should not quietly inherit
+    // yesterday's settings.  Making a variant that DOES keep them is a separate,
+    // named action — "Duplicate Brush" in the right-click menu.
+    // (Nothing is at risk either way: modifications live in the style, the .myb
+    // on disk is never written, and picking from the library page rebuilds the
+    // style straight from the file.)
+    TMyPaintBrushStyle *cur = styleAt(m_currentPreset);
+    auto *st = new TMyPaintBrushStyle(cur ? cur->getPath() : TFilePath());
+    st->setName(tr("New brush").toStdWString());
     m_brushPalette->addStyle(st);
     m_currentPreset = brushCount() - 1;
     saveBrushPalette();
     rebuildBrushStrip();
     m_canvas->setBrushStyle(styleAt(m_currentPreset));
+    openBrushEditor();
   });
   m_brushStripLay->addWidget(addBrush);
+
 
   m_brushStripLay->addStretch(1);
 }

@@ -97,6 +97,10 @@ private:
   TPaletteHandle *m_brushHandle = nullptr;
 
   void onBrushStyleEdited();  // the Style Editor changed the current brush
+  void openBrushEditor();     // browse + customise, in our own Style Editor
+  // Double-click on a brush button reopens the editor on it.
+  bool eventFilter(QObject *watched, QEvent *e) override;
+  QDialog *m_brushEditor = nullptr;  // created on first use, then reused
 
   // Seed the five brushes the room ships with, baking their opacity and eraser
   // role into the style so nothing has to be applied on top later.
