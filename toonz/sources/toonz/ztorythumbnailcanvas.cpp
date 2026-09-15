@@ -215,12 +215,14 @@ ZtoryThumbnailCanvas::~ZtoryThumbnailCanvas() {
 // Tool / palette
 //=============================================================================
 
-void ZtoryThumbnailCanvas::setPreset(const Preset &p) {
-  m_brushFile = p.brushFile;
-  m_opacity   = p.opacity;
-  m_eraser    = p.eraser;
-  m_sizeMod   = p.sizeMod;  // the size belongs to the brush, not to the panel
-  ensureStyle();
+void ZtoryThumbnailCanvas::setBrushStyle(TMyPaintBrushStyle *style) {
+  if (!style) return;
+  m_style = style;  // borrowed: the palette owns it
+  // The cursor circle needs the radius without starting a stroke, and the
+  // style's own modified value is the whole truth now.
+  m_brushBaseRadiusLog =
+      m_style->getBaseValue(MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC);
+  updateToolCursor();
 }
 
 void ZtoryThumbnailCanvas::setColor(const TPixel32 &color) { m_color = color; }
@@ -240,20 +242,6 @@ QString ZtoryThumbnailCanvas::resolveBrushFile(const QString &relPath) {
   return QString();
 }
 
-void ZtoryThumbnailCanvas::ensureStyle() {
-  if (m_style && m_styleFile == m_brushFile) return;
-  QString full = resolveBrushFile(m_brushFile);
-  if (full.isEmpty()) return;  // keep previous style if the file is missing
-  delete m_style;
-  m_style     = new TMyPaintBrushStyle(TFilePath(full.toStdWString()));
-  m_styleFile = m_brushFile;
-  // Cache the brush's base radius (log px) so the cursor circle can show its
-  // real size without starting a stroke.
-  mypaint::Brush b;
-  b.fromBrush(m_style->getBrush());
-  m_brushBaseRadiusLog =
-      b.getBaseValue(MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC);
-}
 
 //=============================================================================
 // Grid
@@ -915,8 +903,10 @@ void ZtoryThumbnailCanvas::leaveEvent(QEvent *) {
 }
 
 double ZtoryThumbnailCanvas::brushRadiusWorld() const {
-  // MyPaint radius is logarithmic (natural log of px); add the size modifier.
-  return std::exp(m_brushBaseRadiusLog + m_sizeMod);
+  // MyPaint radius is logarithmic (natural log of px).  No modifier to add: the
+  // style's value IS the size.
+  if (!m_style) return std::exp(m_brushBaseRadiusLog);
+  return std::exp(m_style->getBaseValue(MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC));
 }
 
 //=============================================================================
@@ -925,7 +915,6 @@ double ZtoryThumbnailCanvas::brushRadiusWorld() const {
 
 void ZtoryThumbnailCanvas::beginStroke(const QPointF &widgetPos, double pressure) {
   if (m_selectMode || m_xformMode) return;  // these modes suspend drawing
-  ensureStyle();
   if (!m_style || !m_ras) return;
   const QPointF w = widgetToWorld(widgetPos);
   if (w.x() < 0 || w.y() < 0 || w.x() > gridW() || w.y() > gridH()) return;
@@ -944,26 +933,32 @@ void ZtoryThumbnailCanvas::beginStroke(const QPointF &widgetPos, double pressure
   double h = 0.0, s = 0.0, v = 0.0;
   RGB2HSV(c.r, c.g, c.b, &h, &s, &v);
 
+  // getBrush() already returns the style WITH its modifications applied, so
+  // radius, opacity and eraser come straight from it.  They used to be applied
+  // here as an offset and a multiplier on top, which is exactly what made a
+  // brush drift every time its values were written out and read back.
   mypaint::Brush brush;
   brush.fromBrush(m_style->getBrush());
   brush.setBaseValue(MYPAINT_BRUSH_SETTING_COLOR_H, (float)(h / 360.0));
   brush.setBaseValue(MYPAINT_BRUSH_SETTING_COLOR_S, (float)s);
   brush.setBaseValue(MYPAINT_BRUSH_SETTING_COLOR_V, (float)v);
-  brush.setBaseValue(MYPAINT_BRUSH_SETTING_ERASER, m_eraser ? 1.0f : 0.0f);
-  brush.setBaseValue(MYPAINT_BRUSH_SETTING_OPAQUE,
-                     brush.getBaseValue(MYPAINT_BRUSH_SETTING_OPAQUE) *
-                         (float)m_opacity);
-  brush.setBaseValue(MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC,
-                     brush.getBaseValue(MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC) +
-                         (float)m_sizeMod);
 
   delete m_brush;
   m_brush    = new MyPaintToonzBrush(m_ras, *this, brush);
-  m_stroking = true;
+  m_stroking   = true;
+  m_cursorPrev = widgetPos;
   m_brush->beginStroke();
   m_timer.restart();
   m_brush->strokeTo(widgetToRaster(widgetPos), pressure, 0.0, 0.0, 0.0);
   update();
+}
+
+// The painted brush circle, with room for its halo and the little cross.
+QRect ZtoryThumbnailCanvas::cursorRect(const QPointF &widgetPos) const {
+  const double r = qBound(1.5, brushRadiusWorld() * m_zoom, 2000.0);
+  return QRectF(widgetPos.x() - r, widgetPos.y() - r, 2 * r, 2 * r)
+      .toAlignedRect()
+      .adjusted(-4, -4, 4, 4);
 }
 
 // Raster is bottom-up, the widget is top-down: mirror Y about the grid height,
@@ -981,13 +976,19 @@ void ZtoryThumbnailCanvas::strokeTo(const QPointF &widgetPos, double pressure) {
   double dtime = m_timer.nsecsElapsed() * 1e-9;
   m_timer.restart();
   m_brush->strokeTo(widgetToRaster(widgetPos), pressure, 0.0, 0.0, dtime);
-  // Repaint the dab, not the window.  If the brush wrote nothing this move
-  // there is nothing to show; if it wrote without announcing it (it always
-  // announces — askWrite is the documented contract) the full update() at
-  // endStroke() puts it right when the pen lifts.
-  if (m_strokeDirty.isNull()) return;
-  update(rasterRectToWidget(m_strokeDirty));
-  m_strokeDirty = QRect();
+
+  // The brush cursor is PAINTED (the system cursor is blank in drawing mode),
+  // so a partial repaint has to cover where the circle was and where it is now
+  // — otherwise it sits frozen at the spot where the stroke began while the
+  // pen moves away from it.  Most visible with an eraser, where the circle is
+  // the only thing telling you what you are about to remove.
+  QRect region = cursorRect(m_cursorPrev).united(cursorRect(widgetPos));
+  m_cursorPrev = widgetPos;
+  if (!m_strokeDirty.isNull()) {
+    region = region.united(rasterRectToWidget(m_strokeDirty));
+    m_strokeDirty = QRect();
+  }
+  update(region);
 }
 
 void ZtoryThumbnailCanvas::endStroke() {
@@ -1616,6 +1617,17 @@ void ZtoryThumbnailCanvas::endStrokeRecording() {
 
 // The brush calls this before writing \a rect: save the untouched pixels of any
 // tile it overlaps, once.  This is the whole stroke undo cost.
+// The engine calls askRead() for EVERY dab, but askWrite() only when one of the
+// blend modes is on (mypainthelpers.hpp) — and an eraser dab turns none of them
+// on.  So erasing announced nothing: no tiles were recorded, endStrokeRecording()
+// bailed out on an empty set and the stroke never reached the undo stack (Cmd+Z
+// after erasing undid whatever came before), and no repaint region was built so
+// the painted brush circle sat frozen where the stroke started.
+// Recording on the read side covers both: a dab always reads what it is about
+// to change.  Tiles that end up unchanged cost one copy-on-write each and
+// restore identical pixels, which is harmless.
+bool ZtoryThumbnailCanvas::askRead(const TRect &rect) { return askWrite(rect); }
+
 bool ZtoryThumbnailCanvas::askWrite(const TRect &rect) {
   if (!m_ras) return true;
   const int rx0 = std::max(0, rect.x0), ry0 = std::max(0, rect.y0);

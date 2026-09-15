@@ -6,6 +6,10 @@
 #include "toonz/mypaintbrushstyle.h"  // getBrushesDirs()
 
 #include "ztorymodel.h"    // addShotFromRasters
+#include "toonz/studiopalette.h"
+#include "toonz/toonzfolders.h"
+#include "tsystem.h"
+#include "tstream.h"
 #include "toonzqt/dvscrollwidget.h"  // brush strip overflow
 #include "ztoryundo.h"     // ztoryFindBoardPanel — undo for the export
 #include "storyboardpanel.h"
@@ -41,6 +45,9 @@
 #include <QDir>
 
 #include <algorithm>
+
+// The room ships with five brushes and those five slots stay put.
+static const int kFixedBrushSlots = 5;
 
 namespace {
 
@@ -157,19 +164,29 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   m_brushGroup->setExclusive(true);
   connect(m_brushGroup, QOverload<int>::of(&QButtonGroup::idClicked), this,
           [this](int id) {
-            if (id < 0 || id >= m_presets.size()) return;
+            if (id < 0 || id >= brushCount()) return;
             m_currentPreset = id;
-            m_canvas->setPreset(m_presets[id]);
+            m_canvas->setBrushStyle(styleAt(id));
             syncSizeSliderToPreset();
+            syncColorToPreset();
           });
 
   // Default brushes (icons come from each brush's MyPaint preview).  These are
   // only the seed: from here on the strip is whatever the user has made of it.
-  m_presets.append({"classic/pencil.myb", 1.0, false, 0.0, true});
-  m_presets.append({"classic/charcoal.myb", 1.0, false, 0.0, true});
-  m_presets.append({"deevad/airbrush.myb", 1.0, false, 0.0, true});
-  m_presets.append({"deevad/kneaded_eraser.myb", 0.3, true, 0.0, true});
-  m_presets.append({"deevad/large_hard_eraser.myb", 1.0, true, 0.0, true});
+  loadBrushPalette();
+  // Our own handle on the brush palette.  Nothing drives it yet: StyleEditor::
+  // setPaletteHandle() is declared in the header but its body is COMMENTED OUT
+  // in styleeditor.cpp, so the editor cannot be pointed anywhere but the
+  // application's current palette.  Restoring it properly (the commented body
+  // swaps the pointer without re-connecting the signals the constructor bound
+  // to the old handle) is shared-code work — and an upstream candidate.  The
+  // handle and the refresh below are the half that is ours, ready for it.
+  m_brushHandle = new TPaletteHandle();
+  m_brushHandle->setPalette(m_brushPalette.getPointer());
+  connect(m_brushHandle, &TPaletteHandle::colorStyleChanged, this,
+          [this](bool) { onBrushStyleEdited(); });
+  connect(m_brushHandle, &TPaletteHandle::colorStyleSwitched, this,
+          [this]() { onBrushStyleEdited(); });
 
   // The strip: only the brush buttons, wrapped so it scrolls on overflow.
   m_brushStrip    = new QWidget(bar);
@@ -228,13 +245,16 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   m_sizeValue->setMinimumWidth(38);
   m_sizeValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
   connect(size, &QSlider::valueChanged, this, [this](int v) {
-    const double mod = -2.0 + 6.0 * (v / 100.0);
-    m_canvas->setSizeModifier(mod);
-    // The size belongs to the brush, so remember it on the active preset:
-    // going to the eraser and back no longer hands the pencil the eraser's tip.
-    if (m_currentPreset >= 0 && m_currentPreset < m_presets.size())
-      m_presets[m_currentPreset].sizeMod = mod;
+    TMyPaintBrushStyle *st = styleAt(m_currentPreset);
+    if (!st) return;
+    // Write the radius INTO the brush: the size belongs to it, so it travels
+    // with the palette and survives a save/reload without anything applied on
+    // top. The slider spans a sensible sketching range in log-radius units.
+    st->setBaseValue(MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC,
+                     (float)(-0.5 + 5.0 * (v / 100.0)));
+    m_canvas->setBrushStyle(st);  // refresh the cached radius + cursor
     updateSizeValueLabel();
+    saveBrushPalette();
   });
   m_sizeSlider = size;
   m_brushBarLay->addWidget(size);
@@ -399,8 +419,9 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
 
   // Defaults: black pencil, black ink.
   if (auto *b = m_brushGroup->button(0)) b->setChecked(true);
-  m_canvas->setPreset(m_presets[0]);
+  m_canvas->setBrushStyle(styleAt(0));
   syncSizeSliderToPreset();  // slider + "NN px" coherent from the first frame
+  syncColorToPreset();
   selectColor(Qt::black);
 
   setWidget(container);
@@ -423,16 +444,17 @@ QString ZtoryThumbnailPanel::pickBrushFile(const QString &title) {
 }
 
 void ZtoryThumbnailPanel::showBrushContextMenu(int id, const QPoint &globalPos) {
-  if (id < 0 || id >= m_presets.size()) return;
+  if (id < 0 || id >= brushCount()) return;
   QMenu menu(this);
   QAction *replace = menu.addAction(tr("Replace Brush…"));
   QAction *remove  = menu.addAction(tr("Remove Brush"));
-  // The five that ship with the room are fixed slots: replaceable, not
-  // removable.  Never let the strip go empty either — with no brush there is
-  // nothing to draw with, and the canvas would keep whatever style it last
-  // built with no way to say so.
-  remove->setEnabled(!m_presets[id].builtIn && m_presets.size() > 1);
-  if (m_presets[id].builtIn)
+  // The first five slots are the room's standard ones: replaceable, not
+  // removable.  They are the places a storyboard artist reaches for without
+  // looking, and a strip that shifts under the fingers is worse than a brush
+  // never used.  Never let it go empty either.
+  const bool fixedSlot = (id < kFixedBrushSlots);
+  remove->setEnabled(!fixedSlot && brushCount() > 1);
+  if (fixedSlot)
     remove->setToolTip(tr("One of the room's standard brushes: it can be "
                           "replaced, but not removed."));
   QAction *chosen = menu.exec(globalPos);
@@ -441,16 +463,134 @@ void ZtoryThumbnailPanel::showBrushContextMenu(int id, const QPoint &globalPos) 
   if (chosen == replace) {
     const QString f = pickBrushFile(tr("Replace with MyPaint brush"));
     if (f.isEmpty()) return;
-    // Keep size, opacity and eraser role: the user is swapping the tip, not
-    // rebuilding the tool.
-    m_presets[id].brushFile = f;
+    // Swap the tip, keep the slot: a fresh style from the chosen .myb, put
+    // back at the same palette id so the strip order does not move.
+    const std::vector<int> ids = brushStyleIds();
+    auto *st = new TMyPaintBrushStyle(TFilePath(f.toStdWString()));
+    st->setName(QFileInfo(f).baseName().toStdWString());
+    m_brushPalette->setStyle(ids[id], st);
   } else if (chosen == remove) {
-    m_presets.removeAt(id);
-    if (m_currentPreset >= m_presets.size()) m_currentPreset = m_presets.size() - 1;
+    const std::vector<int> ids = brushStyleIds();
+    // TPalette has no "erase style": turning it into a plain colour takes it
+    // out of the brush list (which is found by type) without disturbing the
+    // ids of the others.
+    m_brushPalette->setStyle(ids[id], new TSolidColorStyle(TPixel32::Black));
+    if (m_currentPreset >= brushCount()) m_currentPreset = brushCount() - 1;
     if (m_currentPreset < 0) m_currentPreset = 0;
   }
+  saveBrushPalette();
   rebuildBrushStrip();
-  m_canvas->setPreset(m_presets[m_currentPreset]);
+  m_canvas->setBrushStyle(styleAt(m_currentPreset));
+}
+
+//=============================================================================
+// Brush palette
+//=============================================================================
+
+
+TFilePath ZtoryThumbnailPanel::brushPalettePath() {
+  // The user's palette folder — the same place Tahoma keeps <type>_default.tpl.
+  // Global on purpose: a brush palette is a personal tool and follows the artist
+  // between projects.
+  return ToonzFolder::getMyPalettesDir() + TFilePath("ztoryc_thumbs_brushes.tpl");
+}
+
+// The brushes are the MyPaint styles of the palette, found by type rather than
+// by index.  A fresh TPalette already carries two plain colour styles
+// (color_0 / color_1), and a .tpl loaded from disk may hold colours next to the
+// brushes — a TLV palette normally does — so counting from a fixed offset would
+// be wrong in both directions.
+std::vector<int> ZtoryThumbnailPanel::brushStyleIds() const {
+  std::vector<int> ids;
+  if (!m_brushPalette) return ids;
+  for (int i = 0; i < m_brushPalette->getStyleCount(); i++)
+    if (dynamic_cast<TMyPaintBrushStyle *>(m_brushPalette->getStyle(i)))
+      ids.push_back(i);
+  return ids;
+}
+
+int ZtoryThumbnailPanel::brushCount() const { return (int)brushStyleIds().size(); }
+
+TMyPaintBrushStyle *ZtoryThumbnailPanel::styleAt(int i) const {
+  const std::vector<int> ids = brushStyleIds();
+  if (i < 0 || i >= (int)ids.size()) return nullptr;
+  return dynamic_cast<TMyPaintBrushStyle *>(m_brushPalette->getStyle(ids[i]));
+}
+
+namespace {
+// Build a style and bake the values that used to be applied on top of it.
+TMyPaintBrushStyle *makeBrushStyle(const QString &relPath, double opacity,
+                                   bool eraser, const QString &name) {
+  const QString full = ZtoryThumbnailCanvas::resolveBrushFile(relPath);
+  if (full.isEmpty()) return nullptr;
+  auto *st = new TMyPaintBrushStyle(TFilePath(full.toStdWString()));
+  // Opacity used to multiply the brush's own value, so bake the product; the
+  // eraser used to be "paint white", and is a real MyPaint setting now.
+  if (opacity < 1.0)
+    st->setBaseValue(MYPAINT_BRUSH_SETTING_OPAQUE,
+                     st->getBaseValue(MYPAINT_BRUSH_SETTING_OPAQUE) *
+                         (float)opacity);
+  if (eraser) st->setBaseValue(MYPAINT_BRUSH_SETTING_ERASER, 1.0f);
+  st->setName(name.toStdWString());
+  return st;
+}
+}  // namespace
+
+void ZtoryThumbnailPanel::seedBrushPalette() {
+  m_brushPalette = new TPalette();
+  struct Seed { const char *path; double opacity; bool eraser; QString name; };
+  const Seed seeds[] = {
+      {"classic/pencil.myb", 1.0, false, tr("Pencil")},
+      {"classic/charcoal.myb", 1.0, false, tr("Brush")},
+      {"deevad/airbrush.myb", 1.0, false, tr("Airbrush")},
+      {"deevad/kneaded_eraser.myb", 0.3, true, tr("Kneaded eraser")},
+      {"deevad/large_hard_eraser.myb", 1.0, true, tr("Eraser")},
+  };
+  for (const Seed &s : seeds)
+    if (TMyPaintBrushStyle *st = makeBrushStyle(s.path, s.opacity, s.eraser, s.name))
+      m_brushPalette->addStyle(st);
+}
+
+void ZtoryThumbnailPanel::loadBrushPalette() {
+  const TFilePath fp = brushPalettePath();
+  if (TSystem::doesExistFileOrLevel(fp)) {
+    // Same way Tahoma reads its own <type>_default.tpl (palettecontroller.cpp):
+    // StudioPalette::load() is private, and its id machinery is not wanted here.
+    TIStream is(fp);
+    std::string tagName;
+    if (is && is.matchTag(tagName) && tagName == "palette") {
+      TPalette *p = new TPalette();
+      p->loadData(is);
+      m_brushPalette = p;
+      // A palette with no usable brush would leave the room with nothing to
+      // draw with: fall back to the shipped set rather than to an empty strip.
+      if (brushCount() > 0) return;
+    }
+  }
+  seedBrushPalette();
+}
+
+void ZtoryThumbnailPanel::saveBrushPalette() const {
+  if (!m_brushPalette) return;
+  const TFilePath fp = brushPalettePath();
+  try {
+    TSystem::mkDir(fp.getParentDir());
+  } catch (...) {
+  }
+  StudioPalette::instance()->save(fp, m_brushPalette.getPointer());
+}
+
+void ZtoryThumbnailPanel::onBrushStyleEdited() {
+  // The editor wrote into the style the canvas is holding: refresh the cached
+  // radius and cursor, follow the size and colour in the toolbar, redraw the
+  // strip (the icon may now be a different brush) and put it on disk.
+  if (TMyPaintBrushStyle *st = styleAt(m_currentPreset)) {
+    m_canvas->setBrushStyle(st);
+    syncSizeSliderToPreset();
+    syncColorToPreset();
+  }
+  rebuildBrushStrip();
+  saveBrushPalette();
 }
 
 void ZtoryThumbnailPanel::updateSizeValueLabel() {
@@ -461,10 +601,11 @@ void ZtoryThumbnailPanel::updateSizeValueLabel() {
 }
 
 void ZtoryThumbnailPanel::syncSizeSliderToPreset() {
-  if (!m_sizeSlider || m_currentPreset < 0 || m_currentPreset >= m_presets.size())
-    return;
-  const double mod = m_presets[m_currentPreset].sizeMod;
-  const int v      = qBound(0, qRound((mod + 2.0) / 6.0 * 100.0), 100);
+  if (!m_sizeSlider || m_currentPreset < 0) return;
+  TMyPaintBrushStyle *st = styleAt(m_currentPreset);
+  if (!st) return;
+  const double logR = st->getBaseValue(MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC);
+  const int v       = qBound(0, qRound((logR + 0.5) / 5.0 * 100.0), 100);
   // Block signals: this is the slider following the brush, not the user moving
   // it, and writing back would overwrite the very value we are restoring.
   m_sizeSlider->blockSignals(true);
@@ -487,18 +628,23 @@ void ZtoryThumbnailPanel::rebuildBrushStrip() {
     delete it;
   }
 
-  for (int i = 0; i < m_presets.size(); i++) {
-    const auto &p = m_presets[i];
-    auto *btn     = new QToolButton(m_brushStrip);
+  for (int i = 0; i < brushCount(); i++) {
+    TMyPaintBrushStyle *st = styleAt(i);
+    if (!st) continue;
+    auto *btn = new QToolButton(m_brushStrip);
     btn->setCheckable(true);
     btn->setIconSize(QSize(28, 28));
-    const QString name = QFileInfo(p.brushFile).baseName();
-    QIcon ic           = brushIcon(p.brushFile);
+    const QString path = QString::fromStdWString(st->getPath().getWideString());
+    QString name       = QString::fromStdWString(st->getName());
+    if (name.isEmpty()) name = QFileInfo(path).baseName();
+    QIcon ic = brushIcon(path);
     if (ic.isNull())
       btn->setText(name.left(3));  // no preview available
     else
       btn->setIcon(ic);
-    btn->setToolTip(p.eraser ? tr("%1 (eraser)").arg(name) : name);
+    const bool erases =
+        st->getBaseValue(MYPAINT_BRUSH_SETTING_ERASER) > 0.5f;
+    btn->setToolTip(erases ? tr("%1 (eraser)").arg(name) : name);
     btn->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(btn, &QWidget::customContextMenuRequested, this,
             [this, i, btn](const QPoint &pos) {
@@ -517,18 +663,41 @@ void ZtoryThumbnailPanel::rebuildBrushStrip() {
   connect(addBrush, &QToolButton::clicked, this, [this] {
     const QString f = pickBrushFile(tr("Add MyPaint brush"));
     if (f.isEmpty()) return;
-    m_presets.append({f, 1.0, false, 0.0, false});
-    m_currentPreset = m_presets.size() - 1;
+    auto *st = new TMyPaintBrushStyle(TFilePath(f.toStdWString()));
+    st->setName(QFileInfo(f).baseName().toStdWString());
+    m_brushPalette->addStyle(st);
+    m_currentPreset = brushCount() - 1;
+    saveBrushPalette();
     rebuildBrushStrip();
-    m_canvas->setPreset(m_presets[m_currentPreset]);
+    m_canvas->setBrushStyle(styleAt(m_currentPreset));
   });
   m_brushStripLay->addWidget(addBrush);
+
   m_brushStripLay->addStretch(1);
 }
 
 void ZtoryThumbnailPanel::selectColor(const QColor &c) {
-  m_canvas->setColor(TPixel32(c.red(), c.green(), c.blue(), 255));
+  const TPixel32 ink(c.red(), c.green(), c.blue(), 255);
+  m_canvas->setColor(ink);
+  // The colour belongs to the brush, like its size: picking blue for the
+  // pencil should not turn the charcoal blue too.  TColorStyle carries a
+  // colour and saveData() already writes it, so this rides along in the .tpl
+  // with no extra storage.
+  if (TMyPaintBrushStyle *st = styleAt(m_currentPreset)) {
+    st->setMainColor(ink);
+    saveBrushPalette();
+  }
   if (m_swatch) m_swatch->setIcon(activeSwatchIcon(c));
+}
+
+// Bring the toolbar in line with the brush that was just picked.
+void ZtoryThumbnailPanel::syncColorToPreset() {
+  TMyPaintBrushStyle *st = styleAt(m_currentPreset);
+  if (!st) return;
+  const TPixel32 ink = st->getMainColor();
+  m_canvas->setColor(ink);
+  if (m_swatch)
+    m_swatch->setIcon(activeSwatchIcon(QColor(ink.r, ink.g, ink.b)));
 }
 
 void ZtoryThumbnailPanel::exportSelectionToBoard() {

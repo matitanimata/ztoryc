@@ -512,8 +512,19 @@ lo Style Editor?
 - `MyPaintBrushStyleChooserPage` (browser dei pennelli, chip 64x64, ricerca) e
   `SettingsPage` (modifica i PARAMETRI del pennello e le curve sugli input) sono
   gia' nello Style Editor.
-- `StyleEditor::setPaletteHandle()` e' **pubblico**: lo si puo' puntare su una
-  palette nostra.
+- ⚠️ **`StyleEditor::setPaletteHandle()` NON si puo' usare — mia affermazione
+  sbagliata del 2026-09-15, corretta la notte stessa.** E' dichiarata nell'header
+  ma la sua **implementazione e' COMMENTATA** in `styleeditor.cpp:4522`: dal solo
+  header sembra a posto, e lo scopre il linker. E il corpo commentato dice anche
+  perche' e' spenta: scambia il puntatore e chiama `onStyleSwitched()` **senza
+  ricollegare i segnali** che il costruttore aveva agganciato alla maniglia
+  precedente — cioe' e' incompleta, non solo inutilizzata. Riattivarla cosi'
+  com'e' darebbe un editor che mostra una palette e ne ascolta un'altra.
+  **Scriverla per davvero** (scambio + riconnessione) e' lavoro in codice
+  condiviso, quindi **candidato PR a monte**. Fatto quello, lo Style Editor si
+  costruisce a sé (`StyleEditor(PaletteController*, parent)`, come gia' fa
+  `ztoryanimatic.cpp:4946`) e si punta sulla NOSTRA maniglia: cosi' non si tocca
+  quello condiviso e non c'e' niente da rimettere a posto uscendo dalla room.
 - **Le personalizzazioni si salvano davvero.** `TColorStyle::save` scrive il nome;
   `TMyPaintBrushStyle::saveData` scrive percorso, colore, ogni parametro
   modificato **e le curve complete** delle mappature. `loadData` e' simmetrico.

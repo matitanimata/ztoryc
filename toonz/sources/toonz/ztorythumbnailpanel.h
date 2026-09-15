@@ -11,15 +11,20 @@
 
 #include <QWidget>
 #include <QList>
+#include <vector>
 #include <QString>
 
-#include "ztorythumbnailcanvas.h"  // ZtoryThumbnailCanvas::Preset
+#include "ztorythumbnailcanvas.h"
+#include "tpalette.h"          // TPaletteP — the brush palette
+#include "toonz/tpalettehandle.h"
+#include "tfilepath.h"
 
 class QToolButton;
 class QButtonGroup;
 class QHBoxLayout;
 class QSpinBox;
 class QSlider;
+class QDialog;
 class QLabel;
 
 class ZtoryThumbnailPanel final : public TPanel {
@@ -71,6 +76,7 @@ private:
   // the active brush when it changes.
   void updateSizeValueLabel();
   void syncSizeSliderToPreset();
+  void syncColorToPreset();
 
   QSlider *m_sizeSlider          = nullptr;
   QLabel *m_sizeValue            = nullptr;
@@ -79,5 +85,26 @@ private:
   int m_currentPreset            = 0;
   QToolButton *m_swatch          = nullptr;  // shows / picks current colour
   QSpinBox *m_shrinkSpin         = nullptr;  // export resolution divisor (1 = full)
-  QList<ZtoryThumbnailCanvas::Preset> m_presets;  // indexed by brush button id
+  // THE brush palette.  Not a list of presets any more: a real TPalette of
+  // TMyPaintBrushStyle, which is what lets it be saved as a .tpl — names,
+  // customised parameters and input curves included — reloaded next time, and
+  // one day handed to the Style Editor for editing.
+  TPaletteP m_brushPalette;
+  // Our own handle on that palette.  The Style Editor is built against a
+  // PaletteHandle, so giving it OURS means we never touch the shared one the
+  // rest of the application edits — no hijacking, nothing to put back when the
+  // user leaves the room, and no way to break drawing in the other rooms.
+  TPaletteHandle *m_brushHandle = nullptr;
+
+  void onBrushStyleEdited();  // the Style Editor changed the current brush
+
+  // Seed the five brushes the room ships with, baking their opacity and eraser
+  // role into the style so nothing has to be applied on top later.
+  void seedBrushPalette();
+  void loadBrushPalette();
+  void saveBrushPalette() const;
+  static TFilePath brushPalettePath();
+  std::vector<int> brushStyleIds() const;  // palette ids of the MyPaint styles
+  TMyPaintBrushStyle *styleAt(int i) const;
+  int brushCount() const;
 };

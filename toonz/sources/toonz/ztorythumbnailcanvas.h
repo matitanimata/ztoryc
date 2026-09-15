@@ -74,9 +74,13 @@ public:
   explicit ZtoryThumbnailCanvas(QWidget *parent = nullptr);
   ~ZtoryThumbnailCanvas() override;
 
-  void setPreset(const Preset &p);          // switch active brush (size included)
-  double sizeModifier() const { return m_sizeMod; }
-  double opacity() const { return m_opacity; }
+  // The active brush IS a palette style.  Size, opacity and "this one erases"
+  // are all MyPaint base settings, so the style carries the whole definition —
+  // nothing is applied on top of it here any more, and a .tpl round-trips a
+  // brush exactly as the artist tuned it.  The palette owns the style; this is
+  // a borrowed pointer.
+  void setBrushStyle(TMyPaintBrushStyle *style);
+  TMyPaintBrushStyle *brushStyle() const { return m_style; }
   // Live brush radius in canvas pixels — the toolbar shows it as a diameter, so
   // the number next to the slider means something to whoever is drawing.
   double brushRadiusWorld() const;
@@ -282,6 +286,7 @@ private:
   void trimHistory();
 
   // Stroke tile recording (copy-on-write, driven by askWrite()).
+  bool askRead(const TRect &rect) override;
   bool askWrite(const TRect &rect) override;
   void beginStrokeRecording();
   void endStrokeRecording();
@@ -362,6 +367,9 @@ private:
 
   // Raster rect -> widget rect, for the partial repaint above.
   QRect rasterRectToWidget(const QRect &r) const;
+  // Where the painted brush circle sits, so a partial repaint can carry it.
+  QRect cursorRect(const QPointF &widgetPos) const;
+  QPointF m_cursorPrev;  // circle position at the previous stroke sample
 
   // Persistence
   QTimer *m_saveTimer = nullptr;  // debounced autosave after edits
