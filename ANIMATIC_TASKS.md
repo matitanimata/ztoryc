@@ -710,7 +710,15 @@ la password in chiaro sparisce anche a chi il dialogo non lo riapre mai.
 > non esplode. La sonda non ha lasciato niente nel portachiavi (verificato con
 > `security find-generic-password`).
 >
-> ⚠️ **COSA MANCA ANCORA: solo il giro dentro l'applicazione.** Resta da provare
+> ✅ **Il giro dentro l'applicazione su macOS: FATTO il 2026-09-15, e ha trovato
+> un difetto.** Ztoryc chiedeva la password del portachiavi **a ogni avvio**,
+> perche' `loadSettings()` leggeva il segreto e il primo a costruire il singleton
+> e' il pannello di produzione, che lo fa solo per collegare dei segnali. Ora la
+> lettura e' pigra (`ensurePasswordLoaded()`, chiamata da `login()`). Nel farlo e'
+> stato chiuso anche il buco che la pigrizia apriva: `saveSettings` avrebbe
+> potuto scrivere una password vuota sopra quella salvata.
+>
+> ⚠️ **COSA MANCA ANCORA: il giro su WINDOWS.** Resta da provare
 > il dialogo vero — salvare la password, riavviare Ztoryc, e controllare con
 > **Accesso Portachiavi** che sia li' e **non** in
 > `~/Library/Preferences/*Ztoryc*.plist`. E lo stesso su Windows, dove va

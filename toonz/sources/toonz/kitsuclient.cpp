@@ -101,15 +101,31 @@ void KitsuClient::loadSettings() {
   const QString legacy = s.value(kGroupPassword).toString();
   if (!legacy.isEmpty()) {
     m_passwordSaved = ZtorySecret::store(kSecretService, m_email, legacy);
+    // Eager on purpose, unlike the read below: this is what gets the readable
+    // password out of QSettings, and postponing it would leave it there for
+    // anyone who never opens Kitsu again.
+    m_passwordFetched = true;
     if (m_passwordSaved) m_password = legacy;
     s.remove(kGroupPassword);
     s.setValue(kGroupHasPwd, m_passwordSaved);
     return;
   }
 
+  // NOT read here.  Touching the keychain at startup makes macOS ask for the
+  // keychain password on every launch — the panels build KitsuClient::instance()
+  // just to connect signals, so it happened even to someone who never opens
+  // Kitsu.  The read waits until the password is about to be used: see
+  // ensurePasswordLoaded(), called from login().
+}
+
+void KitsuClient::ensurePasswordLoaded() {
+  if (m_passwordFetched) return;
+  m_passwordFetched = true;
+  if (!m_passwordSaved || m_email.isEmpty()) return;
   m_password = ZtorySecret::retrieve(kSecretService, m_email);
-  // Gone from the keychain (another machine, or the user cleared it): stop
-  // claiming it is remembered, or the dialog shows "saved" over nothing.
+  // Gone from the keychain (another machine, the user cleared it, or they
+  // refused the prompt): stop claiming it is remembered, or the dialog shows
+  // "saved" over nothing.
   if (m_password.isEmpty()) m_passwordSaved = false;
 }
 
@@ -126,7 +142,17 @@ void KitsuClient::saveSettings(bool savePassword) {
   // store() failing is not an error to report: it means there is nowhere safe
   // to keep the password, so we simply do not remember it.
   if (savePassword && !m_email.isEmpty()) {
-    m_passwordSaved = ZtorySecret::store(kSecretService, m_email, m_password);
+    // The dialog leaves m_password empty when the user typed nothing and is
+    // relying on the saved one.  Since the read is lazy, storing here without
+    // fetching first would overwrite the good password with an empty string —
+    // and the login right after would then fetch back that empty string.
+    ensurePasswordLoaded();
+    // Never store an empty secret: "remembered" would be a lie, and it would
+    // destroy a perfectly good saved password.
+    if (!m_password.isEmpty())
+      m_passwordSaved = ZtorySecret::store(kSecretService, m_email, m_password);
+    else
+      m_passwordSaved = false;
   } else {
     ZtorySecret::remove(kSecretService, m_email);
     m_passwordSaved = false;
@@ -175,6 +201,7 @@ void KitsuClient::login() {
   QNetworkRequest req((QUrl(m_baseUrl + "/api/auth/login")));
   req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
+  ensurePasswordLoaded();  // the one place the saved password is actually used
   QJsonObject body;
   body["email"]    = m_email;
   body["password"] = m_password;

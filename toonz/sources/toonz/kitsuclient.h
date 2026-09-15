@@ -210,7 +210,16 @@ public:
   void    setEmail(const QString &email) { m_email = email; }
   // Kept in memory for the session; only written to QSettings when the caller
   // passes savePassword=true to saveSettings() (convenient on a local box).
-  void    setPassword(const QString &pwd) { m_password = pwd; }
+  // The user typed one: nothing to fetch from the keychain any more.
+  void    setPassword(const QString &pwd) { m_password = pwd; m_passwordFetched = true; }
+
+  // Pull the saved password out of the system keychain, once, and only when it
+  // is about to be used.  Reading it at startup (which loadSettings() used to
+  // do) made macOS put up its "Ztoryc wants to use your confidential
+  // information" prompt on EVERY launch, even for someone who never opens
+  // Kitsu — a password prompt with no visible reason, which is exactly how you
+  // teach people to click through security dialogs.
+  void    ensurePasswordLoaded();
   bool    hasSavedPassword() const { return m_passwordSaved; }
 
   void loadSettings();
@@ -578,6 +587,7 @@ private:
   QString m_localUrl;  // optional LAN-direct address for uploads (see uploadBase)
   QString m_email;
   QString m_password;
+  bool    m_passwordFetched = false;  // see ensurePasswordLoaded()
   bool    m_passwordSaved = false;
 
   QString m_accessToken;

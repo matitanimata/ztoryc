@@ -78,6 +78,24 @@ sonda linkata **all'oggetto vero** dell'app supera otto controlli sul
 portachiavi di sistema: giro completo, UTF-8, `SecItemUpdate` che sostituisce
 invece di affiancare, cancellazione doppia innocua.
 
+**Ztoryc chiedeva la password del portachiavi A OGNI AVVIO su macOS** — trovato
+da Franco provando il dialogo vero, cioe' l'unica parte che ne' il compilatore ne'
+la sonda potevano vedere. `KitsuClient::instance()` esegue `loadSettings()`, che
+leggeva subito il segreto; ma chi tocca per primo il singleton e' il pannello di
+produzione, e lo fa **solo per collegare dei segnali**. Risultato: il portachiavi
+si apriva anche a chi di Kitsu non fa niente. Un dialogo di sicurezza senza un
+motivo visibile e' peggio che inutile — insegna a cliccare «consenti» senza
+leggere. Ora la lettura aspetta il punto in cui la password serve davvero (uno
+solo: il corpo del login), via `ensurePasswordLoaded()`. La **migrazione** resta
+anticipata di proposito: e' quella che toglie il testo in chiaro da `QSettings`.
+
+> ⚠️ **La lettura pigra apre un buco, se non lo si vede.** Nel dialogo, lasciando
+> il campo vuoto per usare la password salvata, `saveSettings` avrebbe scritto
+> **una stringa vuota** sopra quella buona — e il login subito dopo avrebbe
+> riletto proprio quella. Prima non succedeva perche' la password era gia' stata
+> caricata all'avvio. Ora `saveSettings` si assicura di averla prima di salvare,
+> e **non salva mai un segreto vuoto**.
+
 ### Notes
 
 **Metodo, due volte la stessa lezione.** Due diagnosi sono partite sbagliate
