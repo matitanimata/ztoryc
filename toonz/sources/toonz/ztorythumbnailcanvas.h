@@ -226,6 +226,15 @@ private:
     TRaster32P before;
   };
   struct Snapshot {
+    // Three shapes, cheapest first:
+    //   geometryOnly  — only the row count changed.  Adding a row does not
+    //                   destroy a pixel (it appends a blank band at the world
+    //                   bottom), so undoing it needs no image at all: the old
+    //                   code cloned the WHOLE canvas for it, which is what made
+    //                   the app slow down the moment rows were added.
+    //   patches       — a stroke: the 256x256 tiles it touched.
+    //   ras           — everything else (paste, transform, reflow): full copy.
+    bool geometryOnly = false;
     TRaster32P ras;   // null when this is a stroke (patches) snapshot
     std::vector<Patch> patches;
     int cols, rows;
@@ -247,6 +256,10 @@ private:
   void undo();
   void redo();
   void restoreSnapshot(const Snapshot &s);
+  // Apply a geometryOnly snapshot: resize the surface to its row count, keeping
+  // the drawings at the same world Y (grow and shrink both happen at the world
+  // bottom, exactly as addRow() does it).
+  void restoreGeometry(const Snapshot &s);
   Snapshot makeMetaSnapshot() const;      // grid metadata, no pixels
   void applyPatches(const std::vector<Patch> &patches);
   std::vector<Patch> capturePatchesAt(const std::vector<Patch> &like) const;

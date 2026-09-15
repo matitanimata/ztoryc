@@ -252,7 +252,16 @@ void ZtoryThumbnailCanvas::ensureStyle() {
 //=============================================================================
 
 void ZtoryThumbnailCanvas::addRow() {
-  pushUndo();
+  // NOT pushUndo(): that clones the whole canvas (51 MB at 4x26, and growing),
+  // and sixteen of those filled the undo history with hundreds of megabytes —
+  // the machine started swapping and never recovered.  Adding a row destroys
+  // nothing, so the row count is the entire undo.
+  {
+    Snapshot s     = makeMetaSnapshot();
+    s.geometryOnly = true;
+    m_undo.push_back(std::move(s));
+    trimHistory();
+  }
   const int oldH  = m_ras->getLy();
   m_rows += 1;
   const int newH   = (int)gridH();
@@ -1482,7 +1491,13 @@ ZtoryThumbnailCanvas::Snapshot ZtoryThumbnailCanvas::makeMetaSnapshot() const {
 }
 
 void ZtoryThumbnailCanvas::trimHistory() {
-  static const size_t kMaxUndo = 16;
+  // Sixteen steps is stingy for someone sketching, and it was the binding limit:
+  // a normal stroke snapshot is a handful of 256x256 tiles (~1,5 MB), so the
+  // byte budget below would allow well over a hundred of them.  Raising the
+  // count is only safe BECAUSE that budget exists — before it, sixteen full
+  // clones were already 823 MB.  Expensive steps still get trimmed by bytes;
+  // cheap ones now go as deep as the artist is likely to want.
+  static const size_t kMaxUndo = 100;
   // Budget the history by BYTES as well, because counting entries says nothing
   // about what they cost.  A stroke snapshot is a handful of 256x256 tiles, but
   // a resize / paste / transform clones the WHOLE canvas — 51 MB at 4x26, and
@@ -1638,6 +1653,35 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
   update();
 }
 
+void ZtoryThumbnailCanvas::restoreGeometry(const Snapshot &s) {
+  if (!m_ras) return;
+  m_cols = s.cols;
+  if (s.boxAspect > 0.0) {
+    m_boxAspect = s.boxAspect;
+    m_boxH      = m_boxW / s.boxAspect;
+  }
+  const int oldH = m_ras->getLy();
+  m_rows         = s.rows;
+  const int newH = (int)gridH();
+  if (newH != oldH && newH > 0) {
+    TRaster32P nr((int)gridW(), newH);
+    nr->fill(TPixel32::White);
+    // The raster is bottom-up, so the world bottom is low Y: growing pushes the
+    // content up by the difference, shrinking drops that band off the bottom.
+    if (newH > oldH)
+      nr->copy(m_ras, TPoint(0, newH - oldH));
+    else
+      nr->copy(m_ras->extract(0, oldH - newH, m_ras->getLx() - 1, oldH - 1),
+               TPoint(0, 0));
+    m_ras = nr;
+  }
+  m_merges = s.merges;
+  clearSelection();
+  schedulePersistSave();
+  updateScrollBars();
+  update();
+}
+
 // A patch snapshot only swaps the touched tiles: build the opposite entry from
 // the current pixels of those same tiles, then paste the stored ones back.
 void ZtoryThumbnailCanvas::undo() {
@@ -1646,6 +1690,15 @@ void ZtoryThumbnailCanvas::undo() {
   Snapshot s = m_undo.back();
   m_undo.pop_back();
 
+  // Geometry-only: the opposite entry is geometry-only too, so undoing and
+  // redoing a row costs nothing on either side.
+  if (s.geometryOnly) {
+    Snapshot cur     = makeMetaSnapshot();
+    cur.geometryOnly = true;
+    m_redo.push_back(std::move(cur));
+    restoreGeometry(s);
+    return;
+  }
   if (s.ras) {
     Snapshot cur = makeMetaSnapshot();
     cur.ras      = m_ras->clone();
@@ -1667,6 +1720,15 @@ void ZtoryThumbnailCanvas::redo() {
   Snapshot s = m_redo.back();
   m_redo.pop_back();
 
+  // Geometry-only: the opposite entry is geometry-only too, so undoing and
+  // redoing a row costs nothing on either side.
+  if (s.geometryOnly) {
+    Snapshot cur     = makeMetaSnapshot();
+    cur.geometryOnly = true;
+    m_undo.push_back(std::move(cur));
+    restoreGeometry(s);
+    return;
+  }
   if (s.ras) {
     Snapshot cur = makeMetaSnapshot();
     cur.ras      = m_ras->clone();

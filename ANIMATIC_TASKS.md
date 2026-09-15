@@ -659,10 +659,20 @@ dove il TLS e' di sistema e non serve spedire niente.
 >    quando qualcuno la chiede — l'unico che la chiede e' `Qt5Network` per aprire
 >    un socket cifrato.
 >
-> ⚠️ **RESTA DA VERIFICARE: il confezionamento.** La copia nel `.bat` e il
-> controllo che fa fallire la build se le DLL mancano non sono stati provati —
-> vogliono una build Windows vera. Quello che e' provato e' che **le DLL spedite
-> sono quelle giuste e che con loro l'HTTPS funziona**.
+> ✅ **IL CONFEZIONAMENTO E' VERIFICATO** (2026-09-15, run CI `34999755586`,
+> commit `996f4ea64`). Come chiede AGENTS.md § 4-bis, controllato **sull'artefatto
+> pubblicato** e non solo sul log — la 0.13.2 e' fallita proprio per la verifica
+> giusta fatta sull'artefatto sbagliato:
+> 1. il passo `>>> Copy OpenSSL DLLs (TLS support for Qt)` gira nel log;
+> 2. nel `Ztoryc-0.13.2-win-portable.zip` le due DLL ci sono e stanno in
+>    `Ztoryc/`, **la stessa cartella di `Ztoryc.exe`** — dove Qt le cerca;
+> 3. sha256 **identici** a quelli dichiarati in `thirdparty/openssl/README.md`:
+>    `libcrypto` `67a17e76…`, `libssl` `1dfdf13b…`. Sono quelle giuste, non due
+>    file col nome giusto.
+>
+> ⚠️ **Non e' provato il ramo NEGATIVO**: che la build fallisca davvero se le DLL
+> mancano. Vorrebbe romperla apposta e spendere un'ora di CI. Quello che sappiamo
+> e' che quando ci sono, arrivano dove devono.
 
 **0-bis. ✅ CORRETTA — la password di Kitsu era scritta IN CHIARO nel registro
 di Windows.** Commit `de098ab02`, 2026-08-30. La voce resta qui perché il

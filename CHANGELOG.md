@@ -108,6 +108,19 @@ differenza: il salvataggio pesante peggiora gradualmente, il ridimensionamento
 scatta al primo e resta. Ora c'e' anche un tetto di **256 MB**, con almeno un
 passo sempre conservato qualunque costi.
 
+**L'undo di `addRow` non salva piu' i pixel, e i passi passano da 16 a 100.**
+Aggiungere una riga non distrugge niente — appende una banda bianca al fondo del
+mondo — quindi per annullarla basta il numero di righe. Il clone del canvas era
+puro spreco, ed era proprio quello che riempiva la cronologia. Introdotto un
+terzo tipo di istantanea (`geometryOnly`) accanto a quella a tessere e a quella
+piena: undo e redo di una riga costano zero da entrambe le parti.
+Con il tetto in byte a fare da guardia, il conteggio si e' potuto alzare a **100
+passi** — prima sarebbe stato il modo piu' rapido di mandare in swap la macchina.
+Ora la cronologia si regola su **quanto costa** ogni passo: ~100 tratti normali
+(1,5 MB l'uno), ~34 tratti che attraversano la pagina, ~5 istantanee piene
+(incolla, trasforma). Un tratto di matita e un incolla da 51 MB non sono la
+stessa cosa, e il codice di prima li contava uguali.
+
 ### Notes
 
 **Metodo, due volte la stessa lezione.** Due diagnosi sono partite sbagliate
