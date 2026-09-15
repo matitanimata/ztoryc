@@ -39,6 +39,13 @@
 
 //=============================================================================
 
+// The page is TRANSPARENT, not opaque white.  White is painted UNDER the
+// surface by paintEvent, so drawing still happens on what looks like paper —
+// but an eraser can now take pixels away instead of covering them with white
+// paint, which is what "erase" is supposed to mean, and what lets an exported
+// panel carry its transparency.
+static const TPixel32 kPaper(0, 0, 0, 0);
+
 namespace {
 
 // The canvas write, with no dependency on the widget: it owns its pixels, so it
@@ -153,7 +160,7 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   }
 
   m_ras = TRaster32P((int)gridW(), (int)gridH());
-  m_ras->fill(TPixel32::White);
+  m_ras->fill(kPaper);
 
   // React live to camera changes made from Camera Settings while this room is
   // open. xsheetChanged covers most camera edits; sceneChanged covers a scene
@@ -268,7 +275,7 @@ void ZtoryThumbnailCanvas::addRow() {
   const int newH   = (int)gridH();
   const int addedH = newH - oldH;
   TRaster32P nr((int)gridW(), newH);
-  nr->fill(TPixel32::White);
+  nr->fill(kPaper);
   nr->copy(m_ras, TPoint(0, addedH));  // keep existing content at the same world Y
   m_ras = nr;
   updateScrollBars();
@@ -289,7 +296,7 @@ void ZtoryThumbnailCanvas::applyImportedCells(
     const int newH   = (int)gridH();
     const int addedH = newH - oldH;
     TRaster32P nr((int)gridW(), newH);
-    nr->fill(TPixel32::White);
+    nr->fill(kPaper);
     nr->copy(m_ras, TPoint(0, addedH));
     m_ras = nr;
   }
@@ -410,7 +417,7 @@ TRaster32P ZtoryThumbnailCanvas::reanchorRaster(const TRaster32P &oldRas,
   const int bw   = (int)m_boxW;
 
   TRaster32P nr(gw, newH);
-  nr->fill(TPixel32::White);
+  nr->fill(kPaper);
   if (!oldRas || oldW <= 0 || oldH <= 0 || oldBoxH <= 0.0) return nr;
 
   // Work per REGION rather than per box: a merged pan is one region, every
@@ -680,11 +687,20 @@ TRaster32P ZtoryThumbnailCanvas::panelRaster(int index,
   // source for resample, which writes into the independent output raster.
   TRaster32P sub = m_ras->extract(x0, ry0, x1 - 1, ry1 - 1);
   TRaster32P out(outRes.lx, outRes.ly);
-  out->fill(TPixel32::White);
+  out->fill(kPaper);
   TRop::resample(out, sub,
                  TScale((double)outRes.lx / sub->getLx(),
                         (double)outRes.ly / sub->getLy()));
-  return out;
+  // Flatten onto white.  The surface is transparent now, and resample WRITES
+  // its output rather than compositing into it, so a white pre-fill would just
+  // be overwritten and every exported panel would silently come out
+  // transparent.  Today's behaviour is an opaque white sheet, so put the sheet
+  // under the drawing explicitly — and this is the one line the future
+  // "export with transparency" option will skip.
+  TRaster32P sheet(outRes.lx, outRes.ly);
+  sheet->fill(TPixel32::White);
+  TRop::over(sheet, out);
+  return sheet;
 }
 
 //=============================================================================
@@ -784,7 +800,7 @@ void ZtoryThumbnailCanvas::persistLoad() {
     m_cols = kDefaultCols;
     m_rows = kDefaultRows;
     m_ras  = TRaster32P((int)gridW(), (int)gridH());
-    m_ras->fill(TPixel32::White);
+    m_ras->fill(kPaper);
     clearSelection();
     updateScrollBars();
     update();
@@ -919,8 +935,11 @@ void ZtoryThumbnailCanvas::beginStroke(const QPointF &widgetPos, double pressure
   beginStrokeRecording();
   setFocus();   // so Cmd-Z reaches us right after drawing
 
-  // Erasers paint white onto the opaque page; brushes use the chosen ink.
-  const TPixel32 ink = m_eraser ? TPixel32(255, 255, 255, 255) : m_color;
+  // A real eraser now: it takes pixels away instead of covering them with white.
+  // On screen the result is identical, because paintEvent paints the white page
+  // underneath — but the pixels are actually gone, so a soft eraser fades
+  // properly and an exported panel can keep its transparency.
+  const TPixel32 ink = m_color;
   TPixelD c = PixelConverter<TPixelD>::from(ink);
   double h = 0.0, s = 0.0, v = 0.0;
   RGB2HSV(c.r, c.g, c.b, &h, &s, &v);
@@ -930,8 +949,7 @@ void ZtoryThumbnailCanvas::beginStroke(const QPointF &widgetPos, double pressure
   brush.setBaseValue(MYPAINT_BRUSH_SETTING_COLOR_H, (float)(h / 360.0));
   brush.setBaseValue(MYPAINT_BRUSH_SETTING_COLOR_S, (float)s);
   brush.setBaseValue(MYPAINT_BRUSH_SETTING_COLOR_V, (float)v);
-  // Always paint (never MyPaint-erase): erasers are modelled as white paint.
-  brush.setBaseValue(MYPAINT_BRUSH_SETTING_ERASER, 0.0);
+  brush.setBaseValue(MYPAINT_BRUSH_SETTING_ERASER, m_eraser ? 1.0f : 0.0f);
   brush.setBaseValue(MYPAINT_BRUSH_SETTING_OPAQUE,
                      brush.getBaseValue(MYPAINT_BRUSH_SETTING_OPAQUE) *
                          (float)m_opacity);
@@ -1666,7 +1684,7 @@ void ZtoryThumbnailCanvas::restoreGeometry(const Snapshot &s) {
   const int newH = (int)gridH();
   if (newH != oldH && newH > 0) {
     TRaster32P nr((int)gridW(), newH);
-    nr->fill(TPixel32::White);
+    nr->fill(kPaper);
     // The raster is bottom-up, so the world bottom is low Y: growing pushes the
     // content up by the difference, shrinking drops that band off the bottom.
     if (newH > oldH)
@@ -1779,6 +1797,11 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   // i.e. on every mouse move while drawing.  Take the zero-copy view and let
   // the painter apply the vertical flip: Qt then only touches the pixels inside
   // the clip region.
+  // The page.  The surface itself is transparent (see kPaper), so the white a
+  // storyboard artist draws on is painted HERE, under the drawing — that is
+  // what lets the eraser take pixels away and still look like paper.
+  p.fillRect(target, Qt::white);
+
   QImage img = rasterToQImage(m_ras, /*premultiplied=*/true, /*mirrored=*/false);
   p.save();
   p.translate(target.left(), target.top() + target.height());
