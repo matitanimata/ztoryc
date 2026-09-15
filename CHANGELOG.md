@@ -96,6 +96,18 @@ anticipata di proposito: e' quella che toglie il testo in chiaro da `QSettings`.
 > caricata all'avvio. Ora `saveSettings` si assicura di averla prima di salvare,
 > e **non salva mai un segreto vuoto**.
 
+**La cronologia dell'undo della Thumbs room contava i pezzi, non i byte** —
+trovato grazie a un dettaglio della storyboardista: ha cominciato a rallentare
+**appena** ha aggiunto delle righe, non gradualmente. `addRow()` chiama
+`pushUndo()`, che fa `m_ras->clone()`: tutto il canvas. E `trimHistory()` teneva
+16 voci contandole. Sedici pennellate sono qualche tessera 256x256; sedici
+ridimensionamenti sono **823 MB a 4x26** e **1,9 GB a 4x60** — cioe' swap su un
+portatile, e un rallentamento che non passa piu' perche' la cronologia continua a
+tenersi la memoria. Il «appena» invece di «man mano» e' proprio questa
+differenza: il salvataggio pesante peggiora gradualmente, il ridimensionamento
+scatta al primo e resta. Ora c'e' anche un tetto di **256 MB**, con almeno un
+passo sempre conservato qualunque costi.
+
 ### Notes
 
 **Metodo, due volte la stessa lezione.** Due diagnosi sono partite sbagliate

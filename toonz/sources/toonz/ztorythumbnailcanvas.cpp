@@ -1483,7 +1483,38 @@ ZtoryThumbnailCanvas::Snapshot ZtoryThumbnailCanvas::makeMetaSnapshot() const {
 
 void ZtoryThumbnailCanvas::trimHistory() {
   static const size_t kMaxUndo = 16;
+  // Budget the history by BYTES as well, because counting entries says nothing
+  // about what they cost.  A stroke snapshot is a handful of 256x256 tiles, but
+  // a resize / paste / transform clones the WHOLE canvas — 51 MB at 4x26, and
+  // the canvas only grows.  Sixteen of those are 823 MB (1.9 GB at 4x60), which
+  // on a laptop means swapping, and the slowdown never lifts because the
+  // history goes on holding the memory.  That is the storyboard artist's "it
+  // started slowing down as soon as I added rows": addRow() calls pushUndo(),
+  // and pushUndo() clones everything.
+  static const size_t kMaxUndoBytes = 256u * 1024u * 1024u;
+
+  auto bytesOf = [](const Snapshot &s) -> size_t {
+    size_t n = 0;
+    if (s.ras)
+      n += (size_t)s.ras->getLx() * (size_t)s.ras->getLy() * 4u;
+    for (const Patch &p : s.patches)
+      if (p.before)
+        n += (size_t)p.before->getLx() * (size_t)p.before->getLy() * 4u;
+    if (!s.floatImg.isNull()) n += (size_t)s.floatImg.sizeInBytes();
+    return n;
+  };
+
   if (m_undo.size() > kMaxUndo) m_undo.erase(m_undo.begin());
+
+  size_t bytes = 0;
+  for (const Snapshot &s : m_undo) bytes += bytesOf(s);
+  // Always keep one step, whatever it costs: an undo you cannot take is worse
+  // than an expensive one, and on a very large canvas a single full snapshot
+  // can exceed the budget on its own.
+  while (m_undo.size() > 1 && bytes > kMaxUndoBytes) {
+    bytes -= bytesOf(m_undo.front());
+    m_undo.erase(m_undo.begin());
+  }
   m_redo.clear();  // a fresh edit invalidates the redo branch
 }
 
