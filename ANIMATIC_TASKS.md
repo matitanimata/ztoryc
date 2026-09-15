@@ -503,6 +503,57 @@ nella sub-scene corretta.
 > sono difetti aperti, e riproporle fa perdere tempo a Franco. Vale anche il
 > blocco `🛑 SOSPESI` piu' in alto.
 
+🔵 **TAVOLOZZA PENNELLI — la meta' del lavoro ESISTE GIA' in Tahoma** (verificato
+sul codice il 2026-09-15, non dedotto). Nato dalla domanda di Franco: si possono
+salvare i pennelli aggiunti nella Thumbs room, e sceglierli/personalizzarli con
+lo Style Editor?
+
+**Cosa c'e' gia', e va usato invece di riscriverlo:**
+- `MyPaintBrushStyleChooserPage` (browser dei pennelli, chip 64x64, ricerca) e
+  `SettingsPage` (modifica i PARAMETRI del pennello e le curve sugli input) sono
+  gia' nello Style Editor.
+- `StyleEditor::setPaletteHandle()` e' **pubblico**: lo si puo' puntare su una
+  palette nostra.
+- **Le personalizzazioni si salvano davvero.** `TColorStyle::save` scrive il nome;
+  `TMyPaintBrushStyle::saveData` scrive percorso, colore, ogni parametro
+  modificato **e le curve complete** delle mappature. `loadData` e' simmetrico.
+  (Franco dubitava di questo: il dubbio e' infondato.)
+- `m_styles` e' un **vettore indicizzato**, non una mappa per percorso → si
+  possono avere piu' varianti dello stesso `.myb` con nomi e parametri diversi.
+- **Palette predefinite per tipo di livello, gia' funzionanti**: il comando
+  `MI_SaveAsDefaultPalette` («Save As Default Palette», menu contestuale del
+  pannello Palette) scrive in `<cartella palette utente>/<tipo>_default.tpl`
+  (`raster` / `smart_raster` / `vector`). Il raster la rilegge via
+  `FullColorPalette::getPalette()`, TLV e vettoriale via `tool.cpp` quando il
+  livello nasce senza palette. **Quindi «la mia tavolozza sui livelli nuovi»
+  funziona oggi, senza codice e senza opzione nelle preferenze.**
+
+⚠️ **Precedenza da sapere, o sembra rotto:** per il raster la palette **di
+progetto** (`+palettes/fullcolorPalette.tpl`) vince sulla predefinita
+dell'utente. Voluto (uno studio condivide una tavolozza), ma confonde.
+
+✅ **I pennelli MyPaint funzionano ANCHE sullo smart raster** — correzione di
+Franco, verificata: `ToonzRasterBrushTool` fa lo stesso
+`dynamic_cast<TMyPaintBrushStyle*>(getCurrentLevelStyle())` del raster a colori
+pieni. **E il TLV e' il livello preferenziale di Ztoryc, quindi e' il caso
+principale, non un di piu'.** Una palette TLV contiene anche i colori ink/paint:
+la cosa pulita e' usare le **pagine** della palette (una Colori, una Pennelli),
+che il `.tpl` salva gia'.
+
+**COSA RESTA DA FARE, quindi:**
+1. il canvas della Thumbs room prende un `TMyPaintBrushStyle*` da una palette
+   invece che da un percorso di file (piccolo: usa gia' quel tipo);
+2. lo Style Editor punta su quella palette quando si e' nella room — ⚠️ **l'unico
+   pezzo delicato**: e' condiviso con tutta l'applicazione e va rimesso a posto
+   uscendo, o si rompe il disegno nelle altre room;
+3. la striscia dei pennelli resta come **accesso rapido** mentre si disegna, e lo
+   Style Editor diventa il posto dove si cura e si personalizza — la divisione
+   che hanno tutti i programmi di disegno.
+
+> **Il piano con `QSettings` e' SUPERATO.** Se i pennelli vivono in una palette,
+> la persistenza e' il `.tpl` e non va scritta: nomi, parametri, curve, piu'
+> tavolozze, condivisione. Non riproporre l'elenco in QSettings.
+
 🔴 **IN PIEDI — il raster unico della Thumbs room non regge l'obiettivo di
 produzione.** Non e' un difetto: e' un limite di struttura, con i numeri in mano.
 

@@ -212,6 +212,7 @@ void ZtoryThumbnailCanvas::setPreset(const Preset &p) {
   m_brushFile = p.brushFile;
   m_opacity   = p.opacity;
   m_eraser    = p.eraser;
+  m_sizeMod   = p.sizeMod;  // the size belongs to the brush, not to the panel
   ensureStyle();
 }
 

@@ -53,16 +53,33 @@ public:
   // A palette brush: a .myb file (library-relative, e.g. "classic/pencil.myb"),
   // an opacity multiplier and whether it erases (paints white). Colour is held
   // separately on the canvas so the same brush can draw in any colour.
+  // One entry of the brush palette.  Size and opacity live HERE, per brush,
+  // not as one global setting: switching from a fine pencil to a broad eraser
+  // and back used to hand the pencil the eraser's size, which is the opposite
+  // of how every drawing app behaves and a daily annoyance when sketching.
   struct Preset {
     QString brushFile;
-    double opacity;
-    bool eraser;
+    double opacity = 1.0;
+    bool eraser    = false;
+    // Log-size modifier, same units as setSizeModifier(): 0 = the brush's own
+    // default, the UI slider spans [-2 .. +4].
+    double sizeMod = 0.0;
+    // One of the five that ship with the room.  Replaceable — swap the tip for
+    // whatever you prefer — but not removable: they are the fixed slots a
+    // storyboard artist reaches for without looking, and an empty strip or a
+    // shifting one is worse than a brush you never use.
+    bool builtIn = false;
   };
 
   explicit ZtoryThumbnailCanvas(QWidget *parent = nullptr);
   ~ZtoryThumbnailCanvas() override;
 
-  void setPreset(const Preset &p);          // switch active brush
+  void setPreset(const Preset &p);          // switch active brush (size included)
+  double sizeModifier() const { return m_sizeMod; }
+  double opacity() const { return m_opacity; }
+  // Live brush radius in canvas pixels — the toolbar shows it as a diameter, so
+  // the number next to the slider means something to whoever is drawing.
+  double brushRadiusWorld() const;
   void setColor(const TPixel32 &color);     // ink colour (ignored by erasers)
   void setSizeModifier(double logMod);      // brush size (log2 units)
   void addRow();                            // grow the grid by one row
@@ -183,7 +200,6 @@ private:
   TPointD widgetToRaster(const QPointF &widgetPos) const;
   void zoomAt(const QPointF &widgetAnchor, double factor);
   void updateScrollBars();          // sync the side bars to pan/zoom/grid
-  double brushRadiusWorld() const;  // current brush radius in world px (cursor)
   void updateToolCursor();          // brush(blank)/select/transform per mode
 
   // Persistence: per-scene folder + the contiguous-raster PNG inside it.

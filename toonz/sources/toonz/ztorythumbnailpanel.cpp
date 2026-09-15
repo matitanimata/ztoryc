@@ -6,6 +6,7 @@
 #include "toonz/mypaintbrushstyle.h"  // getBrushesDirs()
 
 #include "ztorymodel.h"    // addShotFromRasters
+#include "toonzqt/dvscrollwidget.h"  // brush strip overflow
 #include "ztoryundo.h"     // ztoryFindBoardPanel — undo for the export
 #include "storyboardpanel.h"
 #include "ztoryshotops.h"  // cameraRes, cameraAspect
@@ -156,37 +157,32 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   m_brushGroup->setExclusive(true);
   connect(m_brushGroup, QOverload<int>::of(&QButtonGroup::idClicked), this,
           [this](int id) {
-            if (id >= 0 && id < m_presets.size())
-              m_canvas->setPreset(m_presets[id]);
+            if (id < 0 || id >= m_presets.size()) return;
+            m_currentPreset = id;
+            m_canvas->setPreset(m_presets[id]);
+            syncSizeSliderToPreset();
           });
 
-  // Default brushes (icons come from each brush's MyPaint preview).
-  addBrushButton("classic/pencil.myb", 1.0, false, tr("Pencil"));
-  addBrushButton("classic/charcoal.myb", 1.0, false, tr("Brush"));
-  addBrushButton("deevad/airbrush.myb", 1.0, false, tr("Airbrush"));
-  addBrushButton("deevad/kneaded_eraser.myb", 0.3, true,
-                 tr("Kneaded eraser (lightens gradually)"));
-  addBrushButton("deevad/large_hard_eraser.myb", 1.0, true, tr("Eraser"));
+  // Default brushes (icons come from each brush's MyPaint preview).  These are
+  // only the seed: from here on the strip is whatever the user has made of it.
+  m_presets.append({"classic/pencil.myb", 1.0, false, 0.0, true});
+  m_presets.append({"classic/charcoal.myb", 1.0, false, 0.0, true});
+  m_presets.append({"deevad/airbrush.myb", 1.0, false, 0.0, true});
+  m_presets.append({"deevad/kneaded_eraser.myb", 0.3, true, 0.0, true});
+  m_presets.append({"deevad/large_hard_eraser.myb", 1.0, true, 0.0, true});
 
-  // "+" add a brush from the library.
-  auto *addBrush = new QToolButton(bar);
-  addBrush->setText("+");
-  addBrush->setToolTip(tr("Add a brush from the library…"));
-  connect(addBrush, &QToolButton::clicked, this, [this] {
-    QString start;
-    for (const TFilePath &d : TMyPaintBrushStyle::getBrushesDirs()) {
-      QString r = QString::fromStdWString(d.getWideString());
-      if (QFileInfo::exists(r)) { start = r; break; }
-    }
-    QString f = QFileDialog::getOpenFileName(this, tr("Add MyPaint brush"), start,
-                                             tr("MyPaint brushes (*.myb)"));
-    if (f.isEmpty()) return;
-    // Store with the absolute path; resolveBrushFile passes absolute paths
-    // through unchanged so this works for brushes outside the library too.
-    auto *btn = addBrushButton(f, 1.0, false, QFileInfo(f).baseName());
-    if (btn) btn->click();
-  });
-  m_brushBarLay->addWidget(addBrush);
+  // The strip: only the brush buttons, wrapped so it scrolls on overflow.
+  m_brushStrip    = new QWidget(bar);
+  m_brushStripLay = new QHBoxLayout(m_brushStrip);
+  m_brushStripLay->setContentsMargins(0, 0, 0, 0);
+  m_brushStripLay->setSpacing(3);
+  // No scroll widget of its own: the WHOLE toolbar scrolls (see the end of the
+  // constructor), the way Tahoma's other toolbars do.  Two nested scrollers
+  // would mean two sets of arrows and a strip that shrinks instead of letting
+  // the bar overflow — which is how the selection arrow ended up sitting on
+  // top of the size slider on a narrow panel.
+  m_brushBarLay->addWidget(m_brushStrip, 1);
+  rebuildBrushStrip();
 
   m_brushBarLay->addSpacing(10);
 
@@ -228,11 +224,28 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   size->setRange(0, 100);  // -> log size modifier [-2 .. +4]
   size->setValue(33);      // ~0 (brush default)
   size->setFixedWidth(110);
-  connect(size, &QSlider::valueChanged, this,
-          [this](int v) { m_canvas->setSizeModifier(-2.0 + 6.0 * (v / 100.0)); });
+  m_sizeValue = new QLabel(bar);
+  m_sizeValue->setMinimumWidth(38);
+  m_sizeValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  connect(size, &QSlider::valueChanged, this, [this](int v) {
+    const double mod = -2.0 + 6.0 * (v / 100.0);
+    m_canvas->setSizeModifier(mod);
+    // The size belongs to the brush, so remember it on the active preset:
+    // going to the eraser and back no longer hands the pencil the eraser's tip.
+    if (m_currentPreset >= 0 && m_currentPreset < m_presets.size())
+      m_presets[m_currentPreset].sizeMod = mod;
+    updateSizeValueLabel();
+  });
+  m_sizeSlider = size;
   m_brushBarLay->addWidget(size);
+  m_brushBarLay->addWidget(m_sizeValue);
 
-  m_brushBarLay->addStretch(1);
+  // NO addStretch() here.  It used to sit between Size and the selection tools,
+  // which is what left the wide empty gap in the middle of the bar while the
+  // brush strip was squeezed to three buttons: the free space went to the hole
+  // instead of to the brushes.  The strip carries the stretch factor now, so
+  // Colour / Ink / Size ride next to the selection arrow and everything to
+  // their left belongs to the brushes.
 
   // --- Selection (for export-to-board) ---------------------------------------
   auto *selSep = new QFrame(bar);
@@ -371,12 +384,23 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
           [this] { importPaperSheetFromCamera(); });
   m_brushBarLay->addWidget(camBtn);
 
-  root->addWidget(bar);
+  // The toolbar scrolls as one.  DvScrollWidget hands its widget the viewport
+  // width only when the widget expands horizontally, otherwise it uses the
+  // widget's own width and shows the arrows — so with Expanding set we get
+  // BOTH behaviours: while everything fits, the layout hands the free space to
+  // the brush strip; once the controls no longer fit, the width is clamped to
+  // the bar's minimum, it overflows, and the arrows appear instead of the
+  // widgets climbing over each other.
+  bar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  auto *barScroll = new DvScrollWidget(container);
+  barScroll->setWidget(bar);
+  root->addWidget(barScroll);
   root->addWidget(m_canvas, /*stretch=*/1);
 
   // Defaults: black pencil, black ink.
   if (auto *b = m_brushGroup->button(0)) b->setChecked(true);
   m_canvas->setPreset(m_presets[0]);
+  syncSizeSliderToPreset();  // slider + "NN px" coherent from the first frame
   selectColor(Qt::black);
 
   setWidget(container);
@@ -386,25 +410,120 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
 
 //=============================================================================
 
-QToolButton *ZtoryThumbnailPanel::addBrushButton(const QString &relPath,
-                                                 double opacity, bool eraser,
-                                                 const QString &tip) {
-  auto *btn = new QToolButton(this);
-  btn->setCheckable(true);
-  btn->setIconSize(QSize(28, 28));
-  QIcon ic = brushIcon(relPath);
-  if (ic.isNull())
-    btn->setText(tip.left(3));  // fallback when no preview is available
-  else
-    btn->setIcon(ic);
-  btn->setToolTip(tip);
+QString ZtoryThumbnailPanel::pickBrushFile(const QString &title) {
+  QString start;
+  for (const TFilePath &d : TMyPaintBrushStyle::getBrushesDirs()) {
+    QString r = QString::fromStdWString(d.getWideString());
+    if (QFileInfo::exists(r)) { start = r; break; }
+  }
+  // Absolute path on purpose: resolveBrushFile() passes absolute paths through
+  // unchanged, so a brush kept outside the MyPaint library works too.
+  return QFileDialog::getOpenFileName(this, title, start,
+                                      tr("MyPaint brushes (*.myb)"));
+}
 
-  const int id = m_presets.size();
-  m_presets.append({relPath, opacity, eraser});
-  m_brushGroup->addButton(btn, id);
-  // Insert before the trailing "+"/spacers if already built, else just append.
-  m_brushBarLay->insertWidget(id, btn);
-  return btn;
+void ZtoryThumbnailPanel::showBrushContextMenu(int id, const QPoint &globalPos) {
+  if (id < 0 || id >= m_presets.size()) return;
+  QMenu menu(this);
+  QAction *replace = menu.addAction(tr("Replace Brush…"));
+  QAction *remove  = menu.addAction(tr("Remove Brush"));
+  // The five that ship with the room are fixed slots: replaceable, not
+  // removable.  Never let the strip go empty either — with no brush there is
+  // nothing to draw with, and the canvas would keep whatever style it last
+  // built with no way to say so.
+  remove->setEnabled(!m_presets[id].builtIn && m_presets.size() > 1);
+  if (m_presets[id].builtIn)
+    remove->setToolTip(tr("One of the room's standard brushes: it can be "
+                          "replaced, but not removed."));
+  QAction *chosen = menu.exec(globalPos);
+  if (!chosen) return;
+
+  if (chosen == replace) {
+    const QString f = pickBrushFile(tr("Replace with MyPaint brush"));
+    if (f.isEmpty()) return;
+    // Keep size, opacity and eraser role: the user is swapping the tip, not
+    // rebuilding the tool.
+    m_presets[id].brushFile = f;
+  } else if (chosen == remove) {
+    m_presets.removeAt(id);
+    if (m_currentPreset >= m_presets.size()) m_currentPreset = m_presets.size() - 1;
+    if (m_currentPreset < 0) m_currentPreset = 0;
+  }
+  rebuildBrushStrip();
+  m_canvas->setPreset(m_presets[m_currentPreset]);
+}
+
+void ZtoryThumbnailPanel::updateSizeValueLabel() {
+  if (!m_sizeValue || !m_canvas) return;
+  // The brush's real radius in pixels, not the slider position: "34 px" means
+  // something to someone drawing, "62" on a 0-100 scale does not.
+  m_sizeValue->setText(QString("%1 px").arg(qRound(m_canvas->brushRadiusWorld() * 2.0)));
+}
+
+void ZtoryThumbnailPanel::syncSizeSliderToPreset() {
+  if (!m_sizeSlider || m_currentPreset < 0 || m_currentPreset >= m_presets.size())
+    return;
+  const double mod = m_presets[m_currentPreset].sizeMod;
+  const int v      = qBound(0, qRound((mod + 2.0) / 6.0 * 100.0), 100);
+  // Block signals: this is the slider following the brush, not the user moving
+  // it, and writing back would overwrite the very value we are restoring.
+  m_sizeSlider->blockSignals(true);
+  m_sizeSlider->setValue(v);
+  m_sizeSlider->blockSignals(false);
+  updateSizeValueLabel();
+}
+
+void ZtoryThumbnailPanel::rebuildBrushStrip() {
+  if (!m_brushStripLay) return;
+  // Tear down: the buttons carry their index as the button-group id, so any
+  // add/remove renumbers them and rebuilding is simpler than patching.
+  for (QAbstractButton *b : m_brushGroup->buttons()) {
+    m_brushGroup->removeButton(b);
+    m_brushStripLay->removeWidget(b);
+    delete b;
+  }
+  while (QLayoutItem *it = m_brushStripLay->takeAt(0)) {
+    if (QWidget *w = it->widget()) { w->hide(); w->deleteLater(); }
+    delete it;
+  }
+
+  for (int i = 0; i < m_presets.size(); i++) {
+    const auto &p = m_presets[i];
+    auto *btn     = new QToolButton(m_brushStrip);
+    btn->setCheckable(true);
+    btn->setIconSize(QSize(28, 28));
+    const QString name = QFileInfo(p.brushFile).baseName();
+    QIcon ic           = brushIcon(p.brushFile);
+    if (ic.isNull())
+      btn->setText(name.left(3));  // no preview available
+    else
+      btn->setIcon(ic);
+    btn->setToolTip(p.eraser ? tr("%1 (eraser)").arg(name) : name);
+    btn->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(btn, &QWidget::customContextMenuRequested, this,
+            [this, i, btn](const QPoint &pos) {
+              showBrushContextMenu(i, btn->mapToGlobal(pos));
+            });
+    m_brushGroup->addButton(btn, i);
+    m_brushStripLay->addWidget(btn);
+    if (i == m_currentPreset) btn->setChecked(true);
+  }
+
+  // "+" lives at the end of the strip, so it scrolls with the brushes instead
+  // of being pushed off by them.
+  auto *addBrush = new QToolButton(m_brushStrip);
+  addBrush->setText("+");
+  addBrush->setToolTip(tr("Add a brush from the library…"));
+  connect(addBrush, &QToolButton::clicked, this, [this] {
+    const QString f = pickBrushFile(tr("Add MyPaint brush"));
+    if (f.isEmpty()) return;
+    m_presets.append({f, 1.0, false, 0.0, false});
+    m_currentPreset = m_presets.size() - 1;
+    rebuildBrushStrip();
+    m_canvas->setPreset(m_presets[m_currentPreset]);
+  });
+  m_brushStripLay->addWidget(addBrush);
+  m_brushStripLay->addStretch(1);
 }
 
 void ZtoryThumbnailPanel::selectColor(const QColor &c) {

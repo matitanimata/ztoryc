@@ -19,6 +19,8 @@ class QToolButton;
 class QButtonGroup;
 class QHBoxLayout;
 class QSpinBox;
+class QSlider;
+class QLabel;
 
 class ZtoryThumbnailPanel final : public TPanel {
   Q_OBJECT
@@ -27,9 +29,6 @@ public:
   explicit ZtoryThumbnailPanel(QWidget *parent = nullptr);
 
 private:
-  // Append a brush tool button (icon = the brush's MyPaint preview) and wire it.
-  QToolButton *addBrushButton(const QString &relPath, double opacity,
-                              bool eraser, const QString &tip);
   void selectColor(const QColor &c);  // set canvas ink + update swatch
   // Build one raster per selected panel (at scene camera res) and hand them to
   // ZtoryModel as a new multi-panel shot, then clear the selection.
@@ -52,9 +51,32 @@ private:
   int importOneSheet(const QImage &photo, const QString &label,
                      QStringList &failed, int &faint);
 
+  // The brush strip is its own scrolling row, separate from the rest of the
+  // toolbar: the buttons used to share one QHBoxLayout with the colour chips,
+  // the size slider and the export controls, so every brush added squeezed
+  // those. In a DvScrollWidget (the same overflow widget the Board toolbar
+  // uses) the row scrolls instead, and "how many brushes fit" stops being a
+  // question.
+  void rebuildBrushStrip();
+  // Right-click on a brush: replace it with another .myb, or drop it.
+  void showBrushContextMenu(int id, const QPoint &globalPos);
+  // Ask for a .myb and return its path ("" if cancelled); starts in the
+  // MyPaint library folder.
+  QString pickBrushFile(const QString &title);
+
   ZtoryThumbnailCanvas *m_canvas = nullptr;
   QButtonGroup *m_brushGroup     = nullptr;
   QHBoxLayout *m_brushBarLay     = nullptr;
+  // Show the live brush radius in px next to the slider, and move the slider to
+  // the active brush when it changes.
+  void updateSizeValueLabel();
+  void syncSizeSliderToPreset();
+
+  QSlider *m_sizeSlider          = nullptr;
+  QLabel *m_sizeValue            = nullptr;
+  QWidget *m_brushStrip          = nullptr;  // holds only the brush buttons
+  QHBoxLayout *m_brushStripLay   = nullptr;
+  int m_currentPreset            = 0;
   QToolButton *m_swatch          = nullptr;  // shows / picks current colour
   QSpinBox *m_shrinkSpin         = nullptr;  // export resolution divisor (1 = full)
   QList<ZtoryThumbnailCanvas::Preset> m_presets;  // indexed by brush button id
