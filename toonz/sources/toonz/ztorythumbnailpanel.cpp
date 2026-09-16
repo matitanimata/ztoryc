@@ -428,12 +428,18 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   root->addWidget(barScroll);
   root->addWidget(m_canvas, /*stretch=*/1);
 
-  // Defaults: black pencil, black ink.
+  // Start on the first brush, with the colour IT was saved with.
   if (auto *b = m_brushGroup->button(0)) b->setChecked(true);
   m_canvas->setBrushStyle(styleAt(0));
   syncSizeSliderToPreset();  // slider + "NN px" coherent from the first frame
+  // syncColorToPreset() reads the brush and updates canvas + swatch.  There used
+  // to be a selectColor(Qt::black) right after, and selectColor WRITES into the
+  // current brush: since the current brush at startup is always the first one,
+  // every launch reset that brush's colour to black and saved it.  The others
+  // kept theirs simply because they were never current here — which is why it
+  // looked like "the first brush does not remember its colour".  The size was
+  // safe because syncSizeSliderToPreset() blocks the slider's signals.
   syncColorToPreset();
-  selectColor(Qt::black);
 
   setWidget(container);
   setMinimumSize(360, 280);
