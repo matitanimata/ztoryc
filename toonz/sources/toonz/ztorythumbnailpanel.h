@@ -27,12 +27,14 @@ class QCheckBox;
 class QSlider;
 class QDialog;
 class QLabel;
+class QTimer;
 
 class ZtoryThumbnailPanel final : public TPanel {
   Q_OBJECT
 
 public:
   explicit ZtoryThumbnailPanel(QWidget *parent = nullptr);
+  ~ZtoryThumbnailPanel() override;
 
 private:
   void selectColor(const QColor &c);  // set canvas ink + update swatch
@@ -106,6 +108,15 @@ private:
   void seedBrushPalette();
   void loadBrushPalette();
   void saveBrushPalette() const;
+  // Dragging the size slider used to write the whole .tpl on every step, on the
+  // UI thread — the same mistake the canvas save had, in miniature.  Coalesce
+  // instead: the last change in a burst wins, and the destructor flushes a
+  // pending one so nothing is lost by leaving the room.
+  void scheduleBrushPaletteSave();
+  QTimer *m_paletteSaveTimer = nullptr;
+  // mutable: saveBrushPalette() is const, and "already told the user" is
+  // bookkeeping about the warning, not about the palette.
+  mutable bool m_paletteSaveFailed = false;
   static TFilePath brushPalettePath();
   std::vector<int> brushStyleIds() const;  // palette ids of the MyPaint styles
   TMyPaintBrushStyle *styleAt(int i) const;

@@ -47,6 +47,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDir>
+#include <QTimer>
 
 #include <algorithm>
 
@@ -178,13 +179,13 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   // Default brushes (icons come from each brush's MyPaint preview).  These are
   // only the seed: from here on the strip is whatever the user has made of it.
   loadBrushPalette();
-  // Our own handle on the brush palette.  Nothing drives it yet: StyleEditor::
-  // setPaletteHandle() is declared in the header but its body is COMMENTED OUT
-  // in styleeditor.cpp, so the editor cannot be pointed anywhere but the
-  // application's current palette.  Restoring it properly (the commented body
-  // swaps the pointer without re-connecting the signals the constructor bound
-  // to the old handle) is shared-code work — and an upstream candidate.  The
-  // handle and the refresh below are the half that is ours, ready for it.
+  // Our own handle on the brush palette.  StyleEditor::setPaletteHandle() was
+  // declared in the header with its body COMMENTED OUT in styleeditor.cpp — it
+  // swapped the pointer without re-connecting the signals the constructor had
+  // bound to the old handle.  It is implemented properly now (disconnect, then
+  // reconnect when the editor is on screen), which is what lets openBrushEditor()
+  // point a Style Editor at THIS palette and never at the application's.
+  // Shared-code work, so it is also an upstream candidate.
   m_brushHandle = new TPaletteHandle();
   m_brushHandle->setPalette(m_brushPalette.getPointer());
   connect(m_brushHandle, &TPaletteHandle::colorStyleChanged, this,
@@ -258,7 +259,7 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
                      (float)(-0.5 + 5.0 * (v / 100.0)));
     m_canvas->setBrushStyle(st);  // refresh the cached radius + cursor
     updateSizeValueLabel();
-    saveBrushPalette();
+    scheduleBrushPaletteSave();
   });
   m_sizeSlider = size;
   m_brushBarLay->addWidget(size);
@@ -568,15 +569,22 @@ void ZtoryThumbnailPanel::loadBrushPalette() {
   if (TSystem::doesExistFileOrLevel(fp)) {
     // Same way Tahoma reads its own <type>_default.tpl (palettecontroller.cpp):
     // StudioPalette::load() is private, and its id machinery is not wanted here.
-    TIStream is(fp);
-    std::string tagName;
-    if (is && is.matchTag(tagName) && tagName == "palette") {
-      TPalette *p = new TPalette();
-      p->loadData(is);
-      m_brushPalette = p;
-      // A palette with no usable brush would leave the room with nothing to
-      // draw with: fall back to the shipped set rather than to an empty strip.
-      if (brushCount() > 0) return;
+    // Wrapped: TIStream throws on malformed data, and this runs from the panel's
+    // constructor — a .tpl left half-written by a crash would stop the Thumbnail
+    // room from opening at all, which is far worse than losing the brushes.
+    try {
+      TIStream is(fp);
+      std::string tagName;
+      if (is && is.matchTag(tagName) && tagName == "palette") {
+        TPalette *p = new TPalette();
+        p->loadData(is);
+        m_brushPalette = p;
+        // A palette with no usable brush would leave the room with nothing to
+        // draw with: fall back to the shipped set rather than to an empty strip.
+        if (brushCount() > 0) return;
+      }
+    } catch (...) {
+      m_brushPalette = nullptr;
     }
   }
   seedBrushPalette();
@@ -587,9 +595,45 @@ void ZtoryThumbnailPanel::saveBrushPalette() const {
   const TFilePath fp = brushPalettePath();
   try {
     TSystem::mkDir(fp.getParentDir());
+    // StudioPalette::save THROWS — on a read-only file, or when the stream
+    // cannot be opened.  This runs from slots (the size slider, the colour
+    // picker, the Style Editor), and an exception that reaches the Qt event
+    // loop aborts the application: a palette that cannot be written would take
+    // the whole session down, drawings included.  Catch it here.
+    StudioPalette::instance()->save(fp, m_brushPalette.getPointer());
+    m_paletteSaveFailed = false;
   } catch (...) {
+    // Say it once per session: the brushes still work, they just will not be
+    // there next time, and repeating it on every stroke would be worse than
+    // the problem.
+    if (!m_paletteSaveFailed) {
+      m_paletteSaveFailed = true;
+      DVGui::warning(tr("The brush palette could not be saved to\n%1\n\n"
+                        "The brushes work as usual, but changes to them will "
+                        "be lost when Ztoryc is closed.")
+                         .arg(QString::fromStdWString(fp.getWideString())));
+    }
   }
-  StudioPalette::instance()->save(fp, m_brushPalette.getPointer());
+}
+
+void ZtoryThumbnailPanel::scheduleBrushPaletteSave() {
+  if (!m_paletteSaveTimer) {
+    m_paletteSaveTimer = new QTimer(this);
+    m_paletteSaveTimer->setSingleShot(true);
+    m_paletteSaveTimer->setInterval(400);
+    connect(m_paletteSaveTimer, &QTimer::timeout, this,
+            [this] { saveBrushPalette(); });
+  }
+  m_paletteSaveTimer->start();  // restart: the last change of a burst wins
+}
+
+ZtoryThumbnailPanel::~ZtoryThumbnailPanel() {
+  // Flush a coalesced save: closing the room right after moving the slider must
+  // not be the one case where the change is dropped.
+  if (m_paletteSaveTimer && m_paletteSaveTimer->isActive()) {
+    m_paletteSaveTimer->stop();
+    saveBrushPalette();
+  }
 }
 
 bool ZtoryThumbnailPanel::eventFilter(QObject *watched, QEvent *e) {
@@ -777,7 +821,7 @@ void ZtoryThumbnailPanel::selectColor(const QColor &c) {
   // with no extra storage.
   if (TMyPaintBrushStyle *st = styleAt(m_currentPreset)) {
     st->setMainColor(ink);
-    saveBrushPalette();
+    scheduleBrushPaletteSave();
   }
   if (m_swatch) m_swatch->setIcon(activeSwatchIcon(c));
 }

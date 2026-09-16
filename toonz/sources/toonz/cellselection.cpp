@@ -4157,6 +4157,22 @@ void TCellSelection::overwritePasteNumbers() {
 
     if (!isPaste) {
       delete beforeData;
+      // Say why nothing happened.  This is the most confusing outcome in the
+      // whole paste path: the command IS "Paste", the clipboard DOES hold
+      // cells, and the result is that the xsheet does not change at all — no
+      // message, no undo entry, nothing to tell the user that a preference
+      // chose a different kind of paste on their behalf.  Pasting into an
+      // empty column reaches here every time, because renumbering needs a
+      // level in the destination column to renumber.
+      DVGui::warning(QObject::tr(
+          "Nothing was pasted.\n\n"
+          "\"Paste Cells Behaviour\" is set to \"Overwrite Paste Cell "
+          "Numbers\", so Paste re-numbers the drawings of the level already "
+          "in the destination column: it needs a column that is not empty, and "
+          "it never brings the copied level with it.\n\n"
+          "To paste the copied cells themselves, use Paste Cell Content, or "
+          "set Preferences > Scene > Paste Cells Behaviour to \"Insert Paste "
+          "Whole Data\"."));
       return;
     }
 

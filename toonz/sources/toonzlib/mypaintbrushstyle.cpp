@@ -219,6 +219,28 @@ static std::string mybToVersion3(std::string origStr) {
 void TMyPaintBrushStyle::loadBrush(const TFilePath &path) {
   m_path     = path;
   m_fullpath = decodePath(path);
+
+  // Keep the stored path RELATIVE to the brush library whenever the brush lives
+  // inside one.  saveData() writes m_path, and getBrushIdName() embeds it, so an
+  // absolute path pins the palette to one machine and one install folder: open
+  // the same palette after moving the application — a clean Windows install, a
+  // portable folder dragged elsewhere, a scene shared with another artist — and
+  // the file is not there any more.  Nothing says so: loadBrush() falls back to
+  // fromDefaults() and the brush keeps painting, with the DEFAULT tip under the
+  // user's own parameter changes.  Wrong brush, no message, noticed a day later.
+  // decodePath() already resolves relative paths against getBrushesDirs(), so
+  // storing them that way costs nothing and makes the palette portable.  Paths
+  // outside the library (a .myb kept beside a scene) stay absolute, as before.
+  if (m_path.isAbsolute()) {
+    const TFilePathSet dirs = getBrushesDirs();
+    for (TFilePathSet::const_iterator i = dirs.begin(); i != dirs.end(); ++i) {
+      if (i->isAbsolute() && i->isAncestorOf(m_fullpath)) {
+        m_path = m_fullpath - *i;
+        break;
+      }
+    }
+  }
+
   m_brushOriginal.fromDefaults();
 
   Tifstream is(m_fullpath);
