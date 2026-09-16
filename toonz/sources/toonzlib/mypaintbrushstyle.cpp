@@ -561,8 +561,13 @@ void TMyPaintBrushStyle::loadData(TInputStreamInterface &is) {
   int baseSettingsCount = 0;
   is >> baseSettingsCount;
 
-  const mypaint::Setting *setting;
-  const mypaint::Input *input;
+  // Inizializzati: la guardia piu' sotto e' `if (!setting || !input) continue;`,
+  // che su puntatori di stack non inizializzati non protegge nulla — quasi mai
+  // valgono zero, quindi la guardia passa e si dereferenzia spazzatura. Succede
+  // se la prima chiave letta e' "x" o "y", cioe' con un .tpl malformato o
+  // troncato: esattamente il caso in cui una difesa dovrebbe reggere.
+  const mypaint::Setting *setting = nullptr;
+  const mypaint::Input *input     = nullptr;
   int index = 0;
   TPointD pt;
   for (int i = 0; i < baseSettingsCount; ++i) {

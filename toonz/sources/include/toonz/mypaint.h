@@ -276,6 +276,17 @@ namespace mypaint {
           settings[i].def      = info->def;
           settings[i].max      = info->max;
         }
+      // initialized non veniva MAI messo a true: l'inizializzazione girava a
+      // OGNI chiamata, riscrivendo le std::string di questi oggetti statici
+      // (e rifacendo una gettext per nome e tooltip a ogni giro — nella traccia
+      // del crash, subito sotto all(), c'e' libintl_dcigettext).
+      //
+      // Riscrivere di continuo memoria statica condivisa e' una bomba a
+      // orologeria: due thread che chiamano all() insieme si scrivono addosso
+      // le stesse stringhe, e il risultato e' corruzione dell'heap che si
+      // manifesta molto piu' tardi, in un punto innocente. Il flag c'era ed era
+      // giusto: mancava solo l'assegnazione.
+      initialized = true;
       }
       return settings;
     }
@@ -331,6 +342,17 @@ namespace mypaint {
           inputs[i].softMax = info->soft_max;
           inputs[i].hardMax = info->hard_max;
         }
+      // initialized non veniva MAI messo a true: l'inizializzazione girava a
+      // OGNI chiamata, riscrivendo le std::string di questi oggetti statici
+      // (e rifacendo una gettext per nome e tooltip a ogni giro — nella traccia
+      // del crash, subito sotto all(), c'e' libintl_dcigettext).
+      //
+      // Riscrivere di continuo memoria statica condivisa e' una bomba a
+      // orologeria: due thread che chiamano all() insieme si scrivono addosso
+      // le stesse stringhe, e il risultato e' corruzione dell'heap che si
+      // manifesta molto piu' tardi, in un punto innocente. Il flag c'era ed era
+      // giusto: mancava solo l'assegnazione.
+      initialized = true;
       }
       return inputs;
     }
