@@ -186,7 +186,11 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
   // reconnect when the editor is on screen), which is what lets openBrushEditor()
   // point a Style Editor at THIS palette and never at the application's.
   // Shared-code work, so it is also an upstream candidate.
+  // Con `this` come genitore muore col pannello. Senza, restava un QObject
+  // orfano con dentro un puntatore grezzo a una TPalette gia' liberata: una
+  // perdita a ogni ricostruzione delle room, che ne crea uno nuovo ogni volta.
   m_brushHandle = new TPaletteHandle();
+  m_brushHandle->setParent(this);
   m_brushHandle->setPalette(m_brushPalette.getPointer());
   connect(m_brushHandle, &TPaletteHandle::colorStyleChanged, this,
           [this](bool) { onBrushStyleEdited(); });
