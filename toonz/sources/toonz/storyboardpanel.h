@@ -253,6 +253,16 @@ struct Shot {
   bool    m_currentSceneIsCharacter = false;
   // B3: suppress publication for scenes the user chose to keep standalone.
   bool    m_suppressProjectPublication = false;
+  // The shot-identity question has been answered for this scene, whatever the
+  // answer was.  Persisted in the .ztoryc: a session-only guard means the same
+  // question every time the scene is reopened.
+  bool    m_shotIdentityAsked = false;
+  // ensureShotIdentityUnique() can change the shots (it gives them a sequence)
+  // but it runs from inside saveZtoryc(), AFTER the file has been written: what
+  // it changed would live only in memory. This asks saveZtoryc() for one more
+  // pass once it is done.
+  bool    m_ztorycNeedsResave = false;
+  bool    m_savingZtoryc      = false;  // re-entrancy guard for that second pass
   // La richiesta della sequenza (shot che si chiamano come quelli di un altro
   // storyboard) si fa UNA volta per scena caricata: saveZtoryc() gira a ogni
   // modifica, e una domanda a ogni salvataggio e' insopportabile.
@@ -260,7 +270,11 @@ struct Shot {
   // shot editor, board flottante) e ognuno salva il suo .ztoryc. Con un campo
   // per istanza la domanda tornava una volta PER PANNELLO — cioe' sembrava
   // che non si chiudesse mai (2026-08-17).
-  static bool s_shotIdentityPromptDone;
+  // The scene this question has already been answered for.  It used to be a
+  // plain bool reset by loadZtoryc() — which does NOT run only when a scene is
+  // opened, it runs on every resequence, so the reset came round constantly and
+  // the question came back with it.  Keyed on the scene, the answer sticks.
+  static QString s_shotIdentityPromptScene;
   // Chiede una sequenza quando gli shot di questa scena si chiamerebbero come
   // quelli di un altro storyboard dello stesso progetto.
   void    ensureShotIdentityUnique(const QString &sourceFile);

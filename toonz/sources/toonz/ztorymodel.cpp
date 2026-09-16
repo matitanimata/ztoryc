@@ -1755,8 +1755,22 @@ QString ZtoryModel::proposeFreeSequenceLabel() const {
   // Il prefisso e il numero di cifre si prendono da cio' che il progetto usa
   // gia': proporre "SQ040" in un progetto che scrive "SEQ04" sarebbe una terza
   // convenzione inventata da noi.
-  QString prefix = "SQ";
-  int digits = 3, maxN = 0;
+  // Il progetto decide: prefisso e padding vengono dalla configurazione di
+  // numerazione, che si imposta sulla PRIMA scena di storyboard e da li' in poi
+  // vale per tutte. Il padding e' anche cio' che detta il passo, perche' e' la
+  // stessa convenzione vista da due lati: a tre cifre si scrive 010, 020, 030
+  // lasciando posto in mezzo; a due cifre si scrive 01, 02, 03.
+  QString prefix = m_numberingConfig.seqPrefix.isEmpty()
+                       ? QString("SQ")
+                       : m_numberingConfig.seqPrefix;
+  int digits     = qBound(1, m_numberingConfig.seqPadding, 6);
+  // Il salto e' "step", che nella configurazione e' proprio il campo che dice
+  // di quanto avanza la numerazione. Il padding e' un'altra cosa: quante cifre
+  // scrivere. Erano due cose diverse e le avevo confuse, deducendo il passo dal
+  // padding — che per SQ010/SQ020 dava il risultato giusto per il motivo
+  // sbagliato, e in un progetto a passo 5 avrebbe sbagliato e basta.
+  int configStep = qMax(1, m_numberingConfig.step);
+  int maxN       = 0;
   QSet<QString> used;
   auto consider = [&](const QString &label) {
     const QString l = label.trimmed();
@@ -1772,17 +1786,24 @@ QString ZtoryModel::proposeFreeSequenceLabel() const {
     const int n = num.toInt(&ok);
     if (ok) maxN = std::max(maxN, n);
   };
+  // Tutto il progetto, non solo questo storyboard: le sequenze della scena
+  // aperta E quelle degli shot gia' pubblicati nel tracker da qualunque altro
+  // storyboard. E' il caso per cui la sequenza esiste — piu' storyboard
+  // collegati allo stesso progetto, uno per sequenza su un film lungo.
   for (const SequenceData &s : m_sequences) consider(s.label);
   for (const ProjectShot &ps : m_projectShots) consider(ps.seq);
 
-  // Passo di dieci come per gli shot: lascia posto a chi si infila in mezzo.
-  int n = ((maxN / 10) + 1) * 10;
-  if (n <= 0) n = 10;
+  // Il passo e' quello della configurazione, punto: e' il campo fatto per dirlo,
+  // ed e' lo stesso che governa la numerazione degli shot. Prima era fisso a
+  // dieci, e in un progetto numerato 01, 02, 03 proponeva 10 saltando da 04 a 09.
+  const int step = configStep;
+  int n          = maxN + step;
+  if (n <= 0) n = step;
   for (int guard = 0; guard < 1000; guard++) {
     const QString cand =
         prefix + QString("%1").arg(n, digits, 10, QChar('0'));
     if (!used.contains(cand.toLower())) return cand;
-    n += 10;
+    n += step;
   }
   return prefix + "999";
 }

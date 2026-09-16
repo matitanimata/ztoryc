@@ -126,6 +126,33 @@
 #include <cmath>
 #include <algorithm>  // sort/unique on the shot-column list in restoreFromSnapshot
 
+namespace {
+// Retire a panel widget without leaving Qt's focus on freed memory.
+//
+// Destroying a widget that holds the keyboard focus leaves QApplicationPrivate::
+// focus_widget pointing at it.  The next setFocus() anywhere then delivers a
+// focusOut to a dead object and the application dies inside
+// QLineEdit::focusOutEvent().  That is exactly the crash reported on
+// 2026-09-16: the cursor was in a panel's Dialog/Notes field, "Give the
+// sequence" called refreshFromScene() which rebuilt every panel, and the FIRST
+// PEN STROKE afterwards — ZtoryThumbnailCanvas::beginStroke() calls setFocus()
+// so Cmd-Z reaches the canvas — was the trigger.  The stroke was innocent; the
+// dangling focus had been waiting since the rebuild.
+//
+// Two things make it safe: move the focus away while the widget is still alive
+// to receive the event, and destroy it outside the current event dispatch
+// (deleteLater), because these rebuilds run from the widgets' own handlers.
+void ztoryRetirePanelWidget(QGridLayout *grid, QWidget *pw) {
+  if (!pw) return;
+  if (QWidget *fw = QApplication::focusWidget())
+    if (fw == pw || pw->isAncestorOf(fw)) fw->clearFocus();
+  if (grid) grid->removeWidget(pw);
+  pw->hide();
+  pw->deleteLater();
+}
+}  // namespace
+
+
 // Definita piu' sotto, accanto a refreshSpeakersLabel(): serve al costruttore
 // del campo dialogo, che viene prima.
 static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
@@ -2060,8 +2087,7 @@ void StoryboardPanel::clearShots() {
   m_currentZtoryPath.clear();
   for (Shot &shot : m_shots)
     for (PanelWidget *pw : shot.panels) {
-      m_grid->removeWidget(pw);
-      delete pw;
+      ztoryRetirePanelWidget(m_grid, pw);
     }
   m_shots.clear();
   m_selectedShotIndex = -1;
@@ -2655,18 +2681,31 @@ QPixmap StoryboardPanel::firstPanelThumbnail(int shotIdx) const {
 // mezza giornata a capirlo. La sequenza non e' un vezzo di numerazione: e' la
 // parte dell'identita' che dice da quale storyboard viene.
 //-----------------------------------------------------------------------------
-bool StoryboardPanel::s_shotIdentityPromptDone = false;
+
+
+QString StoryboardPanel::s_shotIdentityPromptScene;
 
 void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
-  if (s_shotIdentityPromptDone) return;
+  if (m_shotIdentityAsked) return;  // answered in an earlier session
+  const QString sceneKey = ztoryPath();
+  if (!sceneKey.isEmpty() && sceneKey == s_shotIdentityPromptScene) return;
   ZtoryModel *model = ZtoryModel::instance();
   if (model->projectDbPath().isEmpty()) return;
   const QStringList clashes = model->collidingShotLabels(sourceFile);
   if (clashes.isEmpty()) return;
 
-  // Una volta sola, qualunque sia la risposta: chiederlo a ogni salvataggio
-  // trasformerebbe una segnalazione utile in una molestia.
-  s_shotIdentityPromptDone = true;
+  // Una volta sola per scena, qualunque sia la risposta: chiederlo a ogni
+  // salvataggio trasformerebbe una segnalazione utile in una molestia.
+  s_shotIdentityPromptScene = sceneKey;
+  m_shotIdentityAsked = true;
+  // Everything this function changes — the answer above, and the sequence it is
+  // about to hand out — happens AFTER saveZtoryc() has written and closed the
+  // file.  Without a second pass it lives in memory only: the user clicks "Give
+  // the sequence", reads "5 shots are now in sequence SQ010", and on reopening
+  // finds no sequence at all.  Measured on Franco's testthumb.ztoryc: zero
+  // <sequence> elements, numbering still style="0", every shot with
+  // sequenceId="".  An explicit answer must not evaporate.
+  m_ztorycNeedsResave = true;
 
   // Chi sono gli altri: dirlo evita la caccia. «Si chiamano come quelli di un
   // altro storyboard» senza dire QUALE lascia il problema tutto da cercare.
@@ -2681,6 +2720,17 @@ void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
 
   const QString proposed = model->proposeFreeSequenceLabel();
 
+  // Scoped on purpose: the dialog must be GONE before anything below rebuilds
+  // the board or opens another popup.  Left alive (merely hidden) while
+  // refreshFromScene() destroys and recreates every panel and DVGui::info()
+  // spins a second modal loop, its focused QLineEdit is one of the two ways the
+  // 2026-09-16 crash could happen — the other being the panels themselves, now
+  // retired through ztoryRetirePanelWidget().  Take the answer out, close it,
+  // then work.
+  QString label;
+  bool withdrawn = false;
+  static const int kWithdrawFromProject = 2;  // dlg.done() code, not Accept/Reject
+  {
   QDialog dlg(this);
   dlg.setWindowTitle(tr("Two shots with the same name"));
   dlg.setMinimumWidth(520);
@@ -2700,9 +2750,12 @@ void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
   lay->addWidget(list);
 
   auto *why = new QLabel(
-      tr("Give this storyboard a sequence and they become distinguishable "
-         "everywhere: Production Tracker, breakdown, Kitsu. Without it the two "
-         "are the same shot, and what belongs to one lands on the other."),
+      tr("A project can hold several connected storyboards — one per sequence "
+         "on a long film — and the Production Tracker shows them together. The "
+         "sequence is what tells their shots apart: give this storyboard one "
+         "and they become distinguishable everywhere, in the Tracker, in the "
+         "breakdown and in Kitsu. Without it the two are the same shot, and "
+         "what belongs to one lands on the other."),
       &dlg);
   why->setWordWrap(true);
   lay->addWidget(why);
@@ -2725,14 +2778,55 @@ void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
   auto *bbox = new QDialogButtonBox(&dlg);
   QPushButton *apply =
       bbox->addButton(tr("Give the sequence"), QDialogButtonBox::AcceptRole);
+  // The third honest answer.  Until now the only ways out were "give it a
+  // sequence" and "leave it" — and neither covers the commonest case, a scene
+  // that has no business being in the project at all.  That choice could only
+  // be made once, in the "Register as storyboard?" question at the moment the
+  // .ztoryc was created; afterwards there was no way back, and the collision
+  // warning came round for a storyboard the user never wanted published.
+  QPushButton *withdraw = bbox->addButton(tr("Disconnect from Production Tracker"),
+                                          QDialogButtonBox::DestructiveRole);
   bbox->addButton(tr("Leave as is"), QDialogButtonBox::RejectRole);
   lay->addWidget(bbox);
   QObject::connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
   QObject::connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  QObject::connect(withdraw, &QPushButton::clicked, &dlg,
+                   [&dlg] { dlg.done(kWithdrawFromProject); });
   (void)apply;
-  if (dlg.exec() != QDialog::Accepted) return;
+  const int answer = dlg.exec();
+  if (answer == kWithdrawFromProject) withdrawn = true;
+  if (answer != QDialog::Accepted && !withdrawn) return;
+  label = edit->text().trimmed();
+  // Move the focus off the dialog's field while that field is still alive, so
+  // Qt never keeps a pointer to it once the dialog goes.
+  if (QWidget *fw = QApplication::focusWidget())
+    if (fw == &dlg || dlg.isAncestorOf(fw)) fw->clearFocus();
+  }  // dlg destroyed here
 
-  const QString label = edit->text().trimmed();
+  if (withdrawn) {
+    // Out of the project, and out of the project DB: leaving the shots behind
+    // would keep the collision alive in the Production Tracker while claiming
+    // the storyboard is not part of the project.
+    m_suppressProjectPublication = true;  // written into the .ztoryc by the resave
+    const int removed = model->removeProjectShotsFromSource(sourceFile);
+    model->saveProjectDb();
+    // The Production Tracker redraws on this: without it the rows stay on
+    // screen until the panel is reopened, and the command looks like it did
+    // nothing.  Same signal the role change in startuppopup.cpp uses after the
+    // very same removal.
+    emit model->taskStatusChanged();
+    // NO refreshFromScene() here: it calls loadZtoryc(), which re-reads the
+    // .ztoryc from disk — and that file was written BEFORE this function ran,
+    // so it would put m_suppressProjectPublication back to false and the
+    // disconnection would never be written.  saveZtoryc() refreshes once the
+    // file agrees with memory.
+    DVGui::info(tr("This storyboard is no longer connected to the Production "
+                   "Tracker: %1 shot(s) were removed from it. The scene itself "
+                   "is still part of the project.")
+                    .arg(removed));
+    return;
+  }
+
   if (label.isEmpty()) return;
   SequenceData *seq = model->findOrCreateSequence(label);
   if (!seq) return;
@@ -2756,11 +2850,25 @@ void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
     nc.style = NumberingConfig::Sequence;
     model->setNumberingConfig(nc);
   }
-  refreshFromScene();
+  // NO refreshFromScene() here — and this was the whole bug behind "it asks me
+  // for the sequence and then does not do it".  refreshFromScene() clears the
+  // shots and calls loadZtoryc(), which re-reads the .ztoryc written moments
+  // earlier, BEFORE the sequence existed: the refresh meant to display the
+  // sequence was wiping it, a few lines after it had been assigned.  The
+  // publication that follows in saveZtoryc() reads m_shots, so it has to keep
+  // what we just put there; the board is refreshed at the end of saveZtoryc(),
+  // once the file on disk agrees with memory.
   DVGui::info(tr("%1 shot(s) are now in sequence %2.").arg(touched).arg(label));
 }
 
 void StoryboardPanel::saveZtoryc() {
+  // One level only: the second pass below must not start a third.
+  if (m_savingZtoryc) return;
+  m_savingZtoryc = true;
+  struct Guard {
+    bool &f;
+    ~Guard() { f = false; }
+  } guard{m_savingZtoryc};
   // Shot scenes (role="shot") have a companion .ztoryc authored once at export.
   // Never rewrite it here — saveZtoryc always writes role="storyboard", which
   // would corrupt the back-link (and make the shot show the SB badge / open in
@@ -2818,12 +2926,23 @@ void StoryboardPanel::saveZtoryc() {
     // Only prompt if the project DB exists (i.e., there IS a multi-scene project).
     if (!ZtoryModel::instance()->projectDbPath().isEmpty()) {
       QMessageBox ask(this);
-      ask.setWindowTitle(tr("Register as storyboard?"));
-      ask.setText(tr("Add this scene to the project as a storyboard?\n"
-                     "Its shots will appear in the Production Tracker."));
+      // The scene belongs to the project either way — it lives in it.  What is
+      // being asked is whether its shots join the project's Production Tracker.
+      // The old wording ("Add this scene to the project as a storyboard?",
+      // "No — local only") made it sound like the scene itself was being kept
+      // out, which is not a choice this question offers.
+      ask.setWindowTitle(tr("Connect to the Production Tracker?"));
+      ask.setText(
+          tr("Should this storyboard's shots appear in the project's "
+             "Production Tracker?\n\n"
+             "A project can hold several storyboard scenes — one per sequence, "
+             "say, on a long film — and the Tracker shows them together. A "
+             "storyboard that stays disconnected is still part of the project: "
+             "it simply keeps its shots to itself."));
       ask.setIcon(QMessageBox::Question);
-      auto *yesBtn = ask.addButton(tr("Yes — storyboard"), QMessageBox::AcceptRole);
-      auto *noBtn  = ask.addButton(tr("No — local only"),  QMessageBox::RejectRole);
+      auto *yesBtn = ask.addButton(tr("Connect"), QMessageBox::AcceptRole);
+      auto *noBtn  = ask.addButton(tr("Stay disconnected"),
+                                  QMessageBox::RejectRole);
       Q_UNUSED(noBtn)
       ask.exec();
       if (ask.clickedButton() != yesBtn)
@@ -2839,6 +2958,20 @@ void StoryboardPanel::saveZtoryc() {
   xml.writeStartElement("ztoryc");
   xml.writeAttribute("version", "2");
   xml.writeAttribute("role", "storyboard");
+  // "No — local only" has to SURVIVE.  It used to live only in
+  // m_suppressProjectPublication, a plain member reset with every new panel and
+  // gone at every restart: the next session published the scene into the
+  // project anyway, against an answer the user had explicitly given — and the
+  // duplicate shots that followed brought up the "Two shots with the same name"
+  // question, which is how this surfaced.  One attribute, and the answer sticks.
+  // "productionTracker" says what the choice really is; "projectPublication"
+  // is the name it was first written with and is still read below, so a scene
+  // saved in between keeps its answer.
+  if (m_suppressProjectPublication) {
+    xml.writeAttribute("productionTracker", "off");
+    xml.writeAttribute("projectPublication", "local");
+  }
+  if (m_shotIdentityAsked) xml.writeAttribute("shotIdentityAsked", "1");
   // Project metadata (production + title entered by user at scene creation).
   {
     ZtoryModel *model = ZtoryModel::instance();
@@ -2988,6 +3121,15 @@ void StoryboardPanel::saveZtoryc() {
       }
     }
   }
+
+  // Second pass: something above changed the scene after the file was written.
+  // The guard is released first, or this call would return immediately.
+  if (m_ztorycNeedsResave) {
+    m_ztorycNeedsResave = false;
+    m_savingZtoryc      = false;
+    saveZtoryc();      // now the file carries the sequence / the disconnection
+    refreshFromScene();  // and only now is it safe to re-read it
+  }
 }
 
 // Identity (.ztoryc path) of the scene we last auto-switched workflow for. Used
@@ -3005,7 +3147,14 @@ void StoryboardPanel::loadZtoryc() {
   // new/empty scene is never mistaken for a shot scene).
   m_currentSceneIsShot      = false;
   m_currentSceneIsCharacter = false;
-  s_shotIdentityPromptDone  = false;
+  // Cleared before parsing: the root element below is what decides it, and a
+  // scene with no attribute has simply never opted out.
+  m_suppressProjectPublication = false;
+  m_shotIdentityAsked          = false;
+  // NON si azzera qui la guardia della domanda sull'identita' degli shot:
+  // loadZtoryc() gira a ogni resequence, non solo all'apertura di una scena, e
+  // azzerarla qui faceva ricomparire la domanda a ogni riordino. Ora e' legata
+  // al percorso della scena, quindi cambia da se' quando la scena cambia.
   m_shotBackLinkProject   = QString();
   m_shotBackLinkUuid      = QString();
   m_shotBackLinkTaskStage = QString();
@@ -3066,6 +3215,13 @@ void StoryboardPanel::loadZtoryc() {
         auto a = xml.attributes();
         QString r = a.value("role").toString();
         if (!r.isEmpty()) sceneRole = r;
+        // A scene the user kept out of the project stays out, session after
+        // session.  Absent attribute = never asked, or answered yes.
+        m_suppressProjectPublication =
+            (a.value("productionTracker").toString() == QLatin1String("off") ||
+             a.value("projectPublication").toString() == QLatin1String("local"));
+        m_shotIdentityAsked = (a.value("shotIdentityAsked").toString() ==
+                               QLatin1String("1"));
         m_shotBackLinkUuid      = a.value("projectShot").toString();
         m_shotBackLinkProject   = a.value("project").toString();
         m_shotBackLinkTaskStage = QString();  // read from <project> below
@@ -3335,7 +3491,7 @@ void StoryboardPanel::loadZtoryc() {
   for (int i = 0; i < (int)m_shots.size(); i++) {
     Shot &shot = m_shots[i];
     // Rimuovi tutti i widget esistenti e ricostruisci da data
-    for (PanelWidget *pw : shot.panels) { m_grid->removeWidget(pw); delete pw; }
+    for (PanelWidget *pw : shot.panels) ztoryRetirePanelWidget(m_grid, pw);
     shot.panels.clear();
     for (int j = 0; j < (int)shot.data.panels.size(); j++) {
       addPanelWidget(i, j);
@@ -3773,7 +3929,7 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
       if (shot.data.panels.empty()) { PanelData pd; shot.data.panels.push_back(pd); }
       shot.data.panels[0].startFrame = 0;
       shot.data.panels[0].duration   = timelineDuration;
-      for (PanelWidget *pw : shot.panels) { m_grid->removeWidget(pw); delete pw; }
+      for (PanelWidget *pw : shot.panels) ztoryRetirePanelWidget(m_grid, pw);
       shot.panels.clear();
       addPanelWidget(shotIdx, 0);
       renumberAll();
@@ -3942,7 +4098,7 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
     else
       clearCameraMove(shot.data.panels[i]);
   }
-  for (PanelWidget *pw : shot.panels) { m_grid->removeWidget(pw); delete pw; }
+  for (PanelWidget *pw : shot.panels) ztoryRetirePanelWidget(m_grid, pw);
   shot.panels.clear();
   for (int pi = 0; pi < (int)shot.data.panels.size(); pi++)
     addPanelWidget(shotIdx, pi);
@@ -4151,8 +4307,7 @@ void StoryboardPanel::onModelResequenced() {
                  "(board keeps its %d remaining panels)",
                  removeAt, (int)m_shots.size() - 1);
         for (PanelWidget *pw : m_shots[removeAt].panels) {
-          m_grid->removeWidget(pw);
-          delete pw;
+          ztoryRetirePanelWidget(m_grid, pw);
         }
         m_shots.erase(m_shots.begin() + removeAt);
         // Re-anchor the columns from the scene rather than shifting our own
@@ -4443,8 +4598,7 @@ void StoryboardPanel::onShotRemovedAt(int col) {
   }
 
   for (PanelWidget *pw : m_shots[si].panels) {
-    m_grid->removeWidget(pw);
-    delete pw;
+    ztoryRetirePanelWidget(m_grid, pw);
   }
   m_shots.erase(m_shots.begin() + si);
 
@@ -4639,8 +4793,7 @@ void StoryboardPanel::refreshFromScene() {
   // have added more panels to shot.data.panels, so we recreate all widgets.
   for (int si = 0; si < (int)m_shots.size(); si++) {
     for (PanelWidget *pw : m_shots[si].panels) {
-      m_grid->removeWidget(pw);
-      delete pw;
+      ztoryRetirePanelWidget(m_grid, pw);
     }
     m_shots[si].panels.clear();
     for (int pi = 0; pi < (int)m_shots[si].data.panels.size(); pi++) {
@@ -5266,8 +5419,7 @@ void StoryboardPanel::onDeleteShot() {
       if (m_shots[i].data.xsheetColumn == col) { si = i; break; }
     if (si < 0) continue;
     for (PanelWidget *pw : m_shots[si].panels) {
-      m_grid->removeWidget(pw);
-      delete pw;
+      ztoryRetirePanelWidget(m_grid, pw);
     }
     m_shots.erase(m_shots.begin() + si);
     // Aggiorna xsheetColumn degli shot rimasti che erano dopo col.
