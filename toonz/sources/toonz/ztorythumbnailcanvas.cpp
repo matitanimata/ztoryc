@@ -50,6 +50,104 @@ namespace {
 
 // The canvas write, with no dependency on the widget: it owns its pixels, so it
 // is safe to run on a worker while the user keeps drawing on the live raster.
+
+// Is this pixel ink, as opposed to paper?
+//
+// Paper is TRANSPARENT since the room learned to export with alpha, and the old
+// test — "darker than near-white" — calls every blank pixel ink, because a
+// transparent pixel is (0,0,0,0) and 0 is darker than 250.  That is what made
+// every panel look occupied: lastNonEmptyRow() then returned the bottom of the
+// grid, so each imported Procreate page landed a whole sheet below the previous
+// one and left a band of empty rows between pages (and before the first one).
+// inkBBox() had the same flaw, which would have made the camera reflow think the
+// drawing filled the raster.
+//
+// Both conditions are needed.  Alpha alone would call a canvas migrated from the
+// old opaque-white format completely full; near-white alone is what broke.
+inline bool ztoryIsInk(const TPixel32 &p, int nearWhite = 250) {
+  return p.m > 8 && (p.r < nearWhite || p.g < nearWhite || p.b < nearWhite);
+}
+
+// One band of the canvas on its way to disk.
+struct ThumbBand {
+  int index;
+  QImage img;
+};
+
+// Write the bands that changed, plus the little manifest that says how to put
+// them back together.  Only \a bands are touched: everything else on disk stays
+// as it is, which is the whole point — the cost of a save follows what was
+// drawn, not how long the storyboard is.
+void writeThumbBands(const QString &dirStr, int cols, int rows, double boxH,
+                     int bandCount, const QVector<ThumbBand> &bands,
+                     const QVector<QRect> &merges, bool complete) {
+  QDir qd(dirStr);
+  if (!qd.exists() && !qd.mkpath(".")) return;
+
+  for (const ThumbBand &b : bands) {
+    const QString finalName =
+        QString("_ztorythumbs_band%1.png").arg(b.index, 3, 10, QChar('0'));
+    const QString finalPath = dirStr + "/" + finalName;
+    // Beside it, then rename: a crash mid-encode must never leave the band
+    // truncated.  The temporary name deliberately does not match the glob used
+    // when loading.
+    const QString tmpPath =
+        dirStr + QString("/.ztorythumbs_writing_%1.png").arg(b.index);
+    QFile::remove(tmpPath);
+    if (!b.img.save(tmpPath, "PNG")) continue;  // keep the previous band
+    QFile::remove(finalPath);
+    if (!QFile::rename(tmpPath, finalPath)) QFile::remove(tmpPath);
+  }
+
+  // Bands beyond the current grid (rows were removed): drop them, or a later
+  // load would stitch in a stale strip below the canvas.
+  QRegExp bandRe("_ztorythumbs_band(\\d+)\\.png");
+  for (const QString &f :
+       qd.entryList(QStringList() << "_ztorythumbs_band*.png", QDir::Files)) {
+    if (bandRe.indexIn(f) >= 0 && bandRe.cap(1).toInt() >= bandCount)
+      qd.remove(f);
+  }
+
+  // The manifest is written LAST: until it is there, a half-written set of
+  // bands is not loadable, and the loader falls back to whatever it had.
+  QFile gf(dirStr + "/_ztorythumbs_grid.txt");
+  if (gf.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    QTextStream ts(&gf);
+    ts << cols << ' ' << rows << ' ' << boxH << ' ' << bandCount << '\n';
+  }
+
+  // Merged regions in a tiny sidecar ("col row w h" per line).
+  const QString mergesFile = dirStr + "/_ztorythumbs_merges.txt";
+  if (merges.isEmpty()) {
+    QFile::remove(mergesFile);
+  } else {
+    QFile mf(mergesFile);
+    if (mf.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      QTextStream ts(&mf);
+      for (const QRect &m : merges)
+        ts << m.x() << ' ' << m.y() << ' ' << m.width() << ' ' << m.height()
+           << '\n';
+    }
+  }
+
+  // Once the whole canvas has been written as bands, the old single image is no
+  // longer what gets loaded — but it is not deleted: it is RENAMED out of the
+  // way.  This is the first release of the banded format and that file is, for
+  // a scene drawn before today, the only complete copy of the drawings; a bug
+  // here would take a storyboard with it and no undo reaches that far.  The new
+  // name deliberately drops the leading underscore so it cannot match the
+  // loader's "_ztorythumbs_*x*.png" glob, and a later version can drop these
+  // once the format has proved itself on real scenes.
+  if (complete)
+    for (const QString &old :
+         qd.entryList(QStringList() << "_ztorythumbs_*x*.png", QDir::Files)) {
+      const QString backup = "ztorythumbs_backup_" + old.mid(13);
+      QFile::remove(dirStr + "/" + backup);
+      if (!QFile::rename(dirStr + "/" + old, dirStr + "/" + backup))
+        qd.remove(old);  // renaming failed: the bands are complete, let it go
+    }
+}
+
 void writeThumbCanvas(const QImage &img, const QString &dirStr, int cols,
                       int rows, const QVector<QRect> &merges) {
   QDir qd(dirStr);
@@ -98,6 +196,42 @@ void writeThumbCanvas(const QImage &img, const QString &dirStr, int cols,
 
 // Carries its own copy of everything it needs, so nothing it touches can be
 // mutated (or destroyed) by the UI thread while it runs.
+class ThumbBandSaveTask final : public QRunnable {
+public:
+  ThumbBandSaveTask(QVector<ThumbBand> bands, QString dir, int cols, int rows,
+                    double boxH, int bandCount, QVector<QRect> merges,
+                    bool complete, QObject *canvas)
+      : m_bands(std::move(bands))
+      , m_dir(std::move(dir))
+      , m_cols(cols)
+      , m_rows(rows)
+      , m_boxH(boxH)
+      , m_bandCount(bandCount)
+      , m_merges(std::move(merges))
+      , m_complete(complete)
+      , m_canvas(canvas) {
+    setAutoDelete(true);
+  }
+  void run() override {
+    writeThumbBands(m_dir, m_cols, m_rows, m_boxH, m_bandCount, m_bands,
+                    m_merges, m_complete);
+    // Queued: the slot runs on the UI thread.  The canvas is guaranteed to
+    // outlive this call because its destructor waits on the pool.
+    QMetaObject::invokeMethod(m_canvas, "onPersistSaveFinished",
+                              Qt::QueuedConnection);
+  }
+
+private:
+  QVector<ThumbBand> m_bands;
+  QString m_dir;
+  int m_cols, m_rows;
+  double m_boxH;
+  int m_bandCount;
+  QVector<QRect> m_merges;
+  bool m_complete;
+  QObject *m_canvas;
+};
+
 class ThumbCanvasSaveTask final : public QRunnable {
 public:
   ThumbCanvasSaveTask(QImage img, QString dir, int cols, int rows,
@@ -432,7 +566,7 @@ TRaster32P ZtoryThumbnailCanvas::reanchorRaster(const TRaster32P &oldRas,
       TPixel32 *row = ras->pixels(y);
       for (int x = 0; x < w; ++x) {
         const TPixel32 &p = row[x];
-        if (p.r < 248 || p.g < 248 || p.b < 248) {
+        if (ztoryIsInk(p, 248)) {
           if (x < x0) x0 = x;
           if (x > x1) x1 = x;
           if (y < y0) y0 = y;
@@ -648,17 +782,34 @@ bool ZtoryThumbnailCanvas::isPanelEmpty(int index) const {
   const int ry0 = qBound(0, (int)(ly - (br.y() + br.height()) * m_boxH), ly);
   const int ry1 = qBound(0, (int)(ly - br.y() * m_boxH), ly);
 
+  // Two tolerances, and both are needed — measured on a real canvas rather than
+  // guessed.  A stroke drawn near the bottom of a panel leaves an antialiased
+  // trail one or two pixels into the panel BELOW, at alpha 10-21: three to five
+  // such pixels were enough to call an untouched panel "drawn", which pushed
+  // every imported page one row further down.
+  //
+  //  - a 2 px inset, because that bleed lives exactly on the shared edge, and a
+  //    drawing that exists only in the outermost two pixels of a panel is not a
+  //    drawing (it also covers a long stroke bleeding along the whole edge,
+  //    which no pixel count could tell from a deliberate thin line);
+  //  - a minimum count, because specks can land anywhere. Twelve pixels out of
+  //    129,600 is far below the smallest mark anyone makes on purpose and far
+  //    above what bleed produces.
+  const int kInset  = 2;
+  const int kMinInk = 12;
+  const int ix0 = x0 + kInset, ix1 = x1 - kInset;
+  const int iy0 = ry0 + kInset, iy1 = ry1 - kInset;
+  if (ix0 >= ix1 || iy0 >= iy1) return true;
+
   m_ras->lock();
-  bool empty = true;
-  for (int y = ry0; y < ry1 && empty; ++y) {
+  int ink = 0;
+  for (int y = iy0; y < iy1 && ink <= kMinInk; ++y) {
     const TPixel32 *pix = m_ras->pixels(y);
-    for (int x = x0; x < x1; ++x) {
-      const TPixel32 &p = pix[x];
-      if (p.r < 250 || p.g < 250 || p.b < 250) { empty = false; break; }
-    }
+    for (int x = ix0; x < ix1; ++x)
+      if (ztoryIsInk(pix[x]) && ++ink > kMinInk) break;
   }
   m_ras->unlock();
-  return empty;
+  return ink <= kMinInk;
 }
 
 TRaster32P ZtoryThumbnailCanvas::panelRaster(int index, const TDimension &outRes,
@@ -729,8 +880,66 @@ TFilePath ZtoryThumbnailCanvas::persistDir() const {
          TFilePath("thumbs");
 }
 
+void ZtoryThumbnailCanvas::schedulePersistSave(const QRect &rasterRect) {
+  markBandsDirty(rasterRect);
+  schedulePersistSaveTimer();
+}
+
 void ZtoryThumbnailCanvas::schedulePersistSave() {
+  markAllBandsDirty();
+  schedulePersistSaveTimer();
+}
+
+void ZtoryThumbnailCanvas::schedulePersistSaveTimer() {
   if (m_saveTimer) m_saveTimer->start();  // (re)arm the debounce
+}
+
+int ZtoryThumbnailCanvas::bandCount() const {
+  return (qMax(1, m_rows) + kRowsPerBand - 1) / kRowsPerBand;
+}
+
+void ZtoryThumbnailCanvas::markAllBandsDirty() {
+  m_bandDirty.assign(bandCount(), true);
+}
+
+// Bands are numbered from the TOP of the canvas, in the order the rows are
+// drawn — band 0 is the first five rows.  The raster is bottom-up and rows are
+// appended at the world bottom, which in raster coordinates shifts every
+// existing pixel upwards: numbering bands by raster Y would renumber the whole
+// canvas each time a row is added, and every band would have to be rewritten.
+// Anchored to the top, adding a row touches one band.
+void ZtoryThumbnailCanvas::bandRasterRange(int b, int ly, int &y0,
+                                           int &y1) const {
+  const int bandRasterH = (int)std::lround(kRowsPerBand * m_boxH);
+  y1                    = ly - 1 - b * bandRasterH;
+  y0                    = qMax(0, ly - (b + 1) * bandRasterH);
+  // The LAST band always runs down to 0.  With a non-16:9 camera m_boxH is not
+  // an integer, so bandCount() * round(5 * m_boxH) can fall a pixel or two short
+  // of the raster height: those rows would belong to no band, never be written,
+  // and take a thin strip of drawing with them at the bottom of the canvas.
+  // Found by checking that the bands tile the raster exactly — 20 cases out of
+  // 310 left a gap, all of them with a non-integer box height.
+  if (b == bandCount() - 1) y0 = 0;
+}
+
+void ZtoryThumbnailCanvas::markBandsDirty(const QRect &rasterRect) {
+  const int n = bandCount();
+  if ((int)m_bandDirty.size() != n) m_bandDirty.resize(n, true);
+  if (rasterRect.isNull() || m_boxH <= 0.0 || !m_ras) {  // unknown: all of it
+    markAllBandsDirty();
+    return;
+  }
+  const double bandH = kRowsPerBand * m_boxH;
+  const int ly       = m_ras->getLy();
+  // Raster Y counts from the bottom; turn it into a distance from the top,
+  // which is what the band numbering follows.
+  const double fromTopOfHighest = ly - 1 - rasterRect.bottom();
+  const double fromTopOfLowest  = ly - 1 - rasterRect.top();
+  int b0 = (int)std::floor(fromTopOfHighest / bandH);
+  int b1 = (int)std::floor(fromTopOfLowest / bandH);
+  b0     = qBound(0, b0, n - 1);
+  b1     = qBound(0, b1, n - 1);
+  for (int b = b0; b <= b1; b++) m_bandDirty[b] = true;
 }
 
 void ZtoryThumbnailCanvas::persistSave() {
@@ -738,25 +947,49 @@ void ZtoryThumbnailCanvas::persistSave() {
   TFilePath dir = persistDir();
   if (dir.isEmpty()) return;
 
-  // Never run two encodes at once: at this size they would queue up behind the
-  // pen and the last one to land would not necessarily be the newest canvas.
-  // Remember instead that there is something newer to write.
+  // Never run two encodes at once: they would queue up behind the pen and the
+  // last one to land would not necessarily be the newest canvas.  Remember
+  // instead that there is something newer to write — the dirty flags of the
+  // bands are NOT cleared here, so nothing is forgotten in the meantime.
   if (m_saveRunning) {
     m_saveQueued = true;
     return;
   }
 
-  // rasterToQImage() with mirrored=true returns a DETACHED image (QImage::
-  // mirrored() copies), so the worker never reads the live raster.  This copy
-  // is the only part the UI thread still pays for.
-  QImage img = rasterToQImage(m_ras, /*premultiplied=*/false);
+  const int n = bandCount();
+  if ((int)m_bandDirty.size() != n) m_bandDirty.resize(n, true);
+
+  const int lx = m_ras->getLx();
+  const int ly = m_ras->getLy();
+
+  QVector<ThumbBand> bands;
+  int dirtyCount = 0;
+  for (int b = 0; b < n; b++) {
+    if (!m_bandDirty[b]) continue;
+    dirtyCount++;
+    int y0, y1;
+    bandRasterRange(b, ly, y0, y1);
+    if (y0 > y1 || y1 < 0 || y0 >= ly) continue;
+    // Copy into a CONTIGUOUS raster rather than extracting a view: a view keeps
+    // the parent's row stride, and rasterToQImage() builds the QImage without a
+    // stride argument — the image would come out skewed.  This copy is the only
+    // part the UI thread pays for, and it is one band (~10 MB), not the canvas.
+    TRaster32P band(lx, y1 - y0 + 1);
+    band->copy(m_ras->extract(0, y0, lx - 1, y1));
+    bands.push_back({b, rasterToQImage(band, /*premultiplied=*/false)});
+  }
+
+  const bool complete = (dirtyCount == n);
+  m_bandDirty.assign(n, false);
+
+  if (bands.isEmpty()) return;  // nothing changed since the last write
 
   m_saveRunning = true;
   m_saveQueued  = false;
   m_persistKey  = sceneKey();  // this scene's canvas is (about to be) on disk
-  m_savePool->start(new ThumbCanvasSaveTask(
-      std::move(img), QString::fromStdWString(dir.getWideString()), m_cols,
-      m_rows, m_merges, this));
+  m_savePool->start(new ThumbBandSaveTask(
+      std::move(bands), QString::fromStdWString(dir.getWideString()), m_cols,
+      m_rows, m_boxH, n, m_merges, complete, this));
 }
 
 void ZtoryThumbnailCanvas::onPersistSaveFinished() {
@@ -764,6 +997,17 @@ void ZtoryThumbnailCanvas::onPersistSaveFinished() {
   if (m_saveQueued) {
     m_saveQueued = false;
     persistSave();  // an edit landed mid-write: the canvas on disk is stale
+  }
+}
+
+void ZtoryThumbnailCanvas::loadMerges(const QString &dirStr) {
+  QFile mf(dirStr + "/_ztorythumbs_merges.txt");
+  if (!mf.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+  QTextStream ts(&mf);
+  while (!ts.atEnd()) {
+    int c, r, w, h;
+    ts >> c >> r >> w >> h;
+    if (w > 0 && h > 0) m_merges.push_back(QRect(c, r, w, h));
   }
 }
 
@@ -776,13 +1020,58 @@ void ZtoryThumbnailCanvas::persistLoad() {
 
   TFilePath dir = persistDir();
   QStringList matches;
+  QString dirStr;
+  bool haveBands = false;
+  int gCols = 0, gRows = 0, gBands = 0;
+  double gBoxH = 0.0;
   if (!dir.isEmpty()) {
-    QDir qd(QString::fromStdWString(dir.getWideString()));
+    dirStr = QString::fromStdWString(dir.getWideString());
+    QDir qd(dirStr);
+    // The banded format first: its manifest is written last, so its presence
+    // means a complete set of bands is on disk.
+    QFile gf(dirStr + "/_ztorythumbs_grid.txt");
+    if (gf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+      QTextStream ts(&gf);
+      ts >> gCols >> gRows >> gBoxH >> gBands;
+      haveBands = (gCols > 0 && gRows > 0 && gBoxH > 0.0 && gBands > 0);
+    }
     matches = qd.entryList(QStringList() << "_ztorythumbs_*x*.png", QDir::Files,
                            QDir::Time);
   }
 
   m_merges.clear();
+  if (haveBands) {
+    m_cols = gCols;
+    m_rows = gRows;
+    m_boxH = gBoxH;
+    m_boxAspect = m_boxW / gBoxH;
+    loadMerges(dirStr);
+    TRaster32P r((int)gridW(), (int)gridH());
+    r->fill(kPaper);
+    for (int b = 0; b < gBands; b++) {
+      QImage img(dirStr + QString("/_ztorythumbs_band%1.png")
+                              .arg(b, 3, 10, QChar('0')));
+      if (img.isNull()) continue;  // a missing band leaves blank paper, not a hole
+      TRaster32P bandRas = rasterFromQImage(img, /*premultiply=*/false);
+      int y0, y1;
+      bandRasterRange(b, r->getLy(), y0, y1);
+      y1 = qMin(y1, r->getLy() - 1);
+      const int h = qMin(bandRas->getLy(), y1 - y0 + 1);
+      if (h <= 0) continue;
+      // Both sides count from the band's own top, so a short last band lands
+      // where it was cut from.
+      r->extract(0, y1 - h + 1, r->getLx() - 1, y1)
+          ->copy(bandRas->extract(0, bandRas->getLy() - h, bandRas->getLx() - 1,
+                                  bandRas->getLy() - 1));
+    }
+    m_ras = r;
+    markAllBandsDirty();  // nothing written yet in THIS session
+    clearSelection();
+    updateScrollBars();
+    update();
+    return;
+  }
+
   if (matches.isEmpty()) {
     // New scene with no saved canvas: start blank at the DEFAULT grid size (do
     // not inherit rows added with +Row in the previous scene).
@@ -796,17 +1085,8 @@ void ZtoryThumbnailCanvas::persistLoad() {
     return;
   }
 
-  // Merged regions, if any (saved alongside the PNG).
-  QFile mf(QString::fromStdWString(dir.getWideString()) +
-           "/_ztorythumbs_merges.txt");
-  if (mf.open(QIODevice::ReadOnly | QIODevice::Text)) {
-    QTextStream ts(&mf);
-    while (!ts.atEnd()) {
-      int c, r, w, h;
-      ts >> c >> r >> w >> h;
-      if (w > 0 && h > 0) m_merges.push_back(QRect(c, r, w, h));
-    }
-  }
+  // Merged regions, if any (saved alongside the canvas).
+  loadMerges(QString::fromStdWString(dir.getWideString()));
 
   const QString fn = matches.first();  // most-recently modified
   QRegExp re("_ztorythumbs_(\\d+)x(\\d+)\\.png");
@@ -832,6 +1112,10 @@ void ZtoryThumbnailCanvas::persistLoad() {
   m_boxH                 = savedBoxH;
   m_boxAspect            = m_boxW / savedBoxH;
   m_ras                  = r;
+  // Read from the old single-image format: every band still has to be written
+  // before that file can be dropped (writeThumbBands only removes it on a
+  // complete save).
+  markAllBandsDirty();
   clearSelection();
   updateScrollBars();
   update();
@@ -1001,7 +1285,9 @@ void ZtoryThumbnailCanvas::endStroke() {
   endStrokeRecording();  // turn the touched tiles into one undo entry
   m_strokeDirty = QRect();
   update();  // safety net: one full repaint per stroke, not per tablet event
-  schedulePersistSave();
+  // The only cheap save in the class: a stroke knows exactly where it went.
+  schedulePersistSave(m_strokeBounds);
+  m_strokeBounds = QRect();
 }
 
 //=============================================================================
@@ -1015,6 +1301,26 @@ void ZtoryThumbnailCanvas::tabletEvent(QTabletEvent *e) {
     e->ignore();
     return;
   }
+  // Keep the PAINTED brush cursor on the pen.  It is drawn at m_cursorWidget,
+  // and only mouseMoveEvent ever set that — but this handler calls accept() on
+  // every tablet event precisely so Qt does not synthesize mouse events.  With
+  // the pen in proximity the circle therefore stayed wherever the mouse had last
+  // been, both while hovering and while drawing.  It looked intermittent because
+  // some tablet drivers emit mouse moves alongside the tablet ones, and it stood
+  // out on the airbrush and the erasers because their circle is big enough that
+  // being in the wrong place is unmissable.
+  if (e->type() == QEvent::TabletMove || e->type() == QEvent::TabletPress) {
+    const QRect before = cursorRect(m_cursorWidget);
+    m_cursorWidget     = e->posF();
+    m_cursorOnCanvas   = true;
+    // While stroking, strokeTo() already repaints the union of the two cursor
+    // positions: repainting here as well would just draw the same region twice.
+    if (!m_stroking) update(before.united(cursorRect(m_cursorWidget)));
+  } else if (e->type() == QEvent::TabletLeaveProximity) {
+    m_cursorOnCanvas = false;
+    update(cursorRect(m_cursorWidget));
+  }
+
   switch (e->type()) {
   case QEvent::TabletPress:
     beginStroke(e->posF(), e->pressure());
@@ -1596,6 +1902,7 @@ void ZtoryThumbnailCanvas::applyPatches(const std::vector<Patch> &patches) {
 }
 
 void ZtoryThumbnailCanvas::beginStrokeRecording() {
+  m_strokeBounds = QRect();
   m_strokeTiles.clear();
   m_recordingStroke = true;
 }
@@ -1641,6 +1948,9 @@ bool ZtoryThumbnailCanvas::askWrite(const TRect &rect) {
   // regardless of whether the change is undoable.
   const QRect dab(rx0, ry0, rx1 - rx0 + 1, ry1 - ry0 + 1);
   m_strokeDirty = m_strokeDirty.isNull() ? dab : m_strokeDirty.united(dab);
+  // m_strokeDirty is consumed and cleared at every repaint; keep the union of
+  // the WHOLE stroke as well, so the save knows exactly which bands to rewrite.
+  m_strokeBounds = m_strokeBounds.isNull() ? dab : m_strokeBounds.united(dab);
 
   if (!m_recordingStroke) return true;
 

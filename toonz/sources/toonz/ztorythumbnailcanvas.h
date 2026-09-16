@@ -214,7 +214,26 @@ private:
   // Persistence: per-scene folder + the contiguous-raster PNG inside it.
   TFilePath persistDir() const;
   QString sceneKey() const;       // identity of the currently loaded scene
-  void schedulePersistSave();     // (re)arm the debounced autosave
+  // Storage is BANDED: the canvas goes to disk as horizontal bands of
+  // kRowsPerBand grid rows, and a save re-encodes only the bands that changed.
+  // A single image does not scale — at feature length (1080 rows) it is a 2.1 GB
+  // raster, ~11 s of PNG per save and a 208 ms copy on the UI thread — while a
+  // band is ~10 MB and ~52 ms whatever the storyboard's length.
+  static const int kRowsPerBand = 5;
+  int bandCount() const;
+  // Conservative by design: this marks the WHOLE canvas dirty.  There are a
+  // dozen paths that write to the raster (rows, imported cells, float paste and
+  // lift, merges, camera reflow, undo restore, load) and a forgotten one would
+  // mean a change that is never written — no crash, no message, noticed the day
+  // after.  Costing performance is recoverable, losing drawings is not: only the
+  // brush stroke, whose touched area is known exactly, takes the cheap path.
+  void schedulePersistSave();     // (re)arm the debounced autosave — whole canvas
+  void schedulePersistSave(const QRect &rasterRect);  // only the bands touched
+  void markAllBandsDirty();
+  void markBandsDirty(const QRect &rasterRect);
+  void schedulePersistSaveTimer();  // arm the debounce, leaving the flags alone
+  void loadMerges(const QString &dirStr);
+  void bandRasterRange(int b, int ly, int &y0, int &y1) const;
 
   // Linear panel index (row*cols+col) at a world point, or -1 if outside grid.
   int panelAtWorld(const QPointF &world) const;
@@ -346,6 +365,12 @@ private:
 
   // Stroke state
   MyPaintToonzBrush *m_brush = nullptr;
+  // Which bands still have to reach the disk.  Sized lazily from bandCount().
+  std::vector<bool> m_bandDirty;
+  // Union of every dab of the stroke in progress, in raster coordinates: the
+  // one case where we know exactly what changed.  m_strokeDirty cannot serve —
+  // it is cleared at every repaint, so it only ever holds the last few dabs.
+  QRect m_strokeBounds;
   bool m_stroking            = false;
   QElapsedTimer m_timer;
 
