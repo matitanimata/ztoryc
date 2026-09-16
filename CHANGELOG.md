@@ -1,3 +1,209 @@
+## [2026-09-16b] — il collaudo dei pennelli apre una giornata intera, e finisce con ASan
+
+Cominciata come «provo la parte pennelli con calma», diventata la sessione piu'
+lunga finora. Undici difetti, di cui **cinque perdevano lavoro in silenzio**, e
+un crash da corruzione dell'heap che ha richiesto AddressSanitizer dopo che
+quattro ipotesi plausibili erano cadute una dopo l'altra. Chiusa con il rilascio
+della **0.14.0**.
+
+### Fixed
+
+**I pennelli salvati erano legati a QUESTO computer.** Il `.tpl` registrava il
+percorso ASSOLUTO del `.myb`. Altrove — altro sistema, o **un'installazione
+pulita in una cartella diversa, che e' esattamente quello che le note di
+rilascio consigliano su Windows** — `loadBrush()` ripiegava in silenzio sui
+valori di fabbrica: il pennello continuava a dipingere, con sopra i parametri
+personalizzati dell'utente. Sembrava un pennello, era quello sbagliato. Ora il
+percorso e' relativo alla libreria, che `decodePath()` risolveva gia': il
+meccanismo c'era, non veniva usato in scrittura. **Candidato a monte** — tocca
+ogni palette di scena con dentro un pennello MyPaint, non solo la nostra.
+
+**`StudioPalette::save` LANCIA, e veniva chiamata da dentro degli slot.** Un
+file di sola lettura avrebbe chiuso l'applicazione: un'eccezione che arriva al
+ciclo eventi di Qt la termina. Ora catturata, con avviso una volta per sessione.
+Idem il caricamento, che sta nel costruttore del pannello: un `.tpl` scritto a
+meta' impediva di aprire la Thumbs room.
+
+**Il primo dei cinque pennelli si riazzerava il colore a ogni avvio.** Nel
+costruttore, dopo aver letto il colore salvato, c'era `selectColor(Qt::black)` —
+e `selectColor` SCRIVE nel pennello corrente, che all'avvio e' sempre il primo.
+Gli altri quattro si salvavano solo perche' non sono mai quello corrente li'. La
+dimensione era al sicuro perche' il suo percorso blocca i segnali.
+
+**Il cursore del pennello non seguiva la punta.** Si disegna a `m_cursorWidget`,
+aggiornato solo da `mouseMoveEvent` — ma `tabletEvent` accetta ogni evento della
+penna proprio perche' Qt non sintetizzi eventi mouse. Con la penna il cerchio
+restava dove il mouse era passato l'ultima volta, **anche mentre si disegnava**.
+Sembrava intermittente perche' certi driver emettono anche eventi mouse, e si
+notava su aerografo e gomme perche' il loro cerchio e' grande.
+
+**La carta trasparente aveva reso «pieno» ogni pannello.** Regressione della
+notte prima: rendendo la carta trasparente per l'export con alfa, il test che
+decide se un pannello e' vuoto guardava solo se il pixel fosse piu' scuro del
+quasi-bianco — e un pixel trasparente e' (0,0,0,0), cioe' nero. Ogni pannello
+risultava disegnato, `lastNonEmptyRow()` tornava l'ultima riga della griglia, e
+**ogni pagina importata da Procreate atterrava sotto TUTTO**, lasciando una
+banda vuota fra una pagina e l'altra. Stessa falla in `inkBBox()`, che avrebbe
+fatto credere al reflow della camera che il disegno riempie il raster. Ora un
+test solo: serve alfa **e** che sia piu' scuro della carta.
+Piu' due tolleranze **misurate sul canvas vero**: un tratto vicino al bordo
+lascia una scia di antialiasing 1-2 px nel pannello SOTTO, ad alfa 10-21, e
+tre-cinque pixel bastavano a dire «disegnato». Inset di 2 px e minimo di 12
+pixel su 129.600.
+
+**Le preferenze finivano nel bundle, da sole.** `Preferences` e' un singleton
+che apre `preferences.ini` al primo uso e si tiene quel percorso; il primo uso
+era la riga dello scaling ad alta densita', che girava PRIMA che `initToonzEnv`
+dirottasse i profili in una cartella scrivibile. Profilo diviso a meta': le
+preferenze nel bundle, layout, palette e file recenti in Application Support. Su
+un'app installata in `/Applications` o avviata dal DMG **non si sarebbero
+salvate, in silenzio**. Ora la cartella si decide prima, con migrazione unica del
+file esistente.
+
+**La sequenza assegnata a uno storyboard spariva.** Due difetti in fila sullo
+stesso dato, e il primo nascondeva il secondo:
+1. `ensureShotIdentityUnique()` gira DENTRO `saveZtoryc()` ma **dopo** che il
+   file e' stato scritto: l'assegnazione restava in memoria. L'utente leggeva
+   «5 shot sono ora nella sequenza SQ010» e alla riapertura non c'era niente —
+   verificato sul `.ztoryc` di Franco: zero `<sequence>`, `style="0"`,
+   `sequenceId=""` su tutti e cinque;
+2. `refreshFromScene()`, chiamata subito dopo **per mostrarla**, fa
+   `clearShots()` e `loadZtoryc()`: rilegge dal disco il file scritto un istante
+   prima. **Il refresh che doveva mostrarla la cancellava.**
+
+**La domanda sui doppioni tornava a ogni resequence.** La guardia «chiedilo una
+volta sola» veniva azzerata in `loadZtoryc()`, che non gira all'apertura di una
+scena ma a OGNI riordino. Ora e' legata alla scena e persistita nel `.ztoryc`.
+
+**«No — local only» non veniva mai scritto.** Alla sessione dopo la scena
+finiva nel progetto lo stesso, contro una risposta esplicita dell'utente — e i
+doppioni che ne nascevano facevano comparire l'avviso. Ora sta nel `.ztoryc`.
+
+**Un crash da fuoco su widget morti.** `beginStroke()` chiama `setFocus()`, Qt
+recapita il focusOut a una `QLineEdit` gia' distrutta. Otto punti distruggevano i
+pannelli del Board con `delete` mentre un campo Dialog o Notes poteva avere il
+fuoco. Ora il fuoco si sposta **prima**, mentre il widget e' vivo per ricevere
+l'evento. ⚠️ Il crash delle 02:03 della notte prima era **la stessa catena**:
+l'avevo attribuito alla striscia dei pennelli e dichiarato chiuso nel commit
+`72e38111a`. La famiglia era giusta, il widget no.
+
+**L'incolla celle non «si era rotto»: era una preferenza.** `pasteCellsBehavior`
+su «Overwrite Paste Cell Numbers» fa incollare i NUMERI tenendo il livello di
+destinazione — colonna vuota: niente; colonna piena: il disegno di quella
+colonna. Esattamente il sintomo. Ma su colonna vuota **non diceva niente**,
+mentre tutte le altre uscite della stessa funzione un messaggio ce l'hanno: ora
+c'e' anche li'. **Candidato a monte.**
+
+### Added
+
+**Il canvas dei thumbs si salva a BANDE** (fase 1 di due). Era un'unica immagine
+alta quanto lo storyboard, ricodificata intera a ogni salvataggio: 617 MB e
+3,2 s a 26 minuti; a lunghezza di lungometraggio 2,1 GB e ~11 s, con
+**4,2 GB contigui** chiesti per aggiungere UNA riga. Su un portatile Windows non
+e' lento: fallisce. Ora bande di 5 righe (~10 MB, ~52 ms), e un salvataggio
+riscrive solo quelle cambiate.
+Valore predefinito rovesciato di proposito: `schedulePersistSave()` marca TUTTO
+sporco, e solo il tratto di pennello prende la via economica — tredici funzioni
+scrivono sul raster, e una dimenticata deve costare prestazioni, non disegni.
+Due difetti trovati **prima** di spedire: `rasterToQImage` costruisce la QImage
+senza passo di riga (una banda estratta come vista si sarebbe salvata sfalsata),
+e con camera non 16:9 le bande lasciavano scoperta una striscia di 1-2 px —
+20 casi su 310, ora 498 su 498 senza buchi. La vecchia immagine non viene
+cancellata ma **rinominata** in backup.
+⚠️ **La fase 2 — le tessere — non e' iniziata**: i 2,1 GB in memoria restano.
+
+**«Disconnect from Production Tracker».** Prima l'unico modo di tenere uno
+storyboard fuori dal tracker era marcare la scena come *shot*, che e' una cosa
+diversa e falsa. E quella scelta si poteva fare una volta sola, alla nascita del
+`.ztoryc`. Riscritta anche la domanda alla creazione: la scena fa parte del
+progetto in ogni caso, il punto e' se si COLLEGA al tracker.
+
+**Il numero di sequenza proposto segue il passo del progetto.** Era fisso a
+dieci: in un progetto numerato 01, 02, 03 proponeva 10, saltando da 04 a 09. Ora
+viene da `NumberingConfig::step`. (Prima correzione sbagliata: l'avevo dedotto
+dal *padding* — giusto nei due casi provati, per il motivo sbagliato.)
+
+### Il crash che ha richiesto AddressSanitizer
+
+Aprire una scena con `role="shot"` corrompeva l'heap e faceva cadere il
+programma in un punto **sempre diverso e sempre innocente** (icone SVG,
+costruzione di pannelli, barra dei menu, animazioni di finestra): e' la prima
+allocazione che incontra la lista libera avvelenata.
+
+**Quattro ipotesi, tutte plausibili, tutte ritirate** — e tre avevano fatto
+aprire la scena UNA volta, sembrando correzioni: rimandare lo switch fuori dal
+gestore del clic; legare il QTimer a qApp; il flag `initialized` mai assegnato in
+`mypaint.h`; togliere `loadBrushPalette()` dal costruttore.
+
+**ASan ha chiuso la partita in un rapporto.** Causa: il distruttore del canvas
+faceva `delete m_style` — ma `m_style` e' solo `m_styleRef` gia' convertito (lo
+dice l'header), e l'oggetto **appartiene alla palette**, che lo conta per
+riferimenti. Un istante dopo, alla parentesi di chiusura, `m_styleRef` si
+distruggeva e decrementava il contatore **dentro la memoria appena liberata**.
+Residuo di quando il canvas si costruiva lo stile da solo: introducendo la
+palette e' cambiato il proprietario, la riga che liberava e' rimasta.
+Le due condizioni che sembravano arbitrarie si spiegano da sole: serviva il
+`.tpl` (senza file non c'e' nessuno stile della palette) e serviva un cambio di
+room (e' cio' che distrugge il pannello).
+**Verificato**: passata ASan con piu' aperture e piu' ricostruzioni di room, zero
+segnalazioni.
+
+Nello stesso giro, un secondo use-after-free **provato da ASan**:
+`clearRooms()` → `removeWidget` fa mostrare a `QStackedLayout` la pagina
+successiva — una room che si sta cancellando — il cui `FunctionViewer` legge
+`TStageObject` gia' distrutti. Lo stack ora viene nascosto mentre lo si svuota.
+⚠️ **La radice resta aperta**: `functiontreeviewer.h` tiene
+`TStageObject *m_stageObject; // (not owned)`.
+
+### Notes
+
+**Le tendine sui monitor sbagliati non erano un difetto nostro.** Un'ora di
+caccia, con esclusioni misurate (fattore di scala: entrambi gli schermi a 1x;
+geometria salvata: pulita; attributi Qt: identici a Tahoma stock; nostri file:
+nessuno tocca schermi). L'ha risolta Franco: **macOS assegna l'app a un display**
+e trascinare la finestra non aggiorna quell'assegnazione. Si sistema dal Dock.
+La firma che lo distingue: **Qt riporta lo schermo GIUSTO** mentre il disegno
+finisce altrove.
+
+**Corretto un errore di metodo.** Avevo concluso «il crash non e' di oggi»
+ricompilando i file del giorno a `72e38111a` — ma quella versione **contiene
+gia'** la palette dei pennelli, e il `.tpl` letto era comunque quello nuovo. La
+bisezione scagionava solo il lavoro diurno. Il crash e' arrivato con la palette,
+cioe' e' nostro.
+
+**Verificato che la build della storyboardista non e' esposta**: `ced244485`
+precede i commit della palette (`git merge-base --is-ancestor`).
+
+### Upstream candidates
+
+- percorso assoluto dei pennelli MyPaint nelle palette (✅ scritto e provato);
+- il silenzio dell'incolla-numeri su colonna vuota (✅ scritto);
+- `Setting::all()` / `Input::all()` in `mypaint.h`: flag `initialized` mai
+  assegnato, inizializzazione rieseguita a ogni chiamata con una gettext per
+  nome e tooltip (❓ difetto certo, ma **NON** la causa del crash: registrato
+  con l'avvertenza di non presentarlo mai come correzione di crash);
+- `StyleEditor::setPaletteHandle()` senza corpo e la modalita' Color+Raster+
+  Settings (dalla notte prima, da confermare su build stock).
+
+### Aperti
+
+- **gli asset con un tipo che Kitsu non ha vengono saltati IN SILENZIO**
+  (`asPushProcessNext`), e il riepilogo non li conta. Nato da una domanda di
+  Franco che ha smontato una mia nota vecchia: la tassonomia **e' gia'** allineata
+  a Kitsu, il difetto era un altro;
+- i tipi asset sono quattro, scolpiti nel codice: uno studio con `Vehicle` o
+  `Set Dressing` non puo' classificarli;
+- la fase 2 del canvas (tessere);
+- il fork **magic-lantern-workbench** (WizzerWorks) ha un commit CMake 4 mai
+  proposto: il `DEPENDS` su `add_custom_command(TARGET ... POST_BUILD)` che
+  CMake 4 rifiuta, proprio sulle righe che copiano `lzocompress`/`lzodecompress`.
+  Bozza di mail pronta per invitarli a mandarlo come PR.
+
+### Released
+
+**0.14.0** — minor e non patch anche perche' cambia il formato su disco del
+canvas (bande piu' manifest) e nasce il `.tpl` della palette.
+
 ## [2026-09-16] — la Thumbs room smette di frenare, e i pennelli diventano una tavolozza
 
 Sessione lunga, cominciata dalla numerazione degli shot e finita sui pennelli.

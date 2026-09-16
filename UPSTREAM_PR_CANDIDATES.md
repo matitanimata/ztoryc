@@ -176,6 +176,106 @@ not portable.
   *(Written and built here; wants a stock Tahoma build to confirm the other
   three modes are untouched.)*
 
+- ✅ **A MyPaint brush saved in a palette records an ABSOLUTE path, so the
+  palette only works on the machine that made it** — `toonzlib/mypaintbrushstyle.cpp`,
+  `loadBrush()`. `BrushStyleManager::loadItems()` builds each library brush from
+  an absolute path (`TSystem::readDirectory` on an absolute folder), `loadBrush()`
+  stores it verbatim in `m_path`, and `saveData()` writes exactly that — so a
+  `.tpl`, a scene palette, or a studio palette carries something like
+  `/Users/…/stuff/library/mypaint brushes/classic/pencil.myb`.
+  **What the user sees: nothing.** Open that palette where the file is not at
+  that path — another machine, another OS, a clean install into a different
+  folder, a portable folder moved — and `loadBrush()` silently falls back to
+  `fromDefaults()`. The style still paints, and the user's own saved parameters
+  are reapplied on top, so it looks like a brush and behaves like the WRONG one.
+  No error, no log line.
+  **Fix:** when the resolved file lives inside one of `getBrushesDirs()`, store
+  `m_path` relative to that directory (`m_fullpath - dir`, guarded by
+  `isAncestorOf`). `decodePath()` already resolves relative paths against those
+  same directories — the mechanism exists and was simply never used on the way
+  in. Paths outside the library (a `.myb` kept beside a scene) stay absolute, and
+  palettes already saved with absolute paths keep working, since `decodePath()`
+  returns an absolute path unchanged. Backward compatible both ways.
+  **Measured, not deduced:** a probe linked against the real libraries saves and
+  reloads a palette, with a negative control — after the fix the stored path is
+  `classic/pencil.myb`, and the reloaded brush reports `hardness` 0.10 against
+  0.80 for a brush whose file is missing, `slow_tracking` 1.00 against 0.00. That
+  difference is what proves the file was read: radius, opacity and colour come
+  back identical either way, because they are the user's own values reapplied
+  from the palette.
+  **Why it matters upstream:** this is not a Ztoryc corner — it is every scene
+  palette and every studio palette containing a MyPaint brush, in any studio that
+  shares scenes between machines.
+  *(Written and built here, verified with the probe; wants a stock Tahoma build
+  and a shared-scene check before proposing.)*
+
+- ✅ **"Overwrite Paste Cell Numbers" pastes nothing, silently, whenever the
+  destination column is empty** — `toonz/cellselection.cpp`,
+  `TCellSelection::overwritePasteNumbers()`. When `pasteNumbersWithoutUndo()`
+  returns false the function deletes its undo data and returns with no message
+  at all. The command is called Paste, the clipboard does hold cells, and the
+  xsheet simply does not change — there is nothing on screen to say that a
+  preference picked a different kind of paste, or that renumbering needs a level
+  in the destination column to renumber. Pasting into an empty column hits this
+  every single time.
+  **How it was found:** a user reported "cell copy/paste stopped working, it
+  only works inside the same column". It was not a defect at all —
+  `pasteCellsBehavior` was set to 1 — but the absence of any feedback is what
+  made it look like one, and cost a diagnosis session. The other early returns
+  in the same function (locked column, type mismatch, circular reference) all
+  show a `DVGui::error`; only this one is mute.
+  **Fix:** a `DVGui::warning` on that branch, naming the preference, what
+  "Overwrite Paste Cell Numbers" actually does, and the two ways out (Paste
+  Cell Content, or Preferences > Scene > Paste Cells Behaviour).
+  ⚠️ **The category is labelled "Scene", not "Xsheet".** `createXsheetLayout()`
+  fills `m_categoryBoxes[7]`, whose title comes from the 8th entry of the
+  `categories` list — which reads `tr("Scene")`. The function name is the only
+  place the word Xsheet appears, so anyone writing user-facing text from the
+  code (or a message like this one) sends people looking for a tab that does not
+  exist. Worth renaming the function, or the category, in the same PR.
+  **Why it matters upstream:** the behaviour, the preference and the silence are
+  all stock — nothing here is Ztoryc-specific. Note that
+  `TCellSelection::pasteCells()` has the same shape of problem on its
+  `canChange()` branch, where `overwritePasteNumbers()` does show an error;
+  worth aligning the two in the same PR.
+  *(Written and built here; the fix is a message, so it needs no behavioural
+  verification, but a stock build should confirm the wording matches upstream's
+  menu labels.)*
+
+- ❓ **`mypaint::Setting::all()` and `mypaint::Input::all()` re-run their whole
+  initialisation on EVERY call** — `include/toonz/mypaint.h`, around lines 264
+  and 317. Both declare `static bool initialized = false;`, both test it, and
+  **neither ever sets it to true.** So every call rewrites the `std::string`
+  members (`key`, `name`, `tooltip`) of a shared static array, and re-runs a
+  gettext lookup per name and per tooltip — `mypaint_brush_setting_info_get_name`
+  and `..._get_tooltip` are translated. These are called from
+  `TMyPaintBrushStyle::loadData()` (once per modified parameter of every brush
+  loaded) and from `findByKey()`.
+
+  **What is CERTAIN:** the flag is dead code and the initialisation is repeated.
+  That is provable by reading, and it is a defect on its own — wasted work, and
+  continuous rewriting of shared static state.
+
+  **What was RULED OUT, the same evening:** this is **not** what caused the heap
+  corruption we were chasing on 2026-09-16. It looked like it — the block the
+  allocator choked on had been allocated under `Input::all()`, with
+  `libintl_dcigettext` right below it in the stack, and after the fix the scene
+  opened. Then it crashed again. AddressSanitizer later showed the real cause,
+  which was ours and elsewhere entirely (a `delete` on a ref-counted style owned
+  by a palette — see ANIMATIC_TASKS). A matching allocation site and a plausible
+  mechanism were not proof, and saying so at the time is the only reason this
+  entry is still honest.
+  **Present it upstream as a dead flag and repeated work**, which is what is
+  demonstrable, and **never as a crash fix.**
+
+  **Fix:** `initialized = true;` at the end of both loops.
+
+  **The "corroboration" that was not one:** an older archived build (Ztoryc-SP)
+  opened the same scene fine, which looked like support for "latent upstream
+  defect woken by a new caller". It was the second reading that turned out
+  right — the new caller was wrong by itself. Worth remembering: an observation
+  compatible with two explanations supports neither.
+
 ### 2.2 — Features that can go upstream as they are
 
 Nothing here needs the `.ztoryc` file. They operate on ordinary scenes, levels

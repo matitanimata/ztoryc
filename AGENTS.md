@@ -615,15 +615,39 @@ launch**, with no message explaining why.*
 > locale (che ha i minimi della macchina di chi compila, non della CI).
 
 **macOS — prima apertura / first launch:**
-L'app non è notarizzata. Dopo aver copiato `Ztoryc.app` in `/Applications`:
-```bash
-xattr -cr /Applications/Ztoryc.app
-```
-Poi aprire dall'app o doppio clic → Tasto destro → Apri la prima volta.
+L'app non è notarizzata, ma **non serve `xattr -cr`**: non serve dalla **0.13.2**,
+quando è stata corretta la sigillatura del bundle (la firma era *malformata*, e
+macOS una firma malformata la dichiara «danneggiata» nascondendo del tutto il
+pulsante «Apri comunque» — non era un problema di notarizzazione). Copia
+`Ztoryc.app` in `/Applications`, aprila, e quando macOS la blocca vai in
+**Impostazioni di Sistema → Privacy e sicurezza**, scorri in fondo e clicca
+**«Apri comunque»**, poi conferma.
 
-*The app is not notarized. After copying `Ztoryc.app` to `/Applications`, run the command above in Terminal, then open normally.*
+> ⚠️ **Il tasto destro → Apri NON funziona piu' da macOS 15**, e Ztoryc richiede
+> proprio macOS 15 o successivo: quella scorciatoia, che per anni e' stata LA
+> risposta standard, oggi e' esattamente quella che non serve a niente per i
+> nostri utenti. La prima apertura passa dalle Impostazioni di Sistema, e nelle
+> note va scritta come procedura numerata: chi scarica un'app bloccata dal
+> sistema non e' nelle condizioni di indovinare dove guardare.
+
+*The app is not notarized, but **`xattr -cr` is not needed** — and has not been
+since 0.13.2, when the bundle sealing was fixed.*
+
+> ⚠️ Questo blocco diceva il contrario fino al 2026-09-16, cioè **tre settimane
+> dopo** che la correzione era stata rilasciata e annunciata nelle note della
+> 0.13.2. Preparando la 0.14.0 il testo sbagliato è stato copiato da qui nelle
+> note, e sarebbe stato pubblicato se Franco non avesse chiesto «ma non dovrebbe
+> più servire xattr?». Un modello che si copia senza rileggere propaga l'errore
+> a ogni rilascio: quando una release CAMBIA una di queste istruzioni, la
+> correzione va fatta **qui**, non solo nelle note di quella versione.
 
 **Windows — installazione / installation:**
+L'installer **non e' firmato** (nessun signtool negli script di confezionamento),
+quindi al primo avvio compare SmartScreen: «Windows ha protetto il PC» →
+**«Ulteriori informazioni»** (testo piccolo: l'unico PULSANTE visibile e' «Non
+eseguire») → **«Esegui comunque»**. Va scritto come procedura numerata, come per
+macOS: su entrambi i sistemi l'ostacolo non e' l'installazione ma il blocco del
+sistema operativo, ed e' li' che l'utente si ferma.
 Si raccomanda un'**installazione pulita**: disinstallare eventuali versioni precedenti prima di installare (installare sopra una vecchia versione può lasciare file/layout stale e causare instabilità).
 
 *A **clean install** is recommended: uninstall any previous version before installing (installing over an old version may leave stale files/layout and cause instability).*

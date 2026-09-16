@@ -485,6 +485,95 @@ nella sub-scene corretta.
 
 ## Priority Order
 
+### ✅ RISOLTO 2026-09-16 — CRASH aprendo una scena con `role="shot"` (corruzione dell'heap)
+
+**Causa, inchiodata da AddressSanitizer** (commit `ad558bdda`):
+`ZtoryThumbnailCanvas::~ZtoryThumbnailCanvas()` faceva `delete m_style`. Ma
+`m_style` non e' posseduto: e' lo stesso oggetto di `m_styleRef` (TColorStyleP),
+gia' convertito — lo dice l'header, *"m_styleRef, already downcast"* — e
+appartiene alla **palette dei pennelli**, che lo conta per riferimenti. Un istante
+dopo, alla parentesi di chiusura del distruttore, `m_styleRef` si distruggeva e
+decrementava il contatore DENTRO la memoria appena liberata: 8 byte scritti su un
+blocco morto (`heap-use-after-free`, riga 346 scrive quel che la 345 ha liberato).
+
+Quel `delete` era un **residuo**: veniva da quando il canvas si costruiva lo stile
+da solo a partire da un percorso di file. Introducendo la palette (`4dcebf35c`,
+notte del 15→16) e' cambiato il proprietario e la riga che liberava e' rimasta li'.
+
+Le due condizioni necessarie, che per ore erano sembrate arbitrarie, ora si
+spiegano da sole: serviva il **`.tpl`** (senza file non esiste nessuno stile della
+palette) e serviva un **cambio di room** (e' cio' che distrugge il pannello, e
+quindi il canvas).
+
+**Verificato**: passata ASan con piu' aperture di scena e piu' ricostruzioni di
+room, **zero segnalazioni**. Non «sembra andare»: l'accesso non avviene piu', e
+lo dice uno strumento che misura invece di aspettare che il programma cada.
+
+**Un secondo use-after-free, PROVATO e corretto nello stesso commit:** il primo
+rapporto ASan mostrava `MainWindow::clearRooms()` → `QLayout::removeWidget` →
+`QStackedLayout` che MOSTRA la pagina successiva, cioe' una room che si sta
+cancellando; il suo `FunctionViewer` riceve `showEvent()`, espande l'albero e
+legge `TStageObject` gia' distrutti. Ora lo stack viene nascosto mentre lo si
+svuota. ⚠️ **La radice resta aperta**: `functiontreeviewer.h` tiene
+`TStageObject *m_stageObject; // (not owned)` — puntatori grezzi a oggetti di
+scena, senza nessuna garanzia che siano vivi quando l'albero si disegna. Io ho
+chiuso una porta, non ho tolto il pericolo. E' codice condiviso con Tahoma.
+
+**Quello che e' costato, e che vale la pena ricordare:** quattro ipotesi
+plausibili, tutte sbagliate e tutte ritirate — rimandare lo switch fuori dal
+gestore del clic; legare il QTimer a qApp; il flag morto in `mypaint.h`;
+rimandare `loadBrushPalette()` fuori dal costruttore. Tre su quattro avevano
+fatto aprire la scena **una volta**, e sembravano correzioni. Una corruzione
+dell'heap si nasconde dietro un cambio di tempi con la stessa faccia con cui si
+risolve. **Il punto in cui il programma cade non dice niente**: qui cadeva ogni
+volta altrove (icone SVG, costruzione di pannelli, barra dei menu, animazioni di
+finestra), perche' e' semplicemente la prima allocazione che incontra la lista
+libera avvelenata.
+
+**La lezione operativa: ASan prima, non dopo.** Costa quaranta minuti di
+compilazione e li ripaga al primo rapporto. Lo script e la configurazione sono
+piu' sotto, nel blocco che descrive come e' stata montata la build in
+`/Volumes/ZioSam/tahoma2d-workspace/asan-build`.
+
+### 🔴 APERTO 2026-09-16 — gli asset con un tipo che Kitsu non ha vengono SALTATI IN SILENZIO
+
+`KitsuClient::asPushProcessNext()`:
+
+```cpp
+const QString typeId = m_asTypeIdByName.value(a.type.toLower());
+// No matching Kitsu asset-type → can't create it there; skip.
+if (typeId.isEmpty()) { ++m_asIndex; continue; }
+```
+
+Il commento e' onesto, il comportamento no: l'asset non viene creato e **nessuno
+lo dice**. Il riepilogo finale recita «%1 created, %2 already in Kitsu» — i
+saltati non compaiono in nessuno dei due numeri. L'utente preme «push assets»,
+legge un messaggio che sembra un successo, e degli asset non sono mai arrivati.
+E' la famiglia dei difetti che perdono lavoro in silenzio, la peggiore.
+
+**Non e' un problema di tassonomia** — quello era il modo in cui l'avevo scritto
+a memoria, e verificandolo il 2026-09-16 si e' rivelato falso. Ztoryc usa **gia'**
+i nomi di Kitsu (`Character`, `Prop`, `FX`, `Environment`), con migrazione del
+vecchio `BG` dentro `Environment`, e il push accoppia per nome contro i tipi veri
+letti da `/api/data/asset-types`. L'allineamento c'e'.
+
+**Le due cose da fare, distinte:**
+
+1. **Non saltare mai in silenzio.** Contare i saltati e dirlo, col nome e col tipo
+   che non ha trovato corrispondenza. Anche solo questo trasforma una perdita in
+   una segnalazione. E' la parte urgente, ed e' piccola.
+2. **Leggere i tipi dal progetto Kitsu invece di averne quattro scolpiti nel
+   codice** (`ZtoryModel`, la lista `{"Character","Prop","FX","Environment"}`).
+   Uno studio che in Kitsu ha `Vehicle` o `Set Dressing` oggi non puo' nemmeno
+   classificare un asset di quel tipo dentro Ztoryc: il tipo non esiste nella
+   tendina, quindi il problema nasce prima del push. Scelta di progetto da fare:
+   i tipi diventano dati del progetto, non una costante.
+
+> Nato da una domanda di Franco (2026-09-16): «la tassonomia degli asset cosa
+> intendi? non basta adeguarci a quella esistente in Kitsu?». Bastava, ed era
+> gia' stato fatto: la domanda ha smontato una mia nota vecchia e ha fatto
+> emergere il difetto vero, che era un altro.
+
 ### 🆕 APERTI DAL 2026-08-18 (sera)
 
 > 📏 **Una voce di questo blocco dice COME e' stata verificata, o non vale.**
