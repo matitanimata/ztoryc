@@ -149,7 +149,11 @@ public:
   // Crop a panel's region out of the contiguous surface and resample it to
   // outRes (the scene camera resolution). Returned raster is independent of
   // m_ras. Null if the index is out of range.
-  TRaster32P panelRaster(int index, const TDimension &outRes) const;
+  // `onWhite` false keeps the surface's alpha, so an exported panel can sit
+  // over a background instead of being an opaque sheet.  True flattens it onto
+  // white, which is what a storyboard panel has always been.
+  TRaster32P panelRaster(int index, const TDimension &outRes,
+                         bool onWhite = true) const;
 
 signals:
   // Emitted whenever the ordered selection changes (count = panels selected).

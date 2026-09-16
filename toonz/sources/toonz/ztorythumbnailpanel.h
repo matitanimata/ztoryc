@@ -23,6 +23,7 @@ class QToolButton;
 class QButtonGroup;
 class QHBoxLayout;
 class QSpinBox;
+class QCheckBox;
 class QSlider;
 class QDialog;
 class QLabel;
@@ -82,6 +83,7 @@ private:
   int m_currentPreset            = 0;
   QToolButton *m_swatch          = nullptr;  // shows / picks current colour
   QSpinBox *m_shrinkSpin         = nullptr;  // export resolution divisor (1 = full)
+  QCheckBox *m_exportTransparent = nullptr;  // export with alpha, not on white
   // THE brush palette.  Not a list of presets any more: a real TPalette of
   // TMyPaintBrushStyle, which is what lets it be saved as a .tpl — names,
   // customised parameters and input curves included — reloaded next time, and

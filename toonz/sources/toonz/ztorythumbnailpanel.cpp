@@ -10,6 +10,7 @@
 #include "toonz/toonzfolders.h"
 #include "tsystem.h"
 #include "tstream.h"
+#include <QCheckBox>
 #include <QDialog>
 #include <QEvent>
 #include "toonzqt/styleeditor.h"
@@ -358,6 +359,12 @@ ZtoryThumbnailPanel::ZtoryThumbnailPanel(QWidget *parent) : TPanel(parent) {
          "(1 = full camera resolution, 2 = half, …)"));
   m_brushBarLay->addWidget(m_shrinkSpin);
 
+  m_exportTransparent = new QCheckBox(tr("Transparent"), bar);
+  m_exportTransparent->setToolTip(
+      tr("Export panels with transparency instead of on a white sheet, so a\n"
+         "background can go behind them in the shot."));
+  m_brushBarLay->addWidget(m_exportTransparent);
+
   auto *exportBtn = new QToolButton(bar);
   exportBtn->setIcon(createQIcon("clapboard"));
   exportBtn->setToolTip(
@@ -677,10 +684,19 @@ void ZtoryThumbnailPanel::rebuildBrushStrip() {
   if (!m_brushStripLay) return;
   // Tear down: the buttons carry their index as the button-group id, so any
   // add/remove renumbers them and rebuilding is simpler than patching.
+  // deleteLater(), never delete: this runs from the buttons' OWN handlers (a
+  // click, the context menu) and from palette signals raised while the Style
+  // Editor is dispatching events, so an immediate delete frees a widget with an
+  // event still in flight — Qt then walks a dangling QWidget and the crash is
+  // deep inside QApplication, with no frame of ours in it
+  // (Crash-20260916-020344.log).  Hide them so they go at once on screen, and
+  // let Qt reclaim them when the stack has unwound.
   for (QAbstractButton *b : m_brushGroup->buttons()) {
     m_brushGroup->removeButton(b);
     m_brushStripLay->removeWidget(b);
-    delete b;
+    b->removeEventFilter(this);
+    b->hide();
+    b->deleteLater();
   }
   while (QLayoutItem *it = m_brushStripLay->takeAt(0)) {
     if (QWidget *w = it->widget()) { w->hide(); w->deleteLater(); }
@@ -787,6 +803,9 @@ void ZtoryThumbnailPanel::exportSelectionToBoard() {
   // The shot's drawings are framed at the scene camera resolution, optionally
   // shrunk by an integer factor per side (1 = full) to keep the levels light.
   const int shrink     = m_shrinkSpin ? m_shrinkSpin->value() : 1;
+  // White paper or transparency: the drawing surface is transparent either way,
+  // this only decides whether a white sheet goes under it on the way out.
+  const bool onWhite = !m_exportTransparent || !m_exportTransparent->isChecked();
   const TDimension cam = ZtoryShotOps::cameraRes(scene);
 
   // All selected panels become ONE shot on ONE level.  A level has a single
@@ -804,7 +823,7 @@ void ZtoryThumbnailPanel::exportSelectionToBoard() {
     const QSize span = m_canvas->panelSpan(idx);
     const TDimension nat(qMax(1, span.width() * cam.lx / shrink),
                          qMax(1, span.height() * cam.ly / shrink));
-    TRaster32P r = m_canvas->panelRaster(idx, nat);
+    TRaster32P r = m_canvas->panelRaster(idx, nat, onWhite);
     if (!r) continue;
     items.push_back({r, nat});
     maxW = std::max(maxW, nat.lx);
@@ -819,8 +838,10 @@ void ZtoryThumbnailPanel::exportSelectionToBoard() {
       frames.push_back(it.ras);  // already the full canvas
       continue;
     }
+    // The padding around a smaller panel follows the same choice: white would
+    // reintroduce an opaque sheet around a drawing meant to be transparent.
     TRaster32P frame(maxW, maxH);
-    frame->fill(TPixel32::White);
+    frame->fill(onWhite ? TPixel32::White : TPixel32(0, 0, 0, 0));
     frame->copy(it.ras, TPoint((maxW - it.nat.lx) / 2, (maxH - it.nat.ly) / 2));
     frames.push_back(frame);
   }

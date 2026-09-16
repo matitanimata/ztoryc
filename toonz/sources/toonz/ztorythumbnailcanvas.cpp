@@ -661,8 +661,8 @@ bool ZtoryThumbnailCanvas::isPanelEmpty(int index) const {
   return empty;
 }
 
-TRaster32P ZtoryThumbnailCanvas::panelRaster(int index,
-                                             const TDimension &outRes) const {
+TRaster32P ZtoryThumbnailCanvas::panelRaster(int index, const TDimension &outRes,
+                                            bool onWhite) const {
   if (!m_ras || index < 0 || index >= m_cols * m_rows) return TRaster32P();
   const QRect br = regionBoxRect(index);  // whole region (merged or single box)
   const int lx = m_ras->getLx(), ly = m_ras->getLy();
@@ -682,12 +682,10 @@ TRaster32P ZtoryThumbnailCanvas::panelRaster(int index,
   TRop::resample(out, sub,
                  TScale((double)outRes.lx / sub->getLx(),
                         (double)outRes.ly / sub->getLy()));
-  // Flatten onto white.  The surface is transparent now, and resample WRITES
-  // its output rather than compositing into it, so a white pre-fill would just
-  // be overwritten and every exported panel would silently come out
-  // transparent.  Today's behaviour is an opaque white sheet, so put the sheet
-  // under the drawing explicitly — and this is the one line the future
-  // "export with transparency" option will skip.
+  // The surface is transparent, and resample WRITES its output rather than
+  // compositing into it — a white pre-fill would simply be overwritten.  So the
+  // white sheet, when it is wanted, goes under the drawing explicitly.
+  if (!onWhite) return out;
   TRaster32P sheet(outRes.lx, outRes.ly);
   sheet->fill(TPixel32::White);
   TRop::over(sheet, out);

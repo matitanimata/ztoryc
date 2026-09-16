@@ -1,6 +1,8 @@
 #include "ztorymodel.h"
 #include "ztorycharacter.h"
-#include "ztoryshotops.h"     // syncChildCameraToMain
+#include "ztoryshotops.h"
+#include "toonzqt/dvdialog.h"
+#include "toonzqt/menubarcommand.h"
 #include "menubarcommandids.h"  // MI_Workflow* ids for workflowCommand()
 #include "xsheetdragtool.h"   // XsheetGUI::setPlayRange
 #include "tapp.h"
@@ -2113,7 +2115,18 @@ void ZtoryModel::addShotNamed(const QString &name) {
 void ZtoryModel::addShotFromRasters(const QString &name,
                                     const std::vector<TRaster32P> &panels) {
   if (panels.empty()) return;
-  if (!assertMainXsheet(false)) return;
+  // Inside a sub-scene this used to return in SILENCE: no shot, no message, no
+  // reason, so the command looked like it worked sometimes and not others
+  // depending on state the user cannot see.  But asking them to close the shot
+  // first would only be a politer way of making them do our work: we know where
+  // the shot has to go, so come back out and put it there — the same thing Add
+  // Shot and the undo restore already do.
+  {
+    ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+    while (scn && scn->getChildStack()->getAncestorCount() > 0)
+      CommandManager::instance()->execute("MI_CloseChild");
+  }
+  if (!assertMainXsheet(true)) return;  // still not there: then it is worth saying
   TApp *app         = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   TXsheet *xsh      = app->getCurrentXsheet()->getXsheet();
@@ -2187,7 +2200,14 @@ void ZtoryModel::addShotFromRasters(const QString &name,
     // Handing createNewLevel a taken name is the hang described above: its own
     // "_N" disambiguation collapses back to the same level name and never
     // terminates.  Give up cleanly instead of freezing the application.
-    if (nameTaken(levelName)) return rollback();
+    if (nameTaken(levelName)) {
+      DVGui::warning(
+          QObject::tr("Could not find a free name for the shot's drawing level "
+                      "(tried \"%1\" and 25 variants).\nRename or remove the "
+                      "existing levels with that name and try again.")
+              .arg(baseLabel));
+      return rollback();
+    }
   }
 
   TXshLevel *rl =

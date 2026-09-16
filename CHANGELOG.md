@@ -1,3 +1,128 @@
+## [2026-09-16] — la Thumbs room smette di frenare, e i pennelli diventano una tavolozza
+
+Sessione lunga, cominciata dalla numerazione degli shot e finita sui pennelli.
+Sette difetti veri, di cui **tre perdevano lavoro in silenzio**.
+
+### Fixed
+
+**Lentezza della Thumbs room — QUATTRO cause, non una** (segnalata da un utente
+Windows 11). Tutte misurate con l'encoder e il painter veri:
+- il salvataggio automatico ricodificava tutto il canvas **sul thread
+  dell'interfaccia**: 270 ms a 4x26 (1920x7020), 515 a 4x52, su un M4. Il timer
+  si riarma a fine tratto, quindi scattava **quando ti fermi**, e la punta che
+  ripartiva ci cadeva dentro. Ora su un worker: **282 ms → 5**;
+- `strokeTo()` chiamava `update()` **senza rettangolo**: ogni evento della
+  tavoletta ridipingeva tutta la finestra. Ora solo la zona che `askWrite()`
+  gia' dichiara: **1,6 ms → 0,005**, a ogni zoom;
+- la cronologia dell'undo contava **i pezzi, non i byte**: `addRow()` chiama
+  `pushUndo()` che clona TUTTO il canvas, e sedici di quelli sono **823 MB a
+  4x26**, 1,9 GB a 4x60 — swap, e un rallentamento che non passa piu'. Aggiunto
+  un tetto di 256 MB. **Trovato grazie a un dettaglio della storyboardista**: ha
+  rallentato **appena** ha aggiunto righe, non gradualmente — e quell'avverbio
+  distingueva due cause diverse;
+- l'undo di `addRow` non salva piu' i pixel: aggiungere una riga non distrugge
+  niente, basta il numero di righe (`geometryOnly`). Passi da 16 a **100**, cosa
+  che il tetto in byte rende sicura.
+
+**La numerazione degli shot si sfasciava esportando dalla Thumbs room**
+(`sh300 · sh290 · sh300 …`). Il MODELLO numerava giusto — i livelli nella scena
+sono `sh020…sh320` in fila. Sbagliati erano i nomi delle colonne:
+`StoryboardPanel::updateColumnName` scriveva su `ColumnId(si)`, ma
+`refreshFromScene` salta ogni colonna che non e' una sotto-scena ed e' per
+questo che esiste `shot.data.xsheetColumn`. La scena ha `Col1`=shot,
+`Col2`/`Col3`=**audio**, `Col4…`=shot. Rovinava TUTTA la numerazione perche'
+**lettura e scrittura non erano d'accordo su quale colonna sia di quale shot**, e
+il nome della colonna e' insieme l'uscita e l'ingresso. Sonda: **96 chiamate, 93
+sfasate**.
+
+**Un undo qualsiasi del Board duplicava 31 shot.** Stessa famiglia, in
+`restoreFromSnapshot`, in **tre** punti. Confermato da Franco sulla scena vera
+PRIMA di toccare il codice.
+
+**L'export dalla Thumbs room non registrava nessun undo** — e non «non faceva
+niente»: **disfaceva la cosa di prima**, in silenzio. Ora usa la stessa macchina
+di Merge/Paste/Delete.
+
+**Cancellare non finiva nell'undo.** In `mypainthelpers.hpp` `askWrite()` e'
+chiamata solo se e' attiva una modalita' di fusione, e una gommata non ne accende
+nessuna: nessuna tessera registrata, la gommata non raggiungeva la pila. Non era
+una regressione — **la gomma non e' mai stata annullabile**. Registrato ora da
+`askRead()`, che e' chiamata per ogni passata.
+
+**L'export non creava lo shot, in silenzio, se eri dentro una sotto-scena**
+(`assertMainXsheet(false)`). Sembrava casuale perche' dipendeva da uno stato non
+visibile. Ora esce da solo dalla sotto-scena e lo crea dove va (decisione di
+Franco: se sappiamo cosa fare, chiederlo e' un passo in piu').
+
+**Ztoryc chiedeva la password del portachiavi a ogni avvio su macOS** —
+`loadSettings()` leggeva il segreto, e il primo a costruire il singleton e' il
+pannello di produzione, che lo fa solo per collegare dei segnali. Ora la lettura
+aspetta il punto in cui serve. Chiuso anche il buco che la pigrizia apriva:
+`saveSettings` poteva scrivere una password vuota sopra quella salvata.
+
+### Added
+
+**Una gomma vera.** La carta e' trasparente e il bianco lo dipinge `paintEvent`
+SOTTO il raster: mentre disegni vedi sempre carta, ma i pixel cancellati
+spariscono. I canvas esistenti non se ne accorgono. E all'export c'e' la casella
+**Transparent**, cosi' un pannello puo' uscire con l'alfa e prendersi il fondale
+nello shot.
+
+**I pennelli sono una TPalette**, salvata come `.tpl` globale in
+`<cartella palette utente>/ztoryc_thumbs_brushes.tpl`: nomi, parametri, curve
+degli input e colore. Dimensione e colore appartengono al pennello. La striscia
+scorre, i cinque di serie sono sostituibili ma non eliminabili, e c'e'
+**Duplicate Brush** per le varianti. Il `+` apre lo **Style Editor** sulla
+tavolozza (doppio clic per riaprirlo su un pennello): si sfoglia la libreria
+MyPaint con le anteprime e si regolano i parametri.
+
+### Upstream candidates
+
+Due in `toonzqt/`, registrate in `UPSTREAM_PR_CANDIDATES.md`, **da confermare su
+una build Tahoma stock**:
+1. `StyleEditor::setPaletteHandle()` era dichiarata ma con il **corpo
+   commentato** — lo scopre il linker. E la versione commentata non spostava le
+   connessioni, che `showEvent` aggancia e `hideEvent` scioglie.
+2. `updateTabBar()`/`setPage()` non sapevano mostrare «Color + Raster +
+   Settings». La mappatura scheda→pagina NON e' 1:1.
+
+### Notes
+
+**Metodo: non filtrare l'evidenza.** Due diagnosi partite sbagliate perche' ho
+guardato output troncato — un istogramma limitato ai 40 tag piu' frequenti
+(`soundColumn` stava sotto, ed erano LA causa) e un `ninja | grep | head -15`
+(l'errore stava sotto i warning del linker). Annotato in memoria.
+
+**Due crash introdotti stanotte, entrambi da memoria liberata troppo presto**:
+un puntatore grezzo a uno stile di palette che lo Style Editor sostituisce, e
+widget distrutti con `delete` mentre Qt dispacciava i loro eventi. Corretti
+(`TColorStyleP`, `deleteLater()`). Vengono dalla stessa cosa: scelte prese in
+fretta su codice che gestisce memoria condivisa.
+
+### Deciso da Franco
+
+- **Un disegno non attraversa mai due pagine** — e' cio' che rende possibile il
+  raster per pagina: un panorama sta dentro il foglio.
+- **Alla storyboardista si manda la build da `ced244485`**, cioe' PRIMA della
+  parte pennelli: risolve il suo problema (la lentezza) e non contiene niente
+  scritto dopo mezzanotte.
+- La password sotto una email cambiata **non si corregge**.
+
+### Aperto
+
+- **Il raster unico non regge l'obiettivo**: 26' x 16 shot x 3 panel = 1248
+  vignette = 4x312 = **617 MB**. Fermo in attesa di un numero: quante righe ha
+  la griglia della storyboardista.
+- **Due progetti omonimi** `CS2605CA_UGC` (l'originale e la copia di test in
+  `reference/ztorydiag_cascina/`): scegliendo dalla tendina si puo' aprire la
+  scena sbagliata, dai recenti no. Franco: lasciare cosi' per ora.
+- **Griglia invisibile** in una scena mai salvata (`untitled18`, che vive in una
+  cartella temporanea dentro `Caches`). Visto una volta, non riprodotto.
+- **La sequenza richiesta piu' volte** e **copia-incolla delle celle che funziona
+  su alcuni livelli e non su altri** — segnalati, senza repro.
+- L'**import da carta** resta opaco (imbottitura bianca per il ricampionamento):
+  con la trasparenza accesa un pannello importato resta un rettangolo bianco.
+
 ## [2026-09-15] — la colonna di uno shot non e' il suo indice, e la Thumbs room non frena piu'
 
 Quattro difetti, tre della stessa famiglia. Tutti nati da una segnalazione di
