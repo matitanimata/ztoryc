@@ -164,6 +164,29 @@ static void configureWritablePortableProfiles() {
                  writableProfiles.getQString());
   }
 
+  // Carry over a preferences.ini left inside the bundle by an earlier version.
+  // Until this was fixed, Preferences resolved its path before the redirect and
+  // wrote there, so that file — not the one under the writable profiles — holds
+  // the user's real settings.  Copy it once: only when the destination has
+  // none, so it can never overwrite settings already made in the new place.
+  {
+    const std::wstring user = TSystem::getUserName().toStdWString();
+    const TFilePath bundledPrefs =
+        bundledProfiles + TFilePath(L"users/" + user) + "preferences.ini";
+    const TFilePath writablePrefs =
+        writableProfiles + TFilePath(L"users/" + user) + "preferences.ini";
+    if (TFileStatus(bundledPrefs).doesExist() &&
+        !TFileStatus(writablePrefs).doesExist()) {
+      try {
+        TSystem::mkDir(writablePrefs.getParentDir());
+        TSystem::copyFile(writablePrefs, bundledPrefs);
+      } catch (...) {
+        // Losing the migration means starting from defaults, which is
+        // recoverable; failing to start is not.
+      }
+    }
+  }
+
   TEnv::setArgPathValue(std::string(systemVarPrefix) + "PROFILES",
                         writableProfiles.getQString().toStdString());
 }
@@ -426,6 +449,32 @@ int main(int argc, char *argv[]) {
 #endif
   
   TEnv::setApplicationFileName(argv[0]);
+
+  // Settle WHERE the profile lives before anything reads a preference.
+  // Preferences is a singleton that opens preferences.ini on first use and
+  // keeps that path for the whole run; the line below is the first use, and it
+  // used to run BEFORE initToonzEnv() redirected the profile folder to a
+  // writable place.  The result was a split profile: preferences.ini written
+  // inside the bundle, while layouts, palettes and recent files went to
+  // Application Support.  In a portable build on a writable disk that only
+  // looks odd — but an app installed in /Applications, or launched from the
+  // DMG, cannot write inside its own bundle: the preferences would silently
+  // fail to save, and writing there breaks the code signature the same way
+  // createSandboxIfNeeded() does (see the Release Checklist).
+  // These calls are repeated inside initToonzEnv(); they are plain setters and
+  // running them twice costs nothing.
+  TEnv::setRootVarName(rootVarName);
+  TEnv::setSystemVarPrefix(systemVarPrefix);
+  // configureWritablePortableProfiles() derives the destination from
+  // QStandardPaths, which needs the organization and application names — both
+  // static, and settable before QApplication exists.
+  QCoreApplication::setOrganizationName("Ztoryc");
+  QCoreApplication::setOrganizationDomain("");
+  QCoreApplication::setApplicationName(
+      QString::fromStdString(TEnv::getApplicationName()));
+#ifdef MACOSX
+  configureWritablePortableProfiles();
+#endif
 
   // Enables high-DPI scaling. This attribute must be set before QApplication is
   // constructed. Available from Qt 5.6.
