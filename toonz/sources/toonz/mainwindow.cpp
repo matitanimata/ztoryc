@@ -1425,11 +1425,34 @@ void MainWindow::clearRooms() {
   while (roomTabWidget->count() > 0) roomTabWidget->removeTab(0);
   m_panelStates.clear();
 
+  // Lo stack va NASCOSTO mentre lo si svuota.
+  //
+  // removeWidget() sulla pagina corrente fa passare QStackedLayout alla
+  // successiva, cioe' MOSTRA una room che stiamo per cancellare. Il suo
+  // FunctionViewer riceve showEvent(), espande l'albero e chiede i dati al
+  // modello — che tiene puntatori GREZZI e non posseduti ai TStageObject
+  // (functiontreeviewer.h: "not owned"). Se nel frattempo la scena e' cambiata
+  // quegli oggetti sono gia' distrutti, e si legge memoria liberata.
+  //
+  // Diagnosticato con AddressSanitizer il 2026-09-16, dopo quattro ipotesi
+  // sbagliate: heap-use-after-free in TStageObject::getId(), letto da
+  // StageObjectChannelGroup::data() via FunctionViewer::showEvent(), dentro
+  // QLayout::removeWidget() chiamato proprio da qui. Il crash si manifestava
+  // molto piu' tardi, alla prima allocazione che incontrava la lista libera
+  // avvelenata — icone SVG, barra dei menu, animazioni di finestra — e per
+  // questo sembrava casuale.
+  //
+  // Con il contenitore nascosto Qt non propaga show ai figli, quindi nessuna
+  // room in demolizione si popola. Mostrare una room che si sta cancellando non
+  // ha comunque alcun senso.
+  const bool stackWasVisible = m_stackedWidget->isVisible();
+  m_stackedWidget->hide();
   while (m_stackedWidget->count() > 0) {
     QWidget *w = m_stackedWidget->widget(0);
     m_stackedWidget->removeWidget(w);
     delete w;
   }
+  if (stackWasVisible) m_stackedWidget->show();
   m_oldRoomIndex = 0;
 }
 

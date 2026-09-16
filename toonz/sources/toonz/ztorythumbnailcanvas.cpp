@@ -342,7 +342,23 @@ ZtoryThumbnailCanvas::~ZtoryThumbnailCanvas() {
                        m_rows, m_merges);
   }
   delete m_brush;
-  delete m_style;
+  // NIENTE `delete m_style`.
+  //
+  // m_style non e' posseduto: e' lo stesso oggetto di m_styleRef, gia' convertito
+  // (lo dice l'header: "m_styleRef, already downcast"), e appartiene alla palette
+  // dei pennelli, che lo conta per riferimenti. Il `delete` era un residuo di
+  // quando il canvas si costruiva lo stile da solo a partire da un percorso di
+  // file; con la palette introdotta la notte del 15 quel codice e' rimasto li'.
+  //
+  // Faceva danni due volte: liberava un oggetto ancora vivo per la palette, e
+  // subito dopo — alla parentesi di chiusura di questo distruttore — il
+  // distruttore di m_styleRef decrementava il contatore DENTRO la memoria appena
+  // liberata. E' la scrittura di 8 byte che AddressSanitizer ha inchiodato il
+  // 2026-09-16 (heap-use-after-free, riga 346 scrive quel che la 345 ha liberato).
+  //
+  // Da qui veniva l'heap corrotto che poi faceva cadere il programma molto piu'
+  // tardi e sempre altrove — icone SVG, barra dei menu, animazioni di finestra —
+  // e che quattro ipotesi plausibili non erano riuscite a spiegare.
 }
 
 //=============================================================================
