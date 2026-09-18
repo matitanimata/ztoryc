@@ -142,6 +142,62 @@ namespace {
 // Two things make it safe: move the focus away while the widget is still alive
 // to receive the event, and destroy it outside the current event dispatch
 // (deleteLater), because these rebuilds run from the widgets' own handlers.
+// Le colonne dello xsheet che ospitano uno shot (una sotto-scena), nell'ordine
+// in cui stanno in scena. E' LA risposta alla domanda «in quale colonna sta lo
+// shot i?», e va chiesta alla scena, non dedotta dall'indice.
+//
+// ⚠️ Gli shot NON sono un blocco compatto che parte da zero. Una scena puo'
+// avere colonne d'altro tipo prima o in mezzo: basta aggiungere l'audio quando
+// c'e' un solo shot perche' le tracce prendano le colonne 1 e 2 e tutti gli
+// shot successivi finiscano da 3 in poi. Misurato sulle scene di Franco il
+// 2026-09-18: su 15 scene con audio, 13 ce l'hanno in fondo (e li' l'indice
+// coincide con la colonna, ed e' per questo che il difetto si e' nascosto per
+// mesi) e 2 in mezzo.
+// Con `levels` riempie, in parallelo, la sotto-scena di ogni colonna: e'
+// l'identita' che sopravvive allo scorrimento delle colonne, e serve a chi deve
+// distinguere «stesso shot, spostato» da «shot diverso».
+static std::vector<int> ztoryShotColumns(
+    TXsheet *xsh, std::vector<TXshChildLevel *> *levels = nullptr) {
+  std::vector<int> cols;
+  if (levels) levels->clear();
+  if (!xsh) return cols;
+  for (int col = 0; col < xsh->getColumnCount(); col++) {
+    TXshColumn *column = xsh->getColumn(col);
+    if (!column || column->isEmpty()) continue;
+    int r0 = 0, r1 = 0;
+    column->getRange(r0, r1);
+    for (int r = r0; r <= r1; r++) {
+      TXshCell cell = xsh->getCell(r, col);
+      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+        cols.push_back(col);
+        if (levels) levels->push_back(cell.m_level->getChildLevel());
+        break;
+      }
+    }
+  }
+  return cols;
+}
+
+// Vero solo se quella colonna contiene una sotto-scena, cioe' uno shot.
+// Si chiama PRIMA di svuotare una colonna: e' il punto in cui un indice
+// sbagliato smette di essere un fastidio e diventa una perdita di dati.
+// TXshSoundColumn eredita da TXshCellColumn, quindi clearCells() le tracce
+// audio le cancella senza protestare — e' cosi' che il riordino di uno shot
+// poteva portarsi via l'audio della scena.
+static bool ztoryIsShotColumn(TXsheet *xsh, int col) {
+  if (!xsh || col < 0) return false;
+  TXshColumn *column = xsh->getColumn(col);
+  if (!column || column->isEmpty()) return false;
+  int r0 = 0, r1 = 0;
+  column->getRange(r0, r1);
+  for (int r = r0; r <= r1; r++) {
+    TXshCell cell = xsh->getCell(r, col);
+    if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
+      return true;
+  }
+  return false;
+}
+
 void ztoryRetirePanelWidget(QGridLayout *grid, QWidget *pw) {
   if (!pw) return;
   if (QWidget *fw = QApplication::focusWidget())
@@ -1076,7 +1132,22 @@ void PanelWidget::mousePressEvent(QMouseEvent *e) {
       drag->setPixmap(pm.scaled(dragW, dragH, Qt::KeepAspectRatio,
                                 Qt::SmoothTransformation));
       drag->setHotSpot(QPoint(dragW / 2, dragH / 2));
+      // ⚠️ drag->exec() apre un ciclo di eventi ANNIDATO, e il rilascio
+      // arriva dentro di esso. Se il rilascio riordina gli shot, la catena
+      // (onMoveShot → resequenceXsheet → modelReset → refreshFromScene)
+      // ritira OGNI pannello con ztoryRetirePanelWidget(), cioe' deleteLater()
+      // — compreso QUESTO widget, nel cui mousePressEvent siamo ancora dentro.
+      // Qt esegue i deleteLater al livello di ciclo in cui sono stati chiesti:
+      // quello del drag. Quando exec() ritorna, `this` puo' essere gia'
+      // memoria liberata, e la riga QFrame::mousePressEvent(e) qui sotto la
+      // tocca. Crash SIGSEGV riordinando due shot, 2026-09-18.
+      QPointer<PanelWidget> self(this);
       drag->exec(Qt::MoveAction);
+      if (!self) {
+        qWarning("[ZTORY] PanelWidget distrutto durante drag->exec(): "
+                 "uscita senza toccare this");
+        return;
+      }
     }
   }
   QFrame::mousePressEvent(e);
@@ -4210,20 +4281,7 @@ void StoryboardPanel::onModelResequenced() {
   // This is the scene's own answer to "which shots exist, and in what order",
   // expressed in identities that survive column shifts — see Shot::childLevel.
   std::vector<TXshChildLevel *> childLevels;
-  for (int col = 0; col < xsh->getColumnCount(); col++) {
-    TXshColumn *column = xsh->getColumn(col);
-    if (!column || column->isEmpty()) continue;
-    int r0 = 0, r1 = 0;
-    column->getRange(r0, r1);
-    for (int r = r0; r <= r1; r++) {
-      TXshCell cell = xsh->getCell(r, col);
-      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
-        childCols.push_back(col);
-        childLevels.push_back(cell.m_level->getChildLevel());
-        break;
-      }
-    }
-  }
+  childCols = ztoryShotColumns(xsh, &childLevels);
 
   // Fast path: recognise a plain INSERTION and handle just that, instead of
   // rebuilding every panel on the board.
@@ -5770,24 +5828,63 @@ void StoryboardPanel::onMoveShot(int fromShot, int toShot) {
     TXsheet *xsh = scene->getChildStack()->getTopXsheet();
     if (xsh) {
       int maxFrames = xsh->getFrameCount() + 200;
-      int numCols = (int)m_shots.size();
-      std::vector<std::vector<TXshCell>> cols(numCols);
-      for (int c = 0; c < numCols; c++)
+      // ⚠️ L'indice di uno shot NON e' l'indice della sua colonna. Una scena
+      // puo' avere colonne che non sono sotto-scene — questa ne ha due, l'audio,
+      // in posizione 1 e 2 — e allora gli shot stanno in 0,3,4,5... E' per
+      // questo che esiste shot.data.xsheetColumn (vedi 996f4ea64: stessa
+      // famiglia, corretta altrove ma non qui).
+      //
+      // Scorrere le colonne 0..N-1 faceva due danni. Spostava gli shot
+      // SBAGLIATI — chiedere di muovere il 53 muoveva il 51 e il 52 — e,
+      // molto peggio, chiamava clearCells() sulle colonne audio: TXshSoundColumn
+      // eredita da TXshCellColumn, quindi si lascia svuotare senza protestare.
+      // Il riordino CANCELLAVA le tracce audio, in silenzio. Segnalato da Franco
+      // il 2026-09-18 su CS2605CA_UGC.
+      //
+      // Le colonne che ospitano shot, chieste alla SCENA.
+      // (non si chiamano `slots`: e' una macro di Qt e la dichiarazione sparisce)
+      std::vector<int> shotCols = ztoryShotColumns(xsh);
+      if (shotCols.size() != m_shots.size()) {
+        // La scena e la nostra lista non sono d'accordo su quanti shot ci sono.
+        // Si ferma: riscrivere le colonne partendo da un conteggio sbagliato e'
+        // il modo di spargere le celle dove non vanno.
+        qWarning("[ZTORY] onMoveShot annullato: la scena ha %d colonne shot, "
+                 "il pannello ne ha %d",
+                 (int)shotCols.size(), (int)m_shots.size());
+        return;
+      }
+
+      // Il contenuto di ogni shot, letto dalla colonna che occupa ADESSO.
+      // m_shots e' gia' riordinato qui sopra, ma i dati portano ancora la
+      // colonna di partenza: e' esattamente da li' che va preso.
+      std::vector<std::vector<TXshCell>> content(m_shots.size());
+      for (int i = 0; i < (int)m_shots.size(); i++) {
+        const int c = m_shots[i].data.xsheetColumn;
         for (int r = 0; r <= maxFrames; r++)
-          cols[c].push_back(xsh->getCell(r, c));
-      std::vector<TXshCell> tmp = cols[fromShot];
-      cols.erase(cols.begin() + fromShot);
-      cols.insert(cols.begin() + toShot, tmp);
-      for (int c = 0; c < numCols; c++) {
+          content[i].push_back(xsh->getCell(r, c));
+      }
+
+      // Riscrittura: lo shot che ora sta in posizione i finisce nello slot i.
+      // Si toccano SOLO gli slot degli shot; ogni altra colonna resta dov'e'.
+      for (int i = 0; i < (int)shotCols.size(); i++) {
+        const int c = shotCols[i];
+        if (!ztoryIsShotColumn(xsh, c)) {
+          // Non puo' succedere con shotCols preso da ztoryShotColumns(), e proprio
+          // per questo il controllo resta: e' l'ultima cosa fra un indice
+          // sbagliato e l'audio della scena.
+          qWarning("[ZTORY] onMoveShot: rifiuto di svuotare la colonna %d, "
+                   "non e' una colonna shot", c);
+          continue;
+        }
         for (int r = 0; r <= maxFrames; r++) xsh->clearCells(r, c);
-        for (int r = 0; r < (int)cols[c].size(); r++)
-          if (!cols[c][r].isEmpty()) xsh->setCell(r, c, cols[c][r]);
+        for (int r = 0; r < (int)content[i].size(); r++)
+          if (!content[i][r].isEmpty()) xsh->setCell(r, c, content[i][r]);
       }
       xsh->updateFrameCount();
       app->getCurrentXsheet()->notifyXsheetChanged();
       // Cells were physically rearranged: update xsheetColumn to match new positions.
-      for (int i = 0; i < numCols; i++)
-        m_shots[i].data.xsheetColumn = i;
+      for (int i = 0; i < (int)shotCols.size(); i++)
+        m_shots[i].data.xsheetColumn = shotCols[i];
     }
   }
   renumberAll();

@@ -2060,7 +2060,22 @@ bool IoCmd::loadScene(const TFilePath &path, bool updateRecentFile,
     DVGui::error(msg);
     return false;
   }
-  if (!TSystem::doesExistFileOrLevel(scenePath)) return false;
+  if (!TSystem::doesExistFileOrLevel(scenePath)) {
+    // ⚠️ Questo era un `return false` MUTO, ed e' l'unica uscita della
+    // funzione che non dice niente a nessuno. Il silenzio costa caro: chi
+    // clicca una scena e non vede succedere nulla resta sulla scena untitled
+    // di partenza e conclude di aver PERSO IL LAVORO. Successo il 2026-09-18
+    // con uno storyboard di 33 inquadrature, intatto sul disco: il nome del
+    // file finiva per underscore e veniva riscritto come sequenza (vedi
+    // isEmptyFrameSep in tfilepath.cpp). La causa e' corretta li'; qui resta
+    // il messaggio, perche' il prossimo percorso che non si risolve non deve
+    // sparire in silenzio.
+    DVGui::warning(
+        QObject::tr("Scene %1 was not found.\nIt may have been moved, renamed "
+                    "or deleted.")
+            .arg(QString::fromStdWString(scenePath.getWideString())));
+    return false;
+  }
 
   TFilePath scenePathTemp(scenePath.getWideString() +
                           QString(".tmp").toStdWString());

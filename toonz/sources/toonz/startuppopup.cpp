@@ -2126,11 +2126,17 @@ void StartupScenesList::contextMenuEvent(QContextMenuEvent *event) {
   const QString path = it->data(Qt::UserRole).toString();
   if (path.isEmpty() || path == ":" || path == ":PT") return;
 
+  // Vuoto = la scena non ha ancora un .ztoryc accanto, quindi nessun ruolo.
+  // Prima qui si usciva, e il menu compariva solo DOPO aver aperto la scena
+  // almeno una volta: e' l'apertura che scrive il sidecar. Ma aprirla e' gia'
+  // l'atto che agisce sul ruolo sbagliato, quindi il menu arrivava tardi.
+  // Ora c'e' comunque, e la scelta crea il sidecar (vedi ZtoryCharacter::setRole).
   const QString current = ZtoryCharacter::roleOf(path);
-  if (current.isEmpty()) return;  // nessun sidecar: non c'e' ruolo da cambiare
 
   QMenu menu(this);
-  menu.addAction(tr("Role: %1").arg(current))->setEnabled(false);
+  menu.addAction(current.isEmpty() ? tr("Role: not set yet")
+                                   : tr("Role: %1").arg(current))
+      ->setEnabled(false);
   menu.addSeparator();
   struct { const char *role; const char *label; } kRoles[] = {
     {"storyboard", QT_TR_NOOP("Storyboard  (SB)")},

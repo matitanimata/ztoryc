@@ -53,9 +53,27 @@ bool ZtoryCharacter::setRole(const QString &scenePath, const QString &role,
   const QString sidecar = sidecarPathFor(scenePath);
   if (sidecar.isEmpty())
     return fail(QObject::tr("not a scene path: %1").arg(scenePath));
-  if (!QFile::exists(sidecar))
-    return fail(QObject::tr("%1 has no Ztoryc file to change")
-                    .arg(QFileInfo(scenePath).fileName()));
+  if (!QFile::exists(sidecar)) {
+    // Nessun sidecar: lo si CREA con il solo ruolo, invece di rifiutare.
+    // Il file nasce comunque alla prima apertura della scena, quindi non e' un
+    // artefatto nuovo: e' lo stesso file, scritto prima. Rifiutare qui voleva
+    // dire «il ruolo lo puoi correggere solo DOPO aver aperto la scena col
+    // ruolo sbagliato» — cioe' dopo che il danno e' fatto (una scena letta
+    // come storyboard pubblica i suoi shot nel tracker).
+    QFile nf(sidecar);
+    if (!nf.open(QIODevice::WriteOnly | QIODevice::Text))
+      return fail(
+          QObject::tr("cannot create %1").arg(QFileInfo(sidecar).fileName()));
+    nf.write(QString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                     "<ztoryc version=\"2\" role=\"%1\">\n</ztoryc>\n")
+                 .arg(role)
+                 .toUtf8());
+    nf.close();
+    if (nf.error() != QFile::NoError)
+      return fail(
+          QObject::tr("writing %1 failed").arg(QFileInfo(sidecar).fileName()));
+    return true;
+  }
 
   QFile f(sidecar);
   if (!f.open(QIODevice::ReadOnly | QIODevice::Text))

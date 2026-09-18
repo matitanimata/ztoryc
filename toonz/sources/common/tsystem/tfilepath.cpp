@@ -103,6 +103,26 @@ int rfindFrameSep(const std::wstring &str, int i, bool underscoreAllowed) {
   // otherwise the rightmost separator (closest to the frame number) wins.
   return std::max(ju, jh);
 }
+
+// Un separatore incollato all'estensione ("name_.ext") vuol dire «livello senza
+// numero di fotogramma». Ma la notazione universale del frame vuoto e' UNA
+// sola: il doppio punto, "name..ext". Le varianti con '_' e '-' sono le
+// grafie dei formati underscore e trattino, e hanno senso solo per un tipo che
+// PUO' essere una sequenza di fotogrammi.
+//
+// ⚠️ Senza questa distinzione un nome che finisce per underscore viene letto
+// come un livello: una scena "SB_.tnz" diventa il livello "SB", e chi
+// ricostruisce la stringa rimette il separatore canonico — "SB..tnz", che sul
+// disco non e' niente. TSystem::readDirectory fa esattamente questo
+// (`if (son.getDots() == "..") son = son.withFrame();`), la finestra di avvio
+// si porta dietro il nome sbagliato, e IoCmd::loadScene esce sul controllo di
+// esistenza con l'unico `return false` MUTO che ha: nessun avviso, e l'utente
+// resta sulla scena untitled convinto di aver perso il lavoro.
+// Successo davvero, 2026-09-18, su uno storyboard di 33 inquadrature.
+inline bool isEmptyFrameSep(const std::wstring &str, int sep, int dot,
+                            const QString &type) {
+  return sep == dot - 1 && (str[sep] == L'.' || checkForSeqNum(type));
+}
 };  // namespace
 
 // TFrameId::operator string() const
@@ -578,8 +598,10 @@ std::string TFilePath::getDots() const {
   int j = rfindFrameSep(str, i, m_underscoreFormatAllowed);
 
   if (j != (int)std::wstring::npos)
-    return (j == i - 1 || (checkForSeqNum(type) && isNumbers(str, j, i))) ? ".."
-                                                                          : ".";
+    return (isEmptyFrameSep(str, j, i, type) ||
+            (checkForSeqNum(type) && isNumbers(str, j, i)))
+               ? ".."
+               : ".";
   else
     return ".";
 }
@@ -600,7 +622,8 @@ QChar TFilePath::getSepChar() const {
   int j = rfindFrameSep(str, i, m_underscoreFormatAllowed);
   if (j == (int)std::wstring::npos) return QChar();
 
-  if (j == i - 1 || (checkForSeqNum(type) && isNumbers(str, j, i)))
+  if (isEmptyFrameSep(str, j, i, type) ||
+      (checkForSeqNum(type) && isNumbers(str, j, i)))
     return QChar(str[j]);  // '.', '_' or '-'
   else
     return QChar();
@@ -765,7 +788,7 @@ TFrameId TFilePath::getFrame() const {
   int j = rfindFrameSep(str, i, m_underscoreFormatAllowed);
 
   if (j == (int)std::wstring::npos) return TFrameId(TFrameId::NO_FRAME);
-  if (i == j + 1) return TFrameId(TFrameId::EMPTY_FRAME);
+  if (isEmptyFrameSep(str, j, i, type)) return TFrameId(TFrameId::EMPTY_FRAME);
 
   // Exclude cases with non-numeric characters inbetween. (In case the file name
   // contains "_" or ".")
