@@ -35,6 +35,7 @@
 #include <QScrollBar>
 #include "toonz/preferences.h"       // le gesture di annulla/ripeti
 #include "toonzqt/menubarcommand.h"  // CommandManager
+#include "menubarcommandids.h"       // MI_TouchGestureControl
 #include <QTouchEvent>
 #include <QGestureEvent>
 #include <QGesture>
@@ -1649,13 +1650,37 @@ bool ZtoryThumbnailCanvas::eventFilter(QObject *obj, QEvent *ev) {
 // tale, mentre su uno schermo touch il dito E' la mano che sposta il foglio.
 
 bool ZtoryThumbnailCanvas::event(QEvent *e) {
+  // ⚠️ Questa funzione e' scritta come quella di SceneViewer::event(), e le
+  // due differenze che aveva prima sono ESATTAMENTE il motivo per cui le
+  // gesture funzionavano nelle altre room e non qui. Segnalato da Franco il
+  // 2026-09-18 provando sulla Wacom Companion 2.
+  //
+  // 1. LA SPUNTA. SceneViewer non guarda il tocco se «Enable Touch Gesture
+  //    Controls» e' spenta (Preferenze → Touch/Tablet Settings, che e' un
+  //    comando, MI_TouchGestureControl, non una preferenza qualsiasi). Qui non
+  //    si guardava: i gesti funzionavano anche dopo averli disattivati.
+  //
+  // 2. `m_gestureActive = true` SUBITO DOPO touchEvent(). E' la riga che non
+  //    avevo copiato, ed e' quella che conta. Il TOCCO a due/tre dita per
+  //    annulla e ripeti non vive nel gestore del tocco ma in
+  //    mouseReleaseEvent, dietro la guardia `if (m_gestureActive && ...)`.
+  //    Alzando quel flag solo dentro gestureEvent() — cioe' solo quando Qt
+  //    riconosce un gesto suo — sulle piattaforme che non mandano un
+  //    TapGesture il flag restava falso e il tocco-undo non partiva MAI.
+  const bool gesturesOn = CommandManager::instance()
+                              ->getAction(MI_TouchGestureControl)
+                              ->isChecked();
   switch (e->type()) {
   case QEvent::TouchBegin:
   case QEvent::TouchUpdate:
   case QEvent::TouchEnd:
+  case QEvent::TouchCancel:
+    if (!gesturesOn) break;
     touchEvent(static_cast<QTouchEvent *>(e), e->type());
+    m_gestureActive = true;
     return true;
   case QEvent::Gesture:
+    if (!gesturesOn) break;
     gestureEvent(static_cast<QGestureEvent *>(e));
     return true;
   default:
