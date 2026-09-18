@@ -1523,11 +1523,11 @@ void ZtoryThumbnailCanvas::mouseReleaseEvent(QMouseEvent *e) {
     if (m_touchPoints == 2 &&
         Preferences::instance()->getGestureUndoMethod() ==
             Preferences::TwoFingerTap) {
-      CommandManager::instance()->execute("MI_Undo");
+      gestureUndo();
     } else if (m_touchPoints == 3 &&
                Preferences::instance()->getGestureRedoMethod() ==
                    Preferences::ThreeFingerTap) {
-      CommandManager::instance()->execute("MI_Redo");
+      gestureRedo();
     }
     m_touchPoints   = 0;
     m_gestureActive = false;
@@ -1744,14 +1744,14 @@ void ZtoryThumbnailCanvas::touchEvent(QTouchEvent *e, int type) {
       if ((m_undoPoint.x() - newPoint.x()) > 100 &&
           Preferences::instance()->getGestureUndoMethod() ==
               Preferences::ThreeFingerDragLeft) {
-        CommandManager::instance()->execute("MI_Undo");
+        gestureUndo();
         m_undoPoint   = newPoint;
         m_touchPoints = 100;
       }
       if ((m_undoPoint.x() - newPoint.x()) < -100 &&
           Preferences::instance()->getGestureRedoMethod() ==
               Preferences::ThreeFingerDragRight) {
-        CommandManager::instance()->execute("MI_Redo");
+        gestureRedo();
         m_undoPoint   = newPoint;
         m_touchPoints = 100;
       }
@@ -2442,6 +2442,31 @@ void ZtoryThumbnailCanvas::redo() {
   applyPatches(s.patches);
   schedulePersistSave();
   update();
+}
+
+// ⚠️ Il canvas dei thumbnail ha una pila di undo SUA (m_undo/m_redo), separata
+// da TUndoManager: le pennellate qui dentro non passano dall'undo
+// dell'applicazione. Le gesture pero' eseguivano `MI_Undo`, cioe' il comando
+// GLOBALE — quindi partivano davvero e annullavano qualcos'altro, o niente.
+// Da qui il «le gesture non funzionano nella Thumbs room ma funzionano nelle
+// altre»: nelle altre room il disegno passa da TUndoManager e MI_Undo e' il
+// comando giusto. Qui no.
+//
+// La regola e' la stessa di handleUndoKey(): se abbiamo storia nostra la
+// usiamo, altrimenti si lascia fare all'applicazione. Cosi' il gesto e la
+// tastiera si comportano allo stesso modo.
+void ZtoryThumbnailCanvas::gestureUndo() {
+  if (!m_undo.empty())
+    undo();
+  else
+    CommandManager::instance()->execute(MI_Undo);
+}
+
+void ZtoryThumbnailCanvas::gestureRedo() {
+  if (!m_redo.empty())
+    redo();
+  else
+    CommandManager::instance()->execute(MI_Redo);
 }
 
 bool ZtoryThumbnailCanvas::handleUndoKey(QKeyEvent *e) {

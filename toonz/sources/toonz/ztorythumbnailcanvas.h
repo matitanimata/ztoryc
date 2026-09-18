@@ -326,6 +326,12 @@ private:
   void pushUndo();   // snapshot current state before a mutating edit
   void undo();
   void redo();
+  // Annulla/ripeti come li intende QUESTA room: la pila del canvas se c'e',
+  // altrimenti il comando globale. Stessa politica di handleUndoKey(), cosi'
+  // la gesture e la tastiera fanno la stessa cosa — che e' l'unico modo per
+  // cui l'utente non debba sapere quale delle due sta usando.
+  void gestureUndo();
+  void gestureRedo();
   void restoreSnapshot(const Snapshot &s);
   // Apply a geometryOnly snapshot: resize the surface to its row count, keeping
   // the drawings at the same world Y (grow and shrink both happen at the world
