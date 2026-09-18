@@ -1919,7 +1919,26 @@ void ZtoryThumbnailCanvas::liftFloatLasso(const QVector<QPointF> &worldPath,
       cp.setBrush(Qt::white);
       cp.drawPolygon(poly);  // world coords == canvasImg px
     }
-    m_ras = rasterFromQImage(canvasImg, true, true);
+    // ⚠️ premultiply=FALSE, e non e' una svista: qui c'era `true` ed e' costato
+    // il bordo scuro attorno alle cancellature E il colore perso dentro.
+    //
+    // rasterToQImage(..., premul=true) non converte niente: ETICHETTA i byte
+    // come gia' premoltiplicati, e il painter lavora in quello spazio. Quindi
+    // l'immagine che torna indietro E' GIA' premoltiplicata. Ma
+    // rasterFromQImage(..., premultiply=true) chiama TRop::premultiply(), che
+    // moltiplica i canali per l'alpha UN'ALTRA VOLTA.
+    //
+    // Sui pixel opachi non cambia nulla — ed e' per questo che il grosso del
+    // disegno stava bene e il difetto sembrava capriccioso. Sui pixel a
+    // trasparenza PARZIALE, cioe' il bordo morbido di gomma e lazo, i canali si
+    // schiacciano verso lo zero a ogni operazione: un azzurro (37,41,74)
+    // diventa (13,15,27), poi (4,5,10), poi (1,1,3). I rapporti fra i canali si
+    // perdono nell'arrotondamento e il colore diventa grigio.
+    //
+    // Misurato sulla tela vera di Franco prima della correzione: i pixel del
+    // bordo erano (0,0,0) con alpha 95 — grigio 160 sul bianco. Esattamente
+    // dove finisce un colore premoltiplicato due o tre volte.
+    m_ras = rasterFromQImage(canvasImg, /*premultiply=*/false, /*mirror=*/true);
     m_floatWasMove = true;
     schedulePersistSave();
   }
@@ -2031,7 +2050,26 @@ void ZtoryThumbnailCanvas::commitFloat() {
     p.setTransform(floatLocalToWorld());
     p.drawImage(0, 0, m_floatImg);
   }
-  m_ras      = rasterFromQImage(canvasImg, /*premul=*/true, /*mirror=*/true);
+  // ⚠️ premultiply=FALSE, e non e' una svista: qui c'era `true` ed e' costato
+  // il bordo scuro attorno alle cancellature E il colore perso dentro.
+  //
+  // rasterToQImage(..., premul=true) non converte niente: ETICHETTA i byte
+  // come gia' premoltiplicati, e il painter lavora in quello spazio. Quindi
+  // l'immagine che torna indietro E' GIA' premoltiplicata. Ma
+  // rasterFromQImage(..., premultiply=true) chiama TRop::premultiply(), che
+  // moltiplica i canali per l'alpha UN'ALTRA VOLTA.
+  //
+  // Sui pixel opachi non cambia nulla — ed e' per questo che il grosso del
+  // disegno stava bene e il difetto sembrava capriccioso. Sui pixel a
+  // trasparenza PARZIALE, cioe' il bordo morbido di gomma e lazo, i canali si
+  // schiacciano verso lo zero a ogni operazione: un azzurro (37,41,74)
+  // diventa (13,15,27), poi (4,5,10), poi (1,1,3). I rapporti fra i canali si
+  // perdono nell'arrotondamento e il colore diventa grigio.
+  //
+  // Misurato sulla tela vera di Franco prima della correzione: i pixel del
+  // bordo erano (0,0,0) con alpha 95 — grigio 160 sul bianco. Esattamente
+  // dove finisce un colore premoltiplicato due o tre volte.
+  m_ras      = rasterFromQImage(canvasImg, /*premultiply=*/false, /*mirror=*/true);
   m_floatImg = QImage();
   m_floatDrag = -1;
   schedulePersistSave();
@@ -2046,7 +2084,26 @@ void ZtoryThumbnailCanvas::cancelFloat() {
       QPainter p(&canvasImg);
       p.drawImage(m_floatSrcRect.topLeft(), m_floatImg);
     }
-    m_ras = rasterFromQImage(canvasImg, true, true);
+    // ⚠️ premultiply=FALSE, e non e' una svista: qui c'era `true` ed e' costato
+    // il bordo scuro attorno alle cancellature E il colore perso dentro.
+    //
+    // rasterToQImage(..., premul=true) non converte niente: ETICHETTA i byte
+    // come gia' premoltiplicati, e il painter lavora in quello spazio. Quindi
+    // l'immagine che torna indietro E' GIA' premoltiplicata. Ma
+    // rasterFromQImage(..., premultiply=true) chiama TRop::premultiply(), che
+    // moltiplica i canali per l'alpha UN'ALTRA VOLTA.
+    //
+    // Sui pixel opachi non cambia nulla — ed e' per questo che il grosso del
+    // disegno stava bene e il difetto sembrava capriccioso. Sui pixel a
+    // trasparenza PARZIALE, cioe' il bordo morbido di gomma e lazo, i canali si
+    // schiacciano verso lo zero a ogni operazione: un azzurro (37,41,74)
+    // diventa (13,15,27), poi (4,5,10), poi (1,1,3). I rapporti fra i canali si
+    // perdono nell'arrotondamento e il colore diventa grigio.
+    //
+    // Misurato sulla tela vera di Franco prima della correzione: i pixel del
+    // bordo erano (0,0,0) con alpha 95 — grigio 160 sul bianco. Esattamente
+    // dove finisce un colore premoltiplicato due o tre volte.
+    m_ras = rasterFromQImage(canvasImg, /*premultiply=*/false, /*mirror=*/true);
     schedulePersistSave();
   }
   // Cancel fully reverts to the pre-lift canvas (a move restored its source, a
