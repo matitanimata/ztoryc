@@ -618,12 +618,37 @@ ImportResult importSheet(const QImage &photo) {
       // rettangolo dritto — c'e' sempre un po' di prospettiva e di rotazione.
       // Un'esportazione da Procreate del foglio stampato lo e' esattamente.
       // src e' TL, TR, BL, BR.
-      const double tol = 0.005 * std::max(wTop, hLeft);  // mezzo percento
-      res.digitalPage =
-          std::abs(src[0].y - src[1].y) < tol &&   // lato alto orizzontale
-          std::abs(src[2].y - src[3].y) < tol &&   // lato basso orizzontale
-          std::abs(src[0].x - src[2].x) < tol &&   // lato sinistro verticale
-          std::abs(src[1].x - src[3].x) < tol;     // lato destro verticale
+      // PAGINA DIGITALE o FOTO? Lo dice la TRASFORMAZIONE, non la forma del
+      // quadrilatero.
+      //
+      // ⚠️ Il primo tentativo controllava che i quattro centri dei marcatori
+      // formassero un rettangolo dritto. Sbagliato per costruzione: il
+      // marcatore in alto a sinistra e' apposta piu' grande degli altri
+      // (`mSzTL = mSz * 1.4`, serve a riconoscere l'origine per area), quindi
+      // il suo centro sta 29 px piu' all'interno su entrambi gli assi anche su
+      // una pagina perfettamente dritta. Il test bocciava ogni pagina digitale.
+      //
+      // La domanda giusta e': per sovrapporre questi angoli al MODELLO serve
+      // solo ingrandire e spostare, oppure anche ruotare e raddrizzare la
+      // prospettiva? M porta src su dst: se e' una similitudine (scala uniforme
+      // piu' traslazione) l'immagine e' gia' canonica, cioe' non e' stata
+      // fotografata.
+      //
+      // Soglie prese da una misura sul foglio vero di Franco contro una foto
+      // simulata con gli angoli sfasati di appena 10-18 px:
+      //   taglio        0,00009  contro  0,0049
+      //   scala nonunif 0,00062  contro  0,0035
+      //   prospettiva   0,00010  contro  0,0149
+      // Da cinque a centocinquanta volte di margine; una foto vera e' molto
+      // peggio di quella simulata.
+      const double m00 = M.at<double>(0, 0), m01 = M.at<double>(0, 1);
+      const double m10 = M.at<double>(1, 0), m11 = M.at<double>(1, 1);
+      const double m20 = M.at<double>(2, 0), m21 = M.at<double>(2, 1);
+      const double sc    = 0.5 * (std::abs(m00) + std::abs(m11));
+      const double shear = sc > 0 ? std::max(std::abs(m01), std::abs(m10)) / sc : 1.0;
+      const double aniso = sc > 0 ? std::abs(m00 - m11) / sc : 1.0;
+      const double persp = std::abs(m20) * gray.cols + std::abs(m21) * gray.rows;
+      res.digitalPage = shear < 0.001 && aniso < 0.002 && persp < 0.002;
     }
   }
 
