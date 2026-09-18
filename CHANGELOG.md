@@ -1,7 +1,19 @@
 ## [2026-09-18] — «mi ritrovo la scena SB vuota»: un underscore, e l'audio che spariva riordinando
 
 Una sola segnalazione, quattro difetti sotto, **due dei quali distruggevano
-lavoro**. Chiusa con il rilascio della **0.14.1**.
+lavoro**. La sessione e' poi proseguita fino a sera e la voce sotto copre
+solo la prima meta'.
+
+> ⚠️ **Il primo tentativo di 0.14.1 e' stato RITIRATO a meta'**, tag
+> compreso. Era nata incompleta: Windows e Linux pubblicati, macOS ancora in
+> compilazione su un runner Intel anomalo (due ore contro l'ora scarsa
+> abituale), e nel frattempo il lavoro della sera l'aveva gia' superata.
+> **Zero download** su tutti e sei i pacchetti — verificato prima di
+> cancellare — quindi non ha lasciato nessuno a piedi, e la 0.14.0 e'
+> tornata «Latest» con i suoi nove pacchetti finche' non si e' rifatta.
+> **Si rilascia con lo STESSO numero**, 0.14.1: quel numero non l'ha mai
+> avuto nessuno, e saltarlo avrebbe lasciato un buco nella sequenza per
+> nascondere una release che nessuno ha visto. (Osservazione di Franco.)
 
 Il punto di partenza era il peggiore possibile: uno storyboard di 33 inquadrature
 che risultava vuoto. Non lo era. Il file era intatto sul disco — 253 KB, 33
@@ -71,6 +83,88 @@ prima apertura della scena**: il ruolo si poteva correggere solo dopo aver apert
 la scena col ruolo sbagliato, cioe' dopo che il danno era fatto (una scena letta
 come storyboard pubblica i suoi shot nel tracker). Ora il menu compare comunque e
 la scelta crea il sidecar.
+
+### La sera — la Thumbs room, e un difetto che mangiava il colore
+
+**L'undo non riportava indietro l'audio.** Con il **link audio-video** acceso si
+fa «Match Subscene Duration», l'audio segue gli shot, e ⌘Z rimetteva a posto il
+video lasciando l'audio dove l'operazione l'aveva portato. Lo snapshot dell'undo
+conteneva solo shot, livello e durata: dell'audio non aveva **mai** saputo nulla.
+⚠️ E rifare lo spostamento al contrario non sarebbe bastato:
+`shiftLevelFromFrame()` **taglia** il livello precedente quando lo spostamento a
+sinistra lo farebbe sovrapporre, e quel taglio uno shift inverso non lo
+ripristina. Si salva lo STATO, non il movimento. Con due cautele: i livelli si
+ritrovano per identita' (uno shift li riordina), e undo/redo toccano l'audio solo
+se quell'operazione lo aveva davvero mosso.
+
+**Una pagina disegnata su iPad rientrava in bianco e nero.** Nella Thumbs room
+c'e' UNA sola porta di import ed e' quella per la **foto di un foglio stampato**:
+tiene solo il canale blu (per cancellare le righe ciano della stampa) e alza il
+punto di bianco per saturare il rumore della carta. Su una pagina digitale il
+primo passaggio butta via il colore e il secondo schiaccia i grigi disegnati.
+Ironia gia' scritta nel codice: a togliere le righe **non e' il canale, e' il
+ritaglio interno**. Ora foto e pagina digitale si distinguono dalla geometria —
+se per sovrapporre gli angoli al modello basta ingrandire e spostare, senza
+ruotare ne' raddrizzare la prospettiva, l'immagine e' gia' canonica.
+
+> ❌ **Il primo tentativo era sbagliato per costruzione**, e vale la pena
+> ricordarlo: controllava che i quattro centri dei marcatori formassero un
+> rettangolo dritto. Ma il marcatore in alto a sinistra e' **apposta piu'
+> grande** (`mSzTL = mSz * 1.4`, serve a riconoscere l'origine per area), quindi
+> il suo centro sta 29 px piu' all'interno su qualunque pagina. Bocciava tutto.
+> Sciolto misurando il foglio vero con una sonda OpenCV: tre grappoli da quattro
+> quadrati concentrici, uno da sei e piu' grande. Le soglie del test nuovo
+> vengono da quella misura contro una foto simulata, non da un'intuizione.
+
+**Il lazo premoltiplicava DUE volte, e a ogni giro mangiava il colore.**
+Segnalato in due tempi — prima «resta un bordo scuro attorno alla cancellatura»,
+poi «nell'area cancellata il disegno ha perso il colore» — ed e' il secondo
+sintomo ad aver risolto il caso: un bordo scuro puo' venire da dieci cause, un
+colore che diventa grigio **mantenendo la trasparenza** da una sola.
+`rasterToQImage(premul=true)` non converte, **etichetta**; l'immagine che torna
+indietro e' gia' premoltiplicata, ma `rasterFromQImage(premultiply=true)` chiama
+`TRop::premultiply()` un'altra volta. Sui pixel opachi non cambia niente — ed e'
+per questo che sembrava capriccioso e a un certo punto «non lo faceva piu'» —
+mentre sui pixel a trasparenza parziale, cioe' il bordo morbido di gomma e lazo,
+i canali si schiacciano verso lo zero a **ogni** operazione: un azzurro
+(37,41,74) diventa (13,15,27), poi (4,5,10), poi (1,1,3), e i rapporti muoiono
+nell'arrotondamento. ⚠️ **Corregge solo il danno futuro**: dove il colore e' gia'
+stato schiacciato l'informazione non c'e' piu'.
+
+**Il foglio stampato aveva i bordi morbidi piu' scuri dello schermo.** Trovato
+per strada cercando il difetto sopra, e indipendente: `canvasImage()` — che
+alimenta la stampa — dichiarava il buffer non premoltiplicato.
+⚠️ Non si e' toccato allo stesso modo il salvataggio/caricamento della tela,
+che pure dice `false`: li' l'etichetta sbagliata c'e' in andata **e** in ritorno,
+quindi il giro e' byte per byte identico e i file sono sani. «Correggerli»
+avrebbe ripremoltiplicato dati gia' premoltiplicati, scurendo in silenzio tutte
+le tele esistenti. Si corregge il punto da cui l'errore **esce**, non quelli dove
+si annulla.
+
+**Il dito disegnava invece di spostare la tela.** Segnalato da un utente Surface.
+Il canvas non chiedeva a Qt gli eventi di tocco, quindi ogni dito arrivava come
+click sintetizzato e finiva nel pennello. Ora: un dito sposta, il pizzico zooma,
+due e tre dita annullano e ripetono secondo le **stesse preferenze** del resto
+dell'applicazione. Provato da Franco sulla Wacom Companion 2 — tenuta fresca coi
+siberini sotto, che e' il livello di infrastruttura di questo progetto.
+
+> **Tre giri per arrivarci, e i primi due erano nel posto sbagliato.**
+> 1. Il rifiuto del palmo basato sulla **prossimita'** della penna (mia
+>    aggiunta) spegneva il tocco per sempre: su un display con penna la penna e'
+>    quasi sempre vicina al vetro. SceneViewer blocca il tocco **solo mentre si
+>    disegna davvero**, ed era la condizione che avevo prima di «migliorarla».
+> 2. Mancava `m_gestureActive = true` **subito dopo** `touchEvent()` dentro
+>    `event()` — una riga di SceneViewer che non avevo copiato. Il tocco-undo
+>    vive in `mouseReleaseEvent`, dietro quella guardia.
+> 3. E la causa vera: le gesture eseguivano `MI_Undo`, il comando **globale**,
+>    ma la Thumbs room ha una pila di undo **sua** (`m_undo`/`m_redo`),
+>    raggiungibile solo da `handleUndoKey`. Partivano davvero, e annullavano
+>    qualcos'altro.
+>
+> Franco ha ripetuto tre volte la stessa frase — «**funzionano nelle altre
+> room**» — e per due giri l'ho trattata come contorno invece che come il dato
+> principale. Una funzione che va la' e non qua non si spiega col codice
+> condiviso: si spiega con cio' che le due room **non** hanno in comune.
 
 ### Upstream candidates
 

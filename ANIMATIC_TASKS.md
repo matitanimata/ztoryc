@@ -535,6 +535,246 @@ compilazione e li ripaga al primo rapporto. Lo script e la configurazione sono
 piu' sotto, nel blocco che descrive come e' stata montata la build in
 `/Volumes/ZioSam/tahoma2d-workspace/asan-build`.
 
+### ✅ RISOLTO 2026-09-18 — con il link audio-video, l'undo non riportava indietro l'audio
+
+Segnalato da Franco, corretto e **verificato da lui lo stesso giorno**: con il
+link acceso si fa «Match Subscene Duration», l'audio segue gli shot, e ora ⌘Z lo
+riporta esattamente dov'era.
+
+**Causa.** Lo snapshot dell'undo del Board (`ZtoryShotSnap`) conteneva solo
+`ShotData`, il livello e la durata: **dell'audio non sapeva niente**. Ma con
+`m_audioLinked` acceso `ZtoryAnimaticPanel::resequenceXsheet()`
+(`ztoryanimatic.cpp:8211`) sposta lo `startFrame` dei ColumnLevel audio per farli
+seguire gli shot. L'undo rimetteva a posto il video, e l'audio restava dove
+l'operazione l'aveva portato. Non era un ripristino difettoso: era uno stato che
+l'undo non aveva **mai fotografato**.
+
+> ⚠️ **La trappola, e il motivo per cui la prima idea ovvia era sbagliata.**
+> Rifare lo spostamento al contrario NON ripristina lo stato:
+> `shiftLevelFromFrame()` non e' invertibile. Quando uno spostamento a sinistra
+> farebbe sovrapporre due livelli, **taglia** quello precedente
+> (`setEndOffset`). Uno shift inverso rimette le posizioni e **lascia il
+> taglio**. Per questo si salva lo STATO — `startFrame`, `startOffset`,
+> `endOffset` per ogni ColumnLevel — e non il movimento.
+
+**Correzione.** `captureSnapshot()` restituisce ora `ZtoryBoardSnap` (gli shot
+**piu'** le posizioni dell'audio); `UndoBoardState` se le porta dietro.
+`ZtoryBoardSnap` espone `empty()/clear()/size()/operator[]` che inoltrano agli
+shot, quindi i ~44 punti di chiamata non sono cambiati: il tipo nuovo si
+comporta come il vecchio dove il codice tratta lo snapshot come la sola lista di
+shot, ed e' giusto cosi' — l'audio riguarda solo l'undo.
+
+Due cautele, entrambe necessarie e non ornamentali:
+- i livelli si ritrovano per **identita'** (`ColumnLevel*`), non per indice:
+  `shiftLevelFromFrame` **riordina** `m_levels`. E se la struttura e' cambiata
+  (un livello tagliato o aggiunto nel frattempo) quella colonna si salta:
+  rimettere numeri su livelli diversi da quelli fotografati non e' un undo;
+- undo e redo toccano l'audio **solo se le due fotografie differiscono**, cioe'
+  solo se quell'operazione lo aveva davvero mosso. Senza questa condizione
+  `beginExternalEdit()` — che tiene uno snapshot aperto a lungo — avrebbe potuto
+  far spostare, a un undo qualsiasi, un audio che l'utente aveva mosso a mano
+  nel frattempo.
+
+**File:** `ztoryundo.h` (le strutture e le tre funzioni),
+`storyboardpanel.cpp` (`ztoryCaptureAudioSnap` / `ztoryRestoreAudioSnap` /
+`ztoryAudioSnapDiffers`, accanto a `UndoBoardState::undo`).
+
+> **Sull'undo «faticoso»** (l'altra meta' della segnalazione): Franco lo ha
+> trovato «molto piu' veloce» subito dopo, ma **senza che sia stata scritta una
+> riga per la velocita'**. L'effetto di rimbalzo plausibile e' la correzione di
+> `onMoveShot` dello stesso giorno: prima riscriveva `xsheetColumn` sbagliato, e
+> da li' in poi `onModelResequenced` vedeva deriva e faceva la ricostruzione
+> completa — che rilegge il `.ztoryc` dal DISCO, ed e' la stessa strada da cui
+> passa `restoreFromSnapshot`. **Non misurato.** Se ricapita di sembrare lento,
+> mettere un cronometro attorno a `restoreFromSnapshot` prima di ipotizzare.
+
+---
+
+### 🆕 DA FARE — ROTAZIONE DELLA VISTA nella Thumbs room
+
+Chiesta da Franco il 2026-09-18, dopo la prova sulla Wacom Companion 2: il
+pizzico a due dita zooma ma non ruota, mentre nelle altre room ruota. **Da fare
+nella stessa sessione del raster per pagina** (decisione di Franco).
+
+⚠️ **Prima avevo risposto di no, e la risposta era sbagliata.** Avevo in testa
+«ruotare il contenuto DENTRO la griglia», che in effetti la disallineerebbe.
+Franco parla di ruotare **la VISTA**: la griglia ruota insieme al foglio, non si
+disallinea niente, ed e' il gesto di girare il foglio sul tavolo mentre si
+disegna — utile davvero, e presente in ogni programma di disegno.
+
+**Misurato il 2026-09-18** (`ztorythumbnailcanvas.cpp`): la conversione passa
+gia' quasi tutta dalle due funzioni ufficiali (33 usi di `worldToWidget` /
+`widgetToWorld` / `widgetToRaster`), ma **una quindicina di punti danno per
+scontato che la trasformazione sia solo scala + traslazione**. Il caso tipico,
+negli overlay di griglia, fusioni e selezioni:
+
+```cpp
+const QRectF sr(worldToWidget(wr.topLeft()),
+                QSizeF(wr.width() * m_zoom, wr.height() * m_zoom));
+```
+
+Sotto rotazione un rettangolo del mondo non e' piu' un rettangolo dritto sullo
+schermo: quello e' sbagliato per costruzione.
+
+✅ **La correzione e' una SEMPLIFICAZIONE, non trigonometria in piu':** si
+costruisce **una** `QTransform` (traslazione × rotazione × scala), la si da' al
+painter e si disegna in **coordinate del mondo** — `p.drawRect(wr)` invece di
+calcolare `sr`. Sparisce aritmetica. Le penne vogliono `setCosmetic(true)` per
+non ingrossarsi con lo zoom (molte lo sono gia').
+**Il modello e' gia' in casa**: `paintFloat()` costruisce gia' un `world2widget`
+e lo passa al painter.
+
+**I quattro pezzi:**
+1. `m_rot` + una `viewTransform()` sola, e la sua INVERSA per l'input
+   (`widgetToWorld` / `widgetToRaster`);
+2. ridisegno: `paintEvent`, `paintFloat` e tutti gli overlay passano dalla
+   trasformazione invece di calcolare rettangoli dritti;
+3. **barre di scorrimento**: con la pagina storta vanno ricalcolate sul riquadro
+   ruotato (oggi `updateScrollBars` assume assi paralleli);
+4. il pizzico che scrive l'angolo, **piu' un comando «azzera rotazione»** —
+   senza, tornare dritti a mano e' una tortura, ed e' il motivo per cui ce l'hanno
+   tutti.
+
+✅ **DECISO da Franco il 2026-09-18: ruota TUTTO INSIEME, numerini compresi.**
+E' il foglio che gira sul tavolo: se i numeri restassero dritti sembrerebbero
+appiccicati allo schermo invece che alla pagina.
+
+⚠️ **Si lavora sul branch e si compila su `Ztoryc-SP.app`.** Tocca il percorso
+di disegno da cui dipende tutta la room: sbagliando li' non si rompe la
+funzione nuova, si rompe il canvas anche per chi la rotazione non la usa.
+
+---
+
+### ⏳ DA CONFERMARE — tocco e gesti nella Thumbs room (commit `356a3645a`)
+
+Segnalato da un **utente Surface**: nella Thumbs room un dito che prova a
+spostare la tela ci disegnava sopra col pennello attivo. Corretto il 2026-09-18
+portando `touchEvent`/`gestureEvent` da `ImageViewer` (imageviewer.cpp) e il ramo
+`TapGesture` da `SceneViewer`, piu' il rifiuto del palmo che nessuno dei due ha.
+
+⚠️ **NON VERIFICATO DA NESSUNO.** Ne' Franco ne' io abbiamo uno schermo touch
+raggiungibile: il Mac e' un mini senza trackpad, e la Wacom Companion 2 non e'
+utilizzabile. Il 2026-09-18 Franco ha mandato l'installer Windows
+(build da `356a3645a`) **direttamente a chi aveva segnalato il problema**:
+la conferma puo' arrivare solo da li'.
+
+**Cosa chiedergli, perche' «sembra a posto» non basta.** Sono tre cose diverse
+che possono rompersi separatamente:
+1. **un dito sposta la tela** senza lasciare il segno del pennello — e' la
+   segnalazione originale;
+2. **la penna disegna con la mano appoggiata allo schermo** — il rifiuto del
+   palmo. E' l'unico dei tre che, se e' sbagliato, ROVINA un disegno invece di
+   dare fastidio: la tela scivolerebbe sotto il segno;
+3. **il pizzico zooma**, e in **Seleziona/Trasforma** la penna muove ancora le
+   selezioni — sono le uniche due modalita' in cui la penna passa dal mouse
+   sintetizzato, cioe' dove sta la guardia nuova.
+
+Se il 2 fallisce, si torna indietro subito: e' l'unico che fa danno.
+
+---
+
+### ✅ RISOLTO 2026-09-18 — il lazo premoltiplicava DUE volte: bordo scuro e colore mangiato
+
+Segnalato da Franco in due tempi, e **il secondo pezzo e' quello che ha risolto
+il caso**: prima «resta un bordo scuro attorno alla cancellatura», poi —
+riaprendo la scena — «nell'area cancellata il disegno ha perso il colore».
+Col solo bordo c'era un fatto e nessuna spiegazione; un colore che diventa
+grigio MANTENENDO la trasparenza, invece, viene da una causa sola.
+
+**Causa.** I tre percorsi della selezione flottante (`liftFloatLasso`,
+`commitFloat`, `cancelFloat`) fanno il giro raster → QImage → raster cosi':
+
+```cpp
+QImage img = rasterToQImage(m_ras, /*premul=*/true, ...);
+... lavoro col painter ...
+m_ras = rasterFromQImage(img, /*premul=*/true, ...);   // ← SBAGLIATO
+```
+
+`rasterToQImage(premul=true)` **non converte**: ETICHETTA i byte come gia'
+premoltiplicati, e il painter lavora in quello spazio. L'immagine che torna
+indietro e' quindi **gia'** premoltiplicata. Ma `rasterFromQImage(premultiply=
+true)` chiama `TRop::premultiply()`, che moltiplica i canali per l'alpha
+**un'altra volta**. Corretto passando `false`: la conversione non serve, i dati
+sono gia' nello spazio giusto.
+
+**Perche' sembrava capriccioso** (e perche' a un certo punto «non lo faceva
+piu'»): sui pixel OPACHI la doppia premoltiplicazione non cambia nulla, quindi
+il grosso del disegno stava bene. Colpisce solo i pixel a trasparenza PARZIALE
+— cioe' esattamente il bordo morbido di gomma e lazo — ed e' **cumulativa**:
+agisce solo sulle zone passate per un'operazione di lazo, e ogni volta un po' di
+piu'. Non era capriccio, era la storia di quel pezzo di tela.
+
+**I numeri:** un azzurro (37,41,74) diventa (13,15,27), poi (4,5,10), poi
+(1,1,3). I rapporti fra i canali muoiono nell'arrotondamento → grigio.
+Misurato sulla tela vera prima della correzione: pixel del bordo a **(0,0,0)
+con alpha 95**, cioe' grigio 160 sul bianco — esattamente dove finisce un colore
+premoltiplicato due o tre volte.
+
+⚠️ **CORREGGE SOLO IL DANNO FUTURO.** Dove il colore e' gia' stato schiacciato
+l'informazione non c'e' piu': quelle zone restano grigie. Si recuperano solo da
+un salvataggio precedente della scena.
+
+> **Due lezioni, che sono la parte che vale.**
+> 1. La prima ipotesi — cercare il colpevole nel TRACCIATO del lazo — non portava
+>    da nessuna parte, e l'unica cosa che ha funzionato e' stata **misurare i
+>    pixel veri sul PNG salvato** (PIL/numpy) invece di ragionare sul codice.
+> 2. Il sintomo che ha risolto il caso non e' quello segnalato per primo. Un
+>    bordo scuro puo' venire da dieci cause; il colore perso da una. **Quando un
+>    difetto non si spiega, chiedere l'ALTRO sintomo.**
+
+> ✅ Corretto anche, trovato per strada e **indipendente**: `canvasImage()`
+> dichiarava il buffer NON premoltiplicato, e alimenta il contenuto della
+> **stampa del foglio** — i bordi morbidi si stampavano piu' scuri dello schermo.
+> ⚠️ NON si tocca allo stesso modo il salvataggio/caricamento della tela, che
+> pure dice `false`: li' l'etichetta sbagliata c'e' in andata E in ritorno,
+> quindi il giro e' byte per byte identico e i file sono sani. "Correggerli"
+> farebbe ripremoltiplicare dati gia' premoltiplicati e scurirebbe TUTTE le tele
+> esistenti, in silenzio.
+
+---
+
+### ⏳ IN ATTESA — WizzerWorks — la correzione CMake 4, e chi la firma
+
+Il 2026-09-17 Franco ha scritto a **Mark Millard <msm@wizzerworks.com>**
+(`magic-lantern-workbench`, che ha un fork di Ztoryc) chiedendogli di aprire
+come PR il suo commit `31cfa33dc` «Fix CMakeLists files for CMake 4.» del
+24 luglio, che vive su `mlw/magiclantern` e non era mai stato proposto. Le sue
+parole: *«I'd rather merge it with your name on it than copy it out of your
+branch»*.
+
+**Promemoria fissato al 2026-09-25** (task `wizzerworks-cmake4-follow-up`).
+
+**Verificato sul codice il 2026-09-18** — il commit fa tre cose, e due le
+abbiamo gia':
+
+| | lui, 24 luglio | noi, su master |
+|---|---|---|
+| `cmake_minimum_required` 2.8 → 3.10 (due punti) | ✅ | **gia' presente** |
+| `find_package(Boost)` → `Boost CONFIG` | ✅ | **gia' presente** |
+| togliere `DEPENDS` dai `POST_BUILD` | 2 righe | **manca** — ma da noi sono **7** |
+
+⚠️ **Il terzo pezzo NON e' cherry-pickabile.** Il suo ramo e' fermo a luglio e
+da allora `toonz/sources/toonz/CMakeLists.txt` e' cresciuto: lui aveva due
+`add_custom_command(TARGET ... DEPENDS)`, noi ne abbiamo sette (si sono
+aggiunti `tcomposer`, `tcleanup`, `tconverter`, `tfarmcontroller`,
+`tfarmserver`). Un cherry-pick darebbe conflitto e finirebbe riscritto comunque.
+
+**Perche' non si sollecita e non ci si mette le mani.** Al 18 settembre era
+passato **un giorno**, e sul loro fork l'ultimo push e' del **31 luglio**: non
+e' silenzio, e' un progetto che non stanno toccando. E prendergli il commito un
+giorno dopo avergli scritto «preferisco mergiarlo col tuo nome sopra»
+contraddirebbe la mail. Vale anche la memoria corta: **siamo stati noi a tenere
+la loro PR #3 ferma un mese senza un commento** (vedi il passo 1-bis della
+checklist di rilascio, che esiste per quello).
+
+**La forma giusta del sollecito** non e' «hai visto la mail?» ma una seconda
+mail che gli fa RISPARMIARE lavoro: due delle tre correzioni le avevamo gia'
+raggiunte da soli, resta quella dei `DEPENDS`, il file da luglio e' passato da
+due righe a sette — quindi la apre lui sul file di oggi, o la facciamo noi
+citandolo. La scelta resta sua.
+
+---
+
 ### 🔴 APERTO 2026-09-16 — gli asset con un tipo che Kitsu non ha vengono SALTATI IN SILENZIO
 
 `KitsuClient::asPushProcessNext()`:
@@ -640,19 +880,34 @@ principale, non un di piu'.** Una palette TLV contiene anche i colori ink/paint:
 la cosa pulita e' usare le **pagine** della palette (una Colori, una Pennelli),
 che il `.tpl` salva gia'.
 
-**COSA RESTA DA FARE, quindi:**
-1. il canvas della Thumbs room prende un `TMyPaintBrushStyle*` da una palette
-   invece che da un percorso di file (piccolo: usa gia' quel tipo);
-2. lo Style Editor punta su quella palette quando si e' nella room — ⚠️ **l'unico
-   pezzo delicato**: e' condiviso con tutta l'applicazione e va rimesso a posto
-   uscendo, o si rompe il disegno nelle altre room;
-3. la striscia dei pennelli resta come **accesso rapido** mentre si disegna, e lo
-   Style Editor diventa il posto dove si cura e si personalizza — la divisione
-   che hanno tutti i programmi di disegno.
+✅ **FATTO E RILASCIATO nella 0.14.0 (2026-09-16)** — tutti e tre i punti che
+questa voce elencava come da fare:
+1. il canvas della Thumbs room prende il pennello da una **palette vera**, non da
+   un percorso di file;
+2. lo **Style Editor** punta su quella palette quando si e' nella room, costruito
+   sulla nostra maniglia e non su quella condivisa (era il pezzo delicato, e la
+   strada scelta e' proprio quella che evitava di dover rimettere a posto
+   qualcosa uscendo);
+3. la striscia dei pennelli e' rimasta come **accesso rapido**, con Duplica e
+   Rimuovi nel menu contestuale, e lo Style Editor e' il posto dove si
+   personalizza.
+In piu', non previsto qui: una **gomma vera** (toglie i pixel invece di
+dipingerli di bianco, quindi sfuma e si annulla) e i **percorsi relativi** dei
+`.myb`, senza i quali una palette copiata su un'altra macchina ripiegava in
+silenzio sul pennello di fabbrica.
+
+> ⚠️ **Questa voce e' rimasta scritta come «da fare» per due giorni dopo che il
+> lavoro era atterrato**, e il 2026-09-18 ha quasi fatto rifare cose gia' fatte.
+> Quando una voce viene chiusa da un rilascio, si chiude QUI nello stesso giro:
+> una lista di lavoro che non si aggiorna e' peggio di nessuna lista, perche'
+> viene creduta.
 
 > **Il piano con `QSettings` e' SUPERATO.** Se i pennelli vivono in una palette,
 > la persistenza e' il `.tpl` e non va scritta: nomi, parametri, curve, piu'
 > tavolozze, condivisione. Non riproporre l'elenco in QSettings.
+
+**COSA RESTA DAVVERO DA FARE sulla Thumbs room:** solo il **raster per pagina**,
+la voce 🔴 qui sotto. Nient'altro.
 
 🔴 **IN PIEDI — il raster unico della Thumbs room non regge l'obiettivo di
 produzione.** Non e' un difetto: e' un limite di struttura, con i numeri in mano.
@@ -696,6 +951,71 @@ Senza questa risposta il progetto avrebbe una forma completamente diversa.
 > **prestazioni, non dati**. La via stretta del pennello e' gia' collaudata: e'
 > la stessa informazione (`askWrite`) su cui gira il ridisegno parziale, e Franco
 > ha confermato che il segno e' pulito.
+
+#### 🔍 RICOGNIZIONE 2026-09-18 — letta tutta la superficie prima di toccarla
+
+Branch pronto: **`feature/thumbs-paged-raster`**, che si compila nel worktree
+`tahoma2d-superplastic` e produce **`Ztoryc-SP.app`** — cosi' la `Ztoryc.app` su
+cui Franco lavora resta quella di master. Lo `build_and_deploy.sh` di quel
+worktree riconosce da se' il bundle rinominato.
+
+**L'impalcatura esiste gia', ed e' meta' del lavoro.** Il salvataggio a bande
+(2026-09-16) lavora gia' a gruppi di **5 righe di griglia**, che e' esattamente
+l'altezza di una pagina: 4 × 5 × 270 px = **1920×1350**, il numero della tabella
+qui sopra. Sul disco i file sono gia' `_ztorythumbs_band000.png …` con il loro
+manifesto, e ci sono gia' `bandCount()`, `bandRasterRange()`, `m_bandDirty` e la
+via stretta `askWrite()`. **Non si tratta di inventare le pagine: si tratta di
+far combaciare la memoria con la struttura che e' gia' su disco.**
+
+**Misurato, non dedotto: i panorami ATTRAVERSANO gia' una pagina.** Nel file vero
+di Franco `_ztorythumbs_merges.txt` c'e' `1 9 1 2`, cioe' una fusione sulle righe
+**9 e 10** — e il confine fra bande cade a multipli di 5. Quindi la regola «un
+disegno non attraversa mai due pagine» vale per il DISEGNO, non per le fusioni.
+Vietarle romperebbe un disegno esistente: vanno **composte** da due pagine.
+
+**Due costi che la voce qui sopra NON elencava, e pesano quanto quelli elencati:**
+1. **`pushUndo()` clona il raster INTERO** (`s.ras = m_ras->clone()`). Le
+   pennellate usano gia' le tessere, ma ogni operazione che pennellata non e'
+   (importa, incolla, pulisci, fondi, trasforma) si porta via una copia
+   completa. A 617 MB e' insostenibile — ed e' lo stesso guaio che il commento
+   di `addRow` racconta di aver gia' vissuto («la macchina comincio' a swappare
+   e non si riprese piu'»).
+2. **Lazo e selezione flottante fanno un giro raster→QImage→raster su TUTTA la
+   tela**: `liftFloatLasso`, `commitFloat`, `cancelFloat`. Tre conversioni da
+   617 MB per un lazo.
+
+❌ **Sospetto CADUTO, scritto perche' non torni:** `paintEvent` **non** converte
+tutta la tela a ogni ridisegno. Usa `rasterToQImage(..., mirrored=false)`, che
+avvolge la memoria senza copiarla, e lascia il ribaltamento al painter; il
+commento accanto lo spiega gia'. Era stato ottimizzato apposta.
+
+**IL NODO DI PROGETTO: il pennello.** `beginStroke` fa
+`new MyPaintToonzBrush(m_ras, ...)` — il motore MyPaint riceve IL raster e ha uno
+stato interno (velocita', sbavatura). Una pennellata vicina al confine dovrebbe
+scrivere su due pagine, e quello stato non si spezza in due.
+
+→ **La forma che risolve pennello, lazo e undo insieme: la FINESTRA DI LAVORO.**
+Le pagine stanno separate in memoria; quelle su cui si sta lavorando (∼3, una
+trentina di MB) vivono in una finestra **contigua**. Pennello, lazo e undo
+lavorano sulla finestra, esattamente come oggi e senza cambiare il loro codice.
+Quando l'utente si sposta, la finestra si riversa nelle pagine e si riapre
+altrove. E' questo che «tessere» voleva dire, ed e' il motivo per cui era una
+fase a se'.
+
+> ⚠️ **La finestra ALZA il rischio gia' segnalato su «chi marca sporco»**, non
+> lo abbassa: aggiunge un momento in cui gli stessi pixel stanno in due posti
+> (finestra e pagina). Il riversamento va trattato come una strada di scrittura
+> a tutti gli effetti, e vale ancora — a maggior ragione — la regola di
+> rovesciare il valore predefinito: salva tutto, tranne quando si sa con
+> certezza che e' stata solo una pennellata.
+
+**Mappa delle 82 scritture/letture di `m_ras`**, per non scoprirne una a meta'
+lavoro: `applyImportedCells` (8), `askWrite` (6), `restoreGeometry` (5),
+`isPanelEmpty` (5), `persistSave` (4), `persistLoad` (4), `liftFloatLasso` (4),
+`applyPatches` (4), `capturePatchesAt` (4), `panelRaster` (4), `onSceneChanged`
+(3), `liftFloat` (3), `commitFloat` (3), `cancelFloat` (3), `addRow` (3), piu'
+`undo`/`redo`/`pushUndo`/`restoreSnapshot`, `paintEvent`, `markBandsDirty`,
+`beginStroke`, `canvasImage`.
 
 ✅ **RISOLTO 2026-09-15 — la numerazione degli shot si sfasciava: una colonna
 audio in mezzo bastava.** Segnalato da Franco su una scena vera
