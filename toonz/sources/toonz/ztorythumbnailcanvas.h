@@ -213,10 +213,13 @@ protected:
   QPointF m_firstPanPoint;
   bool   m_zooming     = false;
   double m_scaleFactor = 0.0;
-  // La penna e' in prossimita': finche' lo e', il tocco si ignora. E' il
-  // rifiuto del palmo — su una tavoletta con penna E tocco (Wacom Companion,
-  // Surface) la mano appoggiata sullo schermo genera tocchi mentre si disegna.
-  bool m_penInProximity = false;
+  // Quante dita ha visto QUESTO tocco (il massimo raggiunto). Serve alle
+  // gesture di undo/redo: 2 dita = annulla, 3 = ripeti, secondo le preferenze.
+  // Il valore 100 e' il modo di SceneViewer per dire «questo tocco ha gia'
+  // fatto qualcosa (spostamento, zoom), quindi NON contarlo come tocco».
+  int m_touchPoints = 0;
+  QPointF m_undoPoint;       // riferimento per il trascinamento a tre dita
+  QElapsedTimer m_touchClock;
 
 private:
   // Brush

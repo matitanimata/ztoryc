@@ -33,6 +33,8 @@
 #include <QLineF>
 #include <QApplication>
 #include <QScrollBar>
+#include "toonz/preferences.h"       // le gesture di annulla/ripeti
+#include "toonzqt/menubarcommand.h"  // CommandManager
 #include <QTouchEvent>
 #include <QGestureEvent>
 #include <QGesture>
@@ -1347,19 +1349,26 @@ void ZtoryThumbnailCanvas::endStroke() {
 //=============================================================================
 
 void ZtoryThumbnailCanvas::tabletEvent(QTabletEvent *e) {
-  // La penna ha la precedenza su tutto. Due cose, qui:
-  //  - da adesso i tocchi si ignorano (rifiuto del palmo), finche' la penna non
-  //    esce dalla prossimita';
-  //  - un gesto eventualmente rimasto acceso si spegne, o in modalita'
-  //    Seleziona/Trasforma — le uniche in cui la penna passa dal mouse
-  //    sintetizzato, vedi sotto — la penna resterebbe bloccata dalla guardia.
-  if (e->type() != QEvent::TabletLeaveProximity) {
-    m_penInProximity = true;
-    m_gestureActive  = false;
-    m_touchActive    = false;
-    m_touchPanning   = false;
-  } else {
-    m_penInProximity = false;
+  // ⚠️ QUI c'era un rifiuto del palmo basato sulla PROSSIMITA' della penna, e
+  // spegneva il tocco per sempre. Su un display con penna (Wacom Companion,
+  // Cintiq) la penna e' quasi sempre vicina al vetro: bastava cominciare a
+  // disegnare una volta e il dito non spostava piu' la tela. Segnalato da
+  // Franco il 2026-09-18 provando sulla Companion 2.
+  //
+  // SceneViewer fa la cosa giusta e piu' semplice: su Windows abbassa il suo
+  // flag a ogni evento della tavoletta che NON sia un tratto in corso
+  // (`if (m_tabletState != StartStroke && m_tabletState != OnStroke)
+  //   m_tabletEvent = false;`). Cioe' il tocco si blocca SOLO mentre si
+  // disegna davvero. Qui l'equivalente e' m_stroking, che era gia' la
+  // condizione giusta prima che la peggiorassi.
+  //
+  // Resta solo: alla PRESSIONE della penna si spegne un gesto eventualmente
+  // rimasto acceso, o in Seleziona/Trasforma — le uniche modalita' in cui la
+  // penna passa dal mouse sintetizzato — la guardia la bloccherebbe.
+  if (e->type() == QEvent::TabletPress) {
+    m_gestureActive = false;
+    m_touchActive   = false;
+    m_touchPanning  = false;
   }
   // In Select / Transform modes let Qt synthesize mouse events (those handlers
   // own the interaction); the tablet only drives the brush.
@@ -1506,7 +1515,23 @@ void ZtoryThumbnailCanvas::mouseMoveEvent(QMouseEvent *e) {
 
 void ZtoryThumbnailCanvas::mouseReleaseEvent(QMouseEvent *e) {
   if (m_gestureActive && m_touchDevice == QTouchDevice::TouchScreen) {
+    // ➕ Il TOCCO a due dita annulla, a tre ripete. Portato da
+    // SceneViewer::mouseReleaseEvent: e' qui che vive, non nel gestore del
+    // tocco, perche' si decide al rilascio — quando si sa quante dita ha
+    // visto il tocco e se nel frattempo ha gia' spostato o zoomato (100).
+    if (m_touchPoints == 2 &&
+        Preferences::instance()->getGestureUndoMethod() ==
+            Preferences::TwoFingerTap) {
+      CommandManager::instance()->execute("MI_Undo");
+    } else if (m_touchPoints == 3 &&
+               Preferences::instance()->getGestureRedoMethod() ==
+                   Preferences::ThreeFingerTap) {
+      CommandManager::instance()->execute("MI_Redo");
+    }
+    m_touchPoints   = 0;
     m_gestureActive = false;
+    m_zooming       = false;
+    m_touchPanning  = false;
     return;
   }
   if (e->button() == Qt::MiddleButton) {
@@ -1644,17 +1669,23 @@ void ZtoryThumbnailCanvas::touchEvent(QTouchEvent *e, int type) {
   // uniche differenze sono segnate qui sotto e sono due: dove si sposta la
   // vista, e il rifiuto del palmo.
   if (type == QEvent::TouchBegin) {
-    // ➕ AGGIUNTA rispetto all'originale: la penna ha la precedenza. Su una
-    // tavoletta con penna E tocco (Wacom Companion, Surface) la mano appoggiata
-    // allo schermo mentre si disegna genera tocchi, e senza questa riga
-    // sposterebbero la tela sotto il segno. ImageViewer non ne ha bisogno
-    // perche' e' un visore e non ci si disegna.
-    if (m_penInProximity || m_stroking) return;
+    // ➕ AGGIUNTA rispetto all'originale: una penna che STA DISEGNANDO non deve
+    // essere scambiata per un dito — e' mentre si disegna che la mano si
+    // appoggia allo schermo. ImageViewer non ne ha bisogno perche' e' un visore.
+    //
+    // ⚠️ E basta m_stroking. Qui c'era anche la PROSSIMITA' della penna, e
+    // spegneva il tocco per sempre su un display con penna, dove la penna e'
+    // quasi sempre vicina al vetro: vedi tabletEvent.
+    if (m_stroking) return;
     m_touchActive   = true;
+    m_touchPoints   = e->touchPoints().count();
+    m_undoPoint     = e->touchPoints().at(0).pos();
+    m_touchClock.start();
     m_firstPanPoint = e->touchPoints().at(0).pos();
     m_touchDevice   = e->device() ? (int)e->device()->type()
                                   : (int)QTouchDevice::TouchScreen;
   } else if (m_touchActive) {
+    m_touchPoints = std::max(e->touchPoints().count(), m_touchPoints);
     // touchpads must have 2 finger panning for tools and navigation to be
     // functional on other devices, 1 finger panning is preferred
     if ((e->touchPoints().count() == 2 &&
@@ -1677,12 +1708,38 @@ void ZtoryThumbnailCanvas::touchEvent(QTouchEvent *e, int type) {
         m_pan += (panPoint.pos() - panPoint.lastPos()).toPoint();
         updateScrollBars();
         update();
+        m_touchPoints = 100;  // ha gia' fatto qualcosa: non e' un tocco secco
+      }
+    } else if (e->touchPoints().count() == 3) {
+      // ➕ Trascinamento a TRE dita = annulla / ripeti. Portato da
+      // SceneViewer::touchEvent, che ImageViewer non ha perche' in un visore
+      // non c'e' niente da annullare. Rispetta le stesse preferenze del resto
+      // dell'applicazione: non si inventa una scorciatoia nuova.
+      QPointF newPoint = e->touchPoints().at(0).pos();
+      if ((m_undoPoint.x() - newPoint.x()) > 100 &&
+          Preferences::instance()->getGestureUndoMethod() ==
+              Preferences::ThreeFingerDragLeft) {
+        CommandManager::instance()->execute("MI_Undo");
+        m_undoPoint   = newPoint;
+        m_touchPoints = 100;
+      }
+      if ((m_undoPoint.x() - newPoint.x()) < -100 &&
+          Preferences::instance()->getGestureRedoMethod() ==
+              Preferences::ThreeFingerDragRight) {
+        CommandManager::instance()->execute("MI_Redo");
+        m_undoPoint   = newPoint;
+        m_touchPoints = 100;
       }
     }
   }
   if (type == QEvent::TouchEnd || type == QEvent::TouchCancel) {
     m_touchActive  = false;
     m_touchPanning = false;
+    // Un tocco LUNGO non e' un tocco secco: se sono rimaste giu' piu' dita per
+    // piu' di un quarto di secondo, non vale come gesture di annulla/ripeti.
+    if (m_touchClock.isValid() && m_touchClock.elapsed() > 250 &&
+        m_touchPoints > 1)
+      m_touchPoints = 100;
   }
   e->accept();
 }
