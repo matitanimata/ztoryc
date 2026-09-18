@@ -56,8 +56,11 @@ private:
   // with the reason appended to `failed`).
   // `faint` accumulates cells that were skipped as blank but did carry very
   // light marks — a too-light sketch would otherwise vanish without a word.
+  // `digital` conta i fogli riconosciuti come PAGINE DIGITALI (gia' dritte:
+  // non fotografate), che entrano a colori. Contarli serve a dirlo all'utente:
+  // il programma decide da solo, e una decisione presa da sola va detta.
   int importOneSheet(const QImage &photo, const QString &label,
-                     QStringList &failed, int &faint);
+                     QStringList &failed, int &faint, int &digital);
 
   // The brush strip is its own scrolling row, separate from the rest of the
   // toolbar: the buttons used to share one QHBoxLayout with the colour chips,

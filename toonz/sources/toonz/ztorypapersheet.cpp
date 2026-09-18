@@ -613,6 +613,17 @@ ImportResult importSheet(const QImage &photo) {
       code   = c;
       warped = cand;
       solved = true;
+      // PAGINA DIGITALE o FOTO? Non si tira a indovinare e non si chiede
+      // all'utente: lo dicono i quattro angoli trovati. Una foto non e' MAI un
+      // rettangolo dritto — c'e' sempre un po' di prospettiva e di rotazione.
+      // Un'esportazione da Procreate del foglio stampato lo e' esattamente.
+      // src e' TL, TR, BL, BR.
+      const double tol = 0.005 * std::max(wTop, hLeft);  // mezzo percento
+      res.digitalPage =
+          std::abs(src[0].y - src[1].y) < tol &&   // lato alto orizzontale
+          std::abs(src[2].y - src[3].y) < tol &&   // lato basso orizzontale
+          std::abs(src[0].x - src[2].x) < tol &&   // lato sinistro verticale
+          std::abs(src[1].x - src[3].x) < tol;     // lato destro verticale
     }
   }
 
@@ -690,8 +701,23 @@ ImportResult importSheet(const QImage &photo) {
       const int light  = cv::countNonZero(preLift(roi) < 250);
       const bool faint = empty && light > (int)(roi.area() * 0.01);
 
+      // ⚠️ L'ANALISI resta quella di sempre — vuoto, debole, soglie — e gira
+      // sul canale blu normalizzato: e' tarata cosi' e funziona. Cambia solo da
+      // DOVE si prendono i pixel da incollare.
+      //
+      // Su una pagina digitale la pipeline della carta faceva due danni che li'
+      // non servono a niente: teneva solo il canale blu (per cancellare le
+      // righe ciano della stampa — ma il commento sopra dice che a toglierle e'
+      // il ritaglio interno, non il canale) e alzava il punto di bianco per
+      // saturare il rumore della carta, schiacciando i grigi chiari disegnati.
+      // Risultato: un PNG a colori rientrava in bianco e nero e sbiadito.
+      // Su una FOTO quei due passaggi restano indispensabili, quindi la strada
+      // vecchia non si tocca.
       cv::Mat rgb;
-      cv::cvtColor(cell, rgb, cv::COLOR_GRAY2RGB);
+      if (res.digitalPage)
+        cv::cvtColor(warped(roi), rgb, cv::COLOR_BGR2RGB);
+      else
+        cv::cvtColor(cell, rgb, cv::COLOR_GRAY2RGB);
       QImage qi((const uchar *)rgb.data, rgb.cols, rgb.rows, (int)rgb.step,
                 QImage::Format_RGB888);
 

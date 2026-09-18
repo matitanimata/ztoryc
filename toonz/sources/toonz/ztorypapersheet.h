@@ -73,6 +73,11 @@ struct ImportedCell {
 struct ImportResult {
   bool ok = false;
   QString error;
+  // Vero quando il foglio nell'immagine e' gia' un rettangolo dritto, cioe' non
+  // e' stato fotografato: e' una PAGINA DIGITALE (tipicamente il foglio stampato
+  // da Ztoryc, ridisegnato sopra in Procreate ed esportato). Li' i pixel si
+  // prendono a COLORI.
+  bool digitalPage = false;
   int sceneHash = 0;
   int gridCols  = 0;
   int gridRows  = 0;

@@ -947,12 +947,14 @@ void ZtoryThumbnailPanel::printPaperSheet(bool withContent) {
 
 int ZtoryThumbnailPanel::importOneSheet(const QImage &photo,
                                         const QString &label,
-                                        QStringList &failed, int &faint) {
+                                        QStringList &failed, int &faint,
+                                        int &digital) {
   ZtoryPaperSheet::ImportResult r = ZtoryPaperSheet::importSheet(photo);
   if (!r.ok) {
     failed << QString("%1: %2").arg(label, r.error);
     return 0;
   }
+  if (r.digitalPage) ++digital;
   // Columns are never split across pages, so the sheet must have been printed
   // for this room's grid width. Rows, instead, simply grow.
   if (r.gridCols != m_canvas->gridCols()) {
@@ -1001,7 +1003,7 @@ void ZtoryThumbnailPanel::importPaperSheetFromFile() {
   if (paths.isEmpty()) return;
   paths.sort();  // scanner output is usually numbered — keep that order
 
-  int totalPanels = 0, totalSheets = 0, totalFaint = 0;
+  int totalPanels = 0, totalSheets = 0, totalFaint = 0, totalDigital = 0;
   QStringList failed;
   for (const QString &path : paths) {
     QImage photo(path);
@@ -1010,7 +1012,8 @@ void ZtoryThumbnailPanel::importPaperSheetFromFile() {
       failed << tr("%1: not a readable image").arg(label);
       continue;
     }
-    const int n = importOneSheet(photo, label, failed, totalFaint);
+    const int n = importOneSheet(photo, label, failed, totalFaint,
+                                 totalDigital);
     if (n > 0) {
       totalPanels += n;
       ++totalSheets;
@@ -1021,6 +1024,10 @@ void ZtoryThumbnailPanel::importPaperSheetFromFile() {
     QString msg = tr("Imported %1 sheet(s), %2 panel(s).")
                       .arg(totalSheets)
                       .arg(totalPanels);
+    if (totalDigital > 0)
+      msg += "\n" + tr("%1 of them were already straight (not photographed), "
+                       "so they were imported in colour.")
+                        .arg(totalDigital);
     if (totalFaint > 0)
       msg += "\n" + tr("%1 panel(s) were skipped as blank but do carry very "
                        "light marks — draw them darker and shoot again.")
@@ -1042,11 +1049,13 @@ void ZtoryThumbnailPanel::importPaperSheetFromCamera() {
     return;
   }
 
-  int totalPanels = 0, totalSheets = 0, totalFaint = 0;
+  // Una cattura da webcam e' sempre una foto, quindi questo contatore restera'
+  // a zero: sta qui solo perche' la funzione lo chiede.
+  int totalPanels = 0, totalSheets = 0, totalFaint = 0, totalDigital = 0;
   QStringList failed;
   for (int i = 0; i < shots.size(); ++i) {
     const int n = importOneSheet(shots.at(i), tr("Capture %1").arg(i + 1),
-                                 failed, totalFaint);
+                                 failed, totalFaint, totalDigital);
     if (n > 0) {
       totalPanels += n;
       ++totalSheets;
