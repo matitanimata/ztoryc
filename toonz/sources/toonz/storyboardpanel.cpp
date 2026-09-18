@@ -5199,7 +5199,7 @@ void StoryboardPanel::onPasteShot() {
 }
 // ── Undo/Redo snapshot helpers ────────────────────────────────────────────────
 
-std::vector<ZtoryShotSnap> StoryboardPanel::captureSnapshot() {
+ZtoryBoardSnap StoryboardPanel::captureSnapshot() {
   syncWidgetsToData();
   // ALWAYS read the TOP xsheet. Snapshots can be captured while the user is
   // inside a sub-scene (Match button, text-field focusOut, coalescing duration
@@ -5234,10 +5234,16 @@ std::vector<ZtoryShotSnap> StoryboardPanel::captureSnapshot() {
     if (s.duration == 0) s.duration = 24;
     snap.push_back(std::move(s));
   }
-  return snap;
+  // L'audio viaggia con lo snapshot: con il link audio-video acceso e' parte
+  // dello stato che l'operazione cambia, e senza di esso l'undo lo lasciava
+  // dove l'operazione l'aveva portato.
+  ZtoryBoardSnap out;
+  out.shots = std::move(snap);
+  out.audio = ztoryCaptureAudioSnap();
+  return out;
 }
 
-void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snapRef) {
+void StoryboardPanel::restoreFromSnapshot(const ZtoryBoardSnap &snapRef) {
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene) return;
@@ -5250,7 +5256,7 @@ void StoryboardPanel::restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap
   // level "null" → all shot columns removed, nothing re-inserted → storyboard
   // wiped).  The copy's TXshLevelP refs also keep the sub-scene levels alive
   // regardless of who frees the undo object.
-  const std::vector<ZtoryShotSnap> snap = snapRef;
+  const std::vector<ZtoryShotSnap> snap = snapRef.shots;
   {
     int valid = 0;
     for (const ZtoryShotSnap &s : snap)
@@ -5397,6 +5403,86 @@ void StoryboardPanel::endExternalEdit(const QString &label) {
 
 // ── UndoBoardState ────────────────────────────────────────────────────────────
 
+std::vector<ZtoryAudioColSnap> ztoryCaptureAudioSnap() {
+  std::vector<ZtoryAudioColSnap> out;
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return out;
+  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+  if (!xsh) return out;
+  for (int col = 0; col < xsh->getColumnCount(); col++) {
+    TXshColumn *column = xsh->getColumn(col);
+    if (!column) continue;
+    TXshSoundColumn *sc = column->getSoundColumn();
+    if (!sc) continue;
+    ZtoryAudioColSnap cs;
+    cs.col = col;
+    for (int i = 0; i < sc->getColumnLevelCount(); i++) {
+      ColumnLevel *cl = sc->getColumnLevel(i);
+      if (!cl) continue;
+      ZtoryAudioLevelSnap ls;
+      ls.level       = cl;
+      ls.startFrame  = cl->getStartFrame();
+      ls.startOffset = cl->getStartOffset();
+      ls.endOffset   = cl->getEndOffset();
+      cs.levels.push_back(ls);
+    }
+    out.push_back(std::move(cs));
+  }
+  return out;
+}
+
+bool ztoryAudioSnapDiffers(const std::vector<ZtoryAudioColSnap> &a,
+                           const std::vector<ZtoryAudioColSnap> &b) {
+  if (a.size() != b.size()) return true;
+  for (size_t i = 0; i < a.size(); i++) {
+    if (a[i].col != b[i].col) return true;
+    if (a[i].levels.size() != b[i].levels.size()) return true;
+    for (size_t j = 0; j < a[i].levels.size(); j++) {
+      const ZtoryAudioLevelSnap &x = a[i].levels[j];
+      const ZtoryAudioLevelSnap &y = b[i].levels[j];
+      if (x.level != y.level || x.startFrame != y.startFrame ||
+          x.startOffset != y.startOffset || x.endOffset != y.endOffset)
+        return true;
+    }
+  }
+  return false;
+}
+
+void ztoryRestoreAudioSnap(const std::vector<ZtoryAudioColSnap> &snap) {
+  if (snap.empty()) return;
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return;
+  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
+  if (!xsh) return;
+  for (const ZtoryAudioColSnap &cs : snap) {
+    TXshColumn *column = xsh->getColumn(cs.col);
+    if (!column) continue;
+    TXshSoundColumn *sc = column->getSoundColumn();
+    if (!sc) continue;
+    // I livelli si ritrovano per IDENTITA', non per indice: uno shift riordina
+    // m_levels. E se la struttura e' cambiata (uno tagliato, uno aggiunto) si
+    // lascia stare tutta la colonna: rimettere numeri su livelli diversi da
+    // quelli fotografati non e' un undo, e' un guasto nuovo.
+    std::vector<ColumnLevel *> live;
+    for (int i = 0; i < sc->getColumnLevelCount(); i++)
+      if (ColumnLevel *cl = sc->getColumnLevel(i)) live.push_back(cl);
+    if (live.size() != cs.levels.size()) continue;
+    bool allFound = true;
+    for (const ZtoryAudioLevelSnap &ls : cs.levels)
+      if (std::find(live.begin(), live.end(), ls.level) == live.end()) {
+        allFound = false;
+        break;
+      }
+    if (!allFound) continue;
+    for (const ZtoryAudioLevelSnap &ls : cs.levels) {
+      ls.level->setStartFrame(ls.startFrame);
+      ls.level->setOffsets(ls.startOffset, ls.endOffset);
+    }
+  }
+  xsh->updateFrameCount();
+  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+}
+
 void UndoBoardState::undo() const {
   // Levels must be back in the cast before the columns that reference them.
   if (!m_removedLevels.empty()) {
@@ -5407,10 +5493,14 @@ void UndoBoardState::undo() const {
         if (!ls->getLevel(lvl->getName())) ls->insertLevel(lvl.getPointer());
   }
   m_panel->restoreFromSnapshot(m_before);
+  if (ztoryAudioSnapDiffers(m_before.audio, m_after.audio))
+    ztoryRestoreAudioSnap(m_before.audio);
 }
 
 void UndoBoardState::redo() const {
   m_panel->restoreFromSnapshot(m_after);
+  if (ztoryAudioSnapDiffers(m_before.audio, m_after.audio))
+    ztoryRestoreAudioSnap(m_after.audio);
   // Drop them from the cast again once nothing exposes them; the smart
   // pointers here keep the objects alive for a later undo.
   if (!m_removedLevels.empty()) {

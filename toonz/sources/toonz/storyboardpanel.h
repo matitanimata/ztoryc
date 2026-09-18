@@ -290,7 +290,7 @@ struct Shot {
   QTimer                        *m_resizeTimer   = nullptr;
   // Coalescing undo for duration spin changes: captures "before" on first change,
   // then commits one UndoBoardState after 600ms of inactivity.
-  std::vector<ZtoryShotSnap> m_pendingDurationBefore;
+  ZtoryBoardSnap m_pendingDurationBefore;
   QTimer                    *m_durationCommitTimer = nullptr;
   void addPanelWidget(int shotIdx, int panelIdx);
   void connectPanelWidget(PanelWidget *pw);
@@ -341,8 +341,8 @@ public:
   // Empty pixmap if the Board hasn't rendered it yet (rendering is lazy).
   QPixmap firstPanelThumbnail(int shotIdx) const;
   void refreshFromScene();
-  std::vector<ZtoryShotSnap> captureSnapshot();
-  void restoreFromSnapshot(const std::vector<ZtoryShotSnap> &snap);
+  ZtoryBoardSnap captureSnapshot();
+  void restoreFromSnapshot(const ZtoryBoardSnap &snap);
 
   // Undo for an edit made from OUTSIDE the Board — today the Thumbnail room's
   // "export panels as a shot", which goes straight to ZtoryModel and so never
@@ -433,8 +433,8 @@ protected:
 private:
   // Text-field undo: snapshot taken on focusIn, pushed on focusOut.
   bool m_textEditing = false;
-  std::vector<ZtoryShotSnap> m_textUndoBefore;
-  std::vector<ZtoryShotSnap> m_externalBefore;  // see beginExternalEdit()
+  ZtoryBoardSnap m_textUndoBefore;
+  ZtoryBoardSnap m_externalBefore;  // see beginExternalEdit()
 
 public:
   // Le scelte che i due popup di export raccogliono e che il ciclo applica a

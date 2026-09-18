@@ -6420,7 +6420,7 @@ void ZtoryAnimaticPanel::onCutShots() {
   if (sel.empty()) return;
 
   StoryboardPanel *board = findBoardPanel();
-  std::vector<ZtoryShotSnap> before;
+  ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
@@ -6469,7 +6469,7 @@ void ZtoryAnimaticPanel::onPasteShots() {
   // xsheet — works from inside a sub-scene like the Board's onPasteShot.
 
   StoryboardPanel *board = findBoardPanel();
-  std::vector<ZtoryShotSnap> before;
+  ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
@@ -6505,7 +6505,7 @@ void ZtoryAnimaticPanel::onDeleteShots() {
   if (sel.empty()) return;
 
   StoryboardPanel *board = findBoardPanel();
-  std::vector<ZtoryShotSnap> before;
+  ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
   // Structural op: close any open sub-scene first so deleteColumns acts on the
@@ -7045,7 +7045,7 @@ void mergeChildXsheetContent(TXshChildLevel *dstCl,
 
 void ZtoryAnimaticPanel::onMergeShots() {
   StoryboardPanel *board = findBoardPanel();
-  std::vector<ZtoryShotSnap> before;
+  ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
   // Use own selection if >= 2; otherwise fall back to shared selection
@@ -7179,7 +7179,7 @@ void ZtoryAnimaticPanel::onAddShot() {
   if (!xsh) return;
 
   StoryboardPanel *board = findBoardPanel();
-  std::vector<ZtoryShotSnap> before;
+  ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
   // Insert after the rightmost selected shot, or append at the end
@@ -7222,7 +7222,7 @@ void ZtoryAnimaticPanel::onMergeWithNext(int col) {
   if (!ZtoryModel::assertMainXsheet(/*showWarning=*/true)) return;
 
   StoryboardPanel *board = findBoardPanel();
-  std::vector<ZtoryShotSnap> before;
+  ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
   TApp *app = TApp::instance();
@@ -7329,7 +7329,7 @@ void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
   if (m_scroll) m_restoreScrollX = m_scroll->horizontalScrollBar()->value();
 
   StoryboardPanel *board = findBoardPanel();
-  std::vector<ZtoryShotSnap> before;
+  ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
   TApp *app = TApp::instance();
@@ -7383,7 +7383,7 @@ void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
     mainXsh->removeColumn(backupCol);  // orphan it; the TXshLevelP keeps it alive
     mainXsh->updateFrameCount();
     if (backupLevel)
-      for (auto &s : before)
+      for (auto &s : before.shots)
         if (s.data.xsheetColumn == col) { s.level = backupLevel; break; }
   }
 
@@ -7637,7 +7637,7 @@ void ZtoryAnimaticPanel::onSegmentDroppedOutside(int srcCol, int origR0,
 // animatic duration.  resequenceXsheet() re-packs the columns afterwards.
 void ZtoryAnimaticPanel::onRollEdit(int colA, int newDurA, int colB, int newDurB) {
   StoryboardPanel *board = findBoardPanel();
-  std::vector<ZtoryShotSnap> before;
+  ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
   TApp *app = TApp::instance();
@@ -8074,7 +8074,7 @@ void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
   if (newF1 < 0) return;
 
   StoryboardPanel *board = findBoardPanel();
-  std::vector<ZtoryShotSnap> before;
+  ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
   int newDuration = newF1 + 1;

@@ -522,7 +522,7 @@ void ZtoryMonitorPanel::doDeleteShots() {
   if (!ZtoryModel::assertMainXsheet(false)) return;
 
   StoryboardPanel *board = findBoardPanel();
-  std::vector<ZtoryShotSnap> before;
+  ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
