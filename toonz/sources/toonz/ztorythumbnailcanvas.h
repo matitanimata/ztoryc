@@ -38,6 +38,8 @@
 #include <utility>
 #include <vector>
 
+class QTouchEvent;
+class QGestureEvent;
 class QTimer;
 class QScrollBar;
 class QThreadPool;
@@ -193,6 +195,28 @@ protected:
   // App-wide filter: the transform shortcuts (Del/Esc/Enter/Cmd-C/V) must work
   // even when keyboard focus sits on a toolbar button, not the canvas.
   bool eventFilter(QObject *obj, QEvent *ev) override;
+
+  // Tocco e gesti. Senza questi, su uno schermo touch (Surface, iPad in
+  // remoto, portatili Windows) un dito diventa un click SINTETIZZATO e il
+  // canvas ci disegna sopra: chi prova a spostare la tela si ritrova una riga
+  // col pennello attivo. Segnalato da un utente Surface il 2026-09-18.
+  // La logica rispecchia quella gia' collaudata di SceneViewer
+  // (sceneviewerevents.cpp): un dito sullo schermo touch, due sul trackpad.
+  bool event(QEvent *e) override;
+  void touchEvent(QTouchEvent *e, int type);
+  void gestureEvent(QGestureEvent *e);
+
+  bool m_gestureActive = false;   // un gesto e' in corso: il mouse si ignora
+  bool m_touchActive   = false;
+  bool m_touchPanning  = false;
+  int  m_touchDevice   = 0;       // QTouchDevice::DeviceType
+  QPointF m_firstPanPoint;
+  bool   m_zooming     = false;
+  double m_scaleFactor = 0.0;
+  // La penna e' in prossimita': finche' lo e', il tocco si ignora. E' il
+  // rifiuto del palmo — su una tavoletta con penna E tocco (Wacom Companion,
+  // Surface) la mano appoggiata sullo schermo genera tocchi mentre si disegna.
+  bool m_penInProximity = false;
 
 private:
   // Brush

@@ -33,6 +33,9 @@
 #include <QLineF>
 #include <QApplication>
 #include <QScrollBar>
+#include <QTouchEvent>
+#include <QGestureEvent>
+#include <QGesture>
 #include <QResizeEvent>
 
 #include <cmath>
@@ -265,6 +268,17 @@ private:
 ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   setFocusPolicy(Qt::StrongFocus);
   setMouseTracking(true);  // brush cursor follows the mouse without a button
+
+  // Il tocco va CHIESTO, altrimenti Qt lo converte in eventi del mouse e il
+  // canvas disegna quando l'utente voleva solo spostare la tela. Si prendono
+  // anche Tap e Swipe, non perche' servano: e' la loro presenza a rendere
+  // m_gestureActive vero durante un tocco, ed e' cosi' che SceneViewer
+  // distingue il dito dalla penna.
+  setAttribute(Qt::WA_AcceptTouchEvents);
+  grabGesture(Qt::SwipeGesture);
+  grabGesture(Qt::PanGesture);
+  grabGesture(Qt::PinchGesture);
+  grabGesture(Qt::TapGesture);
 
   // Side scrollbars, shown only when the content overflows the viewport. They
   // drive m_pan; middle-drag pan keeps them in sync via updateScrollBars().
@@ -1311,6 +1325,20 @@ void ZtoryThumbnailCanvas::endStroke() {
 //=============================================================================
 
 void ZtoryThumbnailCanvas::tabletEvent(QTabletEvent *e) {
+  // La penna ha la precedenza su tutto. Due cose, qui:
+  //  - da adesso i tocchi si ignorano (rifiuto del palmo), finche' la penna non
+  //    esce dalla prossimita';
+  //  - un gesto eventualmente rimasto acceso si spegne, o in modalita'
+  //    Seleziona/Trasforma — le uniche in cui la penna passa dal mouse
+  //    sintetizzato, vedi sotto — la penna resterebbe bloccata dalla guardia.
+  if (e->type() != QEvent::TabletLeaveProximity) {
+    m_penInProximity = true;
+    m_gestureActive  = false;
+    m_touchActive    = false;
+    m_touchPanning   = false;
+  } else {
+    m_penInProximity = false;
+  }
   // In Select / Transform modes let Qt synthesize mouse events (those handlers
   // own the interaction); the tablet only drives the brush.
   if (m_selectMode || m_xformMode) {
@@ -1354,6 +1382,9 @@ void ZtoryThumbnailCanvas::tabletEvent(QTabletEvent *e) {
 }
 
 void ZtoryThumbnailCanvas::mousePressEvent(QMouseEvent *e) {
+  // Un dito su schermo touch arriva anche qui, sintetizzato. Se un gesto e' in
+  // corso questo click NON e' una pennellata: e' la mano che sposta la tela.
+  if (m_gestureActive && m_touchDevice == QTouchDevice::TouchScreen) return;
   if (e->button() == Qt::MiddleButton) {
     m_panning    = true;
     m_lastPanPos = e->pos();
@@ -1405,6 +1436,7 @@ void ZtoryThumbnailCanvas::mousePressEvent(QMouseEvent *e) {
 }
 
 void ZtoryThumbnailCanvas::mouseMoveEvent(QMouseEvent *e) {
+  if (m_gestureActive && m_touchDevice == QTouchDevice::TouchScreen) return;
   m_cursorWidget   = e->localPos();
   m_cursorOnCanvas = true;
   if (m_panning) {
@@ -1451,6 +1483,10 @@ void ZtoryThumbnailCanvas::mouseMoveEvent(QMouseEvent *e) {
 }
 
 void ZtoryThumbnailCanvas::mouseReleaseEvent(QMouseEvent *e) {
+  if (m_gestureActive && m_touchDevice == QTouchDevice::TouchScreen) {
+    m_gestureActive = false;
+    return;
+  }
   if (e->button() == Qt::MiddleButton) {
     m_panning = false;
     updateToolCursor();
@@ -1558,7 +1594,152 @@ bool ZtoryThumbnailCanvas::eventFilter(QObject *obj, QEvent *ev) {
   return QWidget::eventFilter(obj, ev);
 }
 
+// ── Tocco e gesti ──────────────────────────────────────────────────
+//
+// Rispecchia SceneViewer (sceneviewerevents.cpp), che questa strada l'ha gia'
+// battuta: UN dito sullo schermo touch, DUE sul trackpad. La differenza non e'
+// un capriccio — su un trackpad un dito solo e' il puntatore e deve restare
+// tale, mentre su uno schermo touch il dito E' la mano che sposta il foglio.
+
+bool ZtoryThumbnailCanvas::event(QEvent *e) {
+  switch (e->type()) {
+  case QEvent::TouchBegin:
+  case QEvent::TouchUpdate:
+  case QEvent::TouchEnd:
+    touchEvent(static_cast<QTouchEvent *>(e), e->type());
+    return true;
+  case QEvent::Gesture:
+    gestureEvent(static_cast<QGestureEvent *>(e));
+    return true;
+  default:
+    break;
+  }
+  return QWidget::event(e);
+}
+
+void ZtoryThumbnailCanvas::touchEvent(QTouchEvent *e, int type) {
+  // Portata da ImageViewer::touchEvent (imageviewer.cpp), riga per riga. Le
+  // uniche differenze sono segnate qui sotto e sono due: dove si sposta la
+  // vista, e il rifiuto del palmo.
+  if (type == QEvent::TouchBegin) {
+    // ➕ AGGIUNTA rispetto all'originale: la penna ha la precedenza. Su una
+    // tavoletta con penna E tocco (Wacom Companion, Surface) la mano appoggiata
+    // allo schermo mentre si disegna genera tocchi, e senza questa riga
+    // sposterebbero la tela sotto il segno. ImageViewer non ne ha bisogno
+    // perche' e' un visore e non ci si disegna.
+    if (m_penInProximity || m_stroking) return;
+    m_touchActive   = true;
+    m_firstPanPoint = e->touchPoints().at(0).pos();
+    m_touchDevice   = e->device() ? (int)e->device()->type()
+                                  : (int)QTouchDevice::TouchScreen;
+  } else if (m_touchActive) {
+    // touchpads must have 2 finger panning for tools and navigation to be
+    // functional on other devices, 1 finger panning is preferred
+    if ((e->touchPoints().count() == 2 &&
+         m_touchDevice == QTouchDevice::TouchPad) ||
+        (e->touchPoints().count() == 1 &&
+         m_touchDevice == QTouchDevice::TouchScreen)) {
+      QTouchEvent::TouchPoint panPoint = e->touchPoints().at(0);
+      if (!m_touchPanning) {
+        QPointF deltaPoint = panPoint.pos() - m_firstPanPoint;
+        // minimize accidental and jerky zooming/rotating during 2 finger
+        // panning
+        if ((deltaPoint.manhattanLength() > 100) && !m_zooming) {
+          m_touchPanning = true;
+        }
+      }
+      if (m_touchPanning) {
+        // ◆ DIVERSO dall'originale: li' c'e' panQt() su coordinate GL, con il
+        // rapporto di pixel del dispositivo. Qui la vista e' m_pan, in
+        // coordinate del widget, quindi il delta si usa com'e'.
+        m_pan += (panPoint.pos() - panPoint.lastPos()).toPoint();
+        updateScrollBars();
+        update();
+      }
+    }
+  }
+  if (type == QEvent::TouchEnd || type == QEvent::TouchCancel) {
+    m_touchActive  = false;
+    m_touchPanning = false;
+  }
+  e->accept();
+}
+
+void ZtoryThumbnailCanvas::gestureEvent(QGestureEvent *e) {
+  // Portata da ImageViewer::gestureEvent (imageviewer.cpp).
+  m_gestureActive = false;
+  if (e->gesture(Qt::SwipeGesture)) {
+    m_gestureActive = true;
+  } else if (e->gesture(Qt::PanGesture)) {
+    m_gestureActive = true;
+  } else if (e->gesture(Qt::TapGesture)) {
+    // ➕ Il Tap non c'e' in ImageViewer, e non e' una dimenticanza: li' non si
+    // disegna, quindi un tocco fermo non fa danni. Qui si', lascerebbe un
+    // punto col pennello attivo. SceneViewer — che e' la superficie da
+    // disegno — infatti lo cattura, ed e' da li' che viene questo ramo.
+    m_gestureActive = true;
+  }
+  if (QGesture *pinch = e->gesture(Qt::PinchGesture)) {
+    QPinchGesture *gesture = static_cast<QPinchGesture *>(pinch);
+    QPinchGesture::ChangeFlags changeFlags = gesture->changeFlags();
+    QPoint firstCenter                     = gesture->centerPoint().toPoint();
+    if (m_touchDevice == QTouchDevice::TouchScreen)
+      firstCenter = mapFromGlobal(firstCenter);
+
+    if (gesture->state() == Qt::GestureStarted) {
+      m_gestureActive = true;
+    } else if (gesture->state() == Qt::GestureFinished) {
+      m_gestureActive = false;
+      m_zooming       = false;
+      m_scaleFactor   = 0.0;
+    } else {
+      if (changeFlags & QPinchGesture::ScaleFactorChanged) {
+        double scaleFactor = gesture->scaleFactor();
+        // the scale factor makes for too sensitive scaling
+        // divide the change in half
+        if (scaleFactor > 1) {
+          double decimalValue = scaleFactor - 1;
+          decimalValue /= 1.5;
+          scaleFactor = 1 + decimalValue;
+        } else if (scaleFactor < 1) {
+          double decimalValue = 1 - scaleFactor;
+          decimalValue /= 1.5;
+          scaleFactor = 1 - decimalValue;
+        }
+        if (!m_zooming) {
+          double delta = scaleFactor - 1;
+          m_scaleFactor += delta;
+          if (m_scaleFactor > .2 || m_scaleFactor < -.2) {
+            m_zooming = true;
+          }
+        }
+        if (m_zooming) {
+          // ◆ DIVERSO dall'originale: zoomQt() vuole un punto in coordinate GL
+          // rispetto al centro del widget; zoomAt() vuole il punto del widget.
+          zoomAt(QPointF(firstCenter), scaleFactor);
+          updateScrollBars();
+          m_touchPanning = false;
+        }
+        m_gestureActive = true;
+      }
+      if (changeFlags & QPinchGesture::CenterPointChanged) {
+        m_gestureActive = true;
+      }
+    }
+  }
+  e->accept();
+}
+
 void ZtoryThumbnailCanvas::wheelEvent(QWheelEvent *e) {
+  // ⚠️ Su un TRACKPAD lo scorrimento a due dita arriva due volte: come
+  // evento touch (che qui sposta la tela) e come rotella (che zooma). Senza
+  // questa riga la tela si sposterebbe e si ingrandirebbe insieme. Sullo
+  // schermo touch il problema non esiste, e la rotella resta quella del mouse.
+  // Stessa guardia di SceneViewer, che ci era gia' inciampato.
+  if (m_gestureActive && m_touchDevice == QTouchDevice::TouchPad) {
+    e->accept();
+    return;
+  }
   // Wheel = zoom at the cursor (scroll is via the side bars / middle-drag pan).
   const int dy = e->angleDelta().y();
   if (dy != 0) {
