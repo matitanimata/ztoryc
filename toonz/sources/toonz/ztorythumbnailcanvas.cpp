@@ -519,9 +519,31 @@ void ZtoryThumbnailCanvas::revealRow(int row) {
 
 QImage ZtoryThumbnailCanvas::canvasImage() const {
   if (!m_ras) return QImage();
-  // Same conversion the per-scene autosave uses, so orientation matches the
-  // world (top-down) rather than the bottom-up raster.
-  return rasterToQImage(m_ras, /*premultiplied=*/false).copy();
+  // ⚠️ PREMOLTIPLICATO, e la parola non converte niente: rasterToQImage()
+  // ETICHETTA gli stessi byte come ARGB32_Premultiplied o come ARGB32. Quindi
+  // sbagliare l'etichetta non sposta un pixel in memoria, ma cambia cosa ne
+  // capisce chi compone.
+  //
+  // Il buffer E' premoltiplicato — misurato il 2026-09-18 su una tela vera:
+  // 124.216 pixel a trasparenza parziale, ZERO violazioni dell'invariante
+  // R,G,B <= A. Qui c'era `false`, e questa immagine finisce nel contenuto
+  // della STAMPA del foglio (printPaperSheet → p.content): un pixel bianco al
+  // 37% di copertura, che premoltiplicato vale (95,95,95,95), letto come non
+  // premoltiplicato diventa "grigio 95 al 37%" e sul bianco esce 196 invece di
+  // 255. Cioe' i bordi morbidi — le sfumature della gomma, i contorni del lazo
+  // — si stampavano piu' scuri di come li vedi a schermo.
+  //
+  // ⚠️ NON si corregge allo stesso modo il salvataggio e il caricamento della
+  // tela, che pure dicono `false`: li' l'etichetta sbagliata c'e' in ANDATA e
+  // in RITORNO, quindi il giro e' byte per byte identico e i file sono sani.
+  // Cambiarne uno solo, o cambiarli tutti e due, farebbe ripremoltiplicare dati
+  // gia' premoltiplicati: TUTTE le tele esistenti si scurirebbero sui bordi
+  // morbidi, in silenzio. Si corregge il punto da cui l'errore ESCE, non quelli
+  // dove si annulla.
+  //
+  // (mirrored resta al suo valore di default: l'orientamento e' quello del
+  // mondo, dall'alto in basso, non quello del raster.)
+  return rasterToQImage(m_ras, /*premultiplied=*/true).copy();
 }
 
 void ZtoryThumbnailCanvas::onSceneChanged() {
