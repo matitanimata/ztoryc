@@ -276,6 +276,61 @@ not portable.
   right — the new caller was wrong by itself. Worth remembering: an observation
   compatible with two explanations supports neither.
 
+#### ✨ New (2026-09-18)
+
+- ✅ **A scene whose file name ends with `_` (or `-`) cannot be opened at all,
+  and the failure is silent** — `common/tsystem/tfilepath.cpp`
+  (`getDots()`, `getSepChar()`, `getFrame()`), with the silent exit in
+  `toonz/iocommand.cpp` (`IoCmd::loadScene`).
+  `rfindFrameSep()` accepts `.`, `-` and `_` as the separator that may precede a
+  frame number. When the separator sits **immediately before the extension**
+  (`SB_.tnz`), the code reads it as an *empty frame* — a level with no frame
+  number — **without checking whether the type can be a frame sequence at all**.
+  `getDots()` then returns `".."`, and the comment beside it is explicit:
+  *"return '..' regardless of sepChar type (either '_' or '.')"*. So the
+  underscore comes back as a dot.
+  The damage is done one call later, in `TSystem::readDirectory`:
+  ```cpp
+  if (son.getDots() == "..") son = son.withFrame();   // tsystem.cpp:556
+  ```
+  `SB_.tnz` is collapsed into the level `SB..tnz`. Every scene browser, the
+  startup window included, now carries a path that **names no file on disk**.
+  `IoCmd::loadScene` checks `doesExistFileOrLevel`, fails, and takes the one
+  exit in the whole function that shows **no message at all**.
+  **What the user sees:** they click their storyboard, no dialog appears, and
+  they land on the untitled scene they started from — which reads exactly like
+  the scene has been emptied. Reported here on 2026-09-18 as *"I find the SB
+  scene empty"*; the file was intact all along (33 shots, 253 KB, loads and
+  renders fine under `tcomposer`, which never round-trips the name).
+  Middle underscores are safe (`lib_kiko.tnz`): there the separator is followed
+  by letters, not by the extension.
+  **Fix:** the empty-frame shortcut is only universal for the double dot. A `_`
+  or `-` before the extension is the underscore/hyphen spelling of a level name,
+  and means a sequence **only for a type that can be one**:
+  ```cpp
+  inline bool isEmptyFrameSep(const std::wstring &str, int sep, int dot,
+                              const QString &type) {
+    return sep == dot - 1 && (str[sep] == L'.' || checkForSeqNum(type));
+  }
+  ```
+  used in `getDots()`, `getSepChar()` and `getFrame()` in place of the bare
+  `sep == dot - 1`. `pippo..tif` still reads as a sequence; `pippo_.tif` still
+  reads as one, because `tif` passes `checkForSeqNum`; `SB_.tnz` no longer does,
+  because a scene is not a frame sequence.
+  **Second, separable fix:** give that `return false` in `IoCmd::loadScene` a
+  message. Every caller is user-initiated (startup window, Open Recent, Revert,
+  file browser, script console, command line), and a path that does not resolve
+  should never vanish without a word — the silence is what turned a
+  one-character parsing bug into "I lost a day of storyboard".
+  **Measured, not deduced:** the path was read out of the running application
+  (`[ZDIAG] path=[…/scenes/SB..tnz] exists=0`), and a probe linked against the
+  real libraries confirms the fix — `SB_.tnz` now reports `dots="."`,
+  `name="SB_"`, and `TSystem::readDirectory` on the real folder returns it
+  intact and existing.
+  *(Written, built and verified in the running app here; wants a stock Tahoma
+  build to confirm no level-naming regression — the underscore frame format is
+  the part to exercise.)*
+
 ### 2.2 — Features that can go upstream as they are
 
 Nothing here needs the `.ztoryc` file. They operate on ordinary scenes, levels

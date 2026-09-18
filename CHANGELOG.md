@@ -1,3 +1,95 @@
+## [2026-09-18] — «mi ritrovo la scena SB vuota»: un underscore, e l'audio che spariva riordinando
+
+Una sola segnalazione, quattro difetti sotto, **due dei quali distruggevano
+lavoro**. Chiusa con il rilascio della **0.14.1**.
+
+Il punto di partenza era il peggiore possibile: uno storyboard di 33 inquadrature
+che risultava vuoto. Non lo era. Il file era intatto sul disco — 253 KB, 33
+colonne, le pagine importate tutte al loro posto — e `tcomposer` lo caricava e
+renderizzava senza un errore. Era l'apertura a perdersi per strada.
+
+### Fixed
+
+**Una scena il cui nome finisce per `_` non si apriva, e non lo diceva.**
+`rfindFrameSep()` accetta `.`, `-` e `_` come separatore del numero di
+fotogramma. Quando il separatore sta **attaccato all'estensione** lo legge come
+frame vuoto — cioe' un livello — senza nemmeno guardare se quel tipo di file
+possa essere una sequenza. `getDots()` risponde `".."`, e il commento accanto lo
+dichiara: *«return ".." regardless of sepChar type»*. Da li' il danno e' a una
+riga di distanza: `TSystem::readDirectory` collassa il nome
+(`if (son.getDots() == "..") son = son.withFrame();`) e `SB_.tnz` diventa
+`SB..tnz`, che sul disco non e' niente. La griglia delle miniature della finestra
+di avvio si porta dietro quel nome; `IoCmd::loadScene` non trova il file ed esce
+con **l'unico `return false` muto che ha**. Nessun avviso, e l'utente resta sulla
+scena untitled di partenza — indistinguibile dall'aver perso tutto.
+Corretto con `isEmptyFrameSep()`: la scorciatoia del frame vuoto e' universale
+solo per il doppio punto; `_` e `-` valgono soltanto per un tipo che **puo'**
+essere una sequenza. `pippo..tif` e `pippo_.tif` restano livelli, `SB_.tnz` torna
+un file. L'uscita muta ora dice che la scena non e' stata trovata.
+
+> Perche' era rimasto invisibile per mesi: i **recenti** salvano il percorso come
+> stringa e non passano mai da `readDirectory`, quindi da li' la scena si e'
+> sempre aperta. Chi sviluppa apre sempre dai recenti. Su una macchina nuova —
+> quella di chi riceve il programma — la lista e' vuota, e quella scena non si
+> sarebbe aperta **mai**, da nessuna porta.
+
+**Riordinare uno shot cancellava le tracce audio della scena.**
+`onMoveShot` scorreva le colonne `0..N-1` dando per scontato che gli shot fossero
+un blocco compatto che parte da zero. Non lo sono: basta aggiungere l'audio
+quando c'e' un solo shot perche' le tracce prendano le colonne 1 e 2 e ogni shot
+successivo finisca da 3 in poi. Conseguenze, in ordine di gravita': spostava gli
+shot **sbagliati** (chiedere di muovere il 53 muoveva il 51 e il 52), lasciava
+fuori gli ultimi, e chiamava `clearCells()` sulle colonne **audio** — che essendo
+`TXshSoundColumn : TXshCellColumn` si lasciano svuotare senza protestare.
+Stessa famiglia di `996f4ea64`, corretta altrove ma non qui.
+Ora c'e' **un punto solo** che risponde «quali colonne ospitano shot», chiesto
+alla scena e usato sia da `onMoveShot` sia da `onModelResequenced`, piu' una
+guardia che rifiuta di svuotare una colonna che non sia di uno shot: e' l'ultima
+cosa fra un indice sbagliato e l'audio di una produzione.
+
+> Misurato su **71 scene** vere: 15 hanno audio, **13 ce l'hanno in fondo** — e
+> li' indice e colonna coincidono, ed e' esattamente per questo che «finora ha
+> sempre funzionato» — e 2 in mezzo.
+>
+> Effetto collaterale, misurato: sparisce anche il *full rebuild* spurio a ogni
+> riordino. Lo faceva scattare `xsheetColumn` riscritto sbagliato, e quel rebuild
+> **rileggeva il `.ztoryc` dal disco**, annullando lo spostamento appena fatto.
+> Una riga sola, tre sintomi: lento, sbagliato, e senza effetto.
+
+**Crash riordinando due shot (SIGSEGV).** `drag->exec()` apre un ciclo di eventi
+annidato e il rilascio arriva dentro; se riordina gli shot, la catena fino a
+`refreshFromScene` ritira ogni pannello con `deleteLater()` — compreso quello nel
+cui `mousePressEvent` siamo ancora. Qt esegue quei `deleteLater` al livello di
+ciclo del drag, quindi al ritorno da `exec()` `this` e' gia' memoria liberata e la
+riga successiva la tocca. Guardia `QPointer`. Misurato: prima della correzione
+sarebbe scattata **8 volte su 8**. Un accesso a memoria liberata non crasha quasi
+mai subito — ed e' per questo che il riordino «funzionava» da mesi.
+
+**Il ruolo di una scena non si poteva cambiare prima di aprirla.** Il menu del
+tasto destro pretendeva un `.ztoryc` gia' esistente, ma quel file nasce **alla
+prima apertura della scena**: il ruolo si poteva correggere solo dopo aver aperto
+la scena col ruolo sbagliato, cioe' dopo che il danno era fatto (una scena letta
+come storyboard pubblica i suoi shot nel tracker). Ora il menu compare comunque e
+la scelta crea il sidecar.
+
+### Upstream candidates
+
+I due difetti in `common/tsystem/tfilepath.cpp` e `toonz/iocommand.cpp` toccano
+file core condivisi con Tahoma2D/OpenToonz e valgono per chiunque: una scena il
+cui nome finisce per underscore non si apre, e il fallimento e' muto. Scritti in
+`UPSTREAM_PR_CANDIDATES.md` con la ricetta della correzione.
+
+### Notes
+
+**La diagnosi e' costata tre giri a vuoto per un motivo che vale la pena
+ricordare:** i `printf` del percorso di caricamento vanno su **stdout**, che
+rediretto su file e' bufferizzato a blocchi. Il log sembrava fermo — e sembrava
+dire «quella funzione non e' mai stata chiamata» — mentre le righe erano solo
+nel buffer del processo. Le uniche visibili erano i `qWarning`, che vanno su
+stderr. Si risolve lanciando l'app attraverso uno **pseudo-terminale**
+(`pty.spawn`), che rende stdout riga per riga. `script -q` non basta: serve `-F`,
+e comunque pretende un terminale vero.
+
 ## [2026-09-16b] — il collaudo dei pennelli apre una giornata intera, e finisce con ASan
 
 Cominciata come «provo la parte pennelli con calma», diventata la sessione piu'
