@@ -64,6 +64,30 @@ static const TPixel32 kPaper(0, 0, 0, 0);
 #include <QTextStream>
 #include <QDir>
 
+// ─── SENSORE DEL DANNO (sonda temporanea) ───────────────────────────────────
+// Non sa cosa cerca, ed e' il punto: invece di strumentare un'ipotesi, guarda
+// la tela a ogni ridisegno e grida quando cambia. Registra anche l'ultimo
+// evento di tocco visto, cosi' il log correla il danno con cio' che e'
+// successo un attimo prima — qualunque cosa fosse.
+static QString gZtLastTouch = "(nessun tocco ancora)";
+
+struct ZtCanvasFingerprint {
+  int cols = -1, rows = -1, lx = -1, ly = -1;
+  double boxH = -1.0, boxAspect = -1.0;
+  long long ink = -1;          // pixel non-carta, campionati
+  bool operator==(const ZtCanvasFingerprint &o) const {
+    return cols == o.cols && rows == o.rows && lx == o.lx && ly == o.ly &&
+           qAbs(boxH - o.boxH) < 1e-6 &&
+           qAbs(boxAspect - o.boxAspect) < 1e-9 && ink == o.ink;
+  }
+  QString str() const {
+    return QString("cols=%1 rows=%2 raster=%3x%4 boxH=%5 aspetto=%6 inchiostro=%7")
+        .arg(cols).arg(rows).arg(lx).arg(ly)
+        .arg(boxH, 0, 'f', 3).arg(boxAspect, 0, 'f', 6).arg(ink);
+  }
+};
+// ────────────────────────────────────────────────────────────────────────────
+
 static QtMessageHandler gZtPrevHandler = nullptr;
 
 static void ztProbeMessageHandler(QtMsgType type, const QMessageLogContext &ctx,
@@ -1812,6 +1836,16 @@ bool ZtoryThumbnailCanvas::event(QEvent *e) {
 }
 
 void ZtoryThumbnailCanvas::touchEvent(QTouchEvent *e, int type) {
+  {  // SONDA: traccia grezza del tocco
+    const char *n = type == QEvent::TouchBegin    ? "INIZIO"
+                    : type == QEvent::TouchUpdate ? "muove"
+                    : type == QEvent::TouchEnd    ? "FINE"
+                                                  : "ANNULLATO";
+    gZtLastTouch = QString("%1 dita=%2 disp=%3 punti=%4 pan=%5 zoom=%6")
+                       .arg(n).arg(e->touchPoints().count()).arg(m_touchDevice)
+                       .arg(m_touchPoints).arg(m_touchPanning).arg(m_zooming);
+    qWarning("ZTPROBE tocco: %s", qPrintable(gZtLastTouch));
+  }
   // Portata da ImageViewer::touchEvent (imageviewer.cpp), riga per riga. Le
   // uniche differenze sono segnate qui sotto e sono due: dove si sposta la
   // vista, e il rifiuto del palmo.
@@ -1892,6 +1926,21 @@ void ZtoryThumbnailCanvas::touchEvent(QTouchEvent *e, int type) {
 }
 
 void ZtoryThumbnailCanvas::gestureEvent(QGestureEvent *e) {
+  {  // SONDA: quale gesto, e in che stato
+    QStringList g;
+    if (e->gesture(Qt::PinchGesture)) {
+      auto *pg = static_cast<QPinchGesture *>(e->gesture(Qt::PinchGesture));
+      g << QString("pizzico stato=%1 flag=%2 scala=%3 angolo=%4")
+               .arg((int)pg->state()).arg((int)pg->changeFlags())
+               .arg(pg->scaleFactor(), 0, 'f', 3)
+               .arg(pg->rotationAngle(), 0, 'f', 1);
+    }
+    if (e->gesture(Qt::SwipeGesture)) g << "scorrimento";
+    if (e->gesture(Qt::TapGesture)) g << "tap";
+    if (e->gesture(Qt::TapAndHoldGesture)) g << "tap-e-tieni";
+    gZtLastTouch = "gesto: " + g.join(", ");
+    qWarning("ZTPROBE %s", qPrintable(gZtLastTouch));
+  }
   // Portata da ImageViewer::gestureEvent (imageviewer.cpp).
   m_gestureActive = false;
   if (e->gesture(Qt::SwipeGesture)) {
@@ -2642,6 +2691,32 @@ bool ZtoryThumbnailCanvas::handleUndoKey(QKeyEvent *e) {
 //=============================================================================
 
 void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
+  {  // SONDA: la tela e' cambiata da sola?
+    static ZtCanvasFingerprint prev;
+    ZtCanvasFingerprint now;
+    now.cols = m_cols; now.rows = m_rows;
+    now.boxH = m_boxH; now.boxAspect = m_boxAspect;
+    if (m_ras) {
+      now.lx = m_ras->getLx(); now.ly = m_ras->getLy();
+      // Campionamento rado (1 pixel ogni 16 per lato): misura il CONTENUTO
+      // senza costare a ogni ridisegno. Serve a vedere una cancellazione anche
+      // quando la geometria non cambia.
+      long long ink = 0;
+      for (int y = 0; y < now.ly; y += 16) {
+        TPixel32 *row = m_ras->pixels(y);
+        for (int x = 0; x < now.lx; x += 16)
+          if (row[x].m != 0) ++ink;
+      }
+      now.ink = ink;
+    }
+    if (prev.cols >= 0 && !(now == prev)) {
+      qWarning("ZTPROBE *** LA TELA E' CAMBIATA ***");
+      qWarning("ZTPROBE    prima: %s", qPrintable(prev.str()));
+      qWarning("ZTPROBE     dopo: %s", qPrintable(now.str()));
+      qWarning("ZTPROBE    ultimo tocco visto: %s", qPrintable(gZtLastTouch));
+    }
+    prev = now;
+  }
   QPainter p(this);
   p.fillRect(rect(), QColor(40, 40, 40));
   p.setRenderHint(QPainter::SmoothPixmapTransform, true);
