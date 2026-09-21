@@ -6731,6 +6731,15 @@ void ZtoryAnimaticPanel::keyReleaseEvent(QKeyEvent *e) {
 }
 
 void ZtoryAnimaticPanel::onShotClicked(int col) {
+  // `col` is the shot's column in the MAIN xsheet.  Inside a sub-scene the
+  // current xsheet is the shot's own, where that number addresses a completely
+  // different column: clicking from shot to shot on the timeline while editing
+  // one dragged the cursor to column 49 of a sub-scene whose content lives in
+  // the first columns (Franco, 2026-09-21 — shot 490 is the 49th).
+  // Selecting a shot on the timeline must not move the cursor inside the
+  // sub-scene; entering one does, via positionCursorInsideShot().
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (scene && scene->getChildStack()->getAncestorCount() > 0) return;
   TApp::instance()->getCurrentColumn()->setColumnIndex(col);
 }
 
@@ -6772,6 +6781,7 @@ void ZtoryAnimaticPanel::onShotDoubleClicked(int col) {
       int outF = durInAnimatic - 1 + xdExtra;
       if (outF >= 0)
         XsheetGUI::setPlayRange(0, outF, 1, false);
+      ZtoryShotOps::positionCursorInsideShot(outF);
     }
     // Keep the animatic controller's frame at the shot's main-xsheet row
     // so the animatic viewer renders at the correct position.

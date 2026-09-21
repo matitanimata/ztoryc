@@ -54,6 +54,22 @@ void pasteSharedClip(const std::vector<ZtoryClipEntry> &clip, int insertCol,
 // Cell count of a column (r1 - r0 + 1), or 24 if empty/invalid.
 int colDuration(TXsheet *xsh, int col);
 
+// Place the cursor where an animator needs it right after entering a shot:
+// FIRST column, mark-out frame.
+// The mark-out is deliberate, and NOT the last actual drawing: it lands the
+// cursor on the held cell at the end of the animatic slot, which is where you
+// drag from to extend the drawings over the whole duration the animatic set.
+// That is the move it is there to make quick (Franco, 2026-09-21).  Ztoryc always builds a shot's sub-scene with
+// its content in the first columns, so the column index that identifies the
+// shot in the MAIN xsheet means nothing inside it — entering shot 490 (the
+// 49th) used to leave the cursor on column 49 of a sub-scene that only uses a
+// handful (Franco, 2026-09-21).
+// `outFrame` is passed in rather than read back from XsheetGUI::getPlayRange()
+// on purpose: in animatic context that range is not the authority (see the
+// several warnings in ztoryanimatic.cpp), and every caller has just computed
+// the value itself.
+void positionCursorInsideShot(int outFrame);
+
 // Aspect ratio (width/height) of the scene camera, read from the MAIN xsheet
 // camera resolution.  Board previews, the PDF export and the Thumbnail room
 // grid use this so a non-16:9 camera (e.g. square) is framed correctly instead

@@ -114,6 +114,53 @@ avrebbe sprecato una sessione con la Companion.
 - I thumbs vivono in `+extras/<percorso scena>/thumbs/` e sono PNG normali:
   anche nel caso peggiore si aprono e si guardano.
 
+### Fixed — il Monitor vuoto, e il cursore che finiva sulla colonna 49
+
+Tre difetti segnalati da Franco a fine giornata, **verificati da lui** sulla
+build subito dopo.
+
+**Il Monitor restava vuoto per tutta la sessione.** Riaprendolo da dentro uno
+shot non mostrava ne' la traccia video ne' quelle audio. La guardia che
+disattiva l'aggiornamento dentro una sotto-scena e' **giusta**
+(`getTopXsheet()` restituirebbe la sotto-scena e cancellerebbe i blocchi): a
+mancare era riaccenderlo all'**uscita**. Il Monitor ascoltava `xsheetChanged`,
+che parla del CONTENUTO di uno xsheet, non `xsheetSwitched`, che dice che e'
+cambiato QUALE xsheet e' corrente. Aggiunto l'aggancio che il pannello Animatic
+aveva gia' per lo stesso motivo, con `m_audioFP = 0` perche' altrimenti
+`refreshAudioTracks()` esce subito trovando l'impronta invariata.
+
+**Il cursore finiva sulla colonna 49 entrando nello shot 490.**
+`ZtoryAnimaticPanel::onShotClicked()` faceva `setColumnIndex(col)` senza
+guardie: `col` e' la colonna dello shot nell'xsheet PRINCIPALE, e dentro una
+sotto-scena quel numero indirizza tutt'altro. Il 49esimo shot (etichettato 490)
+portava il cursore sulla colonna 49 di una sotto-scena che ne usa quattro.
+I doppi clic erano gia' corretti — chiudono la sotto-scena prima di riaprire —
+ed e' per questo che si vedeva **solo** passando da uno shot all'altro con clic
+singoli, restando dentro.
+
+> Due piste sbagliate scartate misurando, prima di arrivarci: `openSubXsheet()`
+> (che la colonna la mette gia' a 0) e la StoryStrip (i cui `emit shotClicked`
+> stanno tutti dentro `mousePressEvent`, quindi partono solo per un clic vero).
+
+**Added — entrando in uno shot: colonna 1 e frame sul MARK OUT.**
+`ZtoryShotOps::positionCursorInsideShot()`, chiamato dai due percorsi della
+timeline. Il mark out e' scelto apposta e **non** l'ultimo disegno: e' la cella
+tenuta in fondo allo slot, quella da cui si trascina per allungare i disegni su
+tutta la durata decisa dall'animatic. Motivazione di Franco, scritta nel
+commento perche' altrimenti il prossimo che legge la «corregge» sull'ultimo
+disegno vero.
+`outFrame` si passa invece di rileggerlo da `XsheetGUI::getPlayRange()`: in
+contesto animatic quel range non e' l'autorita' (lo dicono quattro commenti in
+`ztoryanimatic.cpp`) e ogni chiamante l'ha appena calcolato.
+
+⚠️ **NON coperto l'ingresso dal Board**: li' il mark out non e' calcolato e
+includere o no i frame di dissolvenza e' una scelta, non un dettaglio.
+
+> `openSubXsheet()` sta in `subscenecommand.cpp`, **core condiviso con
+> Tahoma2D**: il posizionamento e' una regola di Ztoryc — «il contenuto di uno
+> shot sta nelle prime colonne» e' vero per come Ztoryc costruisce le
+> sotto-scene, non in generale — quindi sta nei chiamanti, non li'.
+
 ### Deciso da Franco
 
 - **Il secchiello / autofill nella Thumbs room NON SI FA** (*«non
