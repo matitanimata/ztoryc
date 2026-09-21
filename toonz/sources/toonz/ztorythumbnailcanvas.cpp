@@ -1823,10 +1823,25 @@ void ZtoryThumbnailCanvas::gestureEvent(QGestureEvent *e) {
           zoomAt(QPointF(firstCenter), scaleFactor);
           updateScrollBars();
           m_touchPanning = false;
+          // ⚠️ QUESTA RIGA E' COSTATA I DISEGNI DI UN UTENTE. Senza, dopo un
+          // pizzico m_touchPoints resta 2, e al rilascio mouseReleaseEvent lo
+          // legge come «tocco secco a due dita» = ANNULLA (che su Windows e' la
+          // preferenza predefinita). Cioe' ogni zoom col tocco finiva con un
+          // undo silenzioso: i pannelli tornavano a uno stato precedente e i
+          // disegni sparivano. L'utente non riusciva nemmeno a rimediare con
+          // l'undo, perche' il danno ERA un undo — serviva il REDO.
+          // SceneViewer ce l'ha, col suo commento «This will block undo/redo
+          // action» (sceneviewerevents.cpp:1390), e io l'ho persa nel port.
+          m_touchPoints = 100;
         }
         m_gestureActive = true;
       }
       if (changeFlags & QPinchGesture::CenterPointChanged) {
+        // Stesso motivo della riga qui sopra: se le dita si sono SPOSTATE, il
+        // tocco ha gia' fatto qualcosa e non e' piu' un tap da annullamento.
+        const QPointF centerDelta =
+            gesture->centerPoint() - gesture->lastCenterPoint();
+        if (centerDelta.manhattanLength() > 10) m_touchPoints = 100;
         m_gestureActive = true;
       }
     }
