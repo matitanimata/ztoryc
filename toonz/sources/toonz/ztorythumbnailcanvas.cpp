@@ -52,6 +52,46 @@
 // panel carry its transparency.
 static const TPixel32 kPaper(0, 0, 0, 0);
 
+// ─── SONDA TEMPORANEA — NON DEVE ARRIVARE IN UN RILASCIO ────────────────────
+// Le sonde usano qWarning, ma su Windows un'app GRAFICA non ha una console:
+// qWarning finisce nell'output del debugger ed e' invisibile senza DebugView.
+// Su un tablet, inutilizzabile. Qui si intercettano i messaggi in UN punto e
+// quelli marcati ZTPROBE si scrivono su un file sul Desktop, che chi collauda
+// puo' trovare e spedire senza sapere niente di strumenti da sviluppatore.
+#include <QStandardPaths>
+#include <QDateTime>
+#include <QFile>
+#include <QTextStream>
+#include <QDir>
+
+static QtMessageHandler gZtPrevHandler = nullptr;
+
+static void ztProbeMessageHandler(QtMsgType type, const QMessageLogContext &ctx,
+                                  const QString &msg) {
+  if (msg.contains("ZTPROBE")) {
+    QString d = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+    if (d.isEmpty())
+      d = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    QFile f(d + "/ztprobe.log");
+    if (f.open(QIODevice::Append | QIODevice::Text)) {
+      QTextStream ts(&f);
+      ts << QDateTime::currentDateTime().toString("HH:mm:ss.zzz") << "  " << msg
+         << "\n";
+    }
+  }
+  if (gZtPrevHandler) gZtPrevHandler(type, ctx, msg);
+}
+
+static void ztProbeInstall() {
+  static bool done = false;
+  if (done) return;
+  done               = true;
+  gZtPrevHandler     = qInstallMessageHandler(ztProbeMessageHandler);
+  qWarning("ZTPROBE === sonda avviata, %s ===",
+           qPrintable(QDateTime::currentDateTime().toString(Qt::ISODate)));
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 namespace {
 
 // The canvas write, with no dependency on the widget: it owns its pixels, so it
@@ -291,12 +331,12 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   m_vbar->hide();
   connect(m_hbar, &QScrollBar::valueChanged, this, [this](int v) {
     if (m_syncingBars) return;
-    m_pan.setX(-v);
+    m_pan.setX(-v - pageBoxNoPan().left());
     update();
   });
   connect(m_vbar, &QScrollBar::valueChanged, this, [this](int v) {
     if (m_syncingBars) return;
-    m_pan.setY(-v);
+    m_pan.setY(-v - pageBoxNoPan().top());
     update();
   });
 
@@ -312,6 +352,8 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
 
   m_ras = TRaster32P((int)gridW(), (int)gridH());
   m_ras->fill(kPaper);
+
+  ztProbeInstall();  // SONDA TEMPORANEA
 
   // React live to camera changes made from Camera Settings while this room is
   // open. xsheetChanged covers most camera edits; sceneChanged covers a scene
@@ -510,6 +552,10 @@ void ZtoryThumbnailCanvas::revealRow(int row) {
   // Fit the grid width, so a freshly imported sheet is shown whole rather than
   // zoomed into one panel.
   const double margin = 28.0;
+  // Straighten first: "fit the grid width" is undefined on a tilted sheet, and
+  // someone asking to be shown a row (typically right after importing pages)
+  // wants to see it square, not at the angle they were drawing at.
+  m_rot = 0.0;
   if (gridW() > 0.0)
     m_zoom = qBound(0.05, (width() - 2 * margin) / gridW(), 4.0);
 
@@ -551,8 +597,10 @@ QImage ZtoryThumbnailCanvas::canvasImage() const {
 
 void ZtoryThumbnailCanvas::onSceneChanged() {
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
-  if (!scene) return;
+  if (!scene) { qWarning("ZTPROBE onSceneChanged: nessuna scena"); return; }
   const double aspect = ZtoryShotOps::cameraAspect(scene);
+  qWarning("ZTPROBE onSceneChanged: letto=%.6f  memorizzato=%.6f  cols=%d rows=%d boxH=%.2f stroking=%d",
+           aspect, m_boxAspect, m_cols, m_rows, m_boxH, (int)m_stroking);
   if (aspect <= 0.0) return;
   // Cheap guard: skip the (most common) changes that don't touch the camera.
   if (qAbs(aspect - m_boxAspect) < 1e-4) return;
@@ -580,6 +628,8 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
 
   // Snapshot the pre-reshape canvas (raster + its aspect) so Cmd-Z reverts the
   // camera-format reflow cleanly instead of leaving a stale grid.
+  qWarning("ZTPROBE *** RIFLUSSO DISTRUTTIVO ***: boxH %.2f -> %.2f, altezza raster %d -> %d",
+           oldBoxH, newBoxH, oldH, newH);
   pushUndo();
   m_boxAspect = aspect;
   m_boxH      = newBoxH;
@@ -1180,12 +1230,37 @@ void ZtoryThumbnailCanvas::persistLoad() {
 // View transform
 //=============================================================================
 
+// The view is ONE transform: translate(pan) * rotate(rot) * scale(zoom).
+// With m_rot == 0 this maps (x,y) to (x*zoom + pan.x, y*zoom + pan.y) -- i.e.
+// exactly what the hand-written arithmetic did before, which is what makes
+// this change safe to land before the rotation gesture exists.
+QTransform ZtoryThumbnailCanvas::viewTransform() const {
+  QTransform t;
+  t.translate(m_pan.x(), m_pan.y());
+  t.rotate(m_rot);
+  t.scale(m_zoom, m_zoom);
+  return t;
+}
+
+QTransform ZtoryThumbnailCanvas::viewTransformInv() const {
+  return viewTransform().inverted();
+}
+
+// Rotation + scale WITHOUT the translation: what an anchor-preserving zoom or
+// rotation needs, since widget = pan + R*S*world  =>  pan = widget - R*S*world.
+static QPointF ztoryRotScale(const QPointF &w, double rot, double zoom) {
+  QTransform t;
+  t.rotate(rot);
+  t.scale(zoom, zoom);
+  return t.map(w);
+}
+
 QPointF ZtoryThumbnailCanvas::worldToWidget(const QPointF &w) const {
-  return QPointF(w.x() * m_zoom + m_pan.x(), w.y() * m_zoom + m_pan.y());
+  return viewTransform().map(w);
 }
 
 QPointF ZtoryThumbnailCanvas::widgetToWorld(const QPointF &p) const {
-  return QPointF((p.x() - m_pan.x()) / m_zoom, (p.y() - m_pan.y()) / m_zoom);
+  return viewTransformInv().map(p);
 }
 
 TPointD ZtoryThumbnailCanvas::widgetToRaster(const QPointF &widgetPos) const {
@@ -1196,13 +1271,37 @@ TPointD ZtoryThumbnailCanvas::widgetToRaster(const QPointF &widgetPos) const {
 void ZtoryThumbnailCanvas::zoomAt(const QPointF &widgetAnchor, double factor) {
   const QPointF worldAnchor = widgetToWorld(widgetAnchor);
   m_zoom = qBound(0.1, m_zoom * factor, 8.0);
-  m_pan = widgetAnchor - QPointF(worldAnchor.x() * m_zoom, worldAnchor.y() * m_zoom);
+  m_pan  = widgetAnchor - ztoryRotScale(worldAnchor, m_rot, m_zoom);
   update();
+}
+
+// Same anchor-preserving shape as zoomAt: the world point under the fingers
+// stays under the fingers while the sheet turns around it.
+void ZtoryThumbnailCanvas::rotateAt(const QPointF &widgetAnchor, double degrees) {
+  if (degrees == 0.0) return;
+  const QPointF worldAnchor = widgetToWorld(widgetAnchor);
+  m_rot = std::fmod(m_rot + degrees, 360.0);
+  m_pan = widgetAnchor - ztoryRotScale(worldAnchor, m_rot, m_zoom);
+  updateScrollBars();
+  update();
+}
+
+void ZtoryThumbnailCanvas::resetRotation() {
+  if (m_rot == 0.0) return;
+  rotateAt(QPointF(width() * 0.5, height() * 0.5), -m_rot);
+}
+
+QRectF ZtoryThumbnailCanvas::pageBoxNoPan() const {
+  QTransform t;
+  t.rotate(m_rot);
+  t.scale(m_zoom, m_zoom);
+  return t.mapRect(QRectF(0.0, 0.0, gridW(), gridH()));
 }
 
 void ZtoryThumbnailCanvas::updateScrollBars() {
   if (!m_hbar || !m_vbar) return;
-  const double contentW = gridW() * m_zoom, contentH = gridH() * m_zoom;
+  const QRectF box      = pageBoxNoPan();
+  const double contentW = box.width(), contentH = box.height();
   const int thick = 16;  // match the app's native scrollbar width
   const bool needH  = contentW > width() + 0.5;
   const bool needV  = contentH > height() + 0.5;
@@ -1216,13 +1315,15 @@ void ZtoryThumbnailCanvas::updateScrollBars() {
     m_hbar->setGeometry(0, height() - thick, viewW, thick);
     m_hbar->setRange(0, (int)std::ceil(contentW - viewW));
     m_hbar->setPageStep(viewW);
-    m_hbar->setValue(qBound(0, (int)(-m_pan.x() + 0.5), m_hbar->maximum()));
+    m_hbar->setValue(
+        qBound(0, (int)(-(m_pan.x() + box.left()) + 0.5), m_hbar->maximum()));
   }
   if (needV) {
     m_vbar->setGeometry(width() - thick, 0, thick, viewH);
     m_vbar->setRange(0, (int)std::ceil(contentH - viewH));
     m_vbar->setPageStep(viewH);
-    m_vbar->setValue(qBound(0, (int)(-m_pan.y() + 0.5), m_vbar->maximum()));
+    m_vbar->setValue(
+        qBound(0, (int)(-(m_pan.y() + box.top()) + 0.5), m_vbar->maximum()));
   }
   m_syncingBars = false;
 }
@@ -1520,13 +1621,19 @@ void ZtoryThumbnailCanvas::mouseReleaseEvent(QMouseEvent *e) {
     // SceneViewer::mouseReleaseEvent: e' qui che vive, non nel gestore del
     // tocco, perche' si decide al rilascio — quando si sa quante dita ha
     // visto il tocco e se nel frattempo ha gia' spostato o zoomato (100).
+    qWarning("ZTPROBE rilascio tocco: m_touchPoints=%d  prefUndo=%d prefRedo=%d  (100 = il tocco ha gia' fatto qualcosa)",
+             m_touchPoints,
+             (int)Preferences::instance()->getGestureUndoMethod(),
+             (int)Preferences::instance()->getGestureRedoMethod());
     if (m_touchPoints == 2 &&
         Preferences::instance()->getGestureUndoMethod() ==
             Preferences::TwoFingerTap) {
+      qWarning("ZTPROBE *** ANNULLA PER SBAGLIO *** (pizzico letto come tap a due dita)");
       gestureUndo();
     } else if (m_touchPoints == 3 &&
                Preferences::instance()->getGestureRedoMethod() ==
                    Preferences::ThreeFingerTap) {
+      qWarning("ZTPROBE *** RIPETI PER SBAGLIO *** (tap a tre dita)");
       gestureRedo();
     }
     m_touchPoints   = 0;
@@ -1605,6 +1712,21 @@ bool ZtoryThumbnailCanvas::handleTransformKey(QKeyEvent *e) {
 void ZtoryThumbnailCanvas::keyPressEvent(QKeyEvent *e) {
   if (handleUndoKey(e)) return;
   if (handleTransformKey(e)) return;
+  // Straighten the sheet: ⌥0 (Option-zero).  Without a way back to square,
+  // getting there by hand is a torture -- which is why every drawing program
+  // that rotates the view also ships this command.
+  if (e->modifiers() & Qt::AltModifier) {
+    const QPointF c(width() * 0.5, height() * 0.5);
+    switch (e->key()) {
+    case Qt::Key_0:     resetRotation();        return;
+    // Rotate by keyboard as well as by pinch.  Not decoration: without it the
+    // rotation cannot be exercised at all on a machine with no touch screen,
+    // which is every machine we develop on -- and turning the sheet a notch at
+    // a time is how a mouse user would want it anyway.
+    case Qt::Key_Left:  rotateAt(c, -15.0);     return;
+    case Qt::Key_Right: rotateAt(c,  15.0);     return;
+    }
+  }
   QWidget::keyPressEvent(e);
 }
 
@@ -1722,7 +1844,7 @@ void ZtoryThumbnailCanvas::touchEvent(QTouchEvent *e, int type) {
         QPointF deltaPoint = panPoint.pos() - m_firstPanPoint;
         // minimize accidental and jerky zooming/rotating during 2 finger
         // panning
-        if ((deltaPoint.manhattanLength() > 100) && !m_zooming) {
+        if ((deltaPoint.manhattanLength() > 100) && !m_zooming && !m_rotating) {
           m_touchPanning = true;
         }
       }
@@ -1792,10 +1914,14 @@ void ZtoryThumbnailCanvas::gestureEvent(QGestureEvent *e) {
 
     if (gesture->state() == Qt::GestureStarted) {
       m_gestureActive = true;
+      m_rotating      = false;
+      m_rotationDelta = 0.0;
     } else if (gesture->state() == Qt::GestureFinished) {
       m_gestureActive = false;
       m_zooming       = false;
       m_scaleFactor   = 0.0;
+      m_rotating      = false;
+      m_rotationDelta = 0.0;
     } else {
       if (changeFlags & QPinchGesture::ScaleFactorChanged) {
         double scaleFactor = gesture->scaleFactor();
@@ -1823,6 +1949,27 @@ void ZtoryThumbnailCanvas::gestureEvent(QGestureEvent *e) {
           zoomAt(QPointF(firstCenter), scaleFactor);
           updateScrollBars();
           m_touchPanning = false;
+        }
+        m_gestureActive = true;
+      }
+      // Rotation of the view.  Ported from SceneViewer
+      // (sceneviewerevents.cpp:1394) so the Thumbnail room turns exactly the
+      // way the other rooms do: a 10-degree dead zone before it engages, and
+      // the MINUS sign because Qt's rotationAngle grows counter-clockwise
+      // while QTransform::rotate() turns clockwise on a y-down widget.
+      if (changeFlags & QPinchGesture::RotationAngleChanged) {
+        const qreal rotationDelta =
+            gesture->rotationAngle() - gesture->lastRotationAngle();
+        if (!m_rotating) {
+          m_rotationDelta += rotationDelta;
+          if (std::abs(m_rotationDelta) >= 10.0) m_rotating = true;
+        }
+        if (m_rotating) {
+          // Around the centre of the widget, like SceneViewer (which rotates
+          // about the centre of the view, not about the fingers).
+          rotateAt(QPointF(width() * 0.5, height() * 0.5), -rotationDelta);
+          m_touchPanning = false;
+          m_touchPoints  = 100;  // blocks the undo/redo tap for this touch
         }
         m_gestureActive = true;
       }
@@ -2031,19 +2178,21 @@ int ZtoryThumbnailCanvas::floatHandleAt(const QPointF &widgetPos) const {
 
 void ZtoryThumbnailCanvas::paintFloat(QPainter &p) {
   if (!hasFloat()) return;
+  // The painter already carries the view transform (paintEvent sets it), so
+  // everything here is in WORLD coordinates: COMBINE, never replace -- a plain
+  // setTransform() would drop pan, zoom and rotation and draw the float in the
+  // widget's top-left corner.
   p.save();
-  const QPointF o = worldToWidget(QPointF(0, 0));
-  QTransform world2widget;
-  world2widget.translate(o.x(), o.y());
-  world2widget.scale(m_zoom, m_zoom);
-  p.setTransform(floatLocalToWorld() * world2widget);
+  p.setTransform(floatLocalToWorld(), /*combine=*/true);
   p.setRenderHint(QPainter::SmoothPixmapTransform, true);
   p.drawImage(0, 0, m_floatImg);
   p.restore();
 
-  // Outline + handles (drawn in widget space).
+  // Outline + handles, in world coordinates: they turn with the sheet, and the
+  // 1/zoom factor keeps their on-screen size what it was before.
+  const double inv = m_zoom > 1e-6 ? 1.0 / m_zoom : 1.0;
   QPolygonF poly;
-  for (int c = 0; c < 4; ++c) poly << worldToWidget(floatHandleWorld(c));
+  for (int c = 0; c < 4; ++c) poly << floatHandleWorld(c);
   QPen pen(QColor(0, 170, 255));
   pen.setCosmetic(true);
   pen.setWidth(2);
@@ -2053,15 +2202,15 @@ void ZtoryThumbnailCanvas::paintFloat(QPainter &p) {
 
   // Rotation handle: a stalk + circle.
   const QPointF topMid = (poly[0] + poly[1]) / 2.0;
-  const QPointF rot    = worldToWidget(floatHandleWorld(4));
+  const QPointF rot    = floatHandleWorld(4);
   p.drawLine(topMid, rot);
   p.setBrush(QColor(0, 170, 255));
-  p.drawEllipse(rot, 5, 5);
+  p.drawEllipse(rot, 5 * inv, 5 * inv);
 
   // Corner (scale) handles.
   for (int c = 0; c < 4; ++c) {
     const QPointF wp = poly[c];
-    p.drawRect(QRectF(wp.x() - 4, wp.y() - 4, 8, 8));
+    p.drawRect(QRectF(wp.x() - 4 * inv, wp.y() - 4 * inv, 8 * inv, 8 * inv));
   }
   p.setBrush(Qt::NoBrush);
 }
@@ -2327,6 +2476,8 @@ bool ZtoryThumbnailCanvas::askWrite(const TRect &rect) {
 }
 
 void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
+  qWarning("ZTPROBE restoreSnapshot: torno a cols=%d rows=%d boxAspect=%.6f (ora era %.6f)",
+           s.cols, s.rows, s.boxAspect, m_boxAspect);
   m_ras    = s.ras->clone();  // clone so the stored snapshot stays immutable
   m_cols   = s.cols;
   m_rows   = s.rows;
@@ -2456,6 +2607,8 @@ void ZtoryThumbnailCanvas::redo() {
 // usiamo, altrimenti si lascia fare all'applicazione. Cosi' il gesto e la
 // tastiera si comportano allo stesso modo.
 void ZtoryThumbnailCanvas::gestureUndo() {
+  qWarning("ZTPROBE gestureUndo: passi in pila=%d  boxAspect ora=%.6f",
+           (int)m_undo.size(), m_boxAspect);
   if (!m_undo.empty())
     undo();
   else
@@ -2495,8 +2648,15 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
 
   if (!m_ras) return;
 
-  const QPointF tl = worldToWidget(QPointF(0, 0));
-  const QRectF target(tl, QSizeF(gridW() * m_zoom, gridH() * m_zoom));
+  // Everything below is drawn in WORLD coordinates with the view transform
+  // set on the painter.  Under rotation a world rectangle is no longer an
+  // upright screen rectangle, so the old "worldToWidget(topLeft) + size*zoom"
+  // shape was wrong by construction: this REMOVES arithmetic rather than
+  // adding trigonometry.
+  const QRectF page(0.0, 0.0, gridW(), gridH());
+
+  p.save();
+  p.setTransform(viewTransform(), /*combine=*/true);
 
   // rasterToQImage() wraps the raster memory without copying, but mirrored=true
   // deep-copies the whole surface (~31 MB on a 4x15 grid) on EVERY repaint —
@@ -2506,13 +2666,13 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   // The page.  The surface itself is transparent (see kPaper), so the white a
   // storyboard artist draws on is painted HERE, under the drawing — that is
   // what lets the eraser take pixels away and still look like paper.
-  p.fillRect(target, Qt::white);
+  p.fillRect(page, Qt::white);
 
   QImage img = rasterToQImage(m_ras, /*premultiplied=*/true, /*mirrored=*/false);
   p.save();
-  p.translate(target.left(), target.top() + target.height());
+  p.translate(0.0, gridH());
   p.scale(1.0, -1.0);
-  p.drawImage(QRectF(0.0, 0.0, target.width(), target.height()), img);
+  p.drawImage(page, img);
   p.restore();
 
   // Thin panel separators (overlay only — the surface itself is contiguous).
@@ -2529,26 +2689,22 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
       if (mergeIndexAt(c - 1, r) >= 0 &&
           mergeIndexAt(c - 1, r) == mergeIndexAt(c, r))
         continue;  // interior vertical edge of a merge
-      const double x  = worldToWidget(QPointF(c * m_boxW, 0)).x();
-      const double y0 = worldToWidget(QPointF(0, r * m_boxH)).y();
-      const double y1 = worldToWidget(QPointF(0, (r + 1) * m_boxH)).y();
-      p.drawLine(QPointF(x, y0), QPointF(x, y1));
+      const double x = c * m_boxW;
+      p.drawLine(QPointF(x, r * m_boxH), QPointF(x, (r + 1) * m_boxH));
     }
   for (int r = 1; r < m_rows; ++r)
     for (int c = 0; c < m_cols; ++c) {
       if (mergeIndexAt(c, r - 1) >= 0 &&
           mergeIndexAt(c, r - 1) == mergeIndexAt(c, r))
         continue;  // interior horizontal edge of a merge
-      const double y  = worldToWidget(QPointF(0, r * m_boxH)).y();
-      const double x0 = worldToWidget(QPointF(c * m_boxW, 0)).x();
-      const double x1 = worldToWidget(QPointF((c + 1) * m_boxW, 0)).x();
-      p.drawLine(QPointF(x0, y), QPointF(x1, y));
+      const double y = r * m_boxH;
+      p.drawLine(QPointF(c * m_boxW, y), QPointF((c + 1) * m_boxW, y));
     }
 
   QPen border(QColor(29, 92, 131, 120));
   border.setCosmetic(true);
   p.setPen(border);
-  p.drawRect(target);
+  p.drawRect(page);
 
   // Outline each merged (panorama) region a little brighter.
   QPen mergePen(QColor(90, 150, 220));
@@ -2559,9 +2715,7 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   for (const QRect &m : m_merges) {
     const QRectF wr(m.x() * m_boxW, m.y() * m_boxH, m.width() * m_boxW,
                     m.height() * m_boxH);
-    const QRectF sr(worldToWidget(wr.topLeft()),
-                    QSizeF(wr.width() * m_zoom, wr.height() * m_zoom));
-    p.drawRect(sr);
+    p.drawRect(wr);
   }
 
   // Selection overlay: tint selected panels + a numbered badge showing the
@@ -2570,25 +2724,27 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   for (int i = 0; i < m_selection.size(); ++i) {
     const QRectF wr = panelWorldRect(m_selection[i]);
     if (wr.isNull()) continue;
-    const QRectF sr(worldToWidget(wr.topLeft()),
-                    QSizeF(wr.width() * m_zoom, wr.height() * m_zoom));
-    p.fillRect(sr, QColor(224, 90, 0, 60));
+    p.fillRect(wr, QColor(224, 90, 0, 60));
     QPen selPen(QColor(224, 90, 0));
     selPen.setCosmetic(true);
     selPen.setWidth(2);
     p.setPen(selPen);
-    p.drawRect(sr);
+    p.drawRect(wr);
 
-    // Order badge (1-based) in the top-left corner of the panel.
-    const double bs = 20.0;
-    QRectF badge(sr.left() + 3, sr.top() + 3, bs, bs);
+    // Order badge (1-based) in the top-left corner of the panel.  Drawn in
+    // world space so it TURNS with the sheet -- the numbers belong to the
+    // page, not to the screen (Franco, 2026-09-18) -- while the 1/zoom factor
+    // keeps its on-screen size the 20 px it has always been.
+    const double inv = m_zoom > 1e-6 ? 1.0 / m_zoom : 1.0;
+    const double bs  = 20.0 * inv;
+    QRectF badge(wr.left() + 3 * inv, wr.top() + 3 * inv, bs, bs);
     p.setBrush(QColor(224, 90, 0));
     p.setPen(Qt::NoPen);
     p.drawEllipse(badge);
     p.setPen(Qt::white);
     QFont f = p.font();
     f.setBold(true);
-    f.setPointSizeF(10.0);
+    f.setPointSizeF(qMax(0.5, 10.0 * inv));
     p.setFont(f);
     p.drawText(badge, Qt::AlignCenter, QString::number(i + 1));
     p.setBrush(Qt::NoBrush);
@@ -2603,20 +2759,20 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
       p.setPen(mp);
       if (m_lassoMode) {
         QPolygonF wpoly;
-        for (const QPointF &wp : m_lassoPath) wpoly << worldToWidget(wp);
+        for (const QPointF &wp : m_lassoPath) wpoly << wp;
         p.setBrush(QColor(0, 170, 255, 30));
         p.drawPolygon(wpoly);
       } else {
         const QRectF wr = QRectF(m_marqueeStart, m_marqueeCur).normalized();
-        const QRectF sr(worldToWidget(wr.topLeft()),
-                        QSizeF(wr.width() * m_zoom, wr.height() * m_zoom));
         p.setBrush(QColor(0, 170, 255, 30));
-        p.drawRect(sr);
+        p.drawRect(wr);
       }
       p.setBrush(Qt::NoBrush);
     }
     paintFloat(p);
   }
+
+  p.restore();  // end of the world-coordinate block
 
   // Brush cursor: a circle of the real brush size (the system cursor is blank in
   // drawing mode). Drawn last so it sits on top of everything.

@@ -213,6 +213,10 @@ protected:
   QPointF m_firstPanPoint;
   bool   m_zooming     = false;
   double m_scaleFactor = 0.0;
+  // Rotation dead zone, same shape as SceneViewer: a pinch is never perfectly
+  // steady, so without it every zoom would wobble the sheet a degree or two.
+  bool   m_rotating      = false;
+  double m_rotationDelta = 0.0;
   // Quante dita ha visto QUESTO tocco (il massimo raggiunto). Serve alle
   // gesture di undo/redo: 2 dita = annulla, 3 = ripeti, secondo le preferenze.
   // Il valore 100 e' il modo di SceneViewer per dire «questo tocco ha gia'
@@ -229,12 +233,29 @@ private:
   void endStroke();
 
   // Layout / view transform (world == raster px, widget == on-screen px).
+  // Every conversion goes through ONE QTransform: with rotation a world
+  // rectangle is no longer an upright screen rectangle, so anything that
+  // builds a screen rect from a world size + m_zoom is wrong by construction.
+  // Draw in WORLD coordinates with viewTransform() set on the painter instead.
+  QTransform viewTransform() const;     // world -> widget
+  QTransform viewTransformInv() const;  // widget -> world
   QPointF worldToWidget(const QPointF &w) const;
   QPointF widgetToWorld(const QPointF &p) const;
   double gridW() const { return m_cols * m_boxW; }
   double gridH() const { return m_rows * m_boxH; }
   TPointD widgetToRaster(const QPointF &widgetPos) const;
   void zoomAt(const QPointF &widgetAnchor, double factor);
+  // Rotation of the VIEW: the whole sheet turns, grid and panel badges with
+  // it, the way you turn paper on the table while drawing (Franco, 2026-09-18).
+  void rotateAt(const QPointF &widgetAnchor, double degrees);
+  void resetRotation();               // without this, straightening by hand is
+                                      // a torture - which is why every drawing
+                                      // program has the command
+  // The page's on-screen box WITHOUT the pan: rotation makes the visible box
+  // bigger than gridW*zoom x gridH*zoom and shifts its corner away from the
+  // pan, and the scrollbars have to follow the box, not the pan.  At rot == 0
+  // it is exactly QRectF(0, 0, gridW()*zoom, gridH()*zoom).
+  QRectF pageBoxNoPan() const;
   void updateScrollBars();          // sync the side bars to pan/zoom/grid
   void updateToolCursor();          // brush(blank)/select/transform per mode
 
@@ -368,6 +389,7 @@ private:
 
   // View
   double m_zoom  = 1.0;
+  double m_rot   = 0.0;  // degrees, clockwise on screen
   QPointF m_pan  = QPointF(28.0, 28.0);
   bool m_panning = false;
   QPoint m_lastPanPos;
