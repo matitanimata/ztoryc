@@ -283,6 +283,25 @@ private:
   void loadMerges(const QString &dirStr);
   void bandRasterRange(int b, int ly, int &y0, int &y1) const;
 
+  // ── Raster per pagina, passo 1: il magazzino ─────────────────────────────
+  // Una PAGINA e' esattamente una banda: kRowsPerBand righe di griglia, cioe'
+  // il foglio fisico che si disegna e si importa.  E' gia' la forma con cui il
+  // canvas vive sul disco (_ztorythumbs_bandNNN.png), quindi qui non si
+  // inventa niente: si fa combaciare la memoria con quella struttura.
+  //
+  // Queste due funzioni sono la GIUNTURA su cui si innestera' la finestra di
+  // lavoro (pagine separate in memoria, le ~3 su cui si sta lavorando tenute
+  // contigue cosi' pennello, lazo e undo continuano a lavorare come oggi).
+  // Finche' la finestra copre tutto il canvas il giro e' l'IDENTITA', ed e'
+  // quella proprieta' che rende sicuro introdurle adesso e stringerla dopo.
+  std::vector<TRaster32P> pagesFromCanvas(const TRaster32P &canvas) const;
+  TRaster32P canvasFromPages(const std::vector<TRaster32P> &pages, int lx,
+                             int ly) const;
+  // Vero se il giro pagine→tela riproduce `canvas` pixel per pixel.  Usata per
+  // dimostrare l'identita' invece di affermarla: un difetto qui non fa
+  // rumore, mangia un pezzo di storyboard al salvataggio successivo.
+  bool pagingRoundTripIsIdentity(const TRaster32P &canvas) const;
+
   // Linear panel index (row*cols+col) at a world point, or -1 if outside grid.
   int panelAtWorld(const QPointF &world) const;
   // World-space rectangle (top-left origin, y down) of a region (top-left index).

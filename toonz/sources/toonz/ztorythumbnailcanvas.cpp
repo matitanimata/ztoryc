@@ -42,6 +42,7 @@
 #include <QResizeEvent>
 
 #include <cmath>
+#include <cstring>
 
 //=============================================================================
 
@@ -980,6 +981,61 @@ void ZtoryThumbnailCanvas::bandRasterRange(int b, int ly, int &y0,
   // Found by checking that the bands tile the raster exactly — 20 cases out of
   // 310 left a gap, all of them with a non-integer box height.
   if (b == bandCount() - 1) y0 = 0;
+}
+
+// ── Raster per pagina, passo 1 ──────────────────────────────────────────────
+
+std::vector<TRaster32P> ZtoryThumbnailCanvas::pagesFromCanvas(
+    const TRaster32P &canvas) const {
+  std::vector<TRaster32P> pages;
+  if (!canvas) return pages;
+  const int lx = canvas->getLx(), ly = canvas->getLy();
+  const int n  = bandCount();
+  pages.reserve(n);
+  for (int b = 0; b < n; b++) {
+    int y0, y1;
+    bandRasterRange(b, ly, y0, y1);
+    if (y0 > y1 || y1 < 0 || y0 >= ly) { pages.push_back(TRaster32P()); continue; }
+    // Copia in un raster CONTIGUO, non una vista: una vista conserva il passo
+    // di riga del genitore, e chi poi la codifica in PNG non lo sa — l'immagine
+    // uscirebbe storta.  Stessa ragione per cui persistSave copia.
+    TRaster32P page(lx, y1 - y0 + 1);
+    page->copy(canvas->extract(0, y0, lx - 1, y1));
+    pages.push_back(page);
+  }
+  return pages;
+}
+
+TRaster32P ZtoryThumbnailCanvas::canvasFromPages(
+    const std::vector<TRaster32P> &pages, int lx, int ly) const {
+  if (lx <= 0 || ly <= 0) return TRaster32P();
+  TRaster32P canvas(lx, ly);
+  canvas->fill(kPaper);
+  for (int b = 0; b < (int)pages.size(); b++) {
+    if (!pages[b]) continue;  // pagina mancante = carta bianca, non un buco
+    int y0, y1;
+    bandRasterRange(b, ly, y0, y1);
+    if (y0 > y1 || y1 < 0 || y0 >= ly) continue;
+    const int h = qMin(pages[b]->getLy(), y1 - y0 + 1);
+    if (h <= 0) continue;
+    canvas->extract(0, y0, lx - 1, y0 + h - 1)
+        ->copy(pages[b]->extract(0, 0, lx - 1, h - 1));
+  }
+  return canvas;
+}
+
+bool ZtoryThumbnailCanvas::pagingRoundTripIsIdentity(
+    const TRaster32P &canvas) const {
+  if (!canvas) return true;
+  const int lx = canvas->getLx(), ly = canvas->getLy();
+  TRaster32P back = canvasFromPages(pagesFromCanvas(canvas), lx, ly);
+  if (!back || back->getLx() != lx || back->getLy() != ly) return false;
+  for (int y = 0; y < ly; y++) {
+    const TPixel32 *a = canvas->pixels(y);
+    const TPixel32 *b = back->pixels(y);
+    if (std::memcmp(a, b, sizeof(TPixel32) * lx) != 0) return false;
+  }
+  return true;
 }
 
 void ZtoryThumbnailCanvas::markBandsDirty(const QRect &rasterRect) {
