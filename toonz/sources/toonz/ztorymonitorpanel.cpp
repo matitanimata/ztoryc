@@ -19,6 +19,7 @@
 #include "menubarcommandids.h"
 #include "toonzqt/gutil.h"
 #include "xsheetdragtool.h"   // XsheetGUI::setPlayRange
+#include "ztoryshotops.h"     // positionCursorInsideShot
 #include "tundo.h"
 
 #include <QApplication>
@@ -337,6 +338,30 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
           &TXsheetHandle::xsheetChanged,
           this, &ZtoryMonitorPanel::onModelChanged);
 
+  // Coming BACK from a sub-scene is the moment the track has to be rebuilt.
+  // While inside a shot both refresh paths (showEvent and the debounce timer)
+  // deliberately do nothing — getTopXsheet() would return the sub-scene and
+  // wipe the blocks — and nothing re-arms them on the way out: xsheetChanged
+  // is about the CONTENT of an xsheet, not about which xsheet is current.
+  // So a Monitor first shown from inside a shot stayed EMPTY for the rest of
+  // the session, with no video track and no audio tracks (Franco, 2026-09-21:
+  // "non si vedono le tracce video e audio").
+  // The Animatic panel already listens to this same signal for the same
+  // reason — see ztoryanimatic.cpp, the "user navigates back to main xsheet
+  // via any path other than the back button" connect.
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched,
+          this, [this]() {
+    ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
+    if (!sc || sc->getChildStack()->getAncestorCount() != 0) return;
+    m_track->refreshFromScene();
+    m_ruler->initPlayRangeIfNeeded();
+    // Force the audio fingerprint to miss: refreshAudioTracks() returns early
+    // when the fingerprint matches, and it still holds the value from before
+    // we entered the shot. Same trick showEvent() uses.
+    m_audioFP = 0;
+    refreshAudioTracks();
+  });
+
   // Trim / edit operations — forward to ZtoryAnimaticPanel
   connect(m_track, &ZtoryAnimaticTrack::shotDurationChanged,
           this, [](int col, int newF1) {
@@ -467,6 +492,7 @@ void ZtoryMonitorPanel::onShotDoubleClicked(int col) {
     int outF = durInAnimatic - 1;
     if (outF >= 0)
       XsheetGUI::setPlayRange(0, outF, 1, false);
+    ZtoryShotOps::positionCursorInsideShot(outF);
     ZtoryAnimaticController::instance()->setCurrentFrame(r0);
     ZtoryModel::instance()->activateShotForViewing(col);
   }

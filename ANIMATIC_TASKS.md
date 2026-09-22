@@ -590,7 +590,89 @@ Due cautele, entrambe necessarie e non ornamentali:
 
 ---
 
-### 🆕 DA FARE — ROTAZIONE DELLA VISTA nella Thumbs room
+### 🔴 APERTO 2026-09-21 — col TOCCO, pan/zoom nella Thumbs room cancella i disegni
+
+Segnalato dall'utente Surface. **Distrugge lavoro.** Col mouse non succede, e
+il tocco e' nuovo nella 0.14.1: e' una regressione nostra.
+
+**Causa accertata nel codice (ma forse non tutta la causa).** Portando
+`touchEvent`/`gestureEvent` da SceneViewer il 2026-09-18 e' andata persa
+`m_touchPoints = 100` nel ramo dello zoom (in originale con accanto il
+commento «This will block undo/redo action», `sceneviewerevents.cpp:1390`), e
+la stessa riga nel ramo `CenterPointChanged`. Senza, dopo un pizzico
+`m_touchPoints` resta 2 e al rilascio `mouseReleaseEvent` lo legge come tap a
+due dita = **ANNULLA**, che su Windows e' la preferenza predefinita.
+Spiega perche' l'utente non rimediava con l'undo: il danno ERA un undo.
+
+⚠️ **Cosa NON torna, da non dimenticare:** un undo annulla **un passo solo**,
+mentre l'utente descrive un wipe **in un colpo**. E c'e' gia' una guardia che
+scarta i tocchi oltre 250 ms, che dovrebbe coprire un pizzico lento — a meno
+che su Windows il `TouchEnd` non arrivi piu' quando Qt riconosce il gesto.
+Quindi il secondo sospetto resta in piedi: `onSceneChanged` rifonde la griglia
+e `xsheetCameraRes` **ripiega su 1920x1080 in silenzio**, in modo
+indistinguibile da una camera 16:9 vera.
+
+**Stato:** correzione su master (parita' con SceneViewer ripristinata).
+**Build di diagnosi** sul branch `feature/thumbs-paged-raster` (`914707b79`),
+SENZA la correzione, con sonde su entrambi i sospetti che scrivono in
+`Desktop/ztprobe.log`. Build Windows su Drive in `Ztoryc/build-di-prova/`.
+**Franco la prova sulla Companion 2** (unico touch raggiungibile).
+
+⚠️ **Quella build ha anche la rotazione nuova**, il cui ramo mette
+`m_touchPoints = 100`: pizzicando storto il difetto viene MASCHERATO. Il
+pizzico di prova va fatto dritto.
+
+**Serve una 0.14.2** appena la causa e' chiusa: la 0.14.1 distrugge lavoro su
+qualunque macchina col tocco e le gesture accese.
+
+---
+
+### 🔴 APERTO 2026-09-21 — l'audio dell'animatic: muto alla ripresa, doppio se si riparte subito
+
+Segnalato da Franco mentre lavorava nella room Ztoryc con l'animatic:
+*«se interrompo e riprendo il play a volte va in play senza audio e se stoppo
+e riprendo subito a volte si sente l'audio doppio»*. **Intermittente** — le due
+facce sono probabilmente lo stesso difetto visto da due lati.
+
+⚠️ **IPOTESI, non misurata.** Scritta per dare un punto di partenza, NON da
+credere finche' non e' verificata con una sonda sulla riproduzione vera.
+`ZtoryAnimaticController::startPerColumnAudio()` (`ztoryanimatic.cpp:305`)
+chiama `sc->play(colTrack, ts0, colSamples-1, false)` per ogni colonna audio:
+un buffer lungo fino alla fine della traccia. `stopPerColumnAudio()` (:332)
+chiama `sc->stop()`. Il commento a :3881 dice che `TSoundOutputDeviceImp` usa
+`QAudioOutput` con un **buffer hardware da 100 ms** — cioe' esiste una finestra
+in cui lo stop non ha ancora rilasciato il dispositivo. Un `play()` dentro
+quella finestra spiegherebbe **tutte e due** le facce: o il nuovo non parte
+(muto), o parte sovrapposto al precedente (doppio). Combacia con il
+«se riprendo SUBITO» di Franco, ed e' l'unica parte del racconto che indica
+un tempo.
+
+**Come si misura** (prima di toccare qualsiasi cosa): `qWarning` con il tempo
+in ms all'ingresso di `startPerColumnAudio` e `stopPerColumnAudio`, piu' lo
+stato di ogni `sc` al momento del play. Serve il caso muto E il caso doppio:
+se la distanza fra stop e play successivo e' sotto i 100 ms nei casi rotti e
+sopra in quelli buoni, l'ipotesi regge; altrimenti cade e si riparte.
+`qWarning` e non `printf` — stdout rediretto e' bufferizzato a blocchi e la
+traccia non arriverebbe.
+
+⏸️ **Rimandato da Franco il 2026-09-21**, subito dopo averlo segnalato: la
+sonda richiede di ricompilare e rilanciare la `Ztoryc.app` in cui stava
+lavorando, e ha preferito non interrompere il lavoro sulla Thumbs room.
+Non e' sfuggito: e' stato visto e messo in coda.
+
+---
+
+### ⏳ FATTA 2026-09-21, DA COLLAUDARE SU UN TOCCO — ROTAZIONE DELLA VISTA nella Thumbs room
+
+> ✅ **Implementata** sul branch `feature/thumbs-paged-raster`: tutti e quattro
+> i pezzi qui sotto. A rotazione zero e' stato MISURATO che il codice nuovo da'
+> gli stessi numeri del vecchio (scarto 0 px su 120 casi, sonda compilata
+> contro le Qt vere). Tasti: ⌥← ⌥→ ruotano di 15°, ⌥0 raddrizza.
+> **Non collaudata su un touch**: il segno del pizzico e' ragionato, non
+> misurato. Manca un pulsante nella barra della room: ⌥0 non lo indovina
+> nessuno.
+
+### (piano originale)
 
 Chiesta da Franco il 2026-09-18, dopo la prova sulla Wacom Companion 2: il
 pizzico a due dita zooma ma non ruota, mentre nelle altre room ruota. **Da fare
@@ -1489,6 +1571,20 @@ dato non lo scrive l'utente ma `classifyCameraMove()`.
 > ricapita da solo lavorando.
 
 
+- **Il secchiello / autofill nella Thumbs room — NON SI FA** (Franco,
+  2026-09-21): *«no il secchiello non lo metterei non complichiamoci la
+  vita»*. Era nato da una sua osservazione mentre si chiudeva la Thumbs room
+  («avrebbe fatto comodo l'autofill come quello che abbiamo sullo smart
+  raster»), e la risposta misurata è che **non si trasporta**: l'autofill
+  vive in `toonzrasterbrushtool.cpp` e lavora su `TRasterCM32P` — ink, paint
+  e tone separati, BFS con barriera `getInk() != 0` e riempimento con
+  `setPaint()`. La tela della Thumbs room è `TRaster32P`, RGBA pieno, senza
+  ink e senza paint: sarebbe un riempimento **nuovo**, non un travaso.
+  In più l'autofill che abbiamo ha un difetto ancora aperto — il bordino
+  bianco sui pixel antialiased, cinque approcci tutti regrediti il
+  2026-06-13 — e su RGBA lo stesso problema si ripresenta senza nemmeno il
+  tone che nel fill nativo dà la direzionalità.
+  **Non riproporlo.** Si riapre solo se lo riapre lui.
 - **La tendina delle bocche mostra i livelli di tutti i personaggi — SI LASCIA
   COSI'** (Franco, 2026-08-28, dopo aver visto i set di SOFIA mentre lavorava
   sul lupo): *«quando le mappo lo faccio nella scena del singolo character

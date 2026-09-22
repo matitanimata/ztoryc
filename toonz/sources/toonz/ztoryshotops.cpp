@@ -7,6 +7,8 @@
 #include "toonz/txsheet.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/tscenehandle.h"
+#include "toonz/tcolumnhandle.h"
+#include "toonz/tframehandle.h"
 #include "toonz/txshlevelcolumn.h"
 #include "toonz/txshleveltypes.h"
 #include "toonz/txshchildlevel.h"
@@ -137,6 +139,20 @@ TDimension cameraRes(ToonzScene *scene) {
 double cameraAspect(ToonzScene *scene) {
   TDimension res = cameraRes(scene);
   return (double)res.lx / (double)res.ly;
+}
+
+void positionCursorInsideShot(int outFrame) {
+  TApp *app         = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  // Only meaningful inside a sub-scene: at top level the column index IS the
+  // shot's identity and moving the cursor would fight the user.
+  if (!scene || scene->getChildStack()->getAncestorCount() == 0) return;
+  TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
+  if (!xsh) return;
+  int target = outFrame;
+  if (target < 0) target = 0;
+  app->getCurrentColumn()->setColumnIndex(0);
+  app->getCurrentFrame()->setFrameIndex(target);
 }
 
 void cloneChildToPosition(int srcCol, int dstCol) {

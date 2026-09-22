@@ -1,3 +1,194 @@
+## [2026-09-21] — la rotazione della vista, e una riga che avevo perso io il 18
+
+Due tronconi. Il primo previsto: la **rotazione della vista** nella Thumbs room,
+il pezzo che mancava al tocco. Il secondo no: una segnalazione dell'utente
+Surface che **distrugge lavoro**, e che si e' rivelata una regressione mia della
+0.14.1.
+
+### Added — la rotazione della vista nella Thumbs room (branch `feature/thumbs-paged-raster`)
+
+Tutti e quattro i pezzi del piano, sul branch che si compila in `Ztoryc-SP.app`.
+La correzione e' stata una **semplificazione**, come previsto: sparisce
+aritmetica invece di aggiungersi trigonometria.
+
+- **Una sola `QTransform`** (`viewTransform()`) con la sua inversa. Prima ogni
+  conversione rifaceva a mano `x * m_zoom + m_pan.x`.
+- **Il ridisegno passa dalla trasformazione** e disegna in coordinate del
+  MONDO. Sparite le quindici costruzioni del tipo
+  `QRectF(worldToWidget(tl), QSizeF(w * m_zoom, h * m_zoom))`, che sotto
+  rotazione sono sbagliate per costruzione: un rettangolo del mondo non e' piu'
+  un rettangolo dritto sullo schermo.
+- **`paintFloat` combina invece di sostituire** (`setTransform(..., true)`): un
+  `setTransform` secco butterebbe via pan, zoom e rotazione e disegnerebbe la
+  selezione flottante nell'angolo.
+- **Le barre di scorrimento** seguono il riquadro RUOTATO (`pageBoxNoPan()`), non
+  `gridW() * m_zoom`. A rotazione zero e' esattamente il valore di prima.
+- **Il pizzico scrive l'angolo**, modellato su `sceneviewerevents.cpp:1394`:
+  zona morta di 10 gradi, rotazione attorno al centro della finestra come
+  SceneViewer, e il segno meno perche' `rotationAngle` di Qt cresce
+  antiorario mentre `QTransform::rotate()` gira orario su un widget con la y
+  in giu'.
+- **⌥0 raddrizza**, ⌥← e ⌥→ ruotano di 15 gradi. Non sono decorazione: senza,
+  la rotazione non e' esercitabile su nessuna macchina senza schermo touch,
+  cioe' su tutte quelle su cui sviluppiamo.
+
+**Misurato, non affermato:** a rotazione zero il codice nuovo deve dare gli
+stessi numeri di quello vecchio. Sonda compilata contro le Qt vere, 120
+combinazioni di pan/zoom/punti: scarto **0 px** su world→widget, 7,3e-12 px
+sull'inversa (rumore dell'inversione di matrice contro la divisione diretta), e
+il riquadro delle barre a rot=0 e' esattamente `gridW*zoom x gridH*zoom`.
+
+**Tre scelte prese da me, da ribaltare se sbagliate:** importando un foglio la
+pagina si raddrizza (`revealRow`), perche' «adatta alla larghezza» non vuol dire
+niente su un foglio storto; si ruota attorno al centro della finestra, come le
+altre room; numerini e maniglie girano con la pagina ma mantengono la dimensione
+sullo schermo che hanno oggi (fattore 1/zoom).
+
+⚠️ **Il segno della rotazione col pizzico e' ragionato, non misurato.** Non
+abbiamo un touch raggiungibile: la Companion 2 e' il solo, ed e' Windows.
+
+### 🔴 REGRESSIONE MIA nella 0.14.1 — il pizzico poteva finire in un ANNULLA
+
+Segnalata dall'utente Surface: *«if you pan/zoom within the thumbnails it resets
+the thumbnails … it wipes all the panels that had been drawn in»*. Col mouse non
+succede — e il tocco e' nuovo nella 0.14.1.
+
+**La causa, nel codice:** portando `touchEvent`/`gestureEvent` da SceneViewer il
+18 settembre ho perso una riga nel ramo dello zoom:
+
+```cpp
+if (m_zooming) {
+  zoomQt(firstCenter * getDevPixRatio(), scaleFactor);
+  m_panning     = false;
+  m_touchPoints = 100;  // This will block undo/redo action   ← persa
+}
+```
+
+Senza, dopo un pizzico `m_touchPoints` resta 2. Al rilascio `mouseReleaseEvent`
+lo legge come **tap a due dita = ANNULLA**, che su Windows e' la preferenza
+predefinita. Stesso buco nel ramo `CenterPointChanged`.
+
+**Spiega il dettaglio che nient'altro spiegava:** l'utente non riusciva a
+rimediare con l'undo, perche' **il danno ERA un undo**. Gli serviva il REDO.
+
+⚠️ **Ma la ricostruzione NON e' completa, e va detto.** Un undo annulla un passo
+solo: per cancellare tutto servirebbero molti pizzichi di fila. L'utente
+descrive **un wipe in un colpo solo**. Inoltre esiste gia' una guardia che
+scarta i tocchi oltre 250 ms, che dovrebbe coprire un pizzico lento — a meno che
+su Windows il `TouchEnd` non arrivi piu' una volta che Qt ha riconosciuto il
+gesto, cosa che da macOS non si stabilisce. **Quindi: la riga mancante e' un
+difetto vero e va corretta comunque, ma potrebbe non essere TUTTA la causa.**
+
+**Corretto su master** (due punti, parita' con SceneViewer ripristinata: sei
+guardie, che sono le sette di SceneViewer meno quella della rotazione, che su
+master non c'e').
+
+**Secondo sospetto, ancora in piedi:** `onSceneChanged` rifonde la griglia
+quando l'aspetto letto differisce da quello impaginato, e `xsheetCameraRes`
+ripiega su **1920x1080 in silenzio** (niente xsheet / camera non risolvibile /
+risoluzione non valida) — un ripiego **indistinguibile da una camera 16:9
+vera**. Il commento a `persistLoad` documenta gia' che esistono momenti in cui
+«the app camera is often still the default». Sulla scena di prova di Franco la
+camera si legge benissimo (5120x2160 = 2,370), quindi li' non scatta: i suoi
+numeri cadono su 202,5 esatti, che e' il caso fortunato.
+
+**Build di diagnosi**: branch `feature/thumbs-paged-raster`, commit `914707b79`,
+**senza** la correzione (con, il difetto non si riprodurrebbe). Sonde su
+entrambi i sospetti. Le sonde scrivono su `Desktop/ztprobe.log` tramite un
+intercettatore di messaggi: su Windows un'app grafica non ha console e
+`qWarning` sarebbe invisibile senza DebugView — errore che avevo fatto e che
+avrebbe sprecato una sessione con la Companion.
+
+### Recupero — cosa si e' potuto dire all'utente, verificato nel codice
+
+- **⌘Z/Ctrl+Z non serve, serve il REDO** (Ctrl+Shift+Z), se il danno e' l'undo
+  accidentale.
+- **La rifusione da sola non scrive su disco**: `onSceneChanged` non arma il
+  salvataggio. E' la prima cosa fatta DOPO che lo arma. Quindi: non disegnare
+  piu' niente e uscire.
+- **`ztorythumbs_backup_<cols>x<rows>.png`**: quando il formato a bande ha
+  salvato la prima volta, la vecchia immagine unica e' stata **rinominata, non
+  cancellata** — apposta. Se c'e', e' una copia completa.
+- **Solo le bande SPORCHE vengono riscritte**: le altre su disco contengono
+  ancora i disegni originali.
+- I thumbs vivono in `+extras/<percorso scena>/thumbs/` e sono PNG normali:
+  anche nel caso peggiore si aprono e si guardano.
+
+### Fixed — il Monitor vuoto, e il cursore che finiva sulla colonna 49
+
+Tre difetti segnalati da Franco a fine giornata, **verificati da lui** sulla
+build subito dopo.
+
+**Il Monitor restava vuoto per tutta la sessione.** Riaprendolo da dentro uno
+shot non mostrava ne' la traccia video ne' quelle audio. La guardia che
+disattiva l'aggiornamento dentro una sotto-scena e' **giusta**
+(`getTopXsheet()` restituirebbe la sotto-scena e cancellerebbe i blocchi): a
+mancare era riaccenderlo all'**uscita**. Il Monitor ascoltava `xsheetChanged`,
+che parla del CONTENUTO di uno xsheet, non `xsheetSwitched`, che dice che e'
+cambiato QUALE xsheet e' corrente. Aggiunto l'aggancio che il pannello Animatic
+aveva gia' per lo stesso motivo, con `m_audioFP = 0` perche' altrimenti
+`refreshAudioTracks()` esce subito trovando l'impronta invariata.
+
+**Il cursore finiva sulla colonna 49 entrando nello shot 490.**
+`ZtoryAnimaticPanel::onShotClicked()` faceva `setColumnIndex(col)` senza
+guardie: `col` e' la colonna dello shot nell'xsheet PRINCIPALE, e dentro una
+sotto-scena quel numero indirizza tutt'altro. Il 49esimo shot (etichettato 490)
+portava il cursore sulla colonna 49 di una sotto-scena che ne usa quattro.
+I doppi clic erano gia' corretti — chiudono la sotto-scena prima di riaprire —
+ed e' per questo che si vedeva **solo** passando da uno shot all'altro con clic
+singoli, restando dentro.
+
+> Due piste sbagliate scartate misurando, prima di arrivarci: `openSubXsheet()`
+> (che la colonna la mette gia' a 0) e la StoryStrip (i cui `emit shotClicked`
+> stanno tutti dentro `mousePressEvent`, quindi partono solo per un clic vero).
+
+**Added — entrando in uno shot: colonna 1 e frame sul MARK OUT.**
+`ZtoryShotOps::positionCursorInsideShot()`, chiamato dai due percorsi della
+timeline. Il mark out e' scelto apposta e **non** l'ultimo disegno: e' la cella
+tenuta in fondo allo slot, quella da cui si trascina per allungare i disegni su
+tutta la durata decisa dall'animatic. Motivazione di Franco, scritta nel
+commento perche' altrimenti il prossimo che legge la «corregge» sull'ultimo
+disegno vero.
+`outFrame` si passa invece di rileggerlo da `XsheetGUI::getPlayRange()`: in
+contesto animatic quel range non e' l'autorita' (lo dicono quattro commenti in
+`ztoryanimatic.cpp`) e ogni chiamante l'ha appena calcolato.
+
+⚠️ **NON coperto l'ingresso dal Board**: li' il mark out non e' calcolato e
+includere o no i frame di dissolvenza e' una scelta, non un dettaglio.
+
+> `openSubXsheet()` sta in `subscenecommand.cpp`, **core condiviso con
+> Tahoma2D**: il posizionamento e' una regola di Ztoryc — «il contenuto di uno
+> shot sta nelle prime colonne» e' vero per come Ztoryc costruisce le
+> sotto-scene, non in generale — quindi sta nei chiamanti, non li'.
+
+### Deciso da Franco
+
+- **Il secchiello / autofill nella Thumbs room NON SI FA** (*«non
+  complichiamoci la vita»*). Non si trasporta comunque: l'autofill vive su
+  `TRasterCM32P` (ink/paint/tone separati), la tela della Thumbs room e'
+  `TRaster32P` RGBA pieno. Scritto nel blocco SOSPESI.
+- **L'audio dell'animatic e' stato RIMANDATO** dopo essere stato segnalato: la
+  sonda richiedeva di ricompilare la `Ztoryc.app` in uso. Voce aperta scritta.
+- Il **raster per pagina** non e' stato iniziato.
+
+### Notes
+
+- Il branch `feature/thumbs-paged-raster` era **9 commit indietro** da master:
+  non aveva il tocco, il lazo e le gesture della 0.14.1. Allineato prima di
+  lavorarci.
+- Le note di rilascio della 0.14.1 sono state ristrutturate dopo la
+  pubblicazione: aggiunto un blocco **🆕 New** (il tocco e la distinzione
+  foto/pagina digitale erano capacita' nuove raccontate come correzioni), tolto
+  il tono catastrofista dal titolo su indicazione di Franco (*«corretti 4 bug
+  importanti»* al posto di *«four defects that destroyed work»*), e aggiunta la
+  rotazione ancora mancante — riscritta dopo una sua correzione: griglia e
+  numerini non esistono nelle altre room, quindi la frase che li citava
+  descrivendo le altre room non voleva dire niente.
+- **Errore di metodo da ricordare:** ho preparato una build macOS e istruzioni
+  con `qWarning` per un test su un tablet **Windows**. Franco se n'e' accorto
+  lui (*«ma hai fatto la build windows?»*). Prima di preparare un collaudo,
+  guardare su che macchina girera'.
+
 ## [2026-09-18] — «mi ritrovo la scena SB vuota»: un underscore, e l'audio che spariva riordinando
 
 Una sola segnalazione, quattro difetti sotto, **due dei quali distruggevano
