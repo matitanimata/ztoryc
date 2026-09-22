@@ -1,5 +1,4 @@
 #include "ztoryshotops.h"
-#include <QDebug>
 
 #include "tapp.h"
 #include "toonz/toonzscene.h"
@@ -113,15 +112,14 @@ bool syncAllCamerasFrom(ToonzScene *scene, TXsheet *srcXsh) {
 
 TDimension xsheetCameraRes(TXsheet *xsh) {
   const TDimension kDefault(1920, 1080);
-  if (!xsh) { qWarning("ZTPROBE camRes: NIENTE XSHEET -> ripiego 1920x1080"); return kDefault; }
+  if (!xsh) return kDefault;
   TStageObjectTree *tree = xsh->getStageObjectTree();
   TStageObject *camObj =
       tree->getStageObject(tree->getCurrentCameraId(), false);
   TCamera *cam = camObj ? camObj->getCamera() : nullptr;
-  if (!cam) { qWarning("ZTPROBE camRes: CAMERA NON RISOLTA (camId non trovato) -> ripiego 1920x1080"); return kDefault; }
+  if (!cam) return kDefault;
   TDimension res = cam->getRes();
-  if (res.lx <= 0 || res.ly <= 0) { qWarning("ZTPROBE camRes: RES NON VALIDA %dx%d -> ripiego 1920x1080", res.lx, res.ly); return kDefault; }
-  qWarning("ZTPROBE camRes: LETTA davvero %dx%d", res.lx, res.ly);
+  if (res.lx <= 0 || res.ly <= 0) return kDefault;
   return res;
 }
 

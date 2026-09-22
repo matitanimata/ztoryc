@@ -52,46 +52,6 @@
 // panel carry its transparency.
 static const TPixel32 kPaper(0, 0, 0, 0);
 
-// ─── SONDA TEMPORANEA — NON DEVE ARRIVARE IN UN RILASCIO ────────────────────
-// Le sonde usano qWarning, ma su Windows un'app GRAFICA non ha una console:
-// qWarning finisce nell'output del debugger ed e' invisibile senza DebugView.
-// Su un tablet, inutilizzabile. Qui si intercettano i messaggi in UN punto e
-// quelli marcati ZTPROBE si scrivono su un file sul Desktop, che chi collauda
-// puo' trovare e spedire senza sapere niente di strumenti da sviluppatore.
-#include <QStandardPaths>
-#include <QDateTime>
-#include <QFile>
-#include <QTextStream>
-#include <QDir>
-
-static QtMessageHandler gZtPrevHandler = nullptr;
-
-static void ztProbeMessageHandler(QtMsgType type, const QMessageLogContext &ctx,
-                                  const QString &msg) {
-  if (msg.contains("ZTPROBE")) {
-    QString d = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
-    if (d.isEmpty())
-      d = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    QFile f(d + "/ztprobe.log");
-    if (f.open(QIODevice::Append | QIODevice::Text)) {
-      QTextStream ts(&f);
-      ts << QDateTime::currentDateTime().toString("HH:mm:ss.zzz") << "  " << msg
-         << "\n";
-    }
-  }
-  if (gZtPrevHandler) gZtPrevHandler(type, ctx, msg);
-}
-
-static void ztProbeInstall() {
-  static bool done = false;
-  if (done) return;
-  done               = true;
-  gZtPrevHandler     = qInstallMessageHandler(ztProbeMessageHandler);
-  qWarning("ZTPROBE === sonda avviata, %s ===",
-           qPrintable(QDateTime::currentDateTime().toString(Qt::ISODate)));
-}
-// ────────────────────────────────────────────────────────────────────────────
-
 namespace {
 
 // The canvas write, with no dependency on the widget: it owns its pixels, so it
@@ -353,7 +313,6 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   m_ras = TRaster32P((int)gridW(), (int)gridH());
   m_ras->fill(kPaper);
 
-  ztProbeInstall();  // SONDA TEMPORANEA
 
   // React live to camera changes made from Camera Settings while this room is
   // open. xsheetChanged covers most camera edits; sceneChanged covers a scene
@@ -597,10 +556,8 @@ QImage ZtoryThumbnailCanvas::canvasImage() const {
 
 void ZtoryThumbnailCanvas::onSceneChanged() {
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
-  if (!scene) { qWarning("ZTPROBE onSceneChanged: nessuna scena"); return; }
+  if (!scene) return;
   const double aspect = ZtoryShotOps::cameraAspect(scene);
-  qWarning("ZTPROBE onSceneChanged: letto=%.6f  memorizzato=%.6f  cols=%d rows=%d boxH=%.2f stroking=%d",
-           aspect, m_boxAspect, m_cols, m_rows, m_boxH, (int)m_stroking);
   if (aspect <= 0.0) return;
   // Cheap guard: skip the (most common) changes that don't touch the camera.
   if (qAbs(aspect - m_boxAspect) < 1e-4) return;
@@ -628,8 +585,6 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
 
   // Snapshot the pre-reshape canvas (raster + its aspect) so Cmd-Z reverts the
   // camera-format reflow cleanly instead of leaving a stale grid.
-  qWarning("ZTPROBE *** RIFLUSSO DISTRUTTIVO ***: boxH %.2f -> %.2f, altezza raster %d -> %d",
-           oldBoxH, newBoxH, oldH, newH);
   pushUndo();
   m_boxAspect = aspect;
   m_boxH      = newBoxH;
@@ -1621,19 +1576,13 @@ void ZtoryThumbnailCanvas::mouseReleaseEvent(QMouseEvent *e) {
     // SceneViewer::mouseReleaseEvent: e' qui che vive, non nel gestore del
     // tocco, perche' si decide al rilascio — quando si sa quante dita ha
     // visto il tocco e se nel frattempo ha gia' spostato o zoomato (100).
-    qWarning("ZTPROBE rilascio tocco: m_touchPoints=%d  prefUndo=%d prefRedo=%d  (100 = il tocco ha gia' fatto qualcosa)",
-             m_touchPoints,
-             (int)Preferences::instance()->getGestureUndoMethod(),
-             (int)Preferences::instance()->getGestureRedoMethod());
     if (m_touchPoints == 2 &&
         Preferences::instance()->getGestureUndoMethod() ==
             Preferences::TwoFingerTap) {
-      qWarning("ZTPROBE *** ANNULLA PER SBAGLIO *** (pizzico letto come tap a due dita)");
       gestureUndo();
     } else if (m_touchPoints == 3 &&
                Preferences::instance()->getGestureRedoMethod() ==
                    Preferences::ThreeFingerTap) {
-      qWarning("ZTPROBE *** RIPETI PER SBAGLIO *** (tap a tre dita)");
       gestureRedo();
     }
     m_touchPoints   = 0;
@@ -2491,8 +2440,6 @@ bool ZtoryThumbnailCanvas::askWrite(const TRect &rect) {
 }
 
 void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
-  qWarning("ZTPROBE restoreSnapshot: torno a cols=%d rows=%d boxAspect=%.6f (ora era %.6f)",
-           s.cols, s.rows, s.boxAspect, m_boxAspect);
   m_ras    = s.ras->clone();  // clone so the stored snapshot stays immutable
   m_cols   = s.cols;
   m_rows   = s.rows;
@@ -2622,8 +2569,6 @@ void ZtoryThumbnailCanvas::redo() {
 // usiamo, altrimenti si lascia fare all'applicazione. Cosi' il gesto e la
 // tastiera si comportano allo stesso modo.
 void ZtoryThumbnailCanvas::gestureUndo() {
-  qWarning("ZTPROBE gestureUndo: passi in pila=%d  boxAspect ora=%.6f",
-           (int)m_undo.size(), m_boxAspect);
   if (!m_undo.empty())
     undo();
   else
