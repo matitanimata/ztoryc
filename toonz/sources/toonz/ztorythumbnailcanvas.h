@@ -302,6 +302,19 @@ private:
   // rumore, mangia un pezzo di storyboard al salvataggio successivo.
   bool pagingRoundTripIsIdentity(const TRaster32P &canvas) const;
 
+  // ── Passo 2a: le pagine diventano il MAGAZZINO ──────────────────────────
+  // m_pages e' dove il canvas vive; m_ras e' la FINESTRA contigua su cui si
+  // disegna. Per ora la finestra copre tutte le pagine, quindi il
+  // comportamento e' identico a prima — e' quello che rende sicuro spostare
+  // qui il percorso di caricamento e salvataggio prima di stringerla.
+  //
+  // Quando la finestra sara' stretta, pennello, lazo e undo continueranno a
+  // lavorare su m_ras senza sapere niente delle pagine: e' il motivo per cui
+  // la forma giusta era la finestra e non le tessere.
+  void flushWindowToPages();   // finestra -> pagine (solo le bande sporche)
+  void rebuildWindowFromPages();  // pagine -> finestra
+  void syncPageCount();        // tiene m_pages allineato a bandCount()
+
   // Linear panel index (row*cols+col) at a world point, or -1 if outside grid.
   int panelAtWorld(const QPointF &world) const;
   // World-space rectangle (top-left origin, y down) of a region (top-left index).
@@ -448,6 +461,9 @@ private:
   MyPaintToonzBrush *m_brush = nullptr;
   // Which bands still have to reach the disk.  Sized lazily from bandCount().
   std::vector<bool> m_bandDirty;
+  // Il magazzino: una pagina per banda. Vuoto finche' persistLoad non lo
+  // riempie; da li' in poi e' la sorgente di verita' del canvas su disco.
+  std::vector<TRaster32P> m_pages;
   // Union of every dab of the stroke in progress, in raster coordinates: the
   // one case where we know exactly what changed.  m_strokeDirty cannot serve —
   // it is cleared at every repaint, so it only ever holds the last few dabs.

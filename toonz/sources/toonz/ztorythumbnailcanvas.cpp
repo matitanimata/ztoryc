@@ -1064,6 +1064,35 @@ bool ZtoryThumbnailCanvas::pagingRoundTripIsIdentity(
   return true;
 }
 
+void ZtoryThumbnailCanvas::syncPageCount() {
+  const int n = bandCount();
+  if ((int)m_pages.size() != n) m_pages.resize(n);
+}
+
+void ZtoryThumbnailCanvas::flushWindowToPages() {
+  if (!m_ras) return;
+  syncPageCount();
+  const int lx = m_ras->getLx(), ly = m_ras->getLy();
+  for (int b = 0; b < (int)m_pages.size(); b++) {
+    // Solo le bande sporche: e' la stessa informazione su cui gira il
+    // salvataggio, quindi non si aggiunge un secondo elenco da tenere in
+    // sincrono — che sarebbe il modo piu' rapido di perdere una modifica.
+    if (b < (int)m_bandDirty.size() && !m_bandDirty[b] && m_pages[b]) continue;
+    int y0, y1;
+    bandRasterRange(b, ly, y0, y1);
+    if (y0 > y1 || y1 < 0 || y0 >= ly) continue;
+    TRaster32P page(lx, y1 - y0 + 1);
+    page->copy(m_ras->extract(0, y0, lx - 1, y1));
+    m_pages[b] = page;
+  }
+}
+
+void ZtoryThumbnailCanvas::rebuildWindowFromPages() {
+  const int lx = (int)gridW(), ly = (int)gridH();
+  if (lx <= 0 || ly <= 0) return;
+  m_ras = canvasFromPages(m_pages, lx, ly);
+}
+
 void ZtoryThumbnailCanvas::markBandsDirty(const QRect &rasterRect) {
   const int n = bandCount();
   if ((int)m_bandDirty.size() != n) m_bandDirty.resize(n, true);
@@ -1104,6 +1133,10 @@ void ZtoryThumbnailCanvas::persistSave() {
   const int lx = m_ras->getLx();
   const int ly = m_ras->getLy();
 
+  // La finestra e' dove si e' disegnato: si riversa nel magazzino PRIMA di
+  // scrivere, o si salverebbero pagine vecchie.
+  flushWindowToPages();
+
   QVector<ThumbBand> bands;
   int dirtyCount = 0;
   for (int b = 0; b < n; b++) {
@@ -1116,8 +1149,13 @@ void ZtoryThumbnailCanvas::persistSave() {
     // the parent's row stride, and rasterToQImage() builds the QImage without a
     // stride argument — the image would come out skewed.  This copy is the only
     // part the UI thread pays for, and it is one band (~10 MB), not the canvas.
-    TRaster32P band(lx, y1 - y0 + 1);
-    band->copy(m_ras->extract(0, y0, lx - 1, y1));
+    TRaster32P band = (b < (int)m_pages.size() && m_pages[b])
+                          ? m_pages[b]
+                          : TRaster32P();
+    if (!band) {  // pagina non ancora nel magazzino: la si prende dalla tela
+      band = TRaster32P(lx, y1 - y0 + 1);
+      band->copy(m_ras->extract(0, y0, lx - 1, y1));
+    }
     bands.push_back({b, rasterToQImage(band, /*premultiplied=*/false)});
   }
 
@@ -1206,25 +1244,17 @@ void ZtoryThumbnailCanvas::persistLoad() {
     m_boxH = gBoxH;
     m_boxAspect = m_boxW / gBoxH;
     loadMerges(dirStr);
-    TRaster32P r((int)gridW(), (int)gridH());
-    r->fill(kPaper);
-    for (int b = 0; b < gBands; b++) {
+    // Le pagine arrivano da disco gia' separate: si caricano nel MAGAZZINO, e
+    // la finestra si costruisce da li'. Prima si montavano dritte in una tela
+    // unica e le pagine si buttavano via.
+    m_pages.assign(bandCount(), TRaster32P());
+    for (int b = 0; b < gBands && b < (int)m_pages.size(); b++) {
       QImage img(dirStr + QString("/_ztorythumbs_band%1.png")
                               .arg(b, 3, 10, QChar('0')));
       if (img.isNull()) continue;  // a missing band leaves blank paper, not a hole
-      TRaster32P bandRas = rasterFromQImage(img, /*premultiply=*/false);
-      int y0, y1;
-      bandRasterRange(b, r->getLy(), y0, y1);
-      y1 = qMin(y1, r->getLy() - 1);
-      const int h = qMin(bandRas->getLy(), y1 - y0 + 1);
-      if (h <= 0) continue;
-      // Both sides count from the band's own top, so a short last band lands
-      // where it was cut from.
-      r->extract(0, y1 - h + 1, r->getLx() - 1, y1)
-          ->copy(bandRas->extract(0, bandRas->getLy() - h, bandRas->getLx() - 1,
-                                  bandRas->getLy() - 1));
+      m_pages[b] = rasterFromQImage(img, /*premultiply=*/false);
     }
-    m_ras = r;
+    rebuildWindowFromPages();
     markAllBandsDirty();  // nothing written yet in THIS session
     clearSelection();
     updateScrollBars();
