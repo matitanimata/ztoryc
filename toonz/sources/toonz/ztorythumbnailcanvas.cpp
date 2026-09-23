@@ -1968,10 +1968,15 @@ void ZtoryThumbnailCanvas::gestureEvent(QGestureEvent *e) {
         m_gestureActive = true;
       }
       // Rotation of the view.  Ported from SceneViewer
-      // (sceneviewerevents.cpp:1394) so the Thumbnail room turns exactly the
-      // way the other rooms do: a 10-degree dead zone before it engages, and
-      // the MINUS sign because Qt's rotationAngle grows counter-clockwise
-      // while QTransform::rotate() turns clockwise on a y-down widget.
+      // (sceneviewerevents.cpp:1394): a 10-degree dead zone before it engages,
+      // so a pinch-zoom does not wobble the sheet.
+      //
+      // ⚠️ IL SEGNO E' POSITIVO, ed e' una CORREZIONE.  Ragionando l'avevo messo
+      // negativo — come SceneViewer, che pero' lavora su un sistema di
+      // coordinate con la y in su e una TAffine, non su una QTransform con la y
+      // in giu': i due meno non sono lo stesso meno.  Provato da Franco sulla
+      // Wacom Companion 2 il 2026-09-22: il foglio girava dalla parte sbagliata.
+      // Misurato batte dedotto, e qui il dedotto aveva torto.
       if (changeFlags & QPinchGesture::RotationAngleChanged) {
         const qreal rotationDelta =
             gesture->rotationAngle() - gesture->lastRotationAngle();
@@ -1982,7 +1987,7 @@ void ZtoryThumbnailCanvas::gestureEvent(QGestureEvent *e) {
         if (m_rotating) {
           // Around the centre of the widget, like SceneViewer (which rotates
           // about the centre of the view, not about the fingers).
-          rotateAt(QPointF(width() * 0.5, height() * 0.5), -rotationDelta);
+          rotateAt(QPointF(width() * 0.5, height() * 0.5), rotationDelta);
           m_touchPanning = false;
           m_touchPoints  = 100;  // blocks the undo/redo tap for this touch
         }
