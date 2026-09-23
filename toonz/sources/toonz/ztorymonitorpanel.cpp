@@ -146,14 +146,14 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
     return btn;
   };
 
-  QToolButton *fitAllBtn = new QToolButton(toolbar);
-  fitAllBtn->setText("[]");
-  fitAllBtn->setFixedSize(26, 22);
-  fitAllBtn->setToolTip(tr("Fit All (Ctrl+0)"));
-  fitAllBtn->setStyleSheet(
-      "QToolButton{background:transparent;border:1px solid #555;border-radius:3px;"
-      "color:#aaa;font-size:10px;}"
-      "QToolButton:hover{background:#555;}");
+  // Fit All con la stessa icona dell'Animatic. Qui c'era il testo "[]" in un
+  // riquadro squadrato: era il segnaposto messo quando l'icona non esisteva
+  // ancora, ed e' rimasto — «ci sono delle icone che sono rimaste con le
+  // vecchie versioni» (Franco, 2026-09-23). Gli altri pulsanti condivisi erano
+  // gia' allineati: makeTbBtn e' identico a quello dell'Animatic.
+  QToolButton *fitAllBtn = makeTbBtn("ztoryc_fit_all",
+                                     tr("Fit All — zoom to show the entire "
+                                        "animatic (Ctrl+0)"));
   tbLay->addWidget(fitAllBtn);
   tbLay->addSpacing(4);
 
@@ -177,6 +177,19 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
 
   QToolButton *mergeBtn = makeTbBtn("ztoryc_merge", tr("Merge selected shots"));
   tbLay->addWidget(mergeBtn);
+
+  // Snap (calamita): mancava, e il track del Monitor sa gia' onorarlo da solo
+  // (setSnapEnabled). Acceso come nell'Animatic, cosi' i due pannelli si
+  // comportano allo stesso modo trascinando i bordi di uno shot.
+  QToolButton *snapBtn = makeTbBtn(
+      "ztoryc_snap",
+      tr("Snap (magnet) — snap dragged edges to shot boundaries"), true);
+  snapBtn->setChecked(true);
+  m_track->setSnapEnabled(true);
+  connect(snapBtn, &QToolButton::toggled, this, [this](bool on) {
+    m_track->setSnapEnabled(on);
+  });
+  tbLay->addWidget(snapBtn);
   tbLay->addSpacing(8);
 
   QToolButton *copyBtn  = makeTbBtn("ztoryc_copy",  tr("Copy selected shots  (Ctrl+C)"));
@@ -198,18 +211,17 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
       "QToolButton:hover{background:#555;}"
       "QToolButton:checked{background:#3a6a9a;color:#fff;border-color:#5599cc;}");
   tbLay->addWidget(m_timecodeBtn);
-  tbLay->addSpacing(8);
-
-  // Return to main xsheet button
-  QToolButton *returnBtn = new QToolButton(toolbar);
-  returnBtn->setText("←");
-  returnBtn->setFixedSize(26, 22);
-  returnBtn->setToolTip(tr("Return to main xsheet (close open sub-scene)"));
-  returnBtn->setStyleSheet(
-      "QToolButton{background:transparent;border:1px solid #555;border-radius:3px;"
-      "color:#aaa;font-size:12px;font-weight:bold;}"
-      "QToolButton:hover{background:#555;}");
-  tbLay->addWidget(returnBtn);
+  // Qui c'era un pulsante «←» (Return to main xsheet) TOLTO il 2026-09-23 su
+  // decisione di Franco. Chiudeva le sotto-scene aperte, quindi faceva
+  // qualcosa solo se stavi DENTRO uno shot guardando il Monitor — cioe' quasi
+  // mai: il resto del tempo il clic non produceva niente, e sembrava rotto.
+  // Nell'Animatic lo stesso comando non sta nella barra: sta nella barra
+  // superiore e COMPARE solo in vista shot, quando ha qualcosa da fare. Il
+  // Monitor ne aveva fatto una copia sempre visibile.
+  // Un pulsante che c'e' sempre e funziona quasi mai e' peggio di uno che non
+  // c'e'. onReturnToMain() NON diventa codice morto: la chiama ancora il
+  // segnale returnToMainRequested del track (doppio clic fuori dai blocchi),
+  // che e' il modo in cui si torna indietro senza un pulsante dedicato.
   tbLay->addStretch(1);
 
   // ── Bottom area: toolbar + ruler + track + audio ──────────────────────────
@@ -285,8 +297,6 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
   connect(m_timecodeBtn, &QToolButton::toggled, this, [this](bool on) {
     m_ruler->setShowTimecode(on);
   });
-  connect(returnBtn, &QToolButton::clicked,
-          this, &ZtoryMonitorPanel::onReturnToMain);
 
   // Shot edit operations — the Monitor's track selection is already mirrored
   // to ZtoryModel::sharedSelection() (see selectionChanged connection below).

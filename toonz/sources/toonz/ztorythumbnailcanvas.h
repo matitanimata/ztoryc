@@ -214,6 +214,10 @@ protected:
   QPointF m_firstPanPoint;
   bool   m_zooming     = false;
   double m_scaleFactor = 0.0;
+  // Rotation dead zone, same shape as SceneViewer: a pinch is never perfectly
+  // steady, so without it every zoom would wobble the sheet a degree or two.
+  bool   m_rotating      = false;
+  double m_rotationDelta = 0.0;
   // Quante dita ha visto QUESTO tocco (il massimo raggiunto). Serve alle
   // gesture di undo/redo: 2 dita = annulla, 3 = ripeti, secondo le preferenze.
   // Il valore 100 e' il modo di SceneViewer per dire «questo tocco ha gia'
@@ -230,12 +234,29 @@ private:
   void endStroke();
 
   // Layout / view transform (world == raster px, widget == on-screen px).
+  // Every conversion goes through ONE QTransform: with rotation a world
+  // rectangle is no longer an upright screen rectangle, so anything that
+  // builds a screen rect from a world size + m_zoom is wrong by construction.
+  // Draw in WORLD coordinates with viewTransform() set on the painter instead.
+  QTransform viewTransform() const;     // world -> widget
+  QTransform viewTransformInv() const;  // widget -> world
   QPointF worldToWidget(const QPointF &w) const;
   QPointF widgetToWorld(const QPointF &p) const;
   double gridW() const { return m_cols * m_boxW; }
   double gridH() const { return m_rows * m_boxH; }
   TPointD widgetToRaster(const QPointF &widgetPos) const;
   void zoomAt(const QPointF &widgetAnchor, double factor);
+  // Rotation of the VIEW: the whole sheet turns, grid and panel badges with
+  // it, the way you turn paper on the table while drawing (Franco, 2026-09-18).
+  void rotateAt(const QPointF &widgetAnchor, double degrees);
+  void resetRotation();               // without this, straightening by hand is
+                                      // a torture - which is why every drawing
+                                      // program has the command
+  // The page's on-screen box WITHOUT the pan: rotation makes the visible box
+  // bigger than gridW*zoom x gridH*zoom and shifts its corner away from the
+  // pan, and the scrollbars have to follow the box, not the pan.  At rot == 0
+  // it is exactly QRectF(0, 0, gridW()*zoom, gridH()*zoom).
+  QRectF pageBoxNoPan() const;
   void updateScrollBars();          // sync the side bars to pan/zoom/grid
   void updateToolCursor();          // brush(blank)/select/transform per mode
 
@@ -262,6 +283,38 @@ private:
   void schedulePersistSaveTimer();  // arm the debounce, leaving the flags alone
   void loadMerges(const QString &dirStr);
   void bandRasterRange(int b, int ly, int &y0, int &y1) const;
+
+  // ── Raster per pagina, passo 1: il magazzino ─────────────────────────────
+  // Una PAGINA e' esattamente una banda: kRowsPerBand righe di griglia, cioe'
+  // il foglio fisico che si disegna e si importa.  E' gia' la forma con cui il
+  // canvas vive sul disco (_ztorythumbs_bandNNN.png), quindi qui non si
+  // inventa niente: si fa combaciare la memoria con quella struttura.
+  //
+  // Queste due funzioni sono la GIUNTURA su cui si innestera' la finestra di
+  // lavoro (pagine separate in memoria, le ~3 su cui si sta lavorando tenute
+  // contigue cosi' pennello, lazo e undo continuano a lavorare come oggi).
+  // Finche' la finestra copre tutto il canvas il giro e' l'IDENTITA', ed e'
+  // quella proprieta' che rende sicuro introdurle adesso e stringerla dopo.
+  std::vector<TRaster32P> pagesFromCanvas(const TRaster32P &canvas) const;
+  TRaster32P canvasFromPages(const std::vector<TRaster32P> &pages, int lx,
+                             int ly) const;
+  // Vero se il giro pagine→tela riproduce `canvas` pixel per pixel.  Usata per
+  // dimostrare l'identita' invece di affermarla: un difetto qui non fa
+  // rumore, mangia un pezzo di storyboard al salvataggio successivo.
+  bool pagingRoundTripIsIdentity(const TRaster32P &canvas) const;
+
+  // ── Passo 2a: le pagine diventano il MAGAZZINO ──────────────────────────
+  // m_pages e' dove il canvas vive; m_ras e' la FINESTRA contigua su cui si
+  // disegna. Per ora la finestra copre tutte le pagine, quindi il
+  // comportamento e' identico a prima — e' quello che rende sicuro spostare
+  // qui il percorso di caricamento e salvataggio prima di stringerla.
+  //
+  // Quando la finestra sara' stretta, pennello, lazo e undo continueranno a
+  // lavorare su m_ras senza sapere niente delle pagine: e' il motivo per cui
+  // la forma giusta era la finestra e non le tessere.
+  void flushWindowToPages();   // finestra -> pagine (solo le bande sporche)
+  void rebuildWindowFromPages();  // pagine -> finestra
+  void syncPageCount();        // tiene m_pages allineato a bandCount()
 
   // Linear panel index (row*cols+col) at a world point, or -1 if outside grid.
   int panelAtWorld(const QPointF &world) const;
@@ -308,6 +361,12 @@ private:
     //   ras           — everything else (paste, transform, reflow): full copy.
     bool geometryOnly = false;
     TRaster32P ras;   // null when this is a stroke (patches) snapshot
+    // ── Fotografia a PAGINE (sostituisce la clonazione dell'intera tela) ──
+    // Tiene i RIFERIMENTI alle pagine, non copie: flushWindowToPages() crea un
+    // raster NUOVO per ogni pagina sporca, quindi una fotografia che tiene i
+    // puntatori vecchi resta valida da sola. Copia-su-scrittura gratis.
+    // Costo di una fotografia: le pagine TOCCATE, non tutta la tela.
+    std::vector<TRaster32P> pages;
     std::vector<Patch> patches;
     int cols, rows;
     QVector<QRect> merges;
@@ -384,8 +443,16 @@ private:  // Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z
 
   // View
   double m_zoom  = 1.0;
+  double m_rot   = 0.0;  // degrees, clockwise on screen
   QPointF m_pan  = QPointF(28.0, 28.0);
   bool m_panning = false;
+  // Rotazione col MOUSE: ⌥ + trascinamento col tasto centrale, cioe' il
+  // fratello della manina (il centrale da solo sposta). Serve perche' senza
+  // touch la rotazione si potrebbe usare solo a scatti di 15° da tastiera, e
+  // in Tahoma la rotazione col mouse e' uno STRUMENTO (T_Rotate) che qui non
+  // arriva: la Thumbs room ha un suo sistema di strumenti.
+  bool   m_mouseRotating = false;
+  double m_mouseRotAngle = 0.0;  // angolo dell'ultimo punto, attorno al centro
   QPoint m_lastPanPos;
   QScrollBar *m_hbar = nullptr;     // side scrollbars (shown only when needed)
   QScrollBar *m_vbar = nullptr;
@@ -416,6 +483,17 @@ private:  // Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z
   MyPaintToonzBrush *m_brush = nullptr;
   // Which bands still have to reach the disk.  Sized lazily from bandCount().
   std::vector<bool> m_bandDirty;
+  // Il magazzino: una pagina per banda. Vuoto finche' persistLoad non lo
+  // riempie; da li' in poi e' la sorgente di verita' del canvas su disco.
+  std::vector<TRaster32P> m_pages;
+  // Quali pagine copre la finestra. Oggi le copre TUTTE (m_winFirstPage = 0,
+  // m_winPageCount = bandCount()), e finche' e' cosi' il comportamento e'
+  // identico a prima. Sono i due numeri che stringendo la finestra diventano
+  // veri, ed esistono gia' adesso perche' il disegno a schermo e il
+  // riversamento possano essere scritti nella forma definitiva mentre sono
+  // ancora verificabili contro il caso pieno.
+  int m_winFirstPage = 0;
+  int m_winPageCount = 0;   // 0 = la finestra copre tutto
   // Union of every dab of the stroke in progress, in raster coordinates: the
   // one case where we know exactly what changed.  m_strokeDirty cannot serve —
   // it is cleared at every repaint, so it only ever holds the last few dabs.

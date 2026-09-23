@@ -44,6 +44,8 @@
 #include <QResizeEvent>
 
 #include <cmath>
+#include <cstring>
+#include <set>
 
 //=============================================================================
 
@@ -369,12 +371,12 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   m_vbar->hide();
   connect(m_hbar, &QScrollBar::valueChanged, this, [this](int v) {
     if (m_syncingBars) return;
-    m_pan.setX(-v);
+    m_pan.setX(-v - pageBoxNoPan().left());
     update();
   });
   connect(m_vbar, &QScrollBar::valueChanged, this, [this](int v) {
     if (m_syncingBars) return;
-    m_pan.setY(-v);
+    m_pan.setY(-v - pageBoxNoPan().top());
     update();
   });
 
@@ -390,6 +392,7 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
 
   m_ras = TRaster32P((int)gridW(), (int)gridH());
   m_ras->fill(kPaper);
+
 
   // React live to camera changes made from Camera Settings while this room is
   // open. xsheetChanged covers most camera edits; sceneChanged covers a scene
@@ -606,6 +609,10 @@ void ZtoryThumbnailCanvas::revealRow(int row) {
   // Fit the grid width, so a freshly imported sheet is shown whole rather than
   // zoomed into one panel.
   const double margin = 28.0;
+  // Straighten first: "fit the grid width" is undefined on a tilted sheet, and
+  // someone asking to be shown a row (typically right after importing pages)
+  // wants to see it square, not at the angle they were drawing at.
+  m_rot = 0.0;
   if (gridW() > 0.0)
     m_zoom = qBound(0.05, (width() - 2 * margin) / gridW(), 4.0);
 
@@ -1092,6 +1099,97 @@ void ZtoryThumbnailCanvas::bandRasterRange(int b, int ly, int &y0,
   if (b == bandCount() - 1) y0 = 0;
 }
 
+// ── Raster per pagina, passo 1 ──────────────────────────────────────────────
+
+std::vector<TRaster32P> ZtoryThumbnailCanvas::pagesFromCanvas(
+    const TRaster32P &canvas) const {
+  std::vector<TRaster32P> pages;
+  if (!canvas) return pages;
+  const int lx = canvas->getLx(), ly = canvas->getLy();
+  const int n  = bandCount();
+  pages.reserve(n);
+  for (int b = 0; b < n; b++) {
+    int y0, y1;
+    bandRasterRange(b, ly, y0, y1);
+    if (y0 > y1 || y1 < 0 || y0 >= ly) { pages.push_back(TRaster32P()); continue; }
+    // Copia in un raster CONTIGUO, non una vista: una vista conserva il passo
+    // di riga del genitore, e chi poi la codifica in PNG non lo sa — l'immagine
+    // uscirebbe storta.  Stessa ragione per cui persistSave copia.
+    TRaster32P page(lx, y1 - y0 + 1);
+    page->copy(canvas->extract(0, y0, lx - 1, y1));
+    pages.push_back(page);
+  }
+  return pages;
+}
+
+TRaster32P ZtoryThumbnailCanvas::canvasFromPages(
+    const std::vector<TRaster32P> &pages, int lx, int ly) const {
+  if (lx <= 0 || ly <= 0) return TRaster32P();
+  TRaster32P canvas(lx, ly);
+  canvas->fill(kPaper);
+  for (int b = 0; b < (int)pages.size(); b++) {
+    if (!pages[b]) continue;  // pagina mancante = carta bianca, non un buco
+    int y0, y1;
+    bandRasterRange(b, ly, y0, y1);
+    if (y0 > y1 || y1 < 0 || y0 >= ly) continue;
+    const int h = qMin(pages[b]->getLy(), y1 - y0 + 1);
+    if (h <= 0) continue;
+    // Allineate dall'ALTO della pagina, come fa il caricatore delle bande:
+    // «so a short last band lands where it was cut from». Finche' la pagina e'
+    // alta quanto il suo intervallo le due scelte coincidono — cioe' sempre,
+    // oggi — ma divergono proprio nei casi storti (una pagina salvata con una
+    // camera diversa), che sono quelli in cui un disallineamento si porta via
+    // una striscia di disegno.
+    canvas->extract(0, y1 - h + 1, lx - 1, y1)
+        ->copy(pages[b]->extract(0, pages[b]->getLy() - h, lx - 1,
+                                 pages[b]->getLy() - 1));
+  }
+  return canvas;
+}
+
+bool ZtoryThumbnailCanvas::pagingRoundTripIsIdentity(
+    const TRaster32P &canvas) const {
+  if (!canvas) return true;
+  const int lx = canvas->getLx(), ly = canvas->getLy();
+  TRaster32P back = canvasFromPages(pagesFromCanvas(canvas), lx, ly);
+  if (!back || back->getLx() != lx || back->getLy() != ly) return false;
+  for (int y = 0; y < ly; y++) {
+    const TPixel32 *a = canvas->pixels(y);
+    const TPixel32 *b = back->pixels(y);
+    if (std::memcmp(a, b, sizeof(TPixel32) * lx) != 0) return false;
+  }
+  return true;
+}
+
+void ZtoryThumbnailCanvas::syncPageCount() {
+  const int n = bandCount();
+  if ((int)m_pages.size() != n) m_pages.resize(n);
+}
+
+void ZtoryThumbnailCanvas::flushWindowToPages() {
+  if (!m_ras) return;
+  syncPageCount();
+  const int lx = m_ras->getLx(), ly = m_ras->getLy();
+  for (int b = 0; b < (int)m_pages.size(); b++) {
+    // Solo le bande sporche: e' la stessa informazione su cui gira il
+    // salvataggio, quindi non si aggiunge un secondo elenco da tenere in
+    // sincrono — che sarebbe il modo piu' rapido di perdere una modifica.
+    if (b < (int)m_bandDirty.size() && !m_bandDirty[b] && m_pages[b]) continue;
+    int y0, y1;
+    bandRasterRange(b, ly, y0, y1);
+    if (y0 > y1 || y1 < 0 || y0 >= ly) continue;
+    TRaster32P page(lx, y1 - y0 + 1);
+    page->copy(m_ras->extract(0, y0, lx - 1, y1));
+    m_pages[b] = page;
+  }
+}
+
+void ZtoryThumbnailCanvas::rebuildWindowFromPages() {
+  const int lx = (int)gridW(), ly = (int)gridH();
+  if (lx <= 0 || ly <= 0) return;
+  m_ras = canvasFromPages(m_pages, lx, ly);
+}
+
 void ZtoryThumbnailCanvas::markBandsDirty(const QRect &rasterRect) {
   const int n = bandCount();
   if ((int)m_bandDirty.size() != n) m_bandDirty.resize(n, true);
@@ -1132,6 +1230,10 @@ void ZtoryThumbnailCanvas::persistSave() {
   const int lx = m_ras->getLx();
   const int ly = m_ras->getLy();
 
+  // La finestra e' dove si e' disegnato: si riversa nel magazzino PRIMA di
+  // scrivere, o si salverebbero pagine vecchie.
+  flushWindowToPages();
+
   QVector<ThumbBand> bands;
   int dirtyCount = 0;
   for (int b = 0; b < n; b++) {
@@ -1144,8 +1246,13 @@ void ZtoryThumbnailCanvas::persistSave() {
     // the parent's row stride, and rasterToQImage() builds the QImage without a
     // stride argument — the image would come out skewed.  This copy is the only
     // part the UI thread pays for, and it is one band (~10 MB), not the canvas.
-    TRaster32P band(lx, y1 - y0 + 1);
-    band->copy(m_ras->extract(0, y0, lx - 1, y1));
+    TRaster32P band = (b < (int)m_pages.size() && m_pages[b])
+                          ? m_pages[b]
+                          : TRaster32P();
+    if (!band) {  // pagina non ancora nel magazzino: la si prende dalla tela
+      band = TRaster32P(lx, y1 - y0 + 1);
+      band->copy(m_ras->extract(0, y0, lx - 1, y1));
+    }
     bands.push_back({b, rasterToQImage(band, /*premultiplied=*/false)});
   }
 
@@ -1234,25 +1341,17 @@ void ZtoryThumbnailCanvas::persistLoad() {
     m_boxH = gBoxH;
     m_boxAspect = m_boxW / gBoxH;
     loadMerges(dirStr);
-    TRaster32P r((int)gridW(), (int)gridH());
-    r->fill(kPaper);
-    for (int b = 0; b < gBands; b++) {
+    // Le pagine arrivano da disco gia' separate: si caricano nel MAGAZZINO, e
+    // la finestra si costruisce da li'. Prima si montavano dritte in una tela
+    // unica e le pagine si buttavano via.
+    m_pages.assign(bandCount(), TRaster32P());
+    for (int b = 0; b < gBands && b < (int)m_pages.size(); b++) {
       QImage img(dirStr + QString("/_ztorythumbs_band%1.png")
                               .arg(b, 3, 10, QChar('0')));
       if (img.isNull()) continue;  // a missing band leaves blank paper, not a hole
-      TRaster32P bandRas = rasterFromQImage(img, /*premultiply=*/false);
-      int y0, y1;
-      bandRasterRange(b, r->getLy(), y0, y1);
-      y1 = qMin(y1, r->getLy() - 1);
-      const int h = qMin(bandRas->getLy(), y1 - y0 + 1);
-      if (h <= 0) continue;
-      // Both sides count from the band's own top, so a short last band lands
-      // where it was cut from.
-      r->extract(0, y1 - h + 1, r->getLx() - 1, y1)
-          ->copy(bandRas->extract(0, bandRas->getLy() - h, bandRas->getLx() - 1,
-                                  bandRas->getLy() - 1));
+      m_pages[b] = rasterFromQImage(img, /*premultiply=*/false);
     }
-    m_ras = r;
+    rebuildWindowFromPages();
     markAllBandsDirty();  // nothing written yet in THIS session
     clearSelection();
     updateScrollBars();
@@ -1313,12 +1412,45 @@ void ZtoryThumbnailCanvas::persistLoad() {
 // View transform
 //=============================================================================
 
+// The view is ONE transform: translate(pan) * rotate(rot) * scale(zoom).
+// With m_rot == 0 this maps (x,y) to (x*zoom + pan.x, y*zoom + pan.y) -- i.e.
+// exactly what the hand-written arithmetic did before, which is what makes
+// this change safe to land before the rotation gesture exists.
+// Angolo del puntatore attorno al centro della finestra, in gradi.  Il verso e'
+// quello di QTransform::rotate() su un widget con la y in giu', cosi' il foglio
+// segue il mouse senza altri segni da indovinare — che e' l'errore che la
+// rotazione col pizzico aveva gia' fatto pagare una volta.
+static double ztoryAngleAround(const QPointF &p, const QPointF &centre) {
+  return std::atan2(p.y() - centre.y(), p.x() - centre.x()) * 180.0 / M_PI;
+}
+
+QTransform ZtoryThumbnailCanvas::viewTransform() const {
+  QTransform t;
+  t.translate(m_pan.x(), m_pan.y());
+  t.rotate(m_rot);
+  t.scale(m_zoom, m_zoom);
+  return t;
+}
+
+QTransform ZtoryThumbnailCanvas::viewTransformInv() const {
+  return viewTransform().inverted();
+}
+
+// Rotation + scale WITHOUT the translation: what an anchor-preserving zoom or
+// rotation needs, since widget = pan + R*S*world  =>  pan = widget - R*S*world.
+static QPointF ztoryRotScale(const QPointF &w, double rot, double zoom) {
+  QTransform t;
+  t.rotate(rot);
+  t.scale(zoom, zoom);
+  return t.map(w);
+}
+
 QPointF ZtoryThumbnailCanvas::worldToWidget(const QPointF &w) const {
-  return QPointF(w.x() * m_zoom + m_pan.x(), w.y() * m_zoom + m_pan.y());
+  return viewTransform().map(w);
 }
 
 QPointF ZtoryThumbnailCanvas::widgetToWorld(const QPointF &p) const {
-  return QPointF((p.x() - m_pan.x()) / m_zoom, (p.y() - m_pan.y()) / m_zoom);
+  return viewTransformInv().map(p);
 }
 
 TPointD ZtoryThumbnailCanvas::widgetToRaster(const QPointF &widgetPos) const {
@@ -1329,13 +1461,37 @@ TPointD ZtoryThumbnailCanvas::widgetToRaster(const QPointF &widgetPos) const {
 void ZtoryThumbnailCanvas::zoomAt(const QPointF &widgetAnchor, double factor) {
   const QPointF worldAnchor = widgetToWorld(widgetAnchor);
   m_zoom = qBound(0.1, m_zoom * factor, 8.0);
-  m_pan = widgetAnchor - QPointF(worldAnchor.x() * m_zoom, worldAnchor.y() * m_zoom);
+  m_pan  = widgetAnchor - ztoryRotScale(worldAnchor, m_rot, m_zoom);
   update();
+}
+
+// Same anchor-preserving shape as zoomAt: the world point under the fingers
+// stays under the fingers while the sheet turns around it.
+void ZtoryThumbnailCanvas::rotateAt(const QPointF &widgetAnchor, double degrees) {
+  if (degrees == 0.0) return;
+  const QPointF worldAnchor = widgetToWorld(widgetAnchor);
+  m_rot = std::fmod(m_rot + degrees, 360.0);
+  m_pan = widgetAnchor - ztoryRotScale(worldAnchor, m_rot, m_zoom);
+  updateScrollBars();
+  update();
+}
+
+void ZtoryThumbnailCanvas::resetRotation() {
+  if (m_rot == 0.0) return;
+  rotateAt(QPointF(width() * 0.5, height() * 0.5), -m_rot);
+}
+
+QRectF ZtoryThumbnailCanvas::pageBoxNoPan() const {
+  QTransform t;
+  t.rotate(m_rot);
+  t.scale(m_zoom, m_zoom);
+  return t.mapRect(QRectF(0.0, 0.0, gridW(), gridH()));
 }
 
 void ZtoryThumbnailCanvas::updateScrollBars() {
   if (!m_hbar || !m_vbar) return;
-  const double contentW = gridW() * m_zoom, contentH = gridH() * m_zoom;
+  const QRectF box      = pageBoxNoPan();
+  const double contentW = box.width(), contentH = box.height();
   const int thick = 16;  // match the app's native scrollbar width
   const bool needH  = contentW > width() + 0.5;
   const bool needV  = contentH > height() + 0.5;
@@ -1349,13 +1505,15 @@ void ZtoryThumbnailCanvas::updateScrollBars() {
     m_hbar->setGeometry(0, height() - thick, viewW, thick);
     m_hbar->setRange(0, (int)std::ceil(contentW - viewW));
     m_hbar->setPageStep(viewW);
-    m_hbar->setValue(qBound(0, (int)(-m_pan.x() + 0.5), m_hbar->maximum()));
+    m_hbar->setValue(
+        qBound(0, (int)(-(m_pan.x() + box.left()) + 0.5), m_hbar->maximum()));
   }
   if (needV) {
     m_vbar->setGeometry(width() - thick, 0, thick, viewH);
     m_vbar->setRange(0, (int)std::ceil(contentH - viewH));
     m_vbar->setPageStep(viewH);
-    m_vbar->setValue(qBound(0, (int)(-m_pan.y() + 0.5), m_vbar->maximum()));
+    m_vbar->setValue(
+        qBound(0, (int)(-(m_pan.y() + box.top()) + 0.5), m_vbar->maximum()));
   }
   m_syncingBars = false;
 }
@@ -1447,11 +1605,27 @@ QRect ZtoryThumbnailCanvas::cursorRect(const QPointF &widgetPos) const {
 // Raster is bottom-up, the widget is top-down: mirror Y about the grid height,
 // then apply zoom and pan exactly as worldToWidget() does.
 QRect ZtoryThumbnailCanvas::rasterRectToWidget(const QRect &r) const {
-  const QPointF tl = worldToWidget(QPointF(r.left(), gridH() - r.bottom() - 1));
-  const QPointF br = worldToWidget(QPointF(r.right() + 1, gridH() - r.top()));
+  // ⚠️ TUTTI E QUATTRO gli angoli, non due. Qui ce n'erano due, che bastano
+  // finche' la vista e' dritta: un rettangolo del mondo resta un rettangolo
+  // dritto sullo schermo e due angoli opposti lo delimitano. Con la ROTAZIONE
+  // non e' piu' vero — gli altri due sporgono fuori — e questa funzione decide
+  // QUALE ZONA RIDISEGNARE dopo una pennellata: sbagliarla lascia pezzi di
+  // tratto non ridisegnati finche' non passa un ridisegno intero.
+  const double x0 = r.left(), x1 = r.right() + 1;
+  const double y0 = gridH() - r.bottom() - 1, y1 = gridH() - r.top();
+  const QPointF c0 = worldToWidget(QPointF(x0, y0));
+  const QPointF c1 = worldToWidget(QPointF(x1, y0));
+  const QPointF c2 = worldToWidget(QPointF(x1, y1));
+  const QPointF c3 = worldToWidget(QPointF(x0, y1));
+  const double lx = qMin(qMin(c0.x(), c1.x()), qMin(c2.x(), c3.x()));
+  const double rx = qMax(qMax(c0.x(), c1.x()), qMax(c2.x(), c3.x()));
+  const double ty = qMin(qMin(c0.y(), c1.y()), qMin(c2.y(), c3.y()));
+  const double by = qMax(qMax(c0.y(), c1.y()), qMax(c2.y(), c3.y()));
   // A pixel of margin each way absorbs the rounding and the painter's smoothing,
   // which can tint the pixel just outside the dab.
-  return QRectF(tl, br).toAlignedRect().adjusted(-2, -2, 2, 2);
+  return QRectF(QPointF(lx, ty), QPointF(rx, by))
+      .toAlignedRect()
+      .adjusted(-2, -2, 2, 2);
 }
 
 void ZtoryThumbnailCanvas::strokeTo(const QPointF &widgetPos, double pressure) {
@@ -1561,6 +1735,13 @@ void ZtoryThumbnailCanvas::mousePressEvent(QMouseEvent *e) {
   // corso questo click NON e' una pennellata: e' la mano che sposta la tela.
   if (m_gestureActive && m_touchDevice == QTouchDevice::TouchScreen) return;
   if (e->button() == Qt::MiddleButton) {
+    if (e->modifiers() & Qt::AltModifier) {
+      m_mouseRotating = true;
+      m_mouseRotAngle =
+          ztoryAngleAround(e->pos(), QPointF(width() * 0.5, height() * 0.5));
+      setCursor(Qt::ClosedHandCursor);
+      return;
+    }
     m_panning    = true;
     m_lastPanPos = e->pos();
     setCursor(Qt::ClosedHandCursor);
@@ -1614,6 +1795,13 @@ void ZtoryThumbnailCanvas::mouseMoveEvent(QMouseEvent *e) {
   if (m_gestureActive && m_touchDevice == QTouchDevice::TouchScreen) return;
   m_cursorWidget   = e->localPos();
   m_cursorOnCanvas = true;
+  if (m_mouseRotating) {
+    const QPointF centre(width() * 0.5, height() * 0.5);
+    const double a = ztoryAngleAround(e->pos(), centre);
+    rotateAt(centre, a - m_mouseRotAngle);
+    m_mouseRotAngle = a;
+    return;
+  }
   if (m_panning) {
     m_pan += e->pos() - m_lastPanPos;
     m_lastPanPos = e->pos();
@@ -1679,7 +1867,8 @@ void ZtoryThumbnailCanvas::mouseReleaseEvent(QMouseEvent *e) {
     return;
   }
   if (e->button() == Qt::MiddleButton) {
-    m_panning = false;
+    m_panning       = false;
+    m_mouseRotating = false;
     updateToolCursor();
     return;
   }
@@ -1748,6 +1937,21 @@ bool ZtoryThumbnailCanvas::handleTransformKey(QKeyEvent *e) {
 void ZtoryThumbnailCanvas::keyPressEvent(QKeyEvent *e) {
   if (handleUndoKey(e)) return;
   if (handleTransformKey(e)) return;
+  // Straighten the sheet: ⌥0 (Option-zero).  Without a way back to square,
+  // getting there by hand is a torture -- which is why every drawing program
+  // that rotates the view also ships this command.
+  if (e->modifiers() & Qt::AltModifier) {
+    const QPointF c(width() * 0.5, height() * 0.5);
+    switch (e->key()) {
+    case Qt::Key_0:     resetRotation();        return;
+    // Rotate by keyboard as well as by pinch.  Not decoration: without it the
+    // rotation cannot be exercised at all on a machine with no touch screen,
+    // which is every machine we develop on -- and turning the sheet a notch at
+    // a time is how a mouse user would want it anyway.
+    case Qt::Key_Left:  rotateAt(c, -15.0);     return;
+    case Qt::Key_Right: rotateAt(c,  15.0);     return;
+    }
+  }
   QWidget::keyPressEvent(e);
 }
 
@@ -1875,7 +2079,7 @@ void ZtoryThumbnailCanvas::touchEvent(QTouchEvent *e, int type) {
         QPointF deltaPoint = panPoint.pos() - m_firstPanPoint;
         // minimize accidental and jerky zooming/rotating during 2 finger
         // panning
-        if ((deltaPoint.manhattanLength() > 100) && !m_zooming) {
+        if ((deltaPoint.manhattanLength() > 100) && !m_zooming && !m_rotating) {
           m_touchPanning = true;
         }
       }
@@ -1945,10 +2149,14 @@ void ZtoryThumbnailCanvas::gestureEvent(QGestureEvent *e) {
 
     if (gesture->state() == Qt::GestureStarted) {
       m_gestureActive = true;
+      m_rotating      = false;
+      m_rotationDelta = 0.0;
     } else if (gesture->state() == Qt::GestureFinished) {
       m_gestureActive = false;
       m_zooming       = false;
       m_scaleFactor   = 0.0;
+      m_rotating      = false;
+      m_rotationDelta = 0.0;
     } else {
       if (changeFlags & QPinchGesture::ScaleFactorChanged) {
         double scaleFactor = gesture->scaleFactor();
@@ -1986,6 +2194,32 @@ void ZtoryThumbnailCanvas::gestureEvent(QGestureEvent *e) {
           // SceneViewer ce l'ha, col suo commento «This will block undo/redo
           // action» (sceneviewerevents.cpp:1390), e io l'ho persa nel port.
           m_touchPoints = 100;
+        }
+        m_gestureActive = true;
+      }
+      // Rotation of the view.  Ported from SceneViewer
+      // (sceneviewerevents.cpp:1394): a 10-degree dead zone before it engages,
+      // so a pinch-zoom does not wobble the sheet.
+      //
+      // ⚠️ IL SEGNO E' POSITIVO, ed e' una CORREZIONE.  Ragionando l'avevo messo
+      // negativo — come SceneViewer, che pero' lavora su un sistema di
+      // coordinate con la y in su e una TAffine, non su una QTransform con la y
+      // in giu': i due meno non sono lo stesso meno.  Provato da Franco sulla
+      // Wacom Companion 2 il 2026-09-22: il foglio girava dalla parte sbagliata.
+      // Misurato batte dedotto, e qui il dedotto aveva torto.
+      if (changeFlags & QPinchGesture::RotationAngleChanged) {
+        const qreal rotationDelta =
+            gesture->rotationAngle() - gesture->lastRotationAngle();
+        if (!m_rotating) {
+          m_rotationDelta += rotationDelta;
+          if (std::abs(m_rotationDelta) >= 10.0) m_rotating = true;
+        }
+        if (m_rotating) {
+          // Around the centre of the widget, like SceneViewer (which rotates
+          // about the centre of the view, not about the fingers).
+          rotateAt(QPointF(width() * 0.5, height() * 0.5), rotationDelta);
+          m_touchPanning = false;
+          m_touchPoints  = 100;  // blocks the undo/redo tap for this touch
         }
         m_gestureActive = true;
       }
@@ -2199,19 +2433,21 @@ int ZtoryThumbnailCanvas::floatHandleAt(const QPointF &widgetPos) const {
 
 void ZtoryThumbnailCanvas::paintFloat(QPainter &p) {
   if (!hasFloat()) return;
+  // The painter already carries the view transform (paintEvent sets it), so
+  // everything here is in WORLD coordinates: COMBINE, never replace -- a plain
+  // setTransform() would drop pan, zoom and rotation and draw the float in the
+  // widget's top-left corner.
   p.save();
-  const QPointF o = worldToWidget(QPointF(0, 0));
-  QTransform world2widget;
-  world2widget.translate(o.x(), o.y());
-  world2widget.scale(m_zoom, m_zoom);
-  p.setTransform(floatLocalToWorld() * world2widget);
+  p.setTransform(floatLocalToWorld(), /*combine=*/true);
   p.setRenderHint(QPainter::SmoothPixmapTransform, true);
   p.drawImage(0, 0, m_floatImg);
   p.restore();
 
-  // Outline + handles (drawn in widget space).
+  // Outline + handles, in world coordinates: they turn with the sheet, and the
+  // 1/zoom factor keeps their on-screen size what it was before.
+  const double inv = m_zoom > 1e-6 ? 1.0 / m_zoom : 1.0;
   QPolygonF poly;
-  for (int c = 0; c < 4; ++c) poly << worldToWidget(floatHandleWorld(c));
+  for (int c = 0; c < 4; ++c) poly << floatHandleWorld(c);
   QPen pen(QColor(0, 170, 255));
   pen.setCosmetic(true);
   pen.setWidth(2);
@@ -2221,15 +2457,15 @@ void ZtoryThumbnailCanvas::paintFloat(QPainter &p) {
 
   // Rotation handle: a stalk + circle.
   const QPointF topMid = (poly[0] + poly[1]) / 2.0;
-  const QPointF rot    = worldToWidget(floatHandleWorld(4));
+  const QPointF rot    = floatHandleWorld(4);
   p.drawLine(topMid, rot);
   p.setBrush(QColor(0, 170, 255));
-  p.drawEllipse(rot, 5, 5);
+  p.drawEllipse(rot, 5 * inv, 5 * inv);
 
   // Corner (scale) handles.
   for (int c = 0; c < 4; ++c) {
     const QPointF wp = poly[c];
-    p.drawRect(QRectF(wp.x() - 4, wp.y() - 4, 8, 8));
+    p.drawRect(QRectF(wp.x() - 4 * inv, wp.y() - 4 * inv, 8 * inv, 8 * inv));
   }
   p.setBrush(Qt::NoBrush);
 }
@@ -2361,10 +2597,20 @@ void ZtoryThumbnailCanvas::trimHistory() {
   // and pushUndo() clones everything.
   static const size_t kMaxUndoBytes = 256u * 1024u * 1024u;
 
-  auto bytesOf = [](const Snapshot &s) -> size_t {
+  // Le pagine sono CONDIVISE fra le fotografie: sommarle una per fotografia
+  // conterebbe piu' volte la stessa memoria e troncherebbe la cronologia molto
+  // prima del necessario — cioe' si pagherebbe il prezzo della copia senza
+  // averla fatta. Si contano una volta sola, per puntatore.
+  std::set<const TRaster *> visti;
+  auto bytesOf = [&visti](const Snapshot &s) -> size_t {
     size_t n = 0;
     if (s.ras)
       n += (size_t)s.ras->getLx() * (size_t)s.ras->getLy() * 4u;
+    for (const TRaster32P &p : s.pages) {
+      if (!p) continue;
+      if (!visti.insert(p.getPointer()).second) continue;  // gia' contata
+      n += (size_t)p->getLx() * (size_t)p->getLy() * 4u;
+    }
     for (const Patch &p : s.patches)
       if (p.before)
         n += (size_t)p.before->getLx() * (size_t)p.before->getLy() * 4u;
@@ -2389,7 +2635,14 @@ void ZtoryThumbnailCanvas::trimHistory() {
 void ZtoryThumbnailCanvas::pushUndo() {
   if (!m_ras) return;
   Snapshot s = makeMetaSnapshot();
-  s.ras      = m_ras->clone();
+  // Qui c'era `s.ras = m_ras->clone()`: una copia dell'INTERA tela per ogni
+  // operazione che non fosse una pennellata (incolla, trasforma, importa,
+  // pulisci, aggiungi riga). 51 MB a 4x26 e 617 MB all'obiettivo di
+  // produzione — ed e' il motivo per cui l'annullamento era "faticoso".
+  // Adesso si riversa e si tengono i RIFERIMENTI alle pagine: quelle non
+  // toccate sono condivise con la cronologia, e costano zero.
+  flushWindowToPages();
+  s.pages = m_pages;
   m_undo.push_back(s);
   trimHistory();
   syncAppUndoActions();
@@ -2496,7 +2749,12 @@ bool ZtoryThumbnailCanvas::askWrite(const TRect &rect) {
 }
 
 void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
-  m_ras    = s.ras->clone();  // clone so the stored snapshot stays immutable
+  // ⚠️ LA GEOMETRIA PRIMA DEI PIXEL, e non e' un dettaglio di stile:
+  // rebuildWindowFromPages() dimensiona la finestra con gridH(), che dipende da
+  // m_rows E da m_boxH. Ripristinando l'altezza della casella DOPO, annullando
+  // attraverso un cambio di formato camera la finestra nascerebbe con
+  // l'altezza vecchia. Il codice di prima non se ne accorgeva perche' clonava
+  // un raster gia' dimensionato.
   m_cols   = s.cols;
   m_rows   = s.rows;
   m_merges = s.merges;
@@ -2505,6 +2763,14 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
   if (s.boxAspect > 0.0) {
     m_boxAspect = s.boxAspect;
     m_boxH      = m_boxW / s.boxAspect;
+  }
+  // Dalle PAGINE: le si adotta e si ricostruisce la finestra. Non serve
+  // clonare — le pagine non si modificano mai in luogo, si sostituiscono.
+  if (!s.pages.empty()) {
+    m_pages = s.pages;
+    rebuildWindowFromPages();
+  } else if (s.ras) {
+    m_ras = s.ras->clone();
   }
   // Restore whatever floating selection was captured with this snapshot (a null
   // image simply clears the float) — this is what makes an undone Del re-float
@@ -2578,9 +2844,10 @@ void ZtoryThumbnailCanvas::undo() {
     restoreGeometry(s);
     return;
   }
-  if (s.ras) {
+  if (!s.pages.empty() || s.ras) {
     Snapshot cur = makeMetaSnapshot();
-    cur.ras      = m_ras->clone();
+    flushWindowToPages();
+    cur.pages = m_pages;
     m_redo.push_back(std::move(cur));
     restoreSnapshot(s);
     return;
@@ -2609,9 +2876,10 @@ void ZtoryThumbnailCanvas::redo() {
     restoreGeometry(s);
     return;
   }
-  if (s.ras) {
+  if (!s.pages.empty() || s.ras) {
     Snapshot cur = makeMetaSnapshot();
-    cur.ras      = m_ras->clone();
+    flushWindowToPages();
+    cur.pages = m_pages;
     m_undo.push_back(std::move(cur));
     restoreSnapshot(s);
     return;
@@ -2733,8 +3001,15 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
 
   if (!m_ras) return;
 
-  const QPointF tl = worldToWidget(QPointF(0, 0));
-  const QRectF target(tl, QSizeF(gridW() * m_zoom, gridH() * m_zoom));
+  // Everything below is drawn in WORLD coordinates with the view transform
+  // set on the painter.  Under rotation a world rectangle is no longer an
+  // upright screen rectangle, so the old "worldToWidget(topLeft) + size*zoom"
+  // shape was wrong by construction: this REMOVES arithmetic rather than
+  // adding trigonometry.
+  const QRectF page(0.0, 0.0, gridW(), gridH());
+
+  p.save();
+  p.setTransform(viewTransform(), /*combine=*/true);
 
   // rasterToQImage() wraps the raster memory without copying, but mirrored=true
   // deep-copies the whole surface (~31 MB on a 4x15 grid) on EVERY repaint —
@@ -2744,13 +3019,55 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   // The page.  The surface itself is transparent (see kPaper), so the white a
   // storyboard artist draws on is painted HERE, under the drawing — that is
   // what lets the eraser take pixels away and still look like paper.
-  p.fillRect(target, Qt::white);
+  p.fillRect(page, Qt::white);
 
-  QImage img = rasterToQImage(m_ras, /*premultiplied=*/true, /*mirrored=*/false);
+  // ── Il foglio: la FINESTRA, piu' le pagine che la finestra non copre ────
+  // Dentro questo blocco la y e' ribaltata, quindi le righe del raster si
+  // usano cosi' come sono. Finche' la finestra copre tutto, il ciclo sulle
+  // pagine non disegna niente e resta il solo blit di prima — identico.
   p.save();
-  p.translate(target.left(), target.top() + target.height());
+  p.translate(0.0, gridH());
   p.scale(1.0, -1.0);
-  p.drawImage(QRectF(0.0, 0.0, target.width(), target.height()), img);
+  {
+    const int lx = m_ras->getLx(), ly = m_ras->getLy();
+    const int first = m_winFirstPage;
+    const int count = m_winPageCount > 0 ? m_winPageCount : bandCount();
+    // La finestra, in un colpo solo: e' contigua, ed e' dove si sta disegnando.
+    int wy0 = 0, wy1 = ly - 1;
+    if (m_winPageCount > 0) {
+      int a0, a1, b0, b1;
+      bandRasterRange(first, (int)gridH(), a0, a1);
+      bandRasterRange(first + count - 1, (int)gridH(), b0, b1);
+      wy0 = qMin(a0, b0);
+      wy1 = qMax(a1, b1);
+    }
+    QImage wimg = rasterToQImage(m_ras, /*premultiplied=*/true, /*mirrored=*/false);
+    // A finestra piena si usa il rettangolo di PRIMA, non [0, ly]: gridH() puo'
+    // non essere intero (altezza casella 205,6 su una camera CinemaScope) e il
+    // raster e' troncato, quindi i due rettangoli differiscono di mezzo pixel
+    // di scala. Invisibile, ma non sarebbe piu' "identico" — ed e' proprio il
+    // tipo di deriva che questo lavoro deve poter escludere.
+    if (m_winPageCount > 0)
+      p.drawImage(QRectF(0, wy0, lx, wy1 - wy0 + 1), wimg);
+    else
+      p.drawImage(page, wimg);
+
+    // Le pagine fuori dalla finestra: una per una, a casa loro. Qt ritaglia
+    // quelle fuori schermo, quindi disegnarle tutte non costa quanto sembra.
+    for (int b = 0; b < (int)m_pages.size(); b++) {
+      if (m_winPageCount > 0 && b >= first && b < first + count) continue;
+      if (m_winPageCount <= 0) break;  // la finestra copre tutto
+      if (!m_pages[b]) continue;
+      int y0, y1;
+      bandRasterRange(b, (int)gridH(), y0, y1);
+      if (y0 > y1) continue;
+      QImage pimg =
+          rasterToQImage(m_pages[b], /*premultiplied=*/true, /*mirrored=*/false);
+      p.drawImage(QRectF(0, y1 - m_pages[b]->getLy() + 1, lx,
+                         m_pages[b]->getLy()),
+                  pimg);
+    }
+  }
   p.restore();
 
   // Thin panel separators (overlay only — the surface itself is contiguous).
@@ -2767,26 +3084,22 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
       if (mergeIndexAt(c - 1, r) >= 0 &&
           mergeIndexAt(c - 1, r) == mergeIndexAt(c, r))
         continue;  // interior vertical edge of a merge
-      const double x  = worldToWidget(QPointF(c * m_boxW, 0)).x();
-      const double y0 = worldToWidget(QPointF(0, r * m_boxH)).y();
-      const double y1 = worldToWidget(QPointF(0, (r + 1) * m_boxH)).y();
-      p.drawLine(QPointF(x, y0), QPointF(x, y1));
+      const double x = c * m_boxW;
+      p.drawLine(QPointF(x, r * m_boxH), QPointF(x, (r + 1) * m_boxH));
     }
   for (int r = 1; r < m_rows; ++r)
     for (int c = 0; c < m_cols; ++c) {
       if (mergeIndexAt(c, r - 1) >= 0 &&
           mergeIndexAt(c, r - 1) == mergeIndexAt(c, r))
         continue;  // interior horizontal edge of a merge
-      const double y  = worldToWidget(QPointF(0, r * m_boxH)).y();
-      const double x0 = worldToWidget(QPointF(c * m_boxW, 0)).x();
-      const double x1 = worldToWidget(QPointF((c + 1) * m_boxW, 0)).x();
-      p.drawLine(QPointF(x0, y), QPointF(x1, y));
+      const double y = r * m_boxH;
+      p.drawLine(QPointF(c * m_boxW, y), QPointF((c + 1) * m_boxW, y));
     }
 
   QPen border(QColor(29, 92, 131, 120));
   border.setCosmetic(true);
   p.setPen(border);
-  p.drawRect(target);
+  p.drawRect(page);
 
   // Outline each merged (panorama) region a little brighter.
   QPen mergePen(QColor(90, 150, 220));
@@ -2797,9 +3110,7 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   for (const QRect &m : m_merges) {
     const QRectF wr(m.x() * m_boxW, m.y() * m_boxH, m.width() * m_boxW,
                     m.height() * m_boxH);
-    const QRectF sr(worldToWidget(wr.topLeft()),
-                    QSizeF(wr.width() * m_zoom, wr.height() * m_zoom));
-    p.drawRect(sr);
+    p.drawRect(wr);
   }
 
   // Selection overlay: tint selected panels + a numbered badge showing the
@@ -2808,25 +3119,27 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   for (int i = 0; i < m_selection.size(); ++i) {
     const QRectF wr = panelWorldRect(m_selection[i]);
     if (wr.isNull()) continue;
-    const QRectF sr(worldToWidget(wr.topLeft()),
-                    QSizeF(wr.width() * m_zoom, wr.height() * m_zoom));
-    p.fillRect(sr, QColor(224, 90, 0, 60));
+    p.fillRect(wr, QColor(224, 90, 0, 60));
     QPen selPen(QColor(224, 90, 0));
     selPen.setCosmetic(true);
     selPen.setWidth(2);
     p.setPen(selPen);
-    p.drawRect(sr);
+    p.drawRect(wr);
 
-    // Order badge (1-based) in the top-left corner of the panel.
-    const double bs = 20.0;
-    QRectF badge(sr.left() + 3, sr.top() + 3, bs, bs);
+    // Order badge (1-based) in the top-left corner of the panel.  Drawn in
+    // world space so it TURNS with the sheet -- the numbers belong to the
+    // page, not to the screen (Franco, 2026-09-18) -- while the 1/zoom factor
+    // keeps its on-screen size the 20 px it has always been.
+    const double inv = m_zoom > 1e-6 ? 1.0 / m_zoom : 1.0;
+    const double bs  = 20.0 * inv;
+    QRectF badge(wr.left() + 3 * inv, wr.top() + 3 * inv, bs, bs);
     p.setBrush(QColor(224, 90, 0));
     p.setPen(Qt::NoPen);
     p.drawEllipse(badge);
     p.setPen(Qt::white);
     QFont f = p.font();
     f.setBold(true);
-    f.setPointSizeF(10.0);
+    f.setPointSizeF(qMax(0.5, 10.0 * inv));
     p.setFont(f);
     p.drawText(badge, Qt::AlignCenter, QString::number(i + 1));
     p.setBrush(Qt::NoBrush);
@@ -2841,20 +3154,20 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
       p.setPen(mp);
       if (m_lassoMode) {
         QPolygonF wpoly;
-        for (const QPointF &wp : m_lassoPath) wpoly << worldToWidget(wp);
+        for (const QPointF &wp : m_lassoPath) wpoly << wp;
         p.setBrush(QColor(0, 170, 255, 30));
         p.drawPolygon(wpoly);
       } else {
         const QRectF wr = QRectF(m_marqueeStart, m_marqueeCur).normalized();
-        const QRectF sr(worldToWidget(wr.topLeft()),
-                        QSizeF(wr.width() * m_zoom, wr.height() * m_zoom));
         p.setBrush(QColor(0, 170, 255, 30));
-        p.drawRect(sr);
+        p.drawRect(wr);
       }
       p.setBrush(Qt::NoBrush);
     }
     paintFloat(p);
   }
+
+  p.restore();  // end of the world-coordinate block
 
   // Brush cursor: a circle of the real brush size (the system cursor is blank in
   // drawing mode). Drawn last so it sits on top of everything.
