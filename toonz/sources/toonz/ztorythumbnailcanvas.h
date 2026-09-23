@@ -459,9 +459,4 @@ private:
 
   // Undo / redo
   std::vector<Snapshot> m_undo, m_redo;
-  // Vero fra un persistLoad() e la prima riallineata alla camera della scena.
-  // Quella riallineata NON e' una modifica dell'utente: e' la tela che si mette
-  // in pari con la scena appena aperta, e non deve finire nella pila
-  // dell'annullamento (vedi onSceneChanged).
-  bool m_awaitingCameraCatchUp = false;
 };

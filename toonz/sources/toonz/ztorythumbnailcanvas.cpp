@@ -578,21 +578,28 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
     return;
   }
 
-  // Snapshot the pre-reshape canvas (raster + its aspect) so Cmd-Z reverts the
-  // camera-format reflow cleanly instead of leaving a stale grid.
+  // ⚠️ NIENTE pushUndo() QUI, ed e' una scelta, non una dimenticanza.
   //
-  // ⚠️ MA NON quando questa e' la prima riallineata dopo un caricamento. Alla
-  // nascita la tela prende il formato predefinito (16:9) e solo un momento dopo
-  // scopre la camera vera: quel ricongiungimento non e' una cosa che l'utente
-  // ha fatto, e rendendolo annullabile ogni apertura di scena lasciava in pila
-  // una fotografia a 16:9 pronta a saltare fuori al primo ⌘Z — anche in una
-  // scena dove la camera non era mai stata toccata.
-  // Trovato da Franco il 2026-09-23 su una scena quadrata: «l'undo cambia la
-  // camera, cosa che non ha senso in questo caso».
-  if (m_awaitingCameraCatchUp)
-    m_awaitingCameraCatchUp = false;
-  else
-    pushUndo();
+  // Qui c'era una fotografia della tela, «so Cmd-Z reverts the camera-format
+  // reflow cleanly». Era l'origine di tutto il guaio trovato il 2026-09-23:
+  // rendeva annullabile la CONSEGUENZA (la griglia si re-impagina) mentre la
+  // CAUSA (il cambio di formato camera) non lo e' — e non lo e' nemmeno in
+  // Tahoma2D ne' in OpenToonz, verificato: zero TUndo in camerasettingspopup e
+  // in camerasettingswidget su entrambi. Da quell'asimmetria venivano il
+  // disallineamento fra griglia e Camera Settings, e la fotografia a 16:9 che
+  // ogni apertura di scena lasciava in pila pronta a saltare fuori al primo ⌘Z.
+  //
+  // Il principio, di Franco (2026-09-23): cambiare il formato della camera e'
+  // una modifica alle IMPOSTAZIONI DEL PROGETTO, non al lavoro, e non deve
+  // stare nella catena dell'annullamento — come il frame rate. Il caso che lo
+  // decide: disegno, cambio camera, continuo a disegnare; se il cambio fosse
+  // nella catena, per annullare le ultime pennellate sarei costretto a
+  // passarci attraverso e mi ritroverei la camera cambiata senza averlo
+  // chiesto.
+  //
+  // Il prezzo, dichiarato: reanchorRaster() re-impagina i disegni e da questa
+  // operazione non si torna indietro. E' lo stesso patto di Tahoma su qualsiasi
+  // cambio di formato, ed e' cio' che un cambio di formato SIGNIFICA.
   m_boxAspect = aspect;
   m_boxH      = newBoxH;
   m_ras       = reanchorRaster(m_ras, oldBoxH, m_boxH);
@@ -1102,9 +1109,6 @@ void ZtoryThumbnailCanvas::persistLoad() {
   m_floatImg     = QImage();
   m_floatDrag    = -1;
   m_floatWasMove = false;
-  // La prima riallineata alla camera dopo un caricamento e' un ricongiungimento,
-  // non una modifica: non va resa annullabile.
-  m_awaitingCameraCatchUp = true;
 
   TFilePath dir = persistDir();
   QStringList matches;
