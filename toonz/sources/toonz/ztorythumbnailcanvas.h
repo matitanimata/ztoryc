@@ -470,6 +470,14 @@ private:
   // Il magazzino: una pagina per banda. Vuoto finche' persistLoad non lo
   // riempie; da li' in poi e' la sorgente di verita' del canvas su disco.
   std::vector<TRaster32P> m_pages;
+  // Quali pagine copre la finestra. Oggi le copre TUTTE (m_winFirstPage = 0,
+  // m_winPageCount = bandCount()), e finche' e' cosi' il comportamento e'
+  // identico a prima. Sono i due numeri che stringendo la finestra diventano
+  // veri, ed esistono gia' adesso perche' il disegno a schermo e il
+  // riversamento possano essere scritti nella forma definitiva mentre sono
+  // ancora verificabili contro il caso pieno.
+  int m_winFirstPage = 0;
+  int m_winPageCount = 0;   // 0 = la finestra copre tutto
   // Union of every dab of the stroke in progress, in raster coordinates: the
   // one case where we know exactly what changed.  m_strokeDirty cannot serve —
   // it is cleared at every repaint, so it only ever holds the last few dabs.

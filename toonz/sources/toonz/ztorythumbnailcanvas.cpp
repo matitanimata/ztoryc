@@ -2835,11 +2835,53 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
   // what lets the eraser take pixels away and still look like paper.
   p.fillRect(page, Qt::white);
 
-  QImage img = rasterToQImage(m_ras, /*premultiplied=*/true, /*mirrored=*/false);
+  // ── Il foglio: la FINESTRA, piu' le pagine che la finestra non copre ────
+  // Dentro questo blocco la y e' ribaltata, quindi le righe del raster si
+  // usano cosi' come sono. Finche' la finestra copre tutto, il ciclo sulle
+  // pagine non disegna niente e resta il solo blit di prima — identico.
   p.save();
   p.translate(0.0, gridH());
   p.scale(1.0, -1.0);
-  p.drawImage(page, img);
+  {
+    const int lx = m_ras->getLx(), ly = m_ras->getLy();
+    const int first = m_winFirstPage;
+    const int count = m_winPageCount > 0 ? m_winPageCount : bandCount();
+    // La finestra, in un colpo solo: e' contigua, ed e' dove si sta disegnando.
+    int wy0 = 0, wy1 = ly - 1;
+    if (m_winPageCount > 0) {
+      int a0, a1, b0, b1;
+      bandRasterRange(first, (int)gridH(), a0, a1);
+      bandRasterRange(first + count - 1, (int)gridH(), b0, b1);
+      wy0 = qMin(a0, b0);
+      wy1 = qMax(a1, b1);
+    }
+    QImage wimg = rasterToQImage(m_ras, /*premultiplied=*/true, /*mirrored=*/false);
+    // A finestra piena si usa il rettangolo di PRIMA, non [0, ly]: gridH() puo'
+    // non essere intero (altezza casella 205,6 su una camera CinemaScope) e il
+    // raster e' troncato, quindi i due rettangoli differiscono di mezzo pixel
+    // di scala. Invisibile, ma non sarebbe piu' "identico" — ed e' proprio il
+    // tipo di deriva che questo lavoro deve poter escludere.
+    if (m_winPageCount > 0)
+      p.drawImage(QRectF(0, wy0, lx, wy1 - wy0 + 1), wimg);
+    else
+      p.drawImage(page, wimg);
+
+    // Le pagine fuori dalla finestra: una per una, a casa loro. Qt ritaglia
+    // quelle fuori schermo, quindi disegnarle tutte non costa quanto sembra.
+    for (int b = 0; b < (int)m_pages.size(); b++) {
+      if (m_winPageCount > 0 && b >= first && b < first + count) continue;
+      if (m_winPageCount <= 0) break;  // la finestra copre tutto
+      if (!m_pages[b]) continue;
+      int y0, y1;
+      bandRasterRange(b, (int)gridH(), y0, y1);
+      if (y0 > y1) continue;
+      QImage pimg =
+          rasterToQImage(m_pages[b], /*premultiplied=*/true, /*mirrored=*/false);
+      p.drawImage(QRectF(0, y1 - m_pages[b]->getLy() + 1, lx,
+                         m_pages[b]->getLy()),
+                  pimg);
+    }
+  }
   p.restore();
 
   // Thin panel separators (overlay only — the surface itself is contiguous).
