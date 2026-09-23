@@ -9,6 +9,7 @@
 #include "tsound.h"
 
 #include <QList>
+#include <QPair>
 #include <QTimer>
 
 #undef DVAPI
@@ -240,6 +241,25 @@ when the user play a single level and hence the audio behind..*/
   /*! Take ownership of |cl| and insert it into m_levels, adjusting its
    * startFrame so that its visible start lands at |targetFrame|. */
   void adoptLevel(ColumnLevel *cl, int targetFrame);
+
+  /*! Move each listed level so that its visible start lands on the paired
+   * frame, then restore the column invariant (sorted by visible start, no
+   * overlaps). An overlap is resolved by trimming the tail of the EARLIER
+   * level; a level left with no visible frame is removed. Callers that need
+   * the trimmed audio back keep a copy of the levels (undo).
+   * Used by the animatic A/V link, where every segment follows its own shot
+   * by a different amount: a single delta from a single frame
+   * (shiftLevelFromFrame) cannot express that. */
+  void setLevelsVisibleStart(const QList<QPair<ColumnLevel *, int>> &moves);
+
+  /*! Replace every level of the column with |levels|, taking ownership of
+   * them. Used to restore a column copied by value: the ColumnLevel objects
+   * of a column do not survive an undo of an audio edit (assignLevels builds
+   * new ones), so a copy can only be matched by value, never by pointer. */
+  void replaceLevels(const QList<ColumnLevel *> &levels);
+
+private:
+  void sortAndTrimOverlaps();
 
 protected:
   bool setCell(int row, const TXshCell &cell, bool updateSequence);

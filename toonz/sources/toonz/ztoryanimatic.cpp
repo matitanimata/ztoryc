@@ -7690,6 +7690,15 @@ void ZtoryAnimaticPanel::onRollEdit(int colA, int newDurA, int colB, int newDurB
     }
   };
 
+  // newDurA/newDurB vengono dai blocchi della traccia, cioe' durate NETTE
+  // (shotTrueSpan, dissolvenza esclusa). resizeCol misura con getRange, che
+  // include i frame esposti della dissolvenza: con una dissolvenza in entrata
+  // su A, un roll che chiedeva 60 frame ne dava 56 — misurava 61 lordi contro
+  // 60 netti e TAGLIAVA invece di allungare. La fine dell'animatic arretrava
+  // di mezza dissolvenza a ogni roll (misurato con una sonda, 2026-09-24).
+  // Stessa cura del trim (onShotDurationChanged): si toglie l'esposizione
+  // prima di misurare, e resequenceXsheet() la rimette alla fine.
+  ZtoryShotOps::teardownCrossDissolves(xsh);
   resizeCol(colA, newDurA);
   resizeCol(colB, newDurB);
 
@@ -8271,60 +8280,84 @@ void ZtoryAnimaticPanel::resequenceXsheet() {
       oldPositions.push_back({col, r0, r1 - r0 + 1});
   }
 
-  // 2. Run resequence on video columns.
-  ZtoryModel::instance()->resequenceXsheet();
-
-  // 3. Read new shot positions AFTER resequence → delta per video column.
-  std::map<int, int> shotDelta;
-  for (auto &op : oldPositions) {
-    TXshColumn *column = xsh->getColumn(op.col);
-    if (!column || column->isEmpty()) continue;
-    // Stessa misura di prima, o il confronto non significherebbe niente:
-    // grezzo contro vero darebbe uno spostamento fasullo pari agli extra.
-    int nts = 0, ntd = 0;
-    if (ZtoryShotOps::shotTrueSpan(xsh, op.col, nts, ntd) && ntd > 0) {
-      shotDelta[op.col] = nts - op.r0;
-    } else {
-      int nr0 = 0, nr1 = 0;
-      column->getRange(nr0, nr1);
-      shotDelta[op.col] = nr0 - op.r0;
+  // 2. ANCORE, prese prima di ricompattare.
+  //
+  //    Principio di Franco (2026-09-23): «se l'audio inizia al frame 5 dello
+  //    shot 02, qualsiasi operazione faccio sempre da quel frame dovra'
+  //    iniziare». La posizione di un segmento audio e' quindi la coppia
+  //    (shot di ancoraggio, scarto dal suo inizio VERO), e dopo il
+  //    ricompattamento si RICALCOLA segmento per segmento.
+  //
+  //    Prima qui c'era un delta comune applicato da un punto in poi
+  //    (shiftLevelFromFrame): giusto solo se tutti gli shot dopo quel punto si
+  //    spostano uguale. Nel roll non e' cosi' — si sposta B e non C — e l'audio
+  //    di C, D… veniva trascinato insieme a B.
+  //
+  //    L'ancora e' il PRIMO shot che il segmento tocca: l'ultimo il cui inizio
+  //    e' <= dell'inizio visibile del segmento (decisione di Franco). Un
+  //    segmento trascinato a mano cambia ancora da se': qui si guarda dove sta
+  //    ADESSO, non dove stava quando e' stato creato.
+  struct Anchor {
+    int audioCol;
+    ColumnLevel *level;
+    int shotCol;
+    int offset;
+  };
+  std::vector<Anchor> anchors;
+  if (!oldPositions.empty()) {
+    for (auto *at : m_audioTracks) {
+      const int audioCol = at->columnIndex();
+      TXshColumn *ac     = xsh->getColumn(audioCol);
+      TXshSoundColumn *sc = ac ? ac->getSoundColumn() : nullptr;
+      if (!sc) continue;
+      for (int i = 0; i < sc->getColumnLevelCount(); i++) {
+        ColumnLevel *l = sc->getColumnLevel(i);
+        if (!l) continue;
+        const int vsf = l->getVisibleStartFrame();
+        const ShotPos *best = &oldPositions.front();
+        for (const ShotPos &op : oldPositions)
+          if (op.r0 <= vsf && op.r0 >= best->r0) best = &op;
+        anchors.push_back({audioCol, l, best->col, vsf - best->r0});
+      }
     }
   }
 
-  // 4. Shift audio ColumnLevels so they follow their associated shots.
-  //
-  //    OLD approach (wrong): call shiftLevelInRange(shotR0, shotR1, delta) for
-  //    each shot that moved. This only shifts ColumnLevels whose vsf falls
-  //    inside exactly that shot's old range. A long (uncut) audio segment
-  //    spanning multiple shots has vsf=0 → is never matched. A razor-cut
-  //    segment for Shot C has vsf=146 → is not matched when we process Shot B
-  //    with range [89,145]. Result: only the first cut segment ever shifts.
-  //
-  //    NEW approach: find the earliest shot that moved → shiftFrom.
-  //    All shots after that point have the same delta (resequence packs
-  //    tightly, so a single duration change propagates uniformly).
-  //    Shift ALL audio ColumnLevels with vsf >= shiftFrom by that delta.
-  //    This correctly handles: uncut tracks spanning all shots, tracks cut
-  //    at shot boundaries, and any number of razor-cut segments.
+  // 3. Run resequence on video columns.
+  ZtoryModel::instance()->resequenceXsheet();
+
+  // 4. Ogni segmento torna al suo scarto dal nuovo inizio del suo shot.
+  //    Misura VERA dell'inizio (shotTrueSpan), la stessa usata per le ancore:
+  //    con una dissolvenza in entrata il r0 grezzo sta prima dell'inizio reale
+  //    e darebbe uno spostamento fasullo pari agli extra.
+  //    Riordinare e risolvere le sovrapposizioni lo fa la colonna
+  //    (setLevelsVisibleStart): m_levels e' suo, e una lista fuori ordine manda
+  //    in confusione forma d'onda, riproduzione e lettura delle celle.
+  //    Una sovrapposizione taglia la coda del segmento precedente; l'undo lo
+  //    ridà intero, perche' lo snapshot del Board copia i livelli per valore.
   {
-    int shiftFrom   = INT_MAX;
-    int commonDelta = 0;
-    for (auto &op : oldPositions) {
-      int d = shotDelta.count(op.col) ? shotDelta.at(op.col) : 0;
-      if (d != 0 && op.r0 < shiftFrom) {
-        shiftFrom   = op.r0;
-        commonDelta = d;
+    std::map<int, int> newStart;
+    for (const ShotPos &op : oldPositions) {
+      int nts = 0, ntd = 0;
+      if (ZtoryShotOps::shotTrueSpan(xsh, op.col, nts, ntd) && ntd > 0) {
+        newStart[op.col] = nts;
+      } else if (TXshColumn *column = xsh->getColumn(op.col)) {
+        int nr0 = 0, nr1 = 0;
+        column->getRange(nr0, nr1);
+        newStart[op.col] = nr0;
       }
     }
-    if (commonDelta != 0 && shiftFrom != INT_MAX) {
-      for (auto *at : m_audioTracks) {
-        int audioCol = at->columnIndex();
-        TXshColumn *ac = xsh->getColumn(audioCol);
-        if (!ac) continue;
-        TXshSoundColumn *sc = ac->getSoundColumn();
-        if (!sc) continue;
-        sc->shiftLevelFromFrame(shiftFrom, commonDelta);
-      }
+    std::map<int, QList<QPair<ColumnLevel *, int>>> movesByCol;
+    for (const Anchor &a : anchors) {
+      auto it = newStart.find(a.shotCol);
+      if (it == newStart.end()) continue;
+      const int wanted = it->second + a.offset;
+      if (wanted != a.level->getVisibleStartFrame())
+        movesByCol[a.audioCol].append(qMakePair(a.level, wanted));
+    }
+    for (auto &m : movesByCol) {
+      TXshColumn *ac      = xsh->getColumn(m.first);
+      TXshSoundColumn *sc = ac ? ac->getSoundColumn() : nullptr;
+      if (sc) sc->setLevelsVisibleStart(m.second);
     }
   }
 

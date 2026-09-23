@@ -1021,6 +1021,50 @@ void TXshSoundColumn::adoptLevel(ColumnLevel *cl, int targetFrame) {
 
 //-----------------------------------------------------------------------------
 
+void TXshSoundColumn::setLevelsVisibleStart(
+    const QList<QPair<ColumnLevel *, int>> &moves) {
+  for (const QPair<ColumnLevel *, int> &m : moves) {
+    if (!m.first || !m_levels.contains(m.first)) continue;
+    m.first->setStartFrame(m.second - m.first->getStartOffset());
+  }
+  sortAndTrimOverlaps();
+}
+
+//-----------------------------------------------------------------------------
+
+void TXshSoundColumn::replaceLevels(const QList<ColumnLevel *> &levels) {
+  clear();
+  for (ColumnLevel *l : levels)
+    if (l) m_levels.append(l);
+  sortAndTrimOverlaps();
+}
+
+//-----------------------------------------------------------------------------
+
+void TXshSoundColumn::sortAndTrimOverlaps() {
+  std::sort(m_levels.begin(), m_levels.end(), lessThan);
+  for (int i = 0; i + 1 < m_levels.count();) {
+    ColumnLevel *prev = m_levels.at(i);
+    ColumnLevel *curr = m_levels.at(i + 1);
+    if (prev->getVisibleEndFrame() < curr->getVisibleStartFrame()) {
+      i++;
+      continue;
+    }
+    // Both start on the same frame: nothing of |prev| stays visible, and
+    // setEndOffset() would refuse the empty range and leave the overlap.
+    if (prev->getVisibleStartFrame() >= curr->getVisibleStartFrame()) {
+      m_levels.removeAt(i);
+      delete prev;
+      continue;
+    }
+    prev->setEndOffset(prev->getEndFrame() - curr->getVisibleStartFrame() + 1);
+    i++;
+  }
+  checkColumn();
+}
+
+//-----------------------------------------------------------------------------
+
 int TXshSoundColumn::getColumnLevelIndex(ColumnLevel *columnLevel) const {
   return m_levels.indexOf(columnLevel);
 }

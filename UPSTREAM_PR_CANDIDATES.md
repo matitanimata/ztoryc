@@ -359,6 +359,31 @@ not portable.
 
 ### 2.2 — Features that can go upstream as they are
 
+- ❓ **Rotate the view with ⌥ + middle-drag** — `toonz/sceneviewerevents.cpp`.
+  Today the view can be rotated only with a pinch (touch) or by picking the
+  `T_Rotate` tool, which means leaving whatever tool you were drawing with.
+  A modifier + middle-drag turns the sheet without losing the tool, the way
+  you turn paper on a table.
+
+  **Why it is small:** the rotation already exists — `SceneViewer::rotate()`
+  is what both the pinch and `T_Rotate` call. Nothing new to write, only a
+  gesture to bind. And **⌥ + middle is free**: the middle-drag pan
+  (`if (event.buttons() & Qt::MiddleButton) { panQt(...) }`) does not look at
+  modifiers at all (checked 2026-09-23).
+
+  **Where the idea comes from:** we did exactly this in Ztoryc's Thumbnail
+  room, which has its own tool system and cannot use `T_Rotate`. Franco then
+  asked for it in the other rooms too — *«e' molto comodo»* — and the reason
+  generalises: touch is on few machines, a modifier and a mouse are on all of
+  them.
+
+  ⚠️ It changes shared input handling for every room and every user, so it
+  wants care and a real try-out before being proposed. The sign must be taken
+  from the SAME coordinate system as the transform, not by analogy: getting it
+  from SceneViewer's pinch (y up, TAffine) into a y-down QTransform is exactly
+  the mistake that made our first rotation turn the wrong way.
+
+
 Nothing here needs the `.ztoryc` file. They operate on ordinary scenes, levels
 and xsheets.
 

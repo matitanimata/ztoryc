@@ -674,6 +674,33 @@ chiamante la politica sulle sovrapposizioni.
 
 ⚠️ Fino ad allora: **col link A/V spento non succede nulla di tutto questo.**
 
+✅ **FATTO la sera del 2026-09-23, COLLAUDATO da Franco il 2026-09-24.** Tre pezzi:
+1. `TXshSoundColumn::setLevelsVisibleStart()` — sposta ogni livello al suo
+   frame, riordina, e una sovrapposizione taglia la coda del precedente
+   (se non ne resta niente lo toglie). E' il metodo «dentro la colonna» che
+   mancava alla patch WIP.
+2. `resequenceXsheet` col link: ancore prese PRIMA di ricompattare (primo shot
+   toccato, inizio VERO), posizioni ricalcolate dopo. Il delta comune e'
+   sparito — nel roll trascinava l'audio di C, D… insieme a B.
+3. **La causa del «continua a fare cose strane» era un'altra**, trovata nel
+   log `ztprobe_undo2.log`: lo snapshot del Board riconosceva i livelli audio
+   per INDIRIZZO, e annullare/ripetere un'operazione sull'audio
+   (`UndoAudioEdit` → `assignLevels`) li ricrea tutti. Da li' ogni annulla
+   video saltava la colonna in silenzio (27 → 40, poi 40 su 40 per sempre).
+   Ora lo snapshot copia i livelli per valore e il ripristino ricostruisce la
+   colonna intera (`replaceLevels`): torna anche un segmento tagliato.
+
+🎯 **DECISO da Franco il 2026-09-24: l'audio SPORGE oltre la fine del video.**
+Se un roll sposta avanti l'inizio dell'ultimo shot, il segmento ancorato a lui
+lo segue e puo' finire dopo l'ultimo frame video (misurato: audio fino a 181,
+video a 167); l'animatic si allunga fino alla fine dell'audio. **Non si taglia
+alla fine del video**: sarebbe un taglio che l'utente non ha chiesto e non vede.
+Come in un montaggio: la parte che sporge si vede e si taglia a mano.
+
+Resta fuori, di proposito: **cambiare la durata di una dissolvenza** non muove
+l'audio (usa il resequence senza link). Con le ancore sarebbe naturale
+aggiungerlo, ma e' un comportamento nuovo: si decide dopo il collaudo.
+
 ---
 
 ### 🔴 APERTI 2026-09-23 — dissolvenza: il roll sbaglia giuntura, e il link A/V sposta l'audio dalla parte sbagliata
@@ -698,6 +725,22 @@ sessione: il difetto c'e' da quando esistono le dissolvenze.
    qualche frame **indietro**, verso la dissolvenza.
 2. Col **link audio/video**, allungando uno shot verso destra l'audio si
    sposta a **sinistra** e taglia il segmento audio precedente.
+
+✅ **1 e 2 CORRETTI il 2026-09-24** (collaudati da Franco, sonda su 30 roll:
+durate ottenute = chieste, fine del video ferma). Tre cause, non una:
+- **roll con dissolvenza su uno shot PRIMA**: `onRollEdit`/`resizeCol`
+  misurava col `getRange` lordo (frame di testa della dissolvenza compresi)
+  contro durate nette: chiesto 60, ottenuto 56, la fine dell'animatic arretrava
+  di mezza dissolvenza a ogni roll. Ora smonta la dissolvenza prima di
+  misurare, come gia' faceva il trim;
+- **roll/trim che allunga A attraverso la giuntura con dissolvenza**:
+  `teardownCrossDissolves` cancellava `[X, X+half]` di A anche a dissolvenza
+  NON esposta, mangiandosi i frame appena aggiunti. Ora salta la coppia se la
+  testa di B non e' esposta;
+- **audio a sinistra / audio di C trascinato da B**: il delta comune, sostituito
+  dalle ancore (vedi la voce DECISO qui sopra).
+Resta aperto il **sintomo 0** (buco nel track tagliando l'audio con una
+dissolvenza): non toccato.
 
 **Radice, accertata leggendo il codice.** `shotTrueSpan()` esiste proprio per
 questo, e il suo commento lo dice: *«Both the animatic track and any duration

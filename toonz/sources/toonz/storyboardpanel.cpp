@@ -5421,10 +5421,7 @@ std::vector<ZtoryAudioColSnap> ztoryCaptureAudioSnap() {
       ColumnLevel *cl = sc->getColumnLevel(i);
       if (!cl) continue;
       ZtoryAudioLevelSnap ls;
-      ls.level       = cl;
-      ls.startFrame  = cl->getStartFrame();
-      ls.startOffset = cl->getStartOffset();
-      ls.endOffset   = cl->getEndOffset();
+      ls.copy.reset(cl->clone());
       cs.levels.push_back(ls);
     }
     out.push_back(std::move(cs));
@@ -5439,10 +5436,13 @@ bool ztoryAudioSnapDiffers(const std::vector<ZtoryAudioColSnap> &a,
     if (a[i].col != b[i].col) return true;
     if (a[i].levels.size() != b[i].levels.size()) return true;
     for (size_t j = 0; j < a[i].levels.size(); j++) {
-      const ZtoryAudioLevelSnap &x = a[i].levels[j];
-      const ZtoryAudioLevelSnap &y = b[i].levels[j];
-      if (x.level != y.level || x.startFrame != y.startFrame ||
-          x.startOffset != y.startOffset || x.endOffset != y.endOffset)
+      const ColumnLevel *x = a[i].levels[j].copy.get();
+      const ColumnLevel *y = b[i].levels[j].copy.get();
+      if (!x || !y) return true;
+      if (x->getSoundLevel() != y->getSoundLevel() ||
+          x->getStartFrame() != y->getStartFrame() ||
+          x->getStartOffset() != y->getStartOffset() ||
+          x->getEndOffset() != y->getEndOffset())
         return true;
     }
   }
@@ -5460,32 +5460,15 @@ void ztoryRestoreAudioSnap(const std::vector<ZtoryAudioColSnap> &snap) {
     if (!column) continue;
     TXshSoundColumn *sc = column->getSoundColumn();
     if (!sc) continue;
-    // I livelli si ritrovano per IDENTITA', non per indice: uno shift riordina
-    // m_levels. E se la struttura e' cambiata (uno tagliato, uno aggiunto) si
-    // lascia stare tutta la colonna: rimettere numeri su livelli diversi da
-    // quelli fotografati non e' un undo, e' un guasto nuovo.
-    std::vector<ColumnLevel *> live;
-    for (int i = 0; i < sc->getColumnLevelCount(); i++)
-      if (ColumnLevel *cl = sc->getColumnLevel(i)) live.push_back(cl);
-    if (live.size() != cs.levels.size()) {
-      continue;
-    }
-    bool allFound = true;
+    // Si ricostruisce la colonna INTERA dalle copie, non si correggono i
+    // numeri dei livelli vivi: quelli possono non essere piu' gli stessi
+    // oggetti (vedi ZtoryAudioLevelSnap) e possono essere di meno, se una
+    // sovrapposizione ne ha tagliato via uno. La pila e' lineare, quindi lo
+    // stato da rimettere e' esattamente quello fotografato.
+    QList<ColumnLevel *> levels;
     for (const ZtoryAudioLevelSnap &ls : cs.levels)
-      if (std::find(live.begin(), live.end(), ls.level) == live.end()) {
-        allFound = false;
-        break;
-      }
-    if (!allFound) continue;
-    for (const ZtoryAudioLevelSnap &ls : cs.levels) {
-      // NOTA: per ora si ripristina anche la POSIZIONE. Nel modello deciso da
-      // Franco il 2026-09-23 sara' derivata (shot di ancoraggio + scarto) e non
-      // andra' piu' ne' fotografata ne' ripristinata — ma quel cambio richiede
-      // di riordinare i livelli dopo averli spostati, e m_levels e' privato:
-      // va fatto dentro TXshSoundColumn, non da qui. Vedi ANIMATIC_TASKS.
-      ls.level->setStartFrame(ls.startFrame);
-      ls.level->setOffsets(ls.startOffset, ls.endOffset);
-    }
+      if (ls.copy) levels.append(ls.copy->clone());
+    sc->replaceLevels(levels);
   }
   xsh->updateFrameCount();
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();

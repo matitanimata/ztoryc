@@ -6,6 +6,7 @@
 #include "toonz/txshsoundcolumn.h"  // ColumnLevel
 
 #include <QString>
+#include <memory>
 #include <vector>
 
 class StoryboardPanel;
@@ -27,14 +28,22 @@ struct ZtoryShotSnap {
     int        duration;
 };
 
-// Posizione di UN livello audio nella timeline. Sono i tre soli numeri che la
-// descrivono: il resto (quale suono, a che frame rate) non cambia mai per
-// effetto di un'operazione del Board.
+// UN livello audio, copiato PER VALORE.
+//
+// ⚠️ Non un puntatore al livello vivo. Era cosi' fino al 2026-09-23 e rendeva
+// l'annullamento cieco: annullare o ripetere un'operazione sull'AUDIO
+// (UndoAudioEdit -> TXshSoundColumn::assignLevels) distrugge i ColumnLevel
+// della colonna e ne crea di nuovi. Da quel momento nessuno snapshot del Board
+// ritrovava piu' i suoi livelli, saltava la colonna in silenzio, e il video
+// tornava indietro lasciando l'audio dov'era. Misurato con una sonda: dopo un
+// annulla del trascinamento audio (27 -> 40) tutti gli annulla video successivi
+// «ripristinavano» 40 su 40.
+//
+// Con la copia, il ripristino ricostruisce la colonna com'era, qualunque cosa
+// sia successa nel frattempo agli oggetti — compreso un segmento tagliato da
+// una sovrapposizione, che torna intero.
 struct ZtoryAudioLevelSnap {
-    ColumnLevel *level = nullptr;  // identita', non indice: uno shift RIORDINA
-    int startFrame  = 0;
-    int startOffset = 0;
-    int endOffset   = 0;
+    std::shared_ptr<const ColumnLevel> copy;
 };
 
 // Lo stato di una colonna sonora.
@@ -51,10 +60,11 @@ struct ZtoryAudioColSnap {
 // l'audio dove l'operazione l'aveva portato. Segnalato da Franco il 2026-09-18
 // facendo «Match Subscene Duration».
 //
-// ⚠️ E NON basta rifare lo spostamento al contrario: shiftLevelFromFrame()
-// **taglia** (setEndOffset) il livello precedente quando lo spostamento a
-// sinistra lo farebbe sovrapporre. Quel taglio uno shift inverso non lo
-// ripristina. Per questo qui si salva lo STATO, non il movimento.
+// ⚠️ E NON basta rifare lo spostamento al contrario: quando un segmento finisce
+// sopra il precedente, la colonna **taglia** la coda del precedente
+// (TXshSoundColumn::setLevelsVisibleStart). Quel taglio uno spostamento
+// inverso non lo ripristina. Per questo qui si salva lo STATO, non il
+// movimento — e lo si salva per valore (vedi ZtoryAudioLevelSnap).
 //
 // I metodi sotto esistono perche' quasi tutto il codice tratta lo snapshot come
 // la sola lista di shot, ed e' giusto: l'audio riguarda solo l'undo.
@@ -70,9 +80,7 @@ struct ZtoryBoardSnap {
 
 // Legge dallo xsheet principale la posizione di ogni livello audio.
 std::vector<ZtoryAudioColSnap> ztoryCaptureAudioSnap();
-// Rimette quelle posizioni. Salta una colonna se la sua struttura e' cambiata
-// (livelli creati o distrutti nel frattempo): li' un ripristino posizionale
-// sarebbe un danno nuovo, non un undo.
+// Ricostruisce quelle colonne sonore com'erano.
 void ztoryRestoreAudioSnap(const std::vector<ZtoryAudioColSnap> &snap);
 // Vero se le due fotografie dell'audio differiscono, cioe' se l'operazione ha
 // davvero mosso il suono. Undo e redo toccano l'audio SOLO in quel caso: cosi'

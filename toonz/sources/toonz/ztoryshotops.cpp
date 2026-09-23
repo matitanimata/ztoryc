@@ -394,8 +394,9 @@ void teardownCrossDissolves(TXsheet *mainXsh) {
   // geometric (no fx): X (colB's real start) is the first colB row whose frameId
   // exceeds the head-hold count, so head-extra = rows [r0B, X) and colA's
   // tail-extra + its stop = rows [X, X+half].  If the overlap is not currently
-  // exposed the loops simply clear the (already correct) boundary stop, which
-  // resequence re-lays — so this is safe to call unconditionally.
+  // exposed the pair is left alone — so this is safe to call unconditionally,
+  // and twice in a row (a trim/roll tears down before measuring, then
+  // resequence tears down again).
   std::vector<int> cols = shotColumns(mainXsh);
   for (size_t k = 0; k + 1 < cols.size(); k++) {
     int colA = cols[k], colB = cols[k + 1];
@@ -414,8 +415,16 @@ void teardownCrossDissolves(TXsheet *mainXsh) {
         break;
       }
     }
-    if (X > r0B) mainXsh->clearCells(r0B, colB, X - r0B);  // colB head-extra
-    mainXsh->clearCells(X, colA, half + 1);  // colA tail-extra + its stop
+    // Overlap NOT exposed (B has no head-extra): there is nothing to strip,
+    // and the rows of A past the seam may be REAL frames — a trim or roll that
+    // already tore the overlap down and then grew A across the seam. Clearing
+    // [X, X+half] there ate the newly added frames: grown by up to half+1
+    // frames, A came back shorter and the seam jumped back towards the
+    // dissolve (reported by Franco, 2026-09-23). A's boundary stop, the only
+    // other thing that can sit at X, is stripped by resequence anyway.
+    if (X == r0B) continue;
+    mainXsh->clearCells(r0B, colB, X - r0B);  // colB head-extra
+    mainXsh->clearCells(X, colA, half + 1);   // colA tail-extra + its stop
   }
 }
 
