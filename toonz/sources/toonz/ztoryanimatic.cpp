@@ -8248,7 +8248,27 @@ void ZtoryAnimaticPanel::resequenceXsheet() {
         isChild = true; break;
       }
     }
-    if (isChild) oldPositions.push_back({col, r0, r1 - r0 + 1});
+    if (!isChild) continue;
+    // ⚠️ POSIZIONE VERA, non quella grezza. Con una dissolvenza in entrata il
+    // r0 di getRange sta PRIMA dell'inizio reale dello shot, di headHalf frame
+    // (lo dice shotTrueSpan: trueStart = r0 + headHalf). Misurando di li', lo
+    // «spostamento» calcolato al passo 3 non e' di quanto si e' mosso lo shot
+    // ma di quanto e' cambiata la sovrapposizione — e puo' venire NEGATIVO
+    // mentre lo shot si allunga a destra.
+    //
+    // Segnalato da Franco il 2026-09-23: allungando uno shot, l'audio si
+    // spostava a SINISTRA e tagliava il segmento precedente. Il taglio arriva
+    // da shiftLevelFromFrame(), che non e' invertibile: spostando a sinistra,
+    // quando due livelli si sovrapporrebbero TAGLIA il precedente.
+    //
+    // Nota: shotTrueSpan NON filtra le colonne shot (restituisce durationOut>0,
+    // quindi direbbe di si' anche a una colonna audio), percio' la scansione
+    // del child level qui sopra resta necessaria.
+    int ts = 0, td = 0;
+    if (ZtoryShotOps::shotTrueSpan(xsh, col, ts, td) && td > 0)
+      oldPositions.push_back({col, ts, td});
+    else
+      oldPositions.push_back({col, r0, r1 - r0 + 1});
   }
 
   // 2. Run resequence on video columns.
@@ -8259,9 +8279,16 @@ void ZtoryAnimaticPanel::resequenceXsheet() {
   for (auto &op : oldPositions) {
     TXshColumn *column = xsh->getColumn(op.col);
     if (!column || column->isEmpty()) continue;
-    int nr0 = 0, nr1 = 0;
-    column->getRange(nr0, nr1);
-    shotDelta[op.col] = nr0 - op.r0;
+    // Stessa misura di prima, o il confronto non significherebbe niente:
+    // grezzo contro vero darebbe uno spostamento fasullo pari agli extra.
+    int nts = 0, ntd = 0;
+    if (ZtoryShotOps::shotTrueSpan(xsh, op.col, nts, ntd) && ntd > 0) {
+      shotDelta[op.col] = nts - op.r0;
+    } else {
+      int nr0 = 0, nr1 = 0;
+      column->getRange(nr0, nr1);
+      shotDelta[op.col] = nr0 - op.r0;
+    }
   }
 
   // 4. Shift audio ColumnLevels so they follow their associated shots.

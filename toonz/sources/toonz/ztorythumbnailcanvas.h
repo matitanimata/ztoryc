@@ -349,7 +349,22 @@ private:
   void endStrokeRecording();
   bool m_recordingStroke = false;
   std::map<std::pair<int, int>, TRaster32P> m_strokeTiles;  // tile key → before
-  bool handleUndoKey(QKeyEvent *e);  // Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z
+  bool handleUndoKey(QKeyEvent *e);
+  // Il menu Edit legge la pila dell'APPLICAZIONE, la tela ha la sua: da qui
+  // le voci Annulla/Ripeti grigie mentre ⌘Z funzionava. Queste due accendono
+  // le voci e le fanno agire sulla tela quando e' lei ad avere la storia —
+  // ma solo se la pila dell'applicazione e' VUOTA, o un clic ne annullerebbe
+  // due (la nostra e la sua).
+public:
+  void syncAppUndoActions();
+  // Chiamata dal router del comando: se la Thumbs room ha qualcosa da
+  // annullare/ripetere lo fa e risponde true, altrimenti lascia fare
+  // all'applicazione. Le due pile restano separate — sono due programmi
+  // adiacenti (Franco, 2026-09-23) — e il comando e' uno solo che smista.
+  bool routeUndoHere(bool redoDirection);
+  bool isThumbsContextActive() const;
+
+private:  // Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z
   QTransform floatLocalToWorld() const;   // base-image px → world coords
   QPointF floatHandleWorld(int h) const;  // h: 0..3 corners, 4 = rotate handle
   int floatHandleAt(const QPointF &widgetPos) const;  // hit-test → handle, or -1

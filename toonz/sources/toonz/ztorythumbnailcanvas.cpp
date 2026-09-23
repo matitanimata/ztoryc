@@ -1,6 +1,8 @@
 #include "ztorythumbnailcanvas.h"
 
 #include "ztoryshotops.h"   // cameraAspect
+#include "tundo.h"
+#include <QPointer>
 #include "tapp.h"
 #include "trop.h"           // resample (raster rescale on camera-aspect change)
 #include "toonz/tscenehandle.h"
@@ -268,6 +270,72 @@ private:
 
 }  // namespace
 
+//=============================================================================
+// Router di Annulla/Ripeti
+//-----------------------------------------------------------------------------
+// La Thumbs room ha una pila SUA, separata da quella dell'applicazione, e la
+// tiene apposta: le sue fotografie condividono le pagine fra loro e il bilancio
+// della memoria le conta una volta sola — cosa che TUndoManager non sa fare,
+// perche' chiede la dimensione a ogni oggetto separatamente e conterebbe la
+// stessa pagina piu' volte, troncando la cronologia molto prima del necessario.
+//
+// Due pile separate vogliono pero' UN SOLO gestore del comando, o due
+// rispondono allo stesso clic. Questo sostituisce quello di MainWindow e
+// smista: se la Thumbs room e' a schermo e ha storia, tocca a lei; altrimenti
+// si fa esattamente cio' che faceva MainWindow::onUndo/onRedo.
+namespace {
+
+class ZtoryUndoRouter final : public CommandHandlerInterface {
+public:
+  explicit ZtoryUndoRouter(bool redo) : m_redo(redo) {}
+  void execute() override {
+    // ⚠️ Si CERCA la tela a schermo, non si tiene "l'ultima costruita". Di
+    // pannelli Thumbs ne possono esistere piu' d'uno (uno per room, anche non
+    // visibili), e ricordando l'ultimo costruito si finiva a puntare a uno
+    // NASCOSTO: isThumbsContextActive() diceva no e il comando passava sempre
+    // all'applicazione. Da qui il "dal menu va sulla pila dell'app" mentre la
+    // tastiera — che non passa di qui ma dal filtro della tela — funzionava.
+    ZtoryThumbnailCanvas *c = nullptr;
+    for (const auto &p : s_canvases) {
+      if (p && p->isThumbsContextActive()) { c = p.data(); break; }
+    }
+    if (c && c->routeUndoHere(m_redo)) return;
+    // Comportamento dell'applicazione, copiato da MainWindow::onUndo/onRedo —
+    // attesa del salvataggio compresa, o un annullamento durante una scrittura
+    // lavorerebbe su uno stato a meta'.
+    while (TApp::instance()->isSaveInProgress()) {
+    }
+    if (m_redo)
+      TUndoManager::manager()->redo();
+    else
+      TUndoManager::manager()->undo();
+  }
+  static std::vector<QPointer<ZtoryThumbnailCanvas>> s_canvases;
+
+private:
+  bool m_redo;
+};
+
+std::vector<QPointer<ZtoryThumbnailCanvas>> ZtoryUndoRouter::s_canvases;
+
+}  // namespace
+
+static void ztoryInstallUndoRouter(ZtoryThumbnailCanvas *canvas) {
+  auto &v = ZtoryUndoRouter::s_canvases;
+  // Via le tele morte: i QPointer si azzerano da soli, ma l'elenco no.
+  v.erase(std::remove_if(v.begin(), v.end(),
+                         [](const QPointer<ZtoryThumbnailCanvas> &p) {
+                           return p.isNull();
+                         }),
+          v.end());
+  v.push_back(canvas);
+  static bool installed = false;
+  if (installed) return;
+  installed = true;
+  CommandManager::instance()->setHandler(MI_Undo, new ZtoryUndoRouter(false));
+  CommandManager::instance()->setHandler(MI_Redo, new ZtoryUndoRouter(true));
+}
+
 ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   setFocusPolicy(Qt::StrongFocus);
   setMouseTracking(true);  // brush cursor follows the mouse without a button
@@ -320,6 +388,24 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
           this, &ZtoryThumbnailCanvas::onSceneChanged);
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneChanged, this,
           &ZtoryThumbnailCanvas::onSceneChanged);
+
+  // Le voci Annulla/Ripeti del menu Edit agiscono sulla tela quando e' lei ad
+  // avere la storia. Il gestore dell'applicazione gira comunque, ma con la sua
+  // pila vuota — e ci arriviamo solo in quel caso — non fa niente.
+  // MainWindow::onHistoryChanged() riscrive lo stato delle due voci a ogni
+  // cambio della cronologia dell'APPLICAZIONE, cancellando il nostro. Ci
+  // agganciamo allo stesso segnale: siamo costruiti dopo la finestra
+  // principale, quindi il nostro slot gira per ultimo ed e' l'ultima parola.
+  if (TUndoManager *um = TUndoManager::manager())
+    connect(um, &TUndoManager::historyChanged, this,
+            &ZtoryThumbnailCanvas::syncAppUndoActions);
+
+  // Un SOLO gestore per Annulla/Ripeti, che smista. Qui ce n'erano due che
+  // rispondevano allo stesso clic — il nostro agganciato a triggered() e quello
+  // di MainWindow — e vinceva il suo: il menu ignorava le operazioni della
+  // Thumbs room. Due programmi adiacenti non possono rispondere entrambi allo
+  // stesso comando.
+  ztoryInstallUndoRouter(this);
 
   // Persistence: debounced autosave after edits, reload on scene switch.
   // One worker, owned by this widget: saves serialise, and ~ZtoryThumbnailCanvas
@@ -1271,10 +1357,12 @@ void ZtoryThumbnailCanvas::resizeEvent(QResizeEvent *e) {
 
 void ZtoryThumbnailCanvas::enterEvent(QEvent *) {
   m_cursorOnCanvas = true;
+  syncAppUndoActions();
   update();
 }
 
 void ZtoryThumbnailCanvas::leaveEvent(QEvent *) {
+  syncAppUndoActions();
   m_cursorOnCanvas = false;
   update();
 }
@@ -1657,11 +1745,18 @@ bool ZtoryThumbnailCanvas::eventFilter(QObject *obj, QEvent *ev) {
     // in a selection tool) AND we have history — else let the app handle Cmd-Z.
     const bool undoish =
         hasFocus() || underMouse() || m_xformMode || m_selectMode;
-    const bool wantsUndo = undoish && (ke->modifiers() & Qt::ControlModifier) &&
-                           ke->key() == Qt::Key_Z &&
-                           ((ke->modifiers() & Qt::ShiftModifier)
-                                ? !m_redo.empty()
-                                : !m_undo.empty());
+    // ⌘Z annulla, ⌘⇧Z ripete — e ANCHE ⌘Y, che e' la scorciatoia di redo
+    // dell'applicazione (mainwindow.cpp: MI_Redo = "Ctrl+Y"). Qui si guardava
+    // solo Key_Z, quindi ⌘Y non arrivava mai alla tela: finiva al redo
+    // dell'applicazione, la cui pila e' un'altra ed e' vuota, e non succedeva
+    // niente. Segnalato da Franco il 2026-09-23.
+    const bool ctrl  = (ke->modifiers() & Qt::ControlModifier) != 0;
+    const bool shift = (ke->modifiers() & Qt::ShiftModifier) != 0;
+    const bool isRedoKey =
+        ctrl && (ke->key() == Qt::Key_Y || (ke->key() == Qt::Key_Z && shift));
+    const bool isUndoKey = ctrl && ke->key() == Qt::Key_Z && !shift;
+    const bool wantsUndo = undoish && ((isRedoKey && !m_redo.empty()) ||
+                                       (isUndoKey && !m_undo.empty()));
     // ShortcutOverride fires BEFORE a matching global QAction (e.g. Delete =
     // clear cells) would eat the key. Accepting it makes Qt re-deliver the key
     // as an ordinary KeyPress that the branches below then handle — without it,
@@ -2276,6 +2371,7 @@ void ZtoryThumbnailCanvas::pushUndo() {
   s.ras      = m_ras->clone();
   m_undo.push_back(s);
   trimHistory();
+  syncAppUndoActions();
 }
 
 // Copy the tiles listed in \a like out of the current raster (used to build the
@@ -2436,7 +2532,17 @@ void ZtoryThumbnailCanvas::restoreGeometry(const Snapshot &s) {
 
 // A patch snapshot only swaps the touched tiles: build the opposite entry from
 // the current pixels of those same tiles, then paste the stored ones back.
+// Riallinea le voci Annulla/Ripeti del menu quando la funzione esce, da
+// qualunque ramo: undo() e redo() hanno piu' uscite anticipate, e dimenticarne
+// una lascerebbe il menu a raccontare una pila che non c'e' piu'.
+struct ZtoryUndoActionSync {
+  ZtoryThumbnailCanvas *c;
+  explicit ZtoryUndoActionSync(ZtoryThumbnailCanvas *canvas) : c(canvas) {}
+  ~ZtoryUndoActionSync() { if (c) c->syncAppUndoActions(); }
+};
+
 void ZtoryThumbnailCanvas::undo() {
+  ZtoryUndoActionSync sync(this);  // riallinea le voci di menu all'uscita
   if (m_undo.empty()) return;
   if (!m_ras) return;
   Snapshot s = m_undo.back();
@@ -2467,6 +2573,7 @@ void ZtoryThumbnailCanvas::undo() {
 }
 
 void ZtoryThumbnailCanvas::redo() {
+  ZtoryUndoActionSync sync(this);  // riallinea le voci di menu all'uscita
   if (m_redo.empty()) return;
   if (!m_ras) return;
   Snapshot s = m_redo.back();
@@ -2521,12 +2628,12 @@ void ZtoryThumbnailCanvas::gestureRedo() {
     CommandManager::instance()->execute(MI_Redo);
 }
 
-bool ZtoryThumbnailCanvas::handleUndoKey(QKeyEvent *e) {
-  // Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z = redo. Only consume when we actually
-  // have history, so the app's own undo still works when ours is empty.
-  if (!(e->modifiers() & Qt::ControlModifier) || e->key() != Qt::Key_Z)
-    return false;
-  if (e->modifiers() & Qt::ShiftModifier) {
+bool ZtoryThumbnailCanvas::isThumbsContextActive() const {
+  return isVisible() && window() && window()->isActiveWindow();
+}
+
+bool ZtoryThumbnailCanvas::routeUndoHere(bool redoDirection) {
+  if (redoDirection) {
     if (m_redo.empty()) return false;
     redo();
   } else {
@@ -2534,6 +2641,55 @@ bool ZtoryThumbnailCanvas::handleUndoKey(QKeyEvent *e) {
     undo();
   }
   return true;
+}
+
+void ZtoryThumbnailCanvas::syncAppUndoActions() {
+  CommandManager *cm = CommandManager::instance();
+  if (!cm) return;
+  QAction *au = cm->getAction(MI_Undo);
+  QAction *ar = cm->getAction(MI_Redo);
+  if (!au || !ar) return;
+  TUndoManager *um = TUndoManager::manager();
+  if (!um) return;
+
+  // ⚠️ NIENTE underMouse() QUI, ed e' il motivo per cui "Ripeti" non si
+  // accendeva MAI: aprendo il menu il puntatore ESCE dalla tela, quindi
+  // nell'istante esatto in cui guardi le voci la tela smette di considerarsi
+  // in primo piano e le rimette grigie. Il filtro dei tasti puo' usarlo — la
+  // tastiera non sposta il puntatore — il menu no.
+  // Qui "nostro" vuol dire: la Thumbs room e' quella a schermo.
+  const bool mine = isVisible() && window() && window()->isActiveWindow();
+  if (mine && (!m_undo.empty() || !m_redo.empty())) {
+    au->setEnabled(!m_undo.empty());
+    ar->setEnabled(!m_redo.empty());
+    return;
+  }
+  // Fuori da quel caso si rimette la verita' dell'applicazione: se restassero
+  // accese, un Annulla dal menu in un'altra room non farebbe niente e
+  // sembrerebbe rotto.
+  au->setEnabled(!um->atBeginning());
+  ar->setEnabled(!um->atEnd());
+}
+
+bool ZtoryThumbnailCanvas::handleUndoKey(QKeyEvent *e) {
+  // ⌘Z annulla; ⌘⇧Z e ⌘Y ripetono. ⌘Y perche' e' la scorciatoia che
+  // l'applicazione assegna a MI_Redo (mainwindow.cpp), quindi e' quella che un
+  // utente prova per prima — e qui non era gestita.
+  // Si consuma il tasto solo quando la pila ha qualcosa, cosi' l'annullamento
+  // dell'applicazione continua a funzionare quando la nostra e' vuota.
+  if (!(e->modifiers() & Qt::ControlModifier)) return false;
+  const bool shift = (e->modifiers() & Qt::ShiftModifier) != 0;
+  if (e->key() == Qt::Key_Y || (e->key() == Qt::Key_Z && shift)) {
+    if (m_redo.empty()) return false;
+    redo();
+    return true;
+  }
+  if (e->key() == Qt::Key_Z && !shift) {
+    if (m_undo.empty()) return false;
+    undo();
+    return true;
+  }
+  return false;
 }
 
 //=============================================================================
