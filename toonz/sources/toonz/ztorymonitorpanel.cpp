@@ -211,18 +211,17 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
       "QToolButton:hover{background:#555;}"
       "QToolButton:checked{background:#3a6a9a;color:#fff;border-color:#5599cc;}");
   tbLay->addWidget(m_timecodeBtn);
-  tbLay->addSpacing(8);
-
-  // Return to main xsheet button
-  QToolButton *returnBtn = new QToolButton(toolbar);
-  returnBtn->setText("←");
-  returnBtn->setFixedSize(26, 22);
-  returnBtn->setToolTip(tr("Return to main xsheet (close open sub-scene)"));
-  returnBtn->setStyleSheet(
-      "QToolButton{background:transparent;border:1px solid #555;border-radius:3px;"
-      "color:#aaa;font-size:12px;font-weight:bold;}"
-      "QToolButton:hover{background:#555;}");
-  tbLay->addWidget(returnBtn);
+  // Qui c'era un pulsante «←» (Return to main xsheet) TOLTO il 2026-09-23 su
+  // decisione di Franco. Chiudeva le sotto-scene aperte, quindi faceva
+  // qualcosa solo se stavi DENTRO uno shot guardando il Monitor — cioe' quasi
+  // mai: il resto del tempo il clic non produceva niente, e sembrava rotto.
+  // Nell'Animatic lo stesso comando non sta nella barra: sta nella barra
+  // superiore e COMPARE solo in vista shot, quando ha qualcosa da fare. Il
+  // Monitor ne aveva fatto una copia sempre visibile.
+  // Un pulsante che c'e' sempre e funziona quasi mai e' peggio di uno che non
+  // c'e'. onReturnToMain() NON diventa codice morto: la chiama ancora il
+  // segnale returnToMainRequested del track (doppio clic fuori dai blocchi),
+  // che e' il modo in cui si torna indietro senza un pulsante dedicato.
   tbLay->addStretch(1);
 
   // ── Bottom area: toolbar + ruler + track + audio ──────────────────────────
@@ -298,8 +297,6 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
   connect(m_timecodeBtn, &QToolButton::toggled, this, [this](bool on) {
     m_ruler->setShowTimecode(on);
   });
-  connect(returnBtn, &QToolButton::clicked,
-          this, &ZtoryMonitorPanel::onReturnToMain);
 
   // Shot edit operations — the Monitor's track selection is already mirrored
   // to ZtoryModel::sharedSelection() (see selectionChanged connection below).
