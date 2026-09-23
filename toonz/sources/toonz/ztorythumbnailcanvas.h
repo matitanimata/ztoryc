@@ -360,6 +360,12 @@ private:
     //   ras           — everything else (paste, transform, reflow): full copy.
     bool geometryOnly = false;
     TRaster32P ras;   // null when this is a stroke (patches) snapshot
+    // ── Fotografia a PAGINE (sostituisce la clonazione dell'intera tela) ──
+    // Tiene i RIFERIMENTI alle pagine, non copie: flushWindowToPages() crea un
+    // raster NUOVO per ogni pagina sporca, quindi una fotografia che tiene i
+    // puntatori vecchi resta valida da sola. Copia-su-scrittura gratis.
+    // Costo di una fotografia: le pagine TOCCATE, non tutta la tela.
+    std::vector<TRaster32P> pages;
     std::vector<Patch> patches;
     int cols, rows;
     QVector<QRect> merges;

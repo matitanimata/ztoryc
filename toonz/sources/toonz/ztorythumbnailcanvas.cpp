@@ -43,6 +43,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <set>
 
 //=============================================================================
 
@@ -2480,10 +2481,20 @@ void ZtoryThumbnailCanvas::trimHistory() {
   // and pushUndo() clones everything.
   static const size_t kMaxUndoBytes = 256u * 1024u * 1024u;
 
-  auto bytesOf = [](const Snapshot &s) -> size_t {
+  // Le pagine sono CONDIVISE fra le fotografie: sommarle una per fotografia
+  // conterebbe piu' volte la stessa memoria e troncherebbe la cronologia molto
+  // prima del necessario — cioe' si pagherebbe il prezzo della copia senza
+  // averla fatta. Si contano una volta sola, per puntatore.
+  std::set<const TRaster *> visti;
+  auto bytesOf = [&visti](const Snapshot &s) -> size_t {
     size_t n = 0;
     if (s.ras)
       n += (size_t)s.ras->getLx() * (size_t)s.ras->getLy() * 4u;
+    for (const TRaster32P &p : s.pages) {
+      if (!p) continue;
+      if (!visti.insert(p.getPointer()).second) continue;  // gia' contata
+      n += (size_t)p->getLx() * (size_t)p->getLy() * 4u;
+    }
     for (const Patch &p : s.patches)
       if (p.before)
         n += (size_t)p.before->getLx() * (size_t)p.before->getLy() * 4u;
@@ -2508,7 +2519,14 @@ void ZtoryThumbnailCanvas::trimHistory() {
 void ZtoryThumbnailCanvas::pushUndo() {
   if (!m_ras) return;
   Snapshot s = makeMetaSnapshot();
-  s.ras      = m_ras->clone();
+  // Qui c'era `s.ras = m_ras->clone()`: una copia dell'INTERA tela per ogni
+  // operazione che non fosse una pennellata (incolla, trasforma, importa,
+  // pulisci, aggiungi riga). 51 MB a 4x26 e 617 MB all'obiettivo di
+  // produzione — ed e' il motivo per cui l'annullamento era "faticoso".
+  // Adesso si riversa e si tengono i RIFERIMENTI alle pagine: quelle non
+  // toccate sono condivise con la cronologia, e costano zero.
+  flushWindowToPages();
+  s.pages = m_pages;
   m_undo.push_back(s);
   trimHistory();
 }
@@ -2614,7 +2632,12 @@ bool ZtoryThumbnailCanvas::askWrite(const TRect &rect) {
 }
 
 void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
-  m_ras    = s.ras->clone();  // clone so the stored snapshot stays immutable
+  // ⚠️ LA GEOMETRIA PRIMA DEI PIXEL, e non e' un dettaglio di stile:
+  // rebuildWindowFromPages() dimensiona la finestra con gridH(), che dipende da
+  // m_rows E da m_boxH. Ripristinando l'altezza della casella DOPO, annullando
+  // attraverso un cambio di formato camera la finestra nascerebbe con
+  // l'altezza vecchia. Il codice di prima non se ne accorgeva perche' clonava
+  // un raster gia' dimensionato.
   m_cols   = s.cols;
   m_rows   = s.rows;
   m_merges = s.merges;
@@ -2623,6 +2646,14 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
   if (s.boxAspect > 0.0) {
     m_boxAspect = s.boxAspect;
     m_boxH      = m_boxW / s.boxAspect;
+  }
+  // Dalle PAGINE: le si adotta e si ricostruisce la finestra. Non serve
+  // clonare — le pagine non si modificano mai in luogo, si sostituiscono.
+  if (!s.pages.empty()) {
+    m_pages = s.pages;
+    rebuildWindowFromPages();
+  } else if (s.ras) {
+    m_ras = s.ras->clone();
   }
   // Restore whatever floating selection was captured with this snapshot (a null
   // image simply clears the float) — this is what makes an undone Del re-float
@@ -2686,9 +2717,10 @@ void ZtoryThumbnailCanvas::undo() {
     restoreGeometry(s);
     return;
   }
-  if (s.ras) {
+  if (!s.pages.empty() || s.ras) {
     Snapshot cur = makeMetaSnapshot();
-    cur.ras      = m_ras->clone();
+    flushWindowToPages();
+    cur.pages = m_pages;
     m_redo.push_back(std::move(cur));
     restoreSnapshot(s);
     return;
@@ -2716,9 +2748,10 @@ void ZtoryThumbnailCanvas::redo() {
     restoreGeometry(s);
     return;
   }
-  if (s.ras) {
+  if (!s.pages.empty() || s.ras) {
     Snapshot cur = makeMetaSnapshot();
-    cur.ras      = m_ras->clone();
+    flushWindowToPages();
+    cur.pages = m_pages;
     m_undo.push_back(std::move(cur));
     restoreSnapshot(s);
     return;
