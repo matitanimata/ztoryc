@@ -580,7 +580,19 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
 
   // Snapshot the pre-reshape canvas (raster + its aspect) so Cmd-Z reverts the
   // camera-format reflow cleanly instead of leaving a stale grid.
-  pushUndo();
+  //
+  // ⚠️ MA NON quando questa e' la prima riallineata dopo un caricamento. Alla
+  // nascita la tela prende il formato predefinito (16:9) e solo un momento dopo
+  // scopre la camera vera: quel ricongiungimento non e' una cosa che l'utente
+  // ha fatto, e rendendolo annullabile ogni apertura di scena lasciava in pila
+  // una fotografia a 16:9 pronta a saltare fuori al primo ⌘Z — anche in una
+  // scena dove la camera non era mai stata toccata.
+  // Trovato da Franco il 2026-09-23 su una scena quadrata: «l'undo cambia la
+  // camera, cosa che non ha senso in questo caso».
+  if (m_awaitingCameraCatchUp)
+    m_awaitingCameraCatchUp = false;
+  else
+    pushUndo();
   m_boxAspect = aspect;
   m_boxH      = newBoxH;
   m_ras       = reanchorRaster(m_ras, oldBoxH, m_boxH);
@@ -1072,6 +1084,27 @@ void ZtoryThumbnailCanvas::persistLoad() {
   // the scene identity actually changed, so in-RAM edits are never clobbered.
   if (key == m_persistKey) return;
   m_persistKey = key;
+
+  // ⚠️ La scena e' UN'ALTRA: tutto lo stato di modifica della tela precedente
+  // deve morire qui. Restava in piedi, e un annullamento qualunque — voluto o
+  // accidentale — ripescava uno stato della scena PRECEDENTE dentro quella
+  // appena aperta; il salvataggio automatico poi lo scriveva su disco al posto
+  // dei thumbs veri. Segnalato da Franco il 2026-09-23 provando sulla
+  // Companion: «un undo successivo fa apparire i thumbs della scena
+  // precedente, tutti insieme».
+  //
+  // Non serve il tocco per inciamparci: bastano due scene e un ⌘Z.
+  m_undo.clear();
+  m_redo.clear();
+  m_strokeTiles.clear();
+  // La selezione flottante e' un pezzo di raster dell'altra scena: confermarla
+  // qui la incollerebbe in questa.
+  m_floatImg     = QImage();
+  m_floatDrag    = -1;
+  m_floatWasMove = false;
+  // La prima riallineata alla camera dopo un caricamento e' un ricongiungimento,
+  // non una modifica: non va resa annullabile.
+  m_awaitingCameraCatchUp = true;
 
   TFilePath dir = persistDir();
   QStringList matches;
