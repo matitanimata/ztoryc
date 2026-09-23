@@ -146,14 +146,14 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
     return btn;
   };
 
-  QToolButton *fitAllBtn = new QToolButton(toolbar);
-  fitAllBtn->setText("[]");
-  fitAllBtn->setFixedSize(26, 22);
-  fitAllBtn->setToolTip(tr("Fit All (Ctrl+0)"));
-  fitAllBtn->setStyleSheet(
-      "QToolButton{background:transparent;border:1px solid #555;border-radius:3px;"
-      "color:#aaa;font-size:10px;}"
-      "QToolButton:hover{background:#555;}");
+  // Fit All con la stessa icona dell'Animatic. Qui c'era il testo "[]" in un
+  // riquadro squadrato: era il segnaposto messo quando l'icona non esisteva
+  // ancora, ed e' rimasto — «ci sono delle icone che sono rimaste con le
+  // vecchie versioni» (Franco, 2026-09-23). Gli altri pulsanti condivisi erano
+  // gia' allineati: makeTbBtn e' identico a quello dell'Animatic.
+  QToolButton *fitAllBtn = makeTbBtn("ztoryc_fit_all",
+                                     tr("Fit All — zoom to show the entire "
+                                        "animatic (Ctrl+0)"));
   tbLay->addWidget(fitAllBtn);
   tbLay->addSpacing(4);
 
@@ -177,6 +177,19 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
 
   QToolButton *mergeBtn = makeTbBtn("ztoryc_merge", tr("Merge selected shots"));
   tbLay->addWidget(mergeBtn);
+
+  // Snap (calamita): mancava, e il track del Monitor sa gia' onorarlo da solo
+  // (setSnapEnabled). Acceso come nell'Animatic, cosi' i due pannelli si
+  // comportano allo stesso modo trascinando i bordi di uno shot.
+  QToolButton *snapBtn = makeTbBtn(
+      "ztoryc_snap",
+      tr("Snap (magnet) — snap dragged edges to shot boundaries"), true);
+  snapBtn->setChecked(true);
+  m_track->setSnapEnabled(true);
+  connect(snapBtn, &QToolButton::toggled, this, [this](bool on) {
+    m_track->setSnapEnabled(on);
+  });
+  tbLay->addWidget(snapBtn);
   tbLay->addSpacing(8);
 
   QToolButton *copyBtn  = makeTbBtn("ztoryc_copy",  tr("Copy selected shots  (Ctrl+C)"));
