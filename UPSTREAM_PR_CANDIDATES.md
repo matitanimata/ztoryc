@@ -276,6 +276,32 @@ not portable.
   right — the new caller was wrong by itself. Worth remembering: an observation
   compatible with two explanations supports neither.
 
+#### ✨ New (2026-09-23)
+
+- ⛔ **WITHDRAWN before it was ever proposed — "changing the camera format is
+  not undoable"** — `toonz/camerasettingspopup.cpp`,
+  `toonzqt/camerasettingswidget.cpp`. Logged here for half an hour on
+  2026-09-23 as a gap, then withdrawn the same day. **Do not re-propose it.**
+
+  The measurement stands and is worth keeping: `TUndo` occurrences in those
+  two files are **0 and 0** on `upstream/master` (tahoma2d) and **0 and 0** on
+  `opentoonz/master`. So a camera format change really is outside the undo
+  chain everywhere. What changed is the reading of that fact.
+
+  **It is not a gap, it is the right behaviour** (Franco, 2026-09-23, after
+  checking it in Tahoma himself): changing the camera format is a change to
+  the PROJECT SETTINGS, not to the work, and it belongs outside the undo chain
+  — like the frame rate. The case that settles it: draw, change camera, keep
+  drawing; if the camera change were in the chain, undoing the last few
+  strokes would force you through it and leave the camera changed without
+  asking.
+
+  Consequence for Ztoryc, already applied: the Thumbnail room no longer keeps
+  an undo snapshot of its grid re-layout either. Making the CONSEQUENCE
+  undoable while the CAUSE was not is exactly what produced the defect Franco
+  hit — the grid going back while Camera Settings stayed on the new format,
+  and a 16:9 snapshot left in the stack by every scene open.
+
 #### ✨ New (2026-09-18)
 
 - ✅ **A scene whose file name ends with `_` (or `-`) cannot be opened at all,
