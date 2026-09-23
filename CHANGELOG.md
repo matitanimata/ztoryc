@@ -1,3 +1,57 @@
+## [2026-09-24] — l'audio segue il suo shot, il roll con la dissolvenza, e la 0.14.2
+
+### Fixed — l'audio col link A/V (`2ce073e29`, collaudato da Franco)
+
+**La causa del «continua a fare cose strane» non era quella che inseguivamo.**
+Trovata nel log `ztprobe_undo2.log` di ieri sera: lo snapshot del Board
+riconosceva i livelli audio per INDIRIZZO, e annullare o ripetere
+un'operazione sull'AUDIO (`UndoAudioEdit` → `TXshSoundColumn::assignLevels`)
+distrugge tutti i `ColumnLevel` della colonna e ne crea di nuovi. Da quel
+momento ogni annulla video saltava la colonna in silenzio: nel log l'audio va
+da 27 a 40 e poi «ripristina» 40 su 40 per sempre. Spiega esattamente il
+«all'inizio funziona, poi si perde». Ora lo snapshot copia i livelli PER
+VALORE e il ripristino ricostruisce la colonna intera
+(`TXshSoundColumn::replaceLevels`).
+
+**Il modello deciso ieri da Franco e' implementato:** ogni segmento e' ancorato
+al primo shot che tocca, allo scarto dal suo inizio VERO, e dopo ogni
+resequence si ricalcola. Fatto dentro `TXshSoundColumn`
+(`setLevelsVisibleStart`: sposta, riordina, e una sovrapposizione taglia la
+coda del precedente), cioe' dove la patch WIP di ieri non poteva arrivare. Il
+delta comune e' sparito: nel roll trascinava l'audio di C, D… insieme a B.
+
+### Fixed — il roll con una dissolvenza accorciava l'animatic
+
+Misurato con una sonda (poi tolta): con una dissolvenza in entrata su A, un
+roll che chiedeva 60 frame ne dava 56. `resizeCol` misurava col `getRange`
+lordo, frame di testa della dissolvenza compresi, contro le durate NETTE dei
+blocchi. Il trim lo evitava gia' smontando la dissolvenza prima di misurare; al
+roll mancava. **E un secondo difetto sotto:** `teardownCrossDissolves`
+cancellava `[X, X+half]` di A anche a dissolvenza NON esposta, mangiandosi i
+frame appena aggiunti oltre la giuntura — il «salto indietro verso la
+dissolvenza» segnalato il 23. Verifica: 30 roll su 30, durate ottenute =
+chieste, fine del video ferma.
+
+### 🎯 Deciso da Franco
+
+- **L'audio sporge oltre la fine del video** quando un roll sposta avanti
+  l'ultimo shot: non si taglia alla fine del video (sarebbe un taglio non
+  chiesto e non visto).
+- **La 0.14.2 esce ADESSO**, senza «chiudi senza salvare» per i thumbs e senza
+  l'ultimo passo del raster per pagina: la correzione del tocco per l'utente
+  Surface aspetta da tre giorni. Quei due vanno nella prossima, con la 1.6.3.
+- **Ordine: prima il rilascio, poi la 1.6.3** — la 1.6.3 tocca CMake e CI.
+
+### Merge
+
+- **Thumbs room nel master** (`dbacbbbdf`): rotazione, raster per pagina passi
+  1–2b, Monitor. Nessun conflitto, nessun residuo delle sonde.
+- **Tahoma2D 1.6.3 PRONTO sul branch `merge/tahoma-1.6.3`** (`15e137725`, NON
+  in master): parentela della 1.6.2 registrata con `-s ours` (`b19611d1c`),
+  poi 12 conflitti — gli stessi previsti dalla prova del 23, tutti in file
+  nostri e risolti tenendo Ztoryc, tranne `AppRun` (correzione Wayland di 1.6.3
+  col nostro eseguibile). Da verificare coi tre workflow prima di fonderlo.
+
 ## [2026-09-23] — l'annullamento come tema del giorno, e un principio che Franco ha messo a fuoco
 
 Giornata lunga e di una cosa sola, vista da sette lati: **chi possiede
