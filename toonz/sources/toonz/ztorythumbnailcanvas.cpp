@@ -1037,8 +1037,15 @@ TRaster32P ZtoryThumbnailCanvas::canvasFromPages(
     if (y0 > y1 || y1 < 0 || y0 >= ly) continue;
     const int h = qMin(pages[b]->getLy(), y1 - y0 + 1);
     if (h <= 0) continue;
-    canvas->extract(0, y0, lx - 1, y0 + h - 1)
-        ->copy(pages[b]->extract(0, 0, lx - 1, h - 1));
+    // Allineate dall'ALTO della pagina, come fa il caricatore delle bande:
+    // «so a short last band lands where it was cut from». Finche' la pagina e'
+    // alta quanto il suo intervallo le due scelte coincidono — cioe' sempre,
+    // oggi — ma divergono proprio nei casi storti (una pagina salvata con una
+    // camera diversa), che sono quelli in cui un disallineamento si porta via
+    // una striscia di disegno.
+    canvas->extract(0, y1 - h + 1, lx - 1, y1)
+        ->copy(pages[b]->extract(0, pages[b]->getLy() - h, lx - 1,
+                                 pages[b]->getLy() - 1));
   }
   return canvas;
 }
@@ -1282,6 +1289,14 @@ void ZtoryThumbnailCanvas::persistLoad() {
 // With m_rot == 0 this maps (x,y) to (x*zoom + pan.x, y*zoom + pan.y) -- i.e.
 // exactly what the hand-written arithmetic did before, which is what makes
 // this change safe to land before the rotation gesture exists.
+// Angolo del puntatore attorno al centro della finestra, in gradi.  Il verso e'
+// quello di QTransform::rotate() su un widget con la y in giu', cosi' il foglio
+// segue il mouse senza altri segni da indovinare — che e' l'errore che la
+// rotazione col pizzico aveva gia' fatto pagare una volta.
+static double ztoryAngleAround(const QPointF &p, const QPointF &centre) {
+  return std::atan2(p.y() - centre.y(), p.x() - centre.x()) * 180.0 / M_PI;
+}
+
 QTransform ZtoryThumbnailCanvas::viewTransform() const {
   QTransform t;
   t.translate(m_pan.x(), m_pan.y());
@@ -1567,6 +1582,13 @@ void ZtoryThumbnailCanvas::mousePressEvent(QMouseEvent *e) {
   // corso questo click NON e' una pennellata: e' la mano che sposta la tela.
   if (m_gestureActive && m_touchDevice == QTouchDevice::TouchScreen) return;
   if (e->button() == Qt::MiddleButton) {
+    if (e->modifiers() & Qt::AltModifier) {
+      m_mouseRotating = true;
+      m_mouseRotAngle =
+          ztoryAngleAround(e->pos(), QPointF(width() * 0.5, height() * 0.5));
+      setCursor(Qt::ClosedHandCursor);
+      return;
+    }
     m_panning    = true;
     m_lastPanPos = e->pos();
     setCursor(Qt::ClosedHandCursor);
@@ -1620,6 +1642,13 @@ void ZtoryThumbnailCanvas::mouseMoveEvent(QMouseEvent *e) {
   if (m_gestureActive && m_touchDevice == QTouchDevice::TouchScreen) return;
   m_cursorWidget   = e->localPos();
   m_cursorOnCanvas = true;
+  if (m_mouseRotating) {
+    const QPointF centre(width() * 0.5, height() * 0.5);
+    const double a = ztoryAngleAround(e->pos(), centre);
+    rotateAt(centre, a - m_mouseRotAngle);
+    m_mouseRotAngle = a;
+    return;
+  }
   if (m_panning) {
     m_pan += e->pos() - m_lastPanPos;
     m_lastPanPos = e->pos();
@@ -1685,7 +1714,8 @@ void ZtoryThumbnailCanvas::mouseReleaseEvent(QMouseEvent *e) {
     return;
   }
   if (e->button() == Qt::MiddleButton) {
-    m_panning = false;
+    m_panning       = false;
+    m_mouseRotating = false;
     updateToolCursor();
     return;
   }

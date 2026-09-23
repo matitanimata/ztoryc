@@ -411,6 +411,13 @@ private:
   double m_rot   = 0.0;  // degrees, clockwise on screen
   QPointF m_pan  = QPointF(28.0, 28.0);
   bool m_panning = false;
+  // Rotazione col MOUSE: ⌥ + trascinamento col tasto centrale, cioe' il
+  // fratello della manina (il centrale da solo sposta). Serve perche' senza
+  // touch la rotazione si potrebbe usare solo a scatti di 15° da tastiera, e
+  // in Tahoma la rotazione col mouse e' uno STRUMENTO (T_Rotate) che qui non
+  // arriva: la Thumbs room ha un suo sistema di strumenti.
+  bool   m_mouseRotating = false;
+  double m_mouseRotAngle = 0.0;  // angolo dell'ultimo punto, attorno al centro
   QPoint m_lastPanPos;
   QScrollBar *m_hbar = nullptr;     // side scrollbars (shown only when needed)
   QScrollBar *m_vbar = nullptr;
