@@ -296,9 +296,8 @@ public:
     // all'applicazione. Da qui il "dal menu va sulla pila dell'app" mentre la
     // tastiera — che non passa di qui ma dal filtro della tela — funzionava.
     ZtoryThumbnailCanvas *c = nullptr;
-    for (const auto &p : s_canvases) {
+    for (const auto &p : s_canvases)
       if (p && p->isThumbsContextActive()) { c = p.data(); break; }
-    }
     if (c && c->routeUndoHere(m_redo)) return;
     // Comportamento dell'applicazione, copiato da MainWindow::onUndo/onRedo —
     // attesa del salvataggio compresa, o un annullamento durante una scrittura
@@ -320,6 +319,14 @@ std::vector<QPointer<ZtoryThumbnailCanvas>> ZtoryUndoRouter::s_canvases;
 
 }  // namespace
 
+// ⚠️ SI REINSTALLA A OGNI SHOW, e non basta farlo alla nascita.
+// MainWindow costruisce le room — quindi anche questo pannello — dentro
+// readSettings(), e SOLO DOPO, cinque righe piu' giu', chiama
+// setCommandHandler("MI_Undo", ...). E setHandler non affianca: ELIMINA il
+// gestore precedente. Il nostro router nasceva e veniva distrutto prima ancora
+// che l'applicazione finisse di partire, e il menu tornava all'applicazione.
+// Trovato con una sonda che non ha scritto NIENTE: execute() non era mai
+// nostra (2026-09-23).
 static void ztoryInstallUndoRouter(ZtoryThumbnailCanvas *canvas) {
   auto &v = ZtoryUndoRouter::s_canvases;
   // Via le tele morte: i QPointer si azzerano da soli, ma l'elenco no.
@@ -328,10 +335,13 @@ static void ztoryInstallUndoRouter(ZtoryThumbnailCanvas *canvas) {
                            return p.isNull();
                          }),
           v.end());
-  v.push_back(canvas);
-  static bool installed = false;
-  if (installed) return;
-  installed = true;
+  bool nuova = true;
+  for (const auto &p : v)
+    if (p.data() == canvas) { nuova = false; break; }
+  if (nuova) v.push_back(canvas);
+  // Niente guardia "una volta sola": se MainWindow ce l'ha cancellato dopo,
+  // l'unico modo di riaverlo e' rimetterlo. setHandler distrugge il vecchio,
+  // quindi non si accumula niente.
   CommandManager::instance()->setHandler(MI_Undo, new ZtoryUndoRouter(false));
   CommandManager::instance()->setHandler(MI_Redo, new ZtoryUndoRouter(true));
 }
@@ -1355,6 +1365,14 @@ void ZtoryThumbnailCanvas::resizeEvent(QResizeEvent *e) {
   updateScrollBars();
 }
 
+void ZtoryThumbnailCanvas::showEvent(QShowEvent *e) {
+  QWidget::showEvent(e);
+  // La room torna a schermo: ci si riprende il comando, che MainWindow puo'
+  // averci tolto all'avvio.
+  ztoryInstallUndoRouter(this);
+  syncAppUndoActions();
+}
+
 void ZtoryThumbnailCanvas::enterEvent(QEvent *) {
   m_cursorOnCanvas = true;
   syncAppUndoActions();
@@ -1741,10 +1759,13 @@ bool ZtoryThumbnailCanvas::eventFilter(QObject *obj, QEvent *ev) {
                      ev->type() == QEvent::ShortcutOverride;
   if (isKey && isVisible() && window() && window()->isActiveWindow()) {
     auto *ke = static_cast<QKeyEvent *>(ev);
-    // Undo only when this canvas is the focus of attention (focused, hovered or
-    // in a selection tool) AND we have history — else let the app handle Cmd-Z.
-    const bool undoish =
-        hasFocus() || underMouse() || m_xformMode || m_selectMode;
+    // ⚠️ NIENTE underMouse() / hasFocus() QUI. Annulla e Ripeti valgono in
+    // TUTTA la Thumbs room, non solo col puntatore sopra la tela: la room e'
+    // il contesto, non il widget. Prima funzionavano solo passando sopra il
+    // disegno — «se stiamo in quella room dovrebbe funzionare ovunque»
+    // (Franco, 2026-09-23) — ed e' la stessa condizione che usa il router del
+    // comando, cosi' menu e tastiera non possono divergere.
+    const bool undoish = isThumbsContextActive();
     // ⌘Z annulla, ⌘⇧Z ripete — e ANCHE ⌘Y, che e' la scorciatoia di redo
     // dell'applicazione (mainwindow.cpp: MI_Redo = "Ctrl+Y"). Qui si guardava
     // solo Key_Z, quindi ⌘Y non arrivava mai alla tela: finiva al redo
@@ -2629,7 +2650,16 @@ void ZtoryThumbnailCanvas::gestureRedo() {
 }
 
 bool ZtoryThumbnailCanvas::isThumbsContextActive() const {
-  return isVisible() && window() && window()->isActiveWindow();
+  // ⚠️ isVisible() E !isHidden(): in un'applicazione a ROOM i pannelli delle
+  // room non correnti restano figli di un contenitore nascosto, e i due
+  // predicati non dicono la stessa cosa — trappola gia' pagata una volta con
+  // "Send to Board". isVisible() da solo puo' essere falso per un pannello che
+  // l'utente sta guardando, e isHidden() da solo puo' essere falso per uno che
+  // non si vede.
+  if (isHidden()) return false;
+  if (!isVisible()) return false;
+  QWidget *w = window();
+  return w && w->isActiveWindow();
 }
 
 bool ZtoryThumbnailCanvas::routeUndoHere(bool redoDirection) {
@@ -2658,7 +2688,7 @@ void ZtoryThumbnailCanvas::syncAppUndoActions() {
   // in primo piano e le rimette grigie. Il filtro dei tasti puo' usarlo — la
   // tastiera non sposta il puntatore — il menu no.
   // Qui "nostro" vuol dire: la Thumbs room e' quella a schermo.
-  const bool mine = isVisible() && window() && window()->isActiveWindow();
+  const bool mine = isThumbsContextActive();
   if (mine && (!m_undo.empty() || !m_redo.empty())) {
     au->setEnabled(!m_undo.empty());
     ar->setEnabled(!m_redo.empty());

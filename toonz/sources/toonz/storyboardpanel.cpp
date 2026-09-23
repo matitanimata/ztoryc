@@ -1,5 +1,6 @@
 #include "storyboardpanel.h"
 #include "ztoryshotops.h"
+#include "ztoryanimatic.h"   // ZtoryAnimaticController::invalidateSoundTrack
 #include "ztorylightgizmo.h"
 #include "ztorydialoguehighlighter.h"
 #include "ztorylipsync.h"
@@ -5466,7 +5467,9 @@ void ztoryRestoreAudioSnap(const std::vector<ZtoryAudioColSnap> &snap) {
     std::vector<ColumnLevel *> live;
     for (int i = 0; i < sc->getColumnLevelCount(); i++)
       if (ColumnLevel *cl = sc->getColumnLevel(i)) live.push_back(cl);
-    if (live.size() != cs.levels.size()) continue;
+    if (live.size() != cs.levels.size()) {
+      continue;
+    }
     bool allFound = true;
     for (const ZtoryAudioLevelSnap &ls : cs.levels)
       if (std::find(live.begin(), live.end(), ls.level) == live.end()) {
@@ -5475,11 +5478,27 @@ void ztoryRestoreAudioSnap(const std::vector<ZtoryAudioColSnap> &snap) {
       }
     if (!allFound) continue;
     for (const ZtoryAudioLevelSnap &ls : cs.levels) {
+      // NOTA: per ora si ripristina anche la POSIZIONE. Nel modello deciso da
+      // Franco il 2026-09-23 sara' derivata (shot di ancoraggio + scarto) e non
+      // andra' piu' ne' fotografata ne' ripristinata — ma quel cambio richiede
+      // di riordinare i livelli dopo averli spostati, e m_levels e' privato:
+      // va fatto dentro TXshSoundColumn, non da qui. Vedi ANIMATIC_TASKS.
       ls.level->setStartFrame(ls.startFrame);
       ls.level->setOffsets(ls.startOffset, ls.endOffset);
     }
   }
   xsh->updateFrameCount();
+  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  // ⚠️ INVALIDARE LE CACHE, o il ripristino resta invisibile.
+  // Qui i dati tornano al posto giusto ma nessuno lo dice a chi DISEGNA la
+  // forma d'onda ne' a chi tiene la traccia sonora fusa: si continua a vedere
+  // — e a SENTIRE — l'audio nella posizione vecchia. resequenceXsheet() lo fa
+  // da sempre, col suo commento; il percorso dell'annullamento no, ed e'
+  // l'unica differenza fra i due.
+  // Segnalato da Franco il 2026-09-23 come «l'undo e il redo non recuperano la
+  // posizione originale»: la recuperavano, ma solo nei numeri. Misurato con
+  // una sonda: le posizioni ripristinate erano esatte e la catena coerente.
+  ZtoryAnimaticController::instance()->invalidateSoundTrack();
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
 }
 

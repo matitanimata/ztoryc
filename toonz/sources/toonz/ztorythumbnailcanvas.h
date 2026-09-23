@@ -190,6 +190,7 @@ protected:
   void wheelEvent(QWheelEvent *) override;
   void resizeEvent(QResizeEvent *) override;
   void enterEvent(QEvent *) override;
+  void showEvent(QShowEvent *e) override;
   void leaveEvent(QEvent *) override;
   void keyPressEvent(QKeyEvent *) override;
   // App-wide filter: the transform shortcuts (Del/Esc/Enter/Cmd-C/V) must work

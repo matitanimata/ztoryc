@@ -1,3 +1,204 @@
+## [2026-09-23] — l'annullamento come tema del giorno, e un principio che Franco ha messo a fuoco
+
+Giornata lunga e di una cosa sola, vista da sette lati: **chi possiede
+l'annullamento**. Il Monitor, la camera, il cambio scena, il menu Edit, il
+tocco, l'audio collegato. Quasi tutti i difetti di oggi sono nati dalla stessa
+forma di errore — **due meccanismi che rispondono alla stessa domanda** — e la
+correzione buona e' sempre stata togliere il doppione, non arbitrarlo.
+
+### Fixed — il Monitor e il cursore entrando in uno shot (`a54408bde`)
+
+**Il Monitor restava vuoto** riaperto da dentro uno shot. La guardia che spegne
+l'aggiornamento dentro una sotto-scena e' giusta; a mancare era riaccenderlo
+all'USCITA. Il Monitor ascoltava `xsheetChanged` (il CONTENUTO di uno xsheet)
+invece di `xsheetSwitched` (QUALE xsheet e' corrente) — il pannello Animatic
+aveva gia' quell'aggancio per lo stesso motivo.
+
+**Il cursore finiva sulla colonna 49** entrando nello shot 490.
+`onShotClicked()` scriveva la colonna dell'xsheet PRINCIPALE nel cursore della
+SOTTO-SCENA. I doppi clic erano gia' corretti (chiudono prima di riaprire), ed
+e' per questo che si vedeva solo passando da uno shot all'altro con clic
+singoli. Due piste scartate MISURANDO prima di arrivarci: `openSubXsheet()`,
+che la colonna la mette gia' a 0, e la StoryStrip, i cui `emit shotClicked`
+stanno tutti dentro `mousePressEvent`.
+
+**Added — entrando in uno shot: colonna 1 e frame sul MARK OUT** (richiesta di
+Franco). Il mark out e' scelto apposta e non l'ultimo disegno: e' la cella
+tenuta in fondo allo slot, quella da cui si trascina per allungare i disegni su
+tutta la durata decisa dall'animatic.
+
+### Fixed — la pila dell'annullamento sopravviveva al cambio scena (`8ad228feb`)
+
+`persistLoad()` caricava la tela nuova ma non svuotava `m_undo`/`m_redo`:
+restavano le fotografie della scena PRECEDENTE, e un ⌘Z qualsiasi ne ripescava
+una dentro la scena aperta — che il salvataggio automatico poi scriveva su
+disco. **Non serviva il tocco: bastavano due scene e un ⌘Z.**
+
+E **ogni apertura di scena lasciava una mina**: la tela nasce col formato
+predefinito e solo dopo scopre la camera vera, e quella riallineata faceva
+`pushUndo()`. In ogni scena, anche dove la camera non era mai stata toccata,
+restava in pila uno stato a 16:9.
+
+### Fixed — la riallineata alla camera esce dalla catena dell'annullamento (`b09dfb2c7`)
+
+Rovescia la direzione presa in mattinata, **su indicazione di Franco**, e la
+correzione risulta piu' semplice di quella che stavo scrivendo.
+
+> Cambiare il formato della camera e' una modifica alle IMPOSTAZIONI DEL
+> PROGETTO, non al lavoro, e non deve stare nella catena dell'annullamento —
+> come il frame rate. Il caso che lo decide: disegno, cambio camera, continuo a
+> disegnare; se il cambio fosse nella catena, per annullare le ultime pennellate
+> sarei costretto a passarci attraverso.
+
+E se la causa non e' annullabile, non deve esserlo la conseguenza. Tolta la
+fotografia della griglia, la mina sparisce alla radice.
+
+**Verificato sullo stock, non dedotto:** `TUndo` in `camerasettingspopup.cpp` e
+`camerasettingswidget.cpp` — upstream/master (tahoma2d) 0 e 0,
+opentoonz/master 0 e 0. Il cambio camera non e' annullabile da nessuna parte, e
+**va bene cosi'**. Candidato upstream registrato e subito RITIRATO, col motivo
+scritto perche' non venga riproposto.
+
+### Fixed — ⌘Y, il menu Edit, e il link A/V (`466e9782f`)
+
+**⌘Y non ripeteva**: il filtro dei tasti guardava solo `Key_Z`, ma
+l'applicazione assegna il redo a `Ctrl+Y` — la scorciatoia che si prova per
+prima era l'unica che non arrivava.
+
+**Il menu Edit ignorava la Thumbs room.** Qui il principio, di Franco: *«di
+fatto e' come se fossero due app adiacenti ma separate»*. Due pile separate
+vogliono UN SOLO gestore del comando; ce n'erano due e vinceva quello
+dell'applicazione. Ora un router smista.
+Quattro trappole, tutte trovate misurando:
+- la condizione includeva `underMouse()`: **aprendo il menu il puntatore esce
+  dalla tela**, quindi proprio mentre guardi le voci tornavano grigie;
+- `MainWindow::onHistoryChanged()` riscrive lo stato delle voci a ogni cambio
+  della cronologia dell'applicazione;
+- il router teneva "l'ultima tela costruita" e puntava a una NASCOSTA;
+- **e la vera causa**: `MainWindow` costruisce le room dentro `readSettings()`
+  e solo DOPO chiama `setCommandHandler("MI_Undo", ...)`, che non affianca ma
+  **elimina**. Il router nasceva e moriva prima che l'applicazione finisse di
+  partire. Inchiodato da una sonda che **non ha scritto niente**: un log vuoto
+  e' un dato, non un fallimento.
+
+**Link A/V: le posizioni si misurano con `shotTrueSpan`.** Con una dissolvenza
+il `r0` grezzo sta PRIMA dell'inizio vero (`trueStart = r0 + headHalf`), quindi
+lo "spostamento" non era di quanto si era mosso lo shot ma di quanto era
+cambiata la sovrapposizione — e poteva venire NEGATIVO mentre lo shot si
+allungava a destra.
+
+### Fixed — l'annullamento dell'audio era invisibile
+
+Il ripristino rimetteva l'audio al posto giusto **nei numeri** (misurato: catena
+coerente, 75→32→86→30, nessun livello tagliato) ma **nessuno lo diceva a chi
+disegna la forma d'onda ne' a chi tiene la traccia sonora fusa**. Si continuava
+a vedere — e si sarebbe continuato a SENTIRE — l'audio nella posizione vecchia.
+`resequenceXsheet()` invalida le cache da sempre; il percorso dell'annullamento
+no, ed era l'unica differenza fra i due.
+
+### 🎯 Deciso da Franco — la posizione dell'audio e' DERIVATA
+
+> *«Se l'audio inizia al frame 5 dello shot 02, qualsiasi operazione faccio
+> sempre da quel frame dovra' iniziare.»*
+
+Non e' un dato assoluto: e' la coppia **(shot di ancoraggio, scarto)**, e la
+posizione si ricalcola. Ancoraggio al primo shot che il segmento tocca;
+trascinando l'audio a mano si sposta anche l'ancora.
+
+Conseguenza grossa: **se la posizione e' derivata, non va ne' fotografata ne'
+ripristinata** — sparisce tutto il meccanismo che abbiamo debuggato tutta la
+sera, e con esso il conflitto fra due scritture sullo stesso numero.
+
+⚠️ **Primo tentativo scritto e MESSO DA PARTE** (patch in
+`tahoma2d-workspace/ancore-audio-WIP.patch`): `shiftLevelFromFrame()`, che
+sostituivo, dopo aver spostato i livelli li RIORDINA, e `m_levels` e' privato.
+La riscrittura va fatta dentro `TXshSoundColumn`. Trovato rileggendo la mia
+stessa modifica mezz'ora dopo averla scritta, prima che uscisse.
+
+### 🎯 Deciso da Franco — i thumbs devono obbedire a «chiudi senza salvare»
+
+La tela ha una persistenza sua (700 ms dopo la pennellata), quindi «non salvare»
+annullava il `.tnz` ma non i thumbs: **la scena non era piu' un'unita'**.
+Scelta: scrivere in un'area d'appoggio e consolidare al salvataggio, cosi'
+l'autosalvataggio continua a proteggere dal crash ma non impone le sue
+modifiche a chi ha detto di no.
+
+### Added — Thumbs room: raster per pagina (branch) e rotazione
+
+Sul branch `feature/thumbs-paged-raster`:
+- **passo 1**, il magazzino delle pagine, con l'identita' del giro
+  tela→pagine→tela **dimostrata** (774 casi su sei rapporti di camera veri,
+  zero buchi e zero sovrapposizioni);
+- **passo 2a**, caricamento e salvataggio passano dalle pagine — identico *per
+  costruzione*: il salvataggio tocca solo le bande sporche, che sono quelle che
+  il riversamento riempie. **Verificato sul campo da Franco**: disegno, salvo,
+  chiudo, riapro → tutto torna;
+- **passo 2b**, l'annullamento non clona piu' la tela: tiene i RIFERIMENTI alle
+  pagine, condivise fra le fotografie. E il bilancio dei byte diventa vero —
+  prima ogni fotografia contava come una tela intera e la cronologia si
+  troncava molto prima del necessario;
+- il disegno a schermo sa gia' mostrare le pagine fuori dalla finestra
+  (prerequisito per stringerla, o zoomando fuori sparirebbe lo storyboard);
+- **rotazione della vista**: segno del pizzico corretto (l'avevo preso da
+  SceneViewer, che lavora con la y in SU e una TAffine — i due meno non erano
+  lo stesso meno), e **rotazione col mouse** (⌥ + trascinamento col tasto
+  centrale) perche' il tocco ce l'hanno in pochi;
+- **il riquadro di ridisegno** usava due angoli: giusto a vista dritta, sbagliato
+  per costruzione con la rotazione. Misurato: nel caso peggiore il **99%**
+  dell'area non veniva ridisegnata. Sintomo vero: i tratti veloci col foglio
+  storto lasciano buchi (la mia previsione «il pennello non disegna» era
+  troppo forte, e l'ho corretta).
+
+⚠️ **La Thumbs room NON e' finita:** la finestra copre ancora tutto, quindi
+l'allocazione unica da 617 MB all'obiettivo di produzione e la copia della tela
+a ogni riga aggiunta sono ancora li'.
+
+### Notes — merge Tahoma2D 1.6.3: fattibile, ma prima va registrata la 1.6.2
+
+7 commit, tutte correzioni; due ci riguardano (requisito di versione su OpenCV
+tolto — noi OpenCV lo usiamo per l'import da carta — e build libgphoto2 su
+macOS).
+
+**Ma `v1.6.2` non e' mai stata registrata come antenato di master:** il
+contenuto c'e', la parentela no, quindi git riparte da **91 commit** indietro e
+rifa' tutta la 1.6.2. Merge diretto: **39 conflitti**.
+
+Misurato col confronto a tre (base, v1.6.2, master) sui 293 file cambiati:
+contenuto presente 183, **mancante 0**, nostre modifiche 86, assenti per nostra
+scelta 22, assenti davvero 2 (due traduzioni di `tips.md`). La dichiarazione
+`git merge -s ours v1.6.2` e' quindi onesta. **Provata in un worktree
+usa-e-getta: conflitti da 39 a 12**, tutti su file nostri (CI, installer,
+`tversion.h.in`, CMakeLists). **Zero conflitti nel codice C++.**
+
+### Aperti, tutti registrati in ANIMATIC_TASKS
+
+- **dissolvenza**: il trim/roll sbaglia giuntura; tagliando l'audio compare un
+  buco fra i due blocchi (spiegazione plausibile, NON verificata);
+- **link A/V**: accorciando uno shot, `shiftLevelFromFrame` TAGLIA il livello
+  precedente e nessun allungamento lo ridà — il taglio deve restare ma l'undo
+  deve poterlo ripristinare;
+- **Monitor**: la barra condivisa (mancano A/V Link, Auto Match, i due export;
+  il loro stato vive dentro il pannello Animatic). Fatto solo l'allineamento
+  contenuto: icona di Fit All — era rimasto il segnaposto `[]` — e Snap.
+
+### Note di metodo
+
+**Tre difetti su tre sono stati trovati strumentando, non leggendo.** E due
+volte il dato decisivo e' stato un'assenza: il log del router **vuoto** (quindi
+`execute()` non era mai nostra) e l'assenza di righe `SPOSTA` fra un
+annullamento e l'altro (che ha ucciso la mia ipotesi migliore).
+
+**Quattro mie ipotesi sono cadute in giornata**, tutte plausibili: il ripiego
+silenzioso della camera, l'autosave come innesco, il taglio dell'audio come
+causa del difetto di stasera, e l'annullamento accidentale come causa del wipe.
+La differenza fra quelle e la conclusione buona non e' stata l'intuizione: e'
+stato il log.
+
+**E due volte Franco ha corretto la direzione**, non un dettaglio: la camera
+fuori dalla catena dell'annullamento, e la posizione dell'audio derivata. In
+entrambi i casi la correzione risultante era piu' SEMPLICE di quella che stavo
+scrivendo.
+
 ## [2026-09-21] — la rotazione della vista, e una riga che avevo perso io il 18
 
 Due tronconi. Il primo previsto: la **rotazione della vista** nella Thumbs room,

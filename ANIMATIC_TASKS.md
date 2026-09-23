@@ -590,6 +590,196 @@ Due cautele, entrambe necessarie e non ornamentali:
 
 ---
 
+### 🎯 DECISO 2026-09-23 — i thumbs devono obbedire a «chiudi senza salvare»
+
+**Segnalato da Franco:** disegna nella Thumbs room, chiude SENZA salvare per
+tornare alla scena com'era, e riaprendo si ritrova i thumbs che non voleva.
+
+**Causa, non una svista.** La tela ha una persistenza SUA: 700 ms dopo
+l'ultima pennellata scrive le bande PNG su disco, senza aspettare il
+salvataggio della scena. Quell'autosalvataggio esiste apposta — la tela e'
+grossa, ridisegnarla costa, e perderla per un crash sarebbe peggio. Ma il
+prezzo e' che **la scena non e' piu' un'unita'**: una parte obbedisce a «non
+salvare» e l'altra no.
+
+**SCELTA DI FRANCO: la strada 2** — scrivere in un'area d'appoggio e
+consolidare al salvataggio della scena.
+- l'autosalvataggio continua a proteggere dal crash, ma finisce in una copia
+  di lavoro;
+- salvando la scena, la copia di lavoro diventa ufficiale;
+- chiudendo senza salvare, si butta;
+- alla riapertura, se c'e' una copia di lavoro piu' recente dell'ufficiale,
+  si puo' chiedere all'utente se recuperarla — come dopo un crash.
+
+Scartate: legare i thumbs al salvataggio della scena (rinuncia alla
+protezione dal crash, che e' il motivo per cui l'autosalvataggio esiste) e
+lasciare com'e' documentandolo (la sorpresa resta, per chiunque).
+
+⚠️ **Non fatto il 2026-09-23 di proposito:** tocca il percorso di persistenza,
+quello che se sbaglia non fa rumore, e c'era un rilascio in corso.
+
+---
+
+### 🎯 DECISO 2026-09-23 — la posizione dell'audio e' DERIVATA, non memorizzata
+
+**Principio, parole di Franco:** *«se l'audio inizia al frame 5 dello shot 02,
+qualsiasi operazione faccio sempre da quel frame dovra' iniziare»*.
+
+Cioe' la posizione di un segmento audio non e' un dato assoluto sulla linea
+del tempo: e' la coppia **(shot di ancoraggio, scarto in frame dal suo
+inizio)**. La posizione assoluta si RICALCOLA, non si conserva.
+
+**Il codice di oggi fa l'opposto** e da li' viene tutta la famiglia di difetti
+inseguita il 2026-09-23: tiene la posizione assoluta e cerca di aggiornarla a
+ogni modifica spostando tutto di un **delta comune** a partire da un punto
+(`resequenceXsheet` + `shiftLevelFromFrame`). E' un'approssimazione che regge
+solo finche' tutti gli shot si spostano della stessa quantita'.
+
+**La conseguenza piu' importante: se la posizione e' derivata, non va ne'
+fotografata ne' ripristinata.** Sparisce tutto il meccanismo che stavamo
+debuggando — `ZtoryAudioColSnap`, `ztoryCaptureAudioSnap`,
+`ztoryRestoreAudioSnap`, la guardia `ztoryAudioSnapDiffers`, e il conflitto fra
+quel ripristino e lo spostamento del resequence che agiscono sulla stessa cosa
+nello stesso istante. Si annulla il video e l'audio si ricalcola da se'.
+
+**Misurato il 2026-09-23, sonde su entrambi i percorsi:**
+- i valori ripristinati sono **esatti** e la catena annulla/ripeti **coerente**
+  (75 → 32 → 86 → 30, e i ritorni combaciano);
+- ma fra un annullamento e il successivo l'audio si sposta **da solo** (27 → 40)
+  senza che nessun ripristino lo tocchi: e' il resequence;
+- e da li' in poi il ripristino riscrive **lo stesso valore che trova**, quindi
+  non corregge piu' niente mentre il video continua a tornare indietro.
+
+**Le due domande sono state DECISE da Franco il 2026-09-23:**
+1. l'ancoraggio e' al **primo shot che il segmento tocca**;
+2. **trascinando l'audio a mano si sposta anche l'ancora**.
+
+⚠️ **PRIMO TENTATIVO SCRITTO E MESSO DA PARTE la sera del 2026-09-23.** La
+patch e' in `/Volumes/ZioSam/tahoma2d-workspace/ancore-audio-WIP.patch` (94
+righe, su `ztoryanimatic.cpp`). Calcola le ancore prima di ricompattare e
+ricalcola le posizioni dopo, al posto del delta comune. **NON rilasciata**,
+perche' incompleta in un punto trovato rileggendola:
+
+> `shiftLevelFromFrame()`, che sostituisce, dopo aver spostato i livelli li
+> **RIORDINA** (`std::sort`). La versione con le ancore sposta e non riordina,
+> e `m_levels` e' privato: da fuori non si puo'. Una lista fuori ordine manda
+> in confusione chi disegna la forma d'onda, chi suona e chi legge le celle —
+> ed e' con ogni probabilita' il «continua a fare cose strane» di Franco.
+> `checkColumn()` non aiuta a scoprirlo: e' `#ifndef NDEBUG`.
+
+**Quindi la riscrittura va fatta DENTRO `TXshSoundColumn`**, dove si possono
+riordinare i livelli — non nel pannello animatic. Un metodo tipo
+`setLevelVisibleStart(ColumnLevel*, int)` che sposta, riordina e lascia al
+chiamante la politica sulle sovrapposizioni.
+
+⚠️ Fino ad allora: **col link A/V spento non succede nulla di tutto questo.**
+
+---
+
+### 🔴 APERTI 2026-09-23 — dissolvenza: il roll sbaglia giuntura, e il link A/V sposta l'audio dalla parte sbagliata
+
+Segnalati da Franco. **Stessa radice**, e non sono regressioni di questa
+sessione: il difetto c'e' da quando esistono le dissolvenze.
+
+**Sintomi.**
+0. Tagliando l'AUDIO con una dissolvenza fra due shot, compare un **buco**
+   fra i due blocchi nel track (schermata di Franco, 2026-09-23).
+   *Spiegazione plausibile, NON verificata:* i blocchi sono disegnati alle
+   durate vere, che escludono gli extra della dissolvenza; ma quegli extra
+   occupano righe reali (coda di A + stop + testa di B), quindi fra la fine
+   vera di A e l'inizio vero di B c'e' materialmente uno spazio. Di norma lo
+   copre il marcatore della transizione: nella schermata la diagonale sta
+   solo sul blocco di sinistra e non scavalca. Il taglio audio chiama
+   `notifyXsheetChanged()` → rifacimento dei blocchi: il sospetto e' che li'
+   la transizione non venga ridisegnata a cavallo.
+   ⚠️ NON puo' venire dalla correzione del link A/V del 2026-09-23: quella
+   sposta solo i livelli audio, non tocca le colonne video.
+1. Con una dissolvenza, un **trim/roll** fa saltare il punto di giuntura
+   qualche frame **indietro**, verso la dissolvenza.
+2. Col **link audio/video**, allungando uno shot verso destra l'audio si
+   sposta a **sinistra** e taglia il segmento audio precedente.
+
+**Radice, accertata leggendo il codice.** `shotTrueSpan()` esiste proprio per
+questo, e il suo commento lo dice: *«Both the animatic track and any duration
+consumer must use this instead of a raw getRange(), or the overlap inflates
+durations»*. I **blocchi del track** lo usano (riga 2488), quindi si VEDONO al
+posto giusto. I percorsi di **scrittura** no:
+
+| punto | cosa sbaglia |
+|---|---|
+| `onRollEdit` → `resizeCol` (riga ~7667) | `curDur` da `getRange` grezzo: con una dissolvenza e' gonfiato dalla sovrapposizione, e la giuntura calcolata da li' cade indietro |
+| `resequenceXsheet` (righe ~8243 e ~8263) | misura le posizioni prima/dopo con `getRange` grezzo: lo «spostamento» non e' di quanto si e' mosso lo shot ma di quanto e' cambiata la sovrapposizione, e puo' risultare NEGATIVO mentre il video si allunga a destra |
+
+Il secondo spiega il taglio dell'audio: lo spostamento finisce in
+`shiftLevelFromFrame()`, che **non e' invertibile** — quando uno spostamento a
+sinistra farebbe sovrapporre due livelli, TAGLIA il precedente
+(`setEndOffset`). Con delta negativo sbagliato, taglia audio buono.
+
+⚠️ **Il link A/V ha anche un'assunzione a parte da verificare**: prende lo
+shot piu' a sinistra che si e' mosso e applica IL SUO spostamento a tutti
+(*«resequence packs tightly, so a single duration change propagates
+uniformly»*). Con le true span quell'uniformita' dovrebbe tornare vera, ma va
+misurato: se con le dissolvenze gli shot si spostano di quantita' diverse, il
+delta unico resta sbagliato anche dopo la correzione.
+
+⚠️ **NON e' una sostituzione di una riga.** `resizeCol` usa la durata e poi
+MANIPOLA LE CELLE nell'intervallo grezzo: cambiando solo la durata
+l'aritmetica diventa incoerente e si inserirebbero frame dopo la coda della
+dissolvenza invece che dentro lo shot. Va rifatta tenendo separati i due
+intervalli — quello vero e quello con gli extra — e provata con una
+dissolvenza in mezzo.
+
+✅ **Proprieta' che rende la correzione a rischio basso:** senza dissolvenza
+`shotTrueSpan` coincide con `getRange(ignoreLastStop=true)` — gestisce
+esplicitamente il caso «niente extra, solo lo stop». Quindi la modifica non
+cambia nulla nelle scene senza transizioni.
+
+⚠️ **Non toccare le altre 30 `getRange` del file alla cieca**: molte sono
+giuste. `onTransitionChanged` per esempio manipola proprio le celle della
+dissolvenza e la durata grezza gli serve.
+
+---
+
+### ⏳ DA FARE, IN QUEST'ORDINE — merge Tahoma2D 1.6.3
+
+**Ordine deciso da Franco il 2026-09-23:** prima il rilascio 0.14.2, poi il
+**lavoro sulla Thumbs room finito** (raster per pagina), poi questo merge.
+Non prima: tocca `CMakeLists`, script di CI e installer, cioe' la categoria
+che la checklist vieta di mergiare a ridosso di un rilascio.
+
+⚠️ **PRIMA DEL MERGE VA REGISTRATA LA PARENTELA DELLA 1.6.2.** Non e' mai
+stata registrata: il contenuto e' in master ma `v1.6.2` non e' un antenato, ne'
+di master ne' del branch `merge/upstream-1.6.2`. Quindi git riparte dalla base
+reale `4a2ec7305`, **91 commit** indietro, e rifa' tutta la 1.6.2 su codice che
+quelle modifiche ce le ha gia'.
+
+**Misurato il 2026-09-23** (confronto a tre fra base, v1.6.2 e master sui 293
+file cambiati fra base e 1.6.2):
+
+| | |
+|---|---|
+| contenuto 1.6.2 presente in master | 183 |
+| contenuto 1.6.2 **mancante** | **0** |
+| nostre modifiche sopra | 86 |
+| assenti perche' tolti da noi (kiss_fft130) | 22 |
+| assenti davvero | 2 (`tips.md` portoghese e russo) |
+
+Zero contenuto perso: la dichiarazione `git merge -s ours v1.6.2` e' onesta.
+**Provato in un worktree usa-e-getta:** conflitti da **39 a 12**, e i 12 sono
+tutti file nostri (CI, installer, `tversion.h.in`, il `CMakeLists` con i
+sorgenti Ztoryc, e `CHANGELOG.md` che collide solo di nome). **Zero conflitti
+nel codice C++.**
+
+**Cosa porta la 1.6.3** (7 commit, tutte correzioni). Due ci riguardano:
+- **tolto il requisito di versione su OpenCV** + compilazione con 4.11+/5.x —
+  noi OpenCV lo usiamo per l'import da foglio di carta e oggi si chiede 4.1;
+- **build libgphoto2 su macOS** — la libreria che ci ha gia' dato guai nel
+  confezionamento.
+Piu' il salvataggio dei parametri di cleanup e correzioni sugli stili
+vettoriali.
+
+---
+
 ### 🔴 APERTO 2026-09-21 — col TOCCO, pan/zoom nella Thumbs room cancella i disegni
 
 Segnalato dall'utente Surface. **Distrugge lavoro.** Col mouse non succede, e
@@ -1571,6 +1761,22 @@ dato non lo scrive l'utente ma `classifyCameraMove()`.
 > ricapita da solo lavorando.
 
 
+- **Entrando in uno shot il VISORE resta sul primo fotogramma — SI LASCIA
+  COSI'** (Franco, 2026-09-23). Dal 2026-09-21 entrando in uno shot la cella
+  corrente dell'xsheet va su Col1 e sulla riga del MARK OUT, cosi' si allunga
+  in fretta la durata dei disegni. Il visore pero' mostra il PRIMO fotogramma
+  della colonna, perche' la testina e' governata dal frame handle separato
+  dell'animatic, che viene messo di proposito sulla riga dello shot
+  nell'xsheet principale.
+  Franco ci ha pensato e ha deciso di lasciarlo: *«forse è un caso
+  particolare, lascia così»*. Portare anche il visore sul mark out vorrebbe
+  dire che entrando in uno shot si vede l'ULTIMO fotogramma invece del primo
+  — comodo per allungare, scomodo per vedere da dove parte lo shot.
+  **Chi lo vuole ha gia' il comando**: «Last Frame», scorciatoia predefinita
+  ⌥. (Option punto). Verificato nel codice: pilota il pulsante «ultimo» del
+  FlipConsole, che usa `to = m_markerTo` quando i marker ci sono — e dentro
+  uno shot ci sono sempre. Quindi porta sul mark out, non sulla fine scena.
+  **Non riproporlo** come difetto.
 - **Il secchiello / autofill nella Thumbs room — NON SI FA** (Franco,
   2026-09-21): *«no il secchiello non lo metterei non complichiamoci la
   vita»*. Era nato da una sua osservazione mentre si chiudeva la Thumbs room
