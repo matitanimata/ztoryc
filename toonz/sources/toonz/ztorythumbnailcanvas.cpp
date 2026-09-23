@@ -1498,11 +1498,27 @@ QRect ZtoryThumbnailCanvas::cursorRect(const QPointF &widgetPos) const {
 // Raster is bottom-up, the widget is top-down: mirror Y about the grid height,
 // then apply zoom and pan exactly as worldToWidget() does.
 QRect ZtoryThumbnailCanvas::rasterRectToWidget(const QRect &r) const {
-  const QPointF tl = worldToWidget(QPointF(r.left(), gridH() - r.bottom() - 1));
-  const QPointF br = worldToWidget(QPointF(r.right() + 1, gridH() - r.top()));
+  // ⚠️ TUTTI E QUATTRO gli angoli, non due. Qui ce n'erano due, che bastano
+  // finche' la vista e' dritta: un rettangolo del mondo resta un rettangolo
+  // dritto sullo schermo e due angoli opposti lo delimitano. Con la ROTAZIONE
+  // non e' piu' vero — gli altri due sporgono fuori — e questa funzione decide
+  // QUALE ZONA RIDISEGNARE dopo una pennellata: sbagliarla lascia pezzi di
+  // tratto non ridisegnati finche' non passa un ridisegno intero.
+  const double x0 = r.left(), x1 = r.right() + 1;
+  const double y0 = gridH() - r.bottom() - 1, y1 = gridH() - r.top();
+  const QPointF c0 = worldToWidget(QPointF(x0, y0));
+  const QPointF c1 = worldToWidget(QPointF(x1, y0));
+  const QPointF c2 = worldToWidget(QPointF(x1, y1));
+  const QPointF c3 = worldToWidget(QPointF(x0, y1));
+  const double lx = qMin(qMin(c0.x(), c1.x()), qMin(c2.x(), c3.x()));
+  const double rx = qMax(qMax(c0.x(), c1.x()), qMax(c2.x(), c3.x()));
+  const double ty = qMin(qMin(c0.y(), c1.y()), qMin(c2.y(), c3.y()));
+  const double by = qMax(qMax(c0.y(), c1.y()), qMax(c2.y(), c3.y()));
   // A pixel of margin each way absorbs the rounding and the painter's smoothing,
   // which can tint the pixel just outside the dab.
-  return QRectF(tl, br).toAlignedRect().adjusted(-2, -2, 2, 2);
+  return QRectF(QPointF(lx, ty), QPointF(rx, by))
+      .toAlignedRect()
+      .adjusted(-2, -2, 2, 2);
 }
 
 void ZtoryThumbnailCanvas::strokeTo(const QPointF &widgetPos, double pressure) {
