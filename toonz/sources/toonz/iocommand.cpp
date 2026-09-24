@@ -1653,11 +1653,9 @@ bool IoCmd::saveScene(const TFilePath &path, int flags) {
   // autosave (would save to scene file) .
   CleanupParameters *cp = scene->getProperties()->getCleanupParameters();
   CleanupParameters keepCP(*cp);
-  if (!isAutosave) {
-    // In case of a .cln file be loaded into GlobalParemeters,
-    // we should also write these info into .tnz (scene file)
-    cp->assign(&CleanupParameters::GlobalParameters, false);
-  }
+  // In case of a .cln file be loaded into GlobalParemeters,
+  // we should also write these info into .tnz (scene file)
+  cp->assign(&CleanupParameters::GlobalParameters, false);
 
   // Persist the live play range into the CURRENT xsheet's In/Out markers before
   // serializing, so the markers stored in the .tnz always match what the user
@@ -1691,7 +1689,7 @@ bool IoCmd::saveScene(const TFilePath &path, int flags) {
   }
   TApp::instance()->setSaveInProgress(false);
 
-  cp->assign(&keepCP);
+  cp->assign(&keepCP, false);
   // Make sure that the current cleanup palette is set to currentParams' palette
   TApp::instance()
       ->getPaletteController()
