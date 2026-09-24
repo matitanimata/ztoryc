@@ -211,6 +211,23 @@ public:
       m_audioOutput->setBufferSize(audioBufferSize);
       m_audioOutput->setNotifyInterval(50);
       QObject::connect(m_audioOutput.data(), &QAudioOutput::notify, [=](){ sendBuffer(); });
+      // Ripartire dopo un UNDERRUN. Il buffer si riempie solo su notify(), e
+      // Qt emette notify() solo mentre l'uscita CONSUMA audio. Se il thread
+      // dell'interfaccia resta occupato piu' dei 100 ms di buffer, l'uscita
+      // si svuota, passa a IdleState con UnderrunError e smette di consumare:
+      // notify() non arriva piu', nessuno riempie, e l'audio resta muto per il
+      // resto del play mentre il video va avanti. Misurato in Ztoryc
+      // (2026-09-24): due uscite in underrun nello stesso millisecondo dopo
+      // 18 s di play, indice fermo fino allo stop 12 s dopo. Scrivere dati
+      // nuovi la fa ripartire: resta un buco lungo quanto il blocco, non il
+      // resto del film.
+      QObject::connect(m_audioOutput.data(), &QAudioOutput::stateChanged,
+                       [=](QAudio::State st) {
+        if (st != QAudio::IdleState || !m_audioOutput) return;
+        if (m_audioOutput->error() != QAudio::UnderrunError) return;
+        if (m_buffer.size() && (isLooping() || m_bufferIndex < m_buffer.size()))
+          sendBuffer();
+      });
 
       reset();
     }

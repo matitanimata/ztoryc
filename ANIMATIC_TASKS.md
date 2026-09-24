@@ -1049,7 +1049,8 @@ qualunque macchina col tocco e le gesture accese.
 > stesso millisecondo, dopo 18,1 s di play (indice 2,6 MB su 64 = 18,1 s), e
 > non sono piu' ripartite fino allo STOP 12 s dopo. **Corretto:** su
 > IdleState+Underrun con audio ancora da suonare si richiama `sendBuffer()`
-> (candidato upstream). Da collaudare. Resta da capire COSA blocca
+> (candidato upstream). **Collaudato da Franco: non si ammutolisce piu'.**
+> Resta da capire COSA blocca
 > l'interfaccia per >100 ms a quel punto del play (Franco: «nei silenzi») —
 > con `sample` durante il play, se il buco si sente.
 

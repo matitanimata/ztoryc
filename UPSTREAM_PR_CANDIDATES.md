@@ -278,6 +278,20 @@ not portable.
 
 #### ✨ New (2026-09-24)
 
+- 🟠 **Sound goes silent for good after an underrun** —
+  `toonz/sources/common/tsound/tsound_qt.cpp`, `TSoundOutputDeviceImp`.
+  Push mode: the buffer is refilled only from `QAudioOutput::notify()`, which
+  Qt emits only while the output is CONSUMING audio. If the UI thread stalls
+  longer than the 100 ms buffer, the output underruns, goes `IdleState` +
+  `UnderrunError`, stops consuming — so `notify()` never comes again and
+  nothing refills it: silent for the rest of playback while the picture goes
+  on. **Measured** in Ztoryc with a probe on the output's states: two outputs
+  underran in the same millisecond after 18 s of play, buffer index frozen
+  until the stop 12 s later. **Fix:** on `stateChanged(IdleState)` with
+  `UnderrunError` and audio still to play, call `sendBuffer()` — writing data
+  resumes the output; the gap lasts as long as the stall, not the rest of the
+  film. Same code on `upstream/master`.
+
 - 🟡 **Sound keeps playing on the old output after switching device** —
   `toonz/sources/common/tsound/tsound_qt.cpp`, `TSoundOutputDeviceImp::play`.
   The `QAudioOutput` is rebuilt only when the audio FORMAT changes, and a
