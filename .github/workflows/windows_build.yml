@@ -12,8 +12,8 @@ on:
         description: 'Release tag (default: v<semver from ZtorycVersion.cmake>)'
         required: false
         default: ''
-      nightly:
-        description: 'Nightly build: upload to the "nightly" pre-release (created by nightly.yml). Never a versioned release.'
+      preview:
+        description: 'Preview (test) build: upload to the "preview" pre-release (created by preview.yml). Never a versioned release.'
         required: false
         default: false
         type: boolean
@@ -22,9 +22,9 @@ jobs:
   Windows:
     runs-on: windows-2022
     env:
-      # Shown in About (ztorycbuild.h): which commit, and whether a nightly.
+      # Shown in About (ztorycbuild.h): which commit, and whether a preview.
       ZTORYC_BUILD_COMMIT: ${{ github.sha }}
-      ZTORYC_NIGHTLY: ${{ github.event.inputs.nightly == 'true' && '1' || '0' }}
+      ZTORYC_PREVIEW: ${{ github.event.inputs.preview == 'true' && '1' || '0' }}
       CCACHE_MAXSIZE: 5G
       CCACHE_COMPRESS: 'true'
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -259,11 +259,11 @@ jobs:
           tag: ${{ steps.release_version.outputs.tag }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # Nightly: a job of its own, so the versioned release path above is never
-  # touched by it (see macOS_build.yml, same job).
-  publish-nightly:
+  # Preview (test) build: a job of its own, so the versioned release path above
+  # is never touched by it (see macOS_build.yml, same job).
+  publish-preview:
     needs: Windows
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.nightly == 'true'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.preview == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -273,7 +273,7 @@ jobs:
           pattern: Ztoryc-*-win*
           merge-multiple: true
           path: release-files
-      - name: Upload the installer and zip to the nightly pre-release
+      - name: Upload the installer and zip to the preview pre-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -281,8 +281,8 @@ jobs:
           SHORT="${GITHUB_SHA::9}"
           mkdir -p up
           for f in $(find release-files -type f \( -name 'Ztoryc-*-win-installer.exe' -o -name 'Ztoryc-*-win-portable.zip' \)); do
-            cp "$f" "up/Ztoryc-nightly-${SHORT}-win-${f##*-win-}"
+            cp "$f" "up/Ztoryc-preview-${SHORT}-win-${f##*-win-}"
           done
           ls -la up
           test "$(ls up | wc -l)" -eq 2
-          gh release upload nightly up/* --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload preview up/* --clobber --repo "$GITHUB_REPOSITORY"

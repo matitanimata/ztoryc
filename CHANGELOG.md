@@ -55,15 +55,17 @@ barra-testina sul bordo alto — non la selezione. In play segna e non scorre, d
 fermo segna e scorre fino a renderlo visibile (anche fermando il play). Un
 bottone solo nelle room Ztoryc; dissolvenze rispettate (inizio vero + head).
 
-### Added — nightly pronte ma SPENTE; il commit in About
+### Added — build di prova SU RICHIESTA (non nightly); il commit in About
 
-`nightly.yml` (inerte finche' la variabile `ZTORYC_NIGHTLY` non vale `on`),
-job `publish-nightly` separato nelle build macOS e Windows, About con commit e
-avviso NIGHTLY. Dettagli e cautele in ANIMATIC_TASKS. Non ancora provate in CI.
+Prima scritte come nightly, poi Franco ha scelto: niente build automatiche,
+solo quando lo chiede lui. `preview.yml` (solo manuale) + job `publish-preview`
+nelle build macOS e Windows; About con commit e avviso PREVIEW. Regola della
+numerazione e del ritmo dei rilasci scritta nella checklist: **la prossima e'
+la 0.15.0**. Non ancora provata in CI.
 
 ### 🎯 Deciso da Franco
 
-- nightly SI', con le cautele, attivate solo col suo via;
+- niente nightly: build di prova su richiesta; patch = correzioni, minor = novita' o comportamenti che cambiano;
 - «Follow» (pannello del Board ↔ testina): in play evidenzia e non scorre, da
   fermo evidenzia e scorre; un bottone solo; nome «Follow».
 

@@ -48,7 +48,7 @@ configure_file(
 )
 # Ztoryc: commit and channel of this build, for About (see ztorycbuild.h.in).
 # CI passes them in the environment (ZTORYC_BUILD_COMMIT = GITHUB_SHA,
-# ZTORYC_NIGHTLY = 1 for a nightly); a local build asks git.
+# ZTORYC_PREVIEW = 1 for a preview build); a local build asks git.
 if(NOT "$ENV{ZTORYC_BUILD_COMMIT}" STREQUAL "")
   string(SUBSTRING "$ENV{ZTORYC_BUILD_COMMIT}" 0 9 ZTORYC_BUILD_COMMIT)
 else()
@@ -59,10 +59,10 @@ else()
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET)
 endif()
-if("$ENV{ZTORYC_NIGHTLY}" STREQUAL "1")
-  set(ZTORYC_BUILD_NIGHTLY 1)
+if("$ENV{ZTORYC_PREVIEW}" STREQUAL "1")
+  set(ZTORYC_BUILD_PREVIEW 1)
 else()
-  set(ZTORYC_BUILD_NIGHTLY 0)
+  set(ZTORYC_BUILD_PREVIEW 0)
 endif()
 configure_file(
   "${CMAKE_SOURCE_DIR}/../cmake/ztorycbuild.h.in"

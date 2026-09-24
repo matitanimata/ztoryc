@@ -23,8 +23,8 @@ on:
         type: string
         required: false
         default: ''
-      nightly:
-        description: 'Nightly build: upload the DMGs to the "nightly" pre-release (created by nightly.yml). Never a versioned release.'
+      preview:
+        description: 'Preview (test) build: upload the DMGs to the "preview" pre-release (created by preview.yml). Never a versioned release.'
         type: boolean
         default: false
   push:
@@ -74,9 +74,9 @@ jobs:
     permissions:
       contents: write
     env:
-      # Shown in About (ztorycbuild.h): which commit, and whether a nightly.
+      # Shown in About (ztorycbuild.h): which commit, and whether a preview.
       ZTORYC_BUILD_COMMIT: ${{ github.sha }}
-      ZTORYC_NIGHTLY: ${{ github.event.inputs.nightly == 'true' && '1' || '0' }}
+      ZTORYC_PREVIEW: ${{ github.event.inputs.preview == 'true' && '1' || '0' }}
       HOMEBREW_NO_AUTO_UPDATE: '1'
       HOMEBREW_NO_ANALYTICS: '1'
       HOMEBREW_NO_INSTALL_CLEANUP: '1'
@@ -557,13 +557,13 @@ jobs:
           tag: ${{ steps.release_version.outputs.tag }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  # Nightly: a job of its own, so the versioned release path above is never
-  # touched by it. Uploads to the "nightly" pre-release that nightly.yml has
-  # just recreated; the commit goes in the file names, because the version
-  # number is still the one of the last release.
-  publish-nightly:
+  # Preview (test) build: a job of its own, so the versioned release path above
+  # is never touched by it. Uploads to the "preview" pre-release that
+  # preview.yml has just recreated; the commit goes in the file names, because
+  # the version number is still the one of the last release.
+  publish-preview:
     needs: macOS
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.nightly == 'true'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.preview == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -573,7 +573,7 @@ jobs:
           pattern: Ztoryc-*-osx-*
           merge-multiple: true
           path: release-files
-      - name: Upload the DMGs to the nightly pre-release
+      - name: Upload the DMGs to the preview pre-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -581,8 +581,8 @@ jobs:
           SHORT="${GITHUB_SHA::9}"
           mkdir -p up
           for f in $(find release-files -type f -name 'Ztoryc-*-osx-*.dmg'); do
-            cp "$f" "up/Ztoryc-nightly-${SHORT}-osx-${f##*-osx-}"
+            cp "$f" "up/Ztoryc-preview-${SHORT}-osx-${f##*-osx-}"
           done
           ls -la up
           test "$(ls up | wc -l)" -eq 2
-          gh release upload nightly up/* --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload preview up/* --clobber --repo "$GITHUB_REPOSITORY"

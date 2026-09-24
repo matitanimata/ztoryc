@@ -656,33 +656,31 @@ Dati gia' presenti: `PanelData::startFrame/duration` (dentro lo shot) +
 inizio VERO dello shot (`shotTrueSpan`, dissolvenze escluse), e la selezione
 condivisa degli shot esiste gia' (`m_sharedSelection`).
 
-### 🎯 DECISO 2026-09-24 — nightly build SI', ma con le cautele, e ATTIVATE SOLO CON IL VIA DI FRANCO
+### 🎯 DECISO 2026-09-24 — NIENTE nightly: build di prova SU RICHIESTA, e la regola della numerazione
 
-Franco: *«ok per le nightly con le accortezze che hai proposto e previa mia
-autorizzazione»*. Le cautele concordate:
-- **una volta al giorno, di notte, solo se master e' cambiato** — non a ogni
-  push (si scontrerebbe con «niente push durante la build macOS del rilascio»);
-- **solo macOS e Windows** (Windows e' dove stanno i tester; Linux 97 min, per
-  ora no);
-- **pre-release**, UNA release «nightly» che si sovrascrive, col commit nel
-  titolo e la riga «non per il lavoro vero, usa l'ultima release»;
-- **il commit anche nell'About**, per sapere di che build parla una segnalazione.
-⚠️ **Si prepara, NON si attiva:** il workflow che pubblica parte solo dopo il
-via esplicito di Franco.
+Prima deciso «nightly si', con cautele», poi Franco ha chiesto come
+funzionano davvero e ha cambiato idea: *«per come lavoriamo noi non credo sia
+il metodo giusto»*. Su master lavoriamo direttamente e lui prova le cose prima
+di chiunque: una build automatica pubblicherebbe cose non ancora viste da lui.
+**Scelta: la «terza via»** — la stessa macchina, ma lanciata SOLO a mano:
+- `.github/workflows/preview.yml`: `gh workflow run preview.yml` ricrea la
+  pre-release **«preview»** (mai latest, commit nel titolo, avviso bilingue) e
+  lancia `macOS_build.yml`/`windows_build.yml` con `preview=true`; li' un job
+  a parte (`publish-preview`) carica i file `Ztoryc-preview-<commit>-…`. Il job
+  del rilascio vero non e' toccato. **Rifiuta di partire se una build macOS
+  gira**: il gruppo di concorrenza macOS e' per ref, annullerebbe un rilascio.
+- About mostra il commit (`ztorycbuild.h`, generato da CMake) e, in una
+  preview, «PREVIEW BUILD» in arancione.
+- Si lancia **solo quando lo chiede Franco** — tipicamente per dare una
+  correzione a un tester prima del rilascio (quello che prima era l'installer
+  fatto a mano su Drive). **Mai provata in CI**: il primo lancio e' il collaudo.
 
-🟡 **PRONTE il 2026-09-24, SPENTE.** `.github/workflows/nightly.yml` gira alle
-01:30 UTC ma non fa NULLA finche' la variabile di repository `ZTORYC_NIGHTLY`
-non vale `on` (Settings → Secrets and variables → Actions → Variables): e'
-quella l'autorizzazione di Franco, e riportarla ad altro le spegne. Salta la
-notte se master non e' cambiato (e l'ultima nightly e' completa, 4 file) o se
-una build macOS sta girando — il gruppo di concorrenza macOS e' per ref, quindi
-una nightly su master ANNULLEREBBE un rilascio in corso. Ricrea la pre-release
-«nightly» (mai latest, commit nel titolo, avviso bilingue) e lancia
-`macOS_build.yml`/`windows_build.yml` con `nightly=true`: li' un job a parte,
-`publish-nightly`, carica i file col commit nel nome — il job del rilascio vero
-non e' toccato. About mostra il commit (`ztorycbuild.h`, generato da CMake) e,
-in una nightly, una riga arancione «NIGHTLY BUILD». **Mai provate in CI**: la
-prima esecuzione e' anche il collaudo.
+**Numerazione e ritmo** (scritti nella checklist di rilascio di AGENTS.md):
+patch = correzioni e ritocchi; minor = funzione nuova, comportamento che
+cambia, o cambio nel salvataggio dei dati. Si rilascia per gravita', non per
+calendario. **La prossima e' la 0.15.0**: Follow, «chiudi senza salvare» dei
+thumbs (le scene ora chiedono di salvare anche per i soli thumbs), ⌥0 che
+cambia significato, `.ztoryc` con i nomi delle sotto-scene, base Tahoma 1.6.3.
 
 ### ✅ CORRETTO E CONFERMATO 2026-09-24 — ⌘C dalla sceneggiatura copiava la frase di prima
 

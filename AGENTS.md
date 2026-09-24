@@ -554,6 +554,23 @@ verificarla davvero.
 toonz/cmake/ZtorycVersion.cmake  # incrementa ZTORYC_VERSION_PATCH (o MINOR)
 ```
 
+**PATCH o MINOR? La regola (decisa con Franco il 2026-09-24):**
+- **patch** (0.14.2 → 0.14.3): correzioni e ritocchi — niente che l'utente
+  debba imparare;
+- **minor** (0.14 → 0.15): una funzione nuova, un comportamento che CAMBIA
+  (anche un tasto che cambia significato), o un cambio nel modo in cui
+  salviamo i dati — cio' che va letto nelle note prima di usarlo.
+Si guarda l'elenco dei commit dal rilascio precedente: basta UNA voce della
+seconda specie per fare minor.
+
+**Quando si rilascia: lo decide la gravita', non il calendario.** Un difetto
+che distrugge lavoro esce subito, anche da solo (come la 0.14.2 per l'utente
+Surface). Il resto si accumula e esce a blocchi sensati. Per dare una
+correzione a UN tester prima del rilascio c'e' la **build di prova su
+richiesta**: `gh workflow run preview.yml` (pre-release «preview», macOS +
+Windows, rifiuta di partire se una build macOS sta girando). Si lancia SOLO
+quando lo chiede Franco.
+
 ### 3. Ringraziamento agli sponsor — OBBLIGATORIO, si controlla ogni volta
 
 > Saltato nella **0.11.0** (primo rilascio dopo l'arrivo del primo sponsor):
