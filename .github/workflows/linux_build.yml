@@ -208,6 +208,9 @@ jobs:
           tag: nightly-${{ github.sha }}
           token: ${{ secrets.TAHOMA2D_TOKEN }}
       - name: Remove existing master cache
+        # A missing cache is not an error: it failed the 0.15.0 Windows release
+        # (build fine, publish skipped). macOS has had `|| true` for this.
+        continue-on-error: true
         if: ${{ steps.restore-cache.outputs.cache-hit == 'true' && github.ref == 'refs/heads/master' }}
         run: gh cache delete ${{ runner.os }}-${{ matrix.compiler }}-refs/heads/master
         env:
