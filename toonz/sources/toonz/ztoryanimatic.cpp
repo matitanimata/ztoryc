@@ -6822,6 +6822,11 @@ void ZtoryAnimaticPanel::onShotDoubleClicked(int col) {
   // ignoreLastStop=true: skip the trailing SFH so the sub-scene's play
   // range mark-out matches the shot's actual animatic length, not +1.
   column->getRange(r0, r1, /*ignoreLastStop=*/true);
+  // The shot's TRUE length, measured now, on the main xsheet: with a dissolve
+  // laid out, [r0, r1] already holds the exposed extras (head-extra before,
+  // tail-extra after), and the XD notes below would add them a second time.
+  int trueStart = r0, trueDur = r1 - r0 + 1;
+  ZtoryShotOps::shotTrueSpan(xsh, col, trueStart, trueDur);
   TXshCell cell = xsh->getCell(r0, col);
   if (cell.m_level && cell.m_level->getChildLevel()) {
     app->getCurrentFrame()->setFrame(r0);
@@ -6835,8 +6840,11 @@ void ZtoryAnimaticPanel::onShotDoubleClicked(int col) {
     // Cross-dissolve: extend the mark-out by the extra dissolve frames (XD-out
     // tail / XD-in head) so the animator sees and works on them.  Derived from
     // the persisted XD note columns, so it survives reload.  Mark-in stays at 0.
+    // Mark-out = true length + half dissolve per side. It used the raw column
+    // length, extras included, and then added the extras again: shot + WHOLE
+    // dissolve instead of shot + half (Franco, 2026-09-24).
     {
-      int durInAnimatic = r1 - r0 + 1;
+      int durInAnimatic = trueDur;
       TXsheet *subXsh = cell.m_level->getChildLevel()->getXsheet();
       int xdExtra = xdNoteHalfCount(subXsh, kXDOutName) +
                     xdNoteHalfCount(subXsh, kXDInName);

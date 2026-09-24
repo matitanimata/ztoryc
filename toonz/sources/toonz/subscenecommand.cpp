@@ -2,6 +2,7 @@
 
 // TnzCore includes
 #include "tconst.h"
+#include "ztoryshotops.h"  // shotTrueSpan (Ztoryc mark-out fallback)
 #include "tundo.h"
 
 // TnzBase includes
@@ -1282,6 +1283,14 @@ void openSubXsheet() {
         shotColPtr->getRange(r0col, r1col, /*ignoreLastStop=*/true);
       int shotDuration =
           (r1col >= r0col) ? (r1col - r0col + 1) : newXsh->getFrameCount();
+      // With a dissolve laid out, [r0col, r1col] already includes the exposed
+      // extras, and the XD notes below add them again: shot + WHOLE dissolve
+      // instead of shot + half per side. Start from the TRUE length.
+      {
+        int ts = 0, td = 0;
+        if (ZtoryShotOps::shotTrueSpan(currentXsheet, openedCol, ts, td))
+          shotDuration = td;
+      }
       markIn  = 0;
       markOut = shotDuration - 1;
       // Cross-dissolve: include the extra dissolve frames in the mark-out so the

@@ -30,6 +30,7 @@
 #include "tdoubleparam.h"
 #include "tdoublekeyframe.h"
 
+#include <algorithm>
 #include <string>
 
 namespace ZtoryShotOps {
@@ -355,6 +356,27 @@ static TXsheet *columnSubXsheet(TXsheet *mainXsh, int col) {
   return nullptr;
 }
 
+static std::vector<int> shotColumns(TXsheet *mainXsh);
+
+// Is the dissolve tail of shot column `col` exposed right now? The tail-extra
+// is indistinguishable from real frames by looking at colA alone, but
+// applyCrossDissolves() and teardownCrossDissolves() always lay/strip it
+// TOGETHER with the next shot's head-extra — so ask colB: its range must start
+// `half` rows before the cut and open with a head-hold copy (frameId <= half).
+static bool tailExtraExposed(TXsheet *mainXsh, int col, int r1, int half) {
+  const std::vector<int> cols = shotColumns(mainXsh);
+  auto it = std::find(cols.begin(), cols.end(), col);
+  if (it == cols.end() || it + 1 == cols.end()) return false;  // last shot
+  const int colB = *(it + 1);
+  int r0B = 0, r1B = 0;
+  mainXsh->getColumn(colB)->getRange(r0B, r1B);
+  const int cut = r1 - half;  // exposed layout: [real][half tail-extra][stop]
+  if (r0B != cut - half) return false;
+  TXshCell b0 = mainXsh->getCell(r0B, colB);
+  return !b0.isEmpty() && !b0.getFrameId().isStopFrame() &&
+         b0.getFrameId().getNumber() <= half;
+}
+
 bool shotTrueSpan(TXsheet *mainXsh, int col, int &startOut, int &durationOut) {
   if (!mainXsh) return false;
   TXshColumn *column = mainXsh->getColumn(col);
@@ -382,10 +404,16 @@ bool shotTrueSpan(TXsheet *mainXsh, int col, int &startOut, int &durationOut) {
 
   // Tail dissolve layout is [real][tailHalf tail-extra][stop]; a plain shot is
   // [real][stop].  Exclude the tail-extra (+ its stop) or the plain stop.
+  // Only when the tail is actually EXPOSED, like the head above: the XD-out
+  // note alone is not enough. With the dissolve not laid (A is the last shot,
+  // B's XD-in doesn't match, or a teardown awaiting its resequence) the old
+  // test still cut `half` frames off A — the track drew A short and a gap
+  // opened before B (Franco's screenshot, 2026-09-23: road map A1).
   TXshCell last     = mainXsh->getCell(r1, col);
   bool lastIsStop   = !last.isEmpty() && last.getFrameId().isStopFrame();
   int trueEndInclusive;
-  if (tailHalf > 0 && lastIsStop && (r1 - 1 - tailHalf) >= trueStart)
+  if (tailHalf > 0 && lastIsStop && (r1 - 1 - tailHalf) >= trueStart &&
+      tailExtraExposed(mainXsh, col, r1, tailHalf))
     trueEndInclusive = r1 - 1 - tailHalf;
   else
     trueEndInclusive = lastIsStop ? r1 - 1 : r1;
