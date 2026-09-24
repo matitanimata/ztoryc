@@ -701,6 +701,13 @@ void KitsuClient::pushTasks(const QString &projectId,
   m_assignQueue.clear();
   m_assignIdx = 0;
   m_ttCreateQueue.clear();
+  m_ttPriorityById.clear();
+  m_projectTtIds.clear();
+  m_ttAddQueue.clear();
+  m_taskCreateList.clear();
+  m_taskMissingTypes.clear();
+  m_taskMissingOrder.clear();
+  m_ttAddIdx = m_tasksCreated = m_ttNewIdx = 0;
   m_taskCreateIdx = m_taskApplyIdx = m_taskStatusesSet = m_taskUnchanged = 0;
 
   // Reverse status map: Ztoryc TaskStatus -> canonical Kitsu status id (only the
@@ -726,34 +733,101 @@ void KitsuClient::taskLoadTaskTypes() {
     if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
     for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
       const QJsonObject o = v.toObject();
-      if (o.value("for_entity").toString() == "Shot")
+      if (o.value("for_entity").toString() == "Shot") {
         m_ttIdByName.insert(o.value("name").toString().toLower(),
                             o.value("id").toString());
+        m_ttPriorityById.insert(o.value("id").toString(),
+                                o.value("priority").toInt());
+      }
     }
-    // Distinct task-type ids actually used by the queue (and known to Kitsu).
+    // Distinct task-type ids actually used by the queue. The ones Kitsu does
+    // not have at all are created next (Franco, 2026-09-24: Ztoryc owns the
+    // workflows, so Kitsu gets the task types they need).
     for (const KitsuTaskPush &t : m_taskQueue) {
       const QString id = resolveTaskTypeId(t.taskType);
-      if (!id.isEmpty() && !m_ttCreateQueue.contains(id)) m_ttCreateQueue.push_back(id);
+      if (id.isEmpty()) {
+        if (!m_taskMissingTypes.contains(t.taskType)) {
+          m_taskMissingTypes << t.taskType;
+          m_taskMissingOrder.insert(t.taskType, t.order);
+        }
+      } else if (!m_ttCreateQueue.contains(id))
+        m_ttCreateQueue.push_back(id);
     }
-    taskCreateNext();
+    taskCreateTypeNext();
   });
 }
 
-void KitsuClient::taskCreateNext() {
-  if (m_taskCreateIdx >= m_ttCreateQueue.size()) { taskLoadSequences(); return; }
-  const QString ttId = m_ttCreateQueue[m_taskCreateIdx];
-  emit shotsPushProgress(tr("Creating tasks (%1/%2)…")
-                             .arg(m_taskCreateIdx + 1)
-                             .arg(m_ttCreateQueue.size()));
-  QNetworkReply *r = authPost("/api/actions/projects/" + m_taskProjectId +
-                                  "/task-types/" + ttId + "/shots/create-tasks",
-                              "{}");
+void KitsuClient::taskCreateTypeNext() {
+  if (m_ttNewIdx >= m_taskMissingTypes.size()) { taskLoadProject(); return; }
+  const QString name = m_taskMissingTypes[m_ttNewIdx];
+  emit shotsPushProgress(tr("Creating task type %1 in Kitsu…").arg(name));
+  // Kitsu task types are server-wide: this one shows up in every project's
+  // choices, but only joins THIS project's pipeline (taskAddTypeNext).
+  QJsonObject body;
+  body["name"]       = name;
+  body["for_entity"] = "Shot";
+  body["color"]      = "#999999";  // Kitsu's own neutral grey
+  body["priority"]   = m_taskMissingOrder.value(name);
+  QNetworkReply *r = authPost("/api/data/task-types",
+                              QJsonDocument(body).toJson(QJsonDocument::Compact));
+  connect(r, &QNetworkReply::finished, this, [this, r, name]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    // A refusal (e.g. not an admin) doesn't stop the push: that type stays in
+    // m_taskMissingTypes and is reported at the end.
+    if (r->error() == QNetworkReply::NoError) {
+      const QJsonObject o = QJsonDocument::fromJson(b).object();
+      const QString id    = o.value("id").toString();
+      if (!id.isEmpty()) {
+        m_ttIdByName.insert(normalizeTaskType(name), id);
+        m_ttPriorityById.insert(id, o.value("priority").toInt());
+        if (!m_ttCreateQueue.contains(id)) m_ttCreateQueue.push_back(id);
+        m_taskMissingTypes.removeAt(m_ttNewIdx);
+        taskCreateTypeNext();
+        return;
+      }
+    }
+    ++m_ttNewIdx;
+    taskCreateTypeNext();
+  });
+}
+
+void KitsuClient::taskLoadProject() {
+  // A task whose type is not in the project's pipeline exists, but Kitsu does
+  // not show its column on the shot page — it looks like it was never created.
+  QNetworkReply *r =
+      m_nam->get(authGet("/api/data/projects/" + m_taskProjectId));
   connect(r, &QNetworkReply::finished, this, [this, r]() {
     r->deleteLater();
     const QByteArray b = r->readAll();
     if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
-    ++m_taskCreateIdx;
-    taskCreateNext();
+    for (const QJsonValue &v :
+         QJsonDocument::fromJson(b).object().value("task_types").toArray())
+      m_projectTtIds.insert(v.toString());
+    for (const QString &id : m_ttCreateQueue)
+      if (!m_projectTtIds.contains(id)) m_ttAddQueue.push_back(id);
+    taskAddTypeNext();
+  });
+}
+
+void KitsuClient::taskAddTypeNext() {
+  if (m_ttAddIdx >= m_ttAddQueue.size()) { taskLoadSequences(); return; }
+  const QString ttId = m_ttAddQueue[m_ttAddIdx];
+  emit shotsPushProgress(tr("Adding task types to the project (%1/%2)…")
+                             .arg(m_ttAddIdx + 1)
+                             .arg(m_ttAddQueue.size()));
+  QJsonObject body;
+  body["task_type_id"] = ttId;
+  body["priority"]     = m_ttPriorityById.value(ttId);
+  QNetworkReply *r =
+      authPost("/api/data/projects/" + m_taskProjectId + "/settings/task-types",
+               QJsonDocument(body).toJson(QJsonDocument::Compact));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
+    ++m_ttAddIdx;
+    taskAddTypeNext();
   });
 }
 
@@ -766,7 +840,8 @@ void KitsuClient::taskLoadSequences() {
     if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
     for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
       const QJsonObject o = v.toObject();
-      m_taskSeqIds.insert(o.value("name").toString(), o.value("id").toString());
+      m_taskSeqIds.insert(o.value("name").toString().toLower(),
+                          o.value("id").toString());
     }
     taskLoadShots();
   });
@@ -781,12 +856,19 @@ void KitsuClient::taskLoadShots() {
     if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
     for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
       const QJsonObject o = v.toObject();
-      m_taskShotIds.insert(
-          o.value("parent_id").toString() + "/" + o.value("name").toString(),
-          o.value("id").toString());
+      m_taskShotIds.insert(o.value("parent_id").toString() + "/" +
+                               o.value("name").toString().toLower(),
+                           o.value("id").toString());
     }
     taskLoadProjectTasks();
   });
+}
+
+QString KitsuClient::taskShotIdFor(const KitsuTaskPush &t) const {
+  if (!t.kitsuShotId.isEmpty()) return t.kitsuShotId;
+  // Fallback for a shot Ztoryc has no id for yet (seq+name, case-insensitive).
+  return m_taskShotIds.value(m_taskSeqIds.value(t.seq.toLower()) + "/" +
+                             t.shot.toLower());
 }
 
 void KitsuClient::taskLoadProjectTasks() {
@@ -808,7 +890,64 @@ void KitsuClient::taskLoadProjectTasks() {
         assignees.insert(a.toString());
       m_taskAssigneesByKey.insert(key, assignees);
     }
-    taskApplyNext();
+    // The tasks THIS push needs and Kitsu lacks: exactly these shots, exactly
+    // these types. (The old "create-tasks" action worked on every shot of the
+    // project, i.e. on every other episode too.)
+    QSet<QString> queued;
+    for (int i = 0; i < m_taskQueue.size(); ++i) {
+      const KitsuTaskPush &t = m_taskQueue[i];
+      const QString ttId   = resolveTaskTypeId(t.taskType);
+      const QString shotId = taskShotIdFor(t);
+      if (ttId.isEmpty() || shotId.isEmpty()) continue;
+      const QString key = shotId + "/" + ttId;
+      if (m_taskIdByKey.contains(key) || queued.contains(key)) continue;
+      queued.insert(key);
+      m_taskCreateList.push_back(i);
+    }
+    taskCreateMissingNext();
+  });
+}
+
+QByteArray KitsuClient::newTaskBody(const QString &projectId,
+                                    const QString &entityId,
+                                    const QString &ttId) const {
+  // Same fields gazu's new_task() sends. A new task starts at Todo.
+  QJsonObject body;
+  body["project_id"]     = projectId;
+  body["entity_id"]      = entityId;
+  body["task_type_id"]   = ttId;
+  body["task_status_id"] = m_statusIdByZ.value(static_cast<int>(TaskStatus::Todo));
+  body["assignees"]      = QJsonArray();
+  body["name"]           = "main";
+  return QJsonDocument(body).toJson(QJsonDocument::Compact);
+}
+
+void KitsuClient::taskCreateMissingNext() {
+  if (m_taskCreateIdx >= m_taskCreateList.size()) { taskApplyNext(); return; }
+  if (m_statusIdByZ.value(static_cast<int>(TaskStatus::Todo)).isEmpty()) {
+    taskFail(tr("Kitsu has no \"todo\" task status: cannot create tasks."));
+    return;
+  }
+  const KitsuTaskPush &t = m_taskQueue[m_taskCreateList[m_taskCreateIdx]];
+  const QString ttId   = resolveTaskTypeId(t.taskType);
+  const QString shotId = taskShotIdFor(t);
+  emit shotsPushProgress(tr("Creating tasks (%1/%2)…")
+                             .arg(m_taskCreateIdx + 1)
+                             .arg(m_taskCreateList.size()));
+  QNetworkReply *r = authPost("/api/data/tasks",
+                              newTaskBody(m_taskProjectId, shotId, ttId));
+  connect(r, &QNetworkReply::finished, this, [this, r, shotId, ttId]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { taskFail(errorMessage(r, b)); return; }
+    const QJsonObject o = QJsonDocument::fromJson(b).object();
+    const QString key   = shotId + "/" + ttId;
+    m_taskIdByKey.insert(key, o.value("id").toString());
+    m_taskStatusByKey.insert(key, o.value("task_status_id").toString());
+    m_taskAssigneesByKey.insert(key, QSet<QString>());
+    ++m_tasksCreated;
+    ++m_taskCreateIdx;
+    taskCreateMissingNext();
   });
 }
 
@@ -816,13 +955,13 @@ void KitsuClient::taskApplyNext() {
   while (m_taskApplyIdx < m_taskQueue.size()) {
     const KitsuTaskPush t = m_taskQueue[m_taskApplyIdx];
     const QString ttId     = resolveTaskTypeId(t.taskType);
-    const QString seqId    = m_taskSeqIds.value(t.seq);
-    const QString shotId   = m_taskShotIds.value(seqId + "/" + t.shot);
+    const QString shotId   = taskShotIdFor(t);
     const QString taskId   = m_taskIdByKey.value(shotId + "/" + ttId);
     const QString statusId = statusIdFor(t.status);
-    // Skip anything we couldn't resolve (unknown task-type, shot or status).
-    if (ttId.isEmpty() || shotId.isEmpty() || taskId.isEmpty() ||
-        statusId.isEmpty()) {
+    // Skip anything we couldn't resolve (unknown task-type, shot or status),
+    // and the untouched workflow tasks: they only had to exist.
+    if (t.createOnly || ttId.isEmpty() || shotId.isEmpty() ||
+        taskId.isEmpty() || statusId.isEmpty()) {
       ++m_taskApplyIdx;
       continue;
     }
@@ -855,13 +994,15 @@ void KitsuClient::taskApplyNext() {
   // reporting completion. Each Ztoryc assignee that maps to a known person and
   // isn't already on the task is added (never removed).
   const int statusesSet = m_taskStatusesSet, unchanged = m_taskUnchanged;
+  const int created  = m_tasksCreated;
+  const QStringList missingTypes = m_taskMissingTypes;
   m_assignQueue.clear();
   m_assignIdx = 0;
   QSet<QString> skippedNames;  // Ztoryc assignees that aren't on the Kitsu team
   for (const KitsuTaskPush &t : m_taskQueue) {
     if (t.assignees.isEmpty()) continue;
     const QString ttId   = resolveTaskTypeId(t.taskType);
-    const QString shotId = m_taskShotIds.value(m_taskSeqIds.value(t.seq) + "/" + t.shot);
+    const QString shotId = taskShotIdFor(t);
     const QString taskId = m_taskIdByKey.value(shotId + "/" + ttId);
     if (taskId.isEmpty()) continue;
     QSet<QString> &have = m_taskAssigneesByKey[shotId + "/" + ttId];
@@ -879,13 +1020,19 @@ void KitsuClient::taskApplyNext() {
     }
   }
   const int assigned = m_assignQueue.size(), skipped = skippedNames.size();
-  m_assignOnDone = [this, statusesSet, unchanged, assigned, skipped]() {
+  m_assignOnDone = [this, statusesSet, unchanged, assigned, skipped, created,
+                    missingTypes]() {
     QString msg = unchanged > 0
                       ? tr("Done — %1 task statuses changed, %2 unchanged.")
                             .arg(statusesSet).arg(unchanged)
                       : tr("Done — %1 task statuses set in Kitsu.").arg(statusesSet);
     if (assigned > 0) msg += tr("  %1 people assigned.").arg(assigned);
     if (skipped > 0)  msg += tr("  %1 not in team (skipped).").arg(skipped);
+    if (created > 0)  msg += tr("  %1 tasks created.").arg(created);
+    if (!missingTypes.isEmpty()) {
+      msg += tr("  %1 task types missing in Kitsu.").arg(missingTypes.size());
+      emit taskTypesMissing(missingTypes);
+    }
     emit tasksPushed(true, statusesSet, msg);
   };
   assignRun();
@@ -1067,6 +1214,7 @@ void KitsuClient::pushAssets(const QString &projectId,
   m_asExisting.clear();
   m_asResolved.clear();
   m_asIndex = m_asCreated = m_asUpdated = 0;
+  m_asSkipped.clear();
   asPushLoadTypes();
 }
 
@@ -1109,8 +1257,14 @@ void KitsuClient::asPushProcessNext() {
     const KitsuAsset a  = m_asQueue[m_asIndex];
     const QString typeId = m_asTypeIdByName.value(a.type.toLower());
     const QString key    = a.type + "\n" + a.name;
-    // No matching Kitsu asset-type → can't create it there; skip.
-    if (typeId.isEmpty()) { ++m_asIndex; continue; }
+    // No matching Kitsu asset-type → can't create it there. Skip it, but
+    // remember it: a silent skip looked like a successful sync while the asset
+    // never reached Kitsu.
+    if (typeId.isEmpty()) {
+      m_asSkipped[a.type].append(a.name);
+      ++m_asIndex;
+      continue;
+    }
     // Already linked, or an asset with this type+name exists → record + move on.
     QString existing = a.kitsuAssetId;
     if (existing.isEmpty())
@@ -1146,10 +1300,21 @@ void KitsuClient::asPushProcessNext() {
     return;  // resume in the callback
   }
   emit assetIdsResolved(m_asResolved);
-  emit assetsPushed(true, m_asCreated, m_asUpdated,
-                    tr("Assets synced — %1 created, %2 already in Kitsu.")
-                        .arg(m_asCreated)
-                        .arg(m_asUpdated));
+  int skipped = 0;
+  if (!m_asSkipped.isEmpty()) {
+    QStringList lines;
+    for (auto it = m_asSkipped.cbegin(); it != m_asSkipped.cend(); ++it) {
+      skipped += it.value().size();
+      lines << it.key() + ": " + it.value().join(", ");
+    }
+    emit assetsSkipped(lines);
+  }
+  QString msg = tr("Assets synced — %1 created, %2 already in Kitsu.")
+                    .arg(m_asCreated)
+                    .arg(m_asUpdated);
+  if (skipped > 0)
+    msg += " " + tr("%1 skipped (asset type missing in Kitsu).").arg(skipped);
+  emit assetsPushed(true, m_asCreated, m_asUpdated, msg);
 }
 
 //----------------------------------------------------------------------------
@@ -1799,11 +1964,25 @@ QVector<KitsuShotPush> KitsuClient::buildShotPushFromProject(
     s.nbFrames    = s.frameOut - s.frameIn + 1;
     s.kitsuShotId = ps.kitsuShotId;  // rename-proof update when known
     shots.push_back(s);
-    for (auto it = ps.tasks.constBegin(); it != ps.tasks.constEnd(); ++it) {
+    // Every task of the shot's WORKFLOW goes up, not only the ones that have a
+    // state here: a fresh shot has Storyboard and Layout at most, and Kitsu
+    // ended up with a single Storyboard column while the tracker showed the
+    // whole pipeline. The untouched ones are created, never given a status.
+    QStringList types = m->taskTypesForProjectShot(ps);
+    for (auto it = ps.tasks.constBegin(); it != ps.tasks.constEnd(); ++it)
+      if (!types.contains(it.key())) types << it.key();
+    for (int ti = 0; ti < types.size(); ++ti) {
+      const QString &tt = types[ti];
       KitsuTaskPush tp;
-      tp.seq = s.seq; tp.shot = s.name;
-      tp.taskType = it.key(); tp.status = it.value().status;
-      tp.assignees = it.value().assignees;
+      tp.seq = s.seq; tp.shot = s.name; tp.taskType = tt;
+      tp.order = ti + 1;
+      tp.kitsuShotId = ps.kitsuShotId;
+      auto it = ps.tasks.constFind(tt);
+      if (it != ps.tasks.constEnd()) {
+        tp.status    = it.value().status;
+        tp.assignees = it.value().assignees;
+      } else
+        tp.createOnly = true;
       outTasks.push_back(tp);
     }
   }
@@ -1883,33 +2062,7 @@ void KitsuClient::uplLoadTaskTypes() {
         m_ttIdByName.insert(o.value("name").toString().toLower(),
                             o.value("id").toString());
     }
-    // Distinct task-type ids the queue uploads to (so we can create the tasks if
-    // they don't exist yet — otherwise there's nothing to attach the preview to).
-    for (const KitsuPreviewUpload &u : m_uplQueue) {
-      const QString id = resolveTaskTypeId(u.taskType);
-      if (!id.isEmpty() && !m_uplTtCreate.contains(id)) m_uplTtCreate.push_back(id);
-    }
-    uplEnsureTasks();
-  });
-}
-
-void KitsuClient::uplEnsureTasks() {
-  // create-tasks is idempotent (only makes the missing ones); run it per used
-  // task-type so the shots have the task before we attach previews to it.
-  if (m_uplTtIdx >= m_uplTtCreate.size()) { uplLoadTasks(); return; }
-  const QString ttId = m_uplTtCreate[m_uplTtIdx];
-  emit shotsPushProgress(tr("Ensuring tasks (%1/%2)…")
-                             .arg(m_uplTtIdx + 1)
-                             .arg(m_uplTtCreate.size()));
-  QNetworkReply *r = authPost("/api/actions/projects/" + m_uplProjectId +
-                                  "/task-types/" + ttId + "/shots/create-tasks",
-                              "{}", uploadBase());
-  connect(r, &QNetworkReply::finished, this, [this, r]() {
-    r->deleteLater();
-    const QByteArray b = r->readAll();
-    if (r->error() != QNetworkReply::NoError) { uplFail(errorMessage(r, b)); return; }
-    ++m_uplTtIdx;
-    uplEnsureTasks();
+    uplLoadTasks();
   });
 }
 
@@ -1927,8 +2080,42 @@ void KitsuClient::uplLoadTasks() {
                                   o.value("task_type_id").toString(),
                               o.value("id").toString());
     }
-    uplProcessNext();
+    m_uplTtIdx = 0;
+    uplEnsureTasks();
   });
+}
+
+void KitsuClient::uplEnsureTasks() {
+  // A preview needs a task to hang on: create the missing one, on THIS shot
+  // only. (This used the project-wide "create-tasks" action, which added the
+  // task to every shot of the project — other episodes included.)
+  // m_uplTtIdx walks m_uplQueue here.
+  while (m_uplTtIdx < m_uplQueue.size()) {
+    const KitsuPreviewUpload &u = m_uplQueue[m_uplTtIdx];
+    const QString ttId = resolveTaskTypeId(u.taskType);
+    const QString key  = u.kitsuShotId + "/" + ttId;
+    if (u.kitsuShotId.isEmpty() || ttId.isEmpty() ||
+        m_uplTaskIdByKey.contains(key) ||
+        m_statusIdByZ.value(static_cast<int>(TaskStatus::Todo)).isEmpty()) {
+      ++m_uplTtIdx;
+      continue;
+    }
+    emit shotsPushProgress(tr("Creating task for %1…").arg(u.shot));
+    QNetworkReply *r = authPost("/api/data/tasks",
+                                newTaskBody(m_uplProjectId, u.kitsuShotId, ttId),
+                                uploadBase());
+    connect(r, &QNetworkReply::finished, this, [this, r, key]() {
+      r->deleteLater();
+      const QByteArray b = r->readAll();
+      if (r->error() != QNetworkReply::NoError) { uplFail(errorMessage(r, b)); return; }
+      m_uplTaskIdByKey.insert(key,
+                              QJsonDocument::fromJson(b).object().value("id").toString());
+      ++m_uplTtIdx;
+      uplEnsureTasks();
+    });
+    return;  // resume in the callback
+  }
+  uplProcessNext();
 }
 
 void KitsuClient::uplProcessNext() {

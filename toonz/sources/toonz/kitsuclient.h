@@ -137,6 +137,14 @@ struct KitsuTaskPush {
   QString     taskType;
   TaskStatus  status = TaskStatus::Todo;
   QStringList assignees;  // Ztoryc assignee names to add (add-only) in Kitsu
+  // The shot's Kitsu id when Ztoryc knows it. Preferred over seq+name, which is
+  // ambiguous in a tvshow: every episode can have its own "SQ01".
+  QString     kitsuShotId;
+  // A task of the shot's workflow that nobody has touched in Ztoryc yet: make
+  // sure it EXISTS in Kitsu, but never push a status for it — Ztoryc has no
+  // opinion, and Kitsu may already know better.
+  bool        createOnly = false;
+  int         order = 0;  // 1-based position in the shot's workflow
 };
 
 // One asset-task whose status we push up to Kitsu. The asset is resolved by
@@ -366,6 +374,9 @@ signals:
   void shotIdsResolved(const QHash<QString, QString> &byKey);
   void shotsPushed(bool ok, int created, int updated, const QString &message);
   void tasksPushed(bool ok, int statusesSet, const QString &message);
+  // Workflow task types that could not reach Kitsu because the server has no
+  // Shot task type with that name. Emitted just before tasksPushed.
+  void taskTypesMissing(const QStringList &names);
   void assetTasksPushed(bool ok, int statusesSet, const QString &message);
   void statusesPulled(bool ok, const QVector<KitsuPullEntry> &entries,
                       const QString &message);
@@ -373,6 +384,10 @@ signals:
   // later syncs are rename-proof. Emitted just before assetsPushed.
   void assetIdsResolved(const QHash<QString, QString> &byKey);
   void assetsPushed(bool ok, int created, int updated, const QString &message);
+  // Assets NOT pushed because Kitsu has no asset type with their type's name,
+  // one "Type: name, name…" line per missing type. Emitted just before
+  // assetsPushed, only when something was skipped.
+  void assetsSkipped(const QStringList &linesByMissingType);
   void assetsPulled(bool ok, const QVector<KitsuAsset> &assets,
                     const QString &message);
   void assetStatusesPulled(bool ok,
@@ -430,8 +445,14 @@ private:
 
   // --- Task + status push (Phase 3b) -----------------------------------
   void taskLoadTaskTypes();
-  void taskCreateNext();
+  void taskCreateTypeNext();    // create the workflow types Kitsu lacks
+  void taskLoadProject();       // which task types the project already shows
+  void taskAddTypeNext();       // add the used ones it doesn't show yet
   void taskLoadSequences();
+  void taskCreateMissingNext(); // create THIS push's missing tasks, one by one
+  QString taskShotIdFor(const KitsuTaskPush &t) const;
+  QByteArray newTaskBody(const QString &projectId, const QString &entityId,
+                         const QString &ttId) const;
   void taskLoadShots();
   void taskLoadProjectTasks();
   void taskApplyNext();
@@ -450,8 +471,17 @@ private:
   QHash<QString, QString>  m_taskStatusByKey; // "shotId/ttId" -> current status id
   QHash<QString, QSet<QString>> m_taskAssigneesByKey; // "shotId/ttId" -> person ids
   QHash<int, QString>      m_statusIdByZ;    // TaskStatus (int) -> Kitsu status id
-  QVector<QString>         m_ttCreateQueue;  // task-type ids to create-tasks for
+  QVector<QString>         m_ttCreateQueue;  // task-type ids used by this push
+  QHash<QString, int>      m_ttPriorityById; // task-type id -> its priority
+  QSet<QString>            m_projectTtIds;   // task types the project shows
+  QVector<QString>         m_ttAddQueue;     // used types to add to the project
+  int m_ttAddIdx = 0;
+  QVector<int>             m_taskCreateList; // m_taskQueue indices to create
+  QStringList              m_taskMissingTypes; // workflow types Kitsu lacks
+  QHash<QString, int>      m_taskMissingOrder; // their position in the workflow
+  int m_ttNewIdx = 0;
   int m_taskCreateIdx = 0;
+  int m_tasksCreated  = 0;
   int m_taskApplyIdx  = 0;
   int m_taskStatusesSet = 0;
   int m_taskUnchanged   = 0;  // already at target status -> skipped
@@ -491,6 +521,7 @@ private:
   int m_asIndex   = 0;
   int m_asCreated = 0;
   int m_asUpdated = 0;
+  QMap<QString, QStringList> m_asSkipped;    // missing type -> asset names
 
   // Asset-task push pipeline (mirror of the shot task pipeline for assets).
   void atLoadTaskTypes();    // GET /api/data/task-types (for_entity = Asset)
@@ -561,7 +592,7 @@ private:
   // then kick off the upload machine.
   void uplProbeLocalThenRun();
   void uplLoadTaskTypes();
-  void uplEnsureTasks();  // create-tasks for the task-types we'll upload to
+  void uplEnsureTasks();  // create the missing task of each uploaded shot
   void uplLoadTasks();
   void uplProcessNext();
   void uplPostComment(const QString &taskId, const QString &statusId,

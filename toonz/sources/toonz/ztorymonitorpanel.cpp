@@ -169,6 +169,21 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
   tbLay->addWidget(m_razorBtn);
   tbLay->addSpacing(8);
 
+  // A/V Link, Follow and Auto Match were missing here (road map B5). All three
+  // switches live in ZtoryModel, so this toolbar and the Animatic's act on the
+  // same state and always show it the same way. The razor cut itself is
+  // forwarded to the Animatic panel (razorRequested), which reads the link.
+  QToolButton *linkBtn = makeTbBtn(
+      "ztoryc_av_link", tr("A/V Link\nLink/Unlink audio and video tracks"),
+      true);
+  linkBtn->setChecked(ZtoryModel::instance()->audioLinked());
+  connect(linkBtn, &QToolButton::toggled, ZtoryModel::instance(),
+          &ZtoryModel::setAudioLinked);
+  connect(ZtoryModel::instance(), &ZtoryModel::audioLinkedChanged, linkBtn,
+          &QToolButton::setChecked);
+  tbLay->addWidget(linkBtn);
+  tbLay->addSpacing(8);
+
   QToolButton *addBtn    = makeTbBtn("ztoryc_add_shot",    tr("Add Shot after selection"));
   QToolButton *deleteBtn = makeTbBtn("ztoryc_delete_shot", tr("Delete selected shots  (Del)"));
   tbLay->addWidget(addBtn);
@@ -190,6 +205,40 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
     m_track->setSnapEnabled(on);
   });
   tbLay->addWidget(snapBtn);
+  tbLay->addSpacing(8);
+
+  // Same orange «on» colour as in the Animatic: these two are modes that stay
+  // on and change what editing does, not tools you pick.
+  auto makeModeBtn = [&](const char *icon, const QString &tip) {
+    QToolButton *b = makeTbBtn(icon, tip, true);
+    b->setStyleSheet(
+        "QToolButton{background:transparent;border:none;border-radius:4px;}"
+        "QToolButton:hover{background:#555;}"
+        "QToolButton:checked{background:#c8703a;}");
+    return b;
+  };
+  QToolButton *followBtn = makeModeBtn(
+      "ztoryc_follow",
+      tr("Follow\nBoard and timeline follow each other: click a panel in "
+         "the Board to put the playhead on it; move the playhead to "
+         "highlight its panel in the Board."));
+  followBtn->setChecked(ZtoryModel::instance()->followEnabled());
+  connect(followBtn, &QToolButton::toggled, ZtoryModel::instance(),
+          &ZtoryModel::setFollowEnabled);
+  connect(ZtoryModel::instance(), &ZtoryModel::followChanged, followBtn,
+          &QToolButton::setChecked);
+  tbLay->addWidget(followBtn);
+
+  QToolButton *autoMatchBtn = makeModeBtn(
+      "ztoryc_automatch",
+      tr("Auto Match Duration\nWhen enabled, the animatic slot automatically\n"
+         "resizes to match the shot drawing content."));
+  autoMatchBtn->setChecked(ZtoryModel::instance()->autoMatch());
+  connect(autoMatchBtn, &QToolButton::toggled, ZtoryModel::instance(),
+          &ZtoryModel::setAutoMatch);
+  connect(ZtoryModel::instance(), &ZtoryModel::autoMatchChanged, autoMatchBtn,
+          &QToolButton::setChecked);
+  tbLay->addWidget(autoMatchBtn);
   tbLay->addSpacing(8);
 
   QToolButton *copyBtn  = makeTbBtn("ztoryc_copy",  tr("Copy selected shots  (Ctrl+C)"));
@@ -223,6 +272,21 @@ ZtoryMonitorPanel::ZtoryMonitorPanel(QWidget *parent)
   // segnale returnToMainRequested del track (doppio clic fuori dai blocchi),
   // che e' il modo in cui si torna indietro senza un pulsante dedicato.
   tbLay->addStretch(1);
+
+  // Export (far right), as in the Animatic. The Monitor usually floats on a
+  // second screen, so the Board is not in this window: look it up anywhere.
+  QToolButton *exportShotsBtn =
+      makeTbBtn("ztoryc_export_shots", tr("Export Shots / Scene"));
+  QToolButton *exportAnimBtn =
+      makeTbBtn("ztoryc_export_animatic", tr("Export Animatic"));
+  connect(exportShotsBtn, &QToolButton::clicked, this, []() {
+    if (StoryboardPanel *b = findBoardPanel()) b->exportShotsCmd();
+  });
+  connect(exportAnimBtn, &QToolButton::clicked, this, []() {
+    if (StoryboardPanel *b = findBoardPanel()) b->exportAnimaticCmd();
+  });
+  tbLay->addWidget(exportShotsBtn);
+  tbLay->addWidget(exportAnimBtn);
 
   // ── Bottom area: toolbar + ruler + track + audio ──────────────────────────
   // The viewer lives in the top half of the splitter; the bottom half contains

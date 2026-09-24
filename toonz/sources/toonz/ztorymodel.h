@@ -373,6 +373,10 @@ class ZtoryModel : public QObject {
   // ZtoryPanelNavigator always reflect the same toggle.
   bool        m_autoMatch = false;
   bool        m_follow    = false;  // «Follow», see followEnabled()
+  // «A/V Link»: a video cut also cuts the audio. Shared so the Animatic and
+  // the Monitor toolbars show — and act on — the same switch. Not persisted
+  // (it always started ON, and still does).
+  bool        m_audioLinked = true;
 
   // Persistent thumbnail cache keyed by shot uuid — survives scene switches so
   // the Production Tracker can show thumbnails for all loaded storyboards.
@@ -879,6 +883,12 @@ public:
   // across sessions (Franco, 2026-09-24).
   bool followEnabled() const { return m_follow; }
   void setFollowEnabled(bool on);
+  bool audioLinked() const { return m_audioLinked; }
+  void setAudioLinked(bool on) {
+    if (m_audioLinked == on) return;
+    m_audioLinked = on;
+    emit audioLinkedChanged(on);
+  }
   bool autoMatch() const { return m_autoMatch; }
   void setAutoMatch(bool on) {
     if (m_autoMatch == on) return;
@@ -947,6 +957,7 @@ signals:
   void scriptFileChanged();  // imported screenplay changed (or cleared)
   void autoMatchChanged(bool on);  // auto-match toggle flipped
   void followChanged(bool on);     // «Follow» toggle flipped
+  void audioLinkedChanged(bool on);  // «A/V Link» toggle flipped
   // Viewer-switch signals: emitted by activateShotForViewing / requestReturnToViewer.
   // ZtoryAnimaticViewerPanel connects to these to switch stack pages.
   void shotActivatedForViewing(int col);

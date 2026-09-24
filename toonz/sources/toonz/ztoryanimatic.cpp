@@ -5542,7 +5542,7 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   linkBtn->setFixedSize(28, 28);
   linkBtn->setToolTip(tr("A/V Link"));
   linkBtn->setCheckable(true);
-  linkBtn->setChecked(true);
+  linkBtn->setChecked(ZtoryModel::instance()->audioLinked());
   linkBtn->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}QToolButton:hover{background:#555;}QToolButton:checked{background:#666;}");
   linkBtn->setToolTip("Link/Unlink audio and video tracks");
   linkBtn->setToolTip("Link/Unlink audio and video tracks");
@@ -5767,9 +5767,15 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
     // m_audioLinked only controls whether a video cut also cuts audio.
     for (auto *at : m_audioTracks) at->setRazorActive(true);
   });
-  connect(linkBtn, &QToolButton::toggled, this, [this](bool checked){
-    m_audioLinked = checked;
-  });
+  // The switch lives in ZtoryModel, shared with the Monitor's own button.
+  m_audioLinked = ZtoryModel::instance()->audioLinked();
+  connect(linkBtn, &QToolButton::toggled, ZtoryModel::instance(),
+          &ZtoryModel::setAudioLinked);
+  connect(ZtoryModel::instance(), &ZtoryModel::audioLinkedChanged, this,
+          [this, linkBtn](bool on) {
+            m_audioLinked = on;
+            linkBtn->setChecked(on);
+          });
   connect(mergeBtn, &QToolButton::clicked, this, &ZtoryAnimaticPanel::onMergeShots);
 
   // Scroll area with ruler + track + audio

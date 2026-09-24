@@ -7,6 +7,7 @@
 #include "toonz/preferences.h"  // getCurrentRoomChoice (exit-bar gating)
 
 #include "toonzqt/gutil.h"
+#include "toonzqt/dvdialog.h"
 
 #include "tundo.h"
 #include "tapp.h"
@@ -424,6 +425,12 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   });
   connect(kc, &KitsuClient::shotsPushed, this, [this](bool ok, int, int, const QString &msg) {
     if (ok && !m_kitsuPendingTasks.isEmpty()) {
+      // Rebuild the task list now: shotIdsResolved (emitted just before this)
+      // has stored the Kitsu id of the shots this push CREATED, and the task
+      // push finds shots by id — by name it can't tell apart the "SQ01" of
+      // one episode from another's.
+      int unusedSkipped = 0;
+      KitsuClient::buildShotPushFromProject(0, m_kitsuPendingTasks, unusedSkipped);
       if (m_kitsuSyncLabel) m_kitsuSyncLabel->setText(msg + tr("  Pushing task statuses…"));
       KitsuClient::instance()->pushTasks(ZtoryModel::instance()->kitsuProjectId(),
                                          m_kitsuPendingTasks);
@@ -511,6 +518,25 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
       if (it != byKey.end() && a.kitsuAssetId != it.value()) { a.kitsuAssetId = it.value(); dirty = true; }
     }
     if (dirty) mm->saveProjectDb();
+  });
+  connect(kc, &KitsuClient::taskTypesMissing, this, [](const QStringList &names) {
+    DVGui::MsgBoxInPopup(
+        DVGui::WARNING,
+        tr("These workflow tasks were NOT created in Kitsu: the server has no "
+           "Shot task type with that name, and it refused to create one (only "
+           "a Kitsu admin can):\n\n%1\n\nCreate them in Kitsu (Settings > "
+           "Task Types) and sync again.")
+            .arg(names.join("\n")));
+  });
+  // A popup, not the status label: the label is overwritten a moment later by
+  // the asset-task push that chains after this one.
+  connect(kc, &KitsuClient::assetsSkipped, this, [](const QStringList &lines) {
+    DVGui::MsgBoxInPopup(
+        DVGui::WARNING,
+        tr("Some assets were NOT sent to Kitsu, because the Kitsu server has "
+           "no asset type with that name:\n\n%1\n\nCreate the type in Kitsu "
+           "(or change the asset's type here) and sync again.")
+            .arg(lines.join("\n")));
   });
   connect(kc, &KitsuClient::assetsPushed, this, [this](bool ok, int, int, const QString &msg) {
     // Chain the asset task/status push after the entities exist (same pattern as
