@@ -1023,6 +1023,18 @@ qualunque macchina col tocco e le gesture accese.
 
 ### 🔴 APERTO 2026-09-21 — l'audio dell'animatic: muto alla ripresa, doppio se si riparte subito
 
+> **2026-09-24, nuovo indizio (Franco):** dopo aver spostato l'uscita del Mac
+> dagli altoparlanti alle cuffie, facendo play di tutta la timeline l'audio a
+> volte si ammutoliva mentre il video andava avanti; fermando, tornando indietro
+> e ripartendo, riprendeva — ma lo SCRUB usciva dagli altoparlanti e il play
+> dalle cuffie. Causa del secondo, dal codice: `TSoundOutputDeviceImp` crea il
+> `QAudioOutput` una volta e lo ricrea solo se cambia il FORMATO, e un
+> `QAudioOutput` resta legato all'uscita attiva quando e' nato. Corretto il
+> 2026-09-24 (ricreato se cambia il dispositivo di sistema; candidato
+> upstream). **Da vedere se il muto sparisce con la stessa correzione**: e'
+> plausibile (un dispositivo rimasto sull'uscita vecchia), ma lo stesso
+> sintomo c'era gia' il 21 senza cambi di uscita — non darlo per chiuso.
+
 Segnalato da Franco mentre lavorava nella room Ztoryc con l'animatic:
 *«se interrompo e riprendo il play a volte va in play senza audio e se stoppo
 e riprendo subito a volte si sente l'audio doppio»*. **Intermittente** — le due

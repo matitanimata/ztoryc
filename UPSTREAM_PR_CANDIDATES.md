@@ -278,6 +278,19 @@ not portable.
 
 #### ✨ New (2026-09-24)
 
+- 🟡 **Sound keeps playing on the old output after switching device** —
+  `toonz/sources/common/tsound/tsound_qt.cpp`, `TSoundOutputDeviceImp::play`.
+  The `QAudioOutput` is rebuilt only when the audio FORMAT changes, and a
+  `QAudioOutput` stays bound to the device that was the system default when
+  it was created. Switch from speakers to headphones and any output device
+  created before (scrub, a column player) keeps sounding from the speakers.
+  **Fix:** remember the device name, rebuild when the default changes, and
+  pass the `QAudioDeviceInfo` to the constructor explicitly —
+  `defaultOutputDevice()` was already queried on every `play()`, so it costs
+  nothing. **Same code on `upstream/master`** (lines 175-188, checked
+  2026-09-24). Seen in Ztoryc by Franco (scrub on speakers, playback on
+  headphones); not yet reproduced on stock Tahoma.
+
 - 🟠 **The viewer steals the keyboard from multi-line text fields** —
   `toonz/sceneviewerevents.cpp`, `SceneViewer::onEnter()`. When the mouse
   enters the viewer it calls `setFocus()` unless the focused widget is a

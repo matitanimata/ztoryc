@@ -39,6 +39,10 @@ private:
   QByteArray m_buffer;
   QPointer<QAudioOutput> m_audioOutput;
   QIODevice *m_audioBuffer;
+  // The system output m_audioOutput was created on. A QAudioOutput stays bound
+  // to the device that was the default when it was built, so after the user
+  // switches output (speakers -> headphones) it kept playing to the old one.
+  QString m_deviceName;
 
 public:
   std::set<TSoundOutputDeviceListener *> m_listeners;
@@ -189,9 +193,17 @@ public:
     m_bufferIndex = 0;
 
     m_looping = loop;
-    if (!m_audioOutput || m_audioOutput->format() != format) {
+    // Rebuilt also when the system default output has changed since it was
+    // created: otherwise a device made before switching to headphones keeps
+    // sounding from the speakers (seen in Ztoryc: scrub on the speakers,
+    // playback on the headphones, 2026-09-24). defaultOutputDevice() is already
+    // queried on every play() above, so this costs nothing extra.
+    const QString deviceName = info.deviceName();
+    if (!m_audioOutput || m_audioOutput->format() != format ||
+        deviceName != m_deviceName) {
       if (m_audioOutput) m_audioOutput->stop();
-      m_audioOutput = new QAudioOutput(format);
+      m_audioOutput = new QAudioOutput(info, format);
+      m_deviceName  = deviceName;
       m_audioOutput->setVolume(m_volume);
 
       // audio buffer size
