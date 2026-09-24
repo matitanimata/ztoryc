@@ -4121,7 +4121,8 @@ void ZtoryThumbnailCanvas::runPagingSelfTest() {
   if (m_style) {
     log << "PROVA 2 — pennellate: posizione (entro 4 px) e annulla/ripeti esatti\n";
     Result sf = runOnce(0, true);
-    auto near = [](const QRect &a, const QRect &b) {
+    // Not "near": on Windows <windef.h> #defines near (and far) to nothing.
+    auto closeTo = [](const QRect &a, const QRect &b) {
       return std::abs(a.left() - b.left()) <= 4 &&
              std::abs(a.right() - b.right()) <= 4 &&
              std::abs(a.top() - b.top()) <= 4 &&
@@ -4132,7 +4133,7 @@ void ZtoryThumbnailCanvas::runPagingSelfTest() {
       bool posOk = sn.strokeBoxes.size() == sf.strokeBoxes.size();
       for (size_t i = 0; posOk && i < sn.strokeBoxes.size(); i++)
         posOk = !sn.strokeBoxes[i].isEmpty() &&
-                near(sn.strokeBoxes[i], sf.strokeBoxes[i]);
+                closeTo(sn.strokeBoxes[i], sf.strokeBoxes[i]);
       const bool ok = posOk && sn.strokeUndoExact;
       allOk         = allOk && ok;
       log << "finestra di " << wp << " pagine (0 = piena): "
