@@ -333,9 +333,46 @@ private:
   // Quando la finestra sara' stretta, pennello, lazo e undo continueranno a
   // lavorare su m_ras senza sapere niente delle pagine: e' il motivo per cui
   // la forma giusta era la finestra e non le tessere.
-  void flushWindowToPages();   // finestra -> pagine (solo le bande sporche)
+  void flushWindowToPages();   // finestra -> pagine (confronta, marca da se')
   void rebuildWindowFromPages();  // pagine -> finestra
   void syncPageCount();        // tiene m_pages allineato a bandCount()
+
+  // ── Passo 3: la finestra si STRINGE ─────────────────────────────────────
+  // Due sistemi di coordinate raster, entrambi dal basso: la TELA (tutto il
+  // foglio, alta canvasLy()) e la FINESTRA (m_ras). Differiscono di winY0():
+  //     riga della tela = riga della finestra + winY0()
+  // Con la finestra piena winY0() e' 0 e tutto torna com'era.
+  // m_windowPages: quante pagine tiene la finestra; 0 = tutte (passo 3a, che
+  // deve comportarsi in modo IDENTICO a prima). Una variabile e non una
+  // costante perche' l'autocollaudo (runPagingSelfTest) fa girare le stesse
+  // operazioni nei due modi e confronta le tele.
+  int m_windowPages = 0;
+  // ZTORYC_THUMBS_SELFTEST=1: stessa sequenza di operazioni vere a finestra
+  // piena e a finestra stretta, tele confrontate byte per byte, esito in
+  // ~/Desktop/ztory_paging_selftest.log. Lo stato della tela torna com'era e
+  // i salvataggi sono bloccati mentre gira.
+  void runPagingSelfTest();
+  bool m_selfTesting = false;
+  int  m_windowMoves = 0;  // quante volte la finestra si e' spostata (per l'autocollaudo)
+  int  canvasLy() const;            // altezza raster della tela intera
+  int  winFirst() const;            // prima pagina coperta dalla finestra
+  int  winCount() const;            // quante pagine copre
+  int  winY0() const;               // riga di tela del fondo della finestra
+  int  bandOfCanvasRow(int y) const;  // pagina che contiene quella riga
+  // La finestra copre le pagine [b0, b1]? Se no, si sposta: riversa, cambia
+  // intervallo, ricostruisce. Mai durante una pennellata: il pennello tiene
+  // il raster (m_ras) per puntatore.
+  void ensureWindowCovers(int b0, int b1);
+  void ensureWindowCoversRows(int canvasY0, int canvasY1);
+  void moveWindow(int first, int count);
+  // Una copia dei pixel della TELA in [x0,x1] x [y0,y1] (righe di tela),
+  // presa dalla finestra dove la finestra c'e' e dalle pagine altrove.
+  // Per chi LEGGE zone qualsiasi (pannello vuoto?, esportazione, stampa)
+  // senza dover spostare la finestra.
+  TRaster32P readCanvas(int x0, int y0, int x1, int y1) const;
+  // Cambia il numero di righe lavorando sulle PAGINE: cambia solo l'ultima
+  // pagina e quelle aggiunte o tolte, invece di ricopiare tutta la tela.
+  void resizeRowsPagewise(int newRows);
 
   // Linear panel index (row*cols+col) at a world point, or -1 if outside grid.
   int panelAtWorld(const QPointF &world) const;

@@ -31,6 +31,7 @@
 #include <QFile>
 #include <QTextStream>
 #include <QThreadPool>
+#include <QThread>
 #include <QRunnable>
 #include <QPolygonF>
 #include <QLineF>
@@ -50,6 +51,7 @@
 #include <QResizeEvent>
 
 #include <cmath>
+#include <climits>
 #include <cstring>
 #include <set>
 
@@ -61,6 +63,15 @@
 // paint, which is what "erase" is supposed to mean, and what lets an exported
 // panel carry its transparency.
 static const TPixel32 kPaper(0, 0, 0, 0);
+
+// How many raster rows a sheet of height \a h (world units) takes. ONE
+// rounding rule for every place that creates or measures the canvas: a sheet
+// read from the old single-image format gets its box height from PNG height /
+// rows, and rows * that can come back as 1598.9999999 — truncated, one row
+// short, and every coordinate below shifted by a pixel.
+static inline int ztoryPixelRows(double h) {
+  return std::max(1, (int)(h + 1e-6));
+}
 
 // One band of the canvas on its way to disk. Outside the anonymous namespace:
 // the canvas collects them (collectDirtyBands), so the header names it.
@@ -496,7 +507,7 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
     m_boxAspect = aspect;
   }
 
-  m_ras = TRaster32P((int)gridW(), (int)gridH());
+  m_ras = TRaster32P((int)gridW(), canvasLy());
   m_ras->fill(kPaper);
 
 
@@ -553,6 +564,9 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
   qApp->installEventFilter(this);
   // Load the scene that is already open when the panel is created.
   persistLoad();
+  // Autocollaudo della finestra, solo su richiesta (vedi runPagingSelfTest).
+  if (qEnvironmentVariableIntValue("ZTORYC_THUMBS_SELFTEST") == 1)
+    QTimer::singleShot(4000, this, [this]() { runPagingSelfTest(); });
   updateToolCursor();  // start in drawing mode → brush-circle cursor
 }
 
@@ -645,14 +659,9 @@ void ZtoryThumbnailCanvas::addRow() {
     m_undo.push_back(std::move(s));
     trimHistory();
   }
-  const int oldH  = m_ras->getLy();
-  m_rows += 1;
-  const int newH   = (int)gridH();
-  const int addedH = newH - oldH;
-  TRaster32P nr((int)gridW(), newH);
-  nr->fill(kPaper);
-  nr->copy(m_ras, TPoint(0, addedH));  // keep existing content at the same world Y
-  m_ras = nr;
+  // Sulle pagine: cambia solo l'ultima, le altre si riusano (vedi
+  // resizeRowsPagewise). Il contenuto resta alla stessa y del mondo.
+  resizeRowsPagewise(m_rows + 1);
   updateScrollBars();
   update();
   schedulePersistSave();
@@ -665,19 +674,9 @@ void ZtoryThumbnailCanvas::applyImportedCells(
 
   // Grow the grid (rows are added at the world bottom; existing content keeps
   // its world Y, exactly like addRow()) so the next page has room to land.
-  if (minRows > m_rows) {
-    const int oldH   = m_ras->getLy();
-    m_rows           = minRows;
-    const int newH   = (int)gridH();
-    const int addedH = newH - oldH;
-    TRaster32P nr((int)gridW(), newH);
-    nr->fill(kPaper);
-    nr->copy(m_ras, TPoint(0, addedH));
-    m_ras = nr;
-  }
+  if (minRows > m_rows) resizeRowsPagewise(minRows);
 
-  const int lx = m_ras->getLx(), ly = m_ras->getLy();
-  m_ras->lock();
+  const int lx = m_ras->getLx(), ly = canvasLy();  // ly: righe della TELA
   for (const ImportedBlit &b : cells) {
     if (b.image.isNull() || b.col < 0 || b.col >= m_cols || b.row < 0 ||
         b.row >= m_rows)
@@ -689,6 +688,10 @@ void ZtoryThumbnailCanvas::applyImportedCells(
     const int ry1 = qBound(0, (int)(ly - b.row * m_boxH), ly);
     const int dw = x1 - x0, dh = ry1 - ry0;
     if (dw < 2 || dh < 2) continue;
+    // Una pagina importata puo' cadere ovunque nel foglio: la finestra la
+    // raggiunge prima di scriverci (ry0/ry1 sono righe della tela).
+    ensureWindowCoversRows(ry0, ry1 - 1);
+    const int off = winY0();
 
     // Smooth-scale to the box, then copy with a vertical flip: the QImage's top
     // row (j = 0) goes to the box's top, which is the HIGHEST raster row.
@@ -696,9 +699,10 @@ void ZtoryThumbnailCanvas::applyImportedCells(
                          .scaled(dw, dh, Qt::IgnoreAspectRatio,
                                  Qt::SmoothTransformation)
                          .convertToFormat(QImage::Format_RGB888);
+    m_ras->lock();
     for (int j = 0; j < dh; ++j) {
-      const int rr = ry1 - 1 - j;
-      if (rr < 0 || rr >= ly) continue;
+      const int rr = ry1 - 1 - j - off;  // riga della FINESTRA
+      if (rr < 0 || rr >= m_ras->getLy()) continue;
       TPixel32 *drow      = m_ras->pixels(rr);
       const uchar *srow   = s.scanLine(j);
       for (int i = 0; i < dw; ++i) {
@@ -706,8 +710,8 @@ void ZtoryThumbnailCanvas::applyImportedCells(
         drow[x0 + i]    = TPixel32(px[0], px[1], px[2], 255);
       }
     }
+    m_ras->unlock();
   }
-  m_ras->unlock();
   updateScrollBars();
   update();
   schedulePersistSave();
@@ -767,7 +771,10 @@ QImage ZtoryThumbnailCanvas::canvasImage() const {
   //
   // (mirrored resta al suo valore di default: l'orientamento e' quello del
   // mondo, dall'alto in basso, non quello del raster.)
-  return rasterToQImage(m_ras, /*premultiplied=*/true).copy();
+  // Tutta la TELA, anche le pagine fuori dalla finestra.
+  const TRaster32P all = readCanvas(0, 0, (int)gridW() - 1, canvasLy() - 1);
+  if (!all) return QImage();
+  return rasterToQImage(all, /*premultiplied=*/true).copy();
 }
 
 void ZtoryThumbnailCanvas::onSceneChanged() {
@@ -781,11 +788,11 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
   if (m_stroking) return;
 
   const double oldBoxH = m_boxH;
-  const int oldH       = m_ras ? m_ras->getLy() : 0;
+  const int oldH       = m_ras ? canvasLy() : 0;  // la TELA, non la finestra
   if (oldH <= 0 || oldBoxH <= 0.0 || !m_ras) return;
 
   const double newBoxH = m_boxW / aspect;
-  const int newH       = qMax(1, (int)(m_rows * newBoxH));
+  const int newH       = ztoryPixelRows(m_rows * newBoxH);
   // Compare the resulting PIXEL layout, not the float aspect. On reopen,
   // persistLoad reconstructs m_boxAspect from the saved PNG's integer height, so
   // it drifts from the true camera aspect by sub-pixel rounding (harmless on a
@@ -821,9 +828,14 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
   // Il prezzo, dichiarato: reanchorRaster() re-impagina i disegni e da questa
   // operazione non si torna indietro. E' lo stesso patto di Tahoma su qualsiasi
   // cambio di formato, ed e' cio' che un cambio di formato SIGNIFICA.
+  // Si ricompone la tela intera il solo tempo di re-impaginarla: cambia la
+  // forma di TUTTE le pagine, e il re-impaginamento lavora sulla tela.
+  flushWindowToPages();
+  const TRaster32P whole = canvasFromPages(m_pages, (int)gridW(), oldH);
   m_boxAspect = aspect;
   m_boxH      = newBoxH;
-  m_ras       = reanchorRaster(m_ras, oldBoxH, m_boxH);
+  m_pages     = pagesFromCanvas(reanchorRaster(whole, oldBoxH, m_boxH));
+  rebuildWindowFromPages();
   // EVERY page changed height: all of them go to disk, and the page store is
   // refilled from the window (flushWindowToPages takes the dirty ones). Without
   // this a reflow after the first save was persisted one page at a time, as
@@ -843,7 +855,7 @@ TRaster32P ZtoryThumbnailCanvas::reanchorRaster(const TRaster32P &oldRas,
   const int oldW = oldRas ? oldRas->getLx() : 0;
   const int oldH = oldRas ? oldRas->getLy() : 0;
   const int gw   = (int)gridW();
-  const int newH = qMax(1, (int)(m_rows * newBoxH));
+  const int newH = ztoryPixelRows(m_rows * newBoxH);
   const int bw   = (int)m_boxW;
 
   TRaster32P nr(gw, newH);
@@ -1080,7 +1092,7 @@ QRectF ZtoryThumbnailCanvas::panelWorldRect(int index) const {
 bool ZtoryThumbnailCanvas::isPanelEmpty(int index) const {
   if (!m_ras || index < 0 || index >= m_cols * m_rows) return true;
   const QRect br = regionBoxRect(index);
-  const int lx = m_ras->getLx(), ly = m_ras->getLy();
+  const int lx = m_ras->getLx(), ly = canvasLy();  // righe della TELA
   const int x0 = qBound(0, (int)(br.x() * m_boxW), lx);
   const int x1 = qBound(0, (int)((br.x() + br.width()) * m_boxW), lx);
   // World y is top-down; the raster is bottom-up, so flip when computing rows.
@@ -1106,14 +1118,18 @@ bool ZtoryThumbnailCanvas::isPanelEmpty(int index) const {
   const int iy0 = ry0 + kInset, iy1 = ry1 - kInset;
   if (ix0 >= ix1 || iy0 >= iy1) return true;
 
-  m_ras->lock();
+  // Il pannello puo' stare fuori dalla finestra (lastNonEmptyRow li scorre
+  // tutti): si legge dalla TELA — finestra dove c'e', pagine altrove.
+  const TRaster32P area = readCanvas(ix0, iy0, ix1 - 1, iy1 - 1);
+  if (!area) return true;
+  area->lock();
   int ink = 0;
-  for (int y = iy0; y < iy1 && ink <= kMinInk; ++y) {
-    const TPixel32 *pix = m_ras->pixels(y);
-    for (int x = ix0; x < ix1; ++x)
+  for (int y = 0; y < area->getLy() && ink <= kMinInk; ++y) {
+    const TPixel32 *pix = area->pixels(y);
+    for (int x = 0; x < area->getLx(); ++x)
       if (ztoryIsInk(pix[x]) && ++ink > kMinInk) break;
   }
-  m_ras->unlock();
+  area->unlock();
   return ink <= kMinInk;
 }
 
@@ -1121,7 +1137,7 @@ TRaster32P ZtoryThumbnailCanvas::panelRaster(int index, const TDimension &outRes
                                             bool onWhite) const {
   if (!m_ras || index < 0 || index >= m_cols * m_rows) return TRaster32P();
   const QRect br = regionBoxRect(index);  // whole region (merged or single box)
-  const int lx = m_ras->getLx(), ly = m_ras->getLy();
+  const int lx = m_ras->getLx(), ly = canvasLy();  // righe della TELA
   const int x0 = qBound(0, (int)(br.x() * m_boxW), lx);
   const int x1 = qBound(0, (int)((br.x() + br.width()) * m_boxW), lx);
   // World y is top-down; the raster is bottom-up, so flip when computing rows.
@@ -1130,9 +1146,10 @@ TRaster32P ZtoryThumbnailCanvas::panelRaster(int index, const TDimension &outRes
   if (x1 <= x0 || ry1 <= ry0 || outRes.lx <= 0 || outRes.ly <= 0)
     return TRaster32P();
 
-  // extract() shares memory with m_ras (inclusive coords) — fine as a read-only
-  // source for resample, which writes into the independent output raster.
-  TRaster32P sub = m_ras->extract(x0, ry0, x1 - 1, ry1 - 1);
+  // Dalla TELA: il pannello puo' stare fuori dalla finestra (esportazione al
+  // Board, anteprime). readCanvas() da' una copia contigua.
+  TRaster32P sub = readCanvas(x0, ry0, x1 - 1, ry1 - 1);
+  if (!sub) return TRaster32P();
   TRaster32P out(outRes.lx, outRes.ly);
   out->fill(kPaper);
   TRop::resample(out, sub,
@@ -1301,28 +1318,239 @@ void ZtoryThumbnailCanvas::syncPageCount() {
   if ((int)m_pages.size() != n) m_pages.resize(n);
 }
 
+// Finestra -> pagine. Riversa OGNI pagina della finestra che differisce dalla
+// sua copia in magazzino, e la marca da salvare lei stessa.
+//
+// Prima si fidava delle marcature (m_bandDirty): copiava solo le pagine gia'
+// segnate. Con la finestra piena era innocuo — la finestra ERA la tela, e una
+// modifica non marcata restava comunque sotto gli occhi. Con la finestra che
+// si sposta, una strada che si dimentica di marcare avrebbe perso la sua
+// modifica al primo spostamento, e in silenzio. Confrontare costa una memcmp
+// della finestra; dimenticare costerebbe un disegno. E' la regola decisa a
+// settembre: una strada dimenticata deve costare prestazioni, non dati.
 void ZtoryThumbnailCanvas::flushWindowToPages() {
   if (!m_ras) return;
   syncPageCount();
-  const int lx = m_ras->getLx(), ly = m_ras->getLy();
-  for (int b = 0; b < (int)m_pages.size(); b++) {
-    // Solo le bande sporche: e' la stessa informazione su cui gira il
-    // salvataggio, quindi non si aggiunge un secondo elenco da tenere in
-    // sincrono — che sarebbe il modo piu' rapido di perdere una modifica.
-    if (b < (int)m_bandDirty.size() && !m_bandDirty[b] && m_pages[b]) continue;
+  const int n = bandCount();
+  if ((int)m_bandDirty.size() != n) m_bandDirty.resize(n, true);
+  const int lx = m_ras->getLx(), wly = m_ras->getLy();
+  const int cly = canvasLy(), off = winY0();
+  const int first = winFirst(), last = first + winCount() - 1;
+  m_ras->lock();
+  for (int b = first; b <= last && b < n; b++) {
     int y0, y1;
-    bandRasterRange(b, ly, y0, y1);
-    if (y0 > y1 || y1 < 0 || y0 >= ly) continue;
-    TRaster32P page(lx, y1 - y0 + 1);
-    page->copy(m_ras->extract(0, y0, lx - 1, y1));
-    m_pages[b] = page;
+    bandRasterRange(b, cly, y0, y1);
+    const int wy0 = y0 - off, wy1 = y1 - off;  // righe della finestra
+    if (wy0 > wy1 || wy1 < 0 || wy0 >= wly) continue;
+    const int h = wy1 - wy0 + 1;
+    const TRaster32P &old = m_pages[b];
+    if (old && old->getLx() == lx && old->getLy() == h) {
+      bool same = true;
+      old->lock();
+      for (int y = 0; y < h && same; y++)
+        same = std::memcmp(old->pixels(y), m_ras->pixels(wy0 + y),
+                           sizeof(TPixel32) * lx) == 0;
+      old->unlock();
+      if (same) continue;
+    }
+    // Un raster NUOVO, mai una scrittura in quello vecchio: le fotografie
+    // dell'annullamento tengono i puntatori alle pagine, e sono valide proprio
+    // perche' nessuno le modifica sul posto.
+    TRaster32P page(lx, h);
+    page->copy(m_ras->extract(0, wy0, lx - 1, wy1));
+    m_pages[b]     = page;
+    m_bandDirty[b] = true;
   }
+  m_ras->unlock();
 }
 
+// Pagine -> finestra, per l'intervallo di pagine che la finestra copre.
 void ZtoryThumbnailCanvas::rebuildWindowFromPages() {
-  const int lx = (int)gridW(), ly = (int)gridH();
+  const int lx = (int)gridW(), ly = canvasLy();
   if (lx <= 0 || ly <= 0) return;
-  m_ras = canvasFromPages(m_pages, lx, ly);
+  syncPageCount();
+  if (m_winPageCount <= 0) {  // la finestra copre tutto: com'era
+    m_ras = canvasFromPages(m_pages, lx, ly);
+    return;
+  }
+  const int n    = bandCount();
+  m_winPageCount = qMin(m_winPageCount, n);
+  m_winFirstPage = qBound(0, m_winFirstPage, n - m_winPageCount);
+  int t0, top, bot, b1;
+  bandRasterRange(m_winFirstPage, ly, t0, top);
+  bandRasterRange(m_winFirstPage + m_winPageCount - 1, ly, bot, b1);
+  TRaster32P win(lx, top - bot + 1);
+  win->fill(kPaper);
+  for (int b = m_winFirstPage; b < m_winFirstPage + m_winPageCount; b++) {
+    if (!m_pages[b]) continue;  // pagina mancante = carta bianca
+    int y0, y1;
+    bandRasterRange(b, ly, y0, y1);
+    const int h = qMin(m_pages[b]->getLy(), y1 - y0 + 1);
+    if (h <= 0) continue;
+    // Allineata dall'ALTO, come canvasFromPages().
+    win->extract(0, y1 - h + 1 - bot, lx - 1, y1 - bot)
+        ->copy(m_pages[b]->extract(0, m_pages[b]->getLy() - h, lx - 1,
+                                   m_pages[b]->getLy() - 1));
+  }
+  m_ras = win;
+}
+
+int ZtoryThumbnailCanvas::canvasLy() const { return ztoryPixelRows(gridH()); }
+
+int ZtoryThumbnailCanvas::winFirst() const {
+  if (m_winPageCount <= 0) return 0;
+  return qBound(0, m_winFirstPage, qMax(0, bandCount() - 1));
+}
+
+int ZtoryThumbnailCanvas::winCount() const {
+  if (m_winPageCount <= 0) return bandCount();
+  return qMax(1, qMin(m_winPageCount, bandCount() - winFirst()));
+}
+
+int ZtoryThumbnailCanvas::winY0() const {
+  if (m_winPageCount <= 0) return 0;
+  int y0, y1;
+  bandRasterRange(winFirst() + winCount() - 1, canvasLy(), y0, y1);
+  return y0;
+}
+
+int ZtoryThumbnailCanvas::bandOfCanvasRow(int y) const {
+  const int n     = bandCount();
+  const int bandH = qMax(1, (int)std::lround(kRowsPerBand * m_boxH));
+  const int fromTop = canvasLy() - 1 - y;
+  if (fromTop < 0) return 0;
+  // L'ultima pagina arriva fino al fondo (vedi bandRasterRange): le righe che
+  // cadono oltre l'ultima pagina "piena" sono sue.
+  return qBound(0, fromTop / bandH, n - 1);
+}
+
+void ZtoryThumbnailCanvas::ensureWindowCovers(int b0, int b1) {
+  if (m_windowPages <= 0 && m_winPageCount <= 0) return;  // finestra piena
+  const int n = bandCount();
+  b0          = qBound(0, b0, n - 1);
+  b1          = qBound(b0, b1, n - 1);
+  if (m_winPageCount > 0 && b0 >= winFirst() &&
+      b1 < winFirst() + winCount())
+    return;  // gia' coperte
+  const int span  = b1 - b0 + 1;
+  const int count = qMin(n, qMax(m_windowPages, span));
+  int first       = b0 - (count - span) / 2;
+  first           = qBound(0, first, n - count);
+  moveWindow(first, count);
+}
+
+void ZtoryThumbnailCanvas::ensureWindowCoversRows(int canvasY0, int canvasY1) {
+  if (canvasY1 < canvasY0) std::swap(canvasY0, canvasY1);
+  const int ly = canvasLy();
+  canvasY0     = qBound(0, canvasY0, ly - 1);
+  canvasY1     = qBound(0, canvasY1, ly - 1);
+  // Righe in alto = pagine di indice basso.
+  ensureWindowCovers(bandOfCanvasRow(canvasY1), bandOfCanvasRow(canvasY0));
+}
+
+void ZtoryThumbnailCanvas::moveWindow(int first, int count) {
+  // Il pennello tiene m_ras per puntatore: spostare la finestra a meta'
+  // pennellata lo farebbe disegnare su un raster che non e' piu' la finestra.
+  if (m_stroking) return;
+  flushWindowToPages();
+  m_winFirstPage = first;
+  m_winPageCount = count;
+  rebuildWindowFromPages();
+  m_windowMoves++;
+}
+
+TRaster32P ZtoryThumbnailCanvas::readCanvas(int x0, int y0, int x1,
+                                            int y1) const {
+  const int lx = (int)gridW(), ly = canvasLy();
+  x0 = qBound(0, x0, lx - 1);
+  x1 = qBound(0, x1, lx - 1);
+  y0 = qBound(0, y0, ly - 1);
+  y1 = qBound(0, y1, ly - 1);
+  if (x1 < x0 || y1 < y0) return TRaster32P();
+  TRaster32P out(x1 - x0 + 1, y1 - y0 + 1);
+  out->fill(kPaper);
+  const int off = winY0();
+  const int wf = winFirst(), wl = wf + winCount() - 1;
+  out->lock();
+  if (m_ras) m_ras->lock();
+  for (int y = y0; y <= y1; y++) {
+    const int b = bandOfCanvasRow(y);
+    const TPixel32 *src = nullptr;
+    if (m_ras && b >= wf && b <= wl) {
+      const int wy = y - off;
+      if (wy >= 0 && wy < m_ras->getLy()) src = m_ras->pixels(wy) + x0;
+    } else if (b < (int)m_pages.size() && m_pages[b]) {
+      // Pagina allineata dall'alto dentro la sua banda.
+      int by0, by1;
+      bandRasterRange(b, ly, by0, by1);
+      const TRaster32P &pg = m_pages[b];
+      const int py = y - (by1 - pg->getLy() + 1);
+      if (py >= 0 && py < pg->getLy() && x1 < pg->getLx())
+        src = pg->pixels(py) + x0;
+    }
+    if (src)
+      std::memcpy(out->pixels(y - y0), src, sizeof(TPixel32) * (x1 - x0 + 1));
+  }
+  if (m_ras) m_ras->unlock();
+  out->unlock();
+  return out;
+}
+
+// Righe aggiunte o tolte IN FONDO al foglio. Le pagine sono ancorate
+// all'ALTO, quindi cambiano solo l'ultima pagina di prima e quelle che
+// nascono o spariscono: le altre si riusano cosi' come sono (sono le stesse
+// righe del mondo, alla stessa altezza). Prima si ricopiava TUTTA la tela a
+// ogni riga aggiunta — 617 MB all'obiettivo di produzione.
+// Da usare solo se m_boxH e m_cols non cambiano: altrimenti cambia la forma
+// di tutte le pagine (vedi restoreGeometry).
+void ZtoryThumbnailCanvas::resizeRowsPagewise(int newRows) {
+  newRows = qMax(1, newRows);
+  if (newRows == m_rows) return;
+  flushWindowToPages();
+  syncPageCount();
+  const int lx = (int)gridW();
+  const int oldN  = bandCount();
+  const int oldLy = canvasLy();
+  const std::vector<TRaster32P> old = m_pages;
+  std::vector<int> oldH(oldN, 0);
+  for (int b = 0; b < oldN; b++) {
+    int y0, y1;
+    bandRasterRange(b, oldLy, y0, y1);
+    oldH[b] = y1 - y0 + 1;
+  }
+  m_rows          = newRows;
+  const int n     = bandCount();
+  const int newLy = canvasLy();
+  std::vector<TRaster32P> np(n);
+  m_bandDirty.resize(n, true);
+  for (int b = 0; b < n; b++) {
+    int y0, y1;
+    bandRasterRange(b, newLy, y0, y1);
+    const int h = y1 - y0 + 1;
+    if (h <= 0) continue;
+    if (b >= oldN || !old[b]) {  // pagina nuova, o mai scritta: carta bianca
+      m_bandDirty[b] = true;
+      continue;
+    }
+    if (oldH[b] == h && old[b]->getLy() == h && old[b]->getLx() == lx) {
+      np[b] = old[b];  // stessa pagina, stesse righe: si condivide
+      continue;
+    }
+    // L'ultima pagina di prima, allungata o accorciata: il contenuto resta in
+    // ALTO (le righe si aggiungono e si tolgono in fondo al foglio).
+    TRaster32P pg(lx, h);
+    pg->fill(kPaper);
+    const int ho = old[b]->getLy();
+    const int wo = qMin(lx, old[b]->getLx());
+    if (h >= ho)
+      pg->copy(old[b]->extract(0, 0, wo - 1, ho - 1), TPoint(0, h - ho));
+    else
+      pg->copy(old[b]->extract(0, ho - h, wo - 1, ho - 1), TPoint(0, 0));
+    np[b]          = pg;
+    m_bandDirty[b] = true;
+  }
+  m_pages = np;
+  rebuildWindowFromPages();
 }
 
 void ZtoryThumbnailCanvas::markBandsDirty(const QRect &rasterRect) {
@@ -1333,7 +1561,7 @@ void ZtoryThumbnailCanvas::markBandsDirty(const QRect &rasterRect) {
     return;
   }
   const double bandH = kRowsPerBand * m_boxH;
-  const int ly       = m_ras->getLy();
+  const int ly       = canvasLy();  // rasterRect e' in righe della TELA
   // Raster Y counts from the bottom; turn it into a distance from the top,
   // which is what the band numbering follows.
   const double fromTopOfHighest = ly - 1 - rasterRect.bottom();
@@ -1354,11 +1582,12 @@ int ZtoryThumbnailCanvas::collectDirtyBands(QVector<ThumbBand> &bands) {
   const int n = bandCount();
   if ((int)m_bandDirty.size() != n) m_bandDirty.resize(n, true);
 
-  const int lx = m_ras->getLx();
-  const int ly = m_ras->getLy();
+  const int lx = (int)gridW();
+  const int ly = canvasLy();
 
   // La finestra e' dove si e' disegnato: si riversa nel magazzino PRIMA di
-  // scrivere, o si salverebbero pagine vecchie.
+  // scrivere, o si salverebbero pagine vecchie. Il riversamento marca anche
+  // da se' ogni pagina che trova cambiata.
   flushWindowToPages();
 
   int dirtyCount = 0;
@@ -1368,16 +1597,14 @@ int ZtoryThumbnailCanvas::collectDirtyBands(QVector<ThumbBand> &bands) {
     int y0, y1;
     bandRasterRange(b, ly, y0, y1);
     if (y0 > y1 || y1 < 0 || y0 >= ly) continue;
-    // Copy into a CONTIGUOUS raster rather than extracting a view: a view keeps
-    // the parent's row stride, and rasterToQImage() builds the QImage without a
-    // stride argument — the image would come out skewed.  This copy is the only
-    // part the UI thread pays for, and it is one band (~10 MB), not the canvas.
+    // Dal magazzino: dopo il riversamento ogni pagina della finestra c'e'.
+    // Una pagina che non c'e' non e' mai stata scritta — carta bianca.
     TRaster32P band = (b < (int)m_pages.size() && m_pages[b])
                           ? m_pages[b]
                           : TRaster32P();
-    if (!band) {  // pagina non ancora nel magazzino: la si prende dalla tela
+    if (!band) {
       band = TRaster32P(lx, y1 - y0 + 1);
-      band->copy(m_ras->extract(0, y0, lx - 1, y1));
+      band->fill(kPaper);
     }
     bands.push_back({b, rasterToQImage(band, /*premultiplied=*/false)});
   }
@@ -1403,6 +1630,7 @@ void ZtoryThumbnailCanvas::writeDirtyBandsNow() {
 
 void ZtoryThumbnailCanvas::persistSave() {
   if (!m_ras) return;
+  if (m_selfTesting) return;  // l'autocollaudo non tocca il disco
   if (m_officialDir.isEmpty()) {
     const TFilePath dir = persistDir();
     if (dir.isEmpty()) return;
@@ -1536,6 +1764,9 @@ void ZtoryThumbnailCanvas::persistLoad() {
   // only refreshes dirty or missing pages: an undo snapshot could then carry
   // them into this scene — the same family as the undo stack above.
   m_pages.clear();
+  // La finestra riparte dalla prima pagina (0 = tutte, finche' e' piena).
+  m_winFirstPage = 0;
+  m_winPageCount = m_windowPages > 0 ? m_windowPages : 0;
 
   {
     const TFilePath od = persistDir();
@@ -1596,8 +1827,9 @@ void ZtoryThumbnailCanvas::persistLoad() {
       // not inherit rows added with +Row in the previous scene).
       m_cols = kDefaultCols;
       m_rows = kDefaultRows;
-      m_ras  = TRaster32P((int)gridW(), (int)gridH());
+      m_ras  = TRaster32P((int)gridW(), canvasLy());
       m_ras->fill(kPaper);
+      if (m_winPageCount > 0) rebuildWindowFromPages();  // pagine vuote
       markAllBandsDirty();  // nothing of this scene is on disk yet
       clearSelection();
       updateScrollBars();
@@ -1632,6 +1864,11 @@ void ZtoryThumbnailCanvas::persistLoad() {
     m_boxH                 = savedBoxH;
     m_boxAspect            = m_boxW / savedBoxH;
     m_ras                  = r;
+    // Finestra ristretta: la tela del vecchio formato si taglia in pagine.
+    if (m_winPageCount > 0) {
+      m_pages = pagesFromCanvas(r);
+      rebuildWindowFromPages();
+    }
     // Read from the old single-image format: every band still has to be written
     // before that file can be dropped (writeThumbBands only removes it on a
     // complete save).
@@ -1779,7 +2016,9 @@ QPointF ZtoryThumbnailCanvas::widgetToWorld(const QPointF &p) const {
 
 TPointD ZtoryThumbnailCanvas::widgetToRaster(const QPointF &widgetPos) const {
   const QPointF w = widgetToWorld(widgetPos);
-  return TPointD(w.x(), gridH() - w.y());  // flip Y to bottom-up raster origin
+  // Flip Y to the bottom-up raster origin, then into the WINDOW: the brush
+  // draws on m_ras, which starts winY0() rows above the bottom of the sheet.
+  return TPointD(w.x(), gridH() - w.y() - winY0());
 }
 
 void ZtoryThumbnailCanvas::zoomAt(const QPointF &widgetAnchor, double factor) {
@@ -1884,6 +2123,16 @@ void ZtoryThumbnailCanvas::beginStroke(const QPointF &widgetPos, double pressure
   const QPointF w = widgetToWorld(widgetPos);
   if (w.x() < 0 || w.y() < 0 || w.x() > gridW() || w.y() > gridH()) return;
 
+  // La finestra deve contenere la pagina sotto la penna e le due vicine
+  // PRIMA che il pennello nasca: lo tiene per puntatore, e durante la
+  // pennellata la finestra non si sposta. Le vicine danno margine a un
+  // tratto che esce dalla pagina («un disegno non attraversa mai due pagine»,
+  // Franco 2026-09-15: il margine copre chi ci arriva vicino).
+  {
+    const int b = bandOfCanvasRow((int)(gridH() - w.y()));
+    ensureWindowCovers(b - 1, b + 1);
+  }
+
   // Record only the tiles the stroke touches (see askWrite): a full-canvas
   // clone here was the stall at stroke start.
   beginStrokeRecording();
@@ -1935,8 +2184,11 @@ QRect ZtoryThumbnailCanvas::rasterRectToWidget(const QRect &r) const {
   // non e' piu' vero — gli altri due sporgono fuori — e questa funzione decide
   // QUALE ZONA RIDISEGNARE dopo una pennellata: sbagliarla lascia pezzi di
   // tratto non ridisegnati finche' non passa un ridisegno intero.
+  // r arriva in righe della FINESTRA (askWrite): si porta nella tela.
+  const int off = winY0();
   const double x0 = r.left(), x1 = r.right() + 1;
-  const double y0 = gridH() - r.bottom() - 1, y1 = gridH() - r.top();
+  const double y0 = gridH() - (r.bottom() + off) - 1,
+               y1 = gridH() - (r.top() + off);
   const QPointF c0 = worldToWidget(QPointF(x0, y0));
   const QPointF c1 = worldToWidget(QPointF(x1, y0));
   const QPointF c2 = worldToWidget(QPointF(x1, y1));
@@ -1982,7 +2234,10 @@ void ZtoryThumbnailCanvas::endStroke() {
   m_strokeDirty = QRect();
   update();  // safety net: one full repaint per stroke, not per tablet event
   // The only cheap save in the class: a stroke knows exactly where it went.
-  schedulePersistSave(m_strokeBounds);
+  // (m_strokeBounds e' in righe della finestra: si porta nella tela.)
+  schedulePersistSave(m_strokeBounds.isNull()
+                          ? m_strokeBounds
+                          : m_strokeBounds.translated(0, winY0()));
   m_strokeBounds = QRect();
 }
 
@@ -2608,7 +2863,7 @@ void ZtoryThumbnailCanvas::setTransformMode(bool on) {
 
 void ZtoryThumbnailCanvas::liftFloat(const QRectF &worldRect, bool copy) {
   if (!m_ras) return;
-  const int lx = m_ras->getLx(), ly = m_ras->getLy();
+  const int lx = m_ras->getLx(), ly = canvasLy();  // ly: righe della TELA
   const int x0 = qBound(0, (int)std::floor(worldRect.left()), lx);
   const int x1 = qBound(0, (int)std::ceil(worldRect.right()), lx);
   const int wy0 = qBound(0, (int)std::floor(worldRect.top()), ly);   // world y
@@ -2620,8 +2875,11 @@ void ZtoryThumbnailCanvas::liftFloat(const QRectF &worldRect, bool copy) {
   // World y is top-down; the raster is bottom-up, so flip to raster rows.
   const int ry0 = qBound(0, ly - wy1, ly);
   const int ry1 = qBound(0, ly - wy0, ly);
+  // La finestra sopra la zona (righe della tela), poi righe della finestra.
+  ensureWindowCoversRows(ry0, ry1 - 1);
+  const int off = winY0();
 
-  TRaster32P sub = m_ras->extract(x0, ry0, x1 - 1, ry1 - 1);  // shares m_ras mem
+  TRaster32P sub = m_ras->extract(x0, ry0 - off, x1 - 1, ry1 - 1 - off);  // shares m_ras mem
   // clone() gives a CONTIGUOUS copy (wrap == lx); rasterToQImage assumes that,
   // whereas the extracted sub keeps the parent's wrap → "dusty" stride garbage.
   // .copy() detaches from the clone's buffer (freed at scope exit).
@@ -2670,13 +2928,20 @@ void ZtoryThumbnailCanvas::liftFloatLasso(const QVector<QPointF> &worldPath,
   }
 
   if (!copy && m_ras) {  // erase only the lassoed shape from the canvas
+    // La FINESTRA, capovolta nel verso del mondo: la sua riga 0 e' la y del
+    // mondo windowWorldTop(), quindi il pittore si sposta di tanto.
+    const QRectF bbw = poly.boundingRect();
+    ensureWindowCoversRows(canvasLy() - (int)std::ceil(bbw.bottom()),
+                           canvasLy() - (int)std::floor(bbw.top()));
+    const int worldTop = canvasLy() - winY0() - m_ras->getLy();
     QImage canvasImg = rasterToQImage(m_ras, true, true);  // world orientation
     {
       QPainter cp(&canvasImg);
       cp.setRenderHint(QPainter::Antialiasing, true);
       cp.setPen(Qt::NoPen);
       cp.setBrush(Qt::white);
-      cp.drawPolygon(poly);  // world coords == canvasImg px
+      cp.translate(0, -worldTop);
+      cp.drawPolygon(poly);  // world coords (shifted into the window)
     }
     // ⚠️ premultiply=FALSE, e non e' una svista: qui c'era `true` ed e' costato
     // il bordo scuro attorno alle cancellature E il colore perso dentro.
@@ -2804,11 +3069,21 @@ void ZtoryThumbnailCanvas::paintFloat(QPainter &p) {
 
 void ZtoryThumbnailCanvas::commitFloat() {
   if (!hasFloat() || !m_ras) return;
+  // La finestra sopra dove la selezione ATTERRA (puo' essere stata spostata
+  // lontano da dove e' stata presa).
+  {
+    const QRectF dst = floatLocalToWorld().mapRect(
+        QRectF(0, 0, m_floatImg.width(), m_floatImg.height()));
+    ensureWindowCoversRows(canvasLy() - (int)std::ceil(dst.bottom()),
+                           canvasLy() - (int)std::floor(dst.top()));
+  }
+  const int worldTop = canvasLy() - winY0() - m_ras->getLy();
   QImage canvasImg = rasterToQImage(m_ras, /*premul=*/true, /*mirror=*/true);
   {
-    QPainter p(&canvasImg);  // canvasImg px == world coords (top-down)
+    QPainter p(&canvasImg);  // canvasImg px == world coords shifted by worldTop
     p.setRenderHint(QPainter::SmoothPixmapTransform, true);
-    p.setTransform(floatLocalToWorld());
+    p.translate(0, -worldTop);
+    p.setTransform(floatLocalToWorld(), /*combine=*/true);
     p.drawImage(0, 0, m_floatImg);
   }
   // ⚠️ premultiply=FALSE, e non e' una svista: qui c'era `true` ed e' costato
@@ -2840,9 +3115,13 @@ void ZtoryThumbnailCanvas::commitFloat() {
 void ZtoryThumbnailCanvas::cancelFloat() {
   if (!hasFloat()) return;
   if (m_floatWasMove && m_ras) {  // put the lifted pixels back where they were
+    ensureWindowCoversRows(canvasLy() - m_floatSrcRect.bottom() - 1,
+                           canvasLy() - m_floatSrcRect.top());
+    const int worldTop = canvasLy() - winY0() - m_ras->getLy();
     QImage canvasImg = rasterToQImage(m_ras, true, true);
     {
       QPainter p(&canvasImg);
+      p.translate(0, -worldTop);
       p.drawImage(m_floatSrcRect.topLeft(), m_floatImg);
     }
     // ⚠️ premultiply=FALSE, e non e' una svista: qui c'era `true` ed e' costato
@@ -2987,16 +3266,19 @@ ZtoryThumbnailCanvas::capturePatchesAt(const std::vector<Patch> &like) const {
   std::vector<Patch> out;
   if (!m_ras) return out;
   out.reserve(like.size());
+  // p.pos e' in righe della TELA; il chiamante ha gia' portato la finestra
+  // sopra queste tessere (undo/redo).
+  const int off = winY0();
   for (const Patch &p : like) {
     const int lx = p.before->getLx(), ly = p.before->getLy();
+    const int wy = p.pos.y - off;
     // Geometry changed under us (undo across a resize): skip rather than
     // read out of bounds.  The resize's own full snapshot restores the pixels.
-    if (p.pos.x < 0 || p.pos.y < 0 || p.pos.x + lx > m_ras->getLx() ||
-        p.pos.y + ly > m_ras->getLy())
+    if (p.pos.x < 0 || wy < 0 || p.pos.x + lx > m_ras->getLx() ||
+        wy + ly > m_ras->getLy())
       continue;
     TRaster32P cur(lx, ly);
-    cur->copy(m_ras->extract(p.pos.x, p.pos.y, p.pos.x + lx - 1,
-                             p.pos.y + ly - 1));
+    cur->copy(m_ras->extract(p.pos.x, wy, p.pos.x + lx - 1, wy + ly - 1));
     out.push_back({p.pos, cur});
   }
   return out;
@@ -3004,12 +3286,14 @@ ZtoryThumbnailCanvas::capturePatchesAt(const std::vector<Patch> &like) const {
 
 void ZtoryThumbnailCanvas::applyPatches(const std::vector<Patch> &patches) {
   if (!m_ras) return;
+  const int off = winY0();  // p.pos in righe della TELA
   for (const Patch &p : patches) {
-    if (p.pos.x < 0 || p.pos.y < 0 ||
+    const int wy = p.pos.y - off;
+    if (p.pos.x < 0 || wy < 0 ||
         p.pos.x + p.before->getLx() > m_ras->getLx() ||
-        p.pos.y + p.before->getLy() > m_ras->getLy())
+        wy + p.before->getLy() > m_ras->getLy())
       continue;
-    m_ras->copy(p.before, p.pos);
+    m_ras->copy(p.before, TPoint(p.pos.x, wy));
   }
 }
 
@@ -3026,9 +3310,13 @@ void ZtoryThumbnailCanvas::endStrokeRecording() {
   if (m_strokeTiles.empty()) return;
   Snapshot s = makeMetaSnapshot();
   s.patches.reserve(m_strokeTiles.size());
+  // Le tessere sono state prese nella FINESTRA; la fotografia le tiene in
+  // righe della TELA, perche' fra la pennellata e il suo annullamento la
+  // finestra puo' essersi spostata.
+  const int off = winY0();
   for (auto &kv : m_strokeTiles)
     s.patches.push_back(
-        {TPoint(kv.first.first * kUndoTile, kv.first.second * kUndoTile),
+        {TPoint(kv.first.first * kUndoTile, kv.first.second * kUndoTile + off),
          kv.second});
   m_strokeTiles.clear();
   m_undo.push_back(std::move(s));
@@ -3102,7 +3390,11 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
     m_pages = s.pages;
     rebuildWindowFromPages();
   } else if (s.ras) {
-    m_ras = s.ras->clone();
+    // (Nessuna fotografia la riempie piu': e' il formato di prima delle
+    // pagine.) Una tela intera: si taglia in pagine e si ricostruisce la
+    // finestra, invece di metterla nella finestra cosi' com'e'.
+    m_pages = pagesFromCanvas(s.ras);
+    rebuildWindowFromPages();
   }
   // Restore whatever floating selection was captured with this snapshot (a null
   // image simply clears the float) — this is what makes an undone Del re-float
@@ -3122,25 +3414,39 @@ void ZtoryThumbnailCanvas::restoreSnapshot(const Snapshot &s) {
 
 void ZtoryThumbnailCanvas::restoreGeometry(const Snapshot &s) {
   if (!m_ras) return;
-  m_cols = s.cols;
-  if (s.boxAspect > 0.0) {
-    m_boxAspect = s.boxAspect;
-    m_boxH      = m_boxW / s.boxAspect;
-  }
-  const int oldH = m_ras->getLy();
-  m_rows         = s.rows;
-  const int newH = (int)gridH();
-  if (newH != oldH && newH > 0) {
-    TRaster32P nr((int)gridW(), newH);
+  const double newBoxH =
+      s.boxAspect > 0.0 ? m_boxW / s.boxAspect : m_boxH;
+  if (s.cols == m_cols && std::abs(newBoxH - m_boxH) < 1e-9) {
+    // Solo il numero di righe (il caso di addRow): sulle pagine.
+    if (s.boxAspect > 0.0) m_boxAspect = s.boxAspect;
+    resizeRowsPagewise(s.rows);
+  } else {
+    // Cambia la forma delle pagine: si ricompone la tela con la geometria di
+    // PRIMA, si applica la regola di sempre, si ritaglia con quella nuova.
+    flushWindowToPages();
+    const int oldH = canvasLy();
+    const TRaster32P whole = canvasFromPages(m_pages, (int)gridW(), oldH);
+    m_cols = s.cols;
+    if (s.boxAspect > 0.0) {
+      m_boxAspect = s.boxAspect;
+      m_boxH      = newBoxH;
+    }
+    m_rows         = s.rows;
+    const int newH = canvasLy();
+    TRaster32P nr((int)gridW(), qMax(1, newH));
     nr->fill(kPaper);
     // The raster is bottom-up, so the world bottom is low Y: growing pushes the
     // content up by the difference, shrinking drops that band off the bottom.
-    if (newH > oldH)
-      nr->copy(m_ras, TPoint(0, newH - oldH));
-    else
-      nr->copy(m_ras->extract(0, oldH - newH, m_ras->getLx() - 1, oldH - 1),
-               TPoint(0, 0));
-    m_ras = nr;
+    if (whole) {
+      if (newH >= oldH)
+        nr->copy(whole, TPoint(0, newH - oldH));
+      else
+        nr->copy(whole->extract(0, oldH - newH, whole->getLx() - 1, oldH - 1),
+                 TPoint(0, 0));
+    }
+    m_pages = pagesFromCanvas(nr);
+    markAllBandsDirty();
+    rebuildWindowFromPages();
   }
   m_merges = s.merges;
   clearSelection();
@@ -3184,6 +3490,15 @@ void ZtoryThumbnailCanvas::undo() {
     restoreSnapshot(s);
     return;
   }
+  // La finestra sopra le tessere, prima di leggerle e riscriverle.
+  {
+    int lo = INT_MAX, hi = INT_MIN;
+    for (const Patch &p : s.patches) {
+      lo = std::min(lo, p.pos.y);
+      hi = std::max(hi, p.pos.y + p.before->getLy() - 1);
+    }
+    if (lo <= hi) ensureWindowCoversRows(lo, hi);
+  }
   Snapshot cur = makeMetaSnapshot();
   cur.patches  = capturePatchesAt(s.patches);
   m_redo.push_back(std::move(cur));
@@ -3215,6 +3530,15 @@ void ZtoryThumbnailCanvas::redo() {
     m_undo.push_back(std::move(cur));
     restoreSnapshot(s);
     return;
+  }
+  // La finestra sopra le tessere, prima di leggerle e riscriverle.
+  {
+    int lo = INT_MAX, hi = INT_MIN;
+    for (const Patch &p : s.patches) {
+      lo = std::min(lo, p.pos.y);
+      hi = std::max(hi, p.pos.y + p.before->getLy() - 1);
+    }
+    if (lo <= hi) ensureWindowCoversRows(lo, hi);
   }
   Snapshot cur = makeMetaSnapshot();
   cur.patches  = capturePatchesAt(s.patches);
@@ -3368,8 +3692,8 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
     int wy0 = 0, wy1 = ly - 1;
     if (m_winPageCount > 0) {
       int a0, a1, b0, b1;
-      bandRasterRange(first, (int)gridH(), a0, a1);
-      bandRasterRange(first + count - 1, (int)gridH(), b0, b1);
+      bandRasterRange(first, canvasLy(), a0, a1);
+      bandRasterRange(first + count - 1, canvasLy(), b0, b1);
       wy0 = qMin(a0, b0);
       wy1 = qMax(a1, b1);
     }
@@ -3391,7 +3715,7 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
       if (m_winPageCount <= 0) break;  // la finestra copre tutto
       if (!m_pages[b]) continue;
       int y0, y1;
-      bandRasterRange(b, (int)gridH(), y0, y1);
+      bandRasterRange(b, canvasLy(), y0, y1);
       if (y0 > y1) continue;
       QImage pimg =
           rasterToQImage(m_pages[b], /*premultiplied=*/true, /*mirrored=*/false);
@@ -3521,4 +3845,308 @@ void ZtoryThumbnailCanvas::paintEvent(QPaintEvent *) {
     p.drawLine(m_cursorWidget + QPointF(-3, 0), m_cursorWidget + QPointF(3, 0));
     p.drawLine(m_cursorWidget + QPointF(0, -3), m_cursorWidget + QPointF(0, 3));
   }
+}
+
+//=============================================================================
+// Autocollaudo della finestra (raster per pagina, passo 3)
+//=============================================================================
+//
+// La finestra stretta NON deve cambiare niente di quello che l'utente vede o
+// salva: deve solo usare meno memoria. Questo lo verifica invece di affermarlo.
+// La stessa sequenza di operazioni VERE (import, righe, pennellate, selezione
+// spostata, lazo, annulla/ripeti) gira a finestra piena e a finestra stretta,
+// e le due tele finali si confrontano byte per byte, insieme alla risposta di
+// «pannello vuoto?» per ogni pannello.
+//
+// Si attiva solo con ZTORYC_THUMBS_SELFTEST=1. Lo stato della tela viene
+// salvato prima e rimesso dopo; i salvataggi su disco sono bloccati mentre
+// gira (m_selfTesting).
+
+namespace {
+QImage ztorySelfTestImage(int seed) {
+  QImage img(240, 135, QImage::Format_RGB888);
+  for (int y = 0; y < img.height(); y++) {
+    uchar *row = img.scanLine(y);
+    for (int x = 0; x < img.width(); x++) {
+      row[3 * x + 0] = (uchar)((x * 7 + seed * 40) & 0xff);
+      row[3 * x + 1] = (uchar)((y * 11 + seed * 90) & 0xff);
+      row[3 * x + 2] = (uchar)(((x + y) * 3 + seed * 17) & 0xff);
+    }
+  }
+  return img;
+}
+}  // namespace
+
+void ZtoryThumbnailCanvas::runPagingSelfTest() {
+  QFile logf(QDir::homePath() + "/Desktop/ztory_paging_selftest.log");
+  if (!logf.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+  QTextStream log(&logf);
+  if (!m_ras) {
+    log << "nessuna tela: prova saltata\n";
+    return;
+  }
+
+  // ── Lo stato di adesso, da rimettere alla fine ──
+  struct Saved {
+    TRaster32P ras;
+    std::vector<TRaster32P> pages;
+    int rows, cols, winFirst, winCount, windowPages;
+    double boxH, boxAspect, zoom, rot;
+    QPointF pan;
+    QVector<QRect> merges;
+    std::vector<bool> dirty;
+    std::vector<Snapshot> undo, redo;
+    QImage floatImg;
+    QPointF floatCenter;
+    double floatScale, floatAngle;
+    QRect floatSrc;
+    bool floatWasMove, selectMode, xformMode, sceneDirty, timerActive;
+    QVector<int> selection;
+  } sv;
+  sv.ras = m_ras->clone();  // il pennello e l'import scrivono DENTRO m_ras
+  sv.pages = m_pages;  // le pagine non si modificano mai sul posto
+  sv.rows = m_rows; sv.cols = m_cols;
+  sv.winFirst = m_winFirstPage; sv.winCount = m_winPageCount;
+  sv.windowPages = m_windowPages;
+  sv.boxH = m_boxH; sv.boxAspect = m_boxAspect;
+  sv.zoom = m_zoom; sv.rot = m_rot; sv.pan = m_pan;
+  sv.merges = m_merges; sv.dirty = m_bandDirty;
+  sv.undo = m_undo; sv.redo = m_redo;
+  sv.floatImg = m_floatImg; sv.floatCenter = m_floatCenter;
+  sv.floatScale = m_floatScale; sv.floatAngle = m_floatAngle;
+  sv.floatSrc = m_floatSrcRect; sv.floatWasMove = m_floatWasMove;
+  sv.selectMode = m_selectMode; sv.xformMode = m_xformMode;
+  sv.selection = m_selection;
+  sv.sceneDirty  = TApp::instance()->getCurrentScene()->getDirtyFlag();
+  sv.timerActive = m_saveTimer && m_saveTimer->isActive();
+  m_selfTesting = true;
+
+  int moves = 0;
+  struct Result {
+    TRaster32P canvas;
+    std::vector<bool> empty;
+    int moves = 0;
+    std::vector<QRect> strokeBoxes;  // pixel cambiati da ogni pennellata
+    bool strokeUndoExact = true;     // annulla = tela di prima, byte per byte
+  };
+  auto wholeCanvas = [this]() {
+    flushWindowToPages();
+    return canvasFromPages(m_pages, (int)gridW(), canvasLy());
+  };
+  // Rettangolo (righe della TELA) dei pixel che differiscono fra a e b.
+  auto diffBox = [](const TRaster32P &a, const TRaster32P &b) -> QRect {
+    if (!a || !b || a->getLx() != b->getLx() || a->getLy() != b->getLy())
+      return QRect(-1, -1, 0, 0);
+    int x0 = INT_MAX, y0 = INT_MAX, x1 = -1, y1 = -1;
+    for (int y = 0; y < a->getLy(); y++) {
+      const TPixel32 *pa = a->pixels(y), *pb = b->pixels(y);
+      for (int x = 0; x < a->getLx(); x++)
+        if (pa[x] != pb[x]) {
+          x0 = std::min(x0, x); x1 = std::max(x1, x);
+          y0 = std::min(y0, y); y1 = std::max(y1, y);
+        }
+    }
+    return x1 < 0 ? QRect() : QRect(QPoint(x0, y0), QPoint(x1, y1));
+  };
+  auto sameCanvas = [](const TRaster32P &a, const TRaster32P &b) {
+    if (!a || !b || a->getLx() != b->getLx() || a->getLy() != b->getLy())
+      return false;
+    for (int y = 0; y < a->getLy(); y++)
+      if (std::memcmp(a->pixels(y), b->pixels(y),
+                      sizeof(TPixel32) * a->getLx()) != 0)
+        return false;
+    return true;
+  };
+
+  auto runOnce = [&](int windowPages, bool withStrokes) -> Result {
+    // Tela di prova: 40 righe = 8 pagine, bianca, vista nota.
+    m_windowPages  = windowPages;
+    m_rows         = 40;
+    m_merges.clear();
+    m_undo.clear();
+    m_redo.clear();
+    m_strokeTiles.clear();
+    m_floatImg     = QImage();
+    m_floatDrag    = -1;
+    m_selectMode   = false;
+    m_xformMode    = false;
+    m_selection.clear();
+    m_zoom = 0.5; m_rot = 0.0; m_pan = QPointF(0, 0);
+    m_pages.assign(bandCount(), TRaster32P());
+    m_bandDirty.assign(bandCount(), true);
+    m_winFirstPage = 0;
+    m_winPageCount = windowPages > 0 ? windowPages : 0;
+    m_ras = TRaster32P((int)gridW(), canvasLy());
+    m_ras->fill(kPaper);
+    if (m_winPageCount > 0) rebuildWindowFromPages();
+    const int movesBefore = m_windowMoves;
+
+    // 1. Pagine importate lontane fra loro.
+    std::vector<ImportedBlit> cells;
+    const int rowsAt[4] = {0, 17, 33, 39};
+    for (int k = 0; k < 4; k++) {
+      ImportedBlit b;
+      b.row   = rowsAt[k];
+      b.col   = k % m_cols;
+      b.image = ztorySelfTestImage(k + 1);
+      cells.push_back(b);
+    }
+    applyImportedCells(cells, 40);
+    // 2. Righe in fondo.
+    addRow();
+    addRow();
+    // 3. Pennellate col pennello vero, in due pagine lontane.
+    std::vector<QRect> boxes;
+    bool undoExact = true;
+    if (withStrokes && m_style) {
+      for (int row : {5, 36}) {
+        const QRectF r = panelWorldRect(row * m_cols + 1);
+        const QPointF a(r.left() + r.width() * 0.2, r.center().y());
+        const QPointF c(r.left() + r.width() * 0.8, r.center().y() + 10);
+        const TRaster32P before = wholeCanvas();
+        beginStroke(worldToWidget(a), 1.0);
+        for (int i = 1; i <= 20; i++) {
+          // Una pausa vera fra i punti: MyPaint ricava la velocita' dal tempo,
+          // e con tutti i punti nello stesso istante disegnava un punto solo.
+          QThread::msleep(8);
+          const double t = i / 20.0;
+          strokeTo(worldToWidget(a + (c - a) * t), 1.0);
+        }
+        endStroke();
+        const TRaster32P after = wholeCanvas();
+        boxes.push_back(diffBox(before, after));
+        // L'annulla della pennellata deve ridare ESATTAMENTE la tela di prima:
+        // e' la prova delle tessere dell'annullamento in righe della tela.
+        undo();
+        if (!sameCanvas(before, wholeCanvas())) undoExact = false;
+        redo();
+        if (!sameCanvas(after, wholeCanvas())) undoExact = false;
+      }
+    }
+    // 4. Selezione sollevata a riga 17 e posata 13 righe piu' in basso.
+    liftFloat(panelWorldRect(17 * m_cols + 1), /*copy=*/false);
+    if (hasFloat()) {
+      m_floatCenter += QPointF(0, 13 * m_boxH);
+      commitFloat();
+    }
+    // 5. Lazo a riga 33, posato a riga 13 una colonna a sinistra.
+    {
+      const QRectF r = panelWorldRect(33 * m_cols + 2);
+      QVector<QPointF> tri;
+      tri << QPointF(r.left() + 10, r.top() + 10)
+          << QPointF(r.right() - 10, r.top() + 20)
+          << QPointF(r.center().x(), r.bottom() - 10);
+      liftFloatLasso(tri, /*copy=*/false);
+      if (hasFloat()) {
+        m_floatCenter += QPointF(-m_boxW, -20 * m_boxH);
+        commitFloat();
+      }
+    }
+    // 6. Annulla e ripeti.
+    undo();
+    undo();
+    redo();
+    // 7. Una riga aggiunta e annullata (solo geometria).
+    addRow();
+    undo();
+
+    Result res;
+    flushWindowToPages();
+    res.canvas = canvasFromPages(m_pages, (int)gridW(), canvasLy());
+    for (int i = 0; i < m_cols * m_rows; i++)
+      res.empty.push_back(isPanelEmpty(i));
+    res.moves = m_windowMoves - movesBefore;
+    res.strokeBoxes     = boxes;
+    res.strokeUndoExact = undoExact;
+    return res;
+  };
+
+  auto firstDiffRow = [](const TRaster32P &a, const TRaster32P &b) -> int {
+    if (!a || !b) return (a || b) ? 0 : -1;
+    if (a->getLx() != b->getLx() || a->getLy() != b->getLy()) return -2;
+    for (int y = 0; y < a->getLy(); y++)
+      if (std::memcmp(a->pixels(y), b->pixels(y),
+                      sizeof(TPixel32) * a->getLx()) != 0)
+        return y;
+    return -1;
+  };
+
+  // Prova 1, deterministica: tutto tranne il pennello, tela byte per byte.
+  const bool strokes = false;
+  Result full1 = runOnce(0, false);
+  log << "PROVA 1 — senza pennellate, tele confrontate byte per byte\n";
+  bool allOk = true;
+  for (int wp : {1, 2, 3, 5}) {
+    Result narrow = runOnce(wp, strokes);
+    const int d   = firstDiffRow(full1.canvas, narrow.canvas);
+    const bool emptiesOk = (full1.empty == narrow.empty);
+    const bool ok        = (d == -1) && emptiesOk;
+    allOk                = allOk && ok;
+    log << "finestra di " << wp << " pagine: "
+        << (ok ? "IDENTICA" : "DIVERSA") << "  (spostamenti della finestra: "
+        << narrow.moves << ")";
+    if (d == -2)
+      log << "  dimensioni diverse "
+          << full1.canvas->getLx() << "x" << full1.canvas->getLy() << " vs "
+          << narrow.canvas->getLx() << "x" << narrow.canvas->getLy();
+    else if (d >= 0)
+      log << "  prima riga diversa: " << d;
+    if (!emptiesOk) log << "  «pannello vuoto?» diverso";
+    log << "\n";
+  }
+  // Prova 2, il pennello: MyPaint ha una componente casuale, quindi non si
+  // confrontano i pixel ma DOVE cade la pennellata (entro 4 px) e che
+  // annulla/ripeti rimettano la tela ESATTAMENTE com'era.
+  if (m_style) {
+    log << "PROVA 2 — pennellate: posizione (entro 4 px) e annulla/ripeti esatti\n";
+    Result sf = runOnce(0, true);
+    auto near = [](const QRect &a, const QRect &b) {
+      return std::abs(a.left() - b.left()) <= 4 &&
+             std::abs(a.right() - b.right()) <= 4 &&
+             std::abs(a.top() - b.top()) <= 4 &&
+             std::abs(a.bottom() - b.bottom()) <= 4;
+    };
+    for (int wp : {0, 1, 3}) {
+      Result sn = wp == 0 ? sf : runOnce(wp, true);
+      bool posOk = sn.strokeBoxes.size() == sf.strokeBoxes.size();
+      for (size_t i = 0; posOk && i < sn.strokeBoxes.size(); i++)
+        posOk = !sn.strokeBoxes[i].isEmpty() &&
+                near(sn.strokeBoxes[i], sf.strokeBoxes[i]);
+      const bool ok = posOk && sn.strokeUndoExact;
+      allOk         = allOk && ok;
+      log << "finestra di " << wp << " pagine (0 = piena): "
+          << (ok ? "OK" : "DIFETTO") << "  annulla/ripeti "
+          << (sn.strokeUndoExact ? "esatti" : "NON esatti");
+      for (const QRect &b : sn.strokeBoxes)
+        log << "  [" << b.left() << "," << b.top() << " " << b.width() << "x"
+            << b.height() << "]";
+      log << "\n";
+    }
+  } else {
+    log << "PROVA 2 saltata: nessun pennello caricato\n";
+  }
+  log << (allOk ? "ESITO: OK\n" : "ESITO: DIFETTO\n");
+
+  // ── Tutto com'era ──
+  m_ras = sv.ras;
+  m_pages = sv.pages;
+  m_rows = sv.rows; m_cols = sv.cols;
+  m_winFirstPage = sv.winFirst; m_winPageCount = sv.winCount;
+  m_windowPages = sv.windowPages;
+  m_boxH = sv.boxH; m_boxAspect = sv.boxAspect;
+  m_zoom = sv.zoom; m_rot = sv.rot; m_pan = sv.pan;
+  m_merges = sv.merges; m_bandDirty = sv.dirty;
+  m_undo = sv.undo; m_redo = sv.redo;
+  m_strokeTiles.clear();
+  m_floatImg = sv.floatImg; m_floatCenter = sv.floatCenter;
+  m_floatScale = sv.floatScale; m_floatAngle = sv.floatAngle;
+  m_floatSrcRect = sv.floatSrc; m_floatWasMove = sv.floatWasMove;
+  m_selectMode = sv.selectMode; m_xformMode = sv.xformMode;
+  m_selection = sv.selection;
+  if (m_saveTimer && !sv.timerActive) m_saveTimer->stop();
+  TApp::instance()->getCurrentScene()->setDirtyFlag(sv.sceneDirty);
+  m_selfTesting = false;
+  syncAppUndoActions();
+  updateScrollBars();
+  update();
 }
