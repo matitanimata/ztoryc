@@ -739,6 +739,14 @@ che pubblica.
 > Successo il 2026-08-18 pushando una correzione Windows mentre la macOS del
 > rilascio girava. Se serve pushare qualcosa a meta' rilascio: prima si aspetta
 > che macOS abbia finito, oppure si mette in conto di rilanciarla.
+>
+> ⚠️ **E il contrario NON succede da solo.** Se al momento del lancio c'e' gia'
+> una build macOS di un push **in corso** su master, la run del rilascio **non**
+> la annulla: resta `pending` dietro di lei finche' non finisce (visto il
+> 2026-09-24: una push-build di un commit precedente teneva ferma la 0.14.2).
+> Dopo il lancio, guardare `gh run list`: se la run del rilascio e' `pending`
+> dietro una push-build di un commit piu' vecchio, annullare quella con
+> `gh run cancel <id>` — e' superata comunque.
 
 > Questa sezione descriveva Linux come **un passo a parte**, da lanciare con un
 > secondo comando dopo gli altri due. Era un residuo: le tre righe qui sopra lo

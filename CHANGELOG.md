@@ -50,7 +50,20 @@ chieste, fine del video ferma.
   in master): parentela della 1.6.2 registrata con `-s ours` (`b19611d1c`),
   poi 12 conflitti — gli stessi previsti dalla prova del 23, tutti in file
   nostri e risolti tenendo Ztoryc, tranne `AppRun` (correzione Wayland di 1.6.3
-  col nostro eseguibile). Da verificare coi tre workflow prima di fonderlo.
+  col nostro eseguibile). **Verificato coi tre workflow sul branch** (tutti
+  verdi, senza pubblicare) e **fuso in master** (`a4f54e53b`): esce con la
+  prossima versione. Non ancora provato a mano da Franco.
+
+### Release — 0.14.2 pubblicata
+
+Nove pacchetti, note bilingui applicate appena la release e' comparsa, DMG
+Apple Silicon verificato montato (`codesign` exit=0, versione 0.14.2). Nessuno
+sponsor nuovo. Nelle note, come **problema noto**, «chiudi senza salvare» che
+non butta i thumbs.
+
+**Trappola nuova, scritta nella checklist:** la run macOS del rilascio e' rimasta
+`pending` dietro una build di push GIA' IN CORSO (merge della Thumbs room): il
+`cancel-in-progress` non l'ha annullata. Annullata a mano, era superata.
 
 ## [2026-09-23] — l'annullamento come tema del giorno, e un principio che Franco ha messo a fuoco
 

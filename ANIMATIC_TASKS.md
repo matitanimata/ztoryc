@@ -783,7 +783,20 @@ dissolvenza e la durata grezza gli serve.
 
 ---
 
-### ⏳ DA FARE, IN QUEST'ORDINE — merge Tahoma2D 1.6.3
+### ✅ FATTO 2026-09-24 — merge Tahoma2D 1.6.3 (in master da `a4f54e53b`)
+
+Rilasciata prima la **0.14.2** (pubblicata la notte del 24, nove pacchetti,
+DMG Apple Silicon montato: `codesign` exit=0). Poi il merge, sul branch
+`merge/tahoma-1.6.3`: parentela 1.6.2 registrata con `-s ours` (`b19611d1c`),
+12 conflitti risolti (`15e137725`), **tre workflow verdi sul branch** (macOS,
+Windows, Linux gcc+clang, senza pubblicare), e solo dopo fuso in master.
+Esce con la prossima versione. ⚠️ **Non ancora provato a mano**: la CI dice
+che si compila e si impacchetta, non che l'app si comporta — un giro di prova
+di Franco sulla `Ztoryc.app` aggiornata prima della prossima release.
+
+La nota storica qui sotto resta per il ragionamento sulla 1.6.2.
+
+### (storico) DA FARE, IN QUEST'ORDINE — merge Tahoma2D 1.6.3
 
 **Ordine deciso da Franco il 2026-09-23:** prima il rilascio 0.14.2, poi il
 **lavoro sulla Thumbs room finito** (raster per pagina), poi questo merge.
