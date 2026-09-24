@@ -5893,6 +5893,7 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
     for (auto *at : m_audioTracks)
       at->setCurrentFrame(frame);
     updateSnapFrames();  // keep the playhead snap target current
+    keepPlayheadVisible(frame);
   });
   // Repaint the timeline whenever the current xsheet switches (entering or
   // leaving a shot). The active-shot highlight depends on the child-stack
@@ -8278,6 +8279,34 @@ void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
     TUndoManager::manager()->add(
         new UndoBoardState(board, tr("Resize Shot Duration"),
                            std::move(before), std::move(after)));
+  }
+}
+
+// La testina resta sempre in vista (Franco, 2026-09-24: «va a finire fuori
+// campo e si perde tempo a ritrovarla»). Come in DaVinci Resolve:
+//  - in PLAY la timeline scatta di una pagina quando la testina arriva al
+//    bordo destro, e la testina riparte da sinistra (e se il play torna
+//    indietro — loop — la pagina la segue);
+//  - da FERMA (clic nel Board col Follow, frecce, salti) la timeline si
+//    centra sulla testina SOLO se e' fuori vista: se si vede, la vista non si
+//    muove, cosi' non si sposta sotto le mani di chi sta lavorando.
+void ZtoryAnimaticPanel::keepPlayheadVisible(int frame) {
+  if (!m_scroll || m_ppf <= 0.0) return;
+  QScrollBar *hb = m_scroll->horizontalScrollBar();
+  const int w    = m_scroll->viewport()->width();
+  if (!hb || w <= kLabelW + 40) return;
+  const int x   = kLabelW + (int)(frame * m_ppf + m_ppf / 2);  // contenuto
+  const int v   = hb->value();
+  const int pad = 24;  // margine: la testina non va incollata al bordo
+  const bool playing =
+      ZtoryAnimaticController::instance()->frameHandle()->isPlaying();
+  if (playing) {
+    if (x > v + w - pad)
+      hb->setValue(x - kLabelW - pad);  // pagina avanti: riparte da sinistra
+    else if (x < v + kLabelW)
+      hb->setValue(qMax(0, x - kLabelW - pad));  // loop: torna indietro
+  } else if (x < v + kLabelW || x > v + w - pad) {
+    hb->setValue(qMax(0, x - w / 2));  // fuori vista da ferma: al centro
   }
 }
 

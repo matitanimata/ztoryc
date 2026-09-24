@@ -932,6 +932,8 @@ public slots:
 private slots:
   void onShotClicked(int col);
   void resequenceXsheet();
+  // La testina sempre in vista: pagina in play, centro da ferma (vedi .cpp).
+  void keepPlayheadVisible(int frame);
   void onZoomChanged(double ppf);
   void onFitAll();
   void onMatchSubsceneDuration(int col);

@@ -638,7 +638,14 @@ di ogni battuta prima dell'allineamento.
 > (QSettings `Ztoryc/followBoardTimeline`), bottone nella barra della timeline
 > e copia nel Board nascosta con gli altri bottoni degli shot. Il segno sul
 > pannello NON e' la selezione (una barra-testina sul bordo alto), cosi' il play
-> non trascina la selezione condivisa. Posizioni degli shot in cache
+> non trascina la selezione condivisa.
+>
+> **Ritocchi dopo l'uso (Franco, stesso giorno), collaudati:** il Board scorre
+> SEMPRE, anche in play (la prima scelta «in play segna e non scorre» e'
+> superata); la testina della timeline resta in vista come in DaVinci —
+> scatto di pagina in play, centratura da ferma solo se fuori vista
+> (`ZtoryAnimaticPanel::keepPlayheadVisible`); il segno del Follow e' ORO e
+> disegnato sopra il bordo di selezione (l'arancione si confondeva). Posizioni degli shot in cache
 > (`m_followSpans`), invalidate a xsheetChanged/modelReset.
 
 

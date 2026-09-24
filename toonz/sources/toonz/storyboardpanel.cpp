@@ -810,15 +810,26 @@ void PanelWidget::setFollowCurrent(bool on) {
 
 void PanelWidget::paintEvent(QPaintEvent *e) {
   QWidget::paintEvent(e);  // stylesheet background/border first
+  QPainter p(this);
+  p.setRenderHint(QPainter::Antialiasing, true);
+
+  if (m_selected) {
+    // Selection highlight drawn over the base border: a 2px inset frame in the
+    // Ztoryc orange, matching the old box-shadow look.
+    QPen pen(QColor(0xe0, 0x5a, 0x00), 2.0);
+    p.setPen(pen);
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(QRectF(rect()).adjusted(1.0, 1.0, -1.0, -1.0), 3.0, 3.0);
+  }
+
   if (m_followCurrent) {
-    // «Follow»: the playhead's own shape and colour — a bar on the top edge
-    // with a small notch — so it reads as "the playhead is here" and is never
-    // mistaken for the orange SELECTION frame drawn below.
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    const QColor playhead(255, 100, 0);  // = ZtoryAnimaticTrack playhead
+    // «Follow»: the playhead's SHAPE — a bar on the top edge with a small
+    // notch. ORO, non l'arancione della testina: sul pannello selezionato
+    // l'arancione si confondeva col bordo di selezione e il segno spariva
+    // (Franco, 2026-09-24). E disegnato DOPO la selezione, sopra di lei.
+    const QColor gold(255, 196, 0);
     p.setPen(Qt::NoPen);
-    p.setBrush(playhead);
+    p.setBrush(gold);
     p.drawRect(QRectF(3.0, 0.0, width() - 6.0, 4.0));
     const double cx = width() * 0.5;
     QPolygonF notch;
@@ -826,16 +837,6 @@ void PanelWidget::paintEvent(QPaintEvent *e) {
           << QPointF(cx, 10.0);
     p.drawPolygon(notch);
   }
-  if (!m_selected) return;
-
-  // Selection highlight drawn over the base border: a 2px inset frame in the
-  // Ztoryc orange, matching the old box-shadow look.
-  QPainter p(this);
-  p.setRenderHint(QPainter::Antialiasing, true);
-  QPen pen(QColor(0xe0, 0x5a, 0x00), 2.0);
-  p.setPen(pen);
-  p.setBrush(Qt::NoBrush);
-  p.drawRoundedRect(QRectF(rect()).adjusted(1.0, 1.0, -1.0, -1.0), 3.0, 3.0);
 }
 
 void PanelWidget::rescalePreview() {
@@ -6110,11 +6111,12 @@ void StoryboardPanel::onFollowFrameChanged() {
   int pi = 0;
   for (int k = 0; k < (int)panels.size(); k++)
     if (panels[k].startFrame <= subRow) pi = k;
-  // Same panel in play: nothing to do (this runs every frame). Stopped, go on
-  // anyway — the Board may have been scrolled away since, and "stopped" means
-  // "keep it in view".
-  if (si == m_followShot && pi == m_followPanel && fh->isPlaying()) return;
-  setFollowMarker(si, pi, !fh->isPlaying());
+  // Sempre in vista, anche in PLAY (Franco, 2026-09-24, dopo averlo usato:
+  // «sarebbe meglio se il board scrollasse in modo che il panel su cui e' la
+  // testina fosse sempre visibile» — la prima scelta era «in play segna e non
+  // scorre»). ensureWidgetVisible() non muove niente se il pannello si vede
+  // gia', quindi chiamarlo a ogni frame costa poco.
+  setFollowMarker(si, pi, /*scroll=*/true);
 }
 
 void StoryboardPanel::onDurationChanged(int shotIdx, int panelIdx, int frames) {
