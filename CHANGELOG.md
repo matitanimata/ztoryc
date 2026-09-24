@@ -1,3 +1,52 @@
+## [2026-09-24c] — la 0.15.0, i task Kitsu completi, le dissolvenze a posto, e il riordino di tutti i documenti
+
+### Fixed — audio (collaudati da Franco)
+- **L'audio segue l'uscita scelta nel sistema** (`9a8befad2`): una QAudioOutput resta legata al dispositivo su cui nasce; ora si ricrea quando il default cambia. Prima, con le cuffie, lo scrub usciva dagli altoparlanti.
+- **L'audio non si ammutolisce piu' dopo un silenzio** (`8b692cb04`): in push mode `notify()` riempie solo mentre consuma, e dopo un underrun l'uscita restava Idle per sempre; ora su Idle+Underrun si rimanda il buffer. Candidato upstream (scritto in UPSTREAM_PR_CANDIDATES).
+
+### Added — Thumbnail room: raster per pagina (`529f97a69`, `a96b85110`, collaudato)
+La tela e' tenuta a pagine, in memoria solo una finestra di 3; coordinate tela/finestra, flush autoriparante, autocollaudo `ZTORYC_THUMBS_SELFTEST=1`. Il foglio nuovo si mostra dall'alto.
+
+### Modified — Follow (`bafd507fe`, collaudato)
+Il Board scorre sempre fino al pannello della testina, anche in play; la testina resta in vista (in play salta di pagina come DaVinci, da ferma si ricentra); il segno del pannello e' **oro** (l'arancione spariva sul pannello selezionato).
+
+### Verificato — la road map 1.0 sul codice
+Dei blocchi A-B-C, una ventina di voci risultavano aperte ed erano chiuse da settimane. Verificate una per una su codice e commit; A2, A5, B7, C2, C3 confermate risolte da Franco. B12 (room TRADITIONAL) rimandata, B14 (Clone copia i testi) decisa NO, C4 (import video) fuori dalla 1.0.
+
+### Fixed — Kitsu (`724e39ba9`, collaudato su Messina)
+- **Il Push mandava solo i task con uno stato**: uno shot nuovo arrivava con il solo Storyboard. Ora tutti i task del flusso; quelli mai toccati si creano SENZA stato.
+- I task si creano **uno per uno sugli shot del push** (`POST data/tasks`, come gazu), non con l'azione `create-tasks` che lavorava su TUTTI gli shot del progetto (altri episodi compresi: possibili task Storyboard vuoti su altri episodi, NON ripuliti).
+- Gli shot si trovano per **id Kitsu**, non per nome di sequenza; la lista dei task si ricostruisce dopo il push degli shot.
+- I tipi di task che il progetto non mostra si aggiungono al suo flusso; quelli che il server non ha **si creano** (decisione di Franco); se Kitsu rifiuta, avviso.
+- **A3**: gli asset con un tipo che Kitsu non ha non spariscono piu' in silenzio — avviso con l'elenco (collaudato con un tipo «Meca»).
+
+### Added — Monitor (`724e39ba9`, collaudato)
+A/V Link, Follow, Auto Match e i due export. L'A/V Link passa in ZtoryModel, condiviso con l'Animatic.
+
+### Fixed — dissolvenze (`ad3184c65`, collaudato)
+- **Buco nel track** (A1): `shotTrueSpan` toglieva la meta' di coda appena c'era la nota XD-out, anche a dissolvenza NON esposta. Ora la coda conta se la testa dello shot dopo e' esposta.
+- **Mark out = shot + dissolvenza INTERA** invece di + meta' per lato: la colonna contiene gia' la meta' esposta e le note la risommavano. Corretto all'apertura dall'animatic e nel ripiego di `MI_OpenChild` (`subscenecommand.cpp`, codice Ztoryc: NON candidato upstream).
+
+### Released — Ztoryc 0.15.0
+Tre giri per Windows: una lambda chiamata `near` (macro di `windef.h`, `e992e108b`) e poi `gh cache delete` che falliva su una cache assente (`1ae87992a`, ora `continue-on-error` su Windows e Linux). Nove asset, note bilingui applicate, latest.
+
+### Modified — i documenti
+- **ANIMATIC_TASKS riordinato**: solo il lavoro vivo, per categoria (Ztoryc, ZtoRig, Puppetoonz, Infrastruttura), SOSPESI in cima; tutto il chiuso in `ANIMATIC_TASKS_ARCHIVE_2026-09.md` (nessuna riga persa, copia integrale in `reference/backup_docs/`). In testa, le cause per cui le voci chiuse risultavano aperte e la regola: una voce, un posto; si chiude quando si committa.
+- **ROADMAP_1.0 riscritta per categorie** con priorita' P1/P2/P3 proposte da Claude e la precedenza del periodo (ottobre Puppetoonz; novembre funzione di punta + manuale; dicembre video e 1.0).
+- **AGENTS.md**: «nuova sessione» legge ROADMAP + SOSPESI; «sessione chiusa» ha il passo 0 (riconciliare ANIMATIC_TASKS); mappa delle cartelle aggiornata.
+- **Archivio**: 25 file superati in `~/ZtorYc/ARCHIVIO/`, 4 in `SamDrive/Ztoryc/ARCHIVIO/`. Letti prima di spostarli: il confronto SBP di marzo (.docx) e i due Google Doc Blender del 19/09 — il vivo e' nella ROADMAP.
+- Nuovo: `PIANO_TUTORIAL.md` (in italiano, poi doppiaggio YouTube + sottotitoli).
+
+### Notes — idee e verifiche
+- **Scenografie**: esperimento in `reference/exp_scenografie/` (cucina BG04/BG05 di Messina: erano prospetti della stessa parete; SIFT non allinea disegni a mano; modello di ingombro in Blender e guida a linee funzionano). Seguiti in ROADMAP: viste con Anymatix (prova il 25/09), visore 3D in Ztoryc (glTF), punti di fuga degli assistenti che calibrano la camera.
+- **Blender**: «Export Camera Track» di Tahoma esporta un'IMMAGINE, non i dati di camera; Ztoryc legge il casting da Kitsu ma non lo manda.
+- **Scanner di Franco**: HP ENVY 4520 in wifi; la scansione e' stata TOLTA da Tahoma nel 2020 (`5957d4d67`); c'e' gia' una specifica di luglio (`SCAN_MODULE.md`, ImageCaptureCore).
+
+### 🎯 Deciso da Franco
+- 1.0 per Natale; niente notarizzazione ne' firma; Puppetoonz subito (dal 25/09, nella sua cartella).
+- Cartoon School e' il banco di prova, Ztoryc deve coprire uno STUDIO. **Kitsu cuore di tutto**, revisioni su Kitsu (e/o marker DaVinci). Sequenze diverse per storyboardista: nessuno scontro di nomi su Kitsu.
+- Clone non copia i testi; room TRADITIONAL rimandata con il lavoro sulle room; Otter: decisione ancora aperta.
+
 ## [2026-09-24b] — thumbs e «non salvare», il focus rubato dal viewer, Back to Animatic immediato
 
 ### Added — i thumbs obbediscono a «chiudi senza salvare» (collaudato da Franco)

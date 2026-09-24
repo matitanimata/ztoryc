@@ -30,7 +30,7 @@ designed to work natively inside an animation application.
 - **Base:** Tahoma2D 1.6.0 (BSD 2-Clause License)
 - **Code workspace (Claude Code):** `/Volumes/ZioSam/tahoma2d-workspace/tahoma2d`
 - **Code backup (Cowork):** `~/ZtorYc/tahoma2d-workspace_local/tahoma2d`
-- **Planning docs:** `~/ZtorYc/` (AGENTS.md, CHANGELOG.md, ANIMATIC_TASKS.md, DESIGN.md)
+- **Planning docs:** `~/ZtorYc/` (AGENTS.md, **ROADMAP_1.0.md**, CHANGELOG.md, ANIMATIC_TASKS.md, DESIGN.md)
 - **Language:** C++17, Qt5
 - **Build system:** CMake + Ninja
 
@@ -43,8 +43,16 @@ designed to work natively inside an animation application.
 ├── AGENTS.md                    ← questo file (canonical)
 ├── CHANGELOG.md                 ← symlink → Google Drive/Ztoryc/CHANGELOG.md
 ├── ANIMATIC_TASKS.md            ← symlink → Google Drive/Ztoryc/ANIMATIC_TASKS.md
-├── DESIGN.md                    ← specifica funzionale
-├── README.md                    ← readme pubblico
+├── ROADMAP_1.0.md               ← PRIORITA' per categoria (P1/P2/P3) — si legge per prima
+├── PIANO_TUTORIAL.md            ← i video tutorial, in ordine
+├── DESIGN.md                    ← specifica funzionale (marzo)
+├── DESIGN_production_tracker.md ← tracker, fasi A-E
+├── DESIGN_export_to_ai.md       ← pipeline export-to-AI (tre macchine, sette passi)
+├── UPSTREAM_PR_CANDIDATES.md    ← symlink → Drive: correzioni da proporre a Tahoma/OT
+├── OPENTOONZ_PORT_CANDIDATES.md ← symlink → Drive: cosa portare da OpenToonz
+├── ARCHIVIO/                    ← documenti superati (riordino del 2026-09-24):
+│                                  «copia», note di rilascio vecchie, lavoro di marzo,
+│                                  confronto SBP di marzo (riassunto nella ROADMAP)
 ├── tahoma2d-workspace_local/    ← backup codice (rsync da ZioSam dopo ogni commit)
 │   └── tahoma2d/
 └── tahoma2d-workspace_bak/      ← snapshot storico (non modificare)
@@ -340,9 +348,14 @@ Nessuno aperto.
 When the user says **"nuova sessione"** (with or without additional text), automatically:
 1. Read `~/ZtorYc/AGENTS.md` (this file) for rules and architecture
 2. Read `~/ZtorYc/CHANGELOG.md` for context — **ONLY the first 60 lines** (recent sessions)
-3. Read `~/ZtorYc/ANIMATIC_TASKS.md` a partire da `## Priority Order` — **e la
-   prima cosa da leggere e' il blocco `🛑 SOSPESI PER DECISIONE DI FRANCO`**, che
-   sta subito sotto quel titolo. Le voci elencate li' sono ancora scritte come
+3. Read **`~/ZtorYc/ROADMAP_1.0.md`** (priorita' e filoni) and, in
+   `~/ZtorYc/ANIMATIC_TASKS.md`, **the `🛑 SOSPESI PER DECISIONE DI FRANCO`
+   block, which is now near the top** (riordino del 2026-09-24: il file tiene
+   SOLO il lavoro vivo, per categoria; il chiuso e' in
+   `ANIMATIC_TASKS_ARCHIVE_2026-09.md`). Il vecchio `## Priority Order` non
+   esiste piu'.
+   *(Testo precedente, per memoria:)* leggere a partire da `## Priority Order`,
+   e per primo il blocco SOSPESI che stava subito sotto quel titolo. Le voci elencate li' sono ancora scritte come
    aperte piu' in basso nel file, ma Franco ha deciso di lasciarle stare:
    riproporgliele gli fa perdere tempo.
    (L'istruzione precedente diceva «le ultime ~40 righe»: era sbagliata, il
@@ -397,6 +410,12 @@ ci sono» sistemare.
 ### Trigger: "sessione chiusa"
 
 When the user says **"sessione chiusa"**, automatically:
+
+0. **Riconciliare `ANIMATIC_TASKS.md`** (regola del 2026-09-24): ogni voce
+   chiusa, collaudata o decisa in questa sessione va SPOSTATA nell'archivio
+   (`ANIMATIC_TASKS_ARCHIVE_2026-09.md`) con commit e data, e la ROADMAP
+   aggiornata. Una voce, un posto solo. E' il passo che mancava: senza, il
+   file si riempie di voci «aperte» chiuse da settimane.
 
 1. **Update `~/ZtorYc/CHANGELOG.md`** — prepend a new entry:
    ```
