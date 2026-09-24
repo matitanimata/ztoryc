@@ -55,6 +55,12 @@ barra-testina sul bordo alto — non la selezione. In play segna e non scorre, d
 fermo segna e scorre fino a renderlo visibile (anche fermando il play). Un
 bottone solo nelle room Ztoryc; dissolvenze rispettate (inizio vero + head).
 
+### Added — nightly pronte ma SPENTE; il commit in About
+
+`nightly.yml` (inerte finche' la variabile `ZTORYC_NIGHTLY` non vale `on`),
+job `publish-nightly` separato nelle build macOS e Windows, About con commit e
+avviso NIGHTLY. Dettagli e cautele in ANIMATIC_TASKS. Non ancora provate in CI.
+
 ### 🎯 Deciso da Franco
 
 - nightly SI', con le cautele, attivate solo col suo via;

@@ -670,6 +670,20 @@ autorizzazione»*. Le cautele concordate:
 ⚠️ **Si prepara, NON si attiva:** il workflow che pubblica parte solo dopo il
 via esplicito di Franco.
 
+🟡 **PRONTE il 2026-09-24, SPENTE.** `.github/workflows/nightly.yml` gira alle
+01:30 UTC ma non fa NULLA finche' la variabile di repository `ZTORYC_NIGHTLY`
+non vale `on` (Settings → Secrets and variables → Actions → Variables): e'
+quella l'autorizzazione di Franco, e riportarla ad altro le spegne. Salta la
+notte se master non e' cambiato (e l'ultima nightly e' completa, 4 file) o se
+una build macOS sta girando — il gruppo di concorrenza macOS e' per ref, quindi
+una nightly su master ANNULLEREBBE un rilascio in corso. Ricrea la pre-release
+«nightly» (mai latest, commit nel titolo, avviso bilingue) e lancia
+`macOS_build.yml`/`windows_build.yml` con `nightly=true`: li' un job a parte,
+`publish-nightly`, carica i file col commit nel nome — il job del rilascio vero
+non e' toccato. About mostra il commit (`ztorycbuild.h`, generato da CMake) e,
+in una nightly, una riga arancione «NIGHTLY BUILD». **Mai provate in CI**: la
+prima esecuzione e' anche il collaudo.
+
 ### ✅ CORRETTO E CONFERMATO 2026-09-24 — ⌘C dalla sceneggiatura copiava la frase di prima
 
 > **Le cause erano DUE**, la seconda trovata con una sonda sul focus: oltre al

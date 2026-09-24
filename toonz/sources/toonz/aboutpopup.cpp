@@ -1,3 +1,4 @@
+#include "ztorycbuild.h"  // commit and nightly flag of this build
 #include "aboutpopup.h"
 #include "tenv.h"
 #include "tsystem.h"
@@ -45,9 +46,22 @@ AboutPopup::AboutPopup(QWidget* parent)
 
   QString name = QString::fromStdString(TEnv::getApplicationFullName());
   name += "\nBuilt: " __DATE__;
+  // The commit, so a report can be traced to the exact build (nightlies above
+  // all: they share a version number with the release they come after).
+  if (QString(ZTORYC_BUILD_COMMIT).length() > 0)
+    name += "\nCommit: " ZTORYC_BUILD_COMMIT;
   QLabel* nameLabel = new QLabel(name, this);
   nameLabel->setAlignment(Qt::AlignHCenter);
   mainLayout->addWidget(nameLabel);
+#if ZTORYC_BUILD_NIGHTLY
+  QLabel* nightlyLabel = new QLabel(
+      tr("NIGHTLY BUILD — for testing, not for real work.\n"
+         "Use the latest release for production."),
+      this);
+  nightlyLabel->setAlignment(Qt::AlignHCenter);
+  nightlyLabel->setStyleSheet("color:#ff6a00;font-weight:bold;");
+  mainLayout->addWidget(nightlyLabel);
+#endif
 
   QString baseVer =
       QString::fromStdString(TEnv::getTahomaBaseVersionString());

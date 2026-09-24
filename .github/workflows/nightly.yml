@@ -1,0 +1,86 @@
+# Ztoryc nightly — once a night, macOS + Windows, as a PRE-RELEASE.
+#
+# Decided with Franco on 2026-09-24, with these conditions:
+#   - INERT until he turns it on: nothing runs unless the repository variable
+#     ZTORYC_NIGHTLY is "on" (Settings → Secrets and variables → Actions →
+#     Variables). That switch is his authorization; turning it off stops it.
+#   - once a night, and only if master has moved since the last nightly (or the
+#     last one came out incomplete);
+#   - macOS and Windows only (Linux takes ~97 min, and the testers are on the
+#     other two);
+#   - ONE "nightly" pre-release, replaced each time, never marked latest, with
+#     the commit in its title and in the file names, and a line saying it is not
+#     for real work. About shows the commit and a NIGHTLY warning.
+#
+# ⚠️ It never starts while a macOS build is running. The macOS build's
+# concurrency group is keyed on the ref only (see macOS_build.yml), so a nightly
+# dispatched on master would CANCEL a release build running on master — the
+# 0.14.2 build was still running at 01:38.
+name: Ztoryc Nightly
+
+on:
+  schedule:
+    - cron: '30 1 * * *'  # 01:30 UTC = 03:30 in Italy in summer, 02:30 in winter
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  nightly:
+    if: vars.ZTORYC_NIGHTLY == 'on'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: Is there anything to build?
+        id: check
+        run: |
+          set -euo pipefail
+          HEAD=$(git rev-parse HEAD)
+          LAST=$(git rev-parse -q --verify 'refs/tags/nightly^{commit}' || true)
+          ASSETS=$(gh release view nightly --json assets --jq '.assets | length' 2>/dev/null || echo 0)
+          BUSY=$(gh run list --workflow macOS_build.yml --limit 20 --json status \
+                   --jq '[.[] | select(.status != "completed")] | length')
+          echo "head=$HEAD" >> "$GITHUB_OUTPUT"
+          echo "master ${HEAD::9}, last nightly ${LAST::9}, its assets $ASSETS, macOS builds running $BUSY"
+          if [ "$BUSY" != "0" ]; then
+            echo "A macOS build is running (a release?): not tonight."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          elif [ "$HEAD" = "$LAST" ] && [ "$ASSETS" -ge 4 ]; then
+            echo "master has not moved since the last complete nightly."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Replace the nightly pre-release
+        if: steps.check.outputs.go == 'true'
+        run: |
+          set -euo pipefail
+          HEAD="${{ steps.check.outputs.head }}"
+          SHORT="${HEAD::9}"
+          DATE=$(date -u +%F)
+          cat > notes.md <<EOF
+          ⚠️ **Nightly build — for testing, not for real work.** Built automatically from \`master\` at \`${SHORT}\` (${DATE}): it may contain unfinished work. For production use the [latest release](https://github.com/${GITHUB_REPOSITORY}/releases/latest). When reporting a problem, say which commit About shows.
+
+          *⚠️ **Build notturna — per provare, non per lavorare.** Costruita in automatico da \`master\` al commit \`${SHORT}\` (${DATE}): può contenere lavoro non finito. Per lavorare usa l'[ultima release](https://github.com/${GITHUB_REPOSITORY}/releases/latest). Se segnali un problema, indica il commit che compare in About.*
+
+          macOS and Windows only; same installation notes as the latest release.
+          *Solo macOS e Windows; per l'installazione valgono le note dell'ultima release.*
+          EOF
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+          gh release create nightly --prerelease --latest=false \
+            --target "$HEAD" \
+            --title "Ztoryc nightly ${DATE} (${SHORT})" \
+            --notes-file notes.md
+      - name: Start the macOS and Windows builds
+        if: steps.check.outputs.go == 'true'
+        run: |
+          set -euo pipefail
+          gh workflow run macOS_build.yml --ref master -f nightly=true
+          gh workflow run windows_build.yml --ref master -f nightly=true
