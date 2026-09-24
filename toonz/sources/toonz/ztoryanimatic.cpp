@@ -5655,6 +5655,32 @@ ZtoryAnimaticPanel::ZtoryAnimaticPanel(QWidget *parent, bool switchEnabled)
   tbLay->addWidget(m_snapBtn);
   tbLay->addSpacing(8);
 
+  // «Follow»: Board panel <-> playhead. The switch lives in ZtoryModel, shared
+  // with the Board's own button — which the Board hides when this timeline is
+  // docked in the same room, so the room shows ONE (updateZtoryToolbarDedup).
+  {
+    QToolButton *followBtn = new QToolButton(toolbar);
+    followBtn->setIcon(createQIcon("ztoryc_follow"));
+    followBtn->setIconSize(QSize(20, 20));
+    followBtn->setFixedSize(28, 28);
+    followBtn->setCheckable(true);
+    followBtn->setChecked(ZtoryModel::instance()->followEnabled());
+    followBtn->setToolTip(
+        tr("Follow\nBoard and timeline follow each other: click a panel in "
+           "the Board to put the playhead on it; move the playhead to "
+           "highlight its panel in the Board."));
+    followBtn->setStyleSheet(
+        "QToolButton{background:transparent;border:none;border-radius:4px;}"
+        "QToolButton:hover{background:#555;}"
+        "QToolButton:checked{background:#c8703a;}");
+    tbLay->addWidget(followBtn);
+    connect(followBtn, &QToolButton::toggled, ZtoryModel::instance(),
+            &ZtoryModel::setFollowEnabled);
+    connect(ZtoryModel::instance(), &ZtoryModel::followChanged, followBtn,
+            &QToolButton::setChecked);
+    tbLay->addSpacing(8);
+  }
+
   // Auto-match toggle: when ON, automatically syncs the animatic slot
   // duration to the sub-scene's drawing content whenever it changes.
   m_autoMatchBtn = new QToolButton(toolbar);

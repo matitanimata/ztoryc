@@ -612,7 +612,9 @@ Lo stesso metodo si rifa' dopo la correzione, per confermare.
 `ZtoryAudioTrack::paintEvent` costa ~150 ms a ridisegno, quasi tutto in
 `TSoundTrackT::getMinMaxPressure` (le forme d'onda si ricalcolano).
 
-### 🟡 CORRETTO 2026-09-24, DA COLLAUDARE — i dialoghi scalavano di uno dopo Clone + Paste
+### ✅ CORRETTO E COLLAUDATO 2026-09-24 — i dialoghi scalavano di uno dopo Clone + Paste
+
+> Collaudato da Franco lo stesso giorno. (Collaudato anche ⌘⌥0 nella Thumbs room.)
 
 Segnalato da Franco: incollando uno shot a meta', dialoghi/azioni/note di tutti
 gli shot dopo si sono spostati di uno. Causa: `loadZtoryc()` gira dopo ogni
@@ -630,7 +632,15 @@ estensione sul nome (`MARIO (V.O.)`). Mancava quello DENTRO la battuta
 (`MARIO: (ride) Non ci credo`): ora `parseDialogue` toglie `(...)` dal testo
 di ogni battuta prima dell'allineamento.
 
-### 🎯 DECISO 2026-09-24 — «Follow»: pannello del Board ↔ testina della timeline
+### ✅ FATTO E COLLAUDATO 2026-09-24 — «Follow»: pannello del Board ↔ testina della timeline
+
+> Franco: *«follow funziona, ottimo»*. Stato in `ZtoryModel::followEnabled()`
+> (QSettings `Ztoryc/followBoardTimeline`), bottone nella barra della timeline
+> e copia nel Board nascosta con gli altri bottoni degli shot. Il segno sul
+> pannello NON e' la selezione (una barra-testina sul bordo alto), cosi' il play
+> non trascina la selezione condivisa. Posizioni degli shot in cache
+> (`m_followSpans`), invalidate a xsheetChanged/modelReset.
+
 
 Richiesta di Franco: cliccando un pannello del Board la testina della timeline
 va al suo primo frame; spostando la testina (o cliccando nella timeline) il

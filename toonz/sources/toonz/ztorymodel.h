@@ -372,6 +372,7 @@ class ZtoryModel : public QObject {
   // Auto-match: shared state so both ANIMATIC toolbar and SHOTEDITOR
   // ZtoryPanelNavigator always reflect the same toggle.
   bool        m_autoMatch = false;
+  bool        m_follow    = false;  // «Follow», see followEnabled()
 
   // Persistent thumbnail cache keyed by shot uuid — survives scene switches so
   // the Production Tracker can show thumbnails for all loaded storyboards.
@@ -872,6 +873,12 @@ public:
   const ZtoryBurnInConfig &burnIn() const { return m_burnIn; }
 
   // Auto-match toggle — shared between ANIMATIC toolbar and SHOTEDITOR navigator
+  // «Follow»: the Board panel and the Animatic playhead follow each other —
+  // click a panel to put the playhead on it, move the playhead to mark its
+  // panel. One switch shared by the Board and the timeline buttons, kept
+  // across sessions (Franco, 2026-09-24).
+  bool followEnabled() const { return m_follow; }
+  void setFollowEnabled(bool on);
   bool autoMatch() const { return m_autoMatch; }
   void setAutoMatch(bool on) {
     if (m_autoMatch == on) return;
@@ -939,6 +946,7 @@ signals:
   void previewUpdated(int shotIdx, int panelIdx);
   void scriptFileChanged();  // imported screenplay changed (or cleared)
   void autoMatchChanged(bool on);  // auto-match toggle flipped
+  void followChanged(bool on);     // «Follow» toggle flipped
   // Viewer-switch signals: emitted by activateShotForViewing / requestReturnToViewer.
   // ZtoryAnimaticViewerPanel connects to these to switch stack pages.
   void shotActivatedForViewing(int col);

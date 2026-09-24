@@ -47,6 +47,14 @@ miniatura dello shot da cui si esce. Franco: *«ora è immediato!»*.
   un file salvato prima dell'operazione; ora per nome della sotto-scena.
 - **Parenthetical dentro la battuta** tolti dal testo del lip sync.
 
+### Added — «Follow»: pannello del Board ↔ testina (collaudato)
+
+Clic su un pannello → la testina va al suo primo frame (solo clic semplice).
+Testina che si muove → il Board segna il pannello sotto di lei con una
+barra-testina sul bordo alto — non la selezione. In play segna e non scorre, da
+fermo segna e scorre fino a renderlo visibile (anche fermando il play). Un
+bottone solo nelle room Ztoryc; dissolvenze rispettate (inizio vero + head).
+
 ### 🎯 Deciso da Franco
 
 - nightly SI', con le cautele, attivate solo col suo via;

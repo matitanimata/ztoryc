@@ -802,8 +802,30 @@ void PanelWidget::updateBorderStyle() {
                 "PanelWidget:hover{border:1px solid #888;}");
 }
 
+void PanelWidget::setFollowCurrent(bool on) {
+  if (m_followCurrent == on) return;
+  m_followCurrent = on;
+  update();
+}
+
 void PanelWidget::paintEvent(QPaintEvent *e) {
   QWidget::paintEvent(e);  // stylesheet background/border first
+  if (m_followCurrent) {
+    // «Follow»: the playhead's own shape and colour — a bar on the top edge
+    // with a small notch — so it reads as "the playhead is here" and is never
+    // mistaken for the orange SELECTION frame drawn below.
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    const QColor playhead(255, 100, 0);  // = ZtoryAnimaticTrack playhead
+    p.setPen(Qt::NoPen);
+    p.setBrush(playhead);
+    p.drawRect(QRectF(3.0, 0.0, width() - 6.0, 4.0));
+    const double cx = width() * 0.5;
+    QPolygonF notch;
+    notch << QPointF(cx - 6.0, 4.0) << QPointF(cx + 6.0, 4.0)
+          << QPointF(cx, 10.0);
+    p.drawPolygon(notch);
+  }
   if (!m_selected) return;
 
   // Selection highlight drawn over the base border: a 2px inset frame in the
@@ -1371,6 +1393,28 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_pasteButton->setToolTip(tr("Paste"));
   m_pasteButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
 
+  // «Follow» — the Board's copy of the timeline's switch (same ZtoryModel
+  // state). Hidden with the other shot buttons when a timeline is docked in
+  // the same room, so a Ztoryc room shows one; a Board alone keeps it.
+  m_followBtn = new QToolButton();
+  m_followBtn->setIcon(createQIcon("ztoryc_follow"));
+  m_followBtn->setIconSize(QSize(20, 20));
+  m_followBtn->setFixedSize(28, 28);
+  m_followBtn->setCheckable(true);
+  m_followBtn->setChecked(ZtoryModel::instance()->followEnabled());
+  m_followBtn->setToolTip(
+      tr("Follow\nBoard and timeline follow each other: click a panel in the "
+         "Board to put the playhead on it; move the playhead to highlight "
+         "its panel in the Board."));
+  m_followBtn->setStyleSheet(
+      "QToolButton{background:transparent;border:none;border-radius:4px;}"
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#c8703a;}");
+  connect(m_followBtn, &QToolButton::toggled, ZtoryModel::instance(),
+          &ZtoryModel::setFollowEnabled);
+  connect(ZtoryModel::instance(), &ZtoryModel::followChanged, m_followBtn,
+          &QToolButton::setChecked);
+
   m_numberingBtn = new QToolButton();
   m_numberingBtn->setIcon(createQIcon("ztoryc_numbering"));
   m_numberingBtn->setIconSize(QSize(20, 20));
@@ -1479,6 +1523,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   tb->addWidget(m_copyButton);
   tb->addWidget(m_cloneButton);
   tb->addWidget(m_pasteButton);
+  tb->addWidget(m_followBtn);
   tb->addSpacing(8);
   tb->addWidget(m_numberingCombo);
   tb->addWidget(m_numberingBtn);
@@ -1749,6 +1794,34 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   // Mirror selection changes from the Animatic timeline onto the board grid.
   connect(ZtoryModel::instance(), &ZtoryModel::sharedSelectionChanged, this,
           [this]() { applySharedSelection(); });
+
+  // «Follow»: the playhead marks its panel. The shot positions are cached
+  // (the playhead moves every frame in play) and dropped whenever the
+  // timeline can have changed; the marker is re-applied after the Board has
+  // rebuilt its widgets, hence the queued call.
+  connect(ZtoryAnimaticController::instance()->frameHandle(),
+          &TFrameHandle::frameSwitched, this,
+          [this]() { onFollowFrameChanged(); });
+  // Play stops: the marked panel may be off screen (play marks, it does not
+  // scroll) and no frame change follows to bring it into view.
+  connect(ZtoryAnimaticController::instance()->frameHandle(),
+          &TFrameHandle::isPlayingStatusChanged, this, [this]() {
+            if (!ZtoryAnimaticController::instance()->frameHandle()->isPlaying())
+              onFollowFrameChanged();
+          });
+  auto followTimelineChanged = [this]() {
+    m_followSpansDirty = true;
+    QTimer::singleShot(0, this, [this]() { onFollowFrameChanged(); });
+  };
+  connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+          this, followTimelineChanged);
+  connect(ZtoryModel::instance(), &ZtoryModel::modelReset, this,
+          followTimelineChanged);
+  connect(ZtoryModel::instance(), &ZtoryModel::followChanged, this,
+          [this](bool on) {
+            if (on) onFollowFrameChanged();
+            else setFollowMarker(-1, -1, false);
+          });
 
   connect(ZtoryModel::instance(), &ZtoryModel::shotDataChanged, this,
           [this](int si) {
@@ -2163,6 +2236,9 @@ void StoryboardPanel::clearShots() {
     }
   m_shots.clear();
   m_selectedShotIndex = -1;
+  // The widgets the «Follow» marker pointed at are gone.
+  m_followShot = m_followPanel = -1;
+  m_followSpansDirty = true;
 }
 
 void StoryboardPanel::resequenceXsheet() {
@@ -4804,7 +4880,8 @@ void StoryboardPanel::setShotButtonsHidden(bool hidden) {
   QToolButton *shared[] = {m_addShotButton,     m_deleteButton,
                            m_mergeButton,       m_copyButton,
                            m_cloneButton,       m_pasteButton,
-                           m_exportShotsButton, m_exportAnimaticButton};
+                           m_exportShotsButton, m_exportAnimaticButton,
+                           m_followBtn};
   for (QToolButton *b : shared)
     if (b) b->setVisible(!hidden);
 }
@@ -5927,6 +6004,117 @@ void StoryboardPanel::onPanelClicked(int shotIdx, int panelIdx, Qt::KeyboardModi
       cols.insert(m_shots[m_selectedShotIndex].data.xsheetColumn);
     ZtoryModel::instance()->setSharedSelection(std::move(cols));
   }
+  // «Follow»: a plain click puts the playhead on the first frame of the
+  // panel. Not on Shift/Cmd clicks — those build a selection, and moving the
+  // playhead under someone composing one would be a surprise.
+  if (ZtoryModel::instance()->followEnabled() &&
+      !(modifiers & (Qt::ShiftModifier | Qt::ControlModifier |
+                     Qt::MetaModifier))) {
+    const int f = timelineFrameOfPanel(shotIdx, panelIdx);
+    if (f >= 0) ZtoryAnimaticController::instance()->setCurrentFrame(f);
+  }
+}
+
+// ── «Follow» ──────────────────────────────────────────────────────────────────
+// Where a panel sits on the animatic timeline: the shot's TRUE start
+// (shotTrueSpan — a dissolve's head frames excluded) plus the panel's start
+// inside the shot. Panel starts are SUB-SCENE rows, and with an incoming
+// dissolve the first `head` rows are hold copies — the same rule
+// detectAndUpdatePanels() uses for the durations.
+void StoryboardPanel::rebuildFollowSpans() {
+  m_followSpans.assign(m_shots.size(), FollowSpan());
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  TXsheet *top = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
+  for (int si = 0; si < (int)m_shots.size() && top; si++) {
+    FollowSpan &sp = m_followSpans[si];
+    const int col  = m_shots[si].data.xsheetColumn;
+    int ts = 0, td = 0;
+    if (!ZtoryShotOps::shotTrueSpan(top, col, ts, td) || td <= 0) {
+      sp.duration = 0;
+      continue;
+    }
+    sp.start    = ts;
+    sp.duration = td;
+    TXshColumn *column = top->getColumn(col);
+    int r0 = 0, r1 = 0;
+    if (column) column->getRange(r0, r1);
+    for (int r = r0; r <= r1; r++) {
+      TXshCell cell = top->getCell(r, col);
+      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
+        sp.head = ZtoryShotOps::xdInHeadOffset(
+            cell.m_level->getChildLevel()->getXsheet());
+        break;
+      }
+    }
+  }
+  m_followSpansDirty = false;
+}
+
+int StoryboardPanel::timelineFrameOfPanel(int si, int pi) {
+  if (m_followSpansDirty || m_followSpans.size() != m_shots.size())
+    rebuildFollowSpans();
+  if (si < 0 || si >= (int)m_shots.size()) return -1;
+  const FollowSpan &sp = m_followSpans[si];
+  if (sp.duration <= 0) return -1;
+  const auto &panels = m_shots[si].data.panels;
+  if (pi < 0 || pi >= (int)panels.size()) return sp.start;
+  const int off = qMax(0, panels[pi].startFrame - sp.head);
+  return sp.start + qMin(off, sp.duration - 1);
+}
+
+void StoryboardPanel::setFollowMarker(int si, int pi, bool scroll) {
+  // In Compact view only one card per shot is shown: mark that one.
+  auto cardOf = [this](int s, int p) -> PanelWidget * {
+    if (s < 0 || s >= (int)m_shots.size()) return nullptr;
+    Shot &shot = m_shots[s];
+    if (m_collapsePanels) p = shot.viewPanel;
+    if (p < 0 || p >= (int)shot.panels.size()) return nullptr;
+    return shot.panels[p];
+  };
+  if (si != m_followShot || pi != m_followPanel) {
+    if (PanelWidget *old = cardOf(m_followShot, m_followPanel))
+      old->setFollowCurrent(false);
+    m_followShot  = si;
+    m_followPanel = pi;
+  }
+  PanelWidget *pw = cardOf(si, pi);
+  if (!pw) return;
+  pw->setFollowCurrent(true);
+  // Stopped: bring it into view. In play: mark only — a Board scrolling by
+  // itself while you watch the animatic is a distraction (Franco).
+  if (scroll && m_scrollArea) m_scrollArea->ensureWidgetVisible(pw, 8, 8);
+}
+
+void StoryboardPanel::onFollowFrameChanged() {
+  if (!ZtoryModel::instance()->followEnabled()) return;
+  if (m_shots.empty()) return;
+  if (m_followSpansDirty || m_followSpans.size() != m_shots.size())
+    rebuildFollowSpans();
+  TFrameHandle *fh = ZtoryAnimaticController::instance()->frameHandle();
+  const int f      = fh->getFrame();
+  int si = -1;
+  for (int i = 0; i < (int)m_followSpans.size(); i++) {
+    const FollowSpan &sp = m_followSpans[i];
+    if (sp.duration > 0 && f >= sp.start && f < sp.start + sp.duration) {
+      si = i;
+      break;
+    }
+  }
+  if (si < 0) {  // between shots or past the end: nothing to mark
+    setFollowMarker(-1, -1, false);
+    return;
+  }
+  const FollowSpan &sp = m_followSpans[si];
+  const int subRow     = f - sp.start + sp.head;
+  const auto &panels   = m_shots[si].data.panels;
+  int pi = 0;
+  for (int k = 0; k < (int)panels.size(); k++)
+    if (panels[k].startFrame <= subRow) pi = k;
+  // Same panel in play: nothing to do (this runs every frame). Stopped, go on
+  // anyway — the Board may have been scrolled away since, and "stopped" means
+  // "keep it in view".
+  if (si == m_followShot && pi == m_followPanel && fh->isPlaying()) return;
+  setFollowMarker(si, pi, !fh->isPlaying());
 }
 
 void StoryboardPanel::onDurationChanged(int shotIdx, int panelIdx, int frames) {

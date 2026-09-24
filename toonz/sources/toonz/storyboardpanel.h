@@ -43,6 +43,7 @@ class PanelWidget final : public QFrame {
   int  m_panelCount;
   int  m_fps;
   bool m_selected;
+  bool m_followCurrent = false;  // «Follow»: the playhead is on this panel
   QLineEdit   *m_seqField;       // editable sequence label (shows number part only)
   QLabel      *m_seqLabel;       // "SQ:" header label — hidden in Simple mode
   QLineEdit   *m_shotLabel;      // editable shot label (shows number part only)
@@ -92,6 +93,10 @@ public:
   void setTotalDuration(int frames);
   void setPreviewPixmap(const QPixmap &px);
   void setSelected(bool sel);
+  // «Follow» marker: a playhead-shaped bar on the top edge. Deliberately NOT
+  // the selection — the playhead moves every frame in play, and selecting
+  // would drag the shared selection and every copy/cut with it.
+  void setFollowCurrent(bool on);
   void setDialog(const QString &t);
   void setAction(const QString &t);
   void setNotes(const QString &t);
@@ -172,6 +177,18 @@ class StoryboardPanel final : public TPanel {
   QToolButton *m_copyButton;
   QToolButton *m_cloneButton;
   QToolButton *m_pasteButton;
+  QToolButton *m_followBtn = nullptr;  // «Follow» (hidden beside a timeline)
+  // «Follow»: the panel currently marked, and where each shot sits on the
+  // animatic timeline (true start, net duration, dissolve head offset),
+  // cached because the playhead moves every frame in play.
+  int m_followShot = -1, m_followPanel = -1;
+  struct FollowSpan { int start = 0, duration = 0, head = 0; };
+  std::vector<FollowSpan> m_followSpans;
+  bool m_followSpansDirty = true;
+  void rebuildFollowSpans();
+  int  timelineFrameOfPanel(int shotIdx, int panelIdx);
+  void setFollowMarker(int shotIdx, int panelIdx, bool scroll);
+  void onFollowFrameChanged();
 QToolButton *m_numberingBtn;   // ⚙ Numbering config button
   QTimer      *m_panelDetectTimer;
   QToolButton *m_exportPdfButton;

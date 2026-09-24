@@ -109,6 +109,7 @@ QString NumberingConfig::shotName(int idx) const {
 // ─── Singleton ────────────────────────────────────────────────────────────────
 
 ZtoryModel::ZtoryModel() : m_fps(24) {
+  m_follow = QSettings().value("Ztoryc/followBoardTimeline", false).toBool();
   m_animaticSidePanels = QStringList{ "Storyboard" };
   m_shotSidePanels     = QStringList{ "Xsheet", "ZtoryScriptPanel" };
   // Default naming pattern (B3d). Follows NABA convention with separate
@@ -402,6 +403,13 @@ QVector<DialogueLine> ZtoryModel::parseDialogue(const QString &text) const {
   }
   flush();
   return out;
+}
+
+void ZtoryModel::setFollowEnabled(bool on) {
+  if (m_follow == on) return;
+  m_follow = on;
+  QSettings().setValue("Ztoryc/followBoardTimeline", on);
+  emit followChanged(on);
 }
 
 void ZtoryModel::setSpeakerAlias(const QString &scriptName,
