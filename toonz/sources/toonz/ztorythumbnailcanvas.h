@@ -342,11 +342,14 @@ private:
   // foglio, alta canvasLy()) e la FINESTRA (m_ras). Differiscono di winY0():
   //     riga della tela = riga della finestra + winY0()
   // Con la finestra piena winY0() e' 0 e tutto torna com'era.
-  // m_windowPages: quante pagine tiene la finestra; 0 = tutte (passo 3a, che
-  // deve comportarsi in modo IDENTICO a prima). Una variabile e non una
-  // costante perche' l'autocollaudo (runPagingSelfTest) fa girare le stesse
-  // operazioni nei due modi e confronta le tele.
-  int m_windowPages = 0;
+  // m_windowPages: quante pagine tiene la finestra; 0 = tutte.
+  // 3 dal passo 3b (2026-09-24): la pagina su cui si lavora e le due vicine,
+  // ~30 MB qualunque sia la lunghezza dello storyboard (617 MB a finestra
+  // piena all'obiettivo di produzione). Deciso DOPO che l'autocollaudo ha
+  // dato tele identiche byte per byte a finestra piena e a 1/2/3/5 pagine.
+  // Una variabile e non una costante perche' l'autocollaudo
+  // (runPagingSelfTest) fa girare le stesse operazioni nei due modi.
+  int m_windowPages = 3;
   // ZTORYC_THUMBS_SELFTEST=1: stessa sequenza di operazioni vere a finestra
   // piena e a finestra stretta, tele confrontate byte per byte, esito in
   // ~/Desktop/ztory_paging_selftest.log. Lo stato della tela torna com'era e
@@ -599,6 +602,7 @@ private:  // Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z
   QTimer *m_saveTimer = nullptr;  // debounced autosave after edits
   QString m_persistKey;           // scene identity currently loaded from disk
   QString m_officialDir;          // the thumbs folder the canvas belongs to
+  bool m_revealPending = false;   // mostra il foglio dall'alto al prossimo show
   // The autosave re-encodes the WHOLE canvas, and that cost grows with every
   // page: measured 71 ms at 4x4 but 270 ms at 4x26 (1920x7020) and 515 ms at
   // 4x52 — on an M4, so more on a slower machine.  On the UI thread it lands as

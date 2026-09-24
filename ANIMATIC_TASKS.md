@@ -1034,6 +1034,24 @@ qualunque macchina col tocco e le gesture accese.
 > upstream). **Da vedere se il muto sparisce con la stessa correzione**: e'
 > plausibile (un dispositivo rimasto sull'uscita vecchia), ma lo stesso
 > sintomo c'era gia' il 21 senza cambi di uscita — non darlo per chiuso.
+>
+> **Stesso giorno, collaudo di Franco:** l'uscita giusta ora e' seguita
+> (✅ chiuso), ma il MUTO resta, e secondo lui arriva **in un momento di
+> silenzio**. Ipotesi (NON misurata): il dispositivo Qt lavora «a spinta» e si
+> riempie solo su `notify()`, che Qt emette solo mentre consuma audio; un
+> buffer che si svuota (UI occupata >100 ms) manda l'uscita in IdleState,
+> `notify()` smette, nessuno riempie piu' → muto fino al prossimo play.
+> Sonda ZTPROBE-AUDIO2 in `tsound_qt.cpp` (stati dell'uscita, play, stop) →
+> `~/Desktop/ztprobe_audio2.log`.
+>
+> **MISURATO lo stesso giorno — ipotesi confermata.** Alle 15:29:13.625 le
+> due uscite (una per traccia) sono andate in IdleState + UnderrunError nello
+> stesso millisecondo, dopo 18,1 s di play (indice 2,6 MB su 64 = 18,1 s), e
+> non sono piu' ripartite fino allo STOP 12 s dopo. **Corretto:** su
+> IdleState+Underrun con audio ancora da suonare si richiama `sendBuffer()`
+> (candidato upstream). Da collaudare. Resta da capire COSA blocca
+> l'interfaccia per >100 ms a quel punto del play (Franco: «nei silenzi») —
+> con `sample` durante il play, se il buco si sente.
 
 Segnalato da Franco mentre lavorava nella room Ztoryc con l'animatic:
 *«se interrompo e riprendo il play a volte va in play senza audio e se stoppo
@@ -1398,6 +1416,14 @@ silenzio sul pennello di fabbrica.
 > **Il piano con `QSettings` e' SUPERATO.** Se i pennelli vivono in una palette,
 > la persistenza e' il `.tpl` e non va scritta: nomi, parametri, curve, piu'
 > tavolozze, condivisione. Non riproporre l'elenco in QSettings.
+
+✅ **RASTER PER PAGINA COMPLETO il 2026-09-24** (passo 3a `529f97a69` + 3b):
+la finestra di lavoro tiene 3 pagine (~30 MB qualunque sia la lunghezza).
+Verificato due volte: **autocollaudo** (`ZTORYC_THUMBS_SELFTEST=1`, stesse
+operazioni vere a finestra piena e a 1/2/3/5 pagine, tele identiche byte per
+byte, pennellate nello stesso punto, annulla/ripeti esatti) e **collaudo di
+Franco** su 30 righe (disegno in alto e in fondo, annulla/ripeti, salva e
+riapri). Con la Thumbs room non resta niente di aperto su questo filone.
 
 **COSA RESTA DAVVERO DA FARE sulla Thumbs room:** solo il **raster per pagina**,
 la voce 🔴 qui sotto. Nient'altro.

@@ -1887,6 +1887,21 @@ void ZtoryThumbnailCanvas::persistLoad() {
   if (!work.isEmpty() && overlayWorkingCopy() &&
       !s_sessionWorkDirs.contains(work))
     askAboutRecoveredWork(work);
+
+  // Un foglio NUOVO si mostra dall'alto, adattato alla larghezza. La vista
+  // restava quella della scena di prima: scorso in fondo a un foglio lungo e
+  // aperto uno corto, la vista puntava sotto la fine del foglio e la room
+  // sembrava vuota — "è sparita la pagina con i thumbs" (Franco, 2026-09-24;
+  // i file erano intatti, ⌘⌥0 la faceva ricomparire).
+  // revealRow() adatta lo zoom alla LARGHEZZA della tela: se la room non e'
+  // a schermo (scena aperta da un'altra room, o all'avvio prima del layout)
+  // quella larghezza non e' vera, e si rimanda alla prima volta che si mostra.
+  if (isVisible() && width() > 0) {
+    m_revealPending = false;
+    revealRow(0);
+  } else {
+    m_revealPending = true;
+  }
 }
 
 bool ZtoryThumbnailCanvas::overlayWorkingCopy() {
@@ -2092,6 +2107,12 @@ void ZtoryThumbnailCanvas::showEvent(QShowEvent *e) {
   // averci tolto all'avvio.
   ztoryInstallUndoRouter(this);
   syncAppUndoActions();
+  // Scena aperta mentre la room non era a schermo: il foglio si mostra
+  // dall'alto adesso, con la larghezza vera (vedi persistLoad).
+  if (m_revealPending) {
+    m_revealPending = false;
+    QTimer::singleShot(0, this, [this]() { revealRow(0); });
+  }
 }
 
 void ZtoryThumbnailCanvas::enterEvent(QEvent *) {
