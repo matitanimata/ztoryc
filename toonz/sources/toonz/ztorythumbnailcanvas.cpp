@@ -4,6 +4,7 @@
 #include "tundo.h"
 #include <QPointer>
 #include "tapp.h"
+#include "ztorymodel.h"  // sceneSaved: the working copy becomes official
 #include "trop.h"           // resample (raster rescale on camera-aspect change)
 #include "toonz/tscenehandle.h"
 #include "toonz/txsheethandle.h"
@@ -35,6 +36,11 @@
 #include <QLineF>
 #include <QApplication>
 #include <QScrollBar>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QLocale>
+#include <QDateTime>
+#include <QSet>
 #include "toonz/preferences.h"       // le gesture di annulla/ripeti
 #include "toonzqt/menubarcommand.h"  // CommandManager
 #include "menubarcommandids.h"       // MI_TouchGestureControl
@@ -55,6 +61,13 @@
 // paint, which is what "erase" is supposed to mean, and what lets an exported
 // panel carry its transparency.
 static const TPixel32 kPaper(0, 0, 0, 0);
+
+// One band of the canvas on its way to disk. Outside the anonymous namespace:
+// the canvas collects them (collectDirtyBands), so the header names it.
+struct ThumbBand {
+  int index;
+  QImage img;
+};
 
 namespace {
 
@@ -78,11 +91,6 @@ inline bool ztoryIsInk(const TPixel32 &p, int nearWhite = 250) {
   return p.m > 8 && (p.r < nearWhite || p.g < nearWhite || p.b < nearWhite);
 }
 
-// One band of the canvas on its way to disk.
-struct ThumbBand {
-  int index;
-  QImage img;
-};
 
 // Write the bands that changed, plus the little manifest that says how to put
 // them back together.  Only \a bands are touched: everything else on disk stays
@@ -156,6 +164,104 @@ void writeThumbBands(const QString &dirStr, int cols, int rows, double boxH,
       if (!QFile::rename(dirStr + "/" + old, dirStr + "/" + backup))
         qd.remove(old);  // renaming failed: the bands are complete, let it go
     }
+}
+
+// ── The working copy («chiudi senza salvare», Franco 2026-09-23) ──────────────
+//
+// The canvas autosaves 700 ms after a stroke, without waiting for the scene to
+// be saved — on purpose: it is big, redrawing it costs, and losing it to a
+// crash would be worse. But it made the scene stop being ONE thing: "Don't
+// save" reverted the .tnz and left the thumbnails as they were. Now the
+// autosave writes here, a scene save moves it over the official files, and a
+// scene left without saving throws it away.
+//
+// A subfolder of the official one: it travels with the scene, and the loader's
+// globs (QDir::Files) never see into it.
+static const char *const kWorkingSubdir = "_ztorythumbs_working";
+
+// Working copies written by THIS session. One found on open that is not here
+// was left by a session that did not close normally, and is offered back
+// instead of being applied in silence; one that IS here is ours — a Thumbnail
+// room panel rebuilt mid-session picks it up without asking.
+static QSet<QString> s_sessionWorkDirs;
+
+static bool readThumbManifest(const QString &dirStr, int &cols, int &rows,
+                              double &boxH, int &bands) {
+  QFile gf(dirStr + "/_ztorythumbs_grid.txt");
+  if (!gf.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+  QTextStream ts(&gf);
+  cols = rows = bands = 0;
+  boxH            = 0.0;
+  ts >> cols >> rows >> boxH >> bands;
+  return cols > 0 && rows > 0 && boxH > 0.0 && bands > 0;
+}
+
+// Save As: the thumbnails follow the scene to its new name. The destination is
+// cleaned first even when there is nothing to copy — it may be the folder of a
+// scene being overwritten, and its thumbnails must not survive under ours.
+static void copyThumbFiles(const QString &srcDir, const QString &dstDir) {
+  const QStringList pats{"_ztorythumbs_*", "ztorythumbs_backup_*"};
+  QDir dst(dstDir);
+  if (!dst.exists() && !dst.mkpath(".")) return;
+  for (const QString &f : dst.entryList(pats, QDir::Files)) dst.remove(f);
+  QDir src(srcDir);
+  if (!src.exists()) return;
+  for (const QString &f : src.entryList(pats, QDir::Files))
+    QFile::copy(srcDir + "/" + f, dstDir + "/" + f);
+}
+
+// Move the working copy over the official files. The manifest goes LAST, and
+// the working folder is removed only once everything is across: a failure — or
+// a crash — halfway leaves it in place, and the next open offers it back.
+// Nothing is ever the only copy while it moves.
+static void promoteThumbWorkingCopy(const QString &workDir,
+                                    const QString &offDir) {
+  int cols, rows, bands;
+  double boxH;
+  if (!readThumbManifest(workDir, cols, rows, boxH, bands)) {
+    // No manifest: its first write never completed, so it holds nothing a
+    // load would ever read. Leaving it would only get it offered back.
+    QDir(workDir).removeRecursively();
+    return;
+  }
+  QDir off(offDir);
+  if (!off.exists() && !off.mkpath(".")) return;
+  auto moveOver = [&](const QString &name) {
+    const QString from = workDir + "/" + name, to = offDir + "/" + name;
+    QFile::remove(to);
+    return QFile::rename(from, to) || QFile::copy(from, to);
+  };
+  bool ok = true;
+  for (const QString &f : QDir(workDir).entryList(
+           QStringList() << "_ztorythumbs_band*.png", QDir::Files))
+    ok = moveOver(f) && ok;
+  // Bands beyond the working grid (rows were removed).
+  QRegExp bandRe("_ztorythumbs_band(\\d+)\\.png");
+  for (const QString &f :
+       off.entryList(QStringList() << "_ztorythumbs_band*.png", QDir::Files))
+    if (bandRe.indexIn(f) >= 0 && bandRe.cap(1).toInt() >= bands) off.remove(f);
+  if (QFile::exists(workDir + "/_ztorythumbs_merges.txt"))
+    ok = moveOver("_ztorythumbs_merges.txt") && ok;
+  else
+    QFile::remove(offDir + "/_ztorythumbs_merges.txt");
+  if (!ok) return;
+  if (!moveOver("_ztorythumbs_grid.txt")) return;
+
+  // Every band is now official: the old single-image canvas can be retired,
+  // renamed and not deleted, exactly as writeThumbBands does it.
+  bool complete = true;
+  for (int b = 0; b < bands && complete; b++)
+    complete = QFile::exists(
+        offDir + QString("/_ztorythumbs_band%1.png").arg(b, 3, 10, QChar('0')));
+  if (complete)
+    for (const QString &old :
+         off.entryList(QStringList() << "_ztorythumbs_*x*.png", QDir::Files)) {
+      const QString backup = "ztorythumbs_backup_" + old.mid(13);
+      QFile::remove(offDir + "/" + backup);
+      if (!QFile::rename(offDir + "/" + old, offDir + "/" + backup))
+        off.remove(old);
+    }
+  QDir(workDir).removeRecursively();
 }
 
 void writeThumbCanvas(const QImage &img, const QString &dirStr, int cols,
@@ -432,6 +538,17 @@ ZtoryThumbnailCanvas::ZtoryThumbnailCanvas(QWidget *parent) : QWidget(parent) {
           &ZtoryThumbnailCanvas::persistSave);
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
           this, &ZtoryThumbnailCanvas::persistLoad);
+  // The working copy: official on a scene save, thrown away when the scene is
+  // left without one. sceneSwitching (NOT sceneSwitched) fires only when the
+  // scene object really changes — New, Load, Revert — and always AFTER the
+  // "save changes?" question; re-selecting the same scene does not emit it.
+  // aboutToQuit comes after MainWindow's own question on Quit.
+  connect(ZtoryModel::instance(), &ZtoryModel::sceneSaved, this,
+          &ZtoryThumbnailCanvas::onSceneSaved);
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitching,
+          this, &ZtoryThumbnailCanvas::discardWorkingCopy);
+  connect(qApp, &QCoreApplication::aboutToQuit, this,
+          &ZtoryThumbnailCanvas::discardWorkingCopy);
   // Transform-tool shortcuts must work even when a toolbar button holds focus.
   qApp->installEventFilter(this);
   // Load the scene that is already open when the panel is created.
@@ -450,13 +567,14 @@ ZtoryThumbnailCanvas::~ZtoryThumbnailCanvas() {
   const bool pending =
       (m_saveTimer && m_saveTimer->isActive()) || m_saveQueued;
   if (m_savePool) m_savePool->waitForDone();
-  if (pending && m_ras) {
-    TFilePath dir = persistDir();
-    if (!dir.isEmpty())
-      writeThumbCanvas(rasterToQImage(m_ras, /*premultiplied=*/false),
-                       QString::fromStdWString(dir.getWideString()), m_cols,
-                       m_rows, m_merges);
-  }
+  // Into the working copy, as bands — like every other autosave. This used to
+  // write the OLD single-image format into the official folder, which the
+  // loader ignores as soon as a band manifest exists: an edit made in the last
+  // 700 ms before quitting was written, and then never read back.
+  // (On Quit, aboutToQuit has already run discardWorkingCopy(), which stops the
+  // timer: nothing is pending here and nothing is written — correctly, since
+  // the user has just been asked whether to keep it.)
+  if (pending && m_ras) writeDirtyBandsNow();
   delete m_brush;
   // NIENTE `delete m_style`.
   //
@@ -706,6 +824,16 @@ void ZtoryThumbnailCanvas::onSceneChanged() {
   m_boxAspect = aspect;
   m_boxH      = newBoxH;
   m_ras       = reanchorRaster(m_ras, oldBoxH, m_boxH);
+  // EVERY page changed height: all of them go to disk, and the page store is
+  // refilled from the window (flushWindowToPages takes the dirty ones). Without
+  // this a reflow after the first save was persisted one page at a time, as
+  // strokes happened to touch them — a canvas with pages of two heights on
+  // disk. It went unnoticed because at scene open, where reflows usually
+  // happen, every page is still dirty from the load.
+  // Scheduled WITHOUT marking the scene modified: a reflow is derived from the
+  // camera, not work, and if nobody saves, the next open simply reflows again.
+  markAllBandsDirty();
+  schedulePersistSaveTimer();
   update();
 }
 
@@ -1057,14 +1185,21 @@ TFilePath ZtoryThumbnailCanvas::persistDir() const {
          TFilePath("thumbs");
 }
 
+// Both are called for edits the USER made, so both mark the scene modified.
+// They never did, and without it "Don't save" could not work: with only the
+// thumbnails changed, closing asked nothing at all, and there was no way to say
+// "keep them" (2026-09-24). The camera reflow is not an edit and does not go
+// through here — see onSceneChanged().
 void ZtoryThumbnailCanvas::schedulePersistSave(const QRect &rasterRect) {
   markBandsDirty(rasterRect);
   schedulePersistSaveTimer();
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
 }
 
 void ZtoryThumbnailCanvas::schedulePersistSave() {
   markAllBandsDirty();
   schedulePersistSaveTimer();
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
 }
 
 void ZtoryThumbnailCanvas::schedulePersistSaveTimer() {
@@ -1210,20 +1345,12 @@ void ZtoryThumbnailCanvas::markBandsDirty(const QRect &rasterRect) {
   for (int b = b0; b <= b1; b++) m_bandDirty[b] = true;
 }
 
-void ZtoryThumbnailCanvas::persistSave() {
-  if (!m_ras) return;
-  TFilePath dir = persistDir();
-  if (dir.isEmpty()) return;
+QString ZtoryThumbnailCanvas::workDirStr() const {
+  if (m_officialDir.isEmpty()) return QString();
+  return m_officialDir + "/" + kWorkingSubdir;
+}
 
-  // Never run two encodes at once: they would queue up behind the pen and the
-  // last one to land would not necessarily be the newest canvas.  Remember
-  // instead that there is something newer to write — the dirty flags of the
-  // bands are NOT cleared here, so nothing is forgotten in the meantime.
-  if (m_saveRunning) {
-    m_saveQueued = true;
-    return;
-  }
-
+int ZtoryThumbnailCanvas::collectDirtyBands(QVector<ThumbBand> &bands) {
   const int n = bandCount();
   if ((int)m_bandDirty.size() != n) m_bandDirty.resize(n, true);
 
@@ -1234,7 +1361,6 @@ void ZtoryThumbnailCanvas::persistSave() {
   // scrivere, o si salverebbero pagine vecchie.
   flushWindowToPages();
 
-  QVector<ThumbBand> bands;
   int dirtyCount = 0;
   for (int b = 0; b < n; b++) {
     if (!m_bandDirty[b]) continue;
@@ -1255,18 +1381,111 @@ void ZtoryThumbnailCanvas::persistSave() {
     }
     bands.push_back({b, rasterToQImage(band, /*premultiplied=*/false)});
   }
-
-  const bool complete = (dirtyCount == n);
   m_bandDirty.assign(n, false);
+  return dirtyCount;
+}
 
+void ZtoryThumbnailCanvas::writeDirtyBandsNow() {
+  if (!m_ras) return;
+  if (m_officialDir.isEmpty()) {
+    const TFilePath dir = persistDir();
+    if (dir.isEmpty()) return;
+    m_officialDir = QString::fromStdWString(dir.getWideString());
+  }
+  QVector<ThumbBand> bands;
+  collectDirtyBands(bands);
+  if (bands.isEmpty()) return;
+  const QString work = workDirStr();
+  writeThumbBands(work, m_cols, m_rows, m_boxH, bandCount(), bands, m_merges,
+                  /*complete=*/false);
+  s_sessionWorkDirs.insert(work);
+}
+
+void ZtoryThumbnailCanvas::persistSave() {
+  if (!m_ras) return;
+  if (m_officialDir.isEmpty()) {
+    const TFilePath dir = persistDir();
+    if (dir.isEmpty()) return;
+    m_officialDir = QString::fromStdWString(dir.getWideString());
+  }
+
+  // Never run two encodes at once: they would queue up behind the pen and the
+  // last one to land would not necessarily be the newest canvas.  Remember
+  // instead that there is something newer to write — the dirty flags of the
+  // bands are NOT cleared here, so nothing is forgotten in the meantime.
+  if (m_saveRunning) {
+    m_saveQueued = true;
+    return;
+  }
+
+  QVector<ThumbBand> bands;
+  collectDirtyBands(bands);
   if (bands.isEmpty()) return;  // nothing changed since the last write
 
+  // Into the WORKING copy, never the official files: only a scene save makes
+  // these pages official (onSceneSaved). complete=false because the old
+  // single-image canvas lives in the official folder, and retiring it is the
+  // promotion's job.
+  const QString work = workDirStr();
+  s_sessionWorkDirs.insert(work);
   m_saveRunning = true;
   m_saveQueued  = false;
   m_persistKey  = sceneKey();  // this scene's canvas is (about to be) on disk
-  m_savePool->start(new ThumbBandSaveTask(
-      std::move(bands), QString::fromStdWString(dir.getWideString()), m_cols,
-      m_rows, m_boxH, n, m_merges, complete, this));
+  m_savePool->start(new ThumbBandSaveTask(std::move(bands), work, m_cols,
+                                          m_rows, m_boxH, bandCount(),
+                                          m_merges, /*complete=*/false, this));
+}
+
+// The scene reached the disk: what the canvas has becomes official too.
+void ZtoryThumbnailCanvas::onSceneSaved() {
+  if (!m_ras) return;
+  const TFilePath dir = persistDir();
+  if (dir.isEmpty()) return;
+  const QString newOff = QString::fromStdWString(dir.getWideString());
+  if (m_officialDir.isEmpty()) m_officialDir = newOff;
+
+  // 1. Everything drawn so far into the working copy first — including an edit
+  //    still waiting on the 700 ms debounce, or the scene would be saved with
+  //    the stroke drawn just before ⌘S missing from its thumbnails.
+  //    Only if something IS pending: after a load every page is marked dirty,
+  //    and flushing unconditionally would re-encode the whole canvas on every
+  //    save of a scene whose thumbnails nobody touched.
+  const bool pending = (m_saveTimer && m_saveTimer->isActive()) ||
+                       m_saveQueued || m_saveRunning;
+  if (m_saveTimer) m_saveTimer->stop();
+  if (m_savePool) m_savePool->waitForDone();
+  m_saveRunning = false;  // the queued finish slot may still arrive: harmless
+  m_saveQueued  = false;
+  if (pending) writeDirtyBandsNow();
+
+  // 2. Save As: the thumbnails follow the scene to its new folder.
+  const QString work = workDirStr();
+  if (newOff != m_officialDir) copyThumbFiles(m_officialDir, newOff);
+
+  // 3. The working copy becomes official.
+  if (QDir(work).exists()) promoteThumbWorkingCopy(work, newOff);
+  if (!QDir(work).exists()) s_sessionWorkDirs.remove(work);
+  m_officialDir = newOff;
+  m_persistKey  = sceneKey();
+}
+
+// The scene is being left without saving (the "save changes?" question has
+// been answered by now), or the application is quitting after it: what the
+// working copy holds is exactly what the user chose not to keep.
+void ZtoryThumbnailCanvas::discardWorkingCopy() {
+  if (m_saveTimer) m_saveTimer->stop();
+  if (m_savePool) m_savePool->waitForDone();  // or it would recreate the folder
+  m_saveRunning = false;
+  m_saveQueued  = false;
+  const QString work = workDirStr();
+  if (!work.isEmpty()) {
+    QDir(work).removeRecursively();
+    s_sessionWorkDirs.remove(work);
+  }
+  // The next persistLoad must read the disk again even for the SAME path:
+  // Revert Scene reloads it, and the canvas still holds what was discarded.
+  m_persistKey.clear();
+  m_officialDir.clear();
 }
 
 void ZtoryThumbnailCanvas::onPersistSaveFinished() {
@@ -1312,100 +1531,205 @@ void ZtoryThumbnailCanvas::persistLoad() {
   m_floatImg     = QImage();
   m_floatDrag    = -1;
   m_floatWasMove = false;
+  // The page store belongs to the scene too. Opening a scene WITHOUT saved
+  // thumbnails left the previous scene's pages in it, and flushWindowToPages()
+  // only refreshes dirty or missing pages: an undo snapshot could then carry
+  // them into this scene — the same family as the undo stack above.
+  m_pages.clear();
 
-  TFilePath dir = persistDir();
-  QStringList matches;
-  QString dirStr;
-  bool haveBands = false;
-  int gCols = 0, gRows = 0, gBands = 0;
-  double gBoxH = 0.0;
-  if (!dir.isEmpty()) {
-    dirStr = QString::fromStdWString(dir.getWideString());
-    QDir qd(dirStr);
-    // The banded format first: its manifest is written last, so its presence
-    // means a complete set of bands is on disk.
-    QFile gf(dirStr + "/_ztorythumbs_grid.txt");
-    if (gf.open(QIODevice::ReadOnly | QIODevice::Text)) {
-      QTextStream ts(&gf);
-      ts >> gCols >> gRows >> gBoxH >> gBands;
-      haveBands = (gCols > 0 && gRows > 0 && gBoxH > 0.0 && gBands > 0);
-    }
-    matches = qd.entryList(QStringList() << "_ztorythumbs_*x*.png", QDir::Files,
-                           QDir::Time);
+  {
+    const TFilePath od = persistDir();
+    m_officialDir =
+        od.isEmpty() ? QString() : QString::fromStdWString(od.getWideString());
   }
 
+  // The official files, exactly as before the working copy existed.
+  auto loadOfficial = [&]() {
+    TFilePath dir = persistDir();
+    QStringList matches;
+    QString dirStr;
+    bool haveBands = false;
+    int gCols = 0, gRows = 0, gBands = 0;
+    double gBoxH = 0.0;
+    if (!dir.isEmpty()) {
+      dirStr = QString::fromStdWString(dir.getWideString());
+      QDir qd(dirStr);
+      // The banded format first: its manifest is written last, so its presence
+      // means a complete set of bands is on disk.
+      QFile gf(dirStr + "/_ztorythumbs_grid.txt");
+      if (gf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream ts(&gf);
+        ts >> gCols >> gRows >> gBoxH >> gBands;
+        haveBands = (gCols > 0 && gRows > 0 && gBoxH > 0.0 && gBands > 0);
+      }
+      matches = qd.entryList(QStringList() << "_ztorythumbs_*x*.png", QDir::Files,
+                             QDir::Time);
+    }
+
+    m_merges.clear();
+    if (haveBands) {
+      m_cols = gCols;
+      m_rows = gRows;
+      m_boxH = gBoxH;
+      m_boxAspect = m_boxW / gBoxH;
+      loadMerges(dirStr);
+      // Le pagine arrivano da disco gia' separate: si caricano nel MAGAZZINO, e
+      // la finestra si costruisce da li'. Prima si montavano dritte in una tela
+      // unica e le pagine si buttavano via.
+      m_pages.assign(bandCount(), TRaster32P());
+      for (int b = 0; b < gBands && b < (int)m_pages.size(); b++) {
+        QImage img(dirStr + QString("/_ztorythumbs_band%1.png")
+                                .arg(b, 3, 10, QChar('0')));
+        if (img.isNull()) continue;  // a missing band leaves blank paper, not a hole
+        m_pages[b] = rasterFromQImage(img, /*premultiply=*/false);
+      }
+      rebuildWindowFromPages();
+      markAllBandsDirty();  // nothing written yet in THIS session
+      clearSelection();
+      updateScrollBars();
+      update();
+      return;
+    }
+
+    if (matches.isEmpty()) {
+      // New scene with no saved canvas: start blank at the DEFAULT grid size (do
+      // not inherit rows added with +Row in the previous scene).
+      m_cols = kDefaultCols;
+      m_rows = kDefaultRows;
+      m_ras  = TRaster32P((int)gridW(), (int)gridH());
+      m_ras->fill(kPaper);
+      markAllBandsDirty();  // nothing of this scene is on disk yet
+      clearSelection();
+      updateScrollBars();
+      update();
+      return;
+    }
+
+    // Merged regions, if any (saved alongside the canvas).
+    loadMerges(QString::fromStdWString(dir.getWideString()));
+
+    const QString fn = matches.first();  // most-recently modified
+    QRegExp re("_ztorythumbs_(\\d+)x(\\d+)\\.png");
+    if (re.indexIn(fn) >= 0) {
+      m_cols = qMax(1, re.cap(1).toInt());
+      m_rows = qMax(1, re.cap(2).toInt());
+    }
+    QImage img(QString::fromStdWString(dir.getWideString()) + "/" + fn);
+    if (img.isNull()) return;
+    TRaster32P r = rasterFromQImage(img, /*premultiply=*/false);
+
+    // Adopt the saved box geometry as-is — do NOT reflow against the live camera
+    // here. At scene-open time the app camera is often still the default (e.g.
+    // 1920x1080) and only switches to the scene's real format a moment later,
+    // firing onSceneChanged(). Reflowing now would target the wrong (default)
+    // aspect, and onSceneChanged would then reflow AGAIN: a lossy double pass that
+    // — because each region is clamped to fit a single box — compressed tall
+    // drawings (a full-column stroke got squished to one row on reopen). Instead
+    // take the raster at its saved box height and set m_boxAspect from it, so
+    // onSceneChanged does the single correct reflow only if the real camera aspect
+    // actually differs (and short-circuits when it matches, the common case).
+    const double savedBoxH = r->getLy() / (double)qMax(1, m_rows);
+    m_boxH                 = savedBoxH;
+    m_boxAspect            = m_boxW / savedBoxH;
+    m_ras                  = r;
+    // Read from the old single-image format: every band still has to be written
+    // before that file can be dropped (writeThumbBands only removes it on a
+    // complete save).
+    markAllBandsDirty();
+    clearSelection();
+    updateScrollBars();
+    update();
+  };
+  loadOfficial();
+
+  // Then the working copy on top, if there is one. Ours (a panel rebuilt
+  // mid-session) is applied silently; one left by a session that did not
+  // close normally is applied too — so the reflow and the display act on the
+  // full content — and then offered to the user to keep or throw away.
+  const QString work = workDirStr();
+  if (!work.isEmpty() && overlayWorkingCopy() &&
+      !s_sessionWorkDirs.contains(work))
+    askAboutRecoveredWork(work);
+}
+
+bool ZtoryThumbnailCanvas::overlayWorkingCopy() {
+  const QString work = workDirStr();
+  int wCols, wRows, wBands;
+  double wBoxH;
+  if (work.isEmpty() || !readThumbManifest(work, wCols, wRows, wBoxH, wBands))
+    return false;
+  if (!m_ras) return false;
+
+  // The official pages as just loaded — from the bands, or cut out of the old
+  // single image. Every page is dirty after a load, so this takes them all.
+  flushWindowToPages();
+  const std::vector<TRaster32P> official = m_pages;
+  // A page the working copy lacks is taken from the official ones only if the
+  // two agree on the page geometry. They always do when a page is missing:
+  // every change of geometry (rows, merges, camera reflow, undo of those)
+  // marks the WHOLE canvas dirty, so it writes every page.
+  const bool sameGeometry =
+      (wCols == m_cols && std::abs(wBoxH - m_boxH) < 1e-6);
+
+  m_cols      = wCols;
+  m_rows      = wRows;
+  m_boxH      = wBoxH;
+  m_boxAspect = m_boxW / wBoxH;
   m_merges.clear();
-  if (haveBands) {
-    m_cols = gCols;
-    m_rows = gRows;
-    m_boxH = gBoxH;
-    m_boxAspect = m_boxW / gBoxH;
-    loadMerges(dirStr);
-    // Le pagine arrivano da disco gia' separate: si caricano nel MAGAZZINO, e
-    // la finestra si costruisce da li'. Prima si montavano dritte in una tela
-    // unica e le pagine si buttavano via.
-    m_pages.assign(bandCount(), TRaster32P());
-    for (int b = 0; b < gBands && b < (int)m_pages.size(); b++) {
-      QImage img(dirStr + QString("/_ztorythumbs_band%1.png")
-                              .arg(b, 3, 10, QChar('0')));
-      if (img.isNull()) continue;  // a missing band leaves blank paper, not a hole
+  loadMerges(work);
+  m_pages.assign(bandCount(), TRaster32P());
+  for (int b = 0; b < (int)m_pages.size(); b++) {
+    QImage img(work + QString("/_ztorythumbs_band%1.png")
+                          .arg(b, 3, 10, QChar('0')));
+    if (!img.isNull())
       m_pages[b] = rasterFromQImage(img, /*premultiply=*/false);
-    }
-    rebuildWindowFromPages();
-    markAllBandsDirty();  // nothing written yet in THIS session
-    clearSelection();
-    updateScrollBars();
-    update();
-    return;
+    else if (sameGeometry && b < (int)official.size())
+      m_pages[b] = official[b];
   }
-
-  if (matches.isEmpty()) {
-    // New scene with no saved canvas: start blank at the DEFAULT grid size (do
-    // not inherit rows added with +Row in the previous scene).
-    m_cols = kDefaultCols;
-    m_rows = kDefaultRows;
-    m_ras  = TRaster32P((int)gridW(), (int)gridH());
-    m_ras->fill(kPaper);
-    clearSelection();
-    updateScrollBars();
-    update();
-    return;
-  }
-
-  // Merged regions, if any (saved alongside the canvas).
-  loadMerges(QString::fromStdWString(dir.getWideString()));
-
-  const QString fn = matches.first();  // most-recently modified
-  QRegExp re("_ztorythumbs_(\\d+)x(\\d+)\\.png");
-  if (re.indexIn(fn) >= 0) {
-    m_cols = qMax(1, re.cap(1).toInt());
-    m_rows = qMax(1, re.cap(2).toInt());
-  }
-  QImage img(QString::fromStdWString(dir.getWideString()) + "/" + fn);
-  if (img.isNull()) return;
-  TRaster32P r = rasterFromQImage(img, /*premultiply=*/false);
-
-  // Adopt the saved box geometry as-is — do NOT reflow against the live camera
-  // here. At scene-open time the app camera is often still the default (e.g.
-  // 1920x1080) and only switches to the scene's real format a moment later,
-  // firing onSceneChanged(). Reflowing now would target the wrong (default)
-  // aspect, and onSceneChanged would then reflow AGAIN: a lossy double pass that
-  // — because each region is clamped to fit a single box — compressed tall
-  // drawings (a full-column stroke got squished to one row on reopen). Instead
-  // take the raster at its saved box height and set m_boxAspect from it, so
-  // onSceneChanged does the single correct reflow only if the real camera aspect
-  // actually differs (and short-circuits when it matches, the common case).
-  const double savedBoxH = r->getLy() / (double)qMax(1, m_rows);
-  m_boxH                 = savedBoxH;
-  m_boxAspect            = m_boxW / savedBoxH;
-  m_ras                  = r;
-  // Read from the old single-image format: every band still has to be written
-  // before that file can be dropped (writeThumbBands only removes it on a
-  // complete save).
+  rebuildWindowFromPages();
   markAllBandsDirty();
   clearSelection();
   updateScrollBars();
   update();
+  return true;
+}
+
+void ZtoryThumbnailCanvas::askAboutRecoveredWork(const QString &work) {
+  // Once per working copy, however many Thumbnail room panels are open.
+  static QSet<QString> asked;
+  if (asked.contains(work)) return;
+  asked.insert(work);
+  // Not from inside sceneSwitched: the scene is still being loaded.
+  QPointer<ZtoryThumbnailCanvas> self(this);
+  const QString key = m_persistKey;
+  QTimer::singleShot(0, this, [self, work, key]() {
+    if (!self || self->m_persistKey != key || !QDir(work).exists()) return;
+    const QDateTime when =
+        QFileInfo(work + "/_ztorythumbs_grid.txt").lastModified();
+    QMessageBox box(self->window());
+    box.setIcon(QMessageBox::Question);
+    box.setWindowTitle(tr("Thumbnail room"));
+    box.setText(tr("This scene has Thumbnail room drawings that were never "
+                   "saved, left by a session that did not close normally "
+                   "(last change: %1).")
+                    .arg(QLocale().toString(when, QLocale::ShortFormat)));
+    box.setInformativeText(
+        tr("Keep them? They stay unsaved until you save the scene."));
+    QPushButton *keep =
+        box.addButton(tr("Keep Them"), QMessageBox::AcceptRole);
+    box.addButton(tr("Discard Them"), QMessageBox::DestructiveRole);
+    box.setDefaultButton(keep);
+    box.exec();
+    if (!self) return;
+    if (box.clickedButton() == keep) {
+      s_sessionWorkDirs.insert(work);
+      // Unsaved work again: the scene must ask before it is closed.
+      TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+    } else {
+      self->discardWorkingCopy();
+      self->persistLoad();  // back to the official thumbnails
+    }
+  });
 }
 
 //=============================================================================
@@ -1940,6 +2264,14 @@ void ZtoryThumbnailCanvas::keyPressEvent(QKeyEvent *e) {
   // Straighten the sheet: ⌥0 (Option-zero).  Without a way back to square,
   // getting there by hand is a torture -- which is why every drawing program
   // that rotates the view also ships this command.
+  // ⌘⌥0 (Ctrl+Alt+0): Reset View, as in the other rooms — straight, fitted
+  // to the width, from the top. ⌥0 alone only straightens, keeping zoom and
+  // pan (Franco, 2026-09-24): checked first, or ⌥0 would swallow it.
+  if ((e->modifiers() & Qt::AltModifier) &&
+      (e->modifiers() & Qt::ControlModifier) && e->key() == Qt::Key_0) {
+    revealRow(0);
+    return;
+  }
   if (e->modifiers() & Qt::AltModifier) {
     const QPointF c(width() * 0.5, height() * 0.5);
     switch (e->key()) {

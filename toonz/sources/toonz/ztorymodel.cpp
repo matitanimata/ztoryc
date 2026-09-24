@@ -316,7 +316,18 @@ QVector<DialogueLine> ZtoryModel::parseDialogue(const QString &text) const {
   for (auto it = m_speakerAliases.constBegin(); it != m_speakerAliases.constEnd(); ++it)
     uuidByName.insert(it.key(), it.value());
 
-  auto emitLine = [&](const QString &speaker, const QString &said) {
+  auto emitLine = [&](const QString &speaker, const QString &saidRaw) {
+    // Parentheticals INSIDE the line — «MARIO: (ride) Non ci credo», «Non ci
+    // credo (sottovoce) davvero» — are directions, not words: left in, the
+    // aligner looked for «ride» in the audio and shifted the words around it.
+    // The two other forms were already handled: a parenthetical on its own
+    // line is skipped below, an extension on the name is stripped
+    // (stripSpeakerExtension). Asked by Franco, 2026-09-24.
+    static const QRegularExpression kInlineParen(QStringLiteral("\\([^)]*\\)"));
+    static const QRegularExpression kSpaces(QStringLiteral("\\s+"));
+    QString said = saidRaw;
+    said.replace(kInlineParen, QStringLiteral(" "));
+    said.replace(kSpaces, QStringLiteral(" "));
     if (said.trimmed().isEmpty()) return;
     DialogueLine dl;
     dl.character = speaker;

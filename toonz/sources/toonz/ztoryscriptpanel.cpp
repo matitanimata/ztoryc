@@ -15,6 +15,7 @@
 #include <QTextCodec>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QKeyEvent>
 #include <QMimeData>
 #include <QUrl>
 #include <QXmlStreamReader>
@@ -26,6 +27,9 @@
 #include <QFont>
 #include <QSizePolicy>
 #include <QPalette>
+
+
+
 
 //=============================================================================
 // ZtoryScriptView
@@ -83,6 +87,7 @@ ZtoryScriptView::ZtoryScriptView(QWidget *parent)
       "border: none; padding: 8px; }");
   m_textEdit->setPlaceholderText(
       tr("Import a screenplay (.fdx, .fountain, .docx, .odt or .txt)."));
+  m_textEdit->installEventFilter(this);
 
   // --- Layout principale ---
   QVBoxLayout *main = new QVBoxLayout(this);
@@ -247,6 +252,31 @@ void ZtoryScriptView::onSceneSwitched() {
 }
 
 //-----------------------------------------------------------------------------
+
+// ⌘C must copy the SCREENPLAY TEXT, not whatever Ztoryc has selected.
+//
+// A read-only QTextEdit does not claim its shortcuts: QWidgetTextControl
+// accepts ShortcutOverride only when the text is editable (Qt 5.15,
+// qwidgettextcontrol.cpp:1183). So ⌘C went to the application's Copy command
+// whenever that was active — it copied the Board's or the xsheet's selection
+// and left the system clipboard as it was, and pasting into the Board gave the
+// sentence copied BEFORE. "Sometimes", because it depends on whether that
+// command is live at the moment (reported by Franco, 2026-09-24).
+// The copy itself read-only text handles fine (same file, :1248): it only has
+// to receive the key.
+// That was half of it. The other half: the scene viewer took the keyboard
+// away whenever the mouse crossed it (SceneViewer::onEnter spared only
+// QLineEdit) — "the first ⌘C works, the second does not". Fixed there.
+bool ZtoryScriptView::eventFilter(QObject *obj, QEvent *e) {
+  if (obj == m_textEdit && e->type() == QEvent::ShortcutOverride) {
+    QKeyEvent *ke = static_cast<QKeyEvent *>(e);
+    if (ke == QKeySequence::Copy || ke == QKeySequence::SelectAll) {
+      ke->accept();
+      return false;  // let the key press reach the text edit
+    }
+  }
+  return QWidget::eventFilter(obj, e);
+}
 
 void ZtoryScriptView::dragEnterEvent(QDragEnterEvent *e) {
   if (!e->mimeData()->hasUrls()) { e->ignore(); return; }

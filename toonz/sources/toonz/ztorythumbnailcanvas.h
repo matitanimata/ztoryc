@@ -44,6 +44,7 @@ class QTimer;
 class QScrollBar;
 class QThreadPool;
 class TFilePath;
+struct ThumbBand;  // one band of the canvas on its way to disk (.cpp)
 
 #include "mypainttoonzbrush.h"  // RasterController, MyPaintToonzBrush
 
@@ -175,6 +176,14 @@ private slots:
   // arrived while it was busy.
   void onPersistSaveFinished();
 
+  // ── «Chiudi senza salvare» (strada 2, decisa da Franco il 2026-09-23) ──
+  // The autosave writes into a WORKING COPY beside the official files; only a
+  // scene save makes it official, and a scene left without saving throws it
+  // away. So the thumbnails obey "Don't save" like the rest of the scene, and
+  // still survive a crash: a working copy found on open is offered back.
+  void onSceneSaved();        // ZtoryModel::sceneSaved: working -> official
+  void discardWorkingCopy();  // sceneSwitching / aboutToQuit: the user said no
+
 public:
 
   // Resolve a library-relative brush path ("classic/pencil.myb") to an absolute
@@ -282,6 +291,18 @@ private:
   void markBandsDirty(const QRect &rasterRect);
   void schedulePersistSaveTimer();  // arm the debounce, leaving the flags alone
   void loadMerges(const QString &dirStr);
+  // Working copy (see onSceneSaved). The folder is derived from the official
+  // one REMEMBERED at load, never from the scene: choosing "Discard Changes"
+  // clears the scene before it is switched, so by then it cannot say where
+  // its thumbnails were.
+  QString workDirStr() const;
+  // Pages marked dirty, copied out for writing; clears the marks.
+  int collectDirtyBands(QVector<ThumbBand> &bands);
+  void writeDirtyBandsNow();  // synchronous, into the working copy
+  // Lay the working copy over what was just loaded from the official files.
+  bool overlayWorkingCopy();
+  // A working copy this session did not write: a crash left it. Ask.
+  void askAboutRecoveredWork(const QString &workDir);
   void bandRasterRange(int b, int ly, int &y0, int &y1) const;
 
   // ── Raster per pagina, passo 1: il magazzino ─────────────────────────────
@@ -540,6 +561,7 @@ private:  // Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z
   // Persistence
   QTimer *m_saveTimer = nullptr;  // debounced autosave after edits
   QString m_persistKey;           // scene identity currently loaded from disk
+  QString m_officialDir;          // the thumbs folder the canvas belongs to
   // The autosave re-encodes the WHOLE canvas, and that cost grows with every
   // page: measured 71 ms at 4x4 but 270 ms at 4x26 (1920x7020) and 515 ms at
   // 4x52 — on an M4, so more on a slower machine.  On the UI thread it lands as

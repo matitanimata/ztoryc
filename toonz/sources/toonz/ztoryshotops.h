@@ -70,6 +70,12 @@ int colDuration(TXsheet *xsh, int col);
 // the value itself.
 void positionCursorInsideShot(int outFrame);
 
+// The key under which the Animatic caches a shot's thumbnail (the sub-scene
+// level name) for the shot whose sub-xsheet is \a sub, or an empty string if
+// no column of the main xsheet exposes it. Used on the way back from a shot to
+// drop only THAT shot's thumbnail: the others cannot have changed.
+QString shotThumbKeyForXsheet(TXsheet *mainXsh, TXsheet *sub);
+
 // Aspect ratio (width/height) of the scene camera, read from the MAIN xsheet
 // camera resolution.  Board previews, the PDF export and the Thumbnail room
 // grid use this so a non-16:9 camera (e.g. square) is framed correctly instead

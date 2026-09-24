@@ -2933,6 +2933,23 @@ void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
   DVGui::info(tr("%1 shot(s) are now in sequence %2.").arg(touched).arg(label));
 }
 
+// The sub-scene level name exposed in a main-xsheet column: the identity a
+// shot keeps through inserts, deletes and reorders (the Animatic caches its
+// thumbnails by it too). Empty for a column with no sub-scene.
+static QString ztoryShotLevelName(TXsheet *xsh, int col) {
+  if (!xsh || col < 0 || col >= xsh->getColumnCount()) return QString();
+  TXshColumn *column = xsh->getColumn(col);
+  if (!column || column->isEmpty()) return QString();
+  int r0 = 0, r1 = 0;
+  column->getRange(r0, r1);
+  for (int r = r0; r <= r1; r++) {
+    TXshCell cell = xsh->getCell(r, col);
+    if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
+      return QString::fromStdWString(cell.m_level->getName());
+  }
+  return QString();
+}
+
 void StoryboardPanel::saveZtoryc() {
   // One level only: the second pass below must not start a third.
   if (m_savingZtoryc) return;
@@ -3104,6 +3121,15 @@ void StoryboardPanel::saveZtoryc() {
     xml.writeAttribute("index",      QString::number(si));
     if (!shot.data.uuid.isEmpty())
       xml.writeAttribute("uuid",     shot.data.uuid);
+    // Which sub-scene this entry belongs to: loadZtoryc() matches on it, so
+    // the text of a shot stays with the shot when one is inserted before it.
+    {
+      ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+      const QString lvl = ztoryShotLevelName(
+          scn ? scn->getChildStack()->getTopXsheet() : nullptr,
+          shot.data.xsheetColumn);
+      if (!lvl.isEmpty()) xml.writeAttribute("level", lvl);
+    }
     xml.writeAttribute("number",     shot.data.shotNumber);
     xml.writeAttribute("label",      shot.data.shotLabel);
     xml.writeAttribute("order",      QString::number(shot.data.orderIndex));
@@ -3269,7 +3295,52 @@ void StoryboardPanel::loadZtoryc() {
   // project DB (or migrates these defaults if no DB exists yet).
   ZtoryModel::instance()->resetProjectLevelDefaults();
 
-  QXmlStreamReader xml(&file);
+  // Which m_shots entry each <shot> of the file belongs to.
+  //
+  // This used to be the file's position, and loadZtoryc() runs after every
+  // resequence, reading a .ztoryc saved BEFORE the operation: after a shot was
+  // pasted or inserted in the middle, every shot from there on received the
+  // dialogue, action and notes of the one that used to sit in its place (Franco,
+  // 2026-09-24, with Clone + Paste — the whole storyboard shifted by one).
+  // Now matched on the sub-scene level name, which the shot keeps. Shots that
+  // share a sub-scene (Copy = shared instance) have the same name and are
+  // matched in order. Files written before the name was saved, or with an
+  // entry lacking it, keep the old positional behaviour. A file entry whose
+  // sub-scene no longer exists (a deleted shot) maps nowhere and is dropped; a
+  // new shot maps from nothing and keeps its blank fields.
+  const QByteArray ztorycBytes = file.readAll();
+  QHash<int, int> shotRemap;
+  bool useShotRemap = false;
+  {
+    QVector<QPair<int, QString>> entries;  // (file index, level)
+    bool allNamed = true;
+    QXmlStreamReader pre(ztorycBytes);
+    while (!pre.atEnd()) {
+      if (pre.readNext() == QXmlStreamReader::StartElement &&
+          pre.name() == QLatin1String("shot")) {
+        const QString lvl = pre.attributes().value("level").toString();
+        if (lvl.isEmpty()) allNamed = false;
+        entries.push_back({pre.attributes().value("index").toInt(), lvl});
+      }
+    }
+    if (allNamed && !entries.isEmpty()) {
+      ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+      TXsheet *top    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
+      QHash<QString, QVector<int>> targetsByLevel;  // level -> m_shots indices
+      for (int t = 0; t < (int)m_shots.size(); t++)
+        targetsByLevel[ztoryShotLevelName(top, m_shots[t].data.xsheetColumn)]
+            .push_back(t);
+      QHash<QString, int> used;
+      for (const auto &e : entries) {
+        QVector<int> &cands = targetsByLevel[e.second];
+        int &n              = used[e.second];
+        shotRemap.insert(e.first, n < cands.size() ? cands[n] : -1);
+        n++;
+      }
+      useShotRemap = true;
+    }
+  }
+  QXmlStreamReader xml(ztorycBytes);
   int si = -1, pi = -1, ai = -1;
   // role: "storyboard" (default/legacy) → publishShotsToProjectDb;
   //       "shot" (B3c exported scene) → do NOT publish (not a shot list source).
@@ -3390,7 +3461,8 @@ void StoryboardPanel::loadZtoryc() {
       }
       else if (xml.name() == QLatin1String("shot")) {
         si = xml.attributes().value("index").toInt();
-        if (si < (int)m_shots.size()) {
+        if (useShotRemap) si = shotRemap.value(si, -1);
+        if (si >= 0 && si < (int)m_shots.size()) {
           m_shots[si].data.uuid             = xml.attributes().value("uuid").toString();
           m_shots[si].data.shotNumber       = xml.attributes().value("number").toString();
           m_shots[si].data.shotLabel        = xml.attributes().value("label").toString();

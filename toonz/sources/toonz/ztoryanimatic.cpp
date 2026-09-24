@@ -2396,13 +2396,31 @@ ZtoryAnimaticTrack::ZtoryAnimaticTrack(QWidget *parent) : QWidget(parent) {
   // simply misses.  Clearing there made every trim (which resequences, hence
   // resets) re-render every thumbnail through a fresh offline GL context.
 
-  // Drawings can only change from inside a shot, so refresh the renders when we
-  // come back up to the main xsheet.
+  // Drawings can only change from inside a shot, so refresh the render of THAT
+  // shot when we come back up to the main xsheet — not all of them.
+  // Clearing the whole cache here was what made "Back to Animatic" slow:
+  // measured with `sample` (2026-09-24), 7.7 s in refreshFromScene
+  // re-rendering every thumbnail, 77% of it creating a fresh offline GL
+  // context per shot — while entering a shot, which renders nothing, was
+  // instant. The Monitor's track is this same class, and paid it again.
   connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched,
           this, [this]() {
             ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
-            if (sc && sc->getChildStack()->getAncestorCount() == 0)
-              clearThumbCache();
+            if (!sc) return;
+            ChildStack *cs = sc->getChildStack();
+            if (cs->getAncestorCount() == 1) {
+              // Entering (or back at) the shot level: remember which shot.
+              m_openShotThumbKey = ZtoryShotOps::shotThumbKeyForXsheet(
+                  cs->getTopXsheet(), cs->getXsheet());
+            } else if (cs->getAncestorCount() == 0) {
+              // Unknown shot (e.g. the panel was created inside one): drop
+              // everything, as before — correct, only slower.
+              if (m_openShotThumbKey.isEmpty())
+                clearThumbCache();
+              else
+                m_thumbCache.remove(m_openShotThumbKey);
+              m_openShotThumbKey.clear();
+            }
           });
 
   // Level names repeat across scenes: never reuse the previous scene's renders.
@@ -3284,12 +3302,23 @@ ZtoryStoryStrip::ZtoryStoryStrip(QWidget *parent) : QWidget(parent) {
   setStyleSheet("background:#1a1a1a;");
   // Keyed by sub-scene level name, so a resequence (trim, reorder) no longer
   // invalidates every render — each miss costs a fresh offline GL context.
-  // Drawings only change from inside a shot: refresh on the way back up.
+  // Drawings only change from inside a shot: on the way back up, refresh the
+  // render of the shot we were in, not all of them (see ZtoryAnimaticTrack).
   connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched,
           this, [this]() {
             ToonzScene *sc = TApp::instance()->getCurrentScene()->getScene();
-            if (sc && sc->getChildStack()->getAncestorCount() == 0)
-              m_thumbCache.clear();
+            if (!sc) return;
+            ChildStack *cs = sc->getChildStack();
+            if (cs->getAncestorCount() == 1) {
+              m_openShotThumbKey = ZtoryShotOps::shotThumbKeyForXsheet(
+                  cs->getTopXsheet(), cs->getXsheet());
+            } else if (cs->getAncestorCount() == 0) {
+              if (m_openShotThumbKey.isEmpty())
+                m_thumbCache.clear();
+              else
+                m_thumbCache.remove(m_openShotThumbKey);
+              m_openShotThumbKey.clear();
+            }
           });
   // Level names repeat across scenes: never reuse the previous scene's renders.
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,

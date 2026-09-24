@@ -276,6 +276,25 @@ not portable.
   right — the new caller was wrong by itself. Worth remembering: an observation
   compatible with two explanations supports neither.
 
+#### ✨ New (2026-09-24)
+
+- 🟠 **The viewer steals the keyboard from multi-line text fields** —
+  `toonz/sceneviewerevents.cpp`, `SceneViewer::onEnter()`. When the mouse
+  enters the viewer it calls `setFocus()` unless the focused widget is a
+  `QLineEdit`; `QTextEdit` and `QPlainTextEdit` were not spared. So merely
+  crossing the viewer on the way elsewhere takes the keyboard away from a
+  multi-line field: typing continues as viewer shortcuts, and Cmd/Ctrl+C on
+  text selected in a read-only one copies the viewer's selection instead.
+  **Measured, not deduced:** a probe on focus changes and Copy key events
+  showed the viewer taking the focus 42 ms before the Cmd+C that failed, and
+  the successful ones arriving at the text field (Ztoryc's screenplay panel,
+  reported by Franco as "the first Cmd+C works, the second pastes the previous
+  sentence"). **Fix:** two more `dynamic_cast`s beside the `QLineEdit` one.
+  **Same code on `upstream/master`** (checked 2026-09-24, lines 493-502), so
+  it applies as is. Not reproduced on stock Tahoma: stock has no read-only
+  text panel, but any QTextEdit next to a viewer (e.g. a dockable text panel)
+  should show it. Ztoryc commit: see CHANGELOG 2026-09-24.
+
 #### ✨ New (2026-09-23)
 
 - ⛔ **WITHDRAWN before it was ever proposed — "changing the camera format is
@@ -359,29 +378,35 @@ not portable.
 
 ### 2.2 — Features that can go upstream as they are
 
-- ❓ **Rotate the view with ⌥ + middle-drag** — `toonz/sceneviewerevents.cpp`.
-  Today the view can be rotated only with a pinch (touch) or by picking the
-  `T_Rotate` tool, which means leaving whatever tool you were drawing with.
-  A modifier + middle-drag turns the sheet without losing the tool, the way
-  you turn paper on a table.
+- 🟡 **Alt (⌥) + middle-drag = the Rotate tool, held** — `toonz/sceneviewerevents.cpp`
+  (`SceneViewer::onPress` + one condition in `onMove`), and **Alt+0 = Reset
+  Rotation** (`mainwindow.cpp`, `deftahoma2d.ini`). Tried by Franco
+  2026-09-24.
+  Today the view can be rotated only with a pinch (touch), or by holding the
+  `T_Rotate` shortcut and dragging with the LEFT button. Alt + middle press now
+  enters that same temporary mode — `m_mouseRotating`, the same
+  `mouseRotate()`, the same cursor — and releasing the button leaves it
+  (`m_resetOnRelease`), like letting go of the key. No new rotation code: a
+  keyboard shortcut cannot carry a mouse button, so the binding lives in
+  `onPress`. Without Alt the middle button still pans; Shift+Ctrl+middle
+  still scrubs.
 
-  **Why it is small:** the rotation already exists — `SceneViewer::rotate()`
-  is what both the pinch and `T_Rotate` call. Nothing new to write, only a
-  gesture to bind. And **⌥ + middle is free**: the middle-drag pan
-  (`if (event.buttons() & Qt::MiddleButton) { panQt(...) }`) does not look at
-  modifiers at all (checked 2026-09-23).
+  **Alt+0.** With rotation one gesture away, straightening is the common case,
+  and Reset View (the old Alt+0) also throws away zoom and pan. Alt+0 becomes
+  Reset Rotation (which had no shortcut) and Reset View moves to Ctrl+Alt+0 —
+  not Alt+Shift+0, which depends on the keyboard layout (Shift+0 is "=" on an
+  Italian keyboard, and macOS matches by character). ⚠️ This one is a change
+  of DEFAULTS that existing users would notice: propose it separately from the
+  gesture, as a question rather than a patch.
 
-  **Where the idea comes from:** we did exactly this in Ztoryc's Thumbnail
-  room, which has its own tool system and cannot use `T_Rotate`. Franco then
-  asked for it in the other rooms too — *«e' molto comodo»* — and the reason
-  generalises: touch is on few machines, a modifier and a mouse are on all of
-  them.
+  **Where the idea comes from:** Ztoryc's Thumbnail room, which has its own
+  tool system; Franco then wanted it everywhere — touch is on few machines, a
+  modifier and a mouse are on all of them.
 
-  ⚠️ It changes shared input handling for every room and every user, so it
-  wants care and a real try-out before being proposed. The sign must be taken
-  from the SAME coordinate system as the transform, not by analogy: getting it
-  from SceneViewer's pinch (y up, TAffine) into a y-down QTransform is exactly
-  the mistake that made our first rotation turn the wrong way.
+  ⚠️ A first version wrote its own rotation (angle of the pointer around the
+  centre, sign taken from the pinch branch). Dropped on Franco's indication in
+  favour of reusing the native mode — the better proposal upstream too: it
+  adds a binding, not a second way of rotating.
 
 
 Nothing here needs the `.ztoryc` file. They operate on ordinary scenes, levels

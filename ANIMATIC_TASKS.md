@@ -590,6 +590,127 @@ Due cautele, entrambe necessarie e non ornamentali:
 
 ---
 
+### ✅ CORRETTO E COLLAUDATO 2026-09-24 — «Back to Animatic» lento: MISURATO con `sample`
+
+> Franco: *«ottimo ora è immediato!»*
+
+Nessuno dei due sospetti del 23 (51 ascoltatori, `loadZtoryc` a ogni
+resequence). `sample` sull'app aperta, Franco clicca Back: **7,7 s in
+`ZtoryAnimaticTrack::refreshFromScene`** a ridisegnare TUTTE le miniature degli
+shot, e **il 77% di quel tempo e' creare un contesto OpenGL fuori schermo per
+ogni miniatura** (`QtOfflineGL::createContext`, dentro
+`IconGenerator::renderXsheetFrame` → `ToonzScene::renderFrame`). Il Monitor e'
+la stessa classe con la sua cache: altri 4,3 s, sincroni dentro
+`closeSubXsheet`. Causa: al ritorno sul main xsheet la cache si svuotava TUTTA
+(«i disegni cambiano solo da dentro uno shot»), mentre puo' essere cambiato
+solo lo shot da cui si esce. Correzione: si ricorda la chiave dello shot
+aperto (`ZtoryShotOps::shotThumbKeyForXsheet`) e al ritorno si butta solo
+quella — nella timeline (anche quella del Monitor) e nella StoryStrip.
+Lo stesso metodo si rifa' dopo la correzione, per confermare.
+
+🔍 **Visto di passaggio, NON affrontato:** zoomando/scorrendo la timeline,
+`ZtoryAudioTrack::paintEvent` costa ~150 ms a ridisegno, quasi tutto in
+`TSoundTrackT::getMinMaxPressure` (le forme d'onda si ricalcolano).
+
+### 🟡 CORRETTO 2026-09-24, DA COLLAUDARE — i dialoghi scalavano di uno dopo Clone + Paste
+
+Segnalato da Franco: incollando uno shot a meta', dialoghi/azioni/note di tutti
+gli shot dopo si sono spostati di uno. Causa: `loadZtoryc()` gira dopo ogni
+resequence e rileggeva un `.ztoryc` salvato PRIMA dell'operazione assegnando
+le voci PER POSIZIONE. Ora il file scrive per ogni shot il nome della sua
+sotto-scena (`level=`) e la rilettura abbina per nome (in ordine per le copie
+condivise); file vecchi senza nomi → posizionale come prima, finche' non vengono
+risalvati. Lo shot incollato parte vuoto: **copiare i dialoghi del sorgente nel
+clone NON e' fatto** — lavoro a parte, se Franco lo vuole.
+
+### 🟡 FATTO 2026-09-24, DA COLLAUDARE — parenthetical dentro la battuta esclusi dal lip sync
+
+Domanda di Franco. Gia' gestiti: parenthetical su riga propria (saltato) ed
+estensione sul nome (`MARIO (V.O.)`). Mancava quello DENTRO la battuta
+(`MARIO: (ride) Non ci credo`): ora `parseDialogue` toglie `(...)` dal testo
+di ogni battuta prima dell'allineamento.
+
+### 🎯 DECISO 2026-09-24 — «Follow»: pannello del Board ↔ testina della timeline
+
+Richiesta di Franco: cliccando un pannello del Board la testina della timeline
+va al suo primo frame; spostando la testina (o cliccando nella timeline) il
+Board evidenzia il pannello sotto la testina.
+Decisioni sue:
+- **in play evidenzia ma NON scorre**; da fermo evidenzia **e scorre** fino a
+  rendere visibile il pannello;
+- **un bottone solo** nelle room Ztoryc, col meccanismo gia' usato per non avere
+  bottoni doppi fra Board e timeline;
+- nome **«Follow»** — non «Sync» (si confonde col sync del sonoro) ne' «Link»
+  (c'e' gia' A/V Link). Tooltip che dica le due direzioni.
+Dati gia' presenti: `PanelData::startFrame/duration` (dentro lo shot) +
+inizio VERO dello shot (`shotTrueSpan`, dissolvenze escluse), e la selezione
+condivisa degli shot esiste gia' (`m_sharedSelection`).
+
+### 🎯 DECISO 2026-09-24 — nightly build SI', ma con le cautele, e ATTIVATE SOLO CON IL VIA DI FRANCO
+
+Franco: *«ok per le nightly con le accortezze che hai proposto e previa mia
+autorizzazione»*. Le cautele concordate:
+- **una volta al giorno, di notte, solo se master e' cambiato** — non a ogni
+  push (si scontrerebbe con «niente push durante la build macOS del rilascio»);
+- **solo macOS e Windows** (Windows e' dove stanno i tester; Linux 97 min, per
+  ora no);
+- **pre-release**, UNA release «nightly» che si sovrascrive, col commit nel
+  titolo e la riga «non per il lavoro vero, usa l'ultima release»;
+- **il commit anche nell'About**, per sapere di che build parla una segnalazione.
+⚠️ **Si prepara, NON si attiva:** il workflow che pubblica parte solo dopo il
+via esplicito di Franco.
+
+### ✅ CORRETTO E CONFERMATO 2026-09-24 — ⌘C dalla sceneggiatura copiava la frase di prima
+
+> **Le cause erano DUE**, la seconda trovata con una sonda sul focus: oltre al
+> campo in sola lettura, `SceneViewer::onEnter()` si prendeva la tastiera
+> quando il mouse lo attraversava (risparmiava solo i `QLineEdit`). Corretto
+> li' anche per `QTextEdit`/`QPlainTextEdit` — candidato upstream. Confermato
+> da Franco: 50 ⌘C su 50 al testo. Probabilmente e' anche il backspace che gli
+> aveva cancellato uno shot mentre voleva cancellare del testo.
+
+Segnalato da Franco, intermittente. Causa verificata sul sorgente di Qt 5.15
+(non dedotta): un `QTextEdit` in sola lettura non rivendica le scorciatoie
+(`qwidgettextcontrol.cpp:1183`, solo se `TextEditable`), quindi ⌘C andava al
+Copy dell'applicazione quando era attivo. Corretto in `ztoryscriptpanel.cpp`
+con un filtro che rivendica Copy e Select All. Intermittente per natura: si
+conferma solo usandolo.
+
+### 🎯 DECISO 2026-09-24 — ⌥ + tasto centrale ruota la vista in TUTTE le room, e ⌥0 raddrizza soltanto
+
+Franco: *«la rotazione option + tasto centrale confermo che la vorrei di
+default anche nelle altre room»*, e poi, correggendo la mia prima versione:
+*«devi semplicemente mettere quella combinazione come shortcut di default del
+comando rotate tool nativo»*. Quindi NIENTE rotazione scritta da noi:
+⌥ + pressione del centrale accende la modalita' temporanea NATIVA del Rotate
+tool (`m_mouseRotating`, stessa `mouseRotate()`, stesso cursore), spenta al
+rilascio con `m_resetOnRelease`. Una scorciatoia di tastiera non puo'
+contenere un tasto del mouse, per questo sta in `SceneViewer::onPress`.
+**Collaudato da Franco: funziona.**
+
+**⌥0 = Reset Rotation ovunque** (scelta di Franco: *«è comodo resettare la
+rotazione senza dover resettare anche lo zoom»*), come nella Thumbs room.
+Reset View passa a **⌘⌥0** (Ctrl+Alt+0), NON a ⌥⇧0: su tastiera italiana
+Maiusc+0 e' «=» e macOS abbina le scorciatoie per carattere. Cambiati i default
+in `mainwindow.cpp` e nel preset `deftahoma2d.ini`; chi ha scorciatoie
+personali tiene le sue.
+
+⚠️ La prima versione (rotazione scritta a mano in `onMove`) e' **sparita dal
+file** prima del collaudo senza che si sia capito come — niente git, le altre
+modifiche intatte. Da allora, prima di ogni deploy, si controlla nel sorgente
+che le modifiche ci siano, non solo che compili.
+
+### ✅ FATTO E COLLAUDATO 2026-09-24 — i thumbs obbediscono a «chiudi senza salvare»
+
+> Collaudato da Franco: Discard, ⌘S + riapertura, uscita forzata + recupero.
+
+Implementata la strada 2 (dettagli nel CHANGELOG del 2026-09-24): copia di
+lavoro in `thumbs/_ztorythumbs_working/`, ufficiale al salvataggio della scena
+(`ZtoryModel::sceneSaved`, emesso da `IoCmd::saveScene`), buttata a
+`sceneSwitching`/`aboutToQuit`, recuperata con una domanda se l'ha lasciata un
+crash. Le modifiche ai thumbs ora segnano la scena come modificata (non lo
+facevano: senza, «non salvare» non poteva funzionare).
+
 ### 🎯 DECISO 2026-09-23 — i thumbs devono obbedire a «chiudi senza salvare»
 
 **Segnalato da Franco:** disegna nella Thumbs room, chiude SENZA salvare per
@@ -836,7 +957,12 @@ vettoriali.
 
 ---
 
-### 🔴 APERTO 2026-09-21 — col TOCCO, pan/zoom nella Thumbs room cancella i disegni
+### ✅ CHIUSO (rilasciato nella 0.14.2) — col TOCCO, pan/zoom nella Thumbs room cancella i disegni
+
+> Correzioni `c48d36f06` (il pizzico letto come ANNULLA), `8ad228feb` (la pila
+> sopravviveva al cambio scena), `b09dfb2c7` (la riallineata alla camera fuori
+> dall'annullamento). Collaudato da Franco sulla Companion 2, uscito nella
+> 0.14.2 il 2026-09-24. Il testo sotto resta per la diagnosi.
 
 Segnalato dall'utente Surface. **Distrugge lavoro.** Col mouse non succede, e
 il tocco e' nuovo nella 0.14.1: e' una regressione nostra.
@@ -908,7 +1034,10 @@ Non e' sfuggito: e' stato visto e messo in coda.
 
 ---
 
-### ⏳ FATTA 2026-09-21, DA COLLAUDARE SU UN TOCCO — ROTAZIONE DELLA VISTA nella Thumbs room
+### ✅ CHIUSO (rilasciato nella 0.14.2) — ROTAZIONE DELLA VISTA nella Thumbs room
+
+> Collaudata da Franco sulla Companion 2 (pizzico, segno corretto in `c142845a2`)
+> e col mouse (⌥ + tasto centrale, `ceffd8380`). Uscita nella 0.14.2.
 
 > ✅ **Implementata** sul branch `feature/thumbs-paged-raster`: tutti e quattro
 > i pezzi qui sotto. A rotazione zero e' stato MISURATO che il codice nuovo da'
@@ -973,7 +1102,9 @@ funzione nuova, si rompe il canvas anche per chi la rotazione non la usa.
 
 ---
 
-### ⏳ DA CONFERMARE — tocco e gesti nella Thumbs room (commit `356a3645a`)
+### ✅ CHIUSO — tocco e gesti nella Thumbs room (commit `356a3645a`)
+
+> Confermato da Franco sulla Companion 2 insieme alla rotazione; nella 0.14.2.
 
 Segnalato da un **utente Surface**: nella Thumbs room un dito che prova a
 spostare la tela ci disegnava sopra col pennello attivo. Corretto il 2026-09-18

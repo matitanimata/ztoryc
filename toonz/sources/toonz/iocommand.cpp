@@ -1678,10 +1678,12 @@ bool IoCmd::saveScene(const TFilePath &path, int flags) {
     ;
 
   TApp::instance()->setSaveInProgress(true);
+  bool sceneWritten = false;  // Ztoryc: see notifySceneSaved() below
   try {
     scene->setStartRow(TApp::instance()->getCurrentFrame()->getFrameIndex());
     scene->setStartCol(TApp::instance()->getCurrentColumn()->getColumnIndex());
     scene->save(scenePath, xsheet);
+    sceneWritten = true;
   } catch (const TSystemException &se) {
     DVGui::warning(QString::fromStdWString(se.getMessage()));
   } catch (...) {
@@ -1729,6 +1731,13 @@ bool IoCmd::saveScene(const TFilePath &path, int flags) {
       scene->decodeFilePath(scene->getScenePath()));
   QAction *act = CommandManager::instance()->getAction(MI_RevertScene);
   if (act) act->setEnabled(exist);
+
+  // Ztoryc: the Thumbnail room keeps its unsaved drawings in a working copy,
+  // made official only here. Not for a sub-xsheet (that is not this scene's
+  // file) and not when the write threw: promoting the thumbnails of a scene
+  // that did not reach the disk would split the two again.
+  if (sceneWritten && !saveSubxsheet)
+    ZtoryModel::instance()->notifySceneSaved();
 
   return true;
 }

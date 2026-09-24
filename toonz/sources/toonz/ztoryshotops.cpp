@@ -139,6 +139,23 @@ double cameraAspect(ToonzScene *scene) {
   return (double)res.lx / (double)res.ly;
 }
 
+static TXsheet *columnSubXsheet(TXsheet *mainXsh, int col);  // below
+
+QString shotThumbKeyForXsheet(TXsheet *mainXsh, TXsheet *sub) {
+  if (!mainXsh || !sub) return QString();
+  for (int col = 0; col < mainXsh->getColumnCount(); col++)
+    if (columnSubXsheet(mainXsh, col) == sub) {
+      int r0 = 0, r1 = 0;
+      mainXsh->getColumn(col)->getRange(r0, r1);
+      for (int r = r0; r <= r1; r++) {
+        TXshCell cell = mainXsh->getCell(r, col);
+        if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
+          return QString::fromStdWString(cell.m_level->getName());
+      }
+    }
+  return QString();
+}
+
 void positionCursorInsideShot(int outFrame) {
   TApp *app         = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();

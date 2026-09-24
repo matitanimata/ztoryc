@@ -1,5 +1,7 @@
 
 
+#include <QTextEdit>
+#include <QPlainTextEdit>
 #include <QtGlobal>
 
 #include "brushprofiler.h"  // task 51 — strumentazione latenza (no-op senza flag)
@@ -514,13 +516,24 @@ void SceneViewer::onEnter() {
     tool->onEnter();
   }
 
-  // grab the focus, unless a line-edit is focused currently
+  // grab the focus, unless a text field is focused currently
   bool shouldSetFocus = true;
 
   QWidget *focusWidget = qApp->focusWidget();
   if (focusWidget) {
     QLineEdit *lineEdit = dynamic_cast<QLineEdit *>(focusWidget);
     if (lineEdit) {
+      shouldSetFocus = false;
+    }
+    // Multi-line text fields too, not just QLineEdit. Passing over the viewer
+    // on the way to somewhere else took the keyboard away from them: typing
+    // went on as viewer shortcuts, and Cmd+C on text selected in a read-only
+    // one (Ztoryc's screenplay) copied the viewer's selection instead — "the
+    // first Cmd+C works, the second pastes the previous sentence". Measured
+    // with a probe: the viewer took the focus 42 ms before the Cmd+C that
+    // failed.
+    if (dynamic_cast<QTextEdit *>(focusWidget) ||
+        dynamic_cast<QPlainTextEdit *>(focusWidget)) {
       shouldSetFocus = false;
     }
   }
@@ -622,7 +635,11 @@ void SceneViewer::onMove(const TMouseEvent &event) {
   bool cursorSet  = false;
   m_lastMousePos  = curPos;
 
-  if (event.buttons() == Qt::LeftButton && m_mouseRotating > 0) {
+  // The native Rotate tool drags with the left button; Alt (Option) + middle
+  // button enters the same mode (see onPress), so it drags with the middle.
+  if ((event.buttons() == Qt::LeftButton ||
+       event.buttons() == Qt::MiddleButton) &&
+      m_mouseRotating > 0) {
     if (m_mouseRotating == 1) {
       TPointD pos = winToWorld(event.mousePos() * getDevPixRatio());
       ;
@@ -884,6 +901,21 @@ void SceneViewer::mousePressEvent(QMouseEvent *event) {
 
 void SceneViewer::onPress(const TMouseEvent &event) {
   m_dragging = true;
+  // Ztoryc: Alt (Option) + middle button = the native Rotate tool, for as long
+  // as the button is held — the same mode its keyboard shortcut enters, with
+  // the same cursor and the same mouseRotate(). A key shortcut cannot carry a
+  // mouse button, so this is where the combination lives. Released, it goes
+  // back to what it was (m_resetOnRelease), like letting go of the key.
+  // Without Alt the middle button still pans; Shift+Ctrl still scrubs.
+  if (event.button() == Qt::MiddleButton && event.isAltPressed() &&
+      !event.isShiftPressed() && !event.isCtrlPressed() && !is3DView() &&
+      m_mousePanning == 0 && m_mouseRotating == 0 && m_mouseZooming == 0 &&
+      m_mouseScrubbing == 0) {
+    m_mouseRotating  = 1;
+    m_resetOnRelease = true;
+    setToolCursor(this, ToolCursor::RotateCursor);
+    TApp::instance()->getCurrentTool()->setTempToolActive(true);
+  }
   if (m_mousePanning > 0 || m_mouseRotating > 0 || m_mouseZooming > 0 ||
       m_mouseScrubbing > 0) {
     m_pos           = event.mousePos() * getDevPixRatio();

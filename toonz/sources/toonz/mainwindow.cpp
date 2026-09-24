@@ -3946,10 +3946,16 @@ void MainWindow::defineActions() {
 
   createViewerAction(V_ZoomIn, QT_TR_NOOP("Zoom In"), "+");
   createViewerAction(V_ZoomOut, QT_TR_NOOP("Zoom Out"), "-");
-  createViewerAction(V_ViewReset, QT_TR_NOOP("Reset View"), "Alt+0");
+  // Ztoryc: Alt+0 straightens the view WITHOUT touching zoom and pan — the
+  // same as in the Thumbnail room. Once the view can be turned with Alt +
+  // middle drag, straightening it is the common case, and losing the zoom with
+  // it was the annoying part (Franco, 2026-09-24). Reset View moves to
+  // Ctrl+Alt+0: Alt+Shift+0 would depend on the keyboard layout (on an Italian
+  // one Shift+0 is "=", and macOS matches it by the character).
+  createViewerAction(V_ViewReset, QT_TR_NOOP("Reset View"), "Ctrl+Alt+0");
   createViewerAction(V_ZoomFit, QT_TR_NOOP("Fit to Window"), "Alt+9");
   createViewerAction(V_ZoomReset, QT_TR_NOOP("Reset Zoom"), "");
-  createViewerAction(V_RotateReset, QT_TR_NOOP("Reset Rotation"), "");
+  createViewerAction(V_RotateReset, QT_TR_NOOP("Reset Rotation"), "Alt+0");
   createViewerAction(V_PositionReset, QT_TR_NOOP("Reset Position"), "");
 
   createViewerAction(V_ActualPixelSize, QT_TR_NOOP("Actual Pixel Size"), "N");

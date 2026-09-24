@@ -955,9 +955,16 @@ signals:
   // contaminate each other's output (per-shot clips ended up containing every
   // shot), so each render must complete before the next starts.
   void renderFinished();
+  // The WHOLE scene was written to disk (not a sub-xsheet, and the write did
+  // not throw). Emitted from IoCmd::saveScene through notifySceneSaved().
+  // The Thumbnail room listens: its canvas autosaves into a working copy, and
+  // only a scene save makes that copy official — so "close without saving"
+  // discards the thumbnails too (Franco, 2026-09-23).
+  void sceneSaved();
 
  public:
   // Public emitter for renderFinished() — Qt signals are protected, so
   // rendercommand.cpp (outside this class) routes completion through here.
   void notifyRenderFinished() { emit renderFinished(); }
+  void notifySceneSaved() { emit sceneSaved(); }
 };

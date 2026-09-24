@@ -1,3 +1,66 @@
+## [2026-09-24b] — thumbs e «non salvare», il focus rubato dal viewer, Back to Animatic immediato
+
+### Added — i thumbs obbediscono a «chiudi senza salvare» (collaudato da Franco)
+
+La strada 2 decisa il 23. L'autosalvataggio della tela scrive in una copia di
+lavoro (`thumbs/_ztorythumbs_working/`); `IoCmd::saveScene` emette
+`ZtoryModel::sceneSaved` e la copia diventa ufficiale (manifesto per ultimo:
+un crash a meta' lascia la copia, che alla riapertura viene riproposta);
+`sceneSwitching`/`aboutToQuit` la buttano — arrivano sempre DOPO la domanda
+«salvare?». Con Salva con nome i thumbs seguono la scena. Una copia lasciata da
+un crash si carica sopra gli ufficiali e poi si chiede se tenerla.
+Tre difetti vicini trovati strada facendo: le modifiche ai thumbs **non
+segnavano la scena come modificata** (senza, «non salvare» non poteva
+funzionare: non compariva nessuna domanda); la riallineata alla camera dopo il
+primo salvataggio scriveva le pagine **con due altezze**; aprendo una scena
+senza thumbs il magazzino delle pagine teneva quelle della **scena precedente**.
+E l'uscita entro 700 ms da una pennellata la scriveva in un formato che nessuno
+rileggeva.
+
+### Fixed — ⌘C dalla sceneggiatura: due cause, la seconda nel viewer di Tahoma
+
+1. un `QTextEdit` in sola lettura non rivendica le scorciatoie
+   (`qwidgettextcontrol.cpp:1183`, verificato sul sorgente Qt 5.15);
+2. **`SceneViewer::onEnter()` si prende la tastiera quando il mouse ci passa
+   sopra**, risparmiando solo i `QLineEdit`. Trovato con una sonda sul focus:
+   il viewer l'aveva presa 42 ms prima del ⌘C fallito. Corretto per `QTextEdit`
+   e `QPlainTextEdit` — **candidato upstream**, stesso codice su
+   `upstream/master`. Spiega anche il backspace che aveva cancellato uno shot.
+
+### Fixed — «Back to Animatic» immediato (misurato con `sample`)
+
+Nessuno dei sospetti del 23. 7,7 s in `ZtoryAnimaticTrack::refreshFromScene` a
+ridisegnare TUTTE le miniature, il 77% nel creare un contesto OpenGL per
+ognuna; il Monitor rifaceva lo stesso (4,3 s). Ora al ritorno si butta solo la
+miniatura dello shot da cui si esce. Franco: *«ora è immediato!»*.
+
+### Added — rotazione e ⌥0
+
+- ⌥ + tasto centrale = il Rotate tool NATIVO tenuto premuto, in tutte le room
+  (su indicazione di Franco: niente rotazione scritta da noi). Collaudato.
+- ⌥0 = Reset Rotation ovunque, Reset View → ⌘⌥0 (non ⌥⇧0: su tastiera italiana
+  Maiusc+0 e' «=»). Nella Thumbs room ⌘⌥0 = raddrizza e riadatta.
+
+### Fixed — da collaudare
+
+- **Dialoghi sfalsati dopo Clone + Paste**: `loadZtoryc` abbinava per posizione
+  un file salvato prima dell'operazione; ora per nome della sotto-scena.
+- **Parenthetical dentro la battuta** tolti dal testo del lip sync.
+
+### 🎯 Deciso da Franco
+
+- nightly SI', con le cautele, attivate solo col suo via;
+- «Follow» (pannello del Board ↔ testina): in play evidenzia e non scorre, da
+  fermo evidenzia e scorre; un bottone solo; nome «Follow».
+
+### Notes
+
+- ⚠️ **Una modifica e' sparita dal file prima del collaudo** (la prima versione
+  della rotazione), senza git e senza che si sia capito come. Da allora prima di
+  ogni deploy si controlla nel sorgente che le modifiche ci siano.
+- Visto e NON affrontato: ridisegnare la forma d'onda costa ~150 ms (zoom e
+  scorrimento della timeline).
+
 ## [2026-09-24] — l'audio segue il suo shot, il roll con la dissolvenza, e la 0.14.2
 
 ### Fixed — l'audio col link A/V (`2ce073e29`, collaudato da Franco)

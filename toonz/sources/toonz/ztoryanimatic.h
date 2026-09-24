@@ -335,6 +335,7 @@ private:
   // offline GL context — seconds of stall on a long timeline).
   QHash<QString, QPixmap> m_thumbCache;
   double m_thumbCacheAspect = -1.0; // camera aspect the cache was rendered at
+  QString m_openShotThumbKey;       // the shot we are inside, if any
   Tool m_tool = SelectTool;
   int m_razorHoverFrame = -1;
   // Lock button painted in paintEvent, toggled via mousePressEvent hit-test
@@ -561,6 +562,7 @@ private:
   // Keyed by sub-scene level name, not column — see ZtoryAnimaticTrack.
   QHash<QString, QPixmap> m_thumbCache;
   double m_thumbCacheAspect = -1.0; // camera aspect the cache was rendered at
+  QString m_openShotThumbKey;       // the shot we are inside, if any
   static constexpr int kThumbH = 54;
   static constexpr int kThumbW = 80;
   static constexpr int kSpacing = 4;

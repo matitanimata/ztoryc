@@ -34,6 +34,8 @@ public:
 protected:
   void dragEnterEvent(QDragEnterEvent *e) override;
   void dropEvent(QDropEvent *e) override;
+  // Claims Copy / Select All for the (read-only) text: see the .cpp.
+  bool eventFilter(QObject *obj, QEvent *e) override;
 
 private slots:
   void onImportClicked();
