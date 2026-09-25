@@ -1,9 +1,12 @@
 # Ztoryc — AI Agent Rules
 
 > This file is read automatically by Claude Code, Codex, Cursor, Copilot, and Windsurf.
-> The canonical copy lives in `~/ZtorYc/AGENTS.md`.
-> In the code repo (`/Volumes/ZioSam/tahoma2d-workspace/tahoma2d/`) CLAUDE.md is a
-> symlink to this file, or a copy of it.
+> The canonical copy lives in `~/ZtorYc/AGENTS.md`; the repo copy is kept identical
+> at «sessione chiusa».
+> In the code repo `CLAUDE.md` is a one-line file, `@AGENTS.md`, that makes Claude Code
+> import the repo's `AGENTS.md` (decided by Franco on 2026-09-25). It used to be a
+> symlink to an ABSOLUTE path on Franco's Mac: broken on every other clone, and a plain
+> text file on Windows.
 
 > ⚠️ **Qui c'e' solo Ztoryc.** Le regole della macchina — dischi, Anymatix e i
 > modelli, Kitsu, `git add -A`, i symlink a Drive, come si parla con Franco —
