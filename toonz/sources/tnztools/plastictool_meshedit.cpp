@@ -152,6 +152,12 @@ struct Closer {
 
 static std::pair<double, int> closestVertex(const TTextureMesh &mesh,
                                             const TPointD &pos) {
+  // Ztoryc: an empty mesh has no closest vertex. min_element() on an empty
+  // range returns end(), and reading vertex(end) is out of bounds. Hardening,
+  // not a proven fix: a crash here after a Cut Mesh on 2026-09-25 could not be
+  // reproduced, and an empty mesh is the one input that breaks this code.
+  if (mesh.verticesCount() == 0)
+    return std::make_pair((std::numeric_limits<double>::max)(), -1);
   Closer closer = {mesh, pos};
   int vIdx      = int(
       std::min_element(mesh.vertices().begin(), mesh.vertices().end(), closer)
@@ -164,6 +170,9 @@ static std::pair<double, int> closestVertex(const TTextureMesh &mesh,
 
 static std::pair<double, int> closestEdge(const TTextureMesh &mesh,
                                           const TPointD &pos) {
+  // Ztoryc: same guard as closestVertex() — no edges, no closest edge.
+  if (mesh.edgesCount() == 0)
+    return std::make_pair((std::numeric_limits<double>::max)(), -1);
   Closer closer = {mesh, pos};
   int eIdx =
       int(std::min_element(mesh.edges().begin(), mesh.edges().end(), closer)
@@ -183,7 +192,9 @@ std::pair<double, MeshIndex> closestVertex(const TMeshImage &mi,
 
   TMeshImage::meshes_container::const_iterator mt, mEnd = meshes.end();
   for (mt = meshes.begin(); mt != mEnd; ++mt) {
+    if (!*mt) continue;
     const std::pair<double, int> &candidateIdx = closestVertex(**mt, pos);
+    if (candidateIdx.second < 0) continue;  // empty mesh
 
     std::pair<double, MeshIndex> candidate(
         candidateIdx.first,
@@ -206,7 +217,9 @@ std::pair<double, MeshIndex> closestEdge(const TMeshImage &mi,
 
   TMeshImage::meshes_container::const_iterator mt, mEnd = meshes.end();
   for (mt = meshes.begin(); mt != mEnd; ++mt) {
+    if (!*mt) continue;
     const std::pair<double, int> &candidateIdx = closestEdge(**mt, pos);
+    if (candidateIdx.second < 0) continue;  // empty mesh
 
     std::pair<double, MeshIndex> candidate(
         candidateIdx.first,

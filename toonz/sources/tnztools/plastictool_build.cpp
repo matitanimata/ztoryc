@@ -50,6 +50,15 @@ TPointD closestMeshVertexPos(const TPointD &pos, double *distance = 0) {
   const std::pair<double, PlasticTool::MeshIndex> &closest =
       PlasticToolLocals::closestVertex(*mi, pos_mesh);
 
+  // Ztoryc: no mesh has a vertex (all empty) -> no snap. The mouse position
+  // comes back unchanged and infinitely far, so every caller's `d < radius`
+  // test fails and the drag/up paths keep the plain position. Returning napd
+  // here would move the skeleton vertex to nowhere.
+  if (!closest.second) {
+    if (distance) *distance = (std::numeric_limits<double>::max)();
+    return pos;
+  }
+
   const TPointD &vxPos_mesh =
       mi->meshes()[closest.second.m_meshIdx]->vertex(closest.second.m_idx).P();
 
