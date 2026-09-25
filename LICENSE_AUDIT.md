@@ -2,7 +2,9 @@
 
 ## Audit 1 — 2026-09-25 (preliminare, solo ScanCode)
 
-**Stato:** preliminare. Manca la scansione snippet (SCANOSS), da eseguire in locale.
+**Stato:** completato il 2026-09-25 con la prima passata SCANOSS (vedi «Audit 1 bis»
+in fondo). Esito: **OK CON RISERVE** — nessuna corrispondenza copyleft; la riserva e' il
+limite degli strumenti sul codice riscritto (vedi sotto).
 
 ### Perimetro
 File aggiunti o modificati da Ztoryc rispetto al tag `v1.6.3` di Tahoma2D
@@ -40,19 +42,53 @@ distribuito con il binario da un tag fissato (`1.52.0`); degradazione controllat
   a cui `LICENSE_espeak-ng_info.txt` gia' rimandava.
 
 ### Da completare
-- [ ] **SCANOSS** sui file di codice del perimetro, priorita' ai 66 nuovi sorgenti in
-      `toonz/sources` e alle aree nate da riferimenti a progetti GPL: sculpt/FFD, pesi delle
-      ossa, IK, deformatori raster.
-- [ ] Licenze dei **modelli** lip sync: `vosk-model-small-en-us-0.15`,
-      `vosk-model-small-it-0.22`, `ggml-base-q5_1.bin` (Whisper).
-- [ ] Verificare che `stuff/doc/LICENSE/` finisca nei pacchetti di tutte le piattaforme.
+- [x] **SCANOSS** sui 66 nuovi sorgenti e sulle aree nate da riferimenti GPL — fatto il
+      2026-09-25, vedi «Audit 1 bis».
+- [x] Licenze dei **modelli** lip sync — verificate il 2026-09-25:
+      `vosk-model-small-en-us-0.15` e `vosk-model-small-it-0.22` **Apache-2.0** (tabella
+      ufficiale https://alphacephei.com/vosk/models; gli archivi dei modelli NON contengono un
+      file di licenza, solo un README — corretto `LICENSE_vosk_info.txt`, che diceva il
+      contrario); `ggml-base-q5_1.bin` **MIT** (whisper.cpp e pesi OpenAI, gia' documentato
+      in `LICENSE_whisper_info.txt`, verifica del 2026-08-15).
+- [x] `stuff/doc/LICENSE/` **finisce nei pacchetti** (verificato sugli script del 2026-09-25):
+      macOS `rsync` di tutto `stuff/` in `Contents/Resources/ztorycstuff`
+      (`ci-scripts/osx/tahoma-buildpkg.sh:588`, escluso solo `profiles/users`); Windows
+      `xcopy` in `ztorycstuff` (`ci-scripts/windows/tahoma-buildpkg.bat:187`); Linux `mv` in
+      `Ztoryc/ztorycstuff` per il `.tar.gz` (`ci-scripts/linux/tahoma-buildpkg.sh:38`).
+      Il `.deb` non e' stato verificato.
 - [ ] Valutare se citare QXlsx nell'About, come gli altri componenti.
 
 ### Metodo per i riferimenti a progetti GPL
 Krita e AnimeEffects (GPL) sono stati usati **solo come riferimento concettuale**:
-- deformatori raster ispirati a Krita **riscritti dai paper**, senza codice di Krita;
+- deformatori raster ispirati a Krita: **proposta di progetto, nessun codice** (verificato il
+  2026-09-25: nessun sorgente di Ztoryc contiene un deformatore raster; la voce precedente
+  diceva «riscritti dai paper», ma non sono mai stati scritti);
 - `AE_REFERENCE_NOTES.md` (su Drive) raccoglie solo descrizioni concettuali di
   AnimeEffects (FFD, pesi delle ossa, UX del rigging), **senza estratti di codice**,
   e dichiara esplicitamente la regola "il credito concettuale va bene, il codice no"
   (verificato il 2026-09-25);
 - per WhisperX: "l'idea si prende, il codice no".
+
+## Audit 1 bis — 2026-09-25, prima passata SCANOSS
+
+`scanoss-py` 1.54.2 (servizio osskb.org, inviate le impronte e non il codice). Dati grezzi e
+copie dei file: `reference/tools/scans/2026-09-25/`; triage completo:
+`~/ZtorYc/reviews/2026-09-25_scanoss_triage.md`.
+
+**Nessuna corrispondenza con codice copyleft (GPL/LGPL/AGPL)** negli 80 file scansionati.
+
+| Gruppo | File | Senza corrispondenze | Corrispondenze (tutte BSD-3-Clause) |
+|---|---|---|---|
+| a) nuovi rispetto a v1.6.3 | 66 | 51 | Ztoryc stesso (v0.2.0/v0.3.5): 11; Tahoma2D nightly: 4 (`txshpegbarcolumn.*`, `maintoolbar.*`, arrivati dal merge upstream: non sono codice Ztoryc) |
+| b) aree da riferimenti GPL (plastic/skeleton modificati) | 14 | 1 (`plastictool_animate.cpp`) | OpenToonz / Tahoma2D (origine comune): 12; Ztoryc v0.2.0: 1 |
+
+«Pixar» e «Unlicense» compaiono tra le licenze di alcune corrispondenze: sono licenze del
+**pacchetto** nightly in cui il file e' stato trovato, non del file (BSD-3 come il resto di Toonz).
+
+Riferimenti nei commenti (nessuno di codice): Moho come esempio d'interfaccia
+(`ztorigpanel.h:129`), un'idea di DragonBones sull'annealing IK (`plastictool_animate.cpp:1492`),
+la regola «GPL solo come processo separato» in `ztoryphonemes.h`.
+
+**Limite:** SCANOSS trova codice copiato, non codice riscritto. Per `plastictool_animate.cpp`
+(sculpt/FFD, pesi, IK: nato con AnimeEffects e DragonBones come riferimento concettuale) resta
+necessaria una lettura umana mirata contro `AE_REFERENCE_NOTES.md`.
