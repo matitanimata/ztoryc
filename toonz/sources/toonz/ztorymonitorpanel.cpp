@@ -560,10 +560,11 @@ void ZtoryMonitorPanel::onShotDoubleClicked(int col) {
   column->getRange(r0, r1, /*ignoreLastStop=*/true);
   TXshCell cell = xsh->getCell(r0, col);
   if (cell.m_level && cell.m_level->getChildLevel()) {
+    // Same mark-out as the animatic: it used the raw column length with no XD
+    // notes, which on a dissolve not laid out gave the true length only.
+    const int outF = ZtoryShotOps::shotMarkOut(xsh, col);
     app->getCurrentFrame()->setFrame(r0);
     CommandManager::instance()->execute("MI_OpenChild");
-    int durInAnimatic = r1 - r0 + 1;
-    int outF = durInAnimatic - 1;
     if (outF >= 0)
       XsheetGUI::setPlayRange(0, outF, 1, false);
     ZtoryShotOps::positionCursorInsideShot(outF);

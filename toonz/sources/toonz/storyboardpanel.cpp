@@ -1,5 +1,6 @@
 #include "storyboardpanel.h"
 #include "ztoryshotops.h"
+#include "xsheetdragtool.h"  // XsheetGUI::setPlayRange
 #include "ztoryanimatic.h"   // ZtoryAnimaticController::invalidateSoundTrack
 #include "ztorylightgizmo.h"
 #include "ztorydialoguehighlighter.h"
@@ -5848,7 +5849,19 @@ void StoryboardPanel::onEditShot(int shotIdx) {
   }
   app->getCurrentColumn()->setColumnIndex(col);
   app->getCurrentFrame()->setFrame(row);
+  // Measured on the main xsheet, before entering.
+  const int outF = ZtoryShotOps::shotMarkOut(xsh, col);
   CommandManager::instance()->execute("MI_OpenChild");
+  // ⚠️ MI_OpenChild restores the markers SAVED in the sub-scene, and the ones
+  // written before 2026-09-24 hold the old wrong mark-out (shot + WHOLE
+  // dissolve). The animatic always recomputed; the Board kept the saved one,
+  // so the same shot opened with two different ranges (review of ad3184c65).
+  if (outF >= 0) XsheetGUI::setPlayRange(0, outF, 1, false);
+  // From the Board the cursor goes on the MARK IN, from the timeline on the
+  // mark out (Franco, 2026-09-25): from the Board you enter to DRAW the shot,
+  // from the first frame; from the timeline, after trimming on the audio, to
+  // fill the empty frames at the end. Knowing it, you pick the door.
+  ZtoryShotOps::positionCursorInsideShot(0);
   // Switch the viewer panel to shot view (ZtoryAnimaticViewerPanel listens).
   ZtoryModel::instance()->activateShotForViewing(col);
 }

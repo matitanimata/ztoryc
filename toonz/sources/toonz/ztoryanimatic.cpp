@@ -6822,11 +6822,8 @@ void ZtoryAnimaticPanel::onShotDoubleClicked(int col) {
   // ignoreLastStop=true: skip the trailing SFH so the sub-scene's play
   // range mark-out matches the shot's actual animatic length, not +1.
   column->getRange(r0, r1, /*ignoreLastStop=*/true);
-  // The shot's TRUE length, measured now, on the main xsheet: with a dissolve
-  // laid out, [r0, r1] already holds the exposed extras (head-extra before,
-  // tail-extra after), and the XD notes below would add them a second time.
-  int trueStart = r0, trueDur = r1 - r0 + 1;
-  ZtoryShotOps::shotTrueSpan(xsh, col, trueStart, trueDur);
+  // Measured now, on the main xsheet, before entering (see shotMarkOut).
+  const int outF = ZtoryShotOps::shotMarkOut(xsh, col);
   TXshCell cell = xsh->getCell(r0, col);
   if (cell.m_level && cell.m_level->getChildLevel()) {
     app->getCurrentFrame()->setFrame(r0);
@@ -6843,16 +6840,8 @@ void ZtoryAnimaticPanel::onShotDoubleClicked(int col) {
     // Mark-out = true length + half dissolve per side. It used the raw column
     // length, extras included, and then added the extras again: shot + WHOLE
     // dissolve instead of shot + half (Franco, 2026-09-24).
-    {
-      int durInAnimatic = trueDur;
-      TXsheet *subXsh = cell.m_level->getChildLevel()->getXsheet();
-      int xdExtra = xdNoteHalfCount(subXsh, kXDOutName) +
-                    xdNoteHalfCount(subXsh, kXDInName);
-      int outF = durInAnimatic - 1 + xdExtra;
-      if (outF >= 0)
-        XsheetGUI::setPlayRange(0, outF, 1, false);
-      ZtoryShotOps::positionCursorInsideShot(outF);
-    }
+    if (outF >= 0) XsheetGUI::setPlayRange(0, outF, 1, false);
+    ZtoryShotOps::positionCursorInsideShot(outF);
     // Keep the animatic controller's frame at the shot's main-xsheet row
     // so the animatic viewer renders at the correct position.
     ZtoryAnimaticController::instance()->setCurrentFrame(r0);

@@ -2,7 +2,7 @@
 
 // TnzCore includes
 #include "tconst.h"
-#include "ztoryshotops.h"  // shotTrueSpan (Ztoryc mark-out fallback)
+#include "ztoryshotops.h"  // shotMarkOut (Ztoryc mark-out fallback)
 #include "tundo.h"
 
 // TnzBase includes
@@ -1273,42 +1273,12 @@ void openSubXsheet() {
     // parent xsheet, + frame extra di cross-dissolve (Ztoryc).  Per sotto-scene
     // generiche corrisponde alla durata piena del blocco celle nel parent.
     else {
-      int r0col = 0, r1col = 0;
-      TXshColumn *shotColPtr = currentXsheet->getColumn(openedCol);
-      // ignoreLastStop=true: in Ztoryc, ZtoryModel::resequenceXsheet() places a
-      // trailing Stop Frame Hold at r1+1 of every shot column to block implicit-
-      // hold bleed.  Without this flag, shotDuration would be inflated by 1 and
-      // the sub-scene's mark-out would land one frame past the actual content.
-      if (shotColPtr)
-        shotColPtr->getRange(r0col, r1col, /*ignoreLastStop=*/true);
-      int shotDuration =
-          (r1col >= r0col) ? (r1col - r0col + 1) : newXsh->getFrameCount();
-      // With a dissolve laid out, [r0col, r1col] already includes the exposed
-      // extras, and the XD notes below add them again: shot + WHOLE dissolve
-      // instead of shot + half per side. Start from the TRUE length.
-      {
-        int ts = 0, td = 0;
-        if (ZtoryShotOps::shotTrueSpan(currentXsheet, openedCol, ts, td))
-          shotDuration = td;
-      }
+      // Same formula as the animatic, the Monitor and the Board
+      // (ZtoryShotOps::shotMarkOut): true length + the XD halves. For a plain
+      // (non-Ztoryc) sub-scene it is the length of its cell block.
       markIn  = 0;
-      markOut = shotDuration - 1;
-      // Cross-dissolve: include the extra dissolve frames in the mark-out so the
-      // animator can work on them.  XD-out adds tail frames (shot A); XD-in adds
-      // head frames (shot B).
-      int xdExtra = 0;
-      for (int c = 0; c < newXsh->getColumnCount(); c++) {
-        TXshColumn *nc = newXsh->getColumn(c);
-        if (!nc || !nc->getSoundTextColumn()) continue;
-        std::string nm =
-            newXsh->getStageObject(newXsh->getColumnObjectId(c))->getName();
-        if (nm == "XD-out" || nm == "XD-in") {
-          int xr0 = 0, xr1 = 0;
-          nc->getRange(xr0, xr1);
-          if (xr1 >= xr0) xdExtra += (xr1 - xr0 + 1);
-        }
-      }
-      markOut += xdExtra;
+      markOut = ZtoryShotOps::shotMarkOut(currentXsheet, openedCol);
+      if (markOut < 0) markOut = newXsh->getFrameCount() - 1;
     }
     XsheetGUI::setPlayRange(markIn, qMax(markIn, markOut), 1, false);
     changeSaveSubXsheetAsCommand();

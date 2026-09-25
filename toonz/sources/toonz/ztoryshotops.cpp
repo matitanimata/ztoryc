@@ -423,6 +423,24 @@ bool shotTrueSpan(TXsheet *mainXsh, int col, int &startOut, int &durationOut) {
   return durationOut > 0;
 }
 
+int shotMarkOut(TXsheet *mainXsh, int col) {
+  if (!mainXsh) return -1;
+  TXshColumn *column = mainXsh->getColumn(col);
+  if (!column || column->isEmpty()) return -1;
+  int r0 = 0, r1 = 0;
+  // ignoreLastStop: the trailing stop resequenceXsheet() puts after every shot
+  // is not a frame of the shot.
+  column->getRange(r0, r1, /*ignoreLastStop=*/true);
+  const int rawDur = r1 - r0 + 1;
+  int ts = r0, td = rawDur;
+  // shotTrueSpan writes its outputs even when it fails (length 0 or less):
+  // fall back to the raw length instead of trusting them.
+  if (!shotTrueSpan(mainXsh, col, ts, td)) td = rawDur;
+  if (td <= 0) return -1;
+  TXsheet *sub = columnSubXsheet(mainXsh, col);
+  return td - 1 + xdInHeadOffset(sub) + xdOutTailCount(sub);
+}
+
 // List the main-xsheet columns that carry a shot (child-level), in order.
 static std::vector<int> shotColumns(TXsheet *mainXsh) {
   std::vector<int> cols;

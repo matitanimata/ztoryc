@@ -68,6 +68,9 @@ int colDuration(TXsheet *xsh, int col);
 // on purpose: in animatic context that range is not the authority (see the
 // several warnings in ztoryanimatic.cpp), and every caller has just computed
 // the value itself.
+// ⚠️ Two doors, two targets (Franco, 2026-09-25): the animatic and the Monitor
+// pass the MARK OUT (you come from trimming, to fill the empty frames); the
+// Board passes 0, the MARK IN (you come to draw the shot from the start).
 void positionCursorInsideShot(int outFrame);
 
 // The key under which the Animatic caches a shot's thumbnail (the sub-scene
@@ -141,6 +144,14 @@ void applyCrossDissolves(TXsheet *mainXsh, const std::vector<ShotLayout> &shots)
 // Writes the true start row + cell count and returns false for empty/non-shot
 // columns.
 bool shotTrueSpan(TXsheet *mainXsh, int col, int &startOut, int &durationOut);
+
+// Mark-out (0-based, inside the sub-scene) of the shot in main-xsheet column
+// \p col: its TRUE length (shotTrueSpan) plus the XD-in / XD-out halves the
+// animator works on. -1 when the column holds no shot.
+// THE formula for every way into a shot — animatic, Monitor, Board and the
+// xsheet's own Open Sub-xsheet. There were three, and they disagreed on a
+// dissolve (review of ad3184c65, 2026-09-25).
+int shotMarkOut(TXsheet *mainXsh, int col);
 
 // Undo of applyCrossDissolves(): removes every "ZXD_" blendFx node (restoring
 // its two column fxs as terminals) and strips the exposed overlap cells so
