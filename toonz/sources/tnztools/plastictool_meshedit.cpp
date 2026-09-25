@@ -1070,7 +1070,10 @@ void PlasticTool::leftButtonDown_mesh(const TPointD &pos,
       if (idx) {
         MeshSelection newSel(idx);
 
-        if (me.isCtrlPressed())
+        // Ztoryc: ⇧ too, the universal add-to-selection key. ⌘ alone (stock)
+        // is undiscoverable: Franco found multi-selection only by being
+        // told (2026-09-25). ⇧ is unused in mesh edit.
+        if (me.isCtrlPressed() || me.isShiftPressed())
           m_this->toggleMeshSelection(sel, newSel);
         else if (!sel.contains(newSel))
           m_this->setMeshSelection(sel, newSel);
