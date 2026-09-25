@@ -2867,6 +2867,11 @@ void MainWindow::defineActions() {
                         "auto_input_cell_number");
   createMenuCellsAction(MI_FillEmptyCell, QT_TR_NOOP("&Fill In Empty Cells"),
                         "", "fill_empty_cells");
+  // Ztoryc: the upward fill, so it can take its own shortcut (⌘ + a key does
+  // not trigger the downward command's shortcut — see fillEmptyCell()).
+  createMenuCellsAction(MI_FillEmptyCellUp,
+                        QT_TR_NOOP("Fill In Empty Cells Upward"), "",
+                        "fill_empty_cells");
 
   createMenuCellsAction(MI_InbetweenLinear, QT_TR_NOOP("&Linear"), "",
                         "inbetween_linear");

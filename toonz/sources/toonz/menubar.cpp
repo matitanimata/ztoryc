@@ -588,6 +588,7 @@ void TopBar::loadMenubar() {
   addMenuItem(cellsMenu, MI_CloneLevel);
   cellsMenu->addSeparator();
   addMenuItem(cellsMenu, MI_FillEmptyCell);
+  addMenuItem(cellsMenu, MI_FillEmptyCellUp);
 
   // Menu' PLAY
   QMenu *playMenu = addMenu(ShortcutTree::tr("Play"), m_menuBar);

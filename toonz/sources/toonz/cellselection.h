@@ -134,6 +134,8 @@ public:
   void stopFrameHold(int row, int col, bool inRange);
   void stopFrameHold();
   void fillEmptyCell();
+  void fillEmptyCellUp();
+  void fillEmptyCells(bool upward);
 
   void inbetween(TInbetween::TweenAlgorithm algorithm);
   void inbetweenLinear() { inbetween(TInbetween::LinearInterpolation); }

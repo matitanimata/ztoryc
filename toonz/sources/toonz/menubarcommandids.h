@@ -177,6 +177,7 @@
 #define MI_Autorenumber "MI_Autorenumber"
 #define MI_CreateBlankDrawing "MI_CreateBlankDrawing"
 #define MI_FillEmptyCell "MI_FillEmptyCell"
+#define MI_FillEmptyCellUp "MI_FillEmptyCellUp"
 #define MI_StopFrameHold "MI_StopFrameHold"
 
 #define MI_MergeFrames "MI_MergeFrames"

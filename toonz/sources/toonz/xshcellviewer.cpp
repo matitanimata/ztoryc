@@ -5041,6 +5041,7 @@ void CellArea::createCellMenu(QMenu &menu, bool isCellSelected, TXshCell cell,
       }
 
       menu.addAction(cmdManager->getAction(MI_FillEmptyCell));
+      menu.addAction(cmdManager->getAction(MI_FillEmptyCellUp));
       menu.addAction(cmdManager->getAction(MI_StopFrameHold));
 
       menu.addSeparator();
@@ -5254,6 +5255,7 @@ void CellArea::createCellMenu(QMenu &menu, bool isCellSelected, TXshCell cell,
       menu.addAction(cmdManager->getAction(MI_CreateBlankDrawing));
       menu.addSeparator();
       menu.addAction(cmdManager->getAction(MI_FillEmptyCell));
+      menu.addAction(cmdManager->getAction(MI_FillEmptyCellUp));
       menu.addAction(cmdManager->getAction(MI_StopFrameHold));
     }
     if (cameraCellsSelected || pegbarCellsSelected) {

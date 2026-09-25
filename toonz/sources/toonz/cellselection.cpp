@@ -1937,6 +1937,7 @@ void TCellSelection::enableCommands() {
   enableCommand(this, MI_PasteInto, &TCellSelection::overWritePasteCells);
 
   enableCommand(this, MI_FillEmptyCell, &TCellSelection::fillEmptyCell);
+  enableCommand(this, MI_FillEmptyCellUp, &TCellSelection::fillEmptyCellUp);
   enableCommand(this, MI_Reframe1, &TCellSelection::reframe1Cells);
   enableCommand(this, MI_Reframe2, &TCellSelection::reframe2Cells);
   enableCommand(this, MI_Reframe3, &TCellSelection::reframe3Cells);
@@ -2021,6 +2022,7 @@ bool TCellSelection::isEnabledCommand(
                                         MI_ConvertVectorToVector,
                                         MI_CreateBlankDrawing,
                                         MI_FillEmptyCell,
+                                        MI_FillEmptyCellUp,
                                         MI_StopFrameHold,
                                         MI_InbetweenLinear,
                                         MI_InbetweenEaseIn,
@@ -4703,8 +4705,73 @@ void TCellSelection::convertVectortoVector() {
       (TImage::Type)app->getCurrentImageType());
 }
 
+// Ztoryc: the mirror of the downward fill below. Each empty run takes the
+// cell BELOW it: from the selection's top row down to the next exposed cell,
+// which may lie past the selection's bottom — exactly as the downward fill
+// reaches up past the selection's top. Runs with nothing below stay empty.
+static void fillEmptyCellsUpwardIn(int r0, int c0, int r1, int c1) {
+  bool initUndo = false;
+  TXsheet *xsh  = TApp::instance()->getCurrentXsheet()->getXsheet();
+  for (int c = c0; c <= c1; c++) {
+    TXshColumn *column = xsh->getColumn(c);
+    if (!column || column->isEmpty() || column->isLocked() ||
+        column->getSoundColumn() || column->getFolderColumn())
+      continue;
+    int cr0 = 0, cr1 = -1;
+    column->getRange(cr0, cr1);
+
+    for (int r = r0; r <= r1; r++) {
+      int fillCount = 0;
+      TXshCell cell = xsh->getCell(r, c);
+      if (cell.isEmpty()) fillCount++;
+
+      int nextR = r + 1;
+      while (nextR <= cr1) {
+        cell = xsh->getCell(nextR, c);
+        if (!cell.isEmpty()) break;
+        nextR++;
+        fillCount++;
+      }
+      // Past the end of the column without finding a cell: nothing to copy.
+      if (nextR > cr1) break;
+      // Adjacent cell is filled: move on.
+      if (!fillCount) continue;
+
+      const int endR   = nextR - 1;
+      const int startR = endR - fillCount + 1;
+      if (!initUndo) {
+        initUndo = true;
+        TUndoManager::manager()->beginBlock();
+      }
+      FillEmptyCellUndo *undo = new FillEmptyCellUndo(startR, endR, c, cell);
+      TUndoManager::manager()->add(undo);
+      undo->redo();
+      r = nextR;  // skip what was just filled
+    }
+  }
+  if (initUndo) TUndoManager::manager()->endBlock();
+  TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+}
+
+// Ztoryc: ⌘ held while triggering (⌘-click on the button, or the menu) fills
+// UPWARD. The upward variant also has its own command, MI_FillEmptyCellUp, for
+// a keyboard shortcut: ⌘ + a key is a different key sequence in Qt and would
+// not trigger this command at all (Franco, 2026-09-25).
 void TCellSelection::fillEmptyCell() {
+  fillEmptyCells(QGuiApplication::queryKeyboardModifiers() &
+                 Qt::ControlModifier);  // ControlModifier = ⌘ on macOS
+}
+
+void TCellSelection::fillEmptyCellUp() { fillEmptyCells(true); }
+
+void TCellSelection::fillEmptyCells(bool upward) {
   if (isEmpty()) return;
+  if (upward) {
+    int ur0, uc0, ur1, uc1;
+    getSelectedCells(ur0, uc0, ur1, uc1);
+    fillEmptyCellsUpwardIn(ur0, uc0, ur1, uc1);
+    return;
+  }
 
   // set up basics
   bool initUndo = false;
