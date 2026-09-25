@@ -77,6 +77,8 @@ signals:
   void modeChanged(int index, int mode);
   //! This action was made (or unmade) the zero of its skeleton.
   void baseToggled(int index, bool isBase);
+  //! Only from the Base row: key the base pose at the current frame.
+  void keyBaseRequested(int index);
   //! The set of skeletons the action may be applied to was edited.
   void skeletonsChanged(int index, const std::set<int> &skelIds);
 
@@ -208,6 +210,7 @@ private slots:
   void onGuideCommit(int index);
   void onModeChanged(int index, int mode);
   void onBaseToggled(int index, bool isBase);
+  void onKeyBase(int index);
   void onSkeletonsChanged(int index, const std::set<int> &skelIds);
   void onRemove(int index);
 

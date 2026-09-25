@@ -2280,6 +2280,33 @@ bool PlasticSkeletonDeformation::Imp::overlaps(const PoseAction &a,
 
 //------------------------------------------------------------------
 
+bool PlasticSkeletonDeformation::applyBasePose(double frame) {
+  const int skelId = skeletonId(frame);
+  // Without a base the zero is the real rest, which on an exploded rig is the
+  // scattered layout: keying it would take the character apart.
+  if (!baseActionOf(skelId)) return false;
+
+  SkVDSet::iterator vt, vEnd(m_imp->m_vds.end());
+  for (vt = m_imp->m_vds.begin(); vt != vEnd; ++vt)
+    for (int i = 0; i < SkVD::POSE_PARAMS_COUNT; ++i) {
+      const int p = SkVD::POSE_PARAMS[i];
+      if (vt->m_vd.m_params[p])
+        vt->m_vd.m_params[p]->setValue(frame,
+                                       poseBaseValue(vt->m_name, p, skelId));
+    }
+
+  // The whole skeleton is now at the base, so no action is applied here any
+  // more: zero the records, or the sliders would read a pose that is gone.
+  for (int a = 0; a < (int)m_imp->m_poseActions.size(); ++a) {
+    if (!poseActionAppliesAt(a, frame)) continue;
+    TDoubleParamP &g = m_imp->m_poseActions[a].m_guide;
+    if (g && fabs(g->getValue(frame)) > 1e-9) g->setValue(frame, 0.0);
+  }
+  return true;
+}
+
+//------------------------------------------------------------------
+
 void PlasticSkeletonDeformation::beginPoseDrag(int idx, double frame) {
   m_imp->m_poseDragBase.clear();
   m_imp->m_poseDragIdx = idx;

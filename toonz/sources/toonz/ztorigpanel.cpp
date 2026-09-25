@@ -256,8 +256,16 @@ ZtoRigActionRow::ZtoRigActionRow(int index, const QString &name, double value,
   // guideChanged, so the display and the model stay in step.
   connect(m_restBt, &QPushButton::clicked, this,
           [this]() { m_spin->setValue(0.0); });
-  connect(m_fullBt, &QPushButton::clicked, this,
-          [this]() { m_spin->setValue(1.0); });
+  // On the Base row the full dot is a COMMAND, not a strength: the base cannot
+  // be dialled (it IS the zero), and before this the only way to put it on a
+  // frame was to dial ANOTHER Pose to 0 — impossible on a rig whose only
+  // action is the base (Franco, 2026-09-25). One click, the base is keyed.
+  connect(m_fullBt, &QPushButton::clicked, this, [this]() {
+    if (m_isBase)
+      emit keyBaseRequested(m_index);
+    else
+      m_spin->setValue(1.0);
+  });
   connect(m_slider, &QSlider::sliderPressed, this,
           [this]() { emit guideBegin(m_index); });
   connect(m_slider, &QSlider::valueChanged, this, &ZtoRigActionRow::onSlider);
@@ -328,8 +336,12 @@ void ZtoRigActionRow::setBaseAppearance() {
   m_slider->setEnabled(dialable);
   m_spin->setEnabled(dialable);
   m_restBt->setEnabled(dialable);
-  m_fullBt->setEnabled(dialable);
   m_modeButton->setEnabled(dialable);
+  // The full dot stays live: on the Base row it keys the base (see the
+  // connect in the constructor).
+  m_fullBt->setToolTip(
+      tr("Key the Base pose at this frame, on the whole skeleton.\n"
+         "The other actions drop to 0 here."));
 }
 
 //-----------------------------------------------------------------------------
@@ -340,7 +352,7 @@ void ZtoRigActionRow::setApplicable(bool on) {
   m_slider->setEnabled(on && !m_isBase);
   m_spin->setEnabled(on && !m_isBase);
   m_restBt->setEnabled(on && !m_isBase);
-  m_fullBt->setEnabled(on && !m_isBase);
+  m_fullBt->setEnabled(on);  // on the Base row it keys the base
   m_modeButton->setEnabled(on && !m_isBase);
   m_label->setEnabled(on);
 }
@@ -1163,6 +1175,8 @@ void ZtoRigPanel::rebuild() {
               &ZtoRigPanel::onModeChanged);
       connect(row, &ZtoRigActionRow::baseToggled, this,
               &ZtoRigPanel::onBaseToggled);
+      connect(row, &ZtoRigActionRow::keyBaseRequested, this,
+              &ZtoRigPanel::onKeyBase);
       connect(row, &ZtoRigActionRow::skeletonsChanged, this,
               &ZtoRigPanel::onSkeletonsChanged);
 
@@ -1900,6 +1914,26 @@ void ZtoRigPanel::onBaseToggled(int index, bool isBase) {
   // Only one action per skeleton can be the base, so another row's button may
   // have just been cleared: rebuild rather than guess which.
   rebuild();
+}
+
+//-----------------------------------------------------------------------------
+
+void ZtoRigPanel::onKeyBase(int index) {
+  if (actionNameAt(index).isEmpty()) return;
+  // Same path as a slider gesture, so it gets the same undo (every column in
+  // one step) and the same transform key under Global Key Stage/All.
+  onGuideBegin(index);
+  TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+  for (const CharPart &part : characterParts()) {
+    if (!part.m_sd->applyBasePose(part.m_frame)) continue;
+    if (xsh)
+      if (TStageObject *o =
+              xsh->getStageObject(TStageObjectId::ColumnId(part.m_col)))
+        o->updateKeyframes();
+  }
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  flushConnectedPlacements();
+  onGuideCommit(index);  // also refreshes every slider to 0
 }
 
 //-----------------------------------------------------------------------------

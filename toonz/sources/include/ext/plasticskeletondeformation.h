@@ -731,6 +731,14 @@ public:
   //! overwrites the whole skeleton — zeroes the other actions' records.
   void applyPoseStrength(int idx, double strength, double frame);
 
+  //! Keys the skeleton active at \p frame to its BASE pose: every pose param
+  //! to the base action's value, and every action's strength record to 0.
+  //! The base cannot be dialled like the others (it IS the zero), and on a rig
+  //! whose only action is the base there is no other Pose to dial to 0 — this
+  //! is how the base gets onto a frame. Returns false, touching nothing, when
+  //! that skeleton has no base: its rest pose is the exploded layout.
+  bool applyBasePose(double frame);
+
   //! Open/close an Add drag. An Add is <TT>base + strength*delta</TT>, and
   //! the slider calls applyPoseStrength on EVERY move: without a base frozen at
   //! the start of the gesture each move would read back its own previous write
