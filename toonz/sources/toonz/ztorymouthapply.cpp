@@ -2,6 +2,7 @@
 
 #include "tapp.h"
 #include "toonzqt/icongenerator.h"
+#include "ztorycharacter.h"
 #include "ztorymodel.h"
 
 #include "toonz/childstack.h"
@@ -262,6 +263,21 @@ QVector<MouthApplyTarget> ZtoryMouthApply::findTargets(ToonzScene *scene) {
   const QHash<QString, TFilePath> mapIndex = indexProjectMaps(scene);
   collectTargets(scene, workingXsheet(), 0, seen, mapIndex, out);
 
+  // ⚠️ UNA SCENA PERSONAGGIO NON EREDITA DA NESSUNO. Il recupero qui sotto
+  // serve allo SHOT, dove il personaggio arriva importato e la sua mappa e'
+  // rimasta nella scena di libreria. Ma nella scena di libreria le sotto-scene
+  // si mappano LI', e cercarle fra gli altri personaggi abbina per il solo nome:
+  // in BRONTOLO la sotto-scena del rig si chiama «sub», come quella delle bocche
+  // di SOFIA, ed era l'unica candidata — quindi «non ambigua» — e la scheda
+  // proponeva le bocche di SOFIA dentro Brontolo (Franco, 2026-09-25). Il
+  // controllo sull'ambiguita' del 28/08 non poteva vederlo: un candidato solo
+  // non e' una prova che sia quello giusto.
+  const QString tnz =
+      QString::fromStdWString(scene->getScenePath().getWideString());
+  const bool characterScene =
+      !tnz.isEmpty() &&
+      ZtoryCharacter::roleOf(tnz) == QLatin1String("character");
+
   // ── I set che sono ARRIVATI COL PERSONAGGIO ─────────────────────────────
   // La mappa di una sotto-scena vive accanto alla scena che la contiene.
   // Importando il personaggio in uno shot, la sotto-scena arriva ma la sua
@@ -271,6 +287,7 @@ QVector<MouthApplyTarget> ZtoryMouthApply::findTargets(ToonzScene *scene) {
   // personaggio -> asset -> scena di libreria -> mappa — e l'aggancio e' il
   // NOME della sotto-scena, che l'import non cambia.
   for (MouthApplyTarget &t : out) {
+    if (characterScene) break;
     if (!t.map.sets.isEmpty() || t.subScene.isEmpty()) continue;
     ZtoryModel *model = ZtoryModel::instance();
     // ⚠️ Si raccolgono TUTTI i candidati invece di fermarsi al primo.
@@ -296,8 +313,9 @@ QVector<MouthApplyTarget> ZtoryMouthApply::findTargets(ToonzScene *scene) {
     // ereditare niente: la sotto-scena resta senza set e si mappa a mano
     // scegliendo il livello, invece di ereditare la bocca sbagliata.
     if (candidates.size() == 1) {
-      t.map   = candidates.first().second;
-      t.label = QObject::tr("%1  (sub-scene, from %2)")
+      t.map           = candidates.first().second;
+      t.fromCharacter = candidates.first().first;
+      t.label         = QObject::tr("%1  (sub-scene, from %2)")
                     .arg(t.subScene, candidates.first().first);
     }
   }

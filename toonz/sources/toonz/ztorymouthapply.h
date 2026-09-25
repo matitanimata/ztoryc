@@ -52,6 +52,9 @@ struct MouthApplyTarget {
   TFilePath  owner;      //!< dove sta la sua mappa
   QString    label;      //!< come mostrarlo all'utente
   MouthMap   map;        //!< gia' letta: serve per elencarne i set
+  //! Valorizzato quando i set NON sono di questa scena ma arrivano dalla scena
+  //! di libreria del personaggio con questo nome (vedi findTargets).
+  QString    fromCharacter;
 };
 
 //! Un tratto: da \p from a \p to (fotogrammi dello SHOT, 1-based) si usa il set

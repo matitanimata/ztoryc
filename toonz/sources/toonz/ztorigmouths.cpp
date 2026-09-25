@@ -154,7 +154,8 @@ QPixmap framed(const QImage &img, const QRect &base, double zoom,
 //! lavoro necessario, e si sentiva uscendo da una sotto-scena.
 void collectColumnNames(TXsheet *xsh, int depth,
                         QHash<TXshLevel *, QString> &out,
-                        QSet<TXshLevel *> &visited) {
+                        QSet<TXshLevel *> &visited,
+                        QSet<TXshLevel *> &exposed) {
   if (!xsh || depth > 8) return;
   for (int col = 0; col < xsh->getColumnCount(); col++) {
     TXshColumn *c = xsh->getColumn(col);
@@ -175,6 +176,7 @@ void collectColumnNames(TXsheet *xsh, int depth,
       // fila: rifare il lavoro a ogni riga non aggiunge niente.
       if (lv == lastSeen) continue;
       lastSeen = lv;
+      exposed.insert(lv);
 
       if (!colName.isEmpty() && !out.contains(lv)) out.insert(lv, colName);
 
@@ -188,7 +190,7 @@ void collectColumnNames(TXsheet *xsh, int depth,
       if (TXshChildLevel *cl = lv->getChildLevel()) {
         if (visited.contains(lv)) continue;
         visited.insert(lv);
-        collectColumnNames(cl->getXsheet(), depth + 1, out, visited);
+        collectColumnNames(cl->getXsheet(), depth + 1, out, visited, exposed);
       }
     }
   }
@@ -375,6 +377,15 @@ ZtoRigMouthsTab::ZtoRigMouthsTab(QWidget *parent) : QWidget(parent) {
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::castChanged,
           this, &ZtoRigMouthsTab::onXsheetChanged);
 
+  connect(ZtoryModel::instance(), &ZtoryModel::sceneSaved, this,
+          &ZtoRigMouthsTab::onSceneSaved);
+  // Cambiando scena la domanda «salvare?» l'ha gia' fatta Tahoma, sulla scena
+  // intera: se la risposta e' stata Salva, onSceneSaved ha gia' scritto il set;
+  // se e' stata Non salvare, anche il set va scartato. Chiederlo di nuovo qui
+  // sarebbe una seconda domanda sulla stessa cosa.
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
+          this, [this]() { m_modified = false; });
+
   rebuild();
 }
 
@@ -536,16 +547,16 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
   const QString keep = m_levelCombo->currentData().toString();
   m_levelCombo->clear();
 
-  QVector<QPair<QString, TXshLevel *>> mapped, others;
+  QVector<QPair<QString, TXshLevel *>> mapped, others, unused;
   if (scene) {
     // UNA passata per i nomi di colonna, e UNA lettura del file di scena.
     // Prima si rileggeva e riparsificava lo stesso .zmouth una volta per
     // sotto-scena, e si riscendeva l'albero una volta per livello: su una scena
     // vera diventava il lavoro al quadrato.
     QHash<TXshLevel *, QString> colNames;
-    QSet<TXshLevel *> visitedSubs;
+    QSet<TXshLevel *> visitedSubs, exposed;
     collectColumnNames(scene->getChildStack()->getTopXsheet(), 0, colNames,
-                       visitedSubs);
+                       visitedSubs, exposed);
 
     // DOVE stanno i set: la stessa ricerca del popup di «Apply», non una
     // seconda copia. Copre l'annidamento e il recupero dei set arrivati con un
@@ -573,6 +584,16 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
                                         : QString("%1  [%2]").arg(colName, name);
       if (cl) label = tr("%1  (sub-scene)").arg(label);
 
+      // ⚠️ Un livello nel cast SENZA UNA CELLA e' quasi sempre un residuo (un
+      // import rifatto lascia i livelli vecchi). Mapparlo scrive un set che
+      // la tendina dei set non elenca — lei guarda le celle — e il set sembra
+      // non salvato: in EOLO il profilo e' finito su eolo_mammolo#bocchePr,
+      // mentre le bocche usate sono ch_eolo#bocchePr (Franco, 2026-09-25).
+      // Si elencano lo stesso, in fondo e dichiarati.
+      if (!exposed.contains(lv)) {
+        unused.append(qMakePair(tr("%1  (unused)").arg(label), lv));
+        continue;
+      }
       const bool hasMap = withSets.contains(lv);
       if (hasMap)
         mapped.append(qMakePair(label, lv));
@@ -590,9 +611,12 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
   // Col filtro acceso ci si ferma ai mappati: sono gli unici su cui il pallino
   // dice qualcosa di certo. Gli altri restano un elenco della scena, utile solo
   // quando si sta cercando un livello DA mappare.
-  if (!m_onlyMapped || !m_onlyMapped->isChecked())
+  if (!m_onlyMapped || !m_onlyMapped->isChecked()) {
     for (const auto &p : others)
       m_levelCombo->addItem(p.first, QVariant::fromValue(quintptr(p.second)));
+    for (const auto &p : unused)
+      m_levelCombo->addItem(p.first, QVariant::fromValue(quintptr(p.second)));
+  }
   m_filling = false;
 
   const bool any = m_levelCombo->count() > 0;
@@ -652,6 +676,9 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
 
 void ZtoRigMouthsTab::onLevelChanged(int) {
   if (m_filling) return;
+  // PRIMA di cambiare m_level: il set in lavorazione si scrive accanto al
+  // livello di prima.
+  settlePendingEdits();
   m_level = reinterpret_cast<TXshLevel *>(
       m_levelCombo->currentData().value<quintptr>());
   m_fids.clear();
@@ -680,20 +707,19 @@ void ZtoRigMouthsTab::onLevelChanged(int) {
     //
     // ⚠️ Questo recupero c'era gia' nel popup di «Apply», e NON qui: percio'
     // l'apply trovava i set e la scheda diceva che non ce n'erano.
+    //
+    // Si LEGGE da m_sources (findTargets), non si rifa'. Qui ce n'era una
+    // seconda copia che prendeva il PRIMO personaggio con una sotto-scena
+    // omonima: non aveva ne' il controllo sull'ambiguita' ne' quello sulla
+    // scena personaggio, e metteva le bocche di SOFIA dentro Brontolo
+    // (2026-09-25). Due copie della stessa regola divergono — di nuovo.
     if (m_map.sets.isEmpty() && !subSceneName().isEmpty()) {
-      ZtoryModel *model = ZtoryModel::instance();
-      for (const Asset &a : model->assets()) {
-        if (a.type.compare("Character", Qt::CaseInsensitive) != 0) continue;
-        const QString lib = model->resolveAssetFile(a);
-        if (lib.isEmpty()) continue;
-        MouthMap m;
-        if (!ZtoryMouthMap::load(TFilePath(lib.toStdWString()),
-                                 subSceneName(), m))
-          continue;
-        if (m.sets.isEmpty()) continue;
-        m_map = m;
+      for (const MouthApplyTarget &src : m_sources) {
+        if (src.level != m_level || src.fromCharacter.isEmpty()) continue;
+        if (src.map.sets.isEmpty()) continue;
+        m_map = src.map;
         m_note->setText(tr("Sets read from %1 — saving writes them here, "
-                           "on this scene.").arg(a.name));
+                           "on this scene.").arg(src.fromCharacter));
         break;
       }
     }
@@ -714,8 +740,25 @@ void ZtoRigMouthsTab::refreshSetCombo() {
   //
   // Il livello resta scegliibile sopra, perche' serve per MAPPARNE uno nuovo,
   // che di set non ne ha ancora e quindi qui non comparirebbe.
-  const bool several = m_sources.size() > 1;
-  for (const MouthApplyTarget &src : m_sources) {
+  // ⚠️ Il livello su cui si sta lavorando c'e' SEMPRE, anche se m_sources
+  // non lo elenca (non e' esposto nell'xsheet corrente, o e' un residuo senza
+  // celle). Senza, un set appena salvato su disco spariva dalla tendina e
+  // sembrava non registrato (EOLO, 2026-09-25).
+  QVector<MouthApplyTarget> sources = m_sources;
+  if (m_level && !m_map.sets.isEmpty()) {
+    bool listed = false;
+    for (const MouthApplyTarget &src : sources)
+      if (src.level == m_level) { listed = true; break; }
+    if (!listed) {
+      MouthApplyTarget t;
+      t.level = m_level;
+      t.map   = m_map;
+      t.label = QString::fromStdWString(m_level->getName());
+      sources.push_back(t);
+    }
+  }
+  const bool several = sources.size() > 1;
+  for (const MouthApplyTarget &src : sources) {
     for (const MouthSet &ms : src.map.sets) {
       QStringList attrs;
       if (!ms.view.isEmpty()) attrs << ms.view;
@@ -777,6 +820,7 @@ void ZtoRigMouthsTab::refreshSetCombo() {
     }
   }
   m_currentSetName.clear();
+  m_modified = false;  // i primi dieci disegni: una proposta, non una modifica
   refreshSources();
 }
 
@@ -824,6 +868,7 @@ void ZtoRigMouthsTab::onSetChanged(int index) {
   TXshLevel *owner = reinterpret_cast<TXshLevel *>(
       m_setCombo->itemData(index).value<quintptr>());
   const QString name = m_setCombo->itemData(index, Qt::UserRole + 1).toString();
+  settlePendingEdits();
 
   // Scegliere un set porta con se' il suo livello: e' il punto di tutta
   // l'inversione.
@@ -850,6 +895,7 @@ void ZtoRigMouthsTab::loadSet(int index) {
   const MouthSet &ms = m_map.sets[index];
   m_currentSetName   = ms.name;
   for (int i = 0; i < 10; i++) m_targets[i] = ms.mouths[i];
+  m_modified = false;  // le caselle sono di nuovo quelle del file
   m_filling = true;
   // ⚠️ NON usare \p index: e' la posizione dentro m_map.sets, cioe' fra i set
   // DI QUESTO LIVELLO, mentre la tendina elenca i set di TUTTA la scena. Le due
@@ -955,6 +1001,7 @@ void ZtoRigMouthsTab::onNavClicked(int id) {
     idx     = (idx + direction + int(m_fids.size())) % int(m_fids.size());
     anchor->frameId = m_fids[idx];
   }
+  markModified();
   refreshSources();
 }
 
@@ -1016,6 +1063,7 @@ void ZtoRigMouthsTab::onSlotContextMenu(const QPoint &pos) {
     t.frameId   = TFrameId(frame);
     m_targets[slot] << t;
   }
+  markModified();
   refreshPreviews();
 }
 
@@ -1056,11 +1104,11 @@ void ZtoRigMouthsTab::onNewSet() {
                       .arg(m_currentSetName));
 }
 
-void ZtoRigMouthsTab::onSaveSet() {
-  if (!m_level) return;
+bool ZtoRigMouthsTab::writeCurrentSet() {
+  if (!m_level) return false;
   if (m_currentSetName.isEmpty()) {
     onNewSet();
-    if (m_currentSetName.isEmpty()) return;
+    if (m_currentSetName.isEmpty()) return false;
   }
 
   MouthSet ms;
@@ -1071,7 +1119,7 @@ void ZtoRigMouthsTab::onSaveSet() {
   for (int i = 0; i < 10; i++) ms.mouths[i] = m_targets[i];
   if (!ms.isUsable()) {
     DVGui::warning(tr("This set has no drawing assigned — nothing to save."));
-    return;
+    return false;
   }
   // Gli attributi si ricavano dal nome invece di chiedere quattro campi che si
   // compilerebbero a caso. Scrivere «profilo triste» basta a ritrovarlo, ed e'
@@ -1097,8 +1145,18 @@ void ZtoRigMouthsTab::onSaveSet() {
   QString why;
   if (!ZtoryMouthMap::save(ownerPath(), subSceneName(), m_map, &why)) {
     DVGui::warning(tr("Could not save the mouth set: %1").arg(why));
-    return;
+    return false;
   }
+  m_modified = false;
+  return true;
+}
+
+void ZtoRigMouthsTab::onSaveSet() {
+  if (writeCurrentSet()) afterSetWritten();
+}
+
+void ZtoRigMouthsTab::afterSetWritten() {
+  const QString setName = m_currentSetName;
   // ⚠️ La firma che evita le ricostruzioni inutili guarda scena e nomi dei
   // livelli: salvando un set NON cambia nessuno dei due, quindi senza
   // invalidarla la scheda resta convinta di sapere gia' tutto e il set appena
@@ -1110,11 +1168,53 @@ void ZtoRigMouthsTab::onSaveSet() {
   refreshSetCombo();    // ora l'elenco contiene quello nuovo
 
   m_filling = true;
-  m_setCombo->setCurrentIndex(setRow(ms.name));
+  m_setCombo->setCurrentIndex(setRow(setName));
   m_filling = false;
-  loadSet(m_map.indexOfSet(ms.name));
+  loadSet(m_map.indexOfSet(setName));
   m_note->setText(
       tr("Saved next to the level — it travels with the character."));
+}
+
+void ZtoRigMouthsTab::markModified() {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  m_modified          = true;
+  m_modifiedScene     = scene;
+  m_modifiedScenePath = scene ? scene->getScenePath() : TFilePath();
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  m_note->setText(tr("Not saved yet — Save, or save the scene (⌘S)."));
+}
+
+void ZtoRigMouthsTab::onSceneSaved() {
+  if (!m_modified || !m_level) return;
+  if (writeCurrentSet()) {
+    afterSetWritten();
+    return;
+  }
+  // Non scritto (nome non dato, set vuoto, errore): la scena e' salva ma il
+  // set no, e l'asterisco deve continuare a dirlo. La scena puo' aver cambiato
+  // percorso (Salva con nome): la modifica ora appartiene a quello.
+  ToonzScene *scene   = TApp::instance()->getCurrentScene()->getScene();
+  m_modifiedScene     = scene;
+  m_modifiedScenePath = scene ? scene->getScenePath() : TFilePath();
+  TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+}
+
+void ZtoRigMouthsTab::settlePendingEdits() {
+  if (!m_modified) return;
+  m_modified = false;
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  // Un'altra scena: il livello di prima non c'e' piu', e la domanda l'ha gia'
+  // fatta Tahoma chiudendo quella (vedi sceneSwitched nel costruttore).
+  if (!m_level || !scene || scene != m_modifiedScene ||
+      scene->getScenePath() != m_modifiedScenePath)
+    return;
+  const QString what =
+      m_currentSetName.isEmpty()
+          ? tr("the mouth mapping")
+          : tr("the mouth set «%1»").arg(m_currentSetName);
+  const int answer = DVGui::MsgBox(tr("Save the changes to %1?").arg(what),
+                                   tr("Save"), tr("Discard"), 1);
+  if (answer == 1) writeCurrentSet();
 }
 
 void ZtoRigMouthsTab::onDeleteSet() {
@@ -1147,6 +1247,7 @@ void ZtoRigMouthsTab::onDeleteSet() {
     return;
   }
   m_currentSetName.clear();
+  m_modified = false;
   // Stessa ragione del salvataggio: abbiamo scritto noi, la firma non lo sa.
   m_levelsSignature.clear();
   m_mapCache.clear();

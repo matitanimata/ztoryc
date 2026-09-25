@@ -39,6 +39,7 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QPushButton;
+class ToonzScene;
 
 class ZtoRigMouthsTab final : public QWidget {
   Q_OBJECT
@@ -55,6 +56,8 @@ private slots:
   void onNewSet();
   void onSaveSet();
   void onDeleteSet();
+  //! ⌘S della scena: salva anche il set in lavorazione (ZtoryModel::sceneSaved).
+  void onSceneSaved();
   //! Freccia sotto un riquadro: scorre i disegni del livello ancora.
   void onNavClicked(int id);
   //! Tasto destro su un riquadro: i bersagli sugli ALTRI livelli.
@@ -179,6 +182,23 @@ private:
   //! la lista caricherebbe un set che l'utente non ha scelto, buttando via
   //! l'assegnazione in corso.
   bool m_filling = false;
+
+  //! ── LE MODIFICHE ALLE CASELLE SEGUONO LA SCENA ─────────────────────────
+  //! Franco, 2026-09-25 (scelta «A»): cambiare una casella accende l'asterisco
+  //! della scena, e ⌘S salva anche il set. Prima la modifica viveva solo qui:
+  //! niente asterisco, ⌘S non la scriveva, e cambiando livello o set la si
+  //! buttava via senza dirlo.
+  bool       m_modified      = false;
+  ToonzScene *m_modifiedScene = nullptr;  //!< la scena in cui e' nata
+  TFilePath  m_modifiedScenePath;
+  void markModified();
+  //! Scrive il set corrente su disco, e basta: niente aggiornamento della UI.
+  //! Chiede il nome se non ce l'ha. false se non e' stato scritto.
+  bool writeCurrentSet();
+  //! Dopo una scrittura: tendine, pallini, set selezionato.
+  void afterSetWritten();
+  //! Prima di lasciare il set in lavorazione: Salva / Scarta.
+  void settlePendingEdits();
   //! Ricostruzione rimandata perche' la scheda non era visibile.
   bool m_dirty = false;
 
