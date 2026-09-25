@@ -1067,7 +1067,18 @@ FunctionSegmentViewer::FunctionSegmentViewer(QWidget *parent,
 }
 
 FunctionSegmentViewer::~FunctionSegmentViewer() {
-  if (m_curve) m_curve->release();
+  // Ztoryc: deregister BEFORE releasing. setSegment()/setSegmentByFrame() add
+  // this viewer as an observer of the curve, and the destructor only dropped
+  // the reference: the curve kept a dangling observer, and its next change
+  // (deleting a key, say) called onChange() on freed memory — a crash in
+  // TDoubleParam::Imp::notify. Stock Tahoma2D / OpenToonz have the same
+  // destructor but rarely destroy the Function Editor; Ztoryc rebuilds the
+  // rooms on every workflow switch (Franco, 2026-09-25, reproduced 3/3 under
+  // lldb). FunctionToolbar's destructor already does this.
+  if (m_curve) {
+    m_curve->removeObserver(this);
+    m_curve->release();
+  }
   m_curve = 0;
 }
 
