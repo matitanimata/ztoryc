@@ -170,6 +170,22 @@ stato e le prossime mosse sono nella ROADMAP.
 
 ## 🎬 Ztoryc — storyboard, animatic, thumbs
 
+### 🆕 APERTO 2026-09-25 — il mark out delle dissolvenze: tre strade, tre formule (dalla review di prova)
+
+Trovato da `ztoryc-reviewer` nel test degli agenti sul commit `ad3184c65`
+(report: `~/ZtorYc/reviews/2026-09-25_test-ad3184c65_reviewer.md`). Nessuno bloccante.
+1. **Marker gia' salvati nelle scene vecchie.** Il mark out sbagliato (shot +
+   dissolvenza INTERA) scritto prima del 24/09 e' stato salvato nei marker della
+   sotto-scena (`closeSubXsheet`, `subscenecommand.cpp:1355`). Riaprendo lo shot
+   **dal Board** (`onEditShot` → MI_OpenChild) vince il marker salvato: resta sbagliato.
+   Dall'animatic invece si ricalcola. Rimedio: ricalcolarlo anche in `onEditShot`, o
+   invalidare i marker quando cambia la dissolvenza.
+2. **Il Monitor ha una terza formula** (`ztorymonitorpanel.cpp:561-567`): lunghezza
+   grezza, senza note XD. Con una nota XD non esposta da' `vero` mentre l'animatic da'
+   `vero + meta'`. Proposta: un helper unico `ZtoryShotOps::shotMarkOut()` per tutti e tre.
+3. `ztoryanimatic.cpp:6828` ignora il ritorno di `shotTrueSpan` (se `false`, durata 0 o
+   negativa): effetto lieve, ma gli altri chiamanti lo controllano.
+
 ### UX (bassa priorità) — Camera-view editing difficile da controllare
 
 **Priorità: BASSA | Tipo: UX | Segnalato: 2026-05-30**

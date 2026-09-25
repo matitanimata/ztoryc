@@ -1,3 +1,53 @@
+## [2026-09-25] — governance AI e licenze: agenti di revisione, guardia SCANOSS, AI_DEVELOPMENT.md, audit OK
+
+Sessione senza sviluppo nuovo. Piano preparato da Franco in una chat (patch di 5 commit),
+applicato sul branch `governance-ai-licenze` e unito a master (`ed423195f`, `bf42d4898`).
+
+### Added
+- **Agenti di revisione** in `.claude/agents/`: `ztoryc-reviewer` (correttezza, coerenza,
+  prestazioni) e `license-guard` (licenze e provenienza). Si caricano all'avvio della
+  sessione: dalla prossima si chiamano per nome. Report in `~/ZtorYc/reviews/`.
+- **Guardia licenze nel pre-push** (`.githooks/pre-push`): scansione SCANOSS dei file di
+  codice pushati, blocca il push su codice GPL/LGPL/AGPL. Installata con
+  `scripts/install-git-safety.sh` (anche `merge.ours.driver`). Prima scansione al push: OK.
+  Strumenti: `scanoss-py` 1.54.2 e ScanCode 32.5.0 in `reference/tools/licenze-venv`
+  (collegati in `~/.local/bin`; ScanCode ha richiesto `libmagic` via Homebrew).
+- **Testi di licenza**: QXlsx (MIT) e GPLv3 integrale di espeak-ng (tag 1.52.0).
+- **`AI_DEVELOPMENT.md`** bilingue, approvato da Franco: sostituisce per Ztoryc
+  l'`AI_POLICY.md` di Tahoma2D; particolare attenzione alle licenze e parere di sviluppatori
+  esterni quando serve; per le PR verso Ztoryc i criteri di Shun Iwasawa per OpenToonz
+  (discussione #6937); le proposte upstream vanno a OpenToonz.
+- **`LICENSE_AUDIT.md`**: audit completo — 80 file scansionati, nessun copyleft; lettura
+  mirata di `plastictool_animate.cpp` contro le note su AnimeEffects: esito **OK**.
+
+### Modified
+- **`CLAUDE.md` diventa un file `@AGENTS.md`** (decisione di Franco): era un symlink a un
+  percorso ASSOLUTO di questo Mac, rotto su ogni altro clone e un file di testo su Windows.
+- AGENTS.md: licenza base **BSD 3-Clause** (non 2-Clause); in «nuova sessione» il passo 3b
+  (review aperte), in «sessione chiusa» il passo 0b (review di sessione).
+- Autori dei commit della patch uniformati a Franco (erano «Claude (chat)»), trailer invariato.
+
+### Fixed — documenti
+- `LICENSE_vosk_info.txt` diceva che i modelli portano un file di licenza: falso (solo un
+  README). Licenza Apache-2.0 verificata sulla tabella ufficiale dei modelli.
+- `license-guard` e la bozza della policy mettevano Rhubarb (MIT) e ffmpeg (LGPL) fra i GPL.
+- `LICENSE_AUDIT.md` diceva «deformatori raster riscritti dai paper»: non esistono nel codice.
+
+### Notes
+- **Tahoma2D ha aggiunto il 23/09 `CLAUDE.md`, `AGENTS.md` e `AI_POLICY.md`** (PR #2285):
+  i primi due ordinano agli agenti AI di rifiutare funzioni e modifiche oltre 2 file/100 righe.
+  **Merge di prova** da tahoma2d/master in una copia usa e getta: `AGENTS.md` e `CLAUDE.md`
+  restano i nostri (merge=ours funziona anche su file aggiunti da entrambe le parti);
+  `AI_POLICY.md` ENTRA → va tolto con `git rm` (annotato in `.gitattributes`). Altri 17
+  conflitti: il lavoro del prossimo aggiornamento.
+- ⚠️ Incidente durante la prova: nella copia `CLAUDE.md` era ancora il vecchio symlink e un
+  `cp` ha sovrascritto per un minuto `~/ZtorYc/AGENTS.md`; ripristinato dalla copia del repo.
+  Memoria: `feedback_claude_md_symlink_writethrough`.
+- La review di prova su `ad3184c65` ha trovato tre punti sul mark out delle dissolvenze
+  (marker salvati, formula del Monitor, ritorno ignorato): in ANIMATIC_TASKS.
+- `git am` era stato bloccato dal controllo automatico dei permessi: l'ha lanciato Franco.
+- Sul Dell: dopo il pull lanciare `scripts/install-git-safety.sh`.
+
 ## [2026-09-24c] — la 0.15.0, i task Kitsu completi, le dissolvenze a posto, e il riordino di tutti i documenti
 
 ### Fixed — audio (collaudati da Franco)
