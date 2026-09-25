@@ -1212,8 +1212,10 @@ void ZtoRigMouthsTab::settlePendingEdits() {
       m_currentSetName.isEmpty()
           ? tr("the mouth mapping")
           : tr("the mouth set «%1»").arg(m_currentSetName);
+  // ⚠️ MsgBox conta i pulsanti da 0: il predefinito (Invio) e' Save. Con 1
+  // Invio scartava le modifiche (review del 25/09).
   const int answer = DVGui::MsgBox(tr("Save the changes to %1?").arg(what),
-                                   tr("Save"), tr("Discard"), 1);
+                                   tr("Save"), tr("Discard"), 0);
   if (answer == 1) writeCurrentSet();
 }
 
