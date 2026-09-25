@@ -2,9 +2,9 @@
 
 ## Audit 1 — 2026-09-25 (preliminare, solo ScanCode)
 
-**Stato:** completato il 2026-09-25 con la prima passata SCANOSS (vedi «Audit 1 bis»
-in fondo). Esito: **OK CON RISERVE** — nessuna corrispondenza copyleft; la riserva e' il
-limite degli strumenti sul codice riscritto (vedi sotto).
+**Stato:** completato il 2026-09-25 con la prima passata SCANOSS e una lettura mirata del
+codice (vedi «Audit 1 bis» in fondo). Esito: **OK** — nessuna corrispondenza copyleft, e
+nessuna derivazione da AnimeEffects nelle parti nate con esso come riferimento.
 
 ### Perimetro
 File aggiunti o modificati da Ztoryc rispetto al tag `v1.6.3` di Tahoma2D
@@ -89,6 +89,16 @@ Riferimenti nei commenti (nessuno di codice): Moho come esempio d'interfaccia
 (`ztorigpanel.h:129`), un'idea di DragonBones sull'annealing IK (`plastictool_animate.cpp:1492`),
 la regola «GPL solo come processo separato» in `ztoryphonemes.h`.
 
-**Limite:** SCANOSS trova codice copiato, non codice riscritto. Per `plastictool_animate.cpp`
-(sculpt/FFD, pesi, IK: nato con AnimeEffects e DragonBones come riferimento concettuale) resta
-necessaria una lettura umana mirata contro `AE_REFERENCE_NOTES.md`.
+**Limite dello strumento, e lettura mirata che lo copre.** SCANOSS trova codice copiato, non
+codice riscritto. Per `plastictool_animate.cpp` (sculpt, pesi, IK, nato con AnimeEffects e
+DragonBones come riferimento concettuale) e' stata fatta il 2026-09-25 una lettura mirata
+contro `AE_REFERENCE_NOTES.md`. Esito **OK**:
+- il pennello di sculpt (correttive di giuntura, `d32e6c5ea`, 2026-07-28) e' **precedente**
+  alle note su AnimeEffects (2026-07-29), usa una caduta *smoothstep* (formula standard) e
+  non quadratica/quartica, realizza un concetto diverso (correttiva guidata dall'angolo del
+  giunto) ed e' costruito sulle strutture Plastic di Toonz;
+- il modello di pesi di AnimeEffects (capsula + smorzamento angolare) **non e' implementato**:
+  l'appartenenza dei vertici ai giunti usa l'ordine di sovrapposizione del Plastic;
+- da AnimeEffects sono state prese scelte di interfaccia (pennelli separati per dipingere e
+  cancellare l'influenza, posa separata dal rigging), dichiarate nel CHANGELOG;
+- IK: CCD/FABRIK sono algoritmi pubblicati; DragonBones non e' GPL.
