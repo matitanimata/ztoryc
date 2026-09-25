@@ -1,3 +1,62 @@
+## [2026-09-25b] — bocche e Base di ZtoRig, due crash, mark out unico, Character Mode, recupero dopo un crash
+
+Parentesi di bug fixing mentre Franco riggava i personaggi di Messina, poi il recupero dopo crash.
+
+### Fixed — crash
+- **Cancellando chiavi** (`c737444bb`, collaudato): `FunctionSegmentViewer` si registrava come
+  osservatore della curva e nel distruttore non si toglieva. Ztoryc ricostruisce le room a ogni cambio
+  di workflow, quindi il visore moriva e la curva lo chiamava alla prima chiave cancellata. Riprodotto
+  3/3 sotto lldb (osservatore con vtable a 0, `malloc_history` sul riuso). Stesso difetto in Tahoma2D
+  e OpenToonz: in UPSTREAM_PR_CANDIDATES.
+- **Edit mesh dopo un Cut Mesh** (DOTTO): NON riprodotto sotto lldb. Messa una protezione per le mesh
+  vuote in `closestVertex/closestEdge` e nell'aggancio del build (`5cbf0265c`), dichiarata come tale.
+
+### Fixed — bocche (`ee233cb56`, collaudato)
+- Una scena personaggio non eredita piu' i set di altri personaggi: la sotto-scena «sub» di BRONTOLO
+  riceveva le bocche di SOFIA (unica altra «sub» mappata). Tolta la seconda copia del recupero.
+- Il set del livello corrente compare sempre nella tendina; i livelli senza celle vanno in fondo come
+  «(unused)». In EOLO il profilo era salvato su `eolo_mammolo#bocchePr`, residuo senza celle (i loro
+  `.zmouth` sono nel Cestino, i livelli tolti dal cast da Franco).
+- Modificare una casella accende l'asterisco e ⌘S salva anche il set; cambiare livello o set con
+  modifiche chiede Save/Discard.
+
+### Fixed — mark out (`1a66fc6a2`)
+- `ZtoryShotOps::shotMarkOut()` unica per animatic, Monitor, Board e Open Sub-xsheet (erano tre formule;
+  il Board teneva il marker salvato delle scene vecchie). Dal Board si entra sul **mark in**, dalla
+  timeline sul mark out (decisione di Franco). Chiude la review di `ad3184c65`.
+
+### Added
+- **ZtoRig**: il cerchietto pieno della riga Base mette la Base in chiave (`78fc807dc`, collaudato).
+- **Character Mode** (`a952502ce`): la tendina legge il progetto scelto nel popup; non offre chi ha gia'
+  una scena collegata ed esistente; il Rigging passa a WIP creando la scena; «Link character scene…»
+  scrive anche `<character>` nel `.ztoryc`, con conferma se la scena e' uno shot, uno storyboard o di un
+  altro personaggio. FATINA e SOFIA collegate (FATINA era finita sullo shot `…chiamate,i_princess`,
+  rimesso com'era); tolto lo shot residuo dal `.ztoryc` di FATINA (copia `.pre-pulizia` accanto).
+- **Kitsu**: il pulsante diventa «● Connected» verde a login fatto; Push/Pull solo se connessi e collegati.
+- **Edit mesh: ⇧ + clic aggiunge alla selezione** di vertici e segmenti, oltre al ⌘ di Tahoma
+  (introvabile: Franco l'ha scoperto solo perche' gliel'ho detto).
+- **Fill In Empty Cells verso l'alto** (`17f17327a`, collaudato): ⌘ + clic, o «Fill In Empty Cells Upward».
+- **Recupero dopo un crash** (commit di fine sessione, collaudato con `kill -9` su kitsuTest01): copia
+  ogni 3 minuti di scena e livelli modificati in `<progetto>/.ztoryc_recovery/`, senza toccare i file
+  veri; riapertura → Recover/Discard, originali messi da parte in `replaced/`. Riprova appena finisce il
+  gesto. `ToonzScene::setSkipSceneIcon` per non renderizzare l'icona. Non e' l'autosave di Tahoma.
+  Dalla review corretti prima del commit: predefinito «Recover» (era «Discard», che cancellava il
+  recupero; stesso errore nel Save/Discard delle Bocche), dirty di livello e palette rimessi dopo la
+  copia (le palette legate a una studio palette perdevano il flag), recupero NON cancellato se
+  restano livelli modificati (Save Scene / Save All). Il resto della review in ANIMATIC_TASKS.
+
+### Upstream candidates
+- Guardie sulle mesh vuote in edit mesh (hardening, crash non riprodotto).
+- `FunctionSegmentViewer::~FunctionSegmentViewer()` non chiama `removeObserver` (Tahoma2D e OpenToonz).
+
+### Notes
+- Il «Loop» del Repeat esiste solo sulle SOLE chiavi dal 15/06: non era una regressione. Proposta di
+  estenderlo a celle+chiavi in ANIMATIC_TASKS.
+- Aperti: edit mesh (taglio da vertice a vertice con anteprima, cancellare un pezzo di mesh),
+  intercalazioni strane da osservare.
+- Tolta dal repo la cartella `profiles/` (un `preferences.ini` morto del 16/09), nel Cestino.
+- AeroSpace spostava Ztoryc sul BenQ; le tendine sul monitor sbagliato = assegnazione nel Dock.
+
 ## [2026-09-25] — governance AI e licenze: agenti di revisione, guardia SCANOSS, AI_DEVELOPMENT.md, audit OK
 
 Sessione senza sviluppo nuovo. Piano preparato da Franco in una chat (patch di 5 commit),

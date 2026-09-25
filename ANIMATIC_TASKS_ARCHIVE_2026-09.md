@@ -2972,3 +2972,40 @@ toonz/sources/toonzlib/timage_cache.h/.cpp  -- TImageCache
 toonz/sources/toonzlib/toonzscene.h/.cpp    -- ToonzScene
 toonz/sources/image/ffmpeg/               -- ffmpeg plugin + formati video
 
+### ✅ FATTO E COLLAUDATO 2026-09-25 — Recupero dopo un crash per la SCENA (come la Thumbs room)
+
+> Chiuso: `ztoryrecovery.h/.cpp` + `ToonzScene::setSkipSceneIcon` (commit di fine sessione 25/09). Copia ogni 3 min in `<progetto>/.ztoryc_recovery/` (decisione di Franco: dentro il progetto), livelli modificati compresi (`TXshSimpleLevel::save(dst, orig)` e' una copia: non azzera il dirty). Riprova appena finisce il gesto se il giro era saltato. Collaudato da Franco su kitsuTest01/testRecovery: snapshot di scena + png + mesh, `kill -9`, riapertura, Recover — tutto rimesso, originali in `replaced/`. Resta: `replaced/` non si svuota da sola (pulizia delle vecchie, se serve).
+
+**Priorita': subito dopo il crash del Cut Mesh** (Franco, 2026-09-25, dopo aver
+perso lavoro sulla mesh di DOTTO).
+- NON l'autosave di Tahoma (`TApp::autosave` → `IoCmd::saveAll`): quello scrive
+  sopra i file veri, rende definitivo cio' che non si voleva, blocca, e si pesta
+  i piedi coi salvataggi manuali ravvicinati.
+- Copia di RECUPERO ogni qualche minuto, solo se dirty e tool non occupato:
+  scena + livelli modificati in `.ztoryc_recovery/<scena>/` del progetto; i file
+  ufficiali non si toccano. Il salvataggio vero (o chiudere senza salvare) la
+  cancella. Riaprendo dopo un crash: «Recuperare il lavoro non salvato delle HH:MM?».
+- I `.bak` creati a ogni salvataggio RESTANO come sono (Franco, 2026-09-25): il
+  recupero si aggiunge, non li sostituisce.
+- ⚠️ Da verificare PRIMA di promettere: scrivere un livello (anche `.mesh`)
+  altrove SENZA cambiarne il percorso in memoria (niente Save As). Il lavoro
+  perso il 25/09 era nel `.mesh`, non nel `.tnz`.
+
+### ✅ CORRETTO 2026-09-25 — il mark out delle dissolvenze: tre strade, tre formule (dalla review di prova)
+
+> Chiuso con `1a66fc6a2`: `ZtoryShotOps::shotMarkOut()` unica per animatic, Monitor, Board e Open Sub-xsheet; il Board ricalcola invece di tenere il marker salvato; ritorno di `shotTrueSpan` controllato. Deciso da Franco: dal Board si entra sul MARK IN (per disegnare), dalla timeline sul mark out (per riempire dopo il trim).
+
+Trovato da `ztoryc-reviewer` nel test degli agenti sul commit `ad3184c65`
+(report: `~/ZtorYc/reviews/2026-09-25_test-ad3184c65_reviewer.md`). Nessuno bloccante.
+1. **Marker gia' salvati nelle scene vecchie.** Il mark out sbagliato (shot +
+   dissolvenza INTERA) scritto prima del 24/09 e' stato salvato nei marker della
+   sotto-scena (`closeSubXsheet`, `subscenecommand.cpp:1355`). Riaprendo lo shot
+   **dal Board** (`onEditShot` → MI_OpenChild) vince il marker salvato: resta sbagliato.
+   Dall'animatic invece si ricalcola. Rimedio: ricalcolarlo anche in `onEditShot`, o
+   invalidare i marker quando cambia la dissolvenza.
+2. **Il Monitor ha una terza formula** (`ztorymonitorpanel.cpp:561-567`): lunghezza
+   grezza, senza note XD. Con una nota XD non esposta da' `vero` mentre l'animatic da'
+   `vero + meta'`. Proposta: un helper unico `ZtoryShotOps::shotMarkOut()` per tutti e tre.
+3. `ztoryanimatic.cpp:6828` ignora il ritorno di `shotTrueSpan` (se `false`, durata 0 o
+   negativa): effetto lieve, ma gli altri chiamanti lo controllano.
+

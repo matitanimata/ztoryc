@@ -170,21 +170,29 @@ stato e le prossime mosse sono nella ROADMAP.
 
 ## 🎬 Ztoryc — storyboard, animatic, thumbs
 
-### 🆕 APERTO 2026-09-25 — il mark out delle dissolvenze: tre strade, tre formule (dalla review di prova)
+### 🆕 2026-09-25 — aperti dalla sessione (da decidere / da osservare)
 
-Trovato da `ztoryc-reviewer` nel test degli agenti sul commit `ad3184c65`
-(report: `~/ZtorYc/reviews/2026-09-25_test-ad3184c65_reviewer.md`). Nessuno bloccante.
-1. **Marker gia' salvati nelle scene vecchie.** Il mark out sbagliato (shot +
-   dissolvenza INTERA) scritto prima del 24/09 e' stato salvato nei marker della
-   sotto-scena (`closeSubXsheet`, `subscenecommand.cpp:1355`). Riaprendo lo shot
-   **dal Board** (`onEditShot` → MI_OpenChild) vince il marker salvato: resta sbagliato.
-   Dall'animatic invece si ricalcola. Rimedio: ricalcolarlo anche in `onEditShot`, o
-   invalidare i marker quando cambia la dissolvenza.
-2. **Il Monitor ha una terza formula** (`ztorymonitorpanel.cpp:561-567`): lunghezza
-   grezza, senza note XD. Con una nota XD non esposta da' `vero` mentre l'animatic da'
-   `vero + meta'`. Proposta: un helper unico `ZtoryShotOps::shotMarkOut()` per tutti e tre.
-3. `ztoryanimatic.cpp:6828` ignora il ritorno di `shotTrueSpan` (se `false`, durata 0 o
-   negativa): effetto lieve, ma gli altri chiamanti lo controllano.
+- **Recupero dopo crash — i punti rimandati della review** (`~/ZtorYc/reviews/2026-09-25b_reviewer.md`):
+  P2 restore che rimette un livello piu' vecchio di uno salvato a parte; P3 snapshot con livelli
+  falliti che sostituisce quello buono + sostituzione non atomica; P4 `replaceFile` che toglie
+  l'originale prima di sapere se la copia riesce; M1 marker/startRow nello snapshot; M2 palette di
+  scena e frame in piu' al restore; M3 cartella visibile su Windows, pulizia di `kept/`/`replaced/`;
+  M7 snapshot ripetuto senza cambiamenti. B1, B2, P1 gia' corretti.
+- **Tendina personaggi** (P5): la ricarica del DB puo' perdere un asset aggiunto dal lip sync e non
+  salvato (`ztorylipsyncdialog.cpp:162` senza `saveProjectDb`); manca `productionReloaded`.
+- **Bocche** (P6 a/b): l'autosave di Tahoma fa aprire da sola la finestra del nome del set; serve
+  una guardia di rientro e nessuna finestra dentro `onSceneSaved`.
+- **Fill Up** (M4): legge ⌘ anche quando il comando parte da una scorciatoia utente con ⌘.
+- **Link anyway** (M5): lascia due asset sulla stessa scena.
+
+- **Repeat con Loop anche su celle+chiavi** — PROPOSTA, non decisa. Oggi il Loop
+  c'e' solo sul Repeat di SOLE chiavi (`83882cc3d`, 15/06): non era una
+  regressione. Con keys-follow il ciclo continuo si ottiene selezionando un
+  fotogramma in meno. Proposta: «l'ultima riga del blocco e' la prima della
+  ripetizione dopo», per celle e chiavi insieme.
+- **Intercalazioni strane tra chiavi (colonna mesh di FATINA)** — DA OSSERVARE:
+  scena vecchia, chiavi buttate. Se ricapita: colonna, chiavi, cosa si vede, e
+  salvare prima di cancellare. Forse lo stesso «sussulto fra chiavi» di ZtoRig.
 
 ### UX (bassa priorità) — Camera-view editing difficile da controllare
 
@@ -678,6 +686,20 @@ Milestone:
 ---
 
 ## 🦴 ZtoRig / personaggio
+
+### 🆕 2026-09-25 — Edit mesh: taglio per percorso e cancellazione di un pezzo (richiesta di Franco)
+
+- **Taglio**: clic sul vertice di partenza e su quello d'arrivo, con ANTEPRIMA
+  del percorso di segmenti, poi Cut Mesh. Oggi la multi-selezione c'e' (⌘+clic,
+  e dal 25/09 anche ⇧+clic; Cut Mesh su una catena) ma e' un clic per segmento.
+  Franco (25/09): il Cut Mesh con la multi-selezione gli va bene cosi'; il taglio
+  da vertice a vertice resta un'idea, non urgente.
+- **Cancellare un insieme di vertici** = togliere un PEZZO di mesh lasciando il
+  buco: serve per le sporcature del disegno finite nella mesh (Franco).
+  Nell'edit mesh oggi non esiste nessuna cancellazione.
+- Crash in `closestVertex` dopo un Cut Mesh su DOTTO (25/09): NON riprodotto
+  sotto lldb; messa una protezione per le mesh vuote (`5cbf0265c`), non una
+  correzione dimostrata. Se ricapita: il log nuovo.
 
 > ⚠️ Il blocco «ORDINE DI PRIORITA'» qui sotto e' del 2026-08-16: l'ORDINE
 > e' superato dalla ROADMAP; restano validi i progetti (libreria di pose,

@@ -276,6 +276,43 @@ not portable.
   right — the new caller was wrong by itself. Worth remembering: an observation
   compatible with two explanations supports neither.
 
+#### ✨ New (2026-09-25)
+
+- 🔴 **CRASH deleting a key on a channel the Function Editor's segment viewer
+  once showed** — `toonzqt/functionsegmentviewer.cpp`,
+  `FunctionSegmentViewer::~FunctionSegmentViewer()`. `setSegment()` and
+  `setSegmentByFrame()` register the viewer as an observer of the curve
+  (`m_curve->addObserver(this)`), but the destructor only does
+  `m_curve->release()`: the curve keeps a dangling `TParamObserver*`. The next
+  change to that curve — deleting a key, say — runs
+  `TDoubleParam::Imp::notify()` over the observer set and calls `onChange()` on
+  freed memory: `EXC_BAD_ACCESS` in `tdoubleparam.cpp:332`, from
+  `TKeyframeSelection::deleteKeyframesWithShift` →
+  `TStageObject::removeKeyframeWithoutUndo`. **Reproduced 3/3 under lldb**
+  (debug build, `MallocScribble`): the offending observer is the only entry
+  besides the `TStageObject` itself, its vtable pointer reads 0, and
+  `malloc_history` shows its memory re-used by a widget built during a room
+  rebuild. **Fix:** `m_curve->removeObserver(this)` before the release —
+  exactly what `FunctionToolbar::~FunctionToolbar()` already does.
+  **Identical in Tahoma2D master and OpenToonz master.** Why it barely shows
+  upstream: the Function Editor is rarely destroyed while a scene lives.
+  Ztoryc rebuilds the rooms on every workflow switch, so the viewer dies with
+  the old room set and the crash comes at the first key edit on the channel it
+  was showing. Any upstream path that destroys a Function Editor panel (closing
+  a floating one, a room reload) should do the same. *(Fix built; verification
+  in the running app pending. Not verified on stock — to reproduce: show a
+  curve in a floating Function Editor, close the panel, delete a key on that
+  channel from the xsheet.)*
+
+- 🟡 **Hardening: nearest vertex/edge on an EMPTY mesh reads out of bounds** —
+  `tnztools/plastictool_meshedit.cpp`, `closestVertex(const TTextureMesh&, …)` /
+  `closestEdge(…)`: `std::min_element` on an empty range returns `end()`, then
+  `mesh.vertex(end.index())` is read. Called on every mouse move in mesh edit.
+  Guarded (skip empty/null meshes) + the build-mode snap in
+  `plastictool_build.cpp` falls back to the mouse position. `5cbf0265c`.
+  *(Hardening, NOT a proven fix: a crash there after a Cut Mesh could not be
+  reproduced under lldb.)*
+
 #### ✨ New (2026-09-24)
 
 - 🟠 **Sound goes silent for good after an underrun** —
