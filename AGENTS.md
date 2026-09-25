@@ -27,7 +27,7 @@ pipeline for 2D animation pre-production. It is the first open-source storyboard
 designed to work natively inside an animation application.
 
 - **Repository:** https://github.com/matitanimata/ztoryc
-- **Base:** Tahoma2D 1.6.0 (BSD 2-Clause License)
+- **Base:** Tahoma2D 1.6.0 (BSD 3-Clause License, come le aggiunte di Ztoryc: vedi `LICENSE.txt`)
 - **Code workspace (Claude Code):** `/Volumes/ZioSam/tahoma2d-workspace/tahoma2d`
 - **Code backup (Cowork):** `~/ZtorYc/tahoma2d-workspace_local/tahoma2d`
 - **Planning docs:** `~/ZtorYc/` (AGENTS.md, **ROADMAP_1.0.md**, CHANGELOG.md, ANIMATIC_TASKS.md, DESIGN.md)
@@ -362,6 +362,10 @@ When the user says **"nuova sessione"** (with or without additional text), autom
    Priority Order NON e' in fondo al file — seguono centinaia di righe. Una
    sessione che leggeva la coda si perdeva tutto.)
    I dettagli di un task si leggono solo quando lo si sta per implementare.
+3b. **Review aperte** (regola del 2026-09-25): leggere l'ultimo report in
+   `~/ZtorYc/reviews/` (i due file piu' recenti, `*_license.md` e `*_reviewer.md`).
+   Se ci sono punti **BLOCCANTI** ancora aperti, proporli PER PRIMI, prima del
+   lavoro nuovo.
 4. Report briefly: last session summary + what you'll work on today (starting from
    the highest-priority pending task in ANIMATIC_TASKS.md)
 
@@ -416,6 +420,18 @@ When the user says **"sessione chiusa"**, automatically:
    (`ANIMATIC_TASKS_ARCHIVE_2026-09.md`) con commit e data, e la ROADMAP
    aggiornata. Una voce, un posto solo. E' il passo che mancava: senza, il
    file si riempie di voci «aperte» chiuse da settimane.
+
+0b. **Review di sessione** (regola del 2026-09-25), PRIMA di commit e push:
+   eseguire i subagent **`ztoryc-reviewer`** e **`license-guard`**
+   (`.claude/agents/`) sulle modifiche della sessione. Salvare i report in
+   `~/ZtorYc/reviews/AAAA-MM-GG_reviewer.md` e `~/ZtorYc/reviews/AAAA-MM-GG_license.md`
+   (scrivendo con `cat >`, come per gli altri file su Drive).
+   - Se `license-guard` chiude con **BLOCCATO**: **non fare push**, riportare a
+     Franco e fermarsi.
+   - I punti bloccanti di `ztoryc-reviewer` si riportano a Franco: decide lui se
+     correggere subito o rimandare (e in quel caso si scrive nel report).
+   - Il pre-push (`.githooks/pre-push`) fa comunque la scansione SCANOSS: e' la
+     rete di sicurezza deterministica, non sostituisce la review.
 
 1. **Update `~/ZtorYc/CHANGELOG.md`** — prepend a new entry:
    ```
