@@ -112,7 +112,8 @@ toonz/Tahoma2D.app.extras/
 # del sorgente vero, versionarla vorrebbe dire avere due verita'.
 /toonz/sources/toonz/tests/parser_body.inc
 /toonz/sources/toonz/tests/align_body.inc
-.claude/
+.claude/*
+!.claude/agents/
 /toonz/Ztoryc.app/
 # Bundle rinominati dei worktree di feature (Ztoryc-SP.app e simili): senza
 # questa riga un `git add -A` da quel worktree stagia l'intero bundle, binari
