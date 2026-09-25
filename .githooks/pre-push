@@ -19,3 +19,98 @@ if [[ "$remote_name" != "origin" ]]; then
   echo "  SKIP_REMOTE_GUARD=1 git push $remote_name <branch>"
   exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# 2. Guardia licenze (SCANOSS) — aggiunta il 2026-09-25
+#
+# Scansiona SOLO i file di codice aggiunti o modificati nei commit che stanno
+# per essere pushati, cercando frammenti coincidenti con codice pubblico sotto
+# licenza copyleft (GPL / LGPL / AGPL). Se ne trova, BLOCCA il push.
+#
+# - Se scanoss-py non e' installato o il servizio non risponde: AVVISA e lascia
+#   passare (non deve impedire il lavoro offline).
+# - Bypass consapevole, stesso stile di SKIP_REMOTE_GUARD:
+#     SKIP_LICENSE_SCAN=1 git push origin <branch>
+# - Installazione: pip install scanoss   (fornisce il comando scanoss-py)
+# ---------------------------------------------------------------------------
+
+if [[ "${SKIP_LICENSE_SCAN:-0}" == "1" ]]; then
+  echo "license-scan: saltato (SKIP_LICENSE_SCAN=1)."
+  exit 0
+fi
+
+if ! command -v scanoss-py >/dev/null 2>&1; then
+  echo "license-scan: ATTENZIONE — scanoss-py non installato, scansione licenze saltata."
+  echo "              Installare con: pip install scanoss"
+  exit 0
+fi
+
+zero_sha="0000000000000000000000000000000000000000"
+code_re='\.(c|cc|cpp|cxx|h|hh|hpp|hxx|mm|m|py|js|ts|glsl|vert|frag|sh)$'
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+file_count=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ -z "${local_sha:-}" || "$local_sha" == "$zero_sha" ]] && continue   # cancellazione di branch
+  if [[ "$remote_sha" == "$zero_sha" ]]; then
+    # branch nuovo sul remote: confronto con il master di origin
+    base="$(git merge-base "$local_sha" "${remote_name}/master" 2>/dev/null || true)"
+    [[ -z "$base" ]] && continue
+  else
+    base="$remote_sha"
+  fi
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    [[ "$path" =~ $code_re ]] || continue
+    [[ "$path" == thirdparty/* ]] && continue   # librerie di terze parti: licenze note, verificate a parte
+    mkdir -p "$tmp_dir/$(dirname "$path")"
+    git show "$local_sha:$path" > "$tmp_dir/$path" 2>/dev/null || continue
+    file_count=$((file_count + 1))
+  done < <(git diff --name-only --diff-filter=AM "$base" "$local_sha")
+done
+
+if [[ "$file_count" -eq 0 ]]; then
+  exit 0
+fi
+
+echo "license-scan: scansione SCANOSS di $file_count file di codice..."
+if ! scanoss-py scan -M 180 -o "$tmp_dir/.scan.json" "$tmp_dir" >/dev/null 2>"$tmp_dir/.scan.err"; then
+  echo "license-scan: ATTENZIONE — scansione non riuscita (servizio non raggiungibile?). Push consentito."
+  tail -3 "$tmp_dir/.scan.err" 2>/dev/null || true
+  exit 0
+fi
+
+python3 - "$tmp_dir/.scan.json" "$tmp_dir" <<'PY'
+import json, re, sys
+report, root = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(report))
+except Exception as e:
+    print(f"license-scan: ATTENZIONE — report illeggibile ({e}). Push consentito.")
+    sys.exit(0)
+copyleft = re.compile(r"\b(A?GPL|LGPL)", re.I)
+hits = []
+for path, matches in data.items():
+    for m in matches or []:
+        if m.get("id") in (None, "none"):
+            continue
+        names = [l.get("name", "") for l in m.get("licenses", []) or []]
+        bad = [n for n in names if copyleft.search(n)]
+        if bad:
+            hits.append((path.replace(root, "").lstrip("/"), m.get("id"),
+                         m.get("component", "?"), m.get("lines", ""),
+                         m.get("oss_lines", ""), ", ".join(sorted(set(bad)))))
+if not hits:
+    print("license-scan: OK — nessuna corrispondenza con codice copyleft.")
+    sys.exit(0)
+print("")
+print("ERROR: push bloccato dalla guardia licenze (SCANOSS).")
+print("Corrispondenze con codice pubblico sotto licenza copyleft:")
+for f, kind, comp, lines, oss, lic in hits:
+    print(f"  - {f}  [{kind}] componente: {comp}  righe: {lines} (origine: {oss})  licenza: {lic}")
+print("")
+print("Verificare con license-guard / a mano. Se e' un falso positivo:")
+print("  SKIP_LICENSE_SCAN=1 git push origin <branch>")
+sys.exit(1)
+PY

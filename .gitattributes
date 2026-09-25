@@ -1,1 +1,8 @@
-
+# File delle regole per gli agenti AI: nei merge da upstream (Tahoma2D)
+# si tiene SEMPRE la versione di Ztoryc. Richiede:
+#   git config merge.ours.driver true   (lo imposta scripts/install-git-safety.sh)
+# Nota: il driver entra in gioco solo se entrambi i lati hanno modificato il file;
+# dopo ogni sync verificare comunque con git diff.
+AGENTS.md merge=ours
+CLAUDE.md merge=ours
+AI_POLICY.md merge=ours
