@@ -6,3 +6,7 @@
 AGENTS.md merge=ours
 CLAUDE.md merge=ours
 AI_POLICY.md merge=ours
+# ATTENZIONE: merge=ours protegge solo i file presenti da ENTRAMBE le parti.
+# L'AI_POLICY.md di Tahoma2D non e' tenuto in Ztoryc (lo sostituisce
+# AI_DEVELOPMENT.md, decisione di Franco del 2026-09-25): se un merge da
+# upstream lo aggiunge, va tolto con `git rm AI_POLICY.md` prima di committare.

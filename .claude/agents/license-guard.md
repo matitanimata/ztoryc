@@ -27,7 +27,8 @@ Verifiche:
    - verifica la licenza (ScanCode: `scancode -cl --json-pp out.json <cartella>`, oppure i file di licenza del pacchetto);
    - ammesse per linking o inclusione: MIT, BSD, Apache-2.0, zlib, ISC, OpenSSL, MPL-2.0 (a livello di file);
      LGPL solo con linking dinamico, da segnalare;
-   - GPL/AGPL: ammessi SOLO come processo separato (come espeak-ng, Rhubarb, ffmpeg), mai linkati né inclusi;
+   - GPL/AGPL: ammessi SOLO come processo separato (oggi l'unico e' espeak-ng; Rhubarb e' MIT,
+     ffmpeg e' usato in configurazione LGPL), mai linkati né inclusi;
      se ne viene distribuito il binario, verifica che venga distribuito anche il sorgente (come per espeak-ng);
    - ffmpeg: la configurazione non deve contenere --enable-gpl o --enable-nonfree;
    - licenze proprietarie o non chiare: bloccante;
