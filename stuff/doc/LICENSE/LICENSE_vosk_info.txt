@@ -20,6 +20,9 @@ Italian, repacked into a compressed container (see tools/pack_vosk_model.py)
 and unpacked to a cache folder on first use. Repacking changes only the
 container, not the model data.
 
-The models are published by Alpha Cephei at https://alphacephei.com/vosk/models
-under the Apache License 2.0. Each model directory carries its own licence file
-in the original distribution; that file is preserved inside the .zvosk archive.
+The models are vosk-model-small-en-us-0.15 and vosk-model-small-it-0.22,
+published by Alpha Cephei at https://alphacephei.com/vosk/models, where the
+model table lists both under the Apache License 2.0 (checked 2026-09-25).
+The model archives themselves do not include a licence file: they carry only a
+README (the English one states "Copyright 2020 Alpha Cephei Inc"). The Apache
+License 2.0 text that applies to them is the one in LICENSE_vosk.txt.
