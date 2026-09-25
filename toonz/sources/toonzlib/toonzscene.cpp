@@ -135,7 +135,11 @@ bool checkTail(TFilePath path, TFilePath tail, TFilePath &head) {
 
 //-----------------------------------------------------------------------------
 
+// Ztoryc: see ToonzScene::setSkipSceneIcon().
+bool s_skipSceneIcon = false;
+
 void makeSceneIcon(ToonzScene *scene) {
+  if (s_skipSceneIcon) return;
   TDimension cameraSize = scene->getCurrentCamera()->getRes();
 
   int maxSize               = 128;
@@ -600,6 +604,10 @@ public:
           m_scene->getTopXsheet()->getStageObjectTree());
   }
 };
+
+//-----------------------------------------------------------------------------
+
+void ToonzScene::setSkipSceneIcon(bool skip) { s_skipSceneIcon = skip; }
 
 //-----------------------------------------------------------------------------
 

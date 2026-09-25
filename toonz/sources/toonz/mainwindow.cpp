@@ -24,6 +24,7 @@ extern ToggleCommandHandler showMeshToggle;
 #include "aboutpopup.h"
 #include "filebrowserpopup.h"
 #include "ztorymodel.h"
+#include "ztoryrecovery.h"
 #include "storyboardpanel.h"
 #include "ztoryanimatic.h"
 
@@ -656,6 +657,10 @@ centralWidget->setLayout(centralWidgetLayout);*/
   // cambio di stanza.
   connect(ZtoryModel::instance(), &ZtoryModel::workflowChanged, this,
           [this](ZtoryWorkflow) { updateZtoryToolbarDedup(); });
+
+  // Copia di recupero della scena e dei livelli modificati, per un crash
+  // (vedi ztoryrecovery.h).
+  ZtoryRecovery::instance()->start();
 }
 
 //-----------------------------------------------------------------------------

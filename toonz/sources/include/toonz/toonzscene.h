@@ -99,6 +99,12 @@ public:
 
   void clear();  //!< Clears the scene.
 
+  //! Ztoryc: while true, save() does not render the scene icon. For the crash
+  //! recovery copy (ztoryrecovery.cpp), which is written every few minutes to
+  //! a private folder: rendering a frame each time would cost a render and
+  //! drop an icon nobody looks at.
+  static void setSkipSceneIcon(bool skip);
+
   void save(
       const TFilePath &path,
       TXsheet *subxsheet = 0);  //!< Saves the scene (or a sub-xsheet) at the
