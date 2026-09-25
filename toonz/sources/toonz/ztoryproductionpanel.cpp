@@ -8,6 +8,7 @@
 
 #include "toonzqt/gutil.h"
 #include "toonzqt/dvdialog.h"
+#include "ztorycharacter.h"  // declareCharacterScene
 
 #include "tundo.h"
 #include "tapp.h"
@@ -759,6 +760,7 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   // As soon as we're connected, pull the project's team so the assignee picker is
   // populated from Kitsu (Kitsu is authoritative on the roster while linked).
   connect(kc, &KitsuClient::loginFinished, this, [this](bool ok, const QString &) {
+    updateKitsuButtons();  // connection line + button text + Push/Pull
     ZtoryModel *mm = ZtoryModel::instance();
     if (ok && mm->isKitsuLinked())
       KitsuClient::instance()->pullTeam(mm->kitsuProjectId());
@@ -1404,7 +1406,14 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   m_kitsuLabel = new QLabel(QObject::tr("Not linked to Kitsu."), m_kitsuGroup);
   m_kitsuLabel->setWordWrap(true);
   kgl->addWidget(m_kitsuLabel);
+  // ⚠️ Two different things: LINKED (the project is bound to a Kitsu
+  // production — saved in production.ztrack, it survives restarts; the label
+  // above) and CONNECTED (logged in — lasts until Ztoryc closes; this button).
+  // The button always read «Connect to Kitsu…», so next to a green «linked»
+  // nobody could tell whether they were connected (Franco, 2026-09-25): it now
+  // turns into a green «Connected» — see updateKitsuButtons().
   auto *kitsuBtn = new QPushButton(QObject::tr("Connect to Kitsu…"), m_kitsuGroup);
+  m_kitsuConnectBtn = kitsuBtn;
   kgl->addWidget(kitsuBtn);
   connect(kitsuBtn, &QPushButton::clicked, this, [this] {
     KitsuConnectDialog dlg(this);
@@ -1560,7 +1569,23 @@ void ZtoryProductionPanel::reloadProjectTab() {
 void ZtoryProductionPanel::updateKitsuButtons() {
   // Opt-in: hide the whole Kitsu group unless the project uses Kitsu.
   if (m_kitsuGroup) m_kitsuGroup->setVisible(ZtoryModel::instance()->useKitsu());
-  const bool linked = ZtoryModel::instance()->isKitsuLinked();
+  // Push/Pull need BOTH: a production to talk to and a session to talk with.
+  // Enabled on «linked» alone they answered «Not logged in» after the click.
+  const bool loggedIn = KitsuClient::instance()->isLoggedIn();
+  const bool linked   = ZtoryModel::instance()->isKitsuLinked() && loggedIn;
+  // Once connected the same dialog is still needed (production, episode,
+  // statuses), so the button stays clickable — but it says the state instead
+  // of offering to connect again.
+  if (m_kitsuConnectBtn) {
+    m_kitsuConnectBtn->setText(loggedIn ? tr("● Connected")
+                                        : tr("Connect to Kitsu…"));
+    m_kitsuConnectBtn->setStyleSheet(loggedIn ? "color:#22D160;" : QString());
+    m_kitsuConnectBtn->setToolTip(
+        loggedIn ? tr("Connected as %1.\nClick for the Kitsu settings: "
+                      "production, episode, statuses.")
+                       .arg(KitsuClient::instance()->email())
+                 : tr("Log in to Kitsu to push or pull."));
+  }
   if (m_kitsuPushBtn)   m_kitsuPushBtn->setEnabled(linked);
   if (m_kitsuPullBtn)   m_kitsuPullBtn->setEnabled(linked);
   if (m_kitsuUploadBtn) m_kitsuUploadBtn->setEnabled(linked);
@@ -1827,7 +1852,44 @@ bool ZtoryProductionPanel::linkAssetFileInteractive(int assetIndex) {
       this, QObject::tr("Link file to %1").arg(a.name), start,
       isChar ? QObject::tr("Scenes (*.tnz)") : QObject::tr("All files (*)"));
   if (f.isEmpty()) return false;
+  // ⚠️ Collegare DICHIARA la scena personaggio (sotto): su uno shot o uno
+  // storyboard ne cambia il ruolo, su un altro personaggio ne ruba la scena.
+  // Due nomi quasi uguali bastano a sbagliare — FATINA finì su
+  // «Companion_non_chiamate,i_princess.tnz», uno shot vecchio, invece che su
+  // «…chiamatemi_princess.tnz» (Franco, 2026-09-25). Si chiede, non si fa.
+  if (isChar) {
+    const QString role = ZtoryCharacter::roleOf(f);
+    QString otherUuid, otherName;
+    ZtoryCharacter::characterRef(f, &otherUuid, &otherName);
+    QString problem;
+    if (role == QLatin1String("shot") || role == QLatin1String("storyboard"))
+      problem = QObject::tr("«%1» is a %2 scene, not a character scene.")
+                    .arg(QFileInfo(f).fileName(), role);
+    else if (!otherUuid.isEmpty() && otherUuid != a.uuid)
+      problem = QObject::tr("«%1» is already the scene of %2.")
+                    .arg(QFileInfo(f).fileName(),
+                         otherName.isEmpty() ? otherUuid : otherName);
+    if (!problem.isEmpty()) {
+      const int answer = DVGui::MsgBox(
+          problem + "\n\n" +
+              QObject::tr("Link it to %1 anyway, and mark it as %1's scene?")
+                  .arg(a.name),
+          QObject::tr("Link"), QObject::tr("Cancel"), 1);
+      if (answer != 1) return false;
+    }
+  }
   m->setAssetFilePath(assetIndex, f);
+  // Il legame va nei DUE sensi, come quando la scena nasce dal popup: il
+  // tracker sa qual e' la scena, e la scena (il suo .ztoryc) sa di essere
+  // questo personaggio — e' da li' che le mappe delle bocche prendono il
+  // personaggio a cui appartengono (Franco, 2026-09-25).
+  if (isChar) {
+    QString why;
+    if (!ZtoryCharacter::declareCharacterScene(f, a.uuid, a.name, &why))
+      DVGui::warning(
+          QObject::tr("The scene is linked, but could not be marked as %1: %2")
+              .arg(a.name, why));
+  }
   persistAssets();
   rebuildAssets();
   rebuildBreakdown();

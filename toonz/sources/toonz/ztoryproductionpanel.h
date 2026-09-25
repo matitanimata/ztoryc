@@ -52,6 +52,7 @@ class ZtoryProductionPanel final : public TPanel {
   QComboBox    *m_techCombo = nullptr;
   QLineEdit    *m_patternEdit = nullptr;   // B3d: naming pattern
   QLabel       *m_kitsuLabel = nullptr;    // M5: Kitsu link status
+  QPushButton  *m_kitsuConnectBtn = nullptr; // Connect… / Kitsu settings…
   bool          m_projLoading = false;
   // M5 — Kitsu sync controls, gated behind the project's opt-in flag (useKitsu):
   // the whole group is hidden unless the project enables Kitsu.

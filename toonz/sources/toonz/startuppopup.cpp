@@ -547,6 +547,10 @@ StartupPopup::StartupPopup(Mode mode)
                   return;
                 }
                 ZtoryModel::instance()->addAsset("Character", name.trimmed());
+                // Su disco SUBITO: refreshCharacterChoices() rilegge il
+                // production.ztrack, e un asset rimasto solo in memoria
+                // sparirebbe proprio mentre lo si sceglie.
+                ZtoryModel::instance()->saveProjectDb();
                 refreshCharacterChoices();
                 const int i = m_characterCB->findText(name.trimmed());
                 if (i >= 0) m_characterCB->setCurrentIndex(i);
@@ -1151,11 +1155,25 @@ void StartupPopup::applyWorkflowForScene(const QString &scenePath) {
 void StartupPopup::refreshCharacterChoices() {
   if (!m_characterCB) return;
   const QString keep = m_characterCB->currentText();
+  // ⚠️ Gli asset si leggono dal production.ztrack del progetto SCELTO QUI, non
+  // da quello che il modello ha in memoria. All'avvio il popup si apre prima di
+  // qualsiasi scena, il modello e' vuoto e la tendina mostrava solo «Add
+  // character…» (Franco, 2026-09-25, cs2606ME2_NCP). Tocca solo i dati di
+  // progetto, non lo storyboard: e' cio' che fa gia' il riquadro del
+  // Production Tracker qui accanto. E serve anche alla creazione, che scrive
+  // il collegamento alla scena e il Rigging in WIP proprio in questo modello.
+  ZtoryModel::instance()->loadProjectDb();
   m_characterCB->blockSignals(true);
   m_characterCB->clear();
   for (const Asset &a : ZtoryModel::instance()->assets())
-    if (a.type.compare("Character", Qt::CaseInsensitive) == 0)
+    if (a.type.compare("Character", Qt::CaseInsensitive) == 0) {
+      // Un personaggio che ha GIA' la sua scena non si offre di nuovo: una
+      // seconda scena dello stesso personaggio ruberebbe il collegamento alla
+      // prima (Franco, 2026-09-25). Conta il file vero, non il solo legame:
+      // se la scena e' stata cancellata il personaggio torna disponibile.
+      if (!a.filePath.isEmpty() && QFile::exists(a.filePath)) continue;
       m_characterCB->addItem(a.name, a.uuid);
+    }
   // Sempre in fondo: l'indice dell'ultima voce e' cio' che lo slot riconosce.
   m_characterCB->addItem(tr("＋ Add character…"), QString());
   const int i = m_characterCB->findText(keep);
@@ -1296,6 +1314,26 @@ void StartupPopup::onCreateButton() {
       for (int i = 0; i < m->assetCount(); i++)
         if (m->assets()[i].uuid == characterUuid) {
           m->setAssetFilePath(i, tnz);
+          // Creare la scena del personaggio E' cominciare il suo rig: il task
+          // Rigging passa a WIP (Franco, 2026-09-25). Solo in avanti: uno gia'
+          // in revisione o chiuso non si riporta indietro. Il nome si cerca
+          // senza badare alle maiuscole — nei progetti tirati da Kitsu convivono
+          // «Rigging» e «rigging» — ma si scrive quello del tipo Character.
+          {
+            QString rigTask;
+            for (const QString &tt :
+                 m->assetTaskTypesForType(m->assets()[i].type))
+              if (tt.compare("Rigging", Qt::CaseInsensitive) == 0) {
+                rigTask = tt;
+                break;
+              }
+            if (!rigTask.isEmpty()) {
+              const TaskStatus cur =
+                  m->assets()[i].tasks.value(rigTask).status;
+              if (cur == TaskStatus::Todo || cur == TaskStatus::Ready)
+                m->setAssetTaskStatus(i, rigTask, TaskStatus::Wip);
+            }
+          }
           // Gli asset vivono in production.ztrack, non nel .ztoryc: senza
           // questo il collegamento resterebbe solo in memoria e sparirebbe
           // alla chiusura — e il personaggio si ritroverebbe scollegato senza
@@ -1441,6 +1479,9 @@ void StartupPopup::setupProjectChange() {
   m_widthFld->setValue(size.lx);
   m_heightFld->setValue(size.ly);
   m_dpi = m_xRes / size.lx;
+  // Cambiato progetto: i personaggi sono i SUOI.
+  if (m_characterCB && m_workflowCB && m_workflowCB->currentIndex() == 4)
+    refreshCharacterChoices();
 }
 
 //-----------------------------------------------------------------------------

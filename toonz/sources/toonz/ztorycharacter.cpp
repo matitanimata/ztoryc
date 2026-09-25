@@ -140,6 +140,49 @@ bool ZtoryCharacter::isCharacterScene(const QString &scenePath) {
 
 //----------------------------------------------------------------------------
 
+//! Scrive <character uuid name/> nel sidecar ESISTENTE \p sidecar toccando solo
+//! quell'elemento: sostituisce il primo <character> (lo stesso che legge
+//! characterRef), o lo aggiunge subito dopo l'apertura di <ztoryc>.
+static bool setCharacterRefInSidecar(const QString &sidecar, const QString &uuid,
+                                     const QString &name, QString *error) {
+  auto fail = [&](const QString &msg) {
+    if (error) *error = msg;
+    return false;
+  };
+  QFile f(sidecar);
+  if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+    return fail(QObject::tr("cannot read %1").arg(QFileInfo(sidecar).fileName()));
+  QString text = QString::fromUtf8(f.readAll());
+  f.close();
+
+  QString elem = "<character";
+  if (!uuid.isEmpty()) elem += " uuid=\"" + uuid.toHtmlEscaped() + "\"";
+  if (!name.isEmpty()) elem += " name=\"" + name.toHtmlEscaped() + "\"";
+  elem += "/>";
+
+  QRegularExpression existing("<character\\b[^>]*/>");
+  QRegularExpressionMatch m = existing.match(text);
+  if (m.hasMatch()) {
+    text.replace(m.capturedStart(), m.capturedLength(), elem);
+  } else {
+    QRegularExpression open("<ztoryc\\b[^>]*>");
+    QRegularExpressionMatch om = open.match(text);
+    if (!om.hasMatch())
+      return fail(QObject::tr("%1 is not a Ztoryc file")
+                      .arg(QFileInfo(sidecar).fileName()));
+    text.insert(om.capturedEnd(), "\n    " + elem);
+  }
+
+  QFile w(sidecar);
+  if (!w.open(QIODevice::WriteOnly | QIODevice::Text))
+    return fail(QObject::tr("cannot write %1").arg(QFileInfo(sidecar).fileName()));
+  w.write(text.toUtf8());
+  w.close();
+  if (w.error() != QFile::NoError)
+    return fail(QObject::tr("writing %1 failed").arg(QFileInfo(sidecar).fileName()));
+  return true;
+}
+
 bool ZtoryCharacter::declareCharacterScene(const QString &scenePath,
                                            const QString &assetUuid,
                                            const QString &assetName,
@@ -154,10 +197,17 @@ bool ZtoryCharacter::declareCharacterScene(const QString &scenePath,
   if (sidecar.isEmpty())
     return fail(QObject::tr("not a scene path: %1").arg(scenePath));
 
-  // Se il sidecar c'e' gia' si cambia il solo ruolo, senza riscrivere il file:
-  // potrebbe contenere roba che non conosciamo, e buttarla via per dichiarare
-  // un ruolo sarebbe un prezzo assurdo.
-  if (QFile::exists(sidecar)) return setRole(scenePath, "character", error);
+  // Se il sidecar c'e' gia' si cambiano il ruolo e il riferimento al
+  // personaggio, senza riscrivere il file: potrebbe contenere roba che non
+  // conosciamo, e buttarla via sarebbe un prezzo assurdo.
+  // ⚠️ Prima si cambiava SOLO il ruolo: le scene dichiarate su un sidecar gia'
+  // esistente (FATINA, SOFIA) restavano personaggi senza sapere QUALE, e le
+  // loro mappe delle bocche nascevano senza personaggio (Franco, 2026-09-25).
+  if (QFile::exists(sidecar)) {
+    if (!setRole(scenePath, "character", error)) return false;
+    if (assetUuid.isEmpty() && assetName.isEmpty()) return true;
+    return setCharacterRefInSidecar(sidecar, assetUuid, assetName, error);
+  }
 
   QFile f(sidecar);
   if (!f.open(QIODevice::WriteOnly | QIODevice::Text))
