@@ -48,6 +48,7 @@ designed to work natively inside an animation application.
 ├── ANIMATIC_TASKS.md            ← symlink → Google Drive/Ztoryc/ANIMATIC_TASKS.md
 ├── ROADMAP_1.0.md               ← PRIORITA' per categoria (P1/P2/P3) — si legge per prima
 ├── PIANO_TUTORIAL.md            ← i video tutorial, in ordine
+├── PIANO_STUDIO_CODICE.md       ← symlink → Drive: Franco impara a leggere il codice (binario A/B)
 ├── DESIGN.md                    ← specifica funzionale (marzo)
 ├── DESIGN_production_tracker.md ← tracker, fasi A-E
 ├── DESIGN_export_to_ai.md       ← pipeline export-to-AI (tre macchine, sette passi)
@@ -418,6 +419,18 @@ Vale anche la sua indicazione complementare: **se controlli una cosa e non trovi
 errori evidenti, non intervenire** — riferire e fermare la modifica, non «già che
 ci sono» sistemare.
 
+### Spiegare il diff a Franco — REGOLA (Franco, 2026-09-26)
+
+E' il «binario A» di `~/ZtorYc/PIANO_STUDIO_CODICE.md`: Franco impara a leggere il
+codice senza togliere tempo al suo mestiere, dentro il lavoro che si fa gia'.
+
+- **Dopo ogni correzione o funzione, prima del commit:** spiegare il diff in
+  **cinque righe al massimo**, in italiano semplice, con accanto a ogni frase il
+  `file:riga` vero (o la riga di codice citata). Niente spiegazione senza la riga:
+  e' la regola «chiedi la riga» del piano, e vale anche quando Franco non la chiede.
+- **Non allungare la sessione:** se Franco dice «vai», si passa oltre. Lo scopo e'
+  abituarlo a vedere il codice, non fargli lezione.
+
 ---
 
 ### Trigger: "sessione chiusa"
@@ -441,6 +454,11 @@ When the user says **"sessione chiusa"**, automatically:
      correggere subito o rimandare (e in quel caso si scrive nel report).
    - Il pre-push (`.githooks/pre-push`) fa comunque la scansione SCANOSS: e' la
      rete di sicurezza deterministica, non sostituisce la review.
+   - **Un punto per Franco** (regola del 2026-09-26, binario A del piano di
+     studio): dal report di `ztoryc-reviewer` proporgli **un** punto da
+     controllare con i suoi occhi — il `file:riga` e la domanda a cui rispondere
+     («il pulsante predefinito qui e' quello sicuro?»). Scegliere un punto
+     leggibile, non il piu' tecnico. Se non ha tempo, si salta senza insistere.
 
 1. **Update `~/ZtorYc/CHANGELOG.md`** — prepend a new entry:
    ```

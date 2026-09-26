@@ -118,7 +118,7 @@ The project carries the know-how of Matitanimata, one of Italy's most respected 
 
 ### How Ztoryc is made
 
-The founder is an animation director, not a programmer. Ztoryc's code is written with AI — mainly Claude Code — from his designs: he decides what the tool must do and how it must behave, tests every change in real production, and approves what enters the repository. Two review agents and a licence scan on every push back him up. The details, and the rules we follow, are in [AI_DEVELOPMENT.md](AI_DEVELOPMENT.md).
+The founder is an animation director, not a programmer. Ztoryc's code is written with AI — mainly Claude Code — from his designs: he decides what the tool must do and how it must behave, tests every change in real production, and approves what enters the repository. Two review agents check each work session, and a licence scan runs on every push. The details, and the rules we follow, are in [AI_DEVELOPMENT.md](AI_DEVELOPMENT.md).
 
 Contributions, feedback, and ideas are welcome.
 
@@ -254,7 +254,7 @@ Il progetto porta con sé il know-how di Matitanimata, uno dei più importanti s
 
 ### Come nasce Ztoryc
 
-Chi l'ha fondato è un regista di animazione, non un programmatore. Il codice di Ztoryc è scritto con l'AI — soprattutto Claude Code — a partire dai suoi progetti: lui decide cosa deve fare lo strumento e come deve comportarsi, collauda ogni modifica in produzione vera e approva ciò che entra nel repository. Lo affiancano due agenti di revisione e una scansione delle licenze a ogni push. I dettagli, e le regole che seguiamo, sono in [AI_DEVELOPMENT.md](AI_DEVELOPMENT.md).
+Chi l'ha fondato è un regista di animazione, non un programmatore. Il codice di Ztoryc è scritto con l'AI — soprattutto Claude Code — a partire dai suoi progetti: lui decide cosa deve fare lo strumento e come deve comportarsi, collauda ogni modifica in produzione vera e approva ciò che entra nel repository. Due agenti di revisione controllano ogni sessione di lavoro, e a ogni push gira una scansione delle licenze. I dettagli, e le regole che seguiamo, sono in [AI_DEVELOPMENT.md](AI_DEVELOPMENT.md).
 
 Contributi, feedback e idee sono benvenuti.
 

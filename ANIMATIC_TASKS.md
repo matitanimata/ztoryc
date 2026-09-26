@@ -170,6 +170,22 @@ stato e le prossime mosse sono nella ROADMAP.
 
 ## 🎬 Ztoryc — storyboard, animatic, thumbs
 
+### 🆕 2026-09-26 — il `.ztoryc`: estrazione, prove, versione del formato (P1 prima del congelamento)
+
+Audit strutturale in sola lettura: `~/ZtorYc/reviews/2026-09-26_audit-ztoryc.md` (i punti R2, R3 e
+il save a ogni apertura li ha ricontrollati la sessione principale sul codice).
+- **Difetti che perdono dati, gia' oggi**: testi dei `.ztoryc` v1 scartati al load (servono `<panel>`,
+  il v1 non li ha); team/asset/produzione legacy mai passati al `.ztrack` e cancellati al primo save;
+  save con `WriteOnly` senza controllo errori, e risalvato a ogni apertura se c'e' la produzione.
+  Da CERCARE quanti file v1 esistono davvero nei progetti di Franco.
+- `version="2"` scritto e mai letto; il codice morto `ZtoryModel::save/load` scrive un "4".
+- Sei letture indipendenti dello stesso file, cinque ricette `.tnz`→`.ztoryc`.
+- **Ordine inderogabile**: corpus di file veri + fotografia del comportamento di oggi → header dati solo
+  QtCore → modulo `ztorycio` copiato senza correzioni (output identico) → ricollegare save poi load →
+  prove Qt Test in CI (target `ZTORYC_BUILD_TESTS`) → SOLO ALLORA correzioni, versione, migrazioni.
+- Da decidere (Franco) prima del congelamento: destino dei blocchi legacy e del percorso ASSOLUTO del
+  `.ztrack` scritto negli shot esportati.
+
 ### 🆕 2026-09-25 — aperti dalla sessione (da decidere / da osservare)
 
 - **Recupero dopo crash — i punti rimandati della review** (`~/ZtorYc/reviews/2026-09-25b_reviewer.md`):

@@ -1,3 +1,38 @@
+## [2026-09-26] — AI ed etica, README trasparente, audit del .ztoryc, piano di studio
+
+Sessione senza codice: una discussione sul vibe coding (partita da un thread anti-AI nel canale
+general del Discord di Tahoma2D) diventata decisioni e documenti.
+
+### Added
+- **README, sezione About (EN/IT)**: «How Ztoryc is made / Come nasce Ztoryc» — il fondatore e' un
+  regista di animazione, non un programmatore; il codice e' scritto con l'AI dai suoi progetti,
+  collaudato in produzione e approvato da lui; rimando ad `AI_DEVELOPMENT.md` (`4636d47c7`).
+- **Audit strutturale del `.ztoryc`** (`~/ZtorYc/reviews/2026-09-26_audit-ztoryc.md`, sola lettura):
+  `version="2"` scritto e mai letto; testi persi nei file v1; migrazione legacy verso il `.ztrack`
+  che non avviene; salvataggio non atomico e risalvato a ogni apertura. Stima 6-10 giorni.
+  → ROADMAP P1 (categoria Ztoryc) e ANIMATIC_TASKS, prima del congelamento.
+- **`PIANO_STUDIO_CODICE.md`** su Drive (symlink in `~/ZtorYc/`): Franco impara a leggere il codice
+  senza togliere tempo all'animazione — binario A dentro il lavoro, binario B 2 × 25 min/settimana.
+- **AGENTS.md**: regola «Spiegare il diff a Franco» (cinque righe con `file:riga` prima di ogni
+  commit) e «Un punto per Franco» nella review di sessione chiusa.
+- **`ECOSISTEMA_FONDAZIONE.md`**: la posizione di Franco sull'AI e l'ecosistema Toonz, e la proposta
+  di un fondo che paga sviluppatori umani per consolidare i prototipi nel nucleo. Spostato su Drive.
+
+### Fixed — documenti
+- README: licenza **BSD 3-Clause** (diceva 2-Clause).
+- AGENTS.md: `SamDrive` **e'** il Drive personale di Franco in modalita' mirror (diceva il contrario).
+
+### Decisioni di Franco
+- **Niente revisione totale del codice**: riordino continuo per priorita' — prima i dati (il
+  `.ztoryc`), poi i formati che la 1.0 congela, poi i moduli toccati dalle funzioni nuove.
+- Il contributo verso upstream passa per OpenToonz; con Tahoma nessun giudizio sulle persone in
+  pubblico.
+
+### Notes
+- **Google Drive**: dopo il riavvio del Mac «Il mio Drive» era sparito da `CloudStorage` e i symlink
+  di `~/ZtorYc/` puntavano nel vuoto (il mirror su SamDrive era intatto). Risolto chiudendo e
+  riaprendo Google Drive. Memoria: `reference_drive_mirror_samdrive`.
+
 ## [2026-09-25b] — bocche e Base di ZtoRig, due crash, mark out unico, Character Mode, recupero dopo un crash
 
 Parentesi di bug fixing mentre Franco riggava i personaggi di Messina, poi il recupero dopo crash.
