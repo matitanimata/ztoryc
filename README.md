@@ -116,9 +116,13 @@ Ztoryc was started by an animation director with over thirty years of experience
 
 The project carries the know-how of Matitanimata, one of Italy's most respected animation studios, whose deep roots in the Toonz ecosystem and years of production experience shaped the vision behind Ztoryc.
 
+### How Ztoryc is made
+
+The founder is an animation director, not a programmer. Ztoryc's code is written with AI — mainly Claude Code — from his designs: he decides what the tool must do and how it must behave, tests every change in real production, and approves what enters the repository. Two review agents and a licence scan on every push back him up. The details, and the rules we follow, are in [AI_DEVELOPMENT.md](AI_DEVELOPMENT.md).
+
 Contributions, feedback, and ideas are welcome.
 
-Based on Tahoma2D — BSD 2-Clause License.
+Based on Tahoma2D — BSD 3-Clause License.
 
 ---
 
@@ -248,9 +252,13 @@ Ztoryc è nato dal lavoro di un regista di animazione con oltre trent'anni di es
 
 Il progetto porta con sé il know-how di Matitanimata, uno dei più importanti studi di animazione italiani, le cui radici profonde nell'ecosistema Toonz e gli anni di esperienza produttiva hanno dato forma alla visione di Ztoryc.
 
+### Come nasce Ztoryc
+
+Chi l'ha fondato è un regista di animazione, non un programmatore. Il codice di Ztoryc è scritto con l'AI — soprattutto Claude Code — a partire dai suoi progetti: lui decide cosa deve fare lo strumento e come deve comportarsi, collauda ogni modifica in produzione vera e approva ciò che entra nel repository. Lo affiancano due agenti di revisione e una scansione delle licenze a ogni push. I dettagli, e le regole che seguiamo, sono in [AI_DEVELOPMENT.md](AI_DEVELOPMENT.md).
+
 Contributi, feedback e idee sono benvenuti.
 
-Basato su Tahoma2D — licenza BSD 2-Clause.
+Basato su Tahoma2D — licenza BSD 3-Clause.
 
 ---
 

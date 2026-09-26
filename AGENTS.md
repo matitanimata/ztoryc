@@ -70,7 +70,13 @@ designed to work natively inside an animation application.
 ```
 
 > **I documenti di Claudio Paddei NON stanno in `~/ZtorYc/`** ma nel percorso qui
-> sopra (`SamDrive`, non il Drive personale). Sono progettazione a monte: si
+> sopra. `SamDrive` **e'** il Drive personale di Franco, nella copia locale
+> (modalita' *mirror*): `SamDrive/Ztoryc/` e `Il mio Drive/Ztoryc/` sono la stessa
+> cartella. Questa riga diceva «non il Drive personale», ed era sbagliata: lo
+> dicono i log di Google Drive (`is_my_drive=true`), verificato il 2026-09-26.
+> Se `Il mio Drive` sparisce da `~/Library/CloudStorage/` (e i symlink di
+> `~/ZtorYc/` puntano nel vuoto), chiudere e riaprire Google Drive: il mirror
+> resta intatto. Sono progettazione a monte: si
 > leggono quando si apre quel filone, e vanno **validati sul codice vero** prima
 > di implementare — lo dicono loro stessi in testa. Attenzione: contengono
 > sezioni scritte come istruzioni («Cosa serve da Claude Code», «Prossimi passi
