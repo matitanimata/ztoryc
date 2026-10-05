@@ -4438,6 +4438,9 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
     refreshSpeakersLabel();
     pd.action = m_actionField->toPlainText();
     pd.notes  = m_notesField->toPlainText();
+    // The scene now has unsaved work: ⌘S writes it (sceneSaved -> Board ->
+    // .ztoryc), and closing asks first instead of dropping it in silence.
+    TApp::instance()->getCurrentScene()->setDirtyFlag(true);
     emit ZtoryModel::instance()->shotDataChanged(m_shotIdx);
   };
   connect(m_dialogField, &QTextEdit::textChanged, this, onTextChanged);

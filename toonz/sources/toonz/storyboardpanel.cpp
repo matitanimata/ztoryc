@@ -1829,6 +1829,14 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
             else setFollowMarker(-1, -1, false);
           });
 
+  // The scene's ⌘S writes the .ztoryc too.  Until now only the Board's own
+  // events wrote it, so text that reached the shots another way (the Shot
+  // Board navigator, the lip sync) was saved only if some Board event
+  // happened to follow — a dialogue typed in the navigator, then ⌘S and quit,
+  // was lost (docs/SHOT_OPS_AUDIT.md §7.5).
+  connect(ZtoryModel::instance(), &ZtoryModel::sceneSaved, this,
+          [this]() { saveZtoryc(); });
+
   connect(ZtoryModel::instance(), &ZtoryModel::shotDataChanged, this,
           [this](int si) {
     if (m_updating) return;
