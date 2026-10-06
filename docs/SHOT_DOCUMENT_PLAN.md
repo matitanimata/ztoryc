@@ -110,7 +110,18 @@ spento (`productionTracker="off"`), mai i file veri:
     ultima vista per pannello); `pullTrackingFromBoard` vuota; i `setShotsFrom` prima della
     pubblicazione → `reconcileWithXsheet`; il riallineamento del modello abbina per colonna solo se
     espone ancora la stessa sotto-scena (il riordino sposta le celle, non le colonne).
-  - Prove a mano da fare: testo nel Board di Ztoryc X visibile subito nel Board di Ztoryc T; Navigator;
+  - Review del 2b (2026-10-06): 2 bloccanti e 5 punti, tutti corretti — `ensurePanelWidgets` (i Board
+    allineano i loro widget ai pannelli condivisi: dal gestore degli avvisi e dalla riconciliazione);
+    riallineamento del modello a passate con «colonna attesa» per voce (se la colonna si è spostata
+    conta la colonna, se è ferma conta il dato: il riordino) — due Copy restano distinte;
+    `takeShotObject` non mette mai lo stesso oggetto in due posti; segno «fresco» azzerato dove la
+    lista si svuota e tolto quando un Board ha completato lo shot; colonne sempre in assoluto e con
+    controllo della sotto-scena (`reanchorColumnsFromScene`, altrimenti si ricostruisce); il «già
+    letto» ricorda l'oggetto scena (entrare/uscire da uno shot non fa rileggere il file); la
+    rilettura non scrive più `sequenceId` nel modello per indice. Rete di sicurezza: identica.
+  - Prove a mano da fare (aggiunte dalla review: secondo disegno in uno shot e i tre Board; Merge; Copy
+    e Paste prima dell'originale; riordino con una Copy; luce dal Navigator, poi entrare e uscire da
+    uno shot senza salvare): testo nel Board di Ztoryc X visibile subito nel Board di Ztoryc T; Navigator;
     «+»; Delete + Undo; Cut/Paste da Board e Animatic; riordino nel Board; Merge; Send to Board; luce
     dal Navigator; salvataggio, Revert Scene, cambio scena (nessun testo di un'altra scena).
 - Noto per il passo 3: dopo «Save Scene As» `saveZtoryc` non scrive (il percorso non coincide

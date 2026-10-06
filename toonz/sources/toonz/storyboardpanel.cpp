@@ -1876,6 +1876,8 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     for (int i = 0; i < (int)m_shots.size(); i++)
       if (m_shots[i].data.get() == sd) { si = i; break; }
     if (si < 0) return;
+    // Another Board may have re-counted the panels: match the widgets first.
+    if (ensurePanelWidgets(si)) rebuildGrid();
     Shot &shot = m_shots[si];
     for (int pi = 0; pi < (int)shot.panels.size() &&
                      pi < (int)shot.data->panels.size(); pi++) {
@@ -2950,6 +2952,40 @@ void StoryboardPanel::bindShotsToModel() {
   }
 }
 
+bool StoryboardPanel::ensurePanelWidgets(int si) {
+  if (si < 0 || si >= (int)m_shots.size()) return false;
+  Shot &shot = m_shots[si];
+  if (!shot.data || shot.panels.size() == shot.data->panels.size()) return false;
+  for (PanelWidget *pw : shot.panels) ztoryRetirePanelWidget(m_grid, pw);
+  shot.panels.clear();
+  for (int pi = 0; pi < (int)shot.data->panels.size(); pi++) {
+    addPanelWidget(si, pi);
+    if (pi >= (int)shot.panels.size()) break;
+    const PanelData &pd = shot.data->panels[pi];
+    shot.panels[pi]->setDuration(pd.duration);
+    shot.panels[pi]->setDialog(pd.dialog);
+    shot.panels[pi]->setAction(pd.action);
+    shot.panels[pi]->setNotes(pd.notes);
+  }
+  return true;
+}
+
+bool StoryboardPanel::reanchorColumnsFromScene() {
+  ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+  TXsheet *top    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
+  if (!top) return false;
+  std::vector<TXshChildLevel *> lv;
+  const std::vector<int> cols = ztoryShotColumns(top, &lv);
+  if (cols.size() != m_shots.size()) return false;
+  for (int i = 0; i < (int)m_shots.size(); i++)
+    if (m_shots[i].childLevel && m_shots[i].childLevel != lv[i]) return false;
+  for (int i = 0; i < (int)m_shots.size(); i++) {
+    m_shots[i].data->xsheetColumn = cols[i];
+    if (!m_shots[i].childLevel) m_shots[i].childLevel = lv[i];
+  }
+  return true;
+}
+
 bool StoryboardPanel::adoptCutShot(Shot &shot) {
   ZtoryModel *model   = ZtoryModel::instance();
   const ShotData *cut = model->cutShotFor(shot.childLevel);
@@ -3785,10 +3821,9 @@ void StoryboardPanel::loadZtoryc() {
           m_shots[si].data->transitionFrames = xml.attributes().value("transition").toInt();
           m_shots[si].data->technique        = xml.attributes().value("technique").toString();
           m_shots[si].data->tasks.clear();   // refilled by <task> children below
-          // sequenceId is synced here (ZtoryModel may already have shots);
-          // transitionFrames is synced later in refreshFromScene after syncShotPanels.
-          if (si < ZtoryModel::instance()->shotCount())
-            ZtoryModel::instance()->shot(si).sequenceId = m_shots[si].data->sequenceId;
+          // (The model's copy of sequenceId used to be set here by index: the
+          // object IS the model's now, step 2b — and on a re-read it is a
+          // private copy that must not reach the model.)
           // Backward compat (v1-v2 files written by StoryboardPanel):
           // if shotLabel absent, use shotNumber
           if (m_shots[si].data->shotLabel.isEmpty())
@@ -5067,6 +5102,7 @@ bool StoryboardPanel::reconcileShotsWithScene(
       // Re-detect a fresh shot, or one whose panels no longer cover the column.
       if ((fresh && !adopted.count(s.childLevel)) || sum != dur)
         toDetect.push_back(j);
+      model->markShotLoaded(s.data.get());  // set up: no longer fresh
       next.push_back(std::move(s));
     }
   }
@@ -5087,9 +5123,9 @@ bool StoryboardPanel::reconcileShotsWithScene(
 
   for (int si = 0; si < (int)m_shots.size(); si++) {
     Shot &shot = m_shots[si];
-    if (shot.panels.empty())
-      for (int pi = 0; pi < (int)shot.data->panels.size(); pi++)
-        addPanelWidget(si, pi);
+    // New shots have no widgets; a kept one may have the wrong count when
+    // another Board already re-counted its (shared) panels.
+    ensurePanelWidgets(si);
     for (int pi = 0; pi < (int)shot.panels.size(); pi++) {
       shot.panels[pi]->setShotIndex(si);
       shot.panels[pi]->setPanelIndex(pi, (int)shot.data->panels.size());
@@ -5194,16 +5230,18 @@ void StoryboardPanel::onShotInserted(int col) {
   m_shots.insert(m_shots.begin() + col, shot);
   // Columns in absolute terms, from the scene: the objects are shared, and a
   // relative shift (+1 for every later shot) would be applied once per Board.
-  {
-    const std::vector<int> cols = ztoryShotColumns(xsh);
-    for (int i = 0; i < (int)m_shots.size() && i < (int)cols.size(); i++)
-      m_shots[i].data->xsheetColumn = cols[i];
+  // A list that does not match the scene is rebuilt instead.
+  if (!reanchorColumnsFromScene()) {
+    refreshFromScene();
+    return;
   }
   bindShotsToModel();
   // A pasted Cut comes back with its data.  Its panels are re-detected only if
   // they no longer cover the column (as reconcileShotsWithScene does).
   bool redetect = false;
-  if (adoptCutShot(m_shots[col])) {
+  const bool adoptedHere = adoptCutShot(m_shots[col]);
+  ZtoryModel::instance()->markShotLoaded(m_shots[col].data.get());
+  if (adoptedHere) {
     int start = 0, dur = 0;
     if (ZtoryShotOps::shotTrueSpan(xsh, col, start, dur) &&
         m_shots[col].data->totalDuration() != dur)
@@ -5247,12 +5285,10 @@ void StoryboardPanel::onShotRemovedAt(int col) {
   m_shots.erase(m_shots.begin() + si);
 
   // Columns in absolute terms, from the scene (shared objects: a relative
-  // shift would be applied once per Board).
-  if (ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene()) {
-    const std::vector<int> cols =
-        ztoryShotColumns(scn->getChildStack()->getTopXsheet());
-    for (int i = 0; i < (int)m_shots.size() && i < (int)cols.size(); i++)
-      m_shots[i].data->xsheetColumn = cols[i];
+  // shift would be applied once per Board); rebuilt if the list does not match.
+  if (!reanchorColumnsFromScene()) {
+    refreshFromScene();
+    return;
   }
   bindShotsToModel();
 
@@ -5451,6 +5487,10 @@ void StoryboardPanel::refreshFromScene() {
   }
   m_widgetsBuiltByLoad = false;
   loadZtoryc();
+  // Set up from the file (or from the defaults above when there is none):
+  // none of these shots is fresh any more.
+  for (const Shot &shot : m_shots)
+    if (shot.data) ZtoryModel::instance()->markShotLoaded(shot.data.get());
   // loadZtoryc returned early (no .ztoryc, unreadable): build the widgets
   // from the scene's data.
   for (int si = 0; si < (int)m_shots.size() && !m_widgetsBuiltByLoad; si++) {
@@ -5990,6 +6030,7 @@ void StoryboardPanel::restoreFromSnapshot(const ZtoryBoardSnap &snapRef) {
     // had (a copy kept by the undo).
     shot.data  = modelShotFor(snap[i].data.xsheetColumn);
     *shot.data = snap[i].data;
+    ZtoryModel::instance()->markShotLoaded(shot.data.get());
     if (snap[i].level) shot.childLevel = snap[i].level->getChildLevel();
     // Keep the column recorded in the snapshot: overwriting it with `i` was the
     // same "shot index == column index" assumption as above, and it fed a wrong
@@ -6239,13 +6280,14 @@ void StoryboardPanel::onDeleteShot() {
       ztoryRetirePanelWidget(m_grid, pw);
     }
     m_shots.erase(m_shots.begin() + si);
-    // Aggiorna xsheetColumn degli shot rimasti che erano dopo col.
-    for (int i = 0; i < (int)m_shots.size(); i++)
-      if (m_shots[i].data->xsheetColumn > col)
-        m_shots[i].data->xsheetColumn--;
+    // (No relative shift of the later shots' columns here any more: the
+    // columns are deleted from the top down, so the lower ones this loop still
+    // looks for do not move; the rest are re-read from the scene below.)
     std::set<int> colSet; colSet.insert(col);
     ColumnCmd::deleteColumns(colSet, false, true);  // withoutUndo=true: our UndoBoardState owns this
   }
+  // Columns from the scene, in absolute terms (the objects are shared).
+  reanchorColumnsFromScene();
 
   m_selectedShotIndex = -1;
   m_selectedIndices.clear();
@@ -6313,8 +6355,6 @@ void StoryboardPanel::onAddShot() {
   // of onDeleteShot). Without this, onEditShot() opens the wrong sub-scene for
   // every shot after an in-the-middle insertion (e.g. click last → enter
   // penultimate).
-  for (Shot &s : m_shots)
-    if (s.data->xsheetColumn >= insertAt) s.data->xsheetColumn++;
 
   // The model's object for the new column (step 2b): reconciling, the model
   // gives it one panel as long as the column.
@@ -6333,6 +6373,9 @@ void StoryboardPanel::onAddShot() {
   if (shot.data->uuid.isEmpty())
     shot.data->uuid = makeSourcedUuid(QFileInfo(ztoryPath()).fileName());
   m_shots.insert(m_shots.begin() + insertAt, shot);
+  ZtoryModel::instance()->markShotLoaded(shot.data.get());
+  // Columns from the scene, in absolute terms (the objects are shared).
+  reanchorColumnsFromScene();
   addPanelWidget(insertAt, 0);
   if (!ZtoryModel::instance()->autoRenumber()) assignKeepNumbers(insertAt);
   renumberAll();

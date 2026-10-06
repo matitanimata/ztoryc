@@ -10,6 +10,7 @@
 #include "toonz/toonzscene.h"
 #include "toonz/txsheet.h"
 #include "toonz/txshcolumn.h"
+#include <map>
 #include "toonz/txshchildlevel.h"
 #include "toonz/txshcell.h"
 #include "toonz/txshsimplelevel.h"
@@ -169,7 +170,16 @@ ZtoryModel::ZtoryModel() : m_fps(24) {
   // here, in the model's constructor, so it runs before the Boards reload.
   if (TApp::instance() && TApp::instance()->getCurrentScene())
     connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
-            this, [this]() { m_shotDataLoadedFor.clear(); });
+            this, [this]() {
+              // Entering or leaving a shot also emits sceneSwitched: that is
+              // the same scene object, and re-reading its file would put it
+              // back over edits not saved yet (e.g. from the Shot Board
+              // navigator).  Opening a scene or Revert Scene make a NEW
+              // ToonzScene (IoCmd::loadScene) before dropping the old one.
+              if (TApp::instance()->getCurrentScene()->getScene() !=
+                  m_shotDataSceneObj)
+                m_shotDataLoadedFor.clear();
+            });
   // More than one Ztoryc may be open on the same project: read back what the
   // others write (debounced: one save can come as several file events).
   m_dbReloadTimer = new QTimer(this);
@@ -3284,6 +3294,7 @@ void ZtoryModel::load() {
   m_shots.clear();
   m_previews.clear();
   m_shotIds.clear();
+  m_freshShots.clear();
   m_sequences.clear();
 
   QXmlStreamReader xml(&file);
@@ -3533,6 +3544,7 @@ void ZtoryModel::recordShotIdentity(int si) {
   TXshChildLevel *cl = shotColumnLevel(top, col);
   m_shotIds[si].column = cl ? top->getColumn(col) : nullptr;
   m_shotIds[si].level  = cl;
+  m_shotIds[si].col    = cl ? col : -1;
 }
 
 ZtoryShotList::Ptr ZtoryModel::shotPtrForColumn(int col) const {
@@ -3553,6 +3565,10 @@ bool ZtoryModel::takeShotObject(int col, ZtoryShotList::Ptr holder) {
   if (!isFreshShot(current.get())) return false;
   const int i = indexOfShot(current.get());
   if (i < 0) return false;
+  // Never the same object in two places: if the model already has it
+  // elsewhere, two shots would share one.
+  const int already = indexOfShot(holder.get());
+  if (already >= 0 && already != i) return false;
   m_freshShots.erase(current.get());
   holder->xsheetColumn = col;
   m_shots.setPtr(i, std::move(holder));
@@ -3566,6 +3582,11 @@ void ZtoryModel::notifyShotEdited(const ShotData *sd) {
   m_previews[i].resize(m_shots[i].panels.size(), QPixmap());
   recordShotIdentity(i);
   emit shotDataChanged(i);
+}
+
+void ZtoryModel::setShotDataLoadedFor(const QString &ztoryPath) {
+  m_shotDataLoadedFor = ztoryPath;
+  m_shotDataSceneObj  = TApp::instance()->getCurrentScene()->getScene();
 }
 
 int ZtoryModel::indexOfShot(const ShotData *sd) const {
@@ -3594,37 +3615,56 @@ void ZtoryModel::reconcileWithXsheet() {
 
   const int n = (int)m_shots.size();
   std::vector<bool> taken(n, false);
-  auto find = [&](auto pred) {
-    for (int i = 0; i < n; i++)
-      if (!taken[i] && pred(i)) return i;
-    return -1;
-  };
   ZtoryShotList next;
   std::vector<std::vector<QPixmap>> nextPreviews;
   std::vector<ShotIdentity> nextIds;
+  // Where each entry is expected now.  If its column object moved in the scene
+  // (a shot inserted or deleted before it), the column says where the shot
+  // went and the entry's xsheetColumn is the stale one.  If the column stayed
+  // where it was and the entry says another column, the Board placed it there
+  // on purpose: its reorder moves the CELLS between columns that stay put.
+  std::map<TXshColumn *, int> colIndex;
+  for (int c = 0; c < top->getColumnCount(); c++)
+    if (TXshColumn *column = top->getColumn(c)) colIndex[column] = c;
+  std::vector<int> expected(n, -1);
+  for (int k = 0; k < n; k++) {
+    auto it = m_shotIds[k].column ? colIndex.find(m_shotIds[k].column)
+                                  : colIndex.end();
+    const int now = it != colIndex.end() ? it->second : -1;
+    expected[k] = (now >= 0 && now != m_shotIds[k].col) ? now
+                                                         : m_shots[k].xsheetColumn;
+  }
+  // Pass by pass over ALL the columns, the strictest first — one pass per
+  // column at a time let a looser test take an entry another column matched
+  // exactly (two Copies of the same sub-scene swapped their data).
+  const int J = (int)cols.size();
+  std::vector<int> match(J, -1);
   int matchedSame = 0, matchedLevel = 0, matchedIndex = 0, fresh = 0;
-  for (int j = 0; j < (int)cols.size(); j++) {
-    // 1. the same column object still showing the same sub-scene: the shot
-    //    itself, wherever the column moved
-    int i = find([&](int k) {
-      return m_shotIds[k].column == colObjs[j] && m_shotIds[k].level == levels[j];
-    });
-    if (i >= 0) matchedSame++;
-    // 2. the same sub-scene in another column: the Board's reorder moves the
-    //    CELLS between columns that stay put, and the undo re-creates columns
-    if (i < 0) {
-      i = find([&](int k) { return m_shotIds[k].level == levels[j]; });
-      if (i >= 0) matchedLevel++;
+  auto pass = [&](int &counter, auto pred) {
+    for (int j = 0; j < J; j++) {
+      if (match[j] >= 0) continue;
+      for (int k = 0; k < n; k++)
+        if (!taken[k] && pred(k, j)) {
+          match[j] = k;
+          taken[k] = true;
+          counter++;
+          break;
+        }
     }
-    // 3. an entry not matched to any column yet, appended for this one
-    if (i < 0) {
-      i = find([&](int k) {
-        return !m_shotIds[k].column && m_shots[k].xsheetColumn == cols[j];
-      });
-      if (i >= 0) matchedIndex++;
-    }
+  };
+  // 1. its sub-scene, where it is expected: the shot itself
+  pass(matchedSame, [&](int k, int j) {
+    return m_shotIds[k].level == levels[j] && expected[k] == cols[j];
+  });
+  // 2. its sub-scene, elsewhere (the undo re-creates columns)
+  pass(matchedLevel, [&](int k, int j) { return m_shotIds[k].level == levels[j]; });
+  // 3. an entry not matched to any column yet, appended for this one
+  pass(matchedIndex, [&](int k, int j) {
+    return !m_shotIds[k].column && m_shots[k].xsheetColumn == cols[j];
+  });
+  for (int j = 0; j < J; j++) {
+    const int i = match[j];
     if (i >= 0) {
-      taken[i] = true;
       next.push_back(m_shots.ptr(i));  // the object itself, not a copy
       nextPreviews.push_back(std::move(m_previews[i]));
     } else {
@@ -3640,7 +3680,7 @@ void ZtoryModel::reconcileWithXsheet() {
       nextPreviews.push_back({QPixmap()});
     }
     next.back().xsheetColumn = cols[j];
-    nextIds.push_back({colObjs[j], levels[j]});
+    nextIds.push_back({colObjs[j], levels[j], cols[j]});
   }
   const int dropped = n - (matchedSame + matchedLevel + matchedIndex);
   if (fresh || dropped || matchedLevel || matchedIndex)

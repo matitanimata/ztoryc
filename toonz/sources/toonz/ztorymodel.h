@@ -436,6 +436,7 @@ class ZtoryModel : public QObject {
   struct ShotIdentity {
     TXshColumn     *column = nullptr;
     TXshChildLevel *level  = nullptr;
+    int             col    = -1;  // where that column stood when recorded
   };
   std::vector<ShotIdentity>         m_shotIds;
   void recordShotIdentity(int si);  // from m_shots[si].xsheetColumn
@@ -445,6 +446,7 @@ class ZtoryModel : public QObject {
   // file again (a full rebuild mid-session) may fill only these.
   std::set<const ShotData *>        m_freshShots;
   QString                           m_shotDataLoadedFor;  // scene path, or empty
+  const void                       *m_shotDataSceneObj = nullptr;  // its ToonzScene
   int                               m_fps;
   QString                           m_ztoryPath;
   // Imported screenplay, stored as a path relative to the project ("+extras/
@@ -581,9 +583,7 @@ public:
   bool shotDataLoadedFor(const QString &ztoryPath) const {
     return !ztoryPath.isEmpty() && m_shotDataLoadedFor == ztoryPath;
   }
-  void setShotDataLoadedFor(const QString &ztoryPath) {
-    m_shotDataLoadedFor = ztoryPath;
-  }
+  void setShotDataLoadedFor(const QString &ztoryPath);
   int  fps() const { return m_fps; }
   void setFps(int fps) { if (fps > 0) m_fps = fps; }
   QString production() const { return m_production; }
@@ -1055,7 +1055,12 @@ public:
   void addShotFromRasters(const QString &name,
                           const std::vector<TRaster32P> &panels);
   // Clears model data only (no xsheet changes). Call before re-populating.
-  void clearShots() { m_shots.clear(); m_previews.clear(); }
+  void clearShots() {
+    m_shots.clear();
+    m_previews.clear();
+    m_shotIds.clear();
+    m_freshShots.clear();
+  }
   // Replace the model's shot list with the given one (the current scene's shots,
   // authored by the Board). Used right before publishing to the project DB so a
   // previously-open larger scene's leftover shots never leak into this project.
@@ -1065,6 +1070,7 @@ public:
     m_shots.resize(shots.size());
     for (int i = 0; i < (int)shots.size(); i++) m_shots[i] = shots[i];
     m_previews.resize(m_shots.size());
+    m_freshShots.clear();
     m_shotIds.assign(m_shots.size(), ShotIdentity());
     for (int i = 0; i < (int)m_shots.size(); i++) recordShotIdentity(i);
   }

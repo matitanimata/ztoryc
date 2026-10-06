@@ -375,6 +375,14 @@ struct Shot {
   // its column (one copy).  A fresh model entry takes the Board's object;
   // otherwise the Board takes the model's.
   void bindShotsToModel();
+  // The shot's panel widgets match its panels (count), rebuilding them if not:
+  // the data is shared, so another Board may have changed the panels.  true if
+  // rebuilt (the caller then relays out the grid).
+  bool ensurePanelWidgets(int si);
+  // Set every shot's column from the scene, in absolute terms, after checking
+  // that shot i really is the i-th shot column's sub-scene.  false (nothing
+  // written) if the Board's list does not match the scene.
+  bool reanchorColumnsFromScene();
   void    updateColumnName(int si);
   void    loadZtoryc();
   // Production-tracking bridge: ZtoryModel is the authoritative store for the
