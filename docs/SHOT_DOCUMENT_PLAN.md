@@ -82,12 +82,17 @@ spento (`productionTracker="off"`), mai i file veri:
 - [x] Passo 0 — il ⌘S della scena scrive il `.ztoryc` (segnale `sceneSaved` → Board), il Navigator
   segna la scena come modificata (provato sul Mac); rete di sicurezza `ZTORYC_ROUNDTRIP` con base
   `out/base1` (2026-10-06).
-- [~] Passo 1 — `ZtoryModel::reconcileWithXsheet()` alla fine di `resequenceXsheet`, identità per
+- [x] Passo 1 — `ZtoryModel::reconcileWithXsheet()` alla fine di `resequenceXsheet`, identità per
   voce in `m_shotIds` (colonna + sotto-scena, solo in memoria); abbinamento: stessa colonna → stessa
   sotto-scena con colonna sparita (undo) → stessa posizione per le voci appena aggiunte
   (`addShotNamed`, `addShotFromRasters`). Rete di sicurezza: sei scene identiche alla base
-  (2026-10-06). **Manca la prova a mano**: «+» dell'Animatic in mezzo e Navigator sullo shot nuovo;
-  tecnica dopo il «+»; Cut/Paste; undo di un Delete; Send to Board.
+  (2026-10-06). Prova a mano fatta (2026-10-06): «+» dell'Animatic in mezzo → «4 → 5, 1 nuovo», tecniche
+  al loro posto, il Navigator trova lo shot nuovo (prima: crash/«No shot») e mostra il suo numero
+  (`renumberAll` passa l'etichetta alla voce del modello sulla stessa colonna); la battuta scritta lì
+  arriva nel `.ztoryc` dello shot giusto. Delete + Undo: «6 → 5, 1 gone», poi «5 → 6, 5 by sub-scene,
+  1 new» — l'undo ricrea tutte le colonne; lo shot ripristinato rientra nel modello come voce nuova
+  (senza i dati che stanno solo nel modello: per i testi comanda ancora il Board). **Da fare al passo
+  2**: un «cimitero» degli shot cancellati, ripresi per sotto-scena. Non provati: Send to Board.
 - Noto per il passo 3: dopo «Save Scene As» `saveZtoryc` non scrive (il percorso non coincide
   con `m_currentZtoryPath`), come già prima.
 - Scoperto il 2026-10-06: **Cut → Paste dal Board perde i testi dello shot** e dà uuid doppi

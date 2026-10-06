@@ -2276,6 +2276,17 @@ void StoryboardPanel::renumberAll() {
       assignBoardShotLabel(i);
     }
     updateColumnName(i);
+    // The model entry on the same column takes the label too: the model now
+    // follows the scene (reconcileWithXsheet), so a shot just added from the
+    // Animatic is already there — without its number, which only the Board
+    // assigns.  Same column = same shot; otherwise leave it alone.
+    if (i < model->shotCount() &&
+        model->shot(i).xsheetColumn == shot.data.xsheetColumn) {
+      ShotData &md  = model->shot(i);
+      md.shotLabel  = shot.data.shotLabel;
+      md.shotNumber = shot.data.shotNumber;
+      md.orderIndex = shot.data.orderIndex;
+    }
     // Resolve sequence label for display
     QString seqLabel;
     if (!shot.data.sequenceId.isEmpty()) {
