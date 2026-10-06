@@ -386,16 +386,10 @@ struct Shot {
   bool reanchorColumnsFromScene();
   void    updateColumnName(int si);
   void    loadZtoryc();
-  // Production-tracking bridge: ZtoryModel is the authoritative store for the
-  // tracking fields (uuid, technique, tasks) edited by the Production Tracker.
-  // The Board's m_shots copy is just the .ztoryc serialization buffer, synced
-  // model⇄Board at the load/save/export boundaries so panel edits round-trip.
-  void    pushTrackingToBoard();    // model → Board (before save / export)
-  void    pullTrackingFromBoard();  // Board → model (after load)
-  // Assign a stable uuid to any shot missing one.  afterLoad: the Board and the
-  // model were just filled from the same file (legacy scenes without uuids
-  // match by position only then).
-  void    ensureShotUuids(bool afterLoad = false);
+  // Assign a stable uuid to any shot missing one (or claimed by another
+  // storyboard).  The Board's shots are the model's objects, so the model
+  // gets the same uuid.
+  void    ensureShotUuids();
 public:
   explicit StoryboardPanel(QWidget *parent = nullptr);
   void    saveZtoryc();

@@ -2184,8 +2184,6 @@ void StoryboardPanel::connectPanelWidget(PanelWidget *pw) {
       m_shots[i].data->sequenceId = seq->uuid;
       for (PanelWidget *pw2 : m_shots[i].panels)
         pw2->setSeqLabel(seq->label);
-      if (i < model->shotCount())
-        model->shot(i).sequenceId = seq->uuid;
     }
     // If resetOnSeqChange is active, renumber all shots so SH numbers
     // are recalculated relative to their (new) sequence.
@@ -2256,17 +2254,6 @@ void StoryboardPanel::renumberAll() {
       assignBoardShotLabel(i);
     }
     updateColumnName(i);
-    // The model entry on the same column takes the label too: the model now
-    // follows the scene (reconcileWithXsheet), so a shot just added from the
-    // Animatic is already there — without its number, which only the Board
-    // assigns.  Same column = same shot; otherwise leave it alone.
-    if (i < model->shotCount() &&
-        model->shot(i).xsheetColumn == shot.data->xsheetColumn) {
-      ShotData &md  = model->shot(i);
-      md.shotLabel  = shot.data->shotLabel;
-      md.shotNumber = shot.data->shotNumber;
-      md.orderIndex = shot.data->orderIndex;
-    }
     // Resolve sequence label for display
     QString seqLabel;
     if (!shot.data->sequenceId.isEmpty()) {
@@ -2867,7 +2854,7 @@ static QString makeSourcedUuid(const QString &sourceFile) {
   return QUuid::createUuidV5(ns, shotSeed.toString()).toString(QUuid::WithoutBraces);
 }
 
-void StoryboardPanel::ensureShotUuids(bool afterLoad) {
+void StoryboardPanel::ensureShotUuids() {
   ZtoryModel *m = ZtoryModel::instance();
 
   // Build a (uuid → source) map from the project DB to detect cross-storyboard
@@ -2891,40 +2878,10 @@ void StoryboardPanel::ensureShotUuids(bool afterLoad) {
     }
   };
 
-  // The Board's uuid only: taking the model's at the same POSITION gave a new
-  // shot (a clone, just pasted) the uuid of whichever shot the stale model
-  // list had there. A legacy shot without one got it from pushTrackingToBoard,
-  // which saveZtoryc now runs first.
-  //
-  // The model entry follows the Board's only when it is the SAME shot: found
-  // by the uuid the Board had before resolving, never by position (or, both
-  // lists without uuids and of equal length, a legacy scene just loaded).
-  // The model's list can be a shot behind the
-  // Board's: an Add from the Animatic reaches the Board through its incremental
-  // path, which never touches the model.  Writing by position then shifted
-  // every later uuid by one, and the next pushTrackingToBoard (the other Board
-  // instances save right after) handed each shot the technique and tasks of
-  // the one after it.
-  QHash<QString, int> modelByUuid;  // same matching as pushTrackingToBoard
-  for (int i = 0; i < m->shotCount(); i++) {
-    const QString &u = m->shot(i).uuid;
-    if (u.isEmpty()) continue;
-    modelByUuid[u] = modelByUuid.contains(u) ? -1 : i;  // -1: claimed twice
-  }
-  const bool sameLength = m->shotCount() == (int)m_shots.size();
-  for (int i = 0; i < (int)m_shots.size(); i++) {
-    QString &bu          = m_shots[i].data->uuid;
-    const QString before = bu;
-    resolveUuid(bu);
-    int mi = -1;
-    if (!before.isEmpty())
-      mi = modelByUuid.value(before, -1);
-    else if (afterLoad && sameLength && m->shot(i).uuid.isEmpty())
-      mi = i;  // legacy scene, just loaded: both lists without uuids.  Only
-               // right after the load: on a later save the model can be a
-               // shot behind the Board, and the position means nothing.
-    if (mi >= 0) m->shot(mi).uuid = bu;
-  }
+  // The shots are the model's objects (step 2b): resolving the Board's uuid
+  // resolves the model's.  The old copy into the model — by uuid, by position
+  // for legacy scenes — had nothing left to do.
+  for (Shot &shot : m_shots) resolveUuid(shot.data->uuid);
 }
 
 ZtoryShotList::Ptr StoryboardPanel::modelShotFor(int col) {
@@ -3039,48 +2996,6 @@ bool StoryboardPanel::shotDataForColumn(int col, ShotData *out) {
       return true;
     }
   return false;
-}
-
-void StoryboardPanel::pushTrackingToBoard() {
-  // By UUID, not by position. Nothing keeps the model's shot list in step
-  // with the Board's between two saves (no ZtoryModel::addShot/removeShot on
-  // any shot operation): after a delete or a merge the model still has the old
-  // list, and copying by index handed every later shot the tasks of the one
-  // before it. The index is used only for a shot with no uuid yet, and only
-  // when the two lists have the same length (a scene from before the uuids).
-  ZtoryModel *m = ZtoryModel::instance();
-  QHash<QString, int> byUuid;
-  for (int i = 0; i < m->shotCount(); i++) {
-    const QString &u = m->shot(i).uuid;
-    if (u.isEmpty()) continue;
-    if (byUuid.contains(u))
-      byUuid[u] = -1;  // two model shots claim it: trust neither
-    else
-      byUuid.insert(u, i);
-  }
-  // A shot without a uuid takes nothing from the model.  The positional
-  // fallback that used to be here (equal lengths -> same index) handed a shot
-  // just pasted after a Cut the uuid, technique and tasks of whichever shot the
-  // stale model list had at that position: one Cut + Paste left two shots with
-  // the same uuid (docs/SHOT_OPS_AUDIT.md §7.6).  Legacy scenes without uuids
-  // do not need it: loadZtoryc copies Board -> model first
-  // (pullTrackingFromBoard) and ensureShotUuids gives both the same uuid.
-  for (int i = 0; i < (int)m_shots.size(); i++) {
-    ShotData &bd = *m_shots[i].data;
-    if (bd.uuid.isEmpty()) continue;
-    const int mi = byUuid.value(bd.uuid, -1);
-    if (mi < 0) continue;
-    const ShotData &md = m->shot(mi);
-    if (!md.uuid.isEmpty()) bd.uuid = md.uuid;
-    bd.technique = md.technique;
-    bd.tasks     = md.tasks;
-  }
-}
-
-void StoryboardPanel::pullTrackingFromBoard() {
-  // Nothing to copy any more: the Board's shots ARE the model's objects
-  // (step 2b).  Copying by index into model->shot(i) could only ever write
-  // into another shot's object.  To be removed in step 2c.
 }
 
 QPixmap StoryboardPanel::firstPanelThumbnail(int shotIdx) const {
@@ -3458,9 +3373,8 @@ void StoryboardPanel::saveZtoryc() {
       xml.writeEndElement();
     }
   }
-  // Make the Board copy reflect the model (tracker edits) before serializing,
-  // and guarantee every shot has a stable uuid.
-  pushTrackingToBoard();  // first: it matches the model by uuid
+  // Guarantee every shot has a stable uuid.  (Tracker edits need no copying:
+  // the Board's shots are the model's objects.)
   ensureShotUuids();
   for (int si = 0; si < (int)m_shots.size(); si++) {
     const Shot &shot = m_shots[si];
@@ -4036,11 +3950,8 @@ void StoryboardPanel::loadZtoryc() {
   for (int i = 0; i < (int)m_shots.size(); i++)
     ZtoryModel::instance()->notifyShotEdited(m_shots[i].data.get());
   m_loadingZtoryc = false;
-  // Bridge: model becomes the live store for tracking fields BEFORE any
-  // saveZtoryc below (so a re-save can't push stale/empty model data over the
-  // freshly-loaded Board copy). Backfill uuids for pre-uuid (legacy) scenes.
-  pullTrackingFromBoard();
-  ensureShotUuids(/*afterLoad=*/true);
+  // Backfill uuids for pre-uuid (legacy) scenes.
+  ensureShotUuids();
   // Mark shot scenes BEFORE any saveZtoryc() below so the companion .ztoryc is
   // never rewritten with role="storyboard".
   m_currentSceneIsShot      = (sceneRole == "shot");
@@ -4713,8 +4624,8 @@ void StoryboardPanel::onModelResequenced() {
   // If shot count changed (e.g. Animatic deleted/merged shots), do a full rebuild.
   //
   // IMPORTANT: use the actual xsheet child-column count, NOT ZtoryModel::m_shots.size().
-  // ZtoryModel::m_shots can be stale after copy/paste/clone sequences that bypass
-  // ZtoryModel::addShot()/removeShot(). Using it as reference caused double-removal:
+  // ZtoryModel::m_shots follows the xsheet only at the end of a resequence
+  // (reconcileWithXsheet). Using it as reference caused double-removal:
   // refreshFromScene() fired here AND shotRemovedAt() fired afterward → Board lost
   // one extra shot after a cross-panel merge.
   TXsheet *xsh = TApp::instance()->getCurrentScene()->getScene()
@@ -5184,8 +5095,7 @@ bool StoryboardPanel::reconcileShotsWithScene(
     for (PanelWidget *pw : m_shots[si].panels) pw->setTotalDuration(total);
   }
   rebuildGrid();
-  // Tracking data follows each shot by uuid (pushTrackingToBoard), and the
-  // save aligns the model's list with the Board's.
+  // Tracking data lives in the shot objects themselves (shared with the model).
   saveZtoryc();
   for (int i = 0; i < (int)m_shots.size(); i++)
     model->notifyShotEdited(m_shots[i].data.get());
@@ -5578,18 +5488,10 @@ void StoryboardPanel::refreshFromScene() {
   updateNumberingLock();
   renumberAll();
   rebuildGrid();
-  // Re-sync labels + xsheet columns AFTER renumberAll so ZtoryModel always
-  // has the final (post-renumber) shot labels and correct column indices.
-  // The earlier syncShotPanels in loadZtoryc may have had empty labels for
-  // scenes without a .ztoryc file; this call makes them authoritative.
-  for (int i = 0; i < (int)m_shots.size(); i++) {
+  // Tell the other views the final (post-renumber) labels.  Nothing to copy:
+  // the shots are the model's objects (transitionFrames included).
+  for (int i = 0; i < (int)m_shots.size(); i++)
     ZtoryModel::instance()->notifyShotEdited(m_shots[i].data.get());
-    // Sync transitionFrames here (after model is fully populated) rather than
-    // inside loadZtoryc() where ZtoryModel::shotCount() may still be 0.
-    if (i < ZtoryModel::instance()->shotCount())
-      ZtoryModel::instance()->shot(i).transitionFrames =
-          m_shots[i].data->transitionFrames;
-  }
   // Re-detect panels for every shot while still in the main-xsheet context, so
   // partial durations are correct right away. Without this pass the panels stay
   // whatever the placeholder/.ztoryc said — often a single panel whose partial
@@ -10125,7 +10027,6 @@ void StoryboardPanel::onExportSpreadsheet() {
     return;
   }
   ZtoryModel *model = ZtoryModel::instance();
-  pushTrackingToBoard();  // reflect tracker edits (model) into the exported copy
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   TXsheet *mainXsh  = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
 
@@ -10406,7 +10307,6 @@ void StoryboardPanel::onExportSpreadsheetCsv() {
     return;
   }
   ZtoryModel *model = ZtoryModel::instance();
-  pushTrackingToBoard();  // reflect tracker edits (model) into the exported copy
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
 
   QString base = model->production().trimmed();
@@ -10594,8 +10494,8 @@ void StoryboardPanel::onSetTechnique() {
   for (const Technique &t : model->techniques()) items << t.name;
 
   int cur = 0;
-  QString curTech = (sel.front() < model->shotCount())
-                        ? model->shot(sel.front()).technique
+  QString curTech = (sel.front() < (int)m_shots.size())
+                        ? m_shots[sel.front()].data->technique
                         : QString();
   if (!curTech.isEmpty()) {
     int idx = items.indexOf(curTech);
@@ -10607,9 +10507,10 @@ void StoryboardPanel::onSetTechnique() {
       tr("Production technique for the selected shot(s):"), items, cur, false, &ok);
   if (!ok) return;
   QString tech = (choice == items.front()) ? QString() : choice;
+  // Board indices: write the Board's shot (the model's object), never
+  // model->shot(si), whose index need not be the Board's.
   for (int si : sel)
-    if (si >= 0 && si < model->shotCount())
-      model->shot(si).technique = tech;  // model is authoritative; save pushes to Board
+    if (si >= 0 && si < (int)m_shots.size()) m_shots[si].data->technique = tech;
   saveZtoryc();
   emit model->taskStatusChanged();  // refresh the Production Tracker columns
 }

@@ -2780,37 +2780,6 @@ bool ZtoryModel::assertMainXsheet(bool showWarning) {
   return false;
 }
 
-void ZtoryModel::syncShotPanels(int si, const std::vector<PanelData> &panels,
-                                const QString &label, int xsheetCol) {
-  if (si < 0) return;
-  // Grow m_shots so it mirrors the Board's shot count. The Board calls this
-  // for every shot it knows about after refreshFromScene, so once all calls
-  // complete ZtoryModel::m_shots has one entry per child-level column.
-  while ((int)m_shots.size() <= si) {
-    ShotData s;
-    PanelData pd;
-    s.panels.push_back(pd);
-    m_shots.push_back(s);
-    m_previews.push_back({QPixmap()});
-  }
-  m_shots[si].panels = panels;
-  // The Board is authoritative for shot labels. Sync it whenever provided so
-  // the Shot Board header always reflects the current label, even for scenes
-  // that were created before the .ztoryc labelling system was introduced.
-  if (!label.isEmpty()) {
-    m_shots[si].shotLabel  = label;
-    m_shots[si].shotNumber = label;  // keep legacy field in sync
-  }
-  // xsheetColumn is critical: refreshPreview() uses it to render the correct
-  // sub-scene thumbnail. Without it, all shots would render column 0 (SH010).
-  if (xsheetCol >= 0) {
-    m_shots[si].xsheetColumn = xsheetCol;
-    recordShotIdentity(si);
-  }
-  m_previews[si].resize(panels.size(), QPixmap());
-  emit shotDataChanged(si);
-}
-
 void ZtoryModel::addShot(int insertAt) {
   if (!assertMainXsheet(true)) return;
   ShotData s;
@@ -3028,48 +2997,6 @@ void ZtoryModel::addShotFromRasters(const QString &name,
   emit modelReset();
 }
 
-void ZtoryModel::removeShot(int si) {
-  if (!assertMainXsheet(true)) return;
-  if (si < 0 || si >= (int)m_shots.size()) return;
-  m_shots.eraseAt(si);
-  if (si < (int)m_previews.size())
-    m_previews.erase(m_previews.begin() + si);
-  emit shotRemoved(si);
-  save();
-}
-
-void ZtoryModel::moveShot(int from, int to) {
-  if (!assertMainXsheet(false)) return;
-  if (from == to) return;
-  if (from < 0 || from >= (int)m_shots.size()) return;
-  if (to   < 0 || to   >= (int)m_shots.size()) return;
-  ShotData s = m_shots[from];
-  std::vector<QPixmap> px = (from < (int)m_previews.size()) ? m_previews[from] : std::vector<QPixmap>();
-  m_shots.eraseAt(from);
-  m_shots.insertAt(to, s);
-  if (!m_previews.empty()) {
-    m_previews.erase(m_previews.begin() + from);
-    m_previews.insert(m_previews.begin() + to, px);
-  }
-  emit shotMoved(from, to);
-  save();
-}
-
-void ZtoryModel::cloneShot(int si) {
-  if (!assertMainXsheet(true)) return;
-  if (si < 0 || si >= (int)m_shots.size()) return;
-  ShotData s = m_shots[si];
-  s.shotNumber = "";   // reset — will be assigned by generateShotLabel
-  s.shotLabel  = "";
-  s.orderIndex = 0;
-  m_shots.insertAt(si + 1, s);
-  std::vector<QPixmap> px = (si < (int)m_previews.size()) ? m_previews[si] : std::vector<QPixmap>();
-  m_previews.insert(m_previews.begin() + si + 1, px);
-  generateShotLabel(si + 1);
-  emit shotAdded(si + 1);
-  save();
-}
-
 // ─── Numerazione ─────────────────────────────────────────────────────────────
 
 void ZtoryModel::setNumberingConfig(const NumberingConfig &cfg) {
@@ -3108,17 +3035,6 @@ QString ZtoryModel::nextShotName() const {
         .arg(next, cfg.padding, 10, QChar('0'));
   }
   return QString("%1%2").arg(cfg.shotPrefix).arg(next, cfg.padding, 10, QChar('0'));
-}
-
-void ZtoryModel::renumberAll() {
-  const int scale = 100;
-  for (int i = 0; i < (int)m_shots.size(); i++) {
-    m_shots[i].shotNumber = m_numberingConfig.shotName(i);
-    m_shots[i].shotLabel  = m_shots[i].shotNumber;  // keep shotLabel in sync
-    m_shots[i].orderIndex =
-        (m_numberingConfig.startNumber + i * m_numberingConfig.step) * scale;
-    updateColumnName(i);
-  }
 }
 
 void ZtoryModel::assignKeepNumbers(int insertAt) {
@@ -3368,8 +3284,8 @@ int ZtoryModel::shotIndexForCol(int col) const {
   // Scan the actual main xsheet for child-level columns in order and return
   // the ordinal of the column that matches `col`. Same algorithm the Board
   // uses in refreshFromScene(), so the two stay consistent without relying
-  // on m_shots[i].xsheetColumn (which can be stale after Animatic-side ops
-  // that don't go through ZtoryModel::addShot/removeShot).
+  // on m_shots[i].xsheetColumn (which can be stale until the next
+  // reconcileWithXsheet).
   TApp *app = TApp::instance();
   if (!app) return -1;
   ToonzScene *scene = app->getCurrentScene() ? app->getCurrentScene()->getScene() : nullptr;

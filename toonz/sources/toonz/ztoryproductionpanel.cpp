@@ -417,9 +417,7 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   ZtoryModel *m = ZtoryModel::instance();
   connect(m, &ZtoryModel::modelReset,        this, &ZtoryProductionPanel::onModelChanged);
   connect(m, &ZtoryModel::shotAdded,         this, [this](int) { scheduleRebuild(); });
-  connect(m, &ZtoryModel::shotRemoved,       this, [this](int) { scheduleRebuild(); });
   connect(m, &ZtoryModel::shotRemovedAt,     this, [this](int) { scheduleRebuild(); });
-  connect(m, &ZtoryModel::shotMoved,         this, [this](int, int) { scheduleRebuild(); });
   connect(m, &ZtoryModel::shotDataChanged,   this, [this](int) { scheduleRebuild(); });
   connect(m, &ZtoryModel::taskStatusChanged, this, [this] { rebuild(); reloadProjectTab(); });
   connect(m, &ZtoryModel::assetsChanged,     this, [this] { rebuildAssets(); });

@@ -138,6 +138,15 @@ spento (`productionTracker="off"`), mai i file veri:
     uno shot senza salvare): testo nel Board di Ztoryc X visibile subito nel Board di Ztoryc T; Navigator;
     «+»; Delete + Undo; Cut/Paste da Board e Animatic; riordino nel Board; Merge; Send to Board; luce
     dal Navigator; salvataggio, Revert Scene, cambio scena (nessun testo di un'altra scena).
+- **2c scritto (2026-10-06), rete di sicurezza identica.** Tolti: nel modello `syncShotPanels`,
+  `removeShot`, `moveShot`, `cloneShot`, `renumberAll`, `setShotsFrom` (nessun chiamante); nel Board
+  `pushTrackingToBoard`/`pullTrackingFromBoard`, la copia dell'etichetta nel modello in `renumberAll`,
+  la copia nel modello in `ensureShotUuids` (e il ripiego per posizione delle scene senza uuid), la
+  copia per posizione di `transitionFrames` dopo `renumberAll` e di `sequenceId` nella cascata delle
+  sequenze. Corretto **Set Technique**: scriveva `model->shot(si)` con un indice del Board e contava
+  sul push per riportarlo nel Board; ora scrive lo shot del Board (l'oggetto del modello). Restano
+  per il passo 4 il `notifyShotEdited` dopo ogni caricamento e il ciclo sul modello in
+  «assegna sequenza» (scrive gli oggetti giusti, è solo doppio).
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della
   scena** (⌘S, Save Scene, Save All), mai più dagli eventi dei Board (riordino, Paste, ecc.). Così
   `.tnz` e `.ztoryc` sono sempre dello stesso momento; un testo non salvato si perde chiudendo senza

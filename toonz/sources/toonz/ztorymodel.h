@@ -1064,37 +1064,14 @@ public:
     m_shotIds.clear();
     m_freshShots.clear();
   }
-  // Replace the model's shot list with the given one (the current scene's shots,
-  // authored by the Board). Used right before publishing to the project DB so a
-  // previously-open larger scene's leftover shots never leak into this project.
-  void setShotsFrom(const std::vector<ShotData> &shots) {
-    // In place: the objects stay the same (others may hold them), only their
-    // contents and the count follow the given list.
-    m_shots.resize(shots.size());
-    for (int i = 0; i < (int)shots.size(); i++) m_shots[i] = shots[i];
-    m_previews.resize(m_shots.size());
-    m_freshShots.clear();
-    m_shotIds.assign(m_shots.size(), ShotIdentity());
-    for (int i = 0; i < (int)m_shots.size(); i++) recordShotIdentity(i);
-  }
   // Bring m_shots in line with the scene's shot columns, by identity (see
   // docs/SHOT_DOCUMENT_PLAN.md, step 1): each entry follows its column, a new
   // column gets a new entry, a column that is gone takes its entry with it, and
   // index i is always the i-th shot column of the scene.  Run at the end of
   // every resequence, before modelReset.
   void reconcileWithXsheet();
-  void removeShot(int shotIdx);
-  void moveShot(int fromIdx, int toIdx);
-  void cloneShot(int shotIdx);
-  // Sync panel data (and optionally the shot label + xsheet column) from the
-  // Board into ZtoryModel.  Updates m_shots[si].panels and resizes
-  // m_previews[si].  Grows m_shots if needed.  When label is non-empty it is
-  // written to shotLabel/shotNumber.  xsheetCol = -1 means "don't update".
-  void syncShotPanels(int si, const std::vector<PanelData> &panels,
-                      const QString &label = {}, int xsheetCol = -1);
 
   // ── Numerazione / Labelling ───────────────────────────────────────────────
-  void    renumberAll();                    // full renumber using m_numberingConfig
   void    assignKeepNumbers(int insertAt);  // letter-suffix for Keep-# mode (legacy)
   QString nextShotName() const;             // next auto name after existing shots
 
@@ -1303,8 +1280,6 @@ signals:
   void modelReset();                          // tutto cambiato
   void shotAdded(int shotIdx);
   void shotRemovedAt(int col);  // col = xsheet column deleted (symmetric with shotAdded)
-  void shotRemoved(int shotIdx);
-  void shotMoved(int fromIdx, int toIdx);
   void shotDataChanged(int shotIdx);
   void taskStatusChanged();  // a per-task status was edited (Production Tracker)
   void assetsChanged();      // asset list or an asset task changed (Production Tracker)
