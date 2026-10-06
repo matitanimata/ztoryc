@@ -99,6 +99,20 @@ spento (`productionTracker="off"`), mai i file veri:
   fotografie dell'undo diventano copie vere, il gestore di `shotDataChanged` aggiorna solo i widget, un
   «cimitero» degli shot cancellati per l'undo; **2c** via `syncShotPanels` (testi),
   `pushTrackingToBoard`/`pullTrackingFromBoard`, `setShotsFrom`.
+  - **2b scritto (2026-10-06), rete di sicurezza identica, prova a mano DA FARE.** Cosa fa:
+    `Shot::data` è `ZtoryShotList::Ptr`, preso con `modelShotFor(col)`; `bindShotsToModel()` dopo ogni
+    riallineamento del Board (oggetto del Board = oggetto del modello per quella colonna; una voce
+    «fresca» del modello prende quello del Board); il `.ztoryc` si legge **una volta per apertura**
+    (`shotDataLoadedFor`, azzerato a `sceneSwitched`): le riletture riempiono solo gli shot freschi;
+    `onShotInserted`/`onShotRemovedAt` rimettono le colonne in assoluto (uno spostamento relativo
+    sarebbe stato applicato una volta per Board); `syncShotPanels` del Board → `notifyShotEdited`;
+    il gestore di `shotDataChanged` trova lo shot per puntatore e aggiorna solo i widget (la luce:
+    ultima vista per pannello); `pullTrackingFromBoard` vuota; i `setShotsFrom` prima della
+    pubblicazione → `reconcileWithXsheet`; il riallineamento del modello abbina per colonna solo se
+    espone ancora la stessa sotto-scena (il riordino sposta le celle, non le colonne).
+  - Prove a mano da fare: testo nel Board di Ztoryc X visibile subito nel Board di Ztoryc T; Navigator;
+    «+»; Delete + Undo; Cut/Paste da Board e Animatic; riordino nel Board; Merge; Send to Board; luce
+    dal Navigator; salvataggio, Revert Scene, cambio scena (nessun testo di un'altra scena).
 - Noto per il passo 3: dopo «Save Scene As» `saveZtoryc` non scrive (il percorso non coincide
   con `m_currentZtoryPath`), come già prima.
 - Scoperto il 2026-10-06: **Cut → Paste dal Board perde i testi dello shot** e dà uuid doppi

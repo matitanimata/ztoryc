@@ -216,7 +216,10 @@ QToolButton *m_numberingBtn;   // ⚙ Numbering config button
   QStackedWidget   *m_stack;
   SceneViewerPanel *m_comboViewer;
 struct Shot {
-    ShotData               data;
+    // The shot's data: the model's object, shared with every other Board and
+    // with the model itself (docs/SHOT_DOCUMENT_PLAN.md, step 2b) — one copy.
+    // Obtained with modelShotFor(column); never null once the shot is built.
+    ZtoryShotList::Ptr     data;
     std::vector<PanelWidget*> panels;
     bool selected = false;
     int  viewPanel = 0;  // panel shown in collapsed "Compact view" view
@@ -361,6 +364,17 @@ struct Shot {
   // A shot just built for a pasted column takes back the data its sub-scene
   // had when it was cut (ZtoryModel::cutShotFor). true = adopted.
   bool    adoptCutShot(Shot &shot);
+  // The model's shared object for the shot in main-xsheet column `col`; asks
+  // the model to reconcile if it does not know the column yet.  A private
+  // object only if the column is not a shot.
+  ZtoryShotList::Ptr modelShotFor(int col);
+  // Light last drawn per panel (key: the PanelData's address), to notice a
+  // light edited elsewhere now that the data has one copy.
+  QHash<QString, QString> m_lightSeen;
+  // After any rebuild of m_shots: make every shot's data THE model's object for
+  // its column (one copy).  A fresh model entry takes the Board's object;
+  // otherwise the Board takes the model's.
+  void bindShotsToModel();
   void    updateColumnName(int si);
   void    loadZtoryc();
   // Production-tracking bridge: ZtoryModel is the authoritative store for the

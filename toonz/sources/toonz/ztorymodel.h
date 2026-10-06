@@ -202,6 +202,7 @@ public:
   const ShotData &operator[](size_t i) const { return *m_v[i]; }
   ShotData &back() { return *m_v.back(); }
   Ptr ptr(size_t i) const { return m_v[i]; }
+  void setPtr(size_t i, Ptr p) { m_v[i] = std::move(p); }
   void push_back(ShotData s) { m_v.push_back(std::make_shared<ShotData>(std::move(s))); }
   void push_back(Ptr p) { m_v.push_back(std::move(p)); }
   void pop_back() { m_v.pop_back(); }
@@ -438,6 +439,12 @@ class ZtoryModel : public QObject {
   };
   std::vector<ShotIdentity>         m_shotIds;
   void recordShotIdentity(int si);  // from m_shots[si].xsheetColumn
+  // Shots the .ztoryc has not filled yet (created by reconcileWithXsheet for a
+  // column the model did not know).  The file is read ONCE per scene opening:
+  // after that the shared objects are the truth, and a Board that reads the
+  // file again (a full rebuild mid-session) may fill only these.
+  std::set<const ShotData *>        m_freshShots;
+  QString                           m_shotDataLoadedFor;  // scene path, or empty
   int                               m_fps;
   QString                           m_ztoryPath;
   // Imported screenplay, stored as a path relative to the project ("+extras/
@@ -554,6 +561,28 @@ public:
   // The shared object of shot i (null if out of range).
   ZtoryShotList::Ptr shotPtr(int i) const {
     return (i >= 0 && i < (int)m_shots.size()) ? m_shots.ptr(i) : nullptr;
+  }
+  // The shared object of the shot in main-xsheet column `col`, checked against
+  // the scene (the entry must BE that column, not just carry its index); null
+  // if the model does not know it yet — call reconcileWithXsheet() and retry.
+  ZtoryShotList::Ptr shotPtrForColumn(int col) const;
+  // Index of a shared object in the model, or -1.
+  int indexOfShot(const ShotData *sd) const;
+  // A Board changed a shot's data (its own object, shared with the model):
+  // fit the preview slots and tell the listeners, by the shot's real index.
+  void notifyShotEdited(const ShotData *sd);
+  // Put `holder`'s object in place of the fresh entry for column `col`: a Board
+  // that already holds the shot's data keeps it, and the model takes it.
+  // false if the model's entry for `col` is not fresh (then the model wins).
+  bool takeShotObject(int col, ZtoryShotList::Ptr holder);
+  bool isFreshShot(const ShotData *sd) const { return m_freshShots.count(sd) > 0; }
+  void markShotLoaded(const ShotData *sd) { m_freshShots.erase(sd); }
+  // Has the open scene's .ztoryc already been read into the shared objects?
+  bool shotDataLoadedFor(const QString &ztoryPath) const {
+    return !ztoryPath.isEmpty() && m_shotDataLoadedFor == ztoryPath;
+  }
+  void setShotDataLoadedFor(const QString &ztoryPath) {
+    m_shotDataLoadedFor = ztoryPath;
   }
   int  fps() const { return m_fps; }
   void setFps(int fps) { if (fps > 0) m_fps = fps; }

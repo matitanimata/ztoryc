@@ -165,6 +165,11 @@ ZtoryModel::ZtoryModel() : m_fps(24) {
   if (TApp::instance() && TApp::instance()->getCurrentScene())
     connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
             this, &ZtoryModel::onSceneSwitchedAdvanceShot);
+  // A new scene (or Revert Scene): its .ztoryc must be read again.  Connected
+  // here, in the model's constructor, so it runs before the Boards reload.
+  if (TApp::instance() && TApp::instance()->getCurrentScene())
+    connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
+            this, [this]() { m_shotDataLoadedFor.clear(); });
   // More than one Ztoryc may be open on the same project: read back what the
   // others write (debounced: one save can come as several file events).
   m_dbReloadTimer = new QTimer(this);
@@ -3530,6 +3535,45 @@ void ZtoryModel::recordShotIdentity(int si) {
   m_shotIds[si].level  = cl;
 }
 
+ZtoryShotList::Ptr ZtoryModel::shotPtrForColumn(int col) const {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  TXsheet *top      = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
+  TXshColumn *column = top ? top->getColumn(col) : nullptr;
+  if (!column) return nullptr;
+  for (int i = 0; i < (int)m_shots.size(); i++)
+    if (m_shots[i].xsheetColumn == col && i < (int)m_shotIds.size() &&
+        m_shotIds[i].column == column)
+      return m_shots.ptr(i);
+  return nullptr;
+}
+
+bool ZtoryModel::takeShotObject(int col, ZtoryShotList::Ptr holder) {
+  ZtoryShotList::Ptr current = shotPtrForColumn(col);
+  if (!current || !holder || current == holder) return current == holder;
+  if (!isFreshShot(current.get())) return false;
+  const int i = indexOfShot(current.get());
+  if (i < 0) return false;
+  m_freshShots.erase(current.get());
+  holder->xsheetColumn = col;
+  m_shots.setPtr(i, std::move(holder));
+  return true;
+}
+
+void ZtoryModel::notifyShotEdited(const ShotData *sd) {
+  const int i = indexOfShot(sd);
+  if (i < 0) return;
+  if (m_previews.size() < m_shots.size()) m_previews.resize(m_shots.size());
+  m_previews[i].resize(m_shots[i].panels.size(), QPixmap());
+  recordShotIdentity(i);
+  emit shotDataChanged(i);
+}
+
+int ZtoryModel::indexOfShot(const ShotData *sd) const {
+  for (int i = 0; i < (int)m_shots.size(); i++)
+    if (&m_shots[i] == sd) return i;
+  return -1;
+}
+
 void ZtoryModel::reconcileWithXsheet() {
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   TXsheet *top      = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
@@ -3547,7 +3591,6 @@ void ZtoryModel::reconcileWithXsheet() {
       colObjs.push_back(top->getColumn(c));
       levels.push_back(cl);
     }
-  std::set<TXshColumn *> present(colObjs.begin(), colObjs.end());
 
   const int n = (int)m_shots.size();
   std::vector<bool> taken(n, false);
@@ -3561,15 +3604,16 @@ void ZtoryModel::reconcileWithXsheet() {
   std::vector<ShotIdentity> nextIds;
   int matchedSame = 0, matchedLevel = 0, matchedIndex = 0, fresh = 0;
   for (int j = 0; j < (int)cols.size(); j++) {
-    // 1. the same column object: the shot itself, wherever it moved
-    int i = find([&](int k) { return m_shotIds[k].column == colObjs[j]; });
+    // 1. the same column object still showing the same sub-scene: the shot
+    //    itself, wherever the column moved
+    int i = find([&](int k) {
+      return m_shotIds[k].column == colObjs[j] && m_shotIds[k].level == levels[j];
+    });
     if (i >= 0) matchedSame++;
-    // 2. its column is gone but its sub-scene is here (undo re-creates columns)
+    // 2. the same sub-scene in another column: the Board's reorder moves the
+    //    CELLS between columns that stay put, and the undo re-creates columns
     if (i < 0) {
-      i = find([&](int k) {
-        return m_shotIds[k].level == levels[j] &&
-               !present.count(m_shotIds[k].column);
-      });
+      i = find([&](int k) { return m_shotIds[k].level == levels[j]; });
       if (i >= 0) matchedLevel++;
     }
     // 3. an entry not matched to any column yet, appended for this one
@@ -3592,6 +3636,7 @@ void ZtoryModel::reconcileWithXsheet() {
       pd.duration = r1 >= r0 ? r1 - r0 + 1 : 24;
       s.panels.push_back(pd);
       next.push_back(std::move(s));
+      m_freshShots.insert(&next.back());
       nextPreviews.push_back({QPixmap()});
     }
     next.back().xsheetColumn = cols[j];
@@ -3603,6 +3648,13 @@ void ZtoryModel::reconcileWithXsheet() {
              "sub-scene, %d by position, %d new, %d gone)",
              n, (int)next.size(), matchedSame, matchedLevel, matchedIndex,
              fresh, dropped);
+  // Forget the fresh marks of objects that left the list.
+  for (auto it = m_freshShots.begin(); it != m_freshShots.end();) {
+    bool kept = false;
+    for (const ShotData &sd : next)
+      if (&sd == *it) { kept = true; break; }
+    it = kept ? std::next(it) : m_freshShots.erase(it);
+  }
   m_shots    = std::move(next);
   m_previews = std::move(nextPreviews);
   m_shotIds  = std::move(nextIds);
