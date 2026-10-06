@@ -54,16 +54,34 @@ Ramo: `feature/shot-document` (parte da `fix/navigator-stale-shot-index`).
 ## Rete di sicurezza
 
 Con `ZTORYC_ROUNDTRIP=1`, Ztoryc apre la scena passata sulla riga di comando, riscrive il
-`.ztoryc` e si chiude. Su copie di scene vere (tracker spento) si produce una **base** con il
-codice di partenza; dopo ogni passo si rifà il giro e i `.ztoryc` devono essere **identici byte
-per byte** alla base.
+`.ztoryc` e si chiude (`_exit`, senza scrivere preferenze né `env.ini`); chiude da solo le finestre
+modali (i «file mancante» delle copie senza disegni).
+
+Corpus in `/Volumes/ZioSam/tahoma2d-workspace/reference/test_projects/roundtrip/` — copie, tracker
+spento (`productionTracker="off"`), mai i file veri:
+
+| copia | origine | shot |
+|---|---|---|
+| rt01 | Messina, storyboard `CS26_06ME_STB_NCP_V1` | 70 |
+| rt02 | Cascina, `SB_` | 71 |
+| rt03 | Maggiolata Zombie | 34 |
+| rt04 | filorosso `SB_test` (il `.ztoryc` era rimasto a 7 shot, la scena ne ha 1) | 1 |
+| rt05 | argo intro | 3 |
+| rt06 | ZtorycTest `demo_ztoryc_v1` (vecchio, senza uuid) | 8 |
+
+- `run_roundtrip.sh <etichetta>` → `out/<etichetta>/rtNN.ztoryc` (rimette `env.ini` com'era).
+- `compare_roundtrip.py <base> <altro>` confronta, con gli uuid sostituiti da segnaposto in ordine di
+  comparsa (rt06 riceve uuid casuali a ogni apertura).
+- **Base** = `out/base1`, prodotta con il codice della 0.16.2 + passo 0. Due giri sullo stesso codice
+  (`base1`, `base2`): identici.
+- Dopo ogni passo: `run_roundtrip.sh passoN` e `compare_roundtrip.py base1 passoN` deve dire
+  «identico» per tutti, salvo differenze volute e spiegate.
 
 ## Stato
 
-- [~] Passo 0 — fatto: il ⌘S della scena scrive il `.ztoryc` (segnale `sceneSaved` → Board),
-  il Navigator segna la scena come modificata; provato sul Mac (la battuta è nel `.ztoryc` dopo
-  ⌘S; alla chiusura Ztoryc chiede di salvare). **Manca**: la modalità `ZTORYC_ROUNDTRIP` e la base
-  dei `.ztoryc` di riferimento.
+- [x] Passo 0 — il ⌘S della scena scrive il `.ztoryc` (segnale `sceneSaved` → Board), il Navigator
+  segna la scena come modificata (provato sul Mac); rete di sicurezza `ZTORYC_ROUNDTRIP` con base
+  `out/base1` (2026-10-06).
 - Noto per il passo 3: dopo «Save Scene As» `saveZtoryc` non scrive (il percorso non coincide
   con `m_currentZtoryPath`), come già prima.
 - Scoperto il 2026-10-06: **Cut → Paste dal Board perde i testi dello shot** e dà uuid doppi

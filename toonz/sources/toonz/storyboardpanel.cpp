@@ -111,6 +111,12 @@
 #include <QXmlStreamReader>
 #include <QRegularExpression>
 #include <QTimer>
+#include <cstdio>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 #include <QComboBox>
 #include <QStackedWidget>
 #include <QApplication>
@@ -1828,6 +1834,26 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
             if (on) onFollowFrameChanged();
             else setFollowMarker(-1, -1, false);
           });
+
+  // Test mode (ZTORYC_ROUNDTRIP, see refreshFromScene): copies of real
+  // storyboards miss their panel drawings, and Tahoma stops the load with a
+  // modal «file missing» box.  Nobody is there to press OK, so close it: only
+  // the .ztoryc matters to the round trip.
+  static bool s_roundtripWatchdog = qEnvironmentVariableIsSet("ZTORYC_ROUNDTRIP");
+  if (s_roundtripWatchdog) {
+    s_roundtripWatchdog = false;
+    QTimer *dismiss = new QTimer(qApp);
+    dismiss->setInterval(50);
+    QObject::connect(dismiss, &QTimer::timeout, qApp, []() {
+      if (QWidget *w = QApplication::activeModalWidget()) {
+        fprintf(stderr, "[ZTORY] roundtrip: closing dialog '%s'\n",
+                qPrintable(w->windowTitle()));
+        if (QDialog *d = qobject_cast<QDialog *>(w)) d->reject();
+        else w->close();
+      }
+    });
+    dismiss->start();
+  }
 
   // The scene's ⌘S writes the .ztoryc too.  Until now only the Board's own
   // events wrote it, so text that reached the shots another way (the Shot
@@ -5501,6 +5527,24 @@ void StoryboardPanel::refreshFromScene() {
   ZtoryModel *zm = ZtoryModel::instance();
   if (!zm->production().isEmpty() || !zm->title().isEmpty())
     saveZtoryc();
+
+  // Test mode (docs/SHOT_DOCUMENT_PLAN.md, safety net): ZTORYC_ROUNDTRIP=1
+  // rewrites the .ztoryc of the scene given on the command line and exits, so
+  // that copies of real storyboards can be compared byte by byte before and
+  // after each step of the shot-data rework.  First Board, first real scene
+  // only; the exit skips the quit path (no save prompts, no preferences written).
+  static bool s_roundtripArmed = qEnvironmentVariableIsSet("ZTORYC_ROUNDTRIP");
+  if (s_roundtripArmed && !m_currentZtoryPath.isEmpty() &&
+      QFileInfo::exists(m_currentZtoryPath)) {
+    s_roundtripArmed = false;
+    QTimer::singleShot(3000, this, [this]() {
+      saveZtoryc();
+      fprintf(stderr, "[ZTORY] roundtrip: wrote %s\n",
+              qPrintable(m_currentZtoryPath));
+      fflush(stderr);
+      _exit(0);
+    });
+  }
 }
 
 // ── qApp event filter: intercept keyboard shortcuts for the Board ────────────
