@@ -17,6 +17,7 @@ class QFileSystemWatcher;
 class QLockFile;
 class QTimer;
 class TXshColumn;
+class TXsheet;
 
 // ─── NumberingConfig ─────────────────────────────────────────────────────────
 // Persistent numbering scheme used both at startup and during Board editing.
@@ -451,7 +452,6 @@ class ZtoryModel : public QObject {
   QString                           m_shotDataLoadedFor;  // scene path, or empty
   const void                       *m_shotDataSceneObj = nullptr;  // its ToonzScene
   int                               m_fps;
-  QString                           m_ztoryPath;
   // Imported screenplay, stored as a path relative to the project ("+extras/
   // script/<file>").  Persisted in the .ztoryc so the Script panel can reload
   // it when the scene is reopened.  Empty = no screenplay imported.
@@ -1064,6 +1064,28 @@ public:
     m_shotIds.clear();
     m_freshShots.clear();
   }
+  // ── The shot document (.ztoryc) ──────────────────────────────────────────
+  // What the file says about the scene besides its shots.  Set when the file
+  // is read (StoryboardPanel::loadZtoryc), written back into the root element.
+  struct ShotDocumentState {
+    bool trackerOff        = false;  // productionTracker="off": the user kept
+                                     // this storyboard out of the Tracker
+    bool shotIdentityAsked = false;  // the duplicate-shot question was answered
+    bool isShotScene       = false;  // role="shot": sidecar written once, at export
+    bool isCharacterScene  = false;  // role="character": the sidecar holds mouth sets
+  };
+  ShotDocumentState &shotDocumentState() { return m_docState; }
+private:
+  ShotDocumentState m_docState;
+public:
+  // Writes the storyboard .ztoryc of `shots` (xsheet order) to `path`.
+  // Serialization only — no guards, no questions, no publication.
+  bool writeShotDocument(const QString &path,
+                         const std::vector<const ShotData *> &shots);
+  // The sub-scene name in a main-xsheet column (empty if none): how the file
+  // ties an entry to its shot.
+  static QString shotLevelNameAt(TXsheet *xsh, int col);
+
   // Bring m_shots in line with the scene's shot columns, by identity (see
   // docs/SHOT_DOCUMENT_PLAN.md, step 1): each entry follows its column, a new
   // column gets a new entry, a column that is gone takes its entry with it, and
@@ -1112,11 +1134,6 @@ public:
   // ── Panel automatici ──────────────────────────────────────────────────────
   void detectAndUpdatePanels(int shotIdx);
   void refreshFromScene();
-
-  // ── Persistenza ───────────────────────────────────────────────────────────
-  void save();
-  void load();
-  void setZtoryPath(const QString &path) { m_ztoryPath = path; }
 
   // Imported screenplay path (project-relative, e.g. "+extras/script/x.fdx").
   QString scriptFile() const { return m_scriptFile; }

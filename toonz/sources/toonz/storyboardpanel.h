@@ -273,17 +273,8 @@ struct Shot {
   QString m_shotBackLinkUuid;       // projectShot uuid
   QString m_shotBackLinkTaskStage;  // task short code (e.g. "ANIM")
   QString m_shotBackLinkTechnique;  // shot technique authored at export time
-  bool    m_currentSceneIsShot = false;  // true when the open scene is role="shot"
-  // Idem per i personaggi (role="character"): il loro sidecar tiene i mouth
-  // set, e saveZtoryc() ci scriverebbe sopra role="storyboard" alla prima
-  // apertura. Stesso bug dei role="shot", terza casistica.
-  bool    m_currentSceneIsCharacter = false;
-  // B3: suppress publication for scenes the user chose to keep standalone.
-  bool    m_suppressProjectPublication = false;
-  // The shot-identity question has been answered for this scene, whatever the
-  // answer was.  Persisted in the .ztoryc: a session-only guard means the same
-  // question every time the scene is reopened.
-  bool    m_shotIdentityAsked = false;
+  // The document flags (role shot/character, Production Tracker off, shot
+  // identity asked) live in the model: ZtoryModel::shotDocumentState().
   // ensureShotIdentityUnique() can change the shots (it gives them a sequence)
   // but it runs from inside saveZtoryc(), AFTER the file has been written: what
   // it changed would live only in memory. This asks saveZtoryc() for one more

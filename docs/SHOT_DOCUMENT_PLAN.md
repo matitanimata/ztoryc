@@ -147,6 +147,31 @@ spento (`productionTracker="off"`), mai i file veri:
   sul push per riportarlo nel Board; ora scrive lo shot del Board (l'oggetto del modello). Restano
   per il passo 4 il `notifyShotEdited` dopo ogni caricamento e il ciclo sul modello in
   «assegna sequenza» (scrive gli oggetti giusti, è solo doppio).
+- **Passo 3 — mappa (2026-10-06).** Oggi il `.ztoryc` lo scrive solo `StoryboardPanel::saveZtoryc`,
+  chiamata da 36 punti (33 nel Board, fra cui **ogni tasto premuto** in un campo di testo,
+  `storyboardpanel.cpp:2166`; 2 nell'Animatic; il tracker via `persistViaBoard`). Il testo arriva già
+  nell'oggetto condiviso a ogni tasto, quindi il modello ha sempre i dati vivi. `ZtoryModel::save()` /
+  `load()` sono codice morto (`setZtoryPath` non è mai chiamata, `m_ztoryPath` resta vuoto) e
+  scrivevano un altro formato (v4, senza uuid né luci): da togliere. Sotto-passi:
+  - **3a — lo scrittore nel modello**, nessun cambiamento visibile: `ZtoryModel::writeShotDocument(path)`
+    produce lo stesso XML di oggi (rete di sicurezza identica); passano nel modello anche gli stati del
+    documento che oggi sono membri del Board (`productionTracker="off"`, `shotIdentityAsked`, ruolo
+    della scena shot/personaggio). Il Board tiene per ora i controlli, la domanda «Connect to the
+    Production Tracker?» e la pubblicazione nel progetto.
+    **Fatto (2026-10-06)**, rete di sicurezza identica: `writeShotDocument(path, shots)` e
+    `shotLevelNameAt` nel modello; i quattro stati in `shotDocumentState()`; tolti `save()`/`load()`/
+    `setZtoryPath`/`m_ztoryPath` del modello. Da tenere a mente per il 3b: ogni Board che rilegge il file
+    azzera e rilegge anche questi stati, che ora sono uno solo per tutti; oggi è innocuo perché la
+    risposta «Stay disconnected» si scrive subito nel file, ma col file scritto solo al ⌘S una rilettura
+    a metà sessione non deve toccarli (stessa regola «letto una volta» dei dati degli shot).
+  - **3b — si scrive solo col salvataggio della scena** (decisione di Franco): i 36 punti diventano
+    «documento modificato» (la scena prende l'asterisco, quindi chiudendo Tahoma chiede di salvare);
+    al `sceneSaved` il modello scrive il `.ztoryc`, anche senza Board nella room, e subito dopo si
+    pubblica nel `production.ztrack`. Conseguenze da dire a Franco: la domanda sul Production Tracker
+    arriva al primo ⌘S invece che alla prima modifica; gli altri storyboard del progetto vedono gli
+    shot di questo nel Tracker dopo il ⌘S, non in diretta.
+  - **3c — il recupero porta il `.ztoryc`** (sotto).
+  - **3d — il lettore nel modello** (`loadZtoryc` legge nel modello; il Board costruisce solo i widget).
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della
   scena** (⌘S, Save Scene, Save All), mai più dagli eventi dei Board (riordino, Paste, ecc.). Così
   `.tnz` e `.ztoryc` sono sempre dello stesso momento; un testo non salvato si perde chiudendo senza

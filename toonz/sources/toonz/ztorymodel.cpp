@@ -2796,7 +2796,6 @@ void ZtoryModel::addShot(int insertAt) {
     generateShotLabel(insertAt);
     emit shotAdded(insertAt);
   }
-  save();
 }
 
 void ZtoryModel::addShotNamed(const QString &name) {
@@ -3119,7 +3118,6 @@ void ZtoryModel::detectAndUpdatePanels(int si) {
   if (newPanels.empty()) { PanelData pd; pd.duration = qMax(1, frameCount); newPanels.push_back(pd); }
   s.panels = newPanels;
   emit shotDataChanged(si);
-  save();
 }
 
 void ZtoryModel::refreshFromScene() {
@@ -3138,60 +3136,168 @@ void ZtoryModel::refreshFromScene() {
   emit modelReset();
 }
 
-// ─── Persistenza ─────────────────────────────────────────────────────────────
+// ─── Il documento degli shot (.ztoryc) ───────────────────────────────────────
 
-void ZtoryModel::save() {
-  if (m_ztoryPath.isEmpty()) return;
-  QFile file(m_ztoryPath);
-  if (!file.open(QIODevice::WriteOnly)) return;
+// The sub-scene level name exposed in a main-xsheet column: the identity a
+// shot keeps through inserts, deletes and reorders (the Animatic caches its
+// thumbnails by it too). Empty for a column with no sub-scene.
+QString ZtoryModel::shotLevelNameAt(TXsheet *xsh, int col) {
+  if (!xsh || col < 0 || col >= xsh->getColumnCount()) return QString();
+  TXshColumn *column = xsh->getColumn(col);
+  if (!column || column->isEmpty()) return QString();
+  int r0 = 0, r1 = 0;
+  column->getRange(r0, r1);
+  for (int r = r0; r <= r1; r++) {
+    TXshCell cell = xsh->getCell(r, col);
+    if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
+      return QString::fromStdWString(cell.m_level->getName());
+  }
+  return QString();
+}
+
+// Serialization only: the callers decide whether this scene's file may be
+// written at all (shot and character scenes keep their own sidecar) and
+// publish to the project afterwards.  The format is the one the Board has
+// always written ("version 2", role="storyboard").
+bool ZtoryModel::writeShotDocument(const QString &path,
+                                   const std::vector<const ShotData *> &shots) {
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return false;
   QXmlStreamWriter xml(&file);
   xml.setAutoFormatting(true);
   xml.writeStartDocument();
   xml.writeStartElement("ztoryc");
-  xml.writeAttribute("version", "4");
-  // ── Numbering config ──
-  xml.writeStartElement("numberingConfig");
-  xml.writeAttribute("style",       QString::number((int)m_numberingConfig.style));
-  xml.writeAttribute("shotPrefix",  m_numberingConfig.shotPrefix);
-  xml.writeAttribute("seqPrefix",   m_numberingConfig.seqPrefix);
-  xml.writeAttribute("panelPrefix", m_numberingConfig.panelPrefix);
-  xml.writeAttribute("step",        QString::number(m_numberingConfig.step));
-  xml.writeAttribute("padding",     QString::number(m_numberingConfig.padding));
-  xml.writeAttribute("seqPadding",  QString::number(m_numberingConfig.seqPadding));
-  xml.writeAttribute("startNumber", QString::number(m_numberingConfig.startNumber));
-  xml.writeAttribute("seqNumber",   QString::number(m_numberingConfig.seqNumber));
-  xml.writeEndElement();
-  // ── Sequences ──
-  if (!m_sequences.empty()) {
-    xml.writeStartElement("sequences");
-    for (const auto &seq : m_sequences) {
+  xml.writeAttribute("version", "2");
+  xml.writeAttribute("role", "storyboard");
+  // "No — local only" has to SURVIVE.  It used to live only in
+  // m_suppressProjectPublication, a plain member reset with every new panel and
+  // gone at every restart: the next session published the scene into the
+  // project anyway, against an answer the user had explicitly given — and the
+  // duplicate shots that followed brought up the "Two shots with the same name"
+  // question, which is how this surfaced.  One attribute, and the answer sticks.
+  // "productionTracker" says what the choice really is; "projectPublication"
+  // is the name it was first written with and is still read below, so a scene
+  // saved in between keeps its answer.
+  if (m_docState.trackerOff) {
+    xml.writeAttribute("productionTracker", "off");
+    xml.writeAttribute("projectPublication", "local");
+  }
+  if (m_docState.shotIdentityAsked) xml.writeAttribute("shotIdentityAsked", "1");
+  // Project metadata (production + title entered by user at scene creation).
+  {
+    ZtoryModel *model = this;
+    // production/title/episode/season/defaultTechnique/techniques now live in
+    // the project DB (production.ztrack). The .ztoryc keeps only the per-scene
+    // PDF logo settings here, and still READS the old attrs for migration.
+    if (!model->pdfLogoPath().isEmpty() || model->pdfNoLogo()) {
+      xml.writeStartElement("project");
+      if (!model->pdfLogoPath().isEmpty())
+        xml.writeAttribute("pdfLogo", model->pdfLogoPath());
+      if (model->pdfNoLogo())
+        xml.writeAttribute("pdfNoLogo", "1");
+      xml.writeEndElement();
+    }
+    // NOTE: the team roster now lives in the project-level DB
+    // (production.ztrack), not in the per-scene .ztoryc. The <team> block is
+    // still READ on load (loadZtoryc) for one-time migration of legacy scenes.
+    // Assets now live in the project DB (production.ztrack), not the .ztoryc.
+    // The <assets> block is still READ on load for one-time migration.
+  }
+  // Imported screenplay (Script panel) — project-relative path.
+  {
+    QString sf = scriptFile();
+    if (!sf.isEmpty()) xml.writeTextElement("scriptFile", sf);
+  }
+  // Numbering scheme + sequence list — so the SQ/SH structure survives reload
+  // (previously only per-shot number/label were saved, so sequences were lost).
+  {
+    ZtoryModel *model = this;
+    const NumberingConfig &cfg = model->numberingConfig();
+    xml.writeStartElement("numbering");
+    xml.writeAttribute("style",       QString::number((int)cfg.style));
+    xml.writeAttribute("shotPrefix",  cfg.shotPrefix);
+    xml.writeAttribute("seqPrefix",   cfg.seqPrefix);
+    xml.writeAttribute("panelPrefix", cfg.panelPrefix);
+    xml.writeAttribute("step",        QString::number(cfg.step));
+    xml.writeAttribute("padding",     QString::number(cfg.padding));
+    xml.writeAttribute("seqPadding",  QString::number(cfg.seqPadding));
+    xml.writeAttribute("startNumber", QString::number(cfg.startNumber));
+    xml.writeAttribute("seqNumber",   QString::number(cfg.seqNumber));
+    xml.writeAttribute("resetOnSeqChange", cfg.resetOnSeqChange ? "1" : "0");
+    xml.writeEndElement();
+    for (const SequenceData &seq : model->sequences()) {
       xml.writeStartElement("sequence");
       xml.writeAttribute("uuid",  seq.uuid);
       xml.writeAttribute("label", seq.label);
       xml.writeAttribute("order", QString::number(seq.orderIndex));
       xml.writeEndElement();
     }
-    xml.writeEndElement();
   }
-  // ── Shots ──
-  for (int si = 0; si < (int)m_shots.size(); si++) {
-    const ShotData &s = m_shots[si];
+  ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+  TXsheet *top    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
+  for (int si = 0; si < (int)shots.size(); si++) {
+    const ShotData &sd = *shots[si];
     xml.writeStartElement("shot");
-    xml.writeAttribute("index",  QString::number(si));
-    xml.writeAttribute("number", s.shotNumber);       // legacy
-    xml.writeAttribute("label",  s.shotLabel);        // v4
-    xml.writeAttribute("order",  QString::number(s.orderIndex)); // v4
-    xml.writeAttribute("seqId",  s.sequenceId);       // v4
-    xml.writeAttribute("column", QString::number(s.xsheetColumn));
-    for (int pi = 0; pi < (int)s.panels.size(); pi++) {
-      const PanelData &pd = s.panels[pi];
+    xml.writeAttribute("index",      QString::number(si));
+    if (!sd.uuid.isEmpty())
+      xml.writeAttribute("uuid",     sd.uuid);
+    // Which sub-scene this entry belongs to: loadZtoryc() matches on it, so
+    // the text of a shot stays with the shot when one is inserted before it.
+    {
+      const QString lvl = shotLevelNameAt(top, sd.xsheetColumn);
+      if (!lvl.isEmpty()) xml.writeAttribute("level", lvl);
+    }
+    xml.writeAttribute("number",     sd.shotNumber);
+    xml.writeAttribute("label",      sd.shotLabel);
+    xml.writeAttribute("order",      QString::number(sd.orderIndex));
+    xml.writeAttribute("sequenceId", sd.sequenceId);
+    if (sd.transitionFrames > 0)
+      xml.writeAttribute("transition", QString::number(sd.transitionFrames));
+    // Production tracking (spreadsheet / Kitsu).
+    if (!sd.technique.isEmpty())
+      xml.writeAttribute("technique", sd.technique);
+    if (!sd.notes.isEmpty())
+      xml.writeTextElement("shotNotes", sd.notes);
+    if (!sd.vfxNotes.isEmpty())
+      xml.writeTextElement("shotVfxNotes", sd.vfxNotes);
+    for (auto it = sd.tasks.constBegin(); it != sd.tasks.constEnd(); ++it) {
+      xml.writeStartElement("task");
+      xml.writeAttribute("type",   it.key());
+      xml.writeAttribute("status", ZtoryModel::taskStatusLabel(it.value().status));
+      if (!it.value().assignees.isEmpty())
+        xml.writeAttribute("assignee", it.value().assignees.join(", "));
+      xml.writeEndElement();
+    }
+    for (int pi = 0; pi < (int)sd.panels.size(); pi++) {
+      const PanelData &pd = sd.panels[pi];
       xml.writeStartElement("panel");
       xml.writeAttribute("index",      QString::number(pi));
       xml.writeAttribute("startFrame", QString::number(pd.startFrame));
       xml.writeAttribute("duration",   QString::number(pd.duration));
-      if (!pd.panelLabel.isEmpty())
-        xml.writeAttribute("panelLabel", pd.panelLabel);
-      xml.writeAttribute("panelOrder",  QString::number(pd.orderIndex));
+      if (pd.cameraMoveType != PanelData::CamNone) {
+        xml.writeAttribute("camMove",  QString::number((int)pd.cameraMoveType));
+        xml.writeAttribute("camLabel", pd.cameraMoveLabel);
+        xml.writeAttribute("camRenderFrame", QString::number(pd.camRenderFrame));
+        xml.writeAttribute("camW", QString::number(pd.camW));
+        xml.writeAttribute("camH", QString::number(pd.camH));
+        // Store affines as space-separated doubles
+        auto affToStr = [](const double a[6]) {
+          return QString("%1 %2 %3 %4 %5 %6")
+              .arg(a[0],0,'g',10).arg(a[1],0,'g',10).arg(a[2],0,'g',10)
+              .arg(a[3],0,'g',10).arg(a[4],0,'g',10).arg(a[5],0,'g',10);
+        };
+        xml.writeAttribute("camA0", affToStr(pd.camA0));
+        xml.writeAttribute("camA1", affToStr(pd.camA1));
+      }
+      if (pd.hasLight) {
+        xml.writeAttribute("lightTail", QString("%1 %2")
+            .arg(pd.lightTailX, 0, 'g', 6).arg(pd.lightTailY, 0, 'g', 6));
+        xml.writeAttribute("lightTip", QString("%1 %2")
+            .arg(pd.lightTipX, 0, 'g', 6).arg(pd.lightTipY, 0, 'g', 6));
+        xml.writeAttribute("lightDepth", QString::number(pd.lightDepth, 'g', 4));
+        xml.writeAttribute("lightSpread", QString::number(pd.lightSpread, 'g', 4));
+        xml.writeAttribute("lightColor", pd.lightColor);
+      }
       xml.writeTextElement("dialog", pd.dialog);
       xml.writeTextElement("action", pd.action);
       xml.writeTextElement("notes",  pd.notes);
@@ -3201,83 +3307,8 @@ void ZtoryModel::save() {
   }
   xml.writeEndElement();
   xml.writeEndDocument();
-}
-
-void ZtoryModel::load() {
-  if (m_ztoryPath.isEmpty()) return;
-  QFile file(m_ztoryPath);
-  if (!file.open(QIODevice::ReadOnly)) return;
-  m_shots.clear();
-  m_previews.clear();
-  m_shotIds.clear();
-  m_freshShots.clear();
-  m_sequences.clear();
-
-  QXmlStreamReader xml(&file);
-  int si = -1, pi = -1;
-
-  while (!xml.atEnd()) {
-    xml.readNext();
-    if (!xml.isStartElement()) continue;
-    const auto name = xml.name();
-
-    if (name == QLatin1String("numberingConfig")) {
-      m_numberingConfig.style =
-          (NumberingConfig::Style)xml.attributes().value("style").toInt();
-      m_numberingConfig.shotPrefix  = xml.attributes().value("shotPrefix").toString();
-      m_numberingConfig.seqPrefix   = xml.attributes().value("seqPrefix").toString();
-      QString ppfx = xml.attributes().value("panelPrefix").toString();
-      if (!ppfx.isEmpty()) m_numberingConfig.panelPrefix = ppfx;
-      m_numberingConfig.step        = xml.attributes().value("step").toInt();
-      m_numberingConfig.padding     = xml.attributes().value("padding").toInt();
-      m_numberingConfig.seqPadding  = xml.attributes().value("seqPadding").toInt();
-      m_numberingConfig.startNumber = xml.attributes().value("startNumber").toInt();
-      m_numberingConfig.seqNumber   = xml.attributes().value("seqNumber").toInt();
-      // Safety defaults for old files
-      if (m_numberingConfig.step <= 0)    m_numberingConfig.step = 10;
-      if (m_numberingConfig.padding <= 0) m_numberingConfig.padding = 3;
-      if (m_numberingConfig.shotPrefix.isEmpty())  m_numberingConfig.shotPrefix  = "SH";
-      if (m_numberingConfig.panelPrefix.isEmpty()) m_numberingConfig.panelPrefix = "P";
-
-    } else if (name == QLatin1String("sequence")) {
-      SequenceData seq;
-      seq.uuid       = xml.attributes().value("uuid").toString();
-      seq.label      = xml.attributes().value("label").toString();
-      seq.orderIndex = xml.attributes().value("order").toInt();
-      if (!seq.uuid.isEmpty()) m_sequences.push_back(seq);
-
-    } else if (name == QLatin1String("shot")) {
-      si = xml.attributes().value("index").toInt();
-      while ((int)m_shots.size() <= si) m_shots.push_back(ShotData());
-      m_shots[si].shotNumber   = xml.attributes().value("number").toString();
-      m_shots[si].shotLabel    = xml.attributes().value("label").toString();
-      m_shots[si].orderIndex   = xml.attributes().value("order").toInt();
-      m_shots[si].sequenceId   = xml.attributes().value("seqId").toString();
-      m_shots[si].xsheetColumn = xml.attributes().value("column").toInt();
-      // Backward compat (v1–v3): if shotLabel absent, copy from shotNumber
-      if (m_shots[si].shotLabel.isEmpty())
-        m_shots[si].shotLabel = m_shots[si].shotNumber;
-      m_previews.resize(m_shots.size());
-
-    } else if (name == QLatin1String("panel") && si >= 0) {
-      pi = xml.attributes().value("index").toInt();
-      PanelData pd;
-      pd.startFrame = xml.attributes().value("startFrame").toInt();
-      pd.duration   = xml.attributes().value("duration").toInt();
-      pd.panelLabel = xml.attributes().value("panelLabel").toString();
-      pd.orderIndex = xml.attributes().value("panelOrder").toInt();
-      while ((int)m_shots[si].panels.size() <= pi) m_shots[si].panels.push_back(PanelData());
-      m_shots[si].panels[pi] = pd;
-      m_previews[si].resize(m_shots[si].panels.size());
-
-    } else if (name == QLatin1String("dialog") && si >= 0 && pi >= 0)
-      m_shots[si].panels[pi].dialog = xml.readElementText();
-    else if (name == QLatin1String("action") && si >= 0 && pi >= 0)
-      m_shots[si].panels[pi].action = xml.readElementText();
-    else if (name == QLatin1String("notes") && si >= 0 && pi >= 0)
-      m_shots[si].panels[pi].notes  = xml.readElementText();
-  }
-  emit modelReset();
+  file.close();
+  return true;
 }
 
 int ZtoryModel::shotIndexForCol(int col) const {
@@ -3650,7 +3681,7 @@ void ZtoryModel::updateColumnName(int si) {
 // Thumbnail refresh happens via frameSwitched signal with a debounce timer
 // (see StoryboardPanel). See AGENTS.md: "Thumbnail refresh = on frameSwitched".
 void ZtoryModel::onXsheetChanged() { /* thumbnails updated via frameSwitched debounce */ }
-void ZtoryModel::onSceneChanged()  { refreshFromScene(); load(); }
+void ZtoryModel::onSceneChanged()  { refreshFromScene(); }
 
 void ZtoryModel::activateShotForViewing(int col) {
   // NOTE: do NOT call TImageCache::instance()->clear() here.  It wipes the

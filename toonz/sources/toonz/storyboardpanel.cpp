@@ -2190,7 +2190,6 @@ void StoryboardPanel::connectPanelWidget(PanelWidget *pw) {
     const NumberingConfig &cfg = model->numberingConfig();
     if (model->autoRenumber() && cfg.resetOnSeqChange)
       renumberAll();
-    model->save();
     saveZtoryc();
   });
 }
@@ -2785,7 +2784,7 @@ void StoryboardPanel::updateColumnName(int si) {
   // An exported SHOT or a CHARACTER scene is not a storyboard: its sub-scene
   // columns are characters, not shots. Named after a shot label, SOFIA's
   // column in sh040 became «sh010» (Franco, 2026-09-27).
-  if (m_currentSceneIsShot || m_currentSceneIsCharacter) return;
+  if (ZtoryModel::instance()->shotDocumentState().isShotScene || ZtoryModel::instance()->shotDocumentState().isCharacterScene) return;
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene) return;
@@ -3020,7 +3019,7 @@ QPixmap StoryboardPanel::firstPanelThumbnail(int shotIdx) const {
 QString StoryboardPanel::s_shotIdentityPromptScene;
 
 void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
-  if (m_shotIdentityAsked) return;  // answered in an earlier session
+  if (ZtoryModel::instance()->shotDocumentState().shotIdentityAsked) return;  // answered in an earlier session
   const QString sceneKey = ztoryPath();
   if (!sceneKey.isEmpty() && sceneKey == s_shotIdentityPromptScene) return;
   ZtoryModel *model = ZtoryModel::instance();
@@ -3031,7 +3030,7 @@ void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
   // Una volta sola per scena, qualunque sia la risposta: chiederlo a ogni
   // salvataggio trasformerebbe una segnalazione utile in una molestia.
   s_shotIdentityPromptScene = sceneKey;
-  m_shotIdentityAsked = true;
+  ZtoryModel::instance()->shotDocumentState().shotIdentityAsked = true;
   // Everything this function changes — the answer above, and the sequence it is
   // about to hand out — happens AFTER saveZtoryc() has written and closed the
   // file.  Without a second pass it lives in memory only: the user clicks "Give
@@ -3141,7 +3140,7 @@ void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
     // Out of the project, and out of the project DB: leaving the shots behind
     // would keep the collision alive in the Production Tracker while claiming
     // the storyboard is not part of the project.
-    m_suppressProjectPublication = true;  // written into the .ztoryc by the resave
+    ZtoryModel::instance()->shotDocumentState().trackerOff = true;  // written into the .ztoryc by the resave
     const int removed = model->removeProjectShotsFromSource(sourceFile);
     model->saveProjectDb();
     // The Production Tracker redraws on this: without it the rows stay on
@@ -3151,7 +3150,7 @@ void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
     emit model->taskStatusChanged();
     // NO refreshFromScene() here: it calls loadZtoryc(), which re-reads the
     // .ztoryc from disk — and that file was written BEFORE this function ran,
-    // so it would put m_suppressProjectPublication back to false and the
+    // so it would put ZtoryModel::instance()->shotDocumentState().trackerOff back to false and the
     // disconnection would never be written.  saveZtoryc() refreshes once the
     // file agrees with memory.
     DVGui::info(tr("This storyboard is no longer connected to the Production "
@@ -3195,23 +3194,6 @@ void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
   DVGui::info(tr("%1 shot(s) are now in sequence %2.").arg(touched).arg(label));
 }
 
-// The sub-scene level name exposed in a main-xsheet column: the identity a
-// shot keeps through inserts, deletes and reorders (the Animatic caches its
-// thumbnails by it too). Empty for a column with no sub-scene.
-static QString ztoryShotLevelName(TXsheet *xsh, int col) {
-  if (!xsh || col < 0 || col >= xsh->getColumnCount()) return QString();
-  TXshColumn *column = xsh->getColumn(col);
-  if (!column || column->isEmpty()) return QString();
-  int r0 = 0, r1 = 0;
-  column->getRange(r0, r1);
-  for (int r = r0; r <= r1; r++) {
-    TXshCell cell = xsh->getCell(r, col);
-    if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
-      return QString::fromStdWString(cell.m_level->getName());
-  }
-  return QString();
-}
-
 void StoryboardPanel::saveZtoryc() {
   // One level only: the second pass below must not start a third.
   if (m_savingZtoryc) return;
@@ -3224,12 +3206,12 @@ void StoryboardPanel::saveZtoryc() {
   // Never rewrite it here — saveZtoryc always writes role="storyboard", which
   // would corrupt the back-link (and make the shot show the SB badge / open in
   // the wrong workflow).
-  if (m_currentSceneIsShot) return;
+  if (ZtoryModel::instance()->shotDocumentState().isShotScene) return;
   // Stessa ragione per le scene personaggio: il loro sidecar e' la casa dei
   // mouth set (e domani delle pose registrate). Riscriverlo come storyboard
   // li cancellerebbe in silenzio — l'utente se ne accorgerebbe al lip sync
   // dello shot dopo, quando le bocche non si assegnano piu'.
-  if (m_currentSceneIsCharacter) return;
+  if (ZtoryModel::instance()->shotDocumentState().isCharacterScene) return;
   // Use m_currentZtoryPath (set at end of refreshFromScene) instead of
   // ztoryPath() so we never write m_shots data to a different scene's file.
   // While m_shots is being rebuilt (clearShots clears it), this is empty →
@@ -3271,9 +3253,9 @@ void StoryboardPanel::saveZtoryc() {
   QString path = m_currentZtoryPath;
 
   // First-time creation: ask user whether to register as project storyboard.
-  // Only ask once per session (m_suppressProjectPublication sticky until reload).
+  // Only ask once per session (ZtoryModel::instance()->shotDocumentState().trackerOff sticky until reload).
   // Guard: skip for empty/untitled scenes (no shots yet — nothing to register).
-  if (!QFile::exists(path) && !m_suppressProjectPublication && !m_shots.empty()) {
+  if (!QFile::exists(path) && !ZtoryModel::instance()->shotDocumentState().trackerOff && !m_shots.empty()) {
     // Only prompt if the project DB exists (i.e., there IS a multi-scene project).
     if (!ZtoryModel::instance()->projectDbPath().isEmpty()) {
       QMessageBox ask(this);
@@ -3297,163 +3279,18 @@ void StoryboardPanel::saveZtoryc() {
       Q_UNUSED(noBtn)
       ask.exec();
       if (ask.clickedButton() != yesBtn)
-        m_suppressProjectPublication = true;
+        ZtoryModel::instance()->shotDocumentState().trackerOff = true;
     }
   }
 
-  QFile file(path);
-  if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
-  QXmlStreamWriter xml(&file);
-  xml.setAutoFormatting(true);
-  xml.writeStartDocument();
-  xml.writeStartElement("ztoryc");
-  xml.writeAttribute("version", "2");
-  xml.writeAttribute("role", "storyboard");
-  // "No — local only" has to SURVIVE.  It used to live only in
-  // m_suppressProjectPublication, a plain member reset with every new panel and
-  // gone at every restart: the next session published the scene into the
-  // project anyway, against an answer the user had explicitly given — and the
-  // duplicate shots that followed brought up the "Two shots with the same name"
-  // question, which is how this surfaced.  One attribute, and the answer sticks.
-  // "productionTracker" says what the choice really is; "projectPublication"
-  // is the name it was first written with and is still read below, so a scene
-  // saved in between keeps its answer.
-  if (m_suppressProjectPublication) {
-    xml.writeAttribute("productionTracker", "off");
-    xml.writeAttribute("projectPublication", "local");
-  }
-  if (m_shotIdentityAsked) xml.writeAttribute("shotIdentityAsked", "1");
-  // Project metadata (production + title entered by user at scene creation).
+  ensureShotUuids();  // first: the file must carry every shot's uuid
   {
-    ZtoryModel *model = ZtoryModel::instance();
-    // production/title/episode/season/defaultTechnique/techniques now live in
-    // the project DB (production.ztrack). The .ztoryc keeps only the per-scene
-    // PDF logo settings here, and still READS the old attrs for migration.
-    if (!model->pdfLogoPath().isEmpty() || model->pdfNoLogo()) {
-      xml.writeStartElement("project");
-      if (!model->pdfLogoPath().isEmpty())
-        xml.writeAttribute("pdfLogo", model->pdfLogoPath());
-      if (model->pdfNoLogo())
-        xml.writeAttribute("pdfNoLogo", "1");
-      xml.writeEndElement();
-    }
-    // NOTE: the team roster now lives in the project-level DB
-    // (production.ztrack), not in the per-scene .ztoryc. The <team> block is
-    // still READ on load (loadZtoryc) for one-time migration of legacy scenes.
-    // Assets now live in the project DB (production.ztrack), not the .ztoryc.
-    // The <assets> block is still READ on load for one-time migration.
+    std::vector<const ShotData *> shots;
+    for (const Shot &shot : m_shots) shots.push_back(shot.data.get());
+    if (!ZtoryModel::instance()->writeShotDocument(path, shots)) return;
   }
-  // Imported screenplay (Script panel) — project-relative path.
-  {
-    QString sf = ZtoryModel::instance()->scriptFile();
-    if (!sf.isEmpty()) xml.writeTextElement("scriptFile", sf);
-  }
-  // Numbering scheme + sequence list — so the SQ/SH structure survives reload
-  // (previously only per-shot number/label were saved, so sequences were lost).
-  {
-    ZtoryModel *model = ZtoryModel::instance();
-    const NumberingConfig &cfg = model->numberingConfig();
-    xml.writeStartElement("numbering");
-    xml.writeAttribute("style",       QString::number((int)cfg.style));
-    xml.writeAttribute("shotPrefix",  cfg.shotPrefix);
-    xml.writeAttribute("seqPrefix",   cfg.seqPrefix);
-    xml.writeAttribute("panelPrefix", cfg.panelPrefix);
-    xml.writeAttribute("step",        QString::number(cfg.step));
-    xml.writeAttribute("padding",     QString::number(cfg.padding));
-    xml.writeAttribute("seqPadding",  QString::number(cfg.seqPadding));
-    xml.writeAttribute("startNumber", QString::number(cfg.startNumber));
-    xml.writeAttribute("seqNumber",   QString::number(cfg.seqNumber));
-    xml.writeAttribute("resetOnSeqChange", cfg.resetOnSeqChange ? "1" : "0");
-    xml.writeEndElement();
-    for (const SequenceData &seq : model->sequences()) {
-      xml.writeStartElement("sequence");
-      xml.writeAttribute("uuid",  seq.uuid);
-      xml.writeAttribute("label", seq.label);
-      xml.writeAttribute("order", QString::number(seq.orderIndex));
-      xml.writeEndElement();
-    }
-  }
-  // Guarantee every shot has a stable uuid.  (Tracker edits need no copying:
-  // the Board's shots are the model's objects.)
-  ensureShotUuids();
-  for (int si = 0; si < (int)m_shots.size(); si++) {
-    const Shot &shot = m_shots[si];
-    xml.writeStartElement("shot");
-    xml.writeAttribute("index",      QString::number(si));
-    if (!shot.data->uuid.isEmpty())
-      xml.writeAttribute("uuid",     shot.data->uuid);
-    // Which sub-scene this entry belongs to: loadZtoryc() matches on it, so
-    // the text of a shot stays with the shot when one is inserted before it.
-    {
-      ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
-      const QString lvl = ztoryShotLevelName(
-          scn ? scn->getChildStack()->getTopXsheet() : nullptr,
-          shot.data->xsheetColumn);
-      if (!lvl.isEmpty()) xml.writeAttribute("level", lvl);
-    }
-    xml.writeAttribute("number",     shot.data->shotNumber);
-    xml.writeAttribute("label",      shot.data->shotLabel);
-    xml.writeAttribute("order",      QString::number(shot.data->orderIndex));
-    xml.writeAttribute("sequenceId", shot.data->sequenceId);
-    if (shot.data->transitionFrames > 0)
-      xml.writeAttribute("transition", QString::number(shot.data->transitionFrames));
-    // Production tracking (spreadsheet / Kitsu).
-    if (!shot.data->technique.isEmpty())
-      xml.writeAttribute("technique", shot.data->technique);
-    if (!shot.data->notes.isEmpty())
-      xml.writeTextElement("shotNotes", shot.data->notes);
-    if (!shot.data->vfxNotes.isEmpty())
-      xml.writeTextElement("shotVfxNotes", shot.data->vfxNotes);
-    for (auto it = shot.data->tasks.constBegin(); it != shot.data->tasks.constEnd(); ++it) {
-      xml.writeStartElement("task");
-      xml.writeAttribute("type",   it.key());
-      xml.writeAttribute("status", ZtoryModel::taskStatusLabel(it.value().status));
-      if (!it.value().assignees.isEmpty())
-        xml.writeAttribute("assignee", it.value().assignees.join(", "));
-      xml.writeEndElement();
-    }
-    for (int pi = 0; pi < (int)shot.data->panels.size(); pi++) {
-      const PanelData &pd = shot.data->panels[pi];
-      xml.writeStartElement("panel");
-      xml.writeAttribute("index",      QString::number(pi));
-      xml.writeAttribute("startFrame", QString::number(pd.startFrame));
-      xml.writeAttribute("duration",   QString::number(pd.duration));
-      if (pd.cameraMoveType != PanelData::CamNone) {
-        xml.writeAttribute("camMove",  QString::number((int)pd.cameraMoveType));
-        xml.writeAttribute("camLabel", pd.cameraMoveLabel);
-        xml.writeAttribute("camRenderFrame", QString::number(pd.camRenderFrame));
-        xml.writeAttribute("camW", QString::number(pd.camW));
-        xml.writeAttribute("camH", QString::number(pd.camH));
-        // Store affines as space-separated doubles
-        auto affToStr = [](const double a[6]) {
-          return QString("%1 %2 %3 %4 %5 %6")
-              .arg(a[0],0,'g',10).arg(a[1],0,'g',10).arg(a[2],0,'g',10)
-              .arg(a[3],0,'g',10).arg(a[4],0,'g',10).arg(a[5],0,'g',10);
-        };
-        xml.writeAttribute("camA0", affToStr(pd.camA0));
-        xml.writeAttribute("camA1", affToStr(pd.camA1));
-      }
-      if (pd.hasLight) {
-        xml.writeAttribute("lightTail", QString("%1 %2")
-            .arg(pd.lightTailX, 0, 'g', 6).arg(pd.lightTailY, 0, 'g', 6));
-        xml.writeAttribute("lightTip", QString("%1 %2")
-            .arg(pd.lightTipX, 0, 'g', 6).arg(pd.lightTipY, 0, 'g', 6));
-        xml.writeAttribute("lightDepth", QString::number(pd.lightDepth, 'g', 4));
-        xml.writeAttribute("lightSpread", QString::number(pd.lightSpread, 'g', 4));
-        xml.writeAttribute("lightColor", pd.lightColor);
-      }
-      xml.writeTextElement("dialog", pd.dialog);
-      xml.writeTextElement("action", pd.action);
-      xml.writeTextElement("notes",  pd.notes);
-      xml.writeEndElement();
-    }
-    xml.writeEndElement();
-  }
-  xml.writeEndElement();
-  xml.writeEndDocument();
-  file.close();
   // Publish structural metadata to the project DB (unless user opted out).
-  if (!m_suppressProjectPublication) {
+  if (!ZtoryModel::instance()->shotDocumentState().trackerOff) {
     QString sourceFile = QFileInfo(path).fileName();
     if (!sourceFile.isEmpty()) {
       // Prima di pubblicare, non dopo: pubblicare e POI dire che c'e' un
@@ -3500,12 +3337,12 @@ void StoryboardPanel::loadZtoryc() {
   m_loadingZtoryc = true;  // suppress scriptFileChanged→saveZtoryc during load
   // Reset role/back-link state so values from a previous scene don't leak (and a
   // new/empty scene is never mistaken for a shot scene).
-  m_currentSceneIsShot      = false;
-  m_currentSceneIsCharacter = false;
+  ZtoryModel::instance()->shotDocumentState().isShotScene      = false;
+  ZtoryModel::instance()->shotDocumentState().isCharacterScene = false;
   // Cleared before parsing: the root element below is what decides it, and a
   // scene with no attribute has simply never opted out.
-  m_suppressProjectPublication = false;
-  m_shotIdentityAsked          = false;
+  ZtoryModel::instance()->shotDocumentState().trackerOff = false;
+  ZtoryModel::instance()->shotDocumentState().shotIdentityAsked          = false;
   // NON si azzera qui la guardia della domanda sull'identita' degli shot:
   // loadZtoryc() gira a ogni resequence, non solo all'apertura di una scena, e
   // azzerarla qui faceva ricomparire la domanda a ogni riordino. Ora e' legata
@@ -3610,7 +3447,7 @@ void StoryboardPanel::loadZtoryc() {
       TXsheet *top    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
       QHash<QString, QVector<int>> targetsByLevel;  // level -> m_shots indices
       for (int t = 0; t < (int)m_shots.size(); t++)
-        targetsByLevel[ztoryShotLevelName(top, m_shots[t].data->xsheetColumn)]
+        targetsByLevel[ZtoryModel::shotLevelNameAt(top, m_shots[t].data->xsheetColumn)]
             .push_back(t);
       QHash<QString, int> used;
       for (const auto &e : entries) {
@@ -3642,10 +3479,10 @@ void StoryboardPanel::loadZtoryc() {
         if (!r.isEmpty()) sceneRole = r;
         // A scene the user kept out of the project stays out, session after
         // session.  Absent attribute = never asked, or answered yes.
-        m_suppressProjectPublication =
+        ZtoryModel::instance()->shotDocumentState().trackerOff =
             (a.value("productionTracker").toString() == QLatin1String("off") ||
              a.value("projectPublication").toString() == QLatin1String("local"));
-        m_shotIdentityAsked = (a.value("shotIdentityAsked").toString() ==
+        ZtoryModel::instance()->shotDocumentState().shotIdentityAsked = (a.value("shotIdentityAsked").toString() ==
                                QLatin1String("1"));
         m_shotBackLinkUuid      = a.value("projectShot").toString();
         m_shotBackLinkProject   = a.value("project").toString();
@@ -3954,8 +3791,8 @@ void StoryboardPanel::loadZtoryc() {
   ensureShotUuids();
   // Mark shot scenes BEFORE any saveZtoryc() below so the companion .ztoryc is
   // never rewritten with role="storyboard".
-  m_currentSceneIsShot      = (sceneRole == "shot");
-  m_currentSceneIsCharacter = (sceneRole == "character");
+  ZtoryModel::instance()->shotDocumentState().isShotScene      = (sceneRole == "shot");
+  ZtoryModel::instance()->shotDocumentState().isCharacterScene = (sceneRole == "character");
   // Persist the SFH-explosion repair so the scene loads cleanly next time.
   // m_currentZtoryPath is still empty here (set by refreshFromScene after we
   // return), so temporarily anchor it so saveZtoryc() can write.
