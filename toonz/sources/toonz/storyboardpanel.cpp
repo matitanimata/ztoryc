@@ -3639,9 +3639,14 @@ void StoryboardPanel::loadZtoryc() {
   // scene reset this (ZtoryModel, sceneSwitched).
   ZtoryModel *zmLoad = ZtoryModel::instance();
   std::vector<std::pair<int, ZtoryShotList::Ptr>> keptShared;
+  // Mid-session (the file was already read for this scene): NO shot takes
+  // anything from the file — not even a fresh one.  The file cannot know the
+  // shots born after it was written, and matching them by sub-scene gave a
+  // Copy pasted before its original the original's uuid and texts.  A pasted
+  // Cut takes its data from the clip (adoptCutShot, below).
   if (zmLoad->shotDataLoadedFor(path))
     for (int i = 0; i < (int)m_shots.size(); i++)
-      if (m_shots[i].data && !zmLoad->isFreshShot(m_shots[i].data.get())) {
+      if (m_shots[i].data) {
         keptShared.push_back({i, m_shots[i].data});
         m_shots[i].data = std::make_shared<ShotData>(*m_shots[i].data);
       }
@@ -3997,13 +4002,13 @@ void StoryboardPanel::loadZtoryc() {
   // A full rebuild right after a Paste: the pasted shot is not in the file
   // (the Cut saved without it), so it would come back blank.  Take its data
   // from the clip — only for a shot the file gave nothing (no uuid).
-  for (Shot &shot : m_shots)
-    if (shot.data->uuid.isEmpty()) adoptCutShot(shot);
-
-  // Give the already-loaded shots their shared objects back (see the top), and
-  // record that this scene's file has been read.
+  // Give the shots their shared objects back (see the top) — before taking a
+  // pasted Cut's data, which must land in the shared object.
   for (const auto &k : keptShared)
     if (k.first < (int)m_shots.size()) m_shots[k.first].data = k.second;
+  for (Shot &shot : m_shots)
+    if (shot.data->uuid.isEmpty()) adoptCutShot(shot);
+  // Record that this scene's file has been read.
   for (const Shot &shot : m_shots)
     if (shot.data) zmLoad->markShotLoaded(shot.data.get());
   zmLoad->setShotDataLoadedFor(path);
@@ -5224,6 +5229,7 @@ void StoryboardPanel::onShotInserted(int col) {
       qWarning("[ZTORY] onShotInserted: column %d is already on the board "
                "(Copies) -> full rebuild", col);
       refreshFromScene();
+      saveZtoryc();
       return;
     }
   TXshColumn *column = xsh->getColumn(col);
@@ -5255,6 +5261,7 @@ void StoryboardPanel::onShotInserted(int col) {
   // A list that does not match the scene is rebuilt instead.
   if (!reanchorColumnsFromScene()) {
     refreshFromScene();
+    saveZtoryc();
     return;
   }
   bindShotsToModel();
@@ -5310,6 +5317,7 @@ void StoryboardPanel::onShotRemovedAt(int col) {
   // shift would be applied once per Board); rebuilt if the list does not match.
   if (!reanchorColumnsFromScene()) {
     refreshFromScene();
+    saveZtoryc();
     return;
   }
   bindShotsToModel();

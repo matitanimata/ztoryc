@@ -99,7 +99,13 @@ spento (`productionTracker="off"`), mai i file veri:
   fotografie dell'undo diventano copie vere, il gestore di `shotDataChanged` aggiorna solo i widget, un
   «cimitero» degli shot cancellati per l'undo; **2c** via `syncShotPanels` (testi),
   `pushTrackingToBoard`/`pullTrackingFromBoard`, `setShotsFrom`.
-  - **2b scritto (2026-10-06), rete di sicurezza identica, prova a mano DA FARE.** Cosa fa:
+  - **2b scritto (2026-10-06), rete di sicurezza identica, prove a mano FATTE in gran parte** (2026-10-06,
+    su navtest1): testi condivisi fra i Board di X e T; secondo disegno; Paste di una Copy prima
+    dell'originale (uuid nuovo, Copy vuota); cancellare l'originale di una Copy + Undo; testo del
+    Navigator conservato entrando e uscendo da un altro shot senza salvare; riordino con una Copy (i
+    dati seguono lo shot, la Copy resta vuota); Merge (un solo «removed» per Board, dati dello shot
+    dopo intatti, uguale in X e T); Revert Scene (rilegge il file: vedi la decisione per il passo 3).
+    Restano: luce dal Navigator, Send to Board, cambio scena. Cosa fa:
     `Shot::data` è `ZtoryShotList::Ptr`, preso con `modelShotFor(col)`; `bindShotsToModel()` dopo ogni
     riallineamento del Board (oggetto del Board = oggetto del modello per quella colonna; una voce
     «fresca» del modello prende quello del Board); il `.ztoryc` si legge **una volta per apertura**
@@ -132,6 +138,21 @@ spento (`productionTracker="off"`), mai i file veri:
     uno shot senza salvare): testo nel Board di Ztoryc X visibile subito nel Board di Ztoryc T; Navigator;
     «+»; Delete + Undo; Cut/Paste da Board e Animatic; riordino nel Board; Merge; Send to Board; luce
     dal Navigator; salvataggio, Revert Scene, cambio scena (nessun testo di un'altra scena).
+- **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della
+  scena** (⌘S, Save Scene, Save All), mai più dagli eventi dei Board (riordino, Paste, ecc.). Così
+  `.tnz` e `.ztoryc` sono sempre dello stesso momento; un testo non salvato si perde chiudendo senza
+  salvare, come un disegno. Perché: provato a mano il 2026-10-06 — Copy incollata (non salvata),
+  riordino (il Board scrive il `.ztoryc`, `onMoveShot`, già così su master), Revert Scene: il `.tnz`
+  ha 5 shot, il `.ztoryc` 6 voci, l'abbinamento per ordine di sotto-scena dà all'unica colonna `sub_4`
+  la prima voce `sub_4`, cioè la Copy vuota → l'originale perde dialogo e uuid. Stesso esito
+  chiudendo senza salvare e riaprendo. Non è una regressione del 2b.
+- **Conseguenza obbligata (domanda di Franco, 2026-10-06): il recupero deve portarsi dietro il
+  `.ztoryc`.** Oggi `ZtoryRecovery` copia solo il `.tnz` e i livelli modificati
+  (`ztoryrecovery.cpp:238-256` la copia, `:412-447` il ripristino): funziona per caso perché il Board
+  scrive il `.ztoryc` da solo, e anche così dopo un recupero il `.ztoryc` può essere di un momento
+  diverso dal `.tnz`. Nel passo 3 lo snapshot scrive anche il `.ztoryc` dal modello nella cartella di
+  recupero (stesso momento del `.tnz`), il manifesto lo elenca e `restore` lo rimette accanto alla
+  scena. Senza questo, col `.ztoryc` scritto solo al salvataggio, un crash perderebbe i testi.
 - Noto per il passo 3: dopo «Save Scene As» `saveZtoryc` non scrive (il percorso non coincide
   con `m_currentZtoryPath`), come già prima.
 - Scoperto il 2026-10-06: **Cut → Paste dal Board perde i testi dello shot** e dà uuid doppi
