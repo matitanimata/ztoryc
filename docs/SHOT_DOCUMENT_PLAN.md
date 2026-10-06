@@ -119,7 +119,15 @@ spento (`productionTracker="off"`), mai i file veri:
     controllo della sotto-scena (`reanchorColumnsFromScene`, altrimenti si ricostruisce); il «già
     letto» ricorda l'oggetto scena (entrare/uscire da uno shot non fa rileggere il file); la
     rilettura non scrive più `sequenceId` nel modello per indice. Rete di sicurezza: identica.
-  - Prove a mano da fare (aggiunte dalla review: secondo disegno in uno shot e i tre Board; Merge; Copy
+  - Seconda review (2026-10-06): chiusi i punti della prima; due bloccanti sulle Copy, corretti —
+    una voce con la colonna morta non vince la passata «dove atteso» (cancellando uno shot che ha
+    una Copy il modello teneva i dati del cancellato); `onShotInserted` ricostruisce invece di mettere
+    due volte lo stesso oggetto (Paste di una Copy prima dell'originale); ricostruzione della griglia
+    raccolta e rimandata, con le anteprime; tolto lo `shotRemovedAt` dopo il resequence nel Merge del
+    Board (contro la regola di AGENTS.md). Codice morto del modello (`removeShot`, `moveShot`,
+    `cloneShot`): da togliere nel 2c. Rete di sicurezza: identica.
+  - Prove a mano da fare (aggiunte dalle review: cancellare l'originale di una Copy e la Copy; Paste di
+    una Copy prima dell'originale e fra due Copy; secondo disegno in uno shot e i tre Board; Merge; Copy
     e Paste prima dell'originale; riordino con una Copy; luce dal Navigator, poi entrare e uscire da
     uno shot senza salvare): testo nel Board di Ztoryc X visibile subito nel Board di Ztoryc T; Navigator;
     «+»; Delete + Undo; Cut/Paste da Board e Animatic; riordino nel Board; Merge; Send to Board; luce

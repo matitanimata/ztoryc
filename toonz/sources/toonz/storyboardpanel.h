@@ -371,6 +371,7 @@ struct Shot {
   // Light last drawn per panel (key: the PanelData's address), to notice a
   // light edited elsewhere now that the data has one copy.
   QHash<QString, QString> m_lightSeen;
+  bool m_gridRebuildPending = false;  // a deferred rebuildGrid is queued
   // After any rebuild of m_shots: make every shot's data THE model's object for
   // its column (one copy).  A fresh model entry takes the Board's object;
   // otherwise the Board takes the model's.

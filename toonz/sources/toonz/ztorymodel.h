@@ -436,7 +436,10 @@ class ZtoryModel : public QObject {
   struct ShotIdentity {
     TXshColumn     *column = nullptr;
     TXshChildLevel *level  = nullptr;
-    int             col    = -1;  // where that column stood when recorded
+    // Where that column stood when recorded.  Compared with where it stands
+    // now: different = the column moved (insert/delete before it); equal while
+    // the entry's xsheetColumn changed = the Board moved the CELLS (reorder).
+    int             col    = -1;
   };
   std::vector<ShotIdentity>         m_shotIds;
   void recordShotIdentity(int si);  // from m_shots[si].xsheetColumn

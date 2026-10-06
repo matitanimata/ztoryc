@@ -3631,8 +3631,15 @@ void ZtoryModel::reconcileWithXsheet() {
     auto it = m_shotIds[k].column ? colIndex.find(m_shotIds[k].column)
                                   : colIndex.end();
     const int now = it != colIndex.end() ? it->second : -1;
-    expected[k] = (now >= 0 && now != m_shotIds[k].col) ? now
-                                                         : m_shots[k].xsheetColumn;
+    // A column that is no longer in the scene expects nothing: its entry
+    // (a deleted shot) must not win pass 1 over a living Copy of the same
+    // sub-scene.  Pass 2 can still re-attach it by sub-scene (the undo
+    // re-creates columns).
+    if (m_shotIds[k].column && now < 0)
+      expected[k] = -1;
+    else
+      expected[k] = (now >= 0 && now != m_shotIds[k].col) ? now
+                                                          : m_shots[k].xsheetColumn;
   }
   // Pass by pass over ALL the columns, the strictest first — one pass per
   // column at a time let a looser test take an entry another column matched

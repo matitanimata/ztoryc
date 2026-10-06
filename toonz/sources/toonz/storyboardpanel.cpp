@@ -1877,7 +1877,16 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
       if (m_shots[i].data.get() == sd) { si = i; break; }
     if (si < 0) return;
     // Another Board may have re-counted the panels: match the widgets first.
-    if (ensurePanelWidgets(si)) rebuildGrid();
+    // The grid is laid out again once per burst (loadZtoryc announces every
+    // shot), with the new panels' previews.
+    if (ensurePanelWidgets(si) && !m_gridRebuildPending) {
+      m_gridRebuildPending = true;
+      QTimer::singleShot(0, this, [this]() {
+        m_gridRebuildPending = false;
+        rebuildGrid();
+        updateVisiblePreviews();
+      });
+    }
     Shot &shot = m_shots[si];
     for (int pi = 0; pi < (int)shot.panels.size() &&
                      pi < (int)shot.data->panels.size(); pi++) {
@@ -2938,6 +2947,10 @@ ZtoryShotList::Ptr StoryboardPanel::modelShotFor(int col) {
 void StoryboardPanel::bindShotsToModel() {
   ZtoryModel *m = ZtoryModel::instance();
   bool reconciled = false;
+  for (int i = 0; i < (int)m_shots.size(); i++)
+    for (int j = i + 1; j < (int)m_shots.size(); j++)
+      if (m_shots[i].data && m_shots[i].data == m_shots[j].data)
+        qWarning("[ZTORY] bindShotsToModel: shots %d and %d share one object", i, j);
   for (Shot &shot : m_shots) {
     if (!shot.data) continue;
     const int col = shot.data->xsheetColumn;
@@ -5003,10 +5016,9 @@ void StoryboardPanel::onMergeShots() {
   m_selectedIndices.clear();
   m_selectedShotIndex = -1;
 
-  m_updating = true;
-  for (int i = (int)sortedCols.size() - 1; i >= 1; i--)
-    emit ZtoryModel::instance()->shotRemovedAt(sortedCols[i]);
-  m_updating = false;
+  // No shotRemovedAt here (AGENTS.md: never after resequenceXsheet): the other
+  // Boards already followed the resequence (onModelResequenced), and the
+  // extra signal made them remove one shot too many.
 
   auto after = captureSnapshot();
   TUndoManager::manager()->add(
@@ -5204,6 +5216,16 @@ void StoryboardPanel::onShotInserted(int col) {
   // only if it has none.
   Shot shot;
   shot.data = modelShotFor(col);
+  // With Copies (the same sub-scene in several columns) the guess above can
+  // pick the wrong position: the model's object for `col` is then one this
+  // Board already shows.  Never the same object twice — rebuild instead.
+  for (const Shot &other : m_shots)
+    if (other.data == shot.data) {
+      qWarning("[ZTORY] onShotInserted: column %d is already on the board "
+               "(Copies) -> full rebuild", col);
+      refreshFromScene();
+      return;
+    }
   TXshColumn *column = xsh->getColumn(col);
   if (column) {
     int r0 = 0, r1 = 0;
@@ -6287,7 +6309,9 @@ void StoryboardPanel::onDeleteShot() {
     ColumnCmd::deleteColumns(colSet, false, true);  // withoutUndo=true: our UndoBoardState owns this
   }
   // Columns from the scene, in absolute terms (the objects are shared).
-  reanchorColumnsFromScene();
+  if (!reanchorColumnsFromScene())
+    qWarning("[ZTORY] board list does not match the scene: columns left to the "
+             "resequence");
 
   m_selectedShotIndex = -1;
   m_selectedIndices.clear();
@@ -6375,7 +6399,9 @@ void StoryboardPanel::onAddShot() {
   m_shots.insert(m_shots.begin() + insertAt, shot);
   ZtoryModel::instance()->markShotLoaded(shot.data.get());
   // Columns from the scene, in absolute terms (the objects are shared).
-  reanchorColumnsFromScene();
+  if (!reanchorColumnsFromScene())
+    qWarning("[ZTORY] board list does not match the scene: columns left to the "
+             "resequence");
   addPanelWidget(insertAt, 0);
   if (!ZtoryModel::instance()->autoRenumber()) assignKeepNumbers(insertAt);
   renumberAll();
