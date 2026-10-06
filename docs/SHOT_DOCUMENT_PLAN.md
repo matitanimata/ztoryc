@@ -93,6 +93,12 @@ spento (`productionTracker="off"`), mai i file veri:
   1 new» — l'undo ricrea tutte le colonne; lo shot ripristinato rientra nel modello come voce nuova
   (senza i dati che stanno solo nel modello: per i testi comanda ancora il Board). **Da fare al passo
   2**: un «cimitero» degli shot cancellati, ripresi per sotto-scena. Non provati: Send to Board.
+- [~] Passo 2 — diviso in tre (2026-10-06): **2a** il modello tiene gli shot come oggetti condivisi
+  (`ZtoryShotList`, `std::shared_ptr<ShotData>`), stessa interfaccia di prima — FATTO, rete di sicurezza
+  identica; **2b** il Board prende l'oggetto dello shot dal modello (`shot.data` → `shot.data->`), le
+  fotografie dell'undo diventano copie vere, il gestore di `shotDataChanged` aggiorna solo i widget, un
+  «cimitero» degli shot cancellati per l'undo; **2c** via `syncShotPanels` (testi),
+  `pushTrackingToBoard`/`pullTrackingFromBoard`, `setShotsFrom`.
 - Noto per il passo 3: dopo «Save Scene As» `saveZtoryc` non scrive (il percorso non coincide
   con `m_currentZtoryPath`), come già prima.
 - Scoperto il 2026-10-06: **Cut → Paste dal Board perde i testi dello shot** e dà uuid doppi

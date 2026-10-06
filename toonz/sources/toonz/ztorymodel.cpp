@@ -2654,7 +2654,12 @@ void ZtoryModel::assignShotLabel(std::vector<ShotData> &shots, int si,
 }
 
 void ZtoryModel::generateShotLabel(int si) {
-  assignShotLabel(m_shots, si, m_numberingConfig);
+  if (si < 0 || si >= (int)m_shots.size()) return;
+  std::vector<ShotData> plain = m_shots.copy();
+  assignShotLabel(plain, si, m_numberingConfig);
+  m_shots[si].shotLabel  = plain[si].shotLabel;
+  m_shots[si].shotNumber = plain[si].shotNumber;
+  m_shots[si].orderIndex = plain[si].orderIndex;
 }
 
 void ZtoryModel::cleanRenumber() {
@@ -2802,7 +2807,7 @@ void ZtoryModel::addShot(int insertAt) {
     generateShotLabel((int)m_shots.size() - 1);
     emit shotAdded((int)m_shots.size() - 1);
   } else {
-    m_shots.insert(m_shots.begin() + insertAt, s);
+    m_shots.insertAt(insertAt, s);
     m_previews.insert(m_previews.begin() + insertAt, {QPixmap()});
     generateShotLabel(insertAt);
     emit shotAdded(insertAt);
@@ -3011,7 +3016,7 @@ void ZtoryModel::addShotFromRasters(const QString &name,
 void ZtoryModel::removeShot(int si) {
   if (!assertMainXsheet(true)) return;
   if (si < 0 || si >= (int)m_shots.size()) return;
-  m_shots.erase(m_shots.begin() + si);
+  m_shots.eraseAt(si);
   if (si < (int)m_previews.size())
     m_previews.erase(m_previews.begin() + si);
   emit shotRemoved(si);
@@ -3025,8 +3030,8 @@ void ZtoryModel::moveShot(int from, int to) {
   if (to   < 0 || to   >= (int)m_shots.size()) return;
   ShotData s = m_shots[from];
   std::vector<QPixmap> px = (from < (int)m_previews.size()) ? m_previews[from] : std::vector<QPixmap>();
-  m_shots.erase(m_shots.begin() + from);
-  m_shots.insert(m_shots.begin() + to, s);
+  m_shots.eraseAt(from);
+  m_shots.insertAt(to, s);
   if (!m_previews.empty()) {
     m_previews.erase(m_previews.begin() + from);
     m_previews.insert(m_previews.begin() + to, px);
@@ -3042,7 +3047,7 @@ void ZtoryModel::cloneShot(int si) {
   s.shotNumber = "";   // reset — will be assigned by generateShotLabel
   s.shotLabel  = "";
   s.orderIndex = 0;
-  m_shots.insert(m_shots.begin() + si + 1, s);
+  m_shots.insertAt(si + 1, s);
   std::vector<QPixmap> px = (si < (int)m_previews.size()) ? m_previews[si] : std::vector<QPixmap>();
   m_previews.insert(m_previews.begin() + si + 1, px);
   generateShotLabel(si + 1);
@@ -3551,7 +3556,7 @@ void ZtoryModel::reconcileWithXsheet() {
       if (!taken[i] && pred(i)) return i;
     return -1;
   };
-  std::vector<ShotData> next;
+  ZtoryShotList next;
   std::vector<std::vector<QPixmap>> nextPreviews;
   std::vector<ShotIdentity> nextIds;
   int matchedSame = 0, matchedLevel = 0, matchedIndex = 0, fresh = 0;
@@ -3576,7 +3581,7 @@ void ZtoryModel::reconcileWithXsheet() {
     }
     if (i >= 0) {
       taken[i] = true;
-      next.push_back(std::move(m_shots[i]));
+      next.push_back(m_shots.ptr(i));  // the object itself, not a copy
       nextPreviews.push_back(std::move(m_previews[i]));
     } else {
       fresh++;

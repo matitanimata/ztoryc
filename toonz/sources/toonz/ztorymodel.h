@@ -9,6 +9,7 @@
 #include <QHash>
 #include <vector>
 #include <set>
+#include <memory>
 #include "toonz/txshchildlevel.h"  // for TXshLevelP
 #include "traster.h"               // TRaster32P (export-to-board panels)
 
@@ -172,6 +173,60 @@ struct ZtoryClipEntry {
   // that builds the pasted column takes it back (StoryboardPanel::adoptCutShot).
   bool       hasShot  = false;
   ShotData   shot;
+};
+
+// The model's list of shots.  Each shot is ONE object, shared: whoever holds
+// it (the model, and from step 2b the Boards) reads and writes the same data,
+// so there is nothing to keep in step (docs/SHOT_DOCUMENT_PLAN.md, step 2).
+// Used like the std::vector<ShotData> it replaces; ptr()/push_back(Ptr) move
+// the objects themselves.
+class ZtoryShotList {
+public:
+  using Ptr = std::shared_ptr<ShotData>;
+  template <class It, class Ref>
+  struct DerefIter {
+    It it;
+    Ref operator*() const { return **it; }
+    DerefIter &operator++() { ++it; return *this; }
+    bool operator!=(const DerefIter &o) const { return it != o.it; }
+  };
+  using iterator = DerefIter<std::vector<Ptr>::iterator, ShotData &>;
+  using const_iterator =
+      DerefIter<std::vector<Ptr>::const_iterator, const ShotData &>;
+
+  size_t size() const { return m_v.size(); }
+  bool empty() const { return m_v.empty(); }
+  void clear() { m_v.clear(); }
+  void reserve(size_t n) { m_v.reserve(n); }
+  ShotData &operator[](size_t i) { return *m_v[i]; }
+  const ShotData &operator[](size_t i) const { return *m_v[i]; }
+  ShotData &back() { return *m_v.back(); }
+  Ptr ptr(size_t i) const { return m_v[i]; }
+  void push_back(ShotData s) { m_v.push_back(std::make_shared<ShotData>(std::move(s))); }
+  void push_back(Ptr p) { m_v.push_back(std::move(p)); }
+  void pop_back() { m_v.pop_back(); }
+  void insertAt(int i, ShotData s) {
+    m_v.insert(m_v.begin() + i, std::make_shared<ShotData>(std::move(s)));
+  }
+  void eraseAt(int i) { m_v.erase(m_v.begin() + i); }
+  void resize(size_t n) {
+    while (m_v.size() > n) m_v.pop_back();
+    while (m_v.size() < n) m_v.push_back(std::make_shared<ShotData>());
+  }
+  iterator begin() { return {m_v.begin()}; }
+  iterator end() { return {m_v.end()}; }
+  const_iterator begin() const { return {m_v.begin()}; }
+  const_iterator end() const { return {m_v.end()}; }
+  // A plain copy of the data (for algorithms written on std::vector).
+  std::vector<ShotData> copy() const {
+    std::vector<ShotData> out;
+    out.reserve(m_v.size());
+    for (const Ptr &p : m_v) out.push_back(*p);
+    return out;
+  }
+
+private:
+  std::vector<Ptr> m_v;
 };
 
 // Una battuta estratta dal testo di un pannello: chi la dice e cosa dice.
@@ -364,7 +419,7 @@ signals:
 class ZtoryModel : public QObject {
   Q_OBJECT
 
-  std::vector<ShotData>             m_shots;
+  ZtoryShotList                     m_shots;
   ZtoryTaskEvents                  *m_taskEvents = new ZtoryTaskEvents(this);
   std::vector<Asset>                m_assets;       // project-level asset list
   // Ztoryc: the PSD load test (ztoryCheckPsd) by «path|size|time». A PSD is
@@ -494,8 +549,12 @@ public:
 
   // Returns the shot index for a given xsheet column, or -1 if not found.
   int  shotIndexForCol(int col) const;
-  std::vector<ShotData>       &shots()       { return m_shots; }
-  const std::vector<ShotData> &shots() const { return m_shots; }
+  ZtoryShotList       &shots()       { return m_shots; }
+  const ZtoryShotList &shots() const { return m_shots; }
+  // The shared object of shot i (null if out of range).
+  ZtoryShotList::Ptr shotPtr(int i) const {
+    return (i >= 0 && i < (int)m_shots.size()) ? m_shots.ptr(i) : nullptr;
+  }
   int  fps() const { return m_fps; }
   void setFps(int fps) { if (fps > 0) m_fps = fps; }
   QString production() const { return m_production; }
@@ -972,7 +1031,10 @@ public:
   // authored by the Board). Used right before publishing to the project DB so a
   // previously-open larger scene's leftover shots never leak into this project.
   void setShotsFrom(const std::vector<ShotData> &shots) {
-    m_shots = shots;
+    // In place: the objects stay the same (others may hold them), only their
+    // contents and the count follow the given list.
+    m_shots.resize(shots.size());
+    for (int i = 0; i < (int)shots.size(); i++) m_shots[i] = shots[i];
     m_previews.resize(m_shots.size());
     m_shotIds.assign(m_shots.size(), ShotIdentity());
     for (int i = 0; i < (int)m_shots.size(); i++) recordShotIdentity(i);

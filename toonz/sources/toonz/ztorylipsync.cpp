@@ -108,7 +108,7 @@ ZtoryShotContext ztoryCurrentShotContext() {
       ctx.firstRow = netStart;
       ctx.lastRow  = netStart + netDuration - 1;
     }
-    const std::vector<ShotData> &shots = ZtoryModel::instance()->shots();
+    const ZtoryShotList &shots = ZtoryModel::instance()->shots();
     for (int i = 0; i < (int)shots.size(); i++)
       if (shots[i].xsheetColumn == col) { ctx.shotIndex = i; break; }
     // Ripiego: xsheetColumn puo' essere stale (lo si riscrive solo in certe
