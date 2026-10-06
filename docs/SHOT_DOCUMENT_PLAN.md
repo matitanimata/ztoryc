@@ -82,6 +82,12 @@ spento (`productionTracker="off"`), mai i file veri:
 - [x] Passo 0 — il ⌘S della scena scrive il `.ztoryc` (segnale `sceneSaved` → Board), il Navigator
   segna la scena come modificata (provato sul Mac); rete di sicurezza `ZTORYC_ROUNDTRIP` con base
   `out/base1` (2026-10-06).
+- [~] Passo 1 — `ZtoryModel::reconcileWithXsheet()` alla fine di `resequenceXsheet`, identità per
+  voce in `m_shotIds` (colonna + sotto-scena, solo in memoria); abbinamento: stessa colonna → stessa
+  sotto-scena con colonna sparita (undo) → stessa posizione per le voci appena aggiunte
+  (`addShotNamed`, `addShotFromRasters`). Rete di sicurezza: sei scene identiche alla base
+  (2026-10-06). **Manca la prova a mano**: «+» dell'Animatic in mezzo e Navigator sullo shot nuovo;
+  tecnica dopo il «+»; Cut/Paste; undo di un Delete; Send to Board.
 - Noto per il passo 3: dopo «Save Scene As» `saveZtoryc` non scrive (il percorso non coincide
   con `m_currentZtoryPath`), come già prima.
 - Scoperto il 2026-10-06: **Cut → Paste dal Board perde i testi dello shot** e dà uuid doppi

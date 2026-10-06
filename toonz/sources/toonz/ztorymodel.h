@@ -15,6 +15,7 @@
 class QFileSystemWatcher;
 class QLockFile;
 class QTimer;
+class TXshColumn;
 
 // ─── NumberingConfig ─────────────────────────────────────────────────────────
 // Persistent numbering scheme used both at startup and during Board editing.
@@ -373,6 +374,15 @@ class ZtoryModel : public QObject {
   QVector<QString>                  m_storyboardFiles; // registered storyboard basenames
   std::vector<SequenceData>         m_sequences;
   std::vector<std::vector<QPixmap>> m_previews; // [shotIdx][panelIdx]
+  // Which scene column each m_shots entry is, kept in parallel (runtime only,
+  // never saved): the shot's identity while the scene is open.  nullptr = not
+  // known yet (an entry appended before its column was matched).
+  struct ShotIdentity {
+    TXshColumn     *column = nullptr;
+    TXshChildLevel *level  = nullptr;
+  };
+  std::vector<ShotIdentity>         m_shotIds;
+  void recordShotIdentity(int si);  // from m_shots[si].xsheetColumn
   int                               m_fps;
   QString                           m_ztoryPath;
   // Imported screenplay, stored as a path relative to the project ("+extras/
@@ -964,7 +974,15 @@ public:
   void setShotsFrom(const std::vector<ShotData> &shots) {
     m_shots = shots;
     m_previews.resize(m_shots.size());
+    m_shotIds.assign(m_shots.size(), ShotIdentity());
+    for (int i = 0; i < (int)m_shots.size(); i++) recordShotIdentity(i);
   }
+  // Bring m_shots in line with the scene's shot columns, by identity (see
+  // docs/SHOT_DOCUMENT_PLAN.md, step 1): each entry follows its column, a new
+  // column gets a new entry, a column that is gone takes its entry with it, and
+  // index i is always the i-th shot column of the scene.  Run at the end of
+  // every resequence, before modelReset.
+  void reconcileWithXsheet();
   void removeShot(int shotIdx);
   void moveShot(int fromIdx, int toIdx);
   void cloneShot(int shotIdx);
@@ -1055,7 +1073,7 @@ public:
   }
 
   // ── Resequencing ──────────────────────────────────────────────────────────
-  void resequenceXsheet();
+  void resequenceXsheet();  // ends with reconcileWithXsheet()
 
   // Returns true if at main xsheet level; optionally shows a warning dialog.
   static bool assertMainXsheet(bool showWarning = true);

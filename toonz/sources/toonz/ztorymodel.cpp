@@ -9,6 +9,8 @@
 #include "tapp.h"
 #include "toonz/toonzscene.h"
 #include "toonz/txsheet.h"
+#include "toonz/txshcolumn.h"
+#include "toonz/txshchildlevel.h"
 #include "toonz/txshcell.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/levelproperties.h"   // LevelProperties (export-to-board level)
@@ -2781,8 +2783,10 @@ void ZtoryModel::syncShotPanels(int si, const std::vector<PanelData> &panels,
   }
   // xsheetColumn is critical: refreshPreview() uses it to render the correct
   // sub-scene thumbnail. Without it, all shots would render column 0 (SH010).
-  if (xsheetCol >= 0)
+  if (xsheetCol >= 0) {
     m_shots[si].xsheetColumn = xsheetCol;
+    recordShotIdentity(si);
+  }
   m_previews[si].resize(panels.size(), QPixmap());
   emit shotDataChanged(si);
 }
@@ -2844,6 +2848,7 @@ void ZtoryModel::addShotNamed(const QString &name) {
   s.panels.push_back(pd);
   m_shots.push_back(s);
   m_previews.push_back({QPixmap()});
+  recordShotIdentity((int)m_shots.size() - 1);
 
   app->getCurrentXsheet()->notifyXsheetChanged();
   resequenceXsheet();
@@ -2992,6 +2997,7 @@ void ZtoryModel::addShotFromRasters(const QString &name,
   // 4) Finalise the model entry now that the column exists.  xsheetColumn is
   //    critical: refreshPreview() uses it to render the sub-scene thumbnail.
   m_shots[si].xsheetColumn = col;
+  recordShotIdentity(si);
   // Name the column after the shot, like every other shot-creating path: the
   // Board's reorder detection compares this name against the shot label, and an
   // unnamed column carries no ordering information.
@@ -3267,6 +3273,7 @@ void ZtoryModel::load() {
   if (!file.open(QIODevice::ReadOnly)) return;
   m_shots.clear();
   m_previews.clear();
+  m_shotIds.clear();
   m_sequences.clear();
 
   QXmlStreamReader xml(&file);
@@ -3488,7 +3495,112 @@ void ZtoryModel::resequenceXsheet() {
   }
 
   app->getCurrentXsheet()->notifyXsheetChanged();
+  reconcileWithXsheet();
   emit modelReset();
+}
+
+// The sub-scene a main-xsheet column exposes, or nullptr if it is not a shot.
+static TXshChildLevel *shotColumnLevel(TXsheet *xsh, int col) {
+  TXshColumn *column = xsh ? xsh->getColumn(col) : nullptr;
+  if (!column || column->isEmpty()) return nullptr;
+  int r0 = 0, r1 = 0;
+  column->getRange(r0, r1);
+  for (int r = r0; r <= r1; r++) {
+    TXshCell cell = xsh->getCell(r, col);
+    if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel())
+      return cell.m_level->getChildLevel();
+  }
+  return nullptr;
+}
+
+void ZtoryModel::recordShotIdentity(int si) {
+  if (si < 0 || si >= (int)m_shots.size()) return;
+  if ((int)m_shotIds.size() < (int)m_shots.size())
+    m_shotIds.resize(m_shots.size());
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  TXsheet *top      = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
+  const int col     = m_shots[si].xsheetColumn;
+  TXshChildLevel *cl = shotColumnLevel(top, col);
+  m_shotIds[si].column = cl ? top->getColumn(col) : nullptr;
+  m_shotIds[si].level  = cl;
+}
+
+void ZtoryModel::reconcileWithXsheet() {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  TXsheet *top      = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
+  if (!top) return;
+  m_shotIds.resize(m_shots.size());
+  m_previews.resize(m_shots.size());
+
+  // The scene's shot columns, in order.
+  std::vector<int> cols;
+  std::vector<TXshColumn *> colObjs;
+  std::vector<TXshChildLevel *> levels;
+  for (int c = 0; c < top->getColumnCount(); c++)
+    if (TXshChildLevel *cl = shotColumnLevel(top, c)) {
+      cols.push_back(c);
+      colObjs.push_back(top->getColumn(c));
+      levels.push_back(cl);
+    }
+  std::set<TXshColumn *> present(colObjs.begin(), colObjs.end());
+
+  const int n = (int)m_shots.size();
+  std::vector<bool> taken(n, false);
+  auto find = [&](auto pred) {
+    for (int i = 0; i < n; i++)
+      if (!taken[i] && pred(i)) return i;
+    return -1;
+  };
+  std::vector<ShotData> next;
+  std::vector<std::vector<QPixmap>> nextPreviews;
+  std::vector<ShotIdentity> nextIds;
+  int matchedSame = 0, matchedLevel = 0, matchedIndex = 0, fresh = 0;
+  for (int j = 0; j < (int)cols.size(); j++) {
+    // 1. the same column object: the shot itself, wherever it moved
+    int i = find([&](int k) { return m_shotIds[k].column == colObjs[j]; });
+    if (i >= 0) matchedSame++;
+    // 2. its column is gone but its sub-scene is here (undo re-creates columns)
+    if (i < 0) {
+      i = find([&](int k) {
+        return m_shotIds[k].level == levels[j] &&
+               !present.count(m_shotIds[k].column);
+      });
+      if (i >= 0) matchedLevel++;
+    }
+    // 3. an entry not matched to any column yet, appended for this one
+    if (i < 0) {
+      i = find([&](int k) {
+        return !m_shotIds[k].column && m_shots[k].xsheetColumn == cols[j];
+      });
+      if (i >= 0) matchedIndex++;
+    }
+    if (i >= 0) {
+      taken[i] = true;
+      next.push_back(std::move(m_shots[i]));
+      nextPreviews.push_back(std::move(m_previews[i]));
+    } else {
+      fresh++;
+      ShotData s;
+      PanelData pd;
+      int r0 = 0, r1 = 0;
+      top->getColumn(cols[j])->getRange(r0, r1, /*ignoreLastStop=*/true);
+      pd.duration = r1 >= r0 ? r1 - r0 + 1 : 24;
+      s.panels.push_back(pd);
+      next.push_back(std::move(s));
+      nextPreviews.push_back({QPixmap()});
+    }
+    next.back().xsheetColumn = cols[j];
+    nextIds.push_back({colObjs[j], levels[j]});
+  }
+  const int dropped = n - (matchedSame + matchedLevel + matchedIndex);
+  if (fresh || dropped || matchedLevel || matchedIndex)
+    qWarning("[ZTORY] model reconcile: %d -> %d shots (%d same column, %d by "
+             "sub-scene, %d by position, %d new, %d gone)",
+             n, (int)next.size(), matchedSame, matchedLevel, matchedIndex,
+             fresh, dropped);
+  m_shots    = std::move(next);
+  m_previews = std::move(nextPreviews);
+  m_shotIds  = std::move(nextIds);
 }
 
 void ZtoryModel::updateColumnName(int si) {
