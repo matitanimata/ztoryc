@@ -90,9 +90,9 @@ bool isLightStatus(TaskStatus s) {
 
 const QVector<TaskStatus> &kAllStatuses = ZtoryModel::allTaskStatuses();
 
-// Persist the .ztoryc through the Board (the in-app source of truth lives in
-// the model; the Board owns the save path). No-op if the Board is closed —
-// the model still holds the change, it just isn't written until next save.
+// The Board alive, if any: a tracker edit marks the scene modified through it
+// (step 3b — the .ztoryc is written with the scene's ⌘S, by the Board or by
+// the model when no Board is alive).
 StoryboardPanel *findBoard() {
   for (QWidget *w : QApplication::allWidgets())
     if (auto *b = qobject_cast<StoryboardPanel *>(w)) return b;

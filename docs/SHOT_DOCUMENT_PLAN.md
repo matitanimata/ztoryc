@@ -253,6 +253,12 @@ spento (`productionTracker="off"`), mai i file veri:
   (niente fotogramma in più) → Undo; Cut dall'Animatic e Paste: lo shot incollato ha testi e durata
   (dati presi dal modello). La rete di sicurezza è identica. Restano: Add con colonna audio, Copy/Clone,
   le varianti dal Board, Merge with Next, undo in flusso Cutout.
+- **Prove del 2026-10-07 (seconda tornata): passate** Copy + Paste (copia vuota, 24 f), Clone + Paste,
+  Add dall'Animatic, Merge with Next (48 f, dati del primo shot), ognuna con undo. L'undo in flusso Cutout
+  non si applica: quelle stanze non hanno né Board né Animatic, le operazioni sugli shot non ci sono.
+- **Review inline di fine lavoro (2026-10-07)**: `~/ZtorYc/reviews/2026-10-07_reviewer.md` / `_license.md`;
+  nessun bloccante aperto; tolte `shotDataForColumn` (orfana) e `nextShotName` (morta da master), corretta la
+  regex di `ztoryPath()`, aggiornati tre commenti. **Il ramo è pronto per il merge su master — lo decide Franco.**
   - Restano a una sola versione: Move (Board) e Razor (Animatic) — da portare in `ZtoryShotOps` solo
     se serviranno anche altrove.
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della

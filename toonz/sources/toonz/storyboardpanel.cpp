@@ -2796,7 +2796,7 @@ QString StoryboardPanel::ztoryPath() const {
   TFilePath sp = scene->getScenePath();
   if (sp.isEmpty()) return QString();
   QString path = QString::fromStdWString(sp.getWideString());
-  path.replace(QRegularExpression("\.tnz$"), ".ztoryc");
+  path.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
   return path;
 }
 
@@ -3006,16 +3006,6 @@ bool StoryboardPanel::adoptCutShot(Shot &shot) {
   }
   *shot.data = std::move(data);  // into the shared object
   return true;
-}
-
-bool StoryboardPanel::shotDataForColumn(int col, ShotData *out) {
-  syncWidgetsToData();
-  for (const Shot &s : m_shots)
-    if (s.data->xsheetColumn == col) {
-      if (out) *out = *s.data;
-      return true;
-    }
-  return false;
 }
 
 QPixmap StoryboardPanel::firstPanelThumbnail(int shotIdx) const {

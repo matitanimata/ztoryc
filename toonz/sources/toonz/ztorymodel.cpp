@@ -3010,39 +3010,6 @@ void ZtoryModel::setNumberingConfig(const NumberingConfig &cfg) {
   // Don't call save() here — caller decides when to persist
 }
 
-QString ZtoryModel::nextShotName() const {
-  const NumberingConfig &cfg = m_numberingConfig;
-  // Parse existing shot numbers to find the highest matching number
-  QRegularExpression re;
-  if (cfg.style == NumberingConfig::Sequence) {
-    re.setPattern(
-        QString("^%1\\d+_%2(\\d+)$")
-            .arg(QRegularExpression::escape(cfg.seqPrefix),
-                 QRegularExpression::escape(cfg.shotPrefix)));
-  } else {
-    re.setPattern(
-        QString("^%1(\\d+)$")
-            .arg(QRegularExpression::escape(cfg.shotPrefix)));
-  }
-  int maxNum = cfg.startNumber - cfg.step;
-  for (const auto &s : m_shots) {
-    auto m = re.match(s.label());
-    if (m.hasMatch()) {
-      int n = m.captured(1).toInt();
-      if (n > maxNum) maxNum = n;
-    }
-  }
-  int next = qMax(cfg.startNumber, maxNum + cfg.step);
-  if (cfg.style == NumberingConfig::Sequence) {
-    return QString("%1%2_%3%4")
-        .arg(cfg.seqPrefix)
-        .arg(cfg.seqNumber, cfg.seqPadding, 10, QChar('0'))
-        .arg(cfg.shotPrefix)
-        .arg(next, cfg.padding, 10, QChar('0'));
-  }
-  return QString("%1%2").arg(cfg.shotPrefix).arg(next, cfg.padding, 10, QChar('0'));
-}
-
 void ZtoryModel::assignKeepNumbers(int insertAt) {
   int total = (int)m_shots.size();
   if (total == 0) return;

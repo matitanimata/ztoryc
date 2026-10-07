@@ -11,9 +11,8 @@
 
 class StoryboardPanel;
 
-// The first Board panel alive, or nullptr.  Needed by panels that mutate the
-// storyboard from outside it (Thumbnail room export, Animatic) and therefore
-// have to register their undo against a Board.
+// The first Board panel alive, or nullptr.  (Undo no longer needs one: the
+// snapshot comes from the model, ztoryCaptureShotSnapshot below.)
 //
 // NOTE: ztoryanimatic.cpp and ztorymonitorpanel.cpp each carry their own static
 // copy of this, written before there was a shared home for it.  They are

@@ -1116,7 +1116,6 @@ public:
 
   // ── Numerazione / Labelling ───────────────────────────────────────────────
   void    assignKeepNumbers(int insertAt);  // letter-suffix for Keep-# mode (legacy)
-  QString nextShotName() const;             // next auto name after existing shots
 
   void setNumberingConfig(const NumberingConfig &cfg);
   NumberingConfig       &numberingConfig()       { return m_numberingConfig; }
