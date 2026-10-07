@@ -1863,6 +1863,22 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   // .ztoryc (the original of a Copy lost its texts that way).
   // A Save As moved the scene: follow it.  sceneSaved comes only for the top
   // scene, and this Board's shots are that scene's.
+  // Undo/redo of a shot operation (step 6): the model restores; this Board
+  // does not follow the xsheet meanwhile, then rebuilds from the model (the
+  // shots are already marked read: the rebuild takes them as they are).
+  connect(ZtoryModel::instance(), &ZtoryModel::shotsRestoreStarted, this, [this]() {
+    disconnect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+               this, &StoryboardPanel::onXsheetChanged);
+  });
+  connect(ZtoryModel::instance(), &ZtoryModel::shotsRestored, this, [this]() {
+    connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
+            this, &StoryboardPanel::onXsheetChanged, Qt::UniqueConnection);
+    m_selectedShotIndex = -1;
+    m_selectedIndices.clear();
+    refreshFromScene();
+    QTimer::singleShot(0, this, &StoryboardPanel::onRefreshPreviews);
+  });
+
   connect(ZtoryModel::instance(), &ZtoryModel::sceneSaved, this, [this]() {
     const QString path = ztoryPath();
     if (!path.isEmpty() && path != m_currentZtoryPath) m_currentZtoryPath = path;
@@ -5300,30 +5316,37 @@ void StoryboardPanel::onPasteShot() {
 // ── Undo/Redo snapshot helpers ────────────────────────────────────────────────
 
 ZtoryBoardSnap StoryboardPanel::captureSnapshot() {
-  syncWidgetsToData();
-  // ALWAYS read the TOP xsheet. Snapshots can be captured while the user is
-  // inside a sub-scene (Match button, text-field focusOut, coalescing duration
-  // timer firing late…): the CURRENT xsheet would then be the sub-xsheet,
-  // whose cells are not child levels → every ZtoryShotSnap.level would be
-  // null, and restoring such a snapshot wipes the whole storyboard
-  // (restoreFromSnapshot removes all shot columns and re-inserts nothing).
+  syncWidgetsToData();  // text being typed belongs to the snapshot
+  return ztoryCaptureShotSnapshot();
+}
+
+void StoryboardPanel::restoreFromSnapshot(const ZtoryBoardSnap &snapRef) {
+  ztoryRestoreShotSnapshot(snapRef);  // the model restores; the Boards rebuild
+}
+
+ZtoryBoardSnap ztoryCaptureShotSnapshot() {
+  // ALWAYS the TOP xsheet: a snapshot can be taken from inside a sub-scene,
+  // where the current xsheet's cells are not shots — every level would be
+  // null, and restoring that snapshot wiped the whole storyboard.
   ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
-  TXsheet *xsh = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
+  TXsheet *xsh    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
+  ZtoryModel *m   = ZtoryModel::instance();
+  m->reconcileWithXsheet();  // the model's list = the scene's shot columns
   std::vector<ZtoryShotSnap> snap;
-  snap.reserve(m_shots.size());
-  for (const Shot &shot : m_shots) {
+  snap.reserve(m->shotCount());
+  for (int i = 0; i < m->shotCount(); i++) {
+    const ShotData &sd = m->shot(i);
     ZtoryShotSnap s;
-    s.data     = *shot.data;  // a COPY: the undo keeps the data as it was
+    s.data     = sd;  // a COPY: the undo keeps the data as it was
     s.duration = 0;
-    int col    = shot.data->xsheetColumn;
+    const int col = sd.xsheetColumn;
     if (xsh) {
-      int frameCount = xsh->getFrameCount();
+      const int frameCount = xsh->getFrameCount();
       for (int r = 0; r <= frameCount; r++) {
         TXshCell cell = xsh->getCell(r, col);
-        if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()
-            && !cell.getFrameId().isStopFrame()) {
-          // Skip SFH cells: they have a valid child-level pointer but are not
-          // real frames — counting them would inflate s.duration by 1.
+        if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel() &&
+            !cell.getFrameId().isStopFrame()) {
+          // Not the stop-frame cell: a valid child level, not a real frame.
           if (!s.level) s.level = cell.m_level;
           s.duration++;
         } else if (s.duration > 0) {
@@ -5334,148 +5357,79 @@ ZtoryBoardSnap StoryboardPanel::captureSnapshot() {
     if (s.duration == 0) s.duration = 24;
     snap.push_back(std::move(s));
   }
-  // L'audio viaggia con lo snapshot: con il link audio-video acceso e' parte
-  // dello stato che l'operazione cambia, e senza di esso l'undo lo lasciava
-  // dove l'operazione l'aveva portato.
+  // The audio travels with the snapshot: with the audio-video link on it is
+  // part of what the operation changes.
   ZtoryBoardSnap out;
   out.shots = std::move(snap);
   out.audio = ztoryCaptureAudioSnap();
   return out;
 }
 
-void StoryboardPanel::restoreFromSnapshot(const ZtoryBoardSnap &snapRef) {
-  TApp *app = TApp::instance();
+void ztoryRestoreShotSnapshot(const ZtoryBoardSnap &snapRef) {
+  TApp *app         = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene) return;
-  // CRITICAL — deep-copy the snapshot BEFORE anything else.  `snapRef` lives
-  // inside the UndoBoardState being executed; when the user is inside a
-  // sub-scene the MI_CloseChild below pushes a CloseChildUndo, and
-  // TUndoManager::add() during an active undo() truncates the redo branch of
-  // the stack, DELETING the executing UndoBoardState — the reference would
-  // dangle and the re-insert loop would read freed memory (observed: every
-  // level "null" → all shot columns removed, nothing re-inserted → storyboard
-  // wiped).  The copy's TXshLevelP refs also keep the sub-scene levels alive
-  // regardless of who frees the undo object.
+  ZtoryModel *m = ZtoryModel::instance();
+  // CRITICAL — deep-copy the snapshot first.  `snapRef` lives inside the undo
+  // item being executed; MI_CloseChild below pushes a CloseChildUndo, and
+  // TUndoManager::add() during an undo() truncates the redo branch, DELETING
+  // that undo item: the reference would dangle.  The copy's TXshLevelP refs
+  // also keep the sub-scene levels alive.
   const std::vector<ZtoryShotSnap> snap = snapRef.shots;
   {
     int valid = 0;
     for (const ZtoryShotSnap &s : snap)
       if (s.level && s.level->getChildLevel()) valid++;
     qWarning("[ZTORY] restoreFromSnapshot: snap=%d validLevels=%d shots=%d ancestors=%d",
-             (int)snap.size(), valid, (int)m_shots.size(),
+             (int)snap.size(), valid, m->shotCount(),
              scene->getChildStack()->getAncestorCount());
+    // A non-empty snapshot with NO valid sub-scene is broken (taken against
+    // the wrong xsheet): applying it would destroy every shot column.
+    if (!snap.empty() && valid == 0) return;
   }
-  // Safety net: a non-empty snapshot where NO entry has a valid sub-scene
-  // level is broken (e.g. captured against the wrong xsheet by an older
-  // build). Applying it would destroy every shot column and save an empty
-  // .ztoryc — refuse instead of wiping the storyboard.
-  if (!snap.empty()) {
-    bool anyLevel = false;
-    for (const ZtoryShotSnap &s : snap)
-      if (s.level && s.level->getChildLevel()) { anyLevel = true; break; }
-    if (!anyLevel) return;
-  }
-  // Ensure we are at the top-level xsheet before modifying it.
-  while (scene->getChildStack()->getAncestorCount() > 0)
-    CommandManager::instance()->execute("MI_CloseChild");
+  ZtoryShotOps::closeSubScenes();
   TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
   if (!xsh) return;
-  qWarning("[ZTORY] restore: xsh==top? %d  cols=%d frames=%d",
-           xsh == scene->getChildStack()->getTopXsheet() ? 1 : 0,
-           xsh->getColumnCount(), xsh->getFrameCount());
+  emit m->shotsRestoreStarted();
 
-  disconnect(app->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
-             this, &StoryboardPanel::onXsheetChanged);
-
-  // WHICH columns the shots occupy — read from the Board's own list, the same
-  // source captureSnapshot() used, and BEFORE clearShots() throws it away.
-  //
-  // They are NOT necessarily the leading ones.  refreshFromScene() skips every
-  // column that is not a sub-scene, so a sound column between two shots — a
-  // storyboard with a voice track, i.e. the normal case — leaves the shots
-  // spread around it.  The previous version counted "leading columns up to the
-  // first audio one": measured on CS2605CA_UGC (Col1 shot, Col2/Col3 audio,
-  // Col4… shots) that found ONE shot instead of 32, removed a single column and
-  // re-inserted the whole snapshot on top of the 31 survivors — every shot
-  // duplicated.  Confirmed by Franco on the real scene before this was changed.
-  //
-  // It still covers what that version was written for: an *empty* shot (only
-  // empty/red cells, a valid Ztoryc state) has no child-level cell, but it IS
-  // in m_shots and carries its column, so it is removed like any other.
+  // WHICH columns the shots occupy now — not necessarily the leading ones: a
+  // sound column between two shots (a storyboard with a voice track) leaves
+  // them spread around it.  From the model's list, reconciled with the scene;
+  // an empty shot (only empty/red cells) is in it too.
+  m->reconcileWithXsheet();
   std::vector<int> shotCols;
-  shotCols.reserve(m_shots.size());
-  for (const Shot &sh : m_shots)
-    if (sh.data->xsheetColumn >= 0) shotCols.push_back(sh.data->xsheetColumn);
+  for (int i = 0; i < m->shotCount(); i++)
+    if (m->shot(i).xsheetColumn >= 0) shotCols.push_back(m->shot(i).xsheetColumn);
   std::sort(shotCols.begin(), shotCols.end());
   shotCols.erase(std::unique(shotCols.begin(), shotCols.end()), shotCols.end());
-
-  clearShots();
-
-  // Remove from the RIGHT, so the indices still to be removed stay valid.
+  // From the RIGHT, so the indices still to be removed stay valid.
   for (auto it = shotCols.rbegin(); it != shotCols.rend(); ++it)
     if (*it < xsh->getColumnCount()) xsh->removeColumn(*it);
-
-  // Re-insert columns from snapshot.
   qWarning("[ZTORY] restore: removed %d shot cols", (int)shotCols.size());
-  for (int i = 0; i < (int)snap.size(); i++) {
-    const ZtoryShotSnap &s = snap[i];
+  // Back into the columns they came from: snap is in column order and the
+  // non-shot columns (audio) are still in place, so inserting in ascending
+  // order reproduces the original layout.
+  for (const ZtoryShotSnap &s : snap) {
     if (!s.level || !s.level->getChildLevel()) continue;
-    // Back into the column it came from, so the columns that are NOT shots
-    // (audio) keep their place in the running order.  snap is in column order,
-    // and the non-shot columns are still where they were, so inserting in
-    // ascending order reproduces the original layout exactly.
     int col = s.data.xsheetColumn;
     if (col < 0 || col > xsh->getColumnCount()) col = xsh->getColumnCount();
     xsh->insertColumn(col);
-    bool okSet = true;
     for (int r = 0; r < s.duration; r++)
-      okSet &= xsh->setCell(r, col, TXshCell(s.level.getPointer(), TFrameId(r + 1)));
-    qWarning("[ZTORY] restore: col %d dur=%d setCell ok=%d cellChild=%d",
-             col, s.duration, okSet ? 1 : 0,
-             (!xsh->getCell(0, col).isEmpty() &&
-              xsh->getCell(0, col).m_level &&
-              xsh->getCell(0, col).m_level->getChildLevel()) ? 1 : 0);
+      xsh->setCell(r, col, TXshCell(s.level.getPointer(), TFrameId(r + 1)));
   }
   xsh->updateFrameCount();
-
-  // Rebuild Board state from snapshot data.
-  for (int i = 0; i < (int)snap.size(); i++) {
-    Shot shot;
-    // The model's object for the restored column, given back the contents it
-    // had (a copy kept by the undo).
-    shot.data  = modelShotFor(snap[i].data.xsheetColumn);
-    *shot.data = snap[i].data;
-    ZtoryModel::instance()->markShotLoaded(shot.data.get());
-    if (snap[i].level) shot.childLevel = snap[i].level->getChildLevel();
-    // Keep the column recorded in the snapshot: overwriting it with `i` was the
-    // same "shot index == column index" assumption as above, and it fed a wrong
-    // column to everything downstream — updateColumnName() included, which is
-    // how a shot ends up renaming a sound column.
-    m_shots.push_back(std::move(shot));
-    for (int pi = 0; pi < (int)snap[i].data.panels.size(); pi++)
-      addPanelWidget(i, pi);
-  }
-
-  m_selectedShotIndex = -1;
-  m_selectedIndices.clear();
-
-  connect(app->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
-          this, &StoryboardPanel::onXsheetChanged);
-
+  // The model's object for each restored column gets back the contents it had
+  // (the copy kept by the undo).
+  m->reconcileWithXsheet();
+  for (const ZtoryShotSnap &s : snap)
+    if (ZtoryShotList::Ptr p = m->shotPtrForColumn(s.data.xsheetColumn)) {
+      *p = s.data;
+      m->markShotLoaded(p.get());
+    }
   app->getCurrentXsheet()->notifyXsheetChanged();
-  renumberAll();
-  resequenceXsheet();
-  rebuildGrid();
-  // After undo/redo the grid is rebuilt with blank thumbnails. Defer the preview
-  // render past this event loop so the QGridLayout has repositioned (and, in
-  // Compact view, actually shown) the cards — otherwise the viewport/visibility
-  // test runs on not-yet-laid-out widgets and skips them (Compact view showed
-  // stale/blank cards after undo). onRefreshPreviews renders only visible panels
-  // lacking a pixmap, so it is cheap and idempotent.
-  QTimer::singleShot(0, this, &StoryboardPanel::onRefreshPreviews);
-  // Re-anchor the path after clearShots() cleared it.
-  m_currentZtoryPath = ztoryPath();
-  markShotDocumentChanged();  // an undo/redo changed the shots
+  m->resequenceXsheet();
+  emit m->shotsRestored();  // the Boards rebuild from the model
+  m->markShotDocumentDirty();
 }
 
 // Declared in ztoryundo.h — defined here because this is the file that knows
@@ -5598,7 +5552,7 @@ void UndoBoardState::undo() const {
       for (const TXshLevelP &lvl : m_removedLevels)
         if (!ls->getLevel(lvl->getName())) ls->insertLevel(lvl.getPointer());
   }
-  m_panel->restoreFromSnapshot(m_before);
+  ztoryRestoreShotSnapshot(m_before);
   if (ztoryAudioSnapDiffers(m_before.audio, m_after.audio))
     ztoryRestoreAudioSnap(m_before.audio);
   // The insert above skips a level whose name was taken meanwhile; this one
@@ -5609,7 +5563,7 @@ void UndoBoardState::undo() const {
 }
 
 void UndoBoardState::redo() const {
-  m_panel->restoreFromSnapshot(m_after);
+  ztoryRestoreShotSnapshot(m_after);
   if (ztoryAudioSnapDiffers(m_before.audio, m_after.audio))
     ztoryRestoreAudioSnap(m_after.audio);
   // Drop them from the cast again once nothing exposes them; the smart

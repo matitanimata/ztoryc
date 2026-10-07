@@ -6492,7 +6492,7 @@ void ZtoryAnimaticPanel::onCutShots() {
   const std::vector<int> cols(selPtr->begin(), selPtr->end());
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
-  if (board) before = board->captureSnapshot();
+  before = ztoryCaptureShotSnapshot();  // from the model (step 6)
   ZtoryShotOps::closeSubScenes();
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
   ZtoryModel::instance()->setSharedClip(
@@ -6501,8 +6501,8 @@ void ZtoryAnimaticPanel::onCutShots() {
   ZtoryModel::instance()->resequenceXsheet();
   refreshFromScene();
   m_track->setFocus(Qt::OtherFocusReason);
-  if (board) {
-    auto after = board->captureSnapshot();
+  {
+    auto after = ztoryCaptureShotSnapshot();
     TUndoManager::manager()->add(
         new UndoBoardState(board, tr("Cut Shot"), std::move(before),
                            std::move(after), std::move(removedLevels)));
@@ -6518,7 +6518,7 @@ void ZtoryAnimaticPanel::onPasteShots() {
 
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
-  if (board) before = board->captureSnapshot();
+  before = ztoryCaptureShotSnapshot();  // from the model (step 6)
 
   // The selection first: closing a sub-scene refreshes the track.
   const std::set<int> sel = m_track->selectedCols();
@@ -6535,8 +6535,8 @@ void ZtoryAnimaticPanel::onPasteShots() {
   ZtoryShotOps::dropOneShotClipEntries();
   m_track->setFocus(Qt::OtherFocusReason);
 
-  if (board) {
-    auto after = board->captureSnapshot();
+  {
+    auto after = ztoryCaptureShotSnapshot();
     TUndoManager::manager()->add(
         new UndoBoardState(board, tr("Paste Shot"), std::move(before), std::move(after)));
   }
@@ -6551,7 +6551,7 @@ void ZtoryAnimaticPanel::onDeleteShots() {
 
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
-  if (board) before = board->captureSnapshot();
+  before = ztoryCaptureShotSnapshot();  // from the model (step 6)
 
   // The same Delete as the Board's (step 5): it also drops the levels left
   // with no user, which this version used to leave orphaned in the cast.
@@ -6563,8 +6563,8 @@ void ZtoryAnimaticPanel::onDeleteShots() {
   refreshFromScene();
   m_track->setFocus(Qt::OtherFocusReason);
 
-  if (board) {
-    auto after = board->captureSnapshot();
+  {
+    auto after = ztoryCaptureShotSnapshot();
     TUndoManager::manager()->add(
         new UndoBoardState(board, tr("Delete Shot"), std::move(before),
                            std::move(after), std::move(removedLevels)));
@@ -7184,7 +7184,7 @@ std::vector<TXshLevelP> mergeShotColumns(std::vector<int> cols,
 void ZtoryAnimaticPanel::onMergeShots() {
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
-  if (board) before = board->captureSnapshot();
+  before = ztoryCaptureShotSnapshot();  // from the model (step 6)
 
   // Own selection if >= 2; otherwise the shared one (set by the Board).
   const std::set<int> *selPtr = &m_track->selectedCols();
@@ -7196,12 +7196,12 @@ void ZtoryAnimaticPanel::onMergeShots() {
   // The same Merge as the Board's (step 5), from inside a sub-scene too.
   ZtoryShotOps::closeSubScenes();
   std::vector<TXshLevelP> removedLevels =
-      ZtoryShotOps::mergeShotColumns(cols, board ? &before : nullptr);
+      ZtoryShotOps::mergeShotColumns(cols, &before);
   ZtoryModel::instance()->resequenceXsheet();
   m_track->refreshFromScene();
 
-  if (board) {
-    auto after = board->captureSnapshot();
+  {
+    auto after = ztoryCaptureShotSnapshot();
     TUndoManager::manager()->add(
         new UndoBoardState(board, tr("Merge Shots"), std::move(before),
                            std::move(after), std::move(removedLevels)));
@@ -7237,7 +7237,7 @@ void ZtoryAnimaticPanel::onAddShot() {
 
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
-  if (board) before = board->captureSnapshot();
+  before = ztoryCaptureShotSnapshot();  // from the model (step 6)
 
   // After the rightmost selected shot, or after the last shot (not after the
   // sound columns, where the end of the xsheet used to put it).
@@ -7255,8 +7255,8 @@ void ZtoryAnimaticPanel::onAddShot() {
   // Board syncs via resequenceXsheet() → modelReset() → onModelResequenced()
   // (xsheet count check). No shotAdded() needed — it would cause double-insert.
 
-  if (board) {
-    auto after = board->captureSnapshot();
+  {
+    auto after = ztoryCaptureShotSnapshot();
     TUndoManager::manager()->add(
         new UndoBoardState(board, tr("Add Shot"), std::move(before), std::move(after)));
   }
@@ -7267,7 +7267,7 @@ void ZtoryAnimaticPanel::onMergeWithNext(int col) {
 
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
-  if (board) before = board->captureSnapshot();
+  before = ztoryCaptureShotSnapshot();  // from the model (step 6)
 
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   TXsheet *xsh      = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
@@ -7275,12 +7275,12 @@ void ZtoryAnimaticPanel::onMergeWithNext(int col) {
   if (nextCol < 0) return;
   // The same Merge as the others (step 5), on two shots.
   std::vector<TXshLevelP> removedLevels = ZtoryShotOps::mergeShotColumns(
-      {col, nextCol}, board ? &before : nullptr);
+      {col, nextCol}, &before);
   ZtoryModel::instance()->resequenceXsheet();
   m_track->refreshFromScene();
 
-  if (board) {
-    auto after = board->captureSnapshot();
+  {
+    auto after = ztoryCaptureShotSnapshot();
     TUndoManager::manager()->add(
         new UndoBoardState(board, tr("Merge with Next"), std::move(before),
                            std::move(after), std::move(removedLevels)));
@@ -7301,7 +7301,7 @@ void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
 
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
-  if (board) before = board->captureSnapshot();
+  before = ztoryCaptureShotSnapshot();  // from the model (step 6)
 
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
@@ -7451,8 +7451,8 @@ void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
   // Group board state + audio edits into a single undoable step.
   {
     TUndoScopedBlock undoBlock;
-    if (board) {
-      auto after = board->captureSnapshot();
+    {
+      auto after = ztoryCaptureShotSnapshot();
       TUndoManager::manager()->add(
           new UndoBoardState(board, tr("Razor"), std::move(before), std::move(after)));
     }
@@ -7592,7 +7592,7 @@ void ZtoryAnimaticPanel::onSegmentDroppedOutside(int srcCol, int origR0,
 void ZtoryAnimaticPanel::onRollEdit(int colA, int newDurA, int colB, int newDurB) {
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
-  if (board) before = board->captureSnapshot();
+  before = ztoryCaptureShotSnapshot();  // from the model (step 6)
 
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
@@ -7679,8 +7679,8 @@ void ZtoryAnimaticPanel::onRollEdit(int colA, int newDurA, int colB, int newDurB
 
   m_track->refreshFromScene();
 
-  if (board) {
-    auto after = board->captureSnapshot();
+  {
+    auto after = ztoryCaptureShotSnapshot();
     TUndoManager::manager()->add(
         new UndoBoardState(board, tr("Roll Edit"),
                            std::move(before), std::move(after)));
@@ -8038,7 +8038,7 @@ void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
 
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
-  if (board) before = board->captureSnapshot();
+  before = ztoryCaptureShotSnapshot();  // from the model (step 6)
 
   int newDuration = newF1 + 1;
   TApp *app = TApp::instance();
@@ -8162,8 +8162,8 @@ void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
   if (xdOldStart != xdNewStart)
     TUndoManager::manager()->add(new UndoXDOutNotes(
         col, xdOldStart, xdOutTail, xdNewStart, xdOutTail));
-  if (board) {
-    auto after = board->captureSnapshot();
+  {
+    auto after = ztoryCaptureShotSnapshot();
     TUndoManager::manager()->add(
         new UndoBoardState(board, tr("Resize Shot Duration"),
                            std::move(before), std::move(after)));

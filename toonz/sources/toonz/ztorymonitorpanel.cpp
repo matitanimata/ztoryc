@@ -624,7 +624,7 @@ void ZtoryMonitorPanel::doDeleteShots() {
 
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
-  if (board) before = board->captureSnapshot();
+  before = ztoryCaptureShotSnapshot();  // from the model (step 6)
 
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
   std::vector<int> cols(sel.begin(), sel.end());
@@ -638,8 +638,8 @@ void ZtoryMonitorPanel::doDeleteShots() {
   m_track->refreshFromScene();
   m_track->setFocus(Qt::OtherFocusReason);
 
-  if (board) {
-    auto after = board->captureSnapshot();
+  {
+    auto after = ztoryCaptureShotSnapshot();
     TUndoManager::manager()->add(
         new UndoBoardState(board, tr("Delete Shot"), std::move(before), std::move(after)));
   }

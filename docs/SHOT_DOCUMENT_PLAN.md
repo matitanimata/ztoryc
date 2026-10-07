@@ -49,7 +49,7 @@ Ramo: `feature/shot-document` (parte da `fix/navigator-stale-shot-index`).
 | 3 ✅ | **Caricamento e salvataggio nel modello** (oggi `loadZtoryc`/`saveZtoryc` del Board) | il `.ztoryc` si salva anche senza Board nella room |
 | 4 ✅ | **Via le sincronizzazioni**: `syncShotPanels`, `pushTrackingToBoard`/`pullTrackingFromBoard`, lo specchio per indice di `shotDataChanged` | — |
 | 5 | **Operazioni uniche** (Add, Delete, Cut, Copy, Clone, Paste, Merge, Split, Move) in `ZtoryShotOps`, chiamate da Board, Animatic, Monitor | stessi comandi, stesso comportamento ovunque |
-| 6 | **Undo sullo xsheet** (decisione ancora da prendere con Franco) | undo anche senza Board |
+| 6 | **Undo nel modello** — decisione di Franco, 2026-10-07: l'istantanea dell'undo la prende il modello invece del Board (stesso meccanismo); scartato l'undo nativo di Tahoma (Delete ricrea colonne nuove, servirebbe il «cimitero») | undo anche senza Board |
 
 ## Rete di sicurezza
 
@@ -238,6 +238,15 @@ spento (`productionTracker="off"`), mai i file veri:
     sotto-scena come gli altri); nessuna versione toglieva dal cast la sotto-scena vuota della
     sorgente (ora sì, come Delete; i disegni restano, usati dentro la destinazione). Prova: Merge di
     2 e 3 shot da Board e da Animatic, Merge with Next; durata = somma delle durate; undo e redo.
+- **Passo 6 — scritto (2026-10-07), compilato, da collaudare.** `ztoryCaptureShotSnapshot()` e
+  `ztoryRestoreShotSnapshot()` (in `ztoryundo.h`): l'istantanea si prende dalla lista del modello e il
+  ripristino rimette le colonne e i dati negli oggetti del modello; segnali `shotsRestoreStarted` /
+  `shotsRestored` — i Board smettono di seguire lo xsheet, poi si ricostruiscono (`refreshFromScene`,
+  gli shot sono già «letti»). `UndoBoardState` non usa più il Board; `captureSnapshot` /
+  `restoreFromSnapshot` del Board sono involucri. Animatic e Monitor registrano l'undo anche senza
+  Board (prima: nessun undo). Da verificare in prova: dopo un undo il Board ricostruito ha i testi e
+  i pannelli dell'istantanea (il vecchio ripristino non rilanciava il rilevamento dei pannelli, la
+  ricostruzione sì); undo/redo di ogni operazione del passo 5 da Board e da Animatic, e in Cutout.
   - Restano a una sola versione: Move (Board) e Razor (Animatic) — da portare in `ZtoryShotOps` solo
     se serviranno anche altrove.
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della

@@ -1349,6 +1349,10 @@ signals:
   // only a scene save makes that copy official — so "close without saving"
   // discards the thumbnails too (Franco, 2026-09-23).
   void sceneSaved();
+  // Undo/redo of a shot operation (step 6): the model restores the xsheet and
+  // the shots; the Boards stop following the xsheet meanwhile, then rebuild.
+  void shotsRestoreStarted();
+  void shotsRestored();
 
  public:
   // Public emitter for renderFinished() — Qt signals are protected, so

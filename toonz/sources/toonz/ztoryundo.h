@@ -88,10 +88,16 @@ void ztoryRestoreAudioSnap(const std::vector<ZtoryAudioColSnap> &snap);
 bool ztoryAudioSnapDiffers(const std::vector<ZtoryAudioColSnap> &a,
                            const std::vector<ZtoryAudioColSnap> &b);
 
+// The undo snapshot of the shots, taken from the MODEL (step 6, Franco
+// 2026-10-07): an operation made with no Board alive — the Animatic in a
+// Cutout workflow — can be undone too.  Restore puts the shot columns and the
+// shots' data back, then the Boards rebuild (ZtoryModel::shotsRestored).
+ZtoryBoardSnap ztoryCaptureShotSnapshot();
+void ztoryRestoreShotSnapshot(const ZtoryBoardSnap &snap);
+
 // Generic undo item for Board CRUD operations.
 // Stores full before/after snapshots and calls restoreFromSnapshot on undo/redo.
 class UndoBoardState final : public TUndo {
-    StoryboardPanel           *m_panel;
     QString                    m_label;
     ZtoryBoardSnap             m_before;
     ZtoryBoardSnap             m_after;
@@ -100,11 +106,13 @@ class UndoBoardState final : public TUndo {
     // undo() can put them back and the snapshots' level pointers stay valid.
     std::vector<TXshLevelP>    m_removedLevels;
 public:
-    UndoBoardState(StoryboardPanel *panel, const QString &label,
+    // `panel` is no longer needed (the model restores, step 6); kept so the
+    // call sites stay as they were.  It may be null.
+    UndoBoardState(StoryboardPanel * /*panel*/, const QString &label,
                    ZtoryBoardSnap before,
                    ZtoryBoardSnap after,
                    std::vector<TXshLevelP> removedLevels = {})
-        : m_panel(panel), m_label(label)
+        : m_label(label)
         , m_before(std::move(before)), m_after(std::move(after))
         , m_removedLevels(std::move(removedLevels)) {}
 
