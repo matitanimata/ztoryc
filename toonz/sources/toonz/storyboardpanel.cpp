@@ -5698,7 +5698,7 @@ void StoryboardPanel::onAddShot() {
   const int insertCol = hasSel ? m_shots[m_selectedShotIndex].data->xsheetColumn + 1
                                : ZtoryShotOps::columnAfterLastShot(xsh);
   // The operation itself, shared with the Animatic (step 5).
-  ZtoryShotOps::insertNewShot(insertCol);
+  if (!ZtoryShotOps::insertNewShot(insertCol)) return;
 
   // The model's object for the new column (step 2b): reconciling, the model
   // gives it one panel as long as the column.
