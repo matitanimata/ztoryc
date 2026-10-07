@@ -689,4 +689,11 @@ void dropOneShotClipEntries() {
   ZtoryModel::instance()->setSharedClip(std::move(clip));
 }
 
+int nextShotColumn(TXsheet *mainXsh, int col) {
+  if (!mainXsh) return -1;
+  for (int c = col + 1; c < mainXsh->getColumnCount(); c++)
+    if (!ZtoryModel::shotLevelNameAt(mainXsh, c).isEmpty()) return c;
+  return -1;
+}
+
 }  // namespace ZtoryShotOps

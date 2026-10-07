@@ -230,6 +230,16 @@ spento (`productionTracker="off"`), mai i file veri:
     selezione la Paste andava in fondo all'xsheet (ora dopo l'ultimo shot). Prova: Copy/Cut/Clone e
     Paste da Board e da Animatic, incrociati (copia dall'uno, incolla nell'altro), dentro e fuori da
     uno shot; Cut + Paste conserva testi e uuid; undo e redo.
+  - **Merge — tre versioni in una, compilata, da collaudare.** `mergeShotColumns(cols, before)` (in
+    `ztoryanimatic.cpp`, accanto ai suoi aiutanti) e `nextShotColumn`; la usano il Merge del Board,
+    quello dell'Animatic e «Merge with Next». **Differenze trovate:** il Merge del Board misurava gli
+    shot con il fotogramma di chiusura (`getRange` senza `ignoreLastStop`): lo shot unito veniva più
+    lungo di un fotogramma per ogni shot unito; il Board rifiutava dentro uno shot (ora chiude la
+    sotto-scena come gli altri); nessuna versione toglieva dal cast la sotto-scena vuota della
+    sorgente (ora sì, come Delete; i disegni restano, usati dentro la destinazione). Prova: Merge di
+    2 e 3 shot da Board e da Animatic, Merge with Next; durata = somma delle durate; undo e redo.
+  - Restano a una sola versione: Move (Board) e Razor (Animatic) — da portare in `ZtoryShotOps` solo
+    se serviranno anche altrove.
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della
   scena** (⌘S, Save Scene, Save All), mai più dagli eventi dei Board (riordino, Paste, ecc.). Così
   `.tnz` e `.ztoryc` sono sempre dello stesso momento; un testo non salvato si perde chiudendo senza

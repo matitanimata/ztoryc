@@ -4464,91 +4464,30 @@ void StoryboardPanel::onModelResequenced() {
 }
 
 void StoryboardPanel::onMergeShots() {
-  if (!ZtoryModel::assertMainXsheet(true)) return;
   auto before = captureSnapshot();
 
-  TApp *app = TApp::instance();
-  ToonzScene *scene = app->getCurrentScene()->getScene();
-  if (!scene) return;
-  TXsheet *xsh = scene->getChildStack()->getTopXsheet();
-  if (!xsh) return;
-
-  // Build the set of xsheet columns to merge.
-  // Prefer own selection (>= 2 shots); fall back to shared selection from Animatic.
-  std::vector<int> sortedCols;
+  // The xsheet columns to merge: own selection (>= 2 shots), else the shared
+  // selection (last written by the Animatic or a Board).
+  std::vector<int> cols;
   std::set<int> localIndices = m_selectedIndices;
   if (localIndices.size() < 2 && m_selectedShotIndex >= 0)
     localIndices.insert(m_selectedShotIndex);
   if (localIndices.size() >= 2) {
     for (int bi : localIndices)
       if (bi >= 0 && bi < (int)m_shots.size())
-        sortedCols.push_back(m_shots[bi].data->xsheetColumn);
+        cols.push_back(m_shots[bi].data->xsheetColumn);
   } else {
-    // Fall back to shared selection (last written by Animatic or Board).
     const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
-    sortedCols.assign(shared.begin(), shared.end());
+    cols.assign(shared.begin(), shared.end());
   }
-  if (sortedCols.size() < 2) return;
-  std::sort(sortedCols.begin(), sortedCols.end(), [&](int a, int b){
-    int r0a = 0, r1a = 0, r0b = 0, r1b = 0;
-    if (xsh->getColumn(a)) xsh->getColumn(a)->getRange(r0a, r1a);
-    if (xsh->getColumn(b)) xsh->getColumn(b)->getRange(r0b, r1b);
-    return r0a < r0b;
-  });
+  if (cols.size() < 2) return;
 
-  int dstCol = sortedCols[0];
-  TXshColumn *dstColumn = xsh->getColumn(dstCol);
-  if (!dstColumn) return;
-  int dstR0 = 0, dstR1 = 0;
-  dstColumn->getRange(dstR0, dstR1);
-
-  TXshChildLevel *dstCl = nullptr;
-  for (int r = dstR0; r <= dstR1; r++) {
-    TXshCell cell = xsh->getCell(r, dstCol);
-    if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
-      dstCl = cell.m_level->getChildLevel();
-      break;
-    }
-  }
-  if (!dstCl) return;
-
-  int appendAt    = dstR1 + 1;
-  int dstDuration = dstR1 - dstR0 + 1;
-  int lastFrameNum = dstDuration;
-
-  backupChildForUndo(dstCol, before);
-  materializeCells(dstCl, dstDuration);
-  trimChildXsheetTo(dstCl, dstDuration);
-
-  for (int i = 1; i < (int)sortedCols.size(); i++) {
-    int srcCol = sortedCols[i];
-    TXshColumn *srcColumn = xsh->getColumn(srcCol);
-    if (!srcColumn) continue;
-    int r0 = 0, r1 = 0;
-    srcColumn->getRange(r0, r1);
-    int duration = r1 - r0 + 1;
-    TXshChildLevel *srcCl = nullptr;
-    for (int r = r0; r <= r1; r++) {
-      TXshCell cell = xsh->getCell(r, srcCol);
-      if (!cell.isEmpty() && cell.m_level && cell.m_level->getChildLevel()) {
-        srcCl = cell.m_level->getChildLevel();
-        break;
-      }
-    }
-    mergeChildXsheetContent(dstCl, srcCl, lastFrameNum, duration);
-    for (int r = 0; r < duration; r++)
-      xsh->setCell(appendAt + r, dstCol, TXshCell(dstCl, TFrameId(++lastFrameNum)));
-    appendAt += duration;
-  }
-
-  // Delete source columns in reverse order to keep lower indices stable
-  for (int i = (int)sortedCols.size() - 1; i >= 1; i--) {
-    std::set<int> cs; cs.insert(sortedCols[i]);
-    ColumnCmd::deleteColumns(cs, false, true);  // withoutUndo=true
-  }
-
-  xsh->updateFrameCount();
-  app->getCurrentXsheet()->notifyXsheetChanged();
+  // The same Merge as the Animatic's (step 5): from inside a shot too, and the
+  // merged shot as long as its parts (this version counted each closing stop
+  // frame, one frame more per merged shot).
+  ZtoryShotOps::closeSubScenes();
+  std::vector<TXshLevelP> removedLevels =
+      ZtoryShotOps::mergeShotColumns(cols, &before);
   ZtoryModel::instance()->resequenceXsheet();
 
   m_selectedIndices.clear();
@@ -4558,9 +4497,11 @@ void StoryboardPanel::onMergeShots() {
   // Boards already followed the resequence (onModelResequenced), and the
   // extra signal made them remove one shot too many.
 
+  markShotDocumentChanged();
   auto after = captureSnapshot();
   TUndoManager::manager()->add(
-      new UndoBoardState(this, tr("Merge Shots"), std::move(before), std::move(after)));
+      new UndoBoardState(this, tr("Merge Shots"), std::move(before),
+                         std::move(after), std::move(removedLevels)));
 }
 
 bool StoryboardPanel::boardMatchesScene(

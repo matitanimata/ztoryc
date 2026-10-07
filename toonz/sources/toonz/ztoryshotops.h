@@ -19,6 +19,8 @@
 
 #include <vector>
 
+struct ZtoryBoardSnap;
+
 class TXsheet;
 class ToonzScene;
 class TXshChildLevel;
@@ -90,6 +92,21 @@ std::vector<ZtoryClipEntry> makeShotClip(TXsheet *mainXsh, std::vector<int> cols
 // keep plain copies for another paste.  Only once the Boards have rebuilt the
 // pasted columns — they take a cut shot's data back from the clip.
 void dropOneShotClipEntries();
+
+// Merge shot columns (main-xsheet indices, at least two) into the one that
+// starts first: the others' sub-scene content is appended to its sub-scene,
+// the main column grows by their real length (the closing stop frame is NOT
+// a frame of the shot), their columns go and their now empty sub-scenes leave
+// the cast — returned for the caller's undo, with `before` (may be null)
+// receiving the destination's sub-scene backup.  The caller resequences.
+// (Step 5: one Merge for the Board, the Animatic and Merge with Next.  The
+// Board's version counted the stop frame: each merged shot came out one frame
+// longer.)  Defined next to its helpers, in ztoryanimatic.cpp.
+std::vector<TXshLevelP> mergeShotColumns(std::vector<int> cols,
+                                         ZtoryBoardSnap *before);
+
+// The next shot column after `col` (sound columns skipped), or -1.
+int nextShotColumn(TXsheet *mainXsh, int col);
 
 // Make sure every level the scene exposes (sub-scenes included, recursively)
 // is in the scene cast.  The Board's Cut drops the cut shot's levels from the
