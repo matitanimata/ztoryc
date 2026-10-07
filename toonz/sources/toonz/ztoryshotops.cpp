@@ -646,4 +646,47 @@ TXshChildLevel *insertNewShot(int insertCol, int duration) {
   return cl;
 }
 
+std::vector<ZtoryClipEntry> makeShotClip(TXsheet *mainXsh, std::vector<int> cols,
+                                         ClipKind kind) {
+  std::vector<ZtoryClipEntry> clip;
+  if (!mainXsh) return clip;
+  std::sort(cols.begin(), cols.end());
+  for (int col : cols) {
+    ZtoryClipEntry ce;
+    ce.isCut   = kind == ClipKind::Cut;
+    ce.isClone = kind == ClipKind::Clone;
+    ce.srcCol  = ce.isCut ? -1 : col;  // a cut column is deleted right after
+    int start = 0, dur = 0;
+    ce.duration = shotTrueSpan(mainXsh, col, start, dur) && dur > 0
+                      ? dur
+                      : colDuration(mainXsh, col);
+    if (ce.isCut) {
+      if (ZtoryShotList::Ptr sd = ZtoryModel::instance()->shotPtrForColumn(col)) {
+        ce.hasShot = true;
+        ce.shot    = *sd;
+      }
+      TXshColumn *xshCol      = mainXsh->getColumn(col);
+      TXshLevelColumn *lc     = xshCol ? xshCol->getLevelColumn() : nullptr;
+      if (lc) {
+        int r0 = 0, r1 = 0;
+        lc->getRange(r0, r1);
+        TXshCell cell = lc->getCell(r0);
+        if (!cell.isEmpty()) ce.cutLevel = cell.m_level;
+      }
+    }
+    clip.push_back(ce);
+  }
+  return clip;
+}
+
+void dropOneShotClipEntries() {
+  auto clip = ZtoryModel::instance()->sharedClip();
+  clip.erase(std::remove_if(clip.begin(), clip.end(),
+                            [](const ZtoryClipEntry &e) {
+                              return e.isCut || e.isClone;
+                            }),
+             clip.end());
+  ZtoryModel::instance()->setSharedClip(std::move(clip));
+}
+
 }  // namespace ZtoryShotOps

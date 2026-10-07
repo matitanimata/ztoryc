@@ -221,6 +221,15 @@ spento (`productionTracker="off"`), mai i file veri:
     l'indice della scheda come colonna dell'xsheet (giusto solo se gli shot sono le prime colonne) —
     ora la colonna vera; il blocco della numerazione con shot su Kitsu ora vale anche dall'Animatic.
     Prova: Add con e senza selezione da Board e Animatic, con una colonna audio; undo e redo.
+  - **Copy / Cut / Clone / Paste — unificati, compilati, da collaudare.** `makeShotClip(xsh, cols,
+    kind)` e `dropOneShotClipEntries()`; la Paste usa `closeSubScenes` e `columnAfterLastShot`.
+    **Differenze trovate:** Copy e Clone del Board prendevano la durata del primo pannello e ti
+    tiravano fuori dallo shot che stavi disegnando (non toccano l'xsheet: ora non lo fanno più);
+    quelle dell'Animatic contavano anche il fotogramma di chiusura; il Cut dell'Animatic non toglieva
+    i livelli orfani e leggeva i dati dello shot dal Board (ora dal modello, anche senza Board); senza
+    selezione la Paste andava in fondo all'xsheet (ora dopo l'ultimo shot). Prova: Copy/Cut/Clone e
+    Paste da Board e da Animatic, incrociati (copia dall'uno, incolla nell'altro), dentro e fuori da
+    uno shot; Cut + Paste conserva testi e uuid; undo e redo.
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della
   scena** (⌘S, Save Scene, Save All), mai più dagli eventi dei Board (riordino, Paste, ecc.). Così
   `.tnz` e `.ztoryc` sono sempre dello stesso momento; un testo non salvato si perde chiudendo senza

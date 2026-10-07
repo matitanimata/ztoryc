@@ -5268,109 +5268,51 @@ void StoryboardPanel::mouseDoubleClickEvent(QMouseEvent *e) {
 }
 
 void StoryboardPanel::onCopyShot() {
-  // Auto-return to main xsheet before operating
-  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
-  if (scene)
-    while (scene->getChildStack()->getAncestorCount() > 0)
-      CommandManager::instance()->execute("MI_CloseChild");
+  // Non-destructive: the artist stays in the shot being drawn.
   std::set<int> indices = m_selectedIndices;
   if (indices.empty() && m_selectedShotIndex >= 0) indices.insert(m_selectedShotIndex);
-  std::vector<int> sorted(indices.begin(), indices.end());
-  std::sort(sorted.begin(), sorted.end());
-  // Shared clipboard is the single source of truth (shared with Animatic).
-  std::vector<ZtoryClipEntry> shared;
-  for (int idx : sorted) {
-    if (idx < 0 || idx >= (int)m_shots.size()) continue;
-    ZtoryClipEntry ze;
-    ze.srcCol   = m_shots[idx].data->xsheetColumn;
-    ze.duration = m_shots[idx].data->panels.empty()
-                  ? 24 : m_shots[idx].data->panels[0].duration;
-    ze.isCut    = false;
-    ze.isClone  = false;
-    shared.push_back(ze);
-  }
-  ZtoryModel::instance()->setSharedClip(std::move(shared));
+  std::vector<int> cols;
+  for (int idx : indices)
+    if (idx >= 0 && idx < (int)m_shots.size())
+      cols.push_back(m_shots[idx].data->xsheetColumn);
+  // The shared clipboard, the same entries as the Animatic's (step 5).
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  ZtoryModel::instance()->setSharedClip(ZtoryShotOps::makeShotClip(
+      scene ? scene->getChildStack()->getTopXsheet() : nullptr, cols,
+      ZtoryShotOps::ClipKind::Copy));
   m_pasteButton->setEnabled(!ZtoryModel::instance()->sharedClip().empty());
 }
 
 void StoryboardPanel::onCutShot() {
-  // Immediate cut: save metadata + level reference, then delete shots immediately.
-  // cutLevel keeps the TXshChildLevel alive after ColumnCmd::deleteColumn so that
-  // onPasteShot() can re-insert the same sub-scene (drawings preserved).
-  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
-  if (scene)
-    while (scene->getChildStack()->getAncestorCount() > 0)
-      CommandManager::instance()->execute("MI_CloseChild");
+  // Immediate cut: the clip keeps the shot's data and its sub-scene alive, then
+  // the shot is deleted (onDeleteShot: the same Delete as the Animatic's).
+  ZtoryShotOps::closeSubScenes();
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
   std::set<int> indices = m_selectedIndices;
   if (indices.empty() && m_selectedShotIndex >= 0) indices.insert(m_selectedShotIndex);
-  std::vector<int> sorted(indices.begin(), indices.end());
-  std::sort(sorted.begin(), sorted.end());
-  // Shared clipboard is the single source of truth (shared with Animatic).
-  // srcCol = -1: original deleted immediately below; cutLevel keeps the sub-scene
-  // alive so paste can re-insert it without losing drawings.
-  std::vector<ZtoryClipEntry> shared;
+  std::vector<int> cols;
+  for (int idx : indices)
+    if (idx >= 0 && idx < (int)m_shots.size())
+      cols.push_back(m_shots[idx].data->xsheetColumn);
   syncWidgetsToData();  // text being typed must travel with the shot
-  for (int idx : sorted) {
-    if (idx < 0 || idx >= (int)m_shots.size()) continue;
-    ZtoryClipEntry ze;
-    ze.srcCol   = -1;
-    ze.hasShot  = true;
-    ze.shot     = *m_shots[idx].data;  // a copy: the column goes away
-    // The shot's true length on the timeline, not its FIRST panel's: a shot
-    // with two panels came back from a Cut + Paste as long as the first one.
-    {
-      int start = 0, dur = 0;
-      ze.duration = (xsh && ZtoryShotOps::shotTrueSpan(
-                                xsh, m_shots[idx].data->xsheetColumn, start, dur) &&
-                     dur > 0)
-                        ? dur
-                        : m_shots[idx].data->totalDuration();
-      if (ze.duration <= 0) ze.duration = 24;
-    }
-    ze.isCut    = true;
-    ze.isClone  = false;
-    if (xsh) {
-      int col = m_shots[idx].data->xsheetColumn;
-      TXshColumn *xshCol = xsh->getColumn(col);
-      TXshLevelColumn *lc = xshCol ? xshCol->getLevelColumn() : nullptr;
-      if (lc) {
-        int r0 = 0, r1 = 0;
-        lc->getRange(r0, r1);
-        TXshCell cell = lc->getCell(r0);
-        if (!cell.isEmpty()) ze.cutLevel = cell.m_level;
-      }
-    }
-    shared.push_back(ze);
-  }
-  ZtoryModel::instance()->setSharedClip(std::move(shared));
+  ZtoryModel::instance()->setSharedClip(
+      ZtoryShotOps::makeShotClip(xsh, cols, ZtoryShotOps::ClipKind::Cut));
   m_pasteButton->setEnabled(!ZtoryModel::instance()->sharedClip().empty());
   onDeleteShot();  // immediately remove from board and xsheet
 }
 
 void StoryboardPanel::onCloneShot() {
-  // Auto-return to main xsheet before operating
-  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
-  if (scene)
-    while (scene->getChildStack()->getAncestorCount() > 0)
-      CommandManager::instance()->execute("MI_CloseChild");
+  // Non-destructive, like Copy: the artist stays in the shot being drawn.
   std::set<int> indices = m_selectedIndices;
   if (indices.empty() && m_selectedShotIndex >= 0) indices.insert(m_selectedShotIndex);
-  std::vector<int> sorted(indices.begin(), indices.end());
-  std::sort(sorted.begin(), sorted.end());
-  // Shared clipboard is the single source of truth (shared with Animatic).
-  std::vector<ZtoryClipEntry> shared;
-  for (int idx : sorted) {
-    if (idx < 0 || idx >= (int)m_shots.size()) continue;
-    ZtoryClipEntry ze;
-    ze.srcCol   = m_shots[idx].data->xsheetColumn;
-    ze.duration = m_shots[idx].data->panels.empty()
-                  ? 24 : m_shots[idx].data->panels[0].duration;
-    ze.isCut    = false;
-    ze.isClone  = true;
-    shared.push_back(ze);
-  }
-  ZtoryModel::instance()->setSharedClip(std::move(shared));
+  std::vector<int> cols;
+  for (int idx : indices)
+    if (idx >= 0 && idx < (int)m_shots.size())
+      cols.push_back(m_shots[idx].data->xsheetColumn);
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  ZtoryModel::instance()->setSharedClip(ZtoryShotOps::makeShotClip(
+      scene ? scene->getChildStack()->getTopXsheet() : nullptr, cols,
+      ZtoryShotOps::ClipKind::Clone));
   m_pasteButton->setEnabled(!ZtoryModel::instance()->sharedClip().empty());
 }
 
@@ -5386,16 +5328,13 @@ void StoryboardPanel::onPasteShot() {
 
   auto before = captureSnapshot();
 
-  // Auto-return to main xsheet before pasting.
+  ZtoryShotOps::closeSubScenes();
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
-  if (scene)
-    while (scene->getChildStack()->getAncestorCount() > 0)
-      CommandManager::instance()->execute("MI_CloseChild");
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
-  // Insert after the selected shot, or at the end.
+  // After the selected shot, or after the last shot (as Add).
   int insertCol = m_selectedShotIndex >= 0 && m_selectedShotIndex < (int)m_shots.size()
                   ? m_shots[m_selectedShotIndex].data->xsheetColumn + 1
-                  : xsh->getColumnCount();
+                  : ZtoryShotOps::columnAfterLastShot(xsh);
   ZtoryShotOps::pasteSharedClip(shared, insertCol, xsh, scene);
   xsh->updateFrameCount();
   resequenceXsheet();  // onModelResequenced updates the Board (by identity)
@@ -5410,13 +5349,7 @@ void StoryboardPanel::onPasteShot() {
   // they can be pasted again.  Only now: while the Boards rebuild the pasted
   // columns (just above) they take a cut shot's data back from the clip
   // (adoptCutShot).  Dropped before the resequence, a Cut + Paste came back blank.
-  {
-    auto newShared = ZtoryModel::instance()->sharedClip();
-    newShared.erase(std::remove_if(newShared.begin(), newShared.end(),
-                    [](const ZtoryClipEntry &e){ return e.isCut || e.isClone; }),
-                    newShared.end());
-    ZtoryModel::instance()->setSharedClip(std::move(newShared));
-  }
+  ZtoryShotOps::dropOneShotClipEntries();
   m_pasteButton->setEnabled(!ZtoryModel::instance()->sharedClip().empty());
 
   auto after = captureSnapshot();

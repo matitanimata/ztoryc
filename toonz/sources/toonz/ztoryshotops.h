@@ -77,6 +77,20 @@ int columnAfterLastShot(TXsheet *mainXsh);
 // sub-scene, or nullptr.  (Step 5: one Add for the Board and the Animatic.)
 TXshChildLevel *insertNewShot(int insertCol, int duration = 24);
 
+// Clipboard entries for shot columns (main-xsheet indices, any order; the
+// entries come out in xsheet order).  Every kind takes the shot's TRUE length
+// (shotTrueSpan — not its first panel, nor the column with the closing stop
+// frame).  A Cut also carries the shot's data (a copy, from the model: the
+// column goes away) and keeps its sub-scene alive for the paste.
+enum class ClipKind { Copy, Clone, Cut };
+std::vector<ZtoryClipEntry> makeShotClip(TXsheet *mainXsh, std::vector<int> cols,
+                                         ClipKind kind);
+
+// After a paste: drop the one-shot entries (cut, clone) from the shared clip,
+// keep plain copies for another paste.  Only once the Boards have rebuilt the
+// pasted columns — they take a cut shot's data back from the clip.
+void dropOneShotClipEntries();
+
 // Make sure every level the scene exposes (sub-scenes included, recursively)
 // is in the scene cast.  The Board's Cut drops the cut shot's levels from the
 // cast (the clip alone keeps them alive), and so does an undo/redo of a Delete;
