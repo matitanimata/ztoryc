@@ -215,6 +215,12 @@ spento (`productionTracker="off"`), mai i file veri:
     utente (restituiti per l'undo). **Differenza trovata:** il Delete dell'Animatic non toglieva i
     livelli orfani — la correzione `2bdb3d19e` (blocco dell'export) valeva solo per il Board. Prova:
     cancellare uno shot dall'Animatic, poi Export to Board / controllare il cast; undo e redo.
+  - **Add — unificato, compilato, da collaudare.** `columnAfterLastShot` e `insertNewShot(col)`.
+    **Differenze trovate:** senza selezione l'Animatic metteva lo shot in fondo all'xsheet (dopo le
+    colonne audio), il Board dopo l'ultimo shot — ora entrambi dopo l'ultimo shot; il Board usava
+    l'indice della scheda come colonna dell'xsheet (giusto solo se gli shot sono le prime colonne) —
+    ora la colonna vera; il blocco della numerazione con shot su Kitsu ora vale anche dall'Animatic.
+    Prova: Add con e senza selezione da Board e Animatic, con una colonna audio; undo e redo.
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della
   scena** (⌘S, Save Scene, Save All), mai più dagli eventi dei Board (riordino, Paste, ecc.). Così
   `.tnz` e `.ztoryc` sono sempre dello stesso momento; un testo non salvato si perde chiudendo senza

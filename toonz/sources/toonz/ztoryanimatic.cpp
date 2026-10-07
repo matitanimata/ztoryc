@@ -7311,30 +7311,17 @@ void ZtoryAnimaticPanel::onAddShot() {
   ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
-  // Insert after the rightmost selected shot, or append at the end
-  int insertAt = xsh->getColumnCount();
+  // After the rightmost selected shot, or after the last shot (not after the
+  // sound columns, where the end of the xsheet used to put it).
+  int insertAt = ZtoryShotOps::columnAfterLastShot(xsh);
   const std::set<int> *selPtr = &m_track->selectedCols();
   const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
   if (selPtr->empty() && !shared.empty()) selPtr = &shared;
   if (!selPtr->empty())
     insertAt = *std::max_element(selPtr->begin(), selPtr->end()) + 1;
 
-  static const int kDefaultDuration = 24;
-
-  // Create a new sub-scene (child level)
-  TXshLevel *xl = scene->createNewLevel(CHILD_XSHLEVEL);
-  if (!xl || !xl->getChildLevel()) return;
-  TXshChildLevel *cl = xl->getChildLevel();
-
-  xsh->insertColumn(insertAt);
-  for (int r = 0; r < kDefaultDuration; r++)
-    xsh->setCell(r, insertAt, TXshCell(cl, TFrameId(r + 1)));
-  xsh->updateFrameCount();
-
-  // Copy camera resolution/size from parent to sub-scene
-  ZtoryShotOps::syncChildCameraToMain(xsh, cl);
-
-  app->getCurrentXsheet()->notifyXsheetChanged();
+  // The same Add as the Board's (step 5).
+  if (!ZtoryShotOps::insertNewShot(insertAt)) return;
   ZtoryModel::instance()->resequenceXsheet();
   m_track->refreshFromScene();
   // Board syncs via resequenceXsheet() → modelReset() → onModelResequenced()

@@ -619,4 +619,31 @@ std::vector<TXshLevelP> deleteShotColumns(std::vector<int> xshCols) {
   return removed;
 }
 
+int columnAfterLastShot(TXsheet *mainXsh) {
+  if (!mainXsh) return 0;
+  for (int c = mainXsh->getColumnCount() - 1; c >= 0; c--)
+    if (!ZtoryModel::shotLevelNameAt(mainXsh, c).isEmpty()) return c + 1;
+  return 0;
+}
+
+TXshChildLevel *insertNewShot(int insertCol, int duration) {
+  TApp *app         = TApp::instance();
+  ToonzScene *scene = app->getCurrentScene()->getScene();
+  TXsheet *xsh      = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
+  if (!xsh) return nullptr;
+  ZtoryModel *model = ZtoryModel::instance();
+  if (model->hasKitsuShots()) model->setAutoRenumber(false);
+  TXshLevel *xl = scene->createNewLevel(CHILD_XSHLEVEL);
+  if (!xl || !xl->getChildLevel()) return nullptr;
+  TXshChildLevel *cl = xl->getChildLevel();
+  insertCol = std::max(0, std::min(insertCol, xsh->getColumnCount()));
+  xsh->insertColumn(insertCol);
+  for (int r = 0; r < duration; r++)
+    xsh->setCell(r, insertCol, TXshCell(cl, TFrameId(r + 1)));
+  xsh->updateFrameCount();
+  syncChildCameraToMain(xsh, cl);  // the sub-scene gets the main camera
+  app->getCurrentXsheet()->notifyXsheetChanged();
+  return cl;
+}
+
 }  // namespace ZtoryShotOps

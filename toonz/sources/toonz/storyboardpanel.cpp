@@ -5812,46 +5812,29 @@ void StoryboardPanel::onAddShot() {
   // renumber existing shots out from under their Kitsu links / statuses.
   updateNumberingLock();
 
-  TApp *app = TApp::instance();
-  ToonzScene *scene = app->getCurrentScene()->getScene();
-  if (scene && scene->getChildStack()->getAncestorCount() > 0)
-    while (scene->getChildStack()->getAncestorCount() > 0)
-      CommandManager::instance()->execute("MI_CloseChild");
+  ZtoryShotOps::closeSubScenes();
+  TApp *app    = TApp::instance();
   TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
-  int duration = 24;
-  int insertAt = (m_selectedShotIndex >= 0 && m_selectedShotIndex < (int)m_shots.size())
-                 ? m_selectedShotIndex + 1
-                 : (int)m_shots.size();
-  if (scene && xsh) {
-    TXshLevel *xl = scene->createNewLevel(CHILD_XSHLEVEL);
-    if (xl && xl->getChildLevel()) {
-      TXshChildLevel *cl = xl->getChildLevel();
-      xsh->insertColumn(insertAt);
-      for (int r = 0; r < duration; r++)
-        xsh->setCell(r, insertAt, TXshCell(cl, TFrameId(r+1)));
-      xsh->updateFrameCount();
-
-      // Inizializza camera della sottoscena copiando quella del main
-      ZtoryShotOps::syncChildCameraToMain(xsh, cl);
-
-      app->getCurrentXsheet()->notifyXsheetChanged();
-    }
-  }
-  // The inserted column shifts every existing shot at/after insertAt one column
-  // to the right in the xsheet. Keep their stored xsheetColumn in sync (mirror
-  // of onDeleteShot). Without this, onEditShot() opens the wrong sub-scene for
-  // every shot after an in-the-middle insertion (e.g. click last → enter
-  // penultimate).
+  // Card index for this Board; xsheet COLUMN for the scene.  The two coincide
+  // only while the shots are the first columns: the column is the selected
+  // shot's own plus one, or the one after the last shot.
+  const bool hasSel = m_selectedShotIndex >= 0 &&
+                      m_selectedShotIndex < (int)m_shots.size();
+  const int insertAt  = hasSel ? m_selectedShotIndex + 1 : (int)m_shots.size();
+  const int insertCol = hasSel ? m_shots[m_selectedShotIndex].data->xsheetColumn + 1
+                               : ZtoryShotOps::columnAfterLastShot(xsh);
+  // The operation itself, shared with the Animatic (step 5).
+  ZtoryShotOps::insertNewShot(insertCol);
 
   // The model's object for the new column (step 2b): reconciling, the model
   // gives it one panel as long as the column.
   Shot shot;
-  shot.data = modelShotFor(insertAt);
+  shot.data = modelShotFor(insertCol);
   if (xsh) {
     std::vector<TXshChildLevel *> lv;
     const std::vector<int> cols = ztoryShotColumns(xsh, &lv);
     for (int i = 0; i < (int)cols.size(); i++)
-      if (cols[i] == insertAt) shot.childLevel = lv[i];
+      if (cols[i] == insertCol) shot.childLevel = lv[i];
   }
   // Assign the uuid up front (before addPanelWidget renders the first preview):
   // updatePreview only warms the Production Tracker thumbnail cache when the shot

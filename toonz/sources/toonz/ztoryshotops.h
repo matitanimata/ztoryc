@@ -66,6 +66,17 @@ void closeSubScenes();
 // the Animatic's own version never dropped the orphans.)
 std::vector<TXshLevelP> deleteShotColumns(std::vector<int> xshCols);
 
+// The main-xsheet column right after the last shot (0 with no shots): where
+// a new shot goes when none is selected — not after the sound columns.
+int columnAfterLastShot(TXsheet *mainXsh);
+
+// Insert a new, empty shot at main-xsheet column insertCol: a fresh
+// sub-scene of `duration` frames with the main camera.  With shots already in
+// Kitsu the numbering is frozen to Keep # first, so the insert cannot renumber
+// them out from under their links.  The caller resequences.  Returns the new
+// sub-scene, or nullptr.  (Step 5: one Add for the Board and the Animatic.)
+TXshChildLevel *insertNewShot(int insertCol, int duration = 24);
+
 // Make sure every level the scene exposes (sub-scenes included, recursively)
 // is in the scene cast.  The Board's Cut drops the cut shot's levels from the
 // cast (the clip alone keeps them alive), and so does an undo/redo of a Delete;
