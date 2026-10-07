@@ -454,6 +454,7 @@ class ZtoryModel : public QObject {
   const void                       *m_shotDataSceneObj = nullptr;  // its ToonzScene
   QSet<QObject *>                   m_shotDocumentWriters;  // live Boards
   void writeShotDocumentWithoutBoard();
+  void readShotDocumentWithoutBoard();
   int                               m_fps;
   // Imported screenplay, stored as a path relative to the project ("+extras/
   // script/<file>").  Persisted in the .ztoryc so the Script panel can reload

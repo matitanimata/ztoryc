@@ -179,6 +179,10 @@ ZtoryModel::ZtoryModel() : m_fps(24) {
               if (TApp::instance()->getCurrentScene()->getScene() !=
                   m_shotDataSceneObj)
                 m_shotDataLoadedFor.clear();
+              // No Board in this workflow's rooms (e.g. Cutout): the model
+              // reads the file itself, after the scene switch has settled.
+              QTimer::singleShot(0, this,
+                                 &ZtoryModel::readShotDocumentWithoutBoard);
             });
   // ⌘S with no Board alive: the model writes the .ztoryc (step 3b).
   connect(this, &ZtoryModel::sceneSaved, this,
@@ -3460,6 +3464,39 @@ void ZtoryModel::addShotDocumentWriter(QObject *writer) {
   m_shotDocumentWriters.insert(writer);
   connect(writer, &QObject::destroyed, this,
           [this, writer]() { m_shotDocumentWriters.remove(writer); });
+}
+
+void ZtoryModel::readShotDocumentWithoutBoard() {
+  if (!m_shotDocumentWriters.isEmpty()) return;  // the Boards read it
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene || scene->getScenePath().isEmpty()) return;
+  QString path = QString::fromStdWString(scene->getScenePath().getWideString());
+  path.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
+  if (shotDataLoadedFor(path)) return;  // read once per opening, as the Board
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+  // The same order as StoryboardPanel::loadZtoryc: nothing from the previous
+  // scene may leak, the file repopulates, the project DB has the last word.
+  reconcileWithXsheet();
+  setPdfLogoPath("");
+  setPdfNoLogo(false);
+  m_sequences.clear();
+  m_docState = ShotDocumentState();
+  resetProjectLevelDefaults();
+  std::vector<ShotData *> targets;
+  for (int i = 0; i < shotCount(); i++) targets.push_back(&shot(i));
+  ShotDocumentRead read;
+  readShotDocument(file.readAll(), targets, read);
+  m_docState.isShotScene      = (read.role == "shot");
+  m_docState.isCharacterScene = (read.role == "character");
+  for (ShotData *sd : targets) markShotLoaded(sd);
+  setShotDataLoadedFor(path);
+  setScriptFile(read.script);
+  if (!m_docState.isShotScene) loadProjectDb();
+  emit productionReloaded();
+  for (ShotData *sd : targets) notifyShotEdited(sd);
+  qWarning("[ZTORY] .ztoryc read by the model (no Board alive): %s",
+           path.toUtf8().constData());
 }
 
 void ZtoryModel::writeShotDocumentWithoutBoard() {

@@ -46,7 +46,7 @@ Ramo: `feature/shot-document` (parte da `fix/navigator-stale-shot-index`).
 | 0 | **Rete di sicurezza + nessun testo perso**: il ⌘S della scena scrive anche il `.ztoryc`; il Navigator segna la scena come modificata; modalità di prova `ZTORYC_ROUNDTRIP` per confrontare i `.ztoryc` | il dialogo del Navigator non si perde più |
 | 1 | **Il modello riconosce gli shot per colonna**: si riallinea dallo xsheet a ogni cambiamento, invece di essere un elenco da tenere in passo | nessuno shot riceve dati di un altro |
 | 2 | **Il Board legge e scrive nel modello**: tiene solo i widget; i tre Board diventano tre finestre sulla stessa copia | due Board non divergono più |
-| 3 | **Caricamento e salvataggio nel modello** (oggi `loadZtoryc`/`saveZtoryc` del Board) | il `.ztoryc` si salva anche senza Board nella room |
+| 3 ✅ | **Caricamento e salvataggio nel modello** (oggi `loadZtoryc`/`saveZtoryc` del Board) | il `.ztoryc` si salva anche senza Board nella room |
 | 4 | **Via le sincronizzazioni**: `syncShotPanels`, `pushTrackingToBoard`/`pullTrackingFromBoard`, lo specchio per indice di `shotDataChanged` | — |
 | 5 | **Operazioni uniche** (Add, Delete, Cut, Copy, Clone, Paste, Merge, Split, Move) in `ZtoryShotOps`, chiamate da Board, Animatic, Monitor | stessi comandi, stesso comportamento ovunque |
 | 6 | **Undo sullo xsheet** (decisione ancora da prendere con Franco) | undo anche senza Board |
@@ -196,6 +196,12 @@ spento (`productionTracker="off"`), mai i file veri:
     Restano: Save As, ⌘S in flusso Cutout (scrive il modello), luce dal Navigator, Send to Board,
     technique e task dal Production Tracker + salva + riapri.
   - **3d — il lettore nel modello** (`loadZtoryc` legge nel modello; il Board costruisce solo i widget).
+    **Fatto (2026-10-07).** `readShotDocument(bytes, targets, out)` nel modello: lo stesso parse e lo
+    stesso abbinamento per sotto-scena; ruolo, sceneggiatura e back-link tornano al Board. Senza Board
+    vivo il modello legge da sé (`readShotDocumentWithoutBoard`, dopo il cambio scena, stessi
+    azzeramenti del Board e poi il DB di progetto). Rete di sicurezza identica; provato a mano in flusso
+    Cutout su navtest1: il modello legge all'apertura e al ⌘S scrive un `.ztoryc` identico a quello letto,
+    insieme al `.tnz`. **Il passo 3 è chiuso**, salvo le prove a mano elencate sopra.
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della
   scena** (⌘S, Save Scene, Save All), mai più dagli eventi dei Board (riordino, Paste, ecc.). Così
   `.tnz` e `.ztoryc` sono sempre dello stesso momento; un testo non salvato si perde chiudendo senza
