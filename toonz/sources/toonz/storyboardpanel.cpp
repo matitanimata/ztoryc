@@ -1789,13 +1789,11 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   // Sync durations when ZtoryModel resequences (works even inside sub-scenes)
   connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
           this, &StoryboardPanel::onModelResequenced);
-  // Persist the imported screenplay: setScriptFile() (called by the Script
-  // panel on import) emits scriptFileChanged → write it into the .ztoryc.
-  // A plain File>Save does not call saveZtoryc(); the .ztoryc is kept in sync
-  // by each edit action instead, so the import must trigger its own save.
-  // m_loadingZtoryc guards the redundant save while loadZtoryc() itself runs.
+  // An imported screenplay (setScriptFile, from the Script panel) is part of
+  // the .ztoryc: the scene is modified, ⌘S writes it.  Not while loadZtoryc()
+  // itself publishes the scene's screenplay.
   connect(ZtoryModel::instance(), &ZtoryModel::scriptFileChanged, this,
-          [this]() { if (!m_loadingZtoryc) saveZtoryc(); });
+          [this]() { if (!m_loadingZtoryc) markShotDocumentChanged(); });
   connect(ZtoryModel::instance(), &ZtoryModel::shotAdded,
           this, &StoryboardPanel::onShotInserted);
   connect(ZtoryModel::instance(), &ZtoryModel::shotRemovedAt,
@@ -1835,6 +1833,10 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
             else setFollowMarker(-1, -1, false);
           });
 
+  // This Board writes the .ztoryc at ⌘S; while any Board lives, the model
+  // leaves it to them (ZtoryModel::writeShotDocumentWithoutBoard).
+  ZtoryModel::instance()->addShotDocumentWriter(this);
+
   // Test mode (ZTORYC_ROUNDTRIP, see refreshFromScene): copies of real
   // storyboards miss their panel drawings, and Tahoma stops the load with a
   // modal «file missing» box.  Nobody is there to press OK, so close it: only
@@ -1855,13 +1857,17 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     dismiss->start();
   }
 
-  // The scene's ⌘S writes the .ztoryc too.  Until now only the Board's own
-  // events wrote it, so text that reached the shots another way (the Shot
-  // Board navigator, the lip sync) was saved only if some Board event
-  // happened to follow — a dialogue typed in the navigator, then ⌘S and quit,
-  // was lost (docs/SHOT_OPS_AUDIT.md §7.5).
-  connect(ZtoryModel::instance(), &ZtoryModel::sceneSaved, this,
-          [this]() { saveZtoryc(); });
+  // The scene's ⌘S is the ONLY moment the .ztoryc is written (step 3b,
+  // Franco 2026-10-06): the two files always come from the same moment, so a
+  // Revert or a close without saving can no longer pair a .tnz with a newer
+  // .ztoryc (the original of a Copy lost its texts that way).
+  // A Save As moved the scene: follow it.  sceneSaved comes only for the top
+  // scene, and this Board's shots are that scene's.
+  connect(ZtoryModel::instance(), &ZtoryModel::sceneSaved, this, [this]() {
+    const QString path = ztoryPath();
+    if (!path.isEmpty() && path != m_currentZtoryPath) m_currentZtoryPath = path;
+    saveZtoryc();
+  });
 
   connect(ZtoryModel::instance(), &ZtoryModel::shotDataChanged, this,
           [this](int mi) {
@@ -1913,7 +1919,6 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
       } else if (seen.value() != light) {
         seen.value() = light;
         updatePreview(si, pi);
-        saveZtoryc();
       }
     }
   });
@@ -2163,7 +2168,7 @@ void StoryboardPanel::connectPanelWidget(PanelWidget *pw) {
       ZtoryModel::instance()->notifyShotEdited(m_shots[si].data.get());
       m_updating = false;
     }
-    saveZtoryc();
+    markShotDocumentChanged();
   });
   // Sequence field edited: cascade the sequence assignment forward until a
   // shot with a different (non-empty) sequenceId is encountered.
@@ -2190,7 +2195,7 @@ void StoryboardPanel::connectPanelWidget(PanelWidget *pw) {
     const NumberingConfig &cfg = model->numberingConfig();
     if (model->autoRenumber() && cfg.resetOnSeqChange)
       renumberAll();
-    saveZtoryc();
+    markShotDocumentChanged();
   });
 }
 
@@ -3194,6 +3199,17 @@ void StoryboardPanel::ensureShotIdentityUnique(const QString &sourceFile) {
   DVGui::info(tr("%1 shot(s) are now in sequence %2.").arg(touched).arg(label));
 }
 
+void StoryboardPanel::markShotDocumentChanged() {
+  // Step 3b: the .ztoryc is written only with the scene, so an edit gives the
+  // scene its asterisk instead of writing the file (closing then asks to save).
+  // Same silences as saveZtoryc: nothing while the Board is being rebuilt
+  // (path cleared) and nothing for a scene that keeps its own sidecar.
+  if (m_currentZtoryPath.isEmpty()) return;
+  const auto &doc = ZtoryModel::instance()->shotDocumentState();
+  if (doc.isShotScene || doc.isCharacterScene) return;
+  ZtoryModel::instance()->markShotDocumentDirty();
+}
+
 void StoryboardPanel::saveZtoryc() {
   // One level only: the second pass below must not start a third.
   if (m_savingZtoryc) return;
@@ -3288,6 +3304,11 @@ void StoryboardPanel::saveZtoryc() {
     std::vector<const ShotData *> shots;
     for (const Shot &shot : m_shots) shots.push_back(shot.data.get());
     if (!ZtoryModel::instance()->writeShotDocument(path, shots)) return;
+    // The file now holds exactly what memory holds: a later rebuild must not
+    // read it back over newer edits (a .ztoryc first created by this save,
+    // or a Save As, had never been "read").
+    for (const ShotData *sd : shots) ZtoryModel::instance()->markShotLoaded(sd);
+    ZtoryModel::instance()->setShotDataLoadedFor(path);
   }
   // Publish structural metadata to the project DB (unless user opted out).
   if (!ZtoryModel::instance()->shotDocumentState().trackerOff) {
@@ -3335,6 +3356,37 @@ void StoryboardPanel::loadZtoryc() {
   // new scene) clears the Script panel instead of leaving a stale one loaded.
   QString scriptFromFile;
   m_loadingZtoryc = true;  // suppress scriptFileChanged→saveZtoryc during load
+  // Mid-session (this scene's file already read): the file is older than
+  // memory — it is written only with the scene (step 3b) — so what it says
+  // about the scene must not replace what memory holds, like the shots below.
+  // Kept here, before the resets, and given back after the parse.
+  struct KeptScene {
+    NumberingConfig numbering;
+    std::vector<SequenceData> sequences;
+    QString script, pdfLogo;
+    bool pdfNoLogo;
+    ZtoryModel::ShotDocumentState doc;
+  };
+  std::unique_ptr<KeptScene> keptScene;
+  {
+    ZtoryModel *zm = ZtoryModel::instance();
+    const QString p = ztoryPath();
+    if (!p.isEmpty() && zm->shotDataLoadedFor(p))
+      keptScene.reset(new KeptScene{zm->numberingConfig(), zm->sequences(),
+                                    zm->scriptFile(), zm->pdfLogoPath(),
+                                    zm->pdfNoLogo(), zm->shotDocumentState()});
+  }
+  auto restoreKeptScene = [&]() {
+    if (!keptScene) return;
+    ZtoryModel *zm = ZtoryModel::instance();
+    zm->setNumberingConfig(keptScene->numbering);
+    zm->sequences() = keptScene->sequences;
+    zm->setPdfLogoPath(keptScene->pdfLogo);
+    zm->setPdfNoLogo(keptScene->pdfNoLogo);
+    zm->shotDocumentState().trackerOff        = keptScene->doc.trackerOff;
+    zm->shotDocumentState().shotIdentityAsked = keptScene->doc.shotIdentityAsked;
+    scriptFromFile = keptScene->script;
+  };
   // Reset role/back-link state so values from a previous scene don't leak (and a
   // new/empty scene is never mistaken for a shot scene).
   ZtoryModel::instance()->shotDocumentState().isShotScene      = false;
@@ -3371,6 +3423,11 @@ void StoryboardPanel::loadZtoryc() {
     // The model's list follows the scene (no leftovers from the previous
     // one); the objects stay, shared with the Board (step 2b).
     ZtoryModel::instance()->reconcileWithXsheet();
+    // No file yet (step 3b: it appears at the first ⌘S): memory is all there
+    // is for this scene, and a rebuild must not clear what it holds — an
+    // imported screenplay was lost that way.
+    restoreKeptScene();
+    ZtoryModel::instance()->setShotDataLoadedFor(path);
     ZtoryModel::instance()->setScriptFile(scriptFromFile);
     ZtoryModel::instance()->resetProjectLevelDefaults();
     ZtoryModel::instance()->loadProjectDb();  // load this project's DB (or migrate defaults)
@@ -3757,6 +3814,7 @@ void StoryboardPanel::loadZtoryc() {
   // pasted Cut's data, which must land in the shared object.
   for (const auto &k : keptShared)
     if (k.first < (int)m_shots.size()) m_shots[k.first].data = k.second;
+  restoreKeptScene();
   for (Shot &shot : m_shots)
     if (shot.data->uuid.isEmpty()) adoptCutShot(shot);
   // Record that this scene's file has been read.
@@ -3793,14 +3851,9 @@ void StoryboardPanel::loadZtoryc() {
   // never rewritten with role="storyboard".
   ZtoryModel::instance()->shotDocumentState().isShotScene      = (sceneRole == "shot");
   ZtoryModel::instance()->shotDocumentState().isCharacterScene = (sceneRole == "character");
-  // Persist the SFH-explosion repair so the scene loads cleanly next time.
-  // m_currentZtoryPath is still empty here (set by refreshFromScene after we
-  // return), so temporarily anchor it so saveZtoryc() can write.
-  if (sfhRepaired) {
-    m_currentZtoryPath = ztoryPath();
-    saveZtoryc();
-    m_currentZtoryPath.clear();  // refreshFromScene will set it authoritatively
-  }
+  // The SFH-explosion repair lives in memory; the next ⌘S writes it (step 3b:
+  // opening a scene never writes its .ztoryc).
+  Q_UNUSED(sfhRepaired)
   // role="shot": load the project DB from the stored back-link path and, on the
   // first open, advance ONLY the first task after the storyboard (usually
   // Layout) Ready/Todo → WIP (Model A: opening the single shot scene means work
@@ -4196,7 +4249,6 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
       renumberAll();
       rebuildGrid();
       ZtoryModel::instance()->notifyShotEdited(shot.data.get());
-      saveZtoryc();
     }
     return;
   }
@@ -4352,7 +4404,6 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
     for (PanelWidget *pw : shot.panels)
       pw->setTotalDuration(timelineDuration);
     ZtoryModel::instance()->notifyShotEdited(shot.data.get());
-    saveZtoryc();
     return;
   }
 
@@ -4378,7 +4429,6 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
   renumberAll();
   rebuildGrid();
   ZtoryModel::instance()->notifyShotEdited(shot.data.get());
-  saveZtoryc();
 }
 
 void StoryboardPanel::assignKeepNumbers(int insertAt) {
@@ -4576,7 +4626,6 @@ void StoryboardPanel::onModelResequenced() {
         bindShotsToModel();
         renumberAll();
         rebuildGrid();
-        saveZtoryc();
         return;
       }
     }
@@ -4932,8 +4981,6 @@ bool StoryboardPanel::reconcileShotsWithScene(
     for (PanelWidget *pw : m_shots[si].panels) pw->setTotalDuration(total);
   }
   rebuildGrid();
-  // Tracking data lives in the shot objects themselves (shared with the model).
-  saveZtoryc();
   for (int i = 0; i < (int)m_shots.size(); i++)
     model->notifyShotEdited(m_shots[i].data.get());
 
@@ -4976,7 +5023,6 @@ void StoryboardPanel::onShotInserted(int col) {
       qWarning("[ZTORY] onShotInserted: column %d is already on the board "
                "(Copies) -> full rebuild", col);
       refreshFromScene();
-      saveZtoryc();
       return;
     }
   TXshColumn *column = xsh->getColumn(col);
@@ -5008,7 +5054,6 @@ void StoryboardPanel::onShotInserted(int col) {
   // A list that does not match the scene is rebuilt instead.
   if (!reanchorColumnsFromScene()) {
     refreshFromScene();
-    saveZtoryc();
     return;
   }
   bindShotsToModel();
@@ -5029,7 +5074,6 @@ void StoryboardPanel::onShotInserted(int col) {
   renumberAll();
   rebuildGrid();
   if (redetect) detectAndUpdatePanels(col);
-  saveZtoryc();
 
   // Render the new panels' thumbnails. Deferred so the insertion returns at
   // once (updatePreview renders synchronously) but without waiting for the user
@@ -5064,14 +5108,12 @@ void StoryboardPanel::onShotRemovedAt(int col) {
   // shift would be applied once per Board); rebuilt if the list does not match.
   if (!reanchorColumnsFromScene()) {
     refreshFromScene();
-    saveZtoryc();
     return;
   }
   bindShotsToModel();
 
   renumberAll();
   rebuildGrid();
-  saveZtoryc();
 }
 
 void StoryboardPanel::onXsheetChanged() {
@@ -5353,12 +5395,6 @@ void StoryboardPanel::refreshFromScene() {
   // clearShots → addShots → loadZtoryc) was correctly suppressed; from this
   // point on saves will target exactly this scene's file.
   m_currentZtoryPath = ztoryPath();
-
-  // If production/title were set during scene creation (startup popup) but
-  // not yet saved (new scene had no .ztoryc), persist them now.
-  ZtoryModel *zm = ZtoryModel::instance();
-  if (!zm->production().isEmpty() || !zm->title().isEmpty())
-    saveZtoryc();
 
   // Test mode (docs/SHOT_DOCUMENT_PLAN.md, safety net): ZTORYC_ROUNDTRIP=1
   // rewrites the .ztoryc of the scene given on the command line and exits, so
@@ -5829,7 +5865,7 @@ void StoryboardPanel::restoreFromSnapshot(const ZtoryBoardSnap &snapRef) {
   QTimer::singleShot(0, this, &StoryboardPanel::onRefreshPreviews);
   // Re-anchor the path after clearShots() cleared it.
   m_currentZtoryPath = ztoryPath();
-  saveZtoryc();
+  markShotDocumentChanged();  // an undo/redo changed the shots
 }
 
 // Declared in ztoryundo.h — defined here because this is the file that knows
@@ -6081,7 +6117,7 @@ void StoryboardPanel::onDeleteShot() {
       }
   }
 
-  saveZtoryc();
+  markShotDocumentChanged();
 
   auto after = captureSnapshot();
   TUndoManager::manager()->add(
@@ -6154,7 +6190,7 @@ void StoryboardPanel::onAddShot() {
   renumberAll();
   resequenceXsheet();
   rebuildGrid();
-  saveZtoryc();
+  markShotDocumentChanged();
   selectShot(insertAt);
 
   auto after = captureSnapshot();
@@ -6224,7 +6260,7 @@ void StoryboardPanel::onLightPlaced(int shotIdx, int panelIdx,
   pd.lightSpread = spread;
   pd.lightColor  = QSettings().value("Ztoryc/LightColor", "#FFC34D").toString();
   ZtoryModel::instance()->notifyShotEdited(shot.data.get());
-  saveZtoryc();
+  markShotDocumentChanged();
   updatePreview(shotIdx, panelIdx);
   TUndoManager::manager()->add(new UndoBoardState(
       this, tr("Light Direction"), std::move(before), captureSnapshot()));
@@ -6239,7 +6275,7 @@ void StoryboardPanel::onLightRemoved(int shotIdx, int panelIdx) {
   auto before = captureSnapshot();
   pd.hasLight = false;
   ZtoryModel::instance()->notifyShotEdited(shot.data.get());
-  saveZtoryc();
+  markShotDocumentChanged();
   updatePreview(shotIdx, panelIdx);
   TUndoManager::manager()->add(new UndoBoardState(
       this, tr("Remove Light Direction"), std::move(before), captureSnapshot()));
@@ -6292,7 +6328,7 @@ void StoryboardPanel::onMatchDuration(int shotIdx) {
     if (!m_shots[shotIdx].panels.empty())
       m_shots[shotIdx].panels[0]->setDuration(actualDuration);
   }
-  saveZtoryc();
+  markShotDocumentChanged();
 
   auto after = captureSnapshot();
   TUndoManager::manager()->add(
@@ -6478,7 +6514,7 @@ void StoryboardPanel::onDurationChanged(int shotIdx, int panelIdx, int frames) {
   for (PanelWidget *pw : m_shots[shotIdx].panels)
     pw->setTotalDuration(tot);
   resequenceXsheet();
-  saveZtoryc();
+  markShotDocumentChanged();
 }
 
 void StoryboardPanel::commitDurationUndo() {
@@ -6592,7 +6628,7 @@ void StoryboardPanel::onMoveShot(int fromShot, int toShot) {
   resequenceXsheet();
   bindShotsToModel();  // the model matched the moved shots by sub-scene
   rebuildGrid();
-  saveZtoryc();
+  markShotDocumentChanged();
   selectShot(toShot);
 
   auto after = captureSnapshot();
@@ -6668,7 +6704,7 @@ void StoryboardPanel::onNumberingChanged(int comboIndex) {
     m_numberingCombo->setCurrentIndex(0);
     m_numberingCombo->blockSignals(false);
   }
-  saveZtoryc();
+  markShotDocumentChanged();
 }
 
 void StoryboardPanel::updateNumberingLock() {
@@ -6799,7 +6835,7 @@ void StoryboardPanel::onNumberingConfig() {
   // If in auto-renumber mode, renumber all shots immediately (also updates visibility).
   if (ZtoryModel::instance()->autoRenumber()) {
     renumberAll();
-    saveZtoryc();
+    markShotDocumentChanged();
   } else {
     // Even without renumbering, update SQ field visibility immediately.
     bool isSeq = (cfg.style == NumberingConfig::Sequence);
@@ -9495,7 +9531,7 @@ void StoryboardPanel::onExportPdf() {
     model->setEpisode(epEdit->text());
     model->setPdfNoLogo(noLogoChk->isChecked());
     model->setPdfLogoPath(logoEdit->text().trimmed());
-    saveZtoryc();  // persist metadata + logo choice in the .ztoryc
+    markShotDocumentChanged();  // metadata + logo choice: written with the next ⌘S
   }
 
   // Build a sensible default filename from the scene name.
@@ -10306,7 +10342,7 @@ void StoryboardPanel::onStoryboardSettings() {
   model->setNamingPattern(patternEdit->text().trimmed());
   if (!techCombo->currentText().isEmpty())
     model->setDefaultTechnique(techCombo->currentText());
-  saveZtoryc();                 // numbering / scene-level
+  markShotDocumentChanged();  // numbering / scene-level: written with the next ⌘S
   model->saveProjectDb();       // production/title/episode/defaultTechnique are project-level
   emit model->productionReloaded();  // refresh the Production Tracker's Project tab
 }
@@ -10348,7 +10384,7 @@ void StoryboardPanel::onSetTechnique() {
   // model->shot(si), whose index need not be the Board's.
   for (int si : sel)
     if (si >= 0 && si < (int)m_shots.size()) m_shots[si].data->technique = tech;
-  saveZtoryc();
+  markShotDocumentChanged();
   emit model->taskStatusChanged();  // refresh the Production Tracker columns
 }
 

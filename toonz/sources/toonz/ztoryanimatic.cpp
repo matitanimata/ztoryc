@@ -4600,7 +4600,8 @@ void ZtoryPanelNavigator::drawLightRubberBand() {
 }
 
 // Writes the placed/removed gizmo into ZtoryModel and notifies — the Board
-// mirrors the change (thumbnail re-bake + .ztoryc save) via shotDataChanged.
+// re-bakes the thumbnail via shotDataChanged; the scene is modified and ⌘S
+// writes the .ztoryc (step 3b).
 void ZtoryPanelNavigator::commitLightEdit(bool remove) {
   if (!hasValidShot()) return;
   auto &panels = ZtoryModel::instance()->shot(m_shotIdx).panels;
@@ -4619,6 +4620,7 @@ void ZtoryPanelNavigator::commitLightEdit(bool remove) {
     pd.lightSpread = m_lightDragSpread;
     pd.lightColor  = QSettings().value("Ztoryc/LightColor", "#FFC34D").toString();
   }
+  ZtoryModel::instance()->markShotDocumentDirty();
   emit ZtoryModel::instance()->shotDataChanged(m_shotIdx);
   refreshPreview();
 }
@@ -8030,7 +8032,7 @@ void ZtoryAnimaticPanel::onTransitionChanged(int colA, int colB, int frames) {
 
   if (delta == 0) {
     StoryboardPanel *board = findBoardPanel();
-    if (board) board->saveZtoryc();
+    if (board) board->markShotDocumentChanged();
     m_track->refreshFromScene();
     return;
   }
@@ -8170,7 +8172,7 @@ void ZtoryAnimaticPanel::onTransitionChanged(int colA, int colB, int frames) {
   ZtoryModel::instance()->resequenceXsheet();
 
   StoryboardPanel *board = findBoardPanel();
-  if (board) board->saveZtoryc();
+  if (board) board->markShotDocumentChanged();
   m_track->refreshFromScene();
   app->getCurrentScene()->notifySceneChanged();
   app->getCurrentXsheet()->notifyXsheetChanged();

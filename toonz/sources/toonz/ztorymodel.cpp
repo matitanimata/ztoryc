@@ -180,6 +180,9 @@ ZtoryModel::ZtoryModel() : m_fps(24) {
                   m_shotDataSceneObj)
                 m_shotDataLoadedFor.clear();
             });
+  // ⌘S with no Board alive: the model writes the .ztoryc (step 3b).
+  connect(this, &ZtoryModel::sceneSaved, this,
+          &ZtoryModel::writeShotDocumentWithoutBoard);
   // More than one Ztoryc may be open on the same project: read back what the
   // others write (debounced: one save can come as several file events).
   m_dbReloadTimer = new QTimer(this);
@@ -3153,6 +3156,38 @@ QString ZtoryModel::shotLevelNameAt(TXsheet *xsh, int col) {
       return QString::fromStdWString(cell.m_level->getName());
   }
   return QString();
+}
+
+void ZtoryModel::markShotDocumentDirty() {
+  TApp *app = TApp::instance();
+  if (app && app->getCurrentScene()) app->getCurrentScene()->setDirtyFlag(true);
+}
+
+void ZtoryModel::addShotDocumentWriter(QObject *writer) {
+  m_shotDocumentWriters.insert(writer);
+  connect(writer, &QObject::destroyed, this,
+          [this, writer]() { m_shotDocumentWriters.remove(writer); });
+}
+
+void ZtoryModel::writeShotDocumentWithoutBoard() {
+  if (!m_shotDocumentWriters.isEmpty()) return;  // a Board writes it
+  if (m_docState.isShotScene || m_docState.isCharacterScene) return;
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene || scene->getScenePath().isEmpty()) return;
+  // Only shots this session has read from the file: a scene never seen by a
+  // Board has no texts in memory, and writing would blank the real file.  The
+  // same scene object also covers a Save As (the path moved, the data is
+  // the same).
+  if (m_shotDataLoadedFor.isEmpty() || m_shotDataSceneObj != scene) return;
+  QString path = QString::fromStdWString(scene->getScenePath().getWideString());
+  path.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
+  reconcileWithXsheet();  // the list follows the scene being written
+  std::vector<const ShotData *> shots;
+  for (int i = 0; i < shotCount(); i++) shots.push_back(&shot(i));
+  if (!writeShotDocument(path, shots)) return;
+  setShotDataLoadedFor(path);
+  qWarning("[ZTORY] .ztoryc written by the model (no Board alive): %s",
+           path.toUtf8().constData());
 }
 
 // Serialization only: the callers decide whether this scene's file may be

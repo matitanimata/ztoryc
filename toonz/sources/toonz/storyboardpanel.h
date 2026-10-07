@@ -384,6 +384,7 @@ struct Shot {
 public:
   explicit StoryboardPanel(QWidget *parent = nullptr);
   void    saveZtoryc();
+  void markShotDocumentChanged();  // an edit: the scene is modified (step 3b)
   // First panel's already-rendered thumbnail (for the Production Tracker).
   // Empty pixmap if the Board hasn't rendered it yet (rendering is lazy).
   QPixmap firstPanelThumbnail(int shotIdx) const;

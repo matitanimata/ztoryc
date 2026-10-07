@@ -7,6 +7,7 @@
 #include <QStringList>
 #include <QMap>
 #include <QHash>
+#include <QSet>
 #include <vector>
 #include <set>
 #include <memory>
@@ -451,6 +452,8 @@ class ZtoryModel : public QObject {
   std::set<const ShotData *>        m_freshShots;
   QString                           m_shotDataLoadedFor;  // scene path, or empty
   const void                       *m_shotDataSceneObj = nullptr;  // its ToonzScene
+  QSet<QObject *>                   m_shotDocumentWriters;  // live Boards
+  void writeShotDocumentWithoutBoard();
   int                               m_fps;
   // Imported screenplay, stored as a path relative to the project ("+extras/
   // script/<file>").  Persisted in the .ztoryc so the Script panel can reload
@@ -1075,6 +1078,13 @@ public:
     bool isCharacterScene  = false;  // role="character": the sidecar holds mouth sets
   };
   ShotDocumentState &shotDocumentState() { return m_docState; }
+  // The shot document changed: it reaches the disk with the next scene save
+  // (step 3b), so the scene takes the asterisk.
+  void markShotDocumentDirty();
+  // The Boards write the .ztoryc at ⌘S (with the Production Tracker
+  // publication).  Each one registers here; with none alive — a workflow
+  // whose rooms have no Board, e.g. Cutout — the model writes it itself.
+  void addShotDocumentWriter(QObject *writer);
 private:
   ShotDocumentState m_docState;
 public:

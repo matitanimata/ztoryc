@@ -170,7 +170,24 @@ spento (`productionTracker="off"`), mai i file veri:
     pubblica nel `production.ztrack`. Conseguenze da dire a Franco: la domanda sul Production Tracker
     arriva al primo ⌘S invece che alla prima modifica; gli altri storyboard del progetto vedono gli
     shot di questo nel Tracker dopo il ⌘S, non in diretta.
-  - **3c — il recupero porta il `.ztoryc`** (sotto).
+    **Scritto (2026-10-06), compilato, da collaudare.** `markShotDocumentChanged()` (Board) /
+    `markShotDocumentDirty()` (modello) al posto delle scritture per le azioni dell'utente (testi,
+    luci, durate, numerazione, sequenze, impostazioni, Add/Delete/Move, undo, technique, tracker,
+    transizioni dell'Animatic, luce del Navigator); tolte quelle delle ricostruzioni (riconciliazione,
+    rilevamento pannelli, `onShotInserted`/`onShotRemovedAt`, apertura della scena: aprire una scena
+    non la segna modificata). Restano tre scritture: `sceneSaved`, la seconda passata interna, la
+    modalità `ZTORYC_ROUNDTRIP`. **Save As** ora segue la scena (prima il `.ztoryc` della copia non
+    veniva scritto). Una rilettura a metà sessione non rimette più dal file numerazione, sequenze,
+    sceneggiatura, logo PDF e stati del documento; dopo ogni scrittura il percorso conta come «letto»;
+    senza file (prima del primo ⌘S) la memoria resta la verità.
+    Senza Board vivo (flusso Cutout: le sue stanze non ne hanno) il ⌘S non arrivava a nessuno: ora
+    scrive il modello (`writeShotDocumentWithoutBoard`), solo se ha letto il file di quella stessa
+    scena in questa sessione (altrimenti scriverebbe dati vuoti sopra quelli veri), senza la
+    pubblicazione nel Tracker. La rete di sicurezza ora forza il flusso Storyboard e rimette quello di
+    Franco (in Cutout restava ferma sulla prima finestra). Rete di sicurezza: identica.
+  - **3c — il recupero porta il `.ztoryc`** (sotto). **Scritto, compilato, da collaudare**: lo snapshot
+    scrive il documento dal modello in `scene/<nome>.ztoryc` (attributo `ztorycFile` nel manifesto),
+    il ripristino lo rimette accanto alla scena; i recuperi vecchi senza l'attributo restano come prima.
   - **3d — il lettore nel modello** (`loadZtoryc` legge nel modello; il Board costruisce solo i widget).
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della
   scena** (⌘S, Save Scene, Save All), mai più dagli eventi dei Board (riordino, Paste, ecc.). Così

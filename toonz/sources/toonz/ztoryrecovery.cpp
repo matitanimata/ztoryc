@@ -24,6 +24,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QXmlStreamReader>
@@ -266,6 +267,29 @@ void ZtoryRecovery::snapshot() {
     return;
   }
 
+  // ── Il .ztoryc ──────────────────────────────────────────────────────────
+  // Dal passo 3b si scrive solo col salvataggio della scena: i testi degli
+  // shot non salvati stanno in memoria come i livelli. La copia porta anche
+  // il documento, dello stesso momento del .tnz — rimettere un .tnz accanto a
+  // un .ztoryc di un altro momento abbina male gli shot (una Copy e il suo
+  // originale si scambiano i dati). Non per le scene shot e personaggio, che
+  // hanno un sidecar loro; non con zero shot, per non rimettere un documento
+  // vuoto sopra uno vero.
+  QString ztorycFile;
+  {
+    ZtoryModel *zm                                  = ZtoryModel::instance();
+    const ZtoryModel::ShotDocumentState &doc = zm->shotDocumentState();
+    if (!doc.isShotScene && !doc.isCharacterScene && zm->shotCount() > 0) {
+      std::vector<const ShotData *> shots;
+      for (int i = 0; i < zm->shotCount(); i++) shots.push_back(&zm->shot(i));
+      const QString name = QFileInfo(scenePath).completeBaseName() + ".ztoryc";
+      if (zm->writeShotDocument(tmp + "/scene/" + name, shots))
+        ztorycFile = "scene/" + name;
+      else
+        qWarning("[RECOVERY] .ztoryc not written");
+    }
+  }
+
   // ── Il manifesto ────────────────────────────────────────────────────────
   {
     QFile f(tmp + "/" + kManifest);
@@ -277,6 +301,7 @@ void ZtoryRecovery::snapshot() {
       xml.writeAttribute("version", "1");
       xml.writeAttribute("scene", scenePath);
       xml.writeAttribute("sceneFile", "scene/" + QFileInfo(toQ(recSp)).fileName());
+      if (!ztorycFile.isEmpty()) xml.writeAttribute("ztorycFile", ztorycFile);
       xml.writeAttribute("time", QDateTime::currentDateTime().toString(Qt::ISODate));
       for (const Entry &e : entries) {
         xml.writeStartElement("level");
@@ -416,6 +441,7 @@ bool ZtoryRecovery::restore(const QString &dir, const QString &scenePath) {
       QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
 
   QString sceneFile;
+  QString ztorycFile;  // assente nei recuperi di prima del passo 3c
   QVector<QPair<QString, QString>> levels;  // src subfolder, dst folder
   {
     QFile f(dir + "/" + kManifest);
@@ -428,9 +454,10 @@ bool ZtoryRecovery::restore(const QString &dir, const QString &scenePath) {
       xml.readNext();
       if (!xml.isStartElement()) continue;
       const QXmlStreamAttributes a = xml.attributes();
-      if (xml.name() == QLatin1String("ztoryrecovery"))
-        sceneFile = a.value("sceneFile").toString();
-      else if (xml.name() == QLatin1String("level"))
+      if (xml.name() == QLatin1String("ztoryrecovery")) {
+        sceneFile  = a.value("sceneFile").toString();
+        ztorycFile = a.value("ztorycFile").toString();
+      } else if (xml.name() == QLatin1String("level"))
         levels.push_back(
             {a.value("src").toString(), a.value("dst").toString()});
     }
@@ -445,6 +472,11 @@ bool ZtoryRecovery::restore(const QString &dir, const QString &scenePath) {
       ok = replaceFile(src.filePath(name), lv.second + "/" + name, bak) && ok;
   }
   ok = replaceFile(dir + "/" + sceneFile, scenePath, backup + "/scene") && ok;
+  if (!ztorycFile.isEmpty()) {
+    QString target = scenePath;
+    target.replace(QRegularExpression("\\.tnz$"), ".ztoryc");
+    ok = replaceFile(dir + "/" + ztorycFile, target, backup + "/scene") && ok;
+  }
 
   if (!ok) {
     DVGui::warning(

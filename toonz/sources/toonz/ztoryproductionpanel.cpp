@@ -113,7 +113,8 @@ void clearUntitledSceneDirty() {
 }
 
 void persistViaBoard() {
-  if (auto *b = findBoard()) b->saveZtoryc();
+  // Step 3b: the scene is modified; ⌘S writes the .ztoryc.
+  if (auto *b = findBoard()) b->markShotDocumentChanged();
   clearUntitledSceneDirty();
 }
 
