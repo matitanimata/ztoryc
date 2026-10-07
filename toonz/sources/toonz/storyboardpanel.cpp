@@ -5761,72 +5761,30 @@ void StoryboardPanel::onDeleteShot() {
   if (toDelete.empty() && m_selectedShotIndex >= 0) toDelete.push_back(m_selectedShotIndex);
   if (toDelete.empty()) return;
 
-  // A structural operation on the MAIN xsheet: close any open sub-scene first,
-  // as Add/Copy/Cut already do.  In Ztoryc X the Board shares its panel with
-  // the xsheet, so it is one click away while inside a shot — and from there
-  // deleteColumns() acted on the sub-scene, destroying the drawing column (the
-  // main-xsheet index of the shot is also a valid column index inside it).
-  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
-  if (scene)
-    while (scene->getChildStack()->getAncestorCount() > 0)
-      CommandManager::instance()->execute("MI_CloseChild");
+  // In Ztoryc X the Board shares its panel with the xsheet: it is one click
+  // away while inside a shot.
+  ZtoryShotOps::closeSubScenes();
 
   auto before = captureSnapshot();
 
-  // Usa data.xsheetColumn (non l'indice Board) per identificare le colonne
-  // da cancellare nell'xsheet. Se i due sono disallineati (dopo merge/cut),
-  // usare l'indice Board cancellerebbe la colonna sbagliata.
-  // Ordina per xsheet column decrescente: cancellare dall'alto mantiene
-  // stabili gli indici delle colonne inferiori nelle iterazioni successive.
+  // data.xsheetColumn, not the Board index: after a merge or a cut the two can
+  // differ, and the Board index would delete the wrong column.
   std::vector<int> xshCols;
-  for (int idx : toDelete) {
+  for (int idx : toDelete)
     if (idx >= 0 && idx < (int)m_shots.size())
       xshCols.push_back(m_shots[idx].data->xsheetColumn);
-  }
-  std::sort(xshCols.rbegin(), xshCols.rend());
 
   disconnect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged, this, &StoryboardPanel::onXsheetChanged);
-
-  // Levels exposed by the shots being deleted: their sub-scene child level plus
-  // everything used inside it (the OVL drawings).  Collected BEFORE the columns
-  // go away; afterwards we drop from the cast only those left with no user, so
-  // deleting a shot frees its level name again instead of leaving an orphan
-  // that later forces export-to-board to disambiguate (or, before the guard,
-  // to hang).  Shots sharing a level (Copy) keep it alive via isLevelUsed().
-  std::set<TXshLevel *> shotLevels;
-  {
-    ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
-    TXsheet *top    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
-    if (top) {
-      int frameCount = top->getFrameCount();
-      for (int col : xshCols)
-        for (int r = 0; r <= frameCount; r++) {
-          TXshCell cell = top->getCell(r, col);
-          if (cell.isEmpty() || !cell.m_level) continue;
-          shotLevels.insert(cell.m_level.getPointer());
-          if (TXshChildLevel *cl = cell.m_level->getChildLevel())
-            cl->getXsheet()->getUsedLevels(shotLevels);
-          break;  // one cell is enough: the column exposes a single sub-scene
-        }
-    }
-  }
-
-  for (int col : xshCols) {
-    // Cerca il board shot corrispondente a questa colonna xsheet.
-    int si = -1;
+  // This Board's own part: the cards of the deleted shots.
+  for (int col : xshCols)
     for (int i = 0; i < (int)m_shots.size(); i++)
-      if (m_shots[i].data->xsheetColumn == col) { si = i; break; }
-    if (si < 0) continue;
-    for (PanelWidget *pw : m_shots[si].panels) {
-      ztoryRetirePanelWidget(m_grid, pw);
-    }
-    m_shots.erase(m_shots.begin() + si);
-    // (No relative shift of the later shots' columns here any more: the
-    // columns are deleted from the top down, so the lower ones this loop still
-    // looks for do not move; the rest are re-read from the scene below.)
-    std::set<int> colSet; colSet.insert(col);
-    ColumnCmd::deleteColumns(colSet, false, true);  // withoutUndo=true: our UndoBoardState owns this
-  }
+      if (m_shots[i].data->xsheetColumn == col) {
+        for (PanelWidget *pw : m_shots[i].panels) ztoryRetirePanelWidget(m_grid, pw);
+        m_shots.erase(m_shots.begin() + i);
+        break;
+      }
+  // The operation itself, shared with the Animatic (step 5).
+  std::vector<TXshLevelP> removedLevels = ZtoryShotOps::deleteShotColumns(xshCols);
   // Columns from the scene, in absolute terms (the objects are shared).
   if (!reanchorColumnsFromScene())
     qWarning("[ZTORY] board list does not match the scene: columns left to the "
@@ -5838,20 +5796,6 @@ void StoryboardPanel::onDeleteShot() {
   renumberAll();
   ZtoryModel::instance()->resequenceXsheet();
   rebuildGrid();
-
-  // Purge the now-unused levels from the cast (kept alive by the undo item).
-  std::vector<TXshLevelP> removedLevels;
-  {
-    ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
-    TXsheet *top    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
-    TLevelSet *ls   = scn ? scn->getLevelSet() : nullptr;
-    if (top && ls)
-      for (TXshLevel *lvl : shotLevels) {
-        if (!lvl || top->isLevelUsed(lvl)) continue;
-        removedLevels.push_back(TXshLevelP(lvl));
-        ls->removeLevel(lvl, false);  // keep alive: the undo item owns it now
-      }
-  }
 
   markShotDocumentChanged();
 

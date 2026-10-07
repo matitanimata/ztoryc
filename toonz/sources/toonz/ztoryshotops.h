@@ -51,6 +51,21 @@ void cloneChildToPosition(int srcCol, int dstCol);
 void pasteSharedClip(const std::vector<ZtoryClipEntry> &clip, int insertCol,
                      TXsheet *xsh, ToonzScene *scene);
 
+// Close every open sub-scene: a shot operation acts on the main xsheet.  From
+// inside a shot a main-xsheet column index is also a valid index in the
+// sub-scene, and deleting there destroyed the drawing column.
+void closeSubScenes();
+
+// Delete shot columns (main-xsheet indices, any order) from the top down, then
+// drop from the cast the levels they exposed — the sub-scene and everything
+// used inside it — that nothing uses any more, so a deleted shot frees its
+// level names (an orphan forced export-to-board to disambiguate, or hang).
+// A Copy sharing the sub-scene keeps it.  No undo of its own: the dropped
+// levels are returned for the caller's undo item to keep alive.  The caller
+// resequences afterwards.  (Step 5: one Delete for the Board and the Animatic;
+// the Animatic's own version never dropped the orphans.)
+std::vector<TXshLevelP> deleteShotColumns(std::vector<int> xshCols);
+
 // Make sure every level the scene exposes (sub-scenes included, recursively)
 // is in the scene cast.  The Board's Cut drops the cut shot's levels from the
 // cast (the clip alone keeps them alive), and so does an undo/redo of a Delete;

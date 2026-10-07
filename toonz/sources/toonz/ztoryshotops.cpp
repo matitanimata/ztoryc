@@ -1,4 +1,6 @@
 #include "ztoryshotops.h"
+#include "columncommand.h"
+#include "toonzqt/menubarcommand.h"
 
 #include "tapp.h"
 #include "toonz/toonzscene.h"
@@ -572,6 +574,49 @@ void applyCrossDissolves(TXsheet *mainXsh, const std::vector<ShotLayout> &shots)
     for (int j = 0; j < half; j++)
       mainXsh->setCell(X - half + j, B.col, TXshCell(clB, TFrameId(1 + j)));
   }
+}
+
+void closeSubScenes() {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return;
+  while (scene->getChildStack()->getAncestorCount() > 0)
+    CommandManager::instance()->execute("MI_CloseChild");
+}
+
+std::vector<TXshLevelP> deleteShotColumns(std::vector<int> xshCols) {
+  std::vector<TXshLevelP> removed;
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  TXsheet *top      = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
+  if (!top) return removed;
+  // From the top down: the lower columns still to delete do not move.
+  std::sort(xshCols.rbegin(), xshCols.rend());
+  xshCols.erase(std::unique(xshCols.begin(), xshCols.end()), xshCols.end());
+  // The levels the shots expose, collected before their columns go.
+  std::set<TXshLevel *> shotLevels;
+  const int frameCount = top->getFrameCount();
+  for (int col : xshCols)
+    for (int r = 0; r <= frameCount; r++) {
+      TXshCell cell = top->getCell(r, col);
+      if (cell.isEmpty() || !cell.m_level) continue;
+      shotLevels.insert(cell.m_level.getPointer());
+      if (TXshChildLevel *cl = cell.m_level->getChildLevel())
+        cl->getXsheet()->getUsedLevels(shotLevels);
+      break;  // one cell is enough: the column exposes a single sub-scene
+    }
+  for (int col : xshCols) {
+    std::set<int> colSet;
+    colSet.insert(col);
+    ColumnCmd::deleteColumns(colSet, false, true);  // withoutUndo: the caller's
+  }
+  top->updateFrameCount();
+  // Drop the orphans; the returned handles keep them alive for the undo.
+  TLevelSet *ls = scene->getLevelSet();
+  for (TXshLevel *lvl : shotLevels) {
+    if (!lvl || top->isLevelUsed(lvl)) continue;
+    removed.push_back(TXshLevelP(lvl));
+    ls->removeLevel(lvl, false);
+  }
+  return removed;
 }
 
 }  // namespace ZtoryShotOps

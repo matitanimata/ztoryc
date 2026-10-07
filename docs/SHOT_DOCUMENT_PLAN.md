@@ -47,7 +47,7 @@ Ramo: `feature/shot-document` (parte da `fix/navigator-stale-shot-index`).
 | 1 | **Il modello riconosce gli shot per colonna**: si riallinea dallo xsheet a ogni cambiamento, invece di essere un elenco da tenere in passo | nessuno shot riceve dati di un altro |
 | 2 | **Il Board legge e scrive nel modello**: tiene solo i widget; i tre Board diventano tre finestre sulla stessa copia | due Board non divergono più |
 | 3 ✅ | **Caricamento e salvataggio nel modello** (oggi `loadZtoryc`/`saveZtoryc` del Board) | il `.ztoryc` si salva anche senza Board nella room |
-| 4 | **Via le sincronizzazioni**: `syncShotPanels`, `pushTrackingToBoard`/`pullTrackingFromBoard`, lo specchio per indice di `shotDataChanged` | — |
+| 4 ✅ | **Via le sincronizzazioni**: `syncShotPanels`, `pushTrackingToBoard`/`pullTrackingFromBoard`, lo specchio per indice di `shotDataChanged` | — |
 | 5 | **Operazioni uniche** (Add, Delete, Cut, Copy, Clone, Paste, Merge, Split, Move) in `ZtoryShotOps`, chiamate da Board, Animatic, Monitor | stessi comandi, stesso comportamento ovunque |
 | 6 | **Undo sullo xsheet** (decisione ancora da prendere con Franco) | undo anche senza Board |
 
@@ -202,6 +202,19 @@ spento (`productionTracker="off"`), mai i file veri:
     azzeramenti del Board e poi il DB di progetto). Rete di sicurezza identica; provato a mano in flusso
     Cutout su navtest1: il modello legge all'apertura e al ⌘S scrive un `.ztoryc` identico a quello letto,
     insieme al `.tnz`. **Il passo 3 è chiuso**, salvo le prove a mano elencate sopra.
+- **Passo 4 — già fatto dal 2c (2026-10-07).** Non restano copie fra Board e modello: gli ascoltatori
+  di `shotDataChanged` (Navigator, titolo del viewer, Tracker) aggiornano solo ciò che mostrano; i
+  `notifyShotEdited` sono avvisi. Resta solo un doppio ciclo innocuo in «assegna sequenza».
+- **Passo 5 — mappa (2026-10-07).** Sette operazioni esistono due volte, Board e Animatic, ~900 righe:
+  Merge (98/107), Delete (104/34), Add (71/54), Cut (53/60), Paste (45/33), Copy (24/22), Clone
+  (24/21); solo Animatic: Razor (181), Merge con il successivo (97); solo Board: Move (85). Tutte usano
+  lo stesso undo (istantanea del Board + `UndoBoardState`), quindi il passo 5 non aspetta la decisione
+  del passo 6. Ordine: prima le coppie più divergenti (più probabile che si comportino diversamente).
+  - **Delete — unificato, compilato, da collaudare.** `ZtoryShotOps::closeSubScenes()` e
+    `deleteShotColumns(cols)`: cancella dall'alto in basso e toglie dal cast i livelli rimasti senza
+    utente (restituiti per l'undo). **Differenza trovata:** il Delete dell'Animatic non toglieva i
+    livelli orfani — la correzione `2bdb3d19e` (blocco dell'export) valeva solo per il Board. Prova:
+    cancellare uno shot dall'Animatic, poi Export to Board / controllare il cast; undo e redo.
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della
   scena** (⌘S, Save Scene, Save All), mai più dagli eventi dei Board (riordino, Paste, ecc.). Così
   `.tnz` e `.ztoryc` sono sempre dello stesso momento; un testo non salvato si perde chiudendo senza

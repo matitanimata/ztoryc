@@ -6598,20 +6598,12 @@ void ZtoryAnimaticPanel::onDeleteShots() {
   ZtoryBoardSnap before;
   if (board) before = board->captureSnapshot();
 
-  // Structural op: close any open sub-scene first so deleteColumns acts on the
-  // main xsheet — lets Delete Shot work from inside a sub-scene.
-  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
-  if (scene)
-    while (scene->getChildStack()->getAncestorCount() > 0)
-      CommandManager::instance()->execute("MI_CloseChild");
-  TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
-  std::vector<int> cols(sel.begin(), sel.end());
-  std::sort(cols.rbegin(), cols.rend());
-  for (int col : cols) {
-    std::set<int> cs; cs.insert(col);
-    ColumnCmd::deleteColumns(cs, false, true);  // withoutUndo=true
-  }
-  xsh->updateFrameCount();
+  // The same Delete as the Board's (step 5): it also drops the levels left
+  // with no user, which this version used to leave orphaned in the cast.
+  // The selection is copied first: closing a sub-scene refreshes the track.
+  const std::vector<int> cols(sel.begin(), sel.end());
+  ZtoryShotOps::closeSubScenes();
+  std::vector<TXshLevelP> removedLevels = ZtoryShotOps::deleteShotColumns(cols);
   ZtoryModel::instance()->resequenceXsheet();
   refreshFromScene();
   m_track->setFocus(Qt::OtherFocusReason);
@@ -6619,7 +6611,8 @@ void ZtoryAnimaticPanel::onDeleteShots() {
   if (board) {
     auto after = board->captureSnapshot();
     TUndoManager::manager()->add(
-        new UndoBoardState(board, tr("Delete Shot"), std::move(before), std::move(after)));
+        new UndoBoardState(board, tr("Delete Shot"), std::move(before),
+                           std::move(after), std::move(removedLevels)));
   }
 }
 
