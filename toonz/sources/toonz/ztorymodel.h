@@ -1088,6 +1088,16 @@ public:
 private:
   ShotDocumentState m_docState;
 public:
+  // What reading a .ztoryc returns besides what it puts in the model: the
+  // parts only the Board uses.
+  struct ShotDocumentRead {
+    QString role = "storyboard";  // "shot" / "character": not a shot list
+    QString script;               // imported screenplay (project-relative)
+    QString backLinkUuid, backLinkProject, backLinkTaskStage, backLinkTechnique;
+  };
+  void readShotDocument(const QByteArray &bytes,
+                        const std::vector<ShotData *> &targets,
+                        ShotDocumentRead &out);
   // Writes the storyboard .ztoryc of `shots` (xsheet order) to `path`.
   // Serialization only — no guards, no questions, no publication.
   bool writeShotDocument(const QString &path,

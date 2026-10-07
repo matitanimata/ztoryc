@@ -3158,6 +3158,299 @@ QString ZtoryModel::shotLevelNameAt(TXsheet *xsh, int col) {
   return QString();
 }
 
+// Reads a .ztoryc (step 3d: the reader lives with the writer).  What it says
+// about the scene goes into the model — document flags, project metadata and
+// the blocks kept for migration (techniques, team, assets), numbering,
+// sequences; each <shot> fills the target with the same sub-scene (Copies in
+// order; files without level names by position).  A target the file does not
+// mention is left alone.  The caller resets what must not leak from the
+// previous scene before calling, and owns what only a Board needs (role,
+// screenplay, back-link: returned in `out`).
+void ZtoryModel::readShotDocument(const QByteArray &bytes,
+                                  const std::vector<ShotData *> &targets,
+                                  ShotDocumentRead &out) {
+  // Which target each <shot> of the file belongs to.
+  //
+  // This used to be the file's position, and the Board reads it after every
+  // resequence, reading a .ztoryc saved BEFORE the operation: after a shot was
+  // pasted or inserted in the middle, every shot from there on received the
+  // dialogue, action and notes of the one that used to sit in its place (Franco,
+  // 2026-09-24, with Clone + Paste — the whole storyboard shifted by one).
+  // Now matched on the sub-scene level name, which the shot keeps. Shots that
+  // share a sub-scene (Copy = shared instance) have the same name and are
+  // matched in order. Files written before the name was saved, or with an
+  // entry lacking it, keep the old positional behaviour. A file entry whose
+  // sub-scene no longer exists (a deleted shot) maps nowhere and is dropped; a
+  // new shot maps from nothing and keeps its blank fields.
+  QHash<int, int> shotRemap;
+  bool useShotRemap = false;
+  {
+    QVector<QPair<int, QString>> entries;  // (file index, level)
+    bool allNamed = true;
+    QXmlStreamReader pre(bytes);
+    while (!pre.atEnd()) {
+      if (pre.readNext() == QXmlStreamReader::StartElement &&
+          pre.name() == QLatin1String("shot")) {
+        const QString lvl = pre.attributes().value("level").toString();
+        if (lvl.isEmpty()) allNamed = false;
+        entries.push_back({pre.attributes().value("index").toInt(), lvl});
+      }
+    }
+    if (allNamed && !entries.isEmpty()) {
+      ToonzScene *scn = TApp::instance()->getCurrentScene()->getScene();
+      TXsheet *top    = scn ? scn->getChildStack()->getTopXsheet() : nullptr;
+      QHash<QString, QVector<int>> targetsByLevel;  // level -> target indices
+      for (int t = 0; t < (int)targets.size(); t++)
+        targetsByLevel[shotLevelNameAt(top, targets[t]->xsheetColumn)]
+            .push_back(t);
+      QHash<QString, int> used;
+      for (const auto &e : entries) {
+        QVector<int> &cands = targetsByLevel[e.second];
+        int &n              = used[e.second];
+        shotRemap.insert(e.first, n < cands.size() ? cands[n] : -1);
+        n++;
+      }
+      useShotRemap = true;
+    }
+  }
+  QXmlStreamReader xml(bytes);
+  int si = -1, pi = -1, ai = -1;
+  std::vector<Technique> loadedTechs;  // technique presets from file (if any)
+  QStringList loadedTeam;              // team roster from file (replaces model's)
+  bool        hasTeamBlock = false;    // true once a <team> element is seen
+  std::vector<Asset> loadedAssets;     // assets from file (replaces model's)
+  bool        hasAssetsBlock = false;
+  while (!xml.atEnd()) {
+    xml.readNext();
+    if (xml.isStartElement()) {
+      if (xml.name() == QLatin1String("ztoryc")) {
+        // Root element: read role + back-link attributes.
+        auto a = xml.attributes();
+        QString r = a.value("role").toString();
+        if (!r.isEmpty()) out.role = r;
+        // A scene the user kept out of the project stays out, session after
+        // session.  Absent attribute = never asked, or answered yes.
+        shotDocumentState().trackerOff =
+            (a.value("productionTracker").toString() == QLatin1String("off") ||
+             a.value("projectPublication").toString() == QLatin1String("local"));
+        shotDocumentState().shotIdentityAsked = (a.value("shotIdentityAsked").toString() ==
+                               QLatin1String("1"));
+        out.backLinkUuid      = a.value("projectShot").toString();
+        out.backLinkProject   = a.value("project").toString();
+        out.backLinkTaskStage = QString();  // read from <project> below
+        out.backLinkTechnique = QString();  // read from <project> below
+      } else if (xml.name() == QLatin1String("project")) {
+        auto a = xml.attributes();
+        setProduction(a.value("production").toString());
+        setTitle(a.value("title").toString());
+        setEpisode(a.value("episode").toString());
+        setPdfLogoPath(a.value("pdfLogo").toString());
+        setPdfNoLogo(a.value("pdfNoLogo").toInt() != 0);
+        if (a.hasAttribute("defaultTechnique"))
+          setDefaultTechnique(
+              a.value("defaultTechnique").toString());
+        // B3c: read task stage from shot scene's <project> element.
+        if (a.hasAttribute("taskStage"))
+          out.backLinkTaskStage = a.value("taskStage").toString();
+        // Shot technique authored at export — drives the workflow to open in.
+        if (a.hasAttribute("technique"))
+          out.backLinkTechnique = a.value("technique").toString();
+      }
+      else if (xml.name() == QLatin1String("technique")) {
+        Technique t;
+        t.name      = xml.attributes().value("name").toString();
+        t.taskTypes = xml.attributes().value("tasks").toString()
+                          .split('|', Qt::SkipEmptyParts);
+        if (!t.name.isEmpty()) loadedTechs.push_back(t);
+      }
+      else if (xml.name() == QLatin1String("team")) {
+        hasTeamBlock = true;  // a <team> exists → replace model roster (even if empty)
+      }
+      else if (xml.name() == QLatin1String("person")) {
+        QString nm = xml.attributes().value("name").toString().trimmed();
+        if (!nm.isEmpty()) loadedTeam << nm;
+      }
+      else if (xml.name() == QLatin1String("assets")) {
+        hasAssetsBlock = true;  // an <assets> exists → replace model assets
+      }
+      else if (xml.name() == QLatin1String("asset")) {
+        Asset as;
+        as.uuid = xml.attributes().value("uuid").toString();
+        if (as.uuid.isEmpty())
+          as.uuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        as.type = xml.attributes().value("type").toString();
+        as.name = xml.attributes().value("name").toString();
+        QString tg = xml.attributes().value("tags").toString();
+        if (!tg.isEmpty()) as.tags = tg.split('|', Qt::SkipEmptyParts);
+        loadedAssets.push_back(as);
+        ai = (int)loadedAssets.size() - 1;
+      }
+      else if (xml.name() == QLatin1String("atask")) {
+        if (ai >= 0 && ai < (int)loadedAssets.size()) {
+          auto a       = xml.attributes();
+          QString type = a.value("type").toString();
+          if (!type.isEmpty()) {
+            TaskState ts;
+            ts.status = ZtoryModel::taskStatusFromLabel(a.value("status").toString());
+            for (const QString &p :
+                 a.value("assignee").toString().split(',', Qt::SkipEmptyParts)) {
+              QString t = p.trimmed();
+              if (!t.isEmpty()) ts.assignees << t;
+            }
+            loadedAssets[ai].tasks.insert(type, ts);
+          }
+        }
+      }
+      else if (xml.name() == QLatin1String("scriptFile")) {
+        out.script = xml.readElementText();
+      }
+      else if (xml.name() == QLatin1String("numbering")) {
+        ZtoryModel *model   = this;
+        NumberingConfig cfg = model->numberingConfig();
+        auto a = xml.attributes();
+        cfg.style = (NumberingConfig::Style)a.value("style").toInt();
+        if (a.hasAttribute("shotPrefix"))  cfg.shotPrefix  = a.value("shotPrefix").toString();
+        if (a.hasAttribute("seqPrefix"))   cfg.seqPrefix   = a.value("seqPrefix").toString();
+        if (a.hasAttribute("panelPrefix")) cfg.panelPrefix = a.value("panelPrefix").toString();
+        if (a.hasAttribute("step"))        cfg.step        = a.value("step").toInt();
+        if (a.hasAttribute("padding"))     cfg.padding     = a.value("padding").toInt();
+        if (a.hasAttribute("seqPadding"))  cfg.seqPadding  = a.value("seqPadding").toInt();
+        if (a.hasAttribute("startNumber")) cfg.startNumber = a.value("startNumber").toInt();
+        if (a.hasAttribute("seqNumber"))   cfg.seqNumber   = a.value("seqNumber").toInt();
+        if (a.hasAttribute("resetOnSeqChange"))
+          cfg.resetOnSeqChange = a.value("resetOnSeqChange").toInt() != 0;
+        model->setNumberingConfig(cfg);
+      }
+      else if (xml.name() == QLatin1String("sequence")) {
+        SequenceData seq;
+        seq.uuid       = xml.attributes().value("uuid").toString();
+        seq.label      = xml.attributes().value("label").toString();
+        seq.orderIndex = xml.attributes().value("order").toInt();
+        if (!seq.uuid.isEmpty())
+          sequences().push_back(seq);
+      }
+      else if (xml.name() == QLatin1String("shot")) {
+        si = xml.attributes().value("index").toInt();
+        if (useShotRemap) si = shotRemap.value(si, -1);
+        if (si >= 0 && si < (int)targets.size()) {
+          targets[si]->uuid             = xml.attributes().value("uuid").toString();
+          targets[si]->shotNumber       = xml.attributes().value("number").toString();
+          targets[si]->shotLabel        = xml.attributes().value("label").toString();
+          targets[si]->orderIndex       = xml.attributes().value("order").toInt();
+          targets[si]->sequenceId       = xml.attributes().value("sequenceId").toString();
+          targets[si]->transitionFrames = xml.attributes().value("transition").toInt();
+          targets[si]->technique        = xml.attributes().value("technique").toString();
+          targets[si]->tasks.clear();   // refilled by <task> children below
+          // (The model's copy of sequenceId used to be set here by index: the
+          // object IS the model's now, step 2b — and on a re-read it is a
+          // private copy that must not reach the model.)
+          // Backward compat (v1-v2 files written by StoryboardPanel):
+          // if shotLabel absent, use shotNumber
+          if (targets[si]->shotLabel.isEmpty())
+            targets[si]->shotLabel = targets[si]->shotNumber;
+        }
+      }
+      else if (xml.name() == QLatin1String("panel")) {
+        pi = xml.attributes().value("index").toInt();
+        if (si >= 0 && si < (int)targets.size() && pi >= 0) {
+          // Aggiungi panel mancanti se necessario
+          while (pi >= (int)targets[si]->panels.size()) {
+            PanelData pd;
+            targets[si]->panels.push_back(pd);
+          }
+          PanelData &pd = targets[si]->panels[pi];
+          pd.startFrame = xml.attributes().value("startFrame").toInt();
+          pd.duration   = xml.attributes().value("duration").toInt();
+          // Camera move overlay
+          if (xml.attributes().hasAttribute("camMove")) {
+            pd.cameraMoveType  = (PanelData::CameraMove)
+                xml.attributes().value("camMove").toInt();
+            pd.cameraMoveLabel = xml.attributes().value("camLabel").toString();
+            pd.camRenderFrame  = xml.attributes().value("camRenderFrame").toInt();
+            pd.camW = xml.attributes().value("camW").toDouble();
+            pd.camH = xml.attributes().value("camH").toDouble();
+            auto strToAff = [](const QString &s, double a[6]) {
+              QStringList t = s.split(' ', Qt::SkipEmptyParts);
+              for (int k = 0; k < 6 && k < t.size(); k++) a[k] = t[k].toDouble();
+            };
+            strToAff(xml.attributes().value("camA0").toString(), pd.camA0);
+            strToAff(xml.attributes().value("camA1").toString(), pd.camA1);
+            // (The type/label/render frame are re-derived from the affines by
+            // the Board after the read: StoryboardPanel's classifyCameraMove.)
+          }
+          // Light-direction gizmo
+          if (xml.attributes().hasAttribute("lightTail")) {
+            auto strToPt = [](const QString &s, double &x, double &y) {
+              QStringList t = s.split(' ', Qt::SkipEmptyParts);
+              if (t.size() >= 2) { x = t[0].toDouble(); y = t[1].toDouble(); }
+            };
+            strToPt(xml.attributes().value("lightTail").toString(),
+                    pd.lightTailX, pd.lightTailY);
+            strToPt(xml.attributes().value("lightTip").toString(),
+                    pd.lightTipX, pd.lightTipY);
+            pd.lightDepth = xml.attributes().value("lightDepth").toDouble();
+            if (xml.attributes().hasAttribute("lightSpread"))
+              pd.lightSpread = xml.attributes().value("lightSpread").toDouble();
+            QString lc = xml.attributes().value("lightColor").toString();
+            if (!lc.isEmpty()) pd.lightColor = lc;
+            pd.hasLight = true;
+          }
+        }
+      }
+      else if (xml.name() == QLatin1String("task")) {
+        if (si >= 0 && si < (int)targets.size()) {
+          auto a = xml.attributes();
+          QString type = a.value("type").toString();
+          if (!type.isEmpty()) {
+            TaskState ts;
+            ts.status   = ZtoryModel::taskStatusFromLabel(a.value("status").toString());
+            const QStringList parts =
+                a.value("assignee").toString().split(',', Qt::SkipEmptyParts);
+            for (const QString &p : parts) {
+              QString t = p.trimmed();
+              if (!t.isEmpty()) ts.assignees << t;
+            }
+            targets[si]->tasks.insert(type, ts);
+          }
+        }
+      }
+      else if (xml.name() == QLatin1String("shotNotes")) {
+        QString t = xml.readElementText();
+        if (si >= 0 && si < (int)targets.size()) targets[si]->notes = t;
+      }
+      else if (xml.name() == QLatin1String("shotVfxNotes")) {
+        QString t = xml.readElementText();
+        if (si >= 0 && si < (int)targets.size()) targets[si]->vfxNotes = t;
+      }
+      else if (xml.name() == QLatin1String("dialog")) {
+        QString t = xml.readElementText();
+        if (si >= 0 && si < (int)targets.size() &&
+            pi >= 0 && pi < (int)targets[si]->panels.size())
+          targets[si]->panels[pi].dialog = t;
+      }
+      else if (xml.name() == QLatin1String("action")) {
+        QString t = xml.readElementText();
+        if (si >= 0 && si < (int)targets.size() &&
+            pi >= 0 && pi < (int)targets[si]->panels.size())
+          targets[si]->panels[pi].action = t;
+      }
+      else if (xml.name() == QLatin1String("notes")) {
+        QString t = xml.readElementText();
+        if (si >= 0 && si < (int)targets.size() &&
+            pi >= 0 && pi < (int)targets[si]->panels.size())
+          targets[si]->panels[pi].notes = t;
+      }
+    }
+  }
+
+  // Replace the seeded technique presets with the ones saved in this scene
+  // (only when present, so old files keep the built-in defaults).
+  if (!loadedTechs.empty())
+    techniques() = loadedTechs;
+  if (hasTeamBlock) setTeam(loadedTeam);
+  if (hasAssetsBlock) assets() = loadedAssets;
+}
+
 void ZtoryModel::markShotDocumentDirty() {
   TApp *app = TApp::instance();
   if (app && app->getCurrentScene()) app->getCurrentScene()->setDirtyFlag(true);
