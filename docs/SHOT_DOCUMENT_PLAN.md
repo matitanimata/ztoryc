@@ -247,6 +247,12 @@ spento (`productionTracker="off"`), mai i file veri:
   Board (prima: nessun undo). Da verificare in prova: dopo un undo il Board ricostruito ha i testi e
   i pannelli dell'istantanea (il vecchio ripristino non rilanciava il rilevamento dei pannelli, la
   ricostruzione sì); undo/redo di ogni operazione del passo 5 da Board e da Animatic, e in Cutout.
+- **Prove a mano dei passi 5 e 6 (2026-10-07, navtest1): passate.** Delete dall'Animatic → Undo
+  (lo shot torna con dialogo e azione, ripristinato dal modello, i tre Board ricostruiti) → Redo →
+  Undo; riordino nel Board → Undo (ordine originale); Merge di due shot da 24 → **48 fotogrammi**
+  (niente fotogramma in più) → Undo; Cut dall'Animatic e Paste: lo shot incollato ha testi e durata
+  (dati presi dal modello). La rete di sicurezza è identica. Restano: Add con colonna audio, Copy/Clone,
+  le varianti dal Board, Merge with Next, undo in flusso Cutout.
   - Restano a una sola versione: Move (Board) e Razor (Animatic) — da portare in `ZtoryShotOps` solo
     se serviranno anche altrove.
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della
