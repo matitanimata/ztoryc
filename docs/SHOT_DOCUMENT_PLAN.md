@@ -188,6 +188,13 @@ spento (`productionTracker="off"`), mai i file veri:
   - **3c — il recupero porta il `.ztoryc`** (sotto). **Scritto, compilato, da collaudare**: lo snapshot
     scrive il documento dal modello in `scene/<nome>.ztoryc` (attributo `ztorycFile` nel manifesto),
     il ripristino lo rimette accanto alla scena; i recuperi vecchi senza l'attributo restano come prima.
+  - **Prove a mano di 3b/3c (2026-10-07, navtest1): passate.** Aprire la scena non la segna modificata;
+    scrivere un testo mette l'asterisco senza toccare il `.ztoryc`; ⌘S scrive `.tnz` e `.ztoryc`
+    insieme; Copy + Paste + riordino senza scrivere nulla, poi Revert: l'originale tiene il suo dialogo
+    (il caso del 6/10); recupero dopo un'uscita forzata: rimette `.tnz` e `.ztoryc` dello stesso
+    momento e il Board mostra il testo; chiudere senza salvare chiede, «Discard» lascia il file com'era.
+    Restano: Save As, ⌘S in flusso Cutout (scrive il modello), luce dal Navigator, Send to Board,
+    technique e task dal Production Tracker + salva + riapri.
   - **3d — il lettore nel modello** (`loadZtoryc` legge nel modello; il Board costruisce solo i widget).
 - **Decisione di Franco (2026-10-06), passo 3: il `.ztoryc` si scrive solo col salvataggio della
   scena** (⌘S, Save Scene, Save All), mai più dagli eventi dei Board (riordino, Paste, ecc.). Così
