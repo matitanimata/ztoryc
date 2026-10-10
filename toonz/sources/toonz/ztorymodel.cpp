@@ -49,6 +49,7 @@
 #include <QLockFile>
 #include <QSaveFile>
 #include <QTimer>
+#include <QLabel>
 #include "ztrackmerge.h"
 #include "ztorylocks.h"
 #include <QSettings>
@@ -151,6 +152,33 @@ QColor ZtoryModel::taskStatusColor(TaskStatus s) {
   default:                 return QColor("#9E9E9E");  // grey
   }
 }
+
+// Test mode (ZTORYC_ROUNDTRIP, see StoryboardPanel::refreshFromScene): armed as
+// soon as the application exists — not by a Board or the model, which a
+// workflow with no Board (Cutout, Character) creates late or never, after the
+// first modal box has already stopped the load.
+static void ztoryArmRoundtripWatchdog() {
+  // Copies of real storyboards miss their panel drawings, and Tahoma stops the load with a
+  // modal «file missing» box.  Nobody is there to press OK, so close it: only
+  // the .ztoryc matters to the round trip.
+  if (qEnvironmentVariableIsSet("ZTORYC_ROUNDTRIP")) {
+    QTimer *dismiss = new QTimer(qApp);
+    dismiss->setInterval(50);
+    QObject::connect(dismiss, &QTimer::timeout, qApp, []() {
+      if (QWidget *w = QApplication::activeModalWidget()) {
+        QString text;
+        for (QLabel *l : w->findChildren<QLabel *>())
+          if (!l->text().isEmpty()) text += l->text().left(160) + " | ";
+        fprintf(stderr, "[ZTORY] roundtrip: closing dialog '%s': %s\n",
+                qPrintable(w->windowTitle()), qPrintable(text));
+        if (QDialog *d = qobject_cast<QDialog *>(w)) d->reject();
+        else w->close();
+      }
+    });
+    dismiss->start();
+  }
+}
+Q_COREAPP_STARTUP_FUNCTION(ztoryArmRoundtripWatchdog)
 
 ZtoryModel::ZtoryModel() : m_fps(24) {
   m_follow = QSettings().value("Ztoryc/followBoardTimeline", false).toBool();
@@ -1412,6 +1440,26 @@ void ZtoryModel::saveProjectDb() {
           disk.contains(QRegularExpression("title=\"[^\"]+\"")) ||
           disk.contains("<person ") || disk.contains("<asset ");
       if (diskHasMeta) return;  // would wipe real metadata → block
+    }
+  }
+  // Second firewall, on the CONTENTS: no shots, no assets and no storyboards in
+  // memory over a file that has them is never a real edit — it is a model whose
+  // project data was reset and not reloaded.  On 2026-10-07 a shot scene read
+  // with no Board alive did exactly that (its sidecar refilled production/title,
+  // so the metadata check above let it through) and Messina's tracker was
+  // written empty: 70 shots, 42 assets, 11 storyboards gone.
+  if (m_projectShots.empty() && m_assets.empty() &&
+      m_storyboardFiles.isEmpty() && QFile::exists(path)) {
+    QFile rf(path);
+    if (rf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+      const QByteArray disk = rf.readAll();
+      rf.close();
+      if (disk.contains("<shot ") || disk.contains("<asset ") ||
+          disk.contains("<storyboard ")) {
+        qWarning("[ZTORY] saveProjectDb BLOCKED: empty project data over a "
+                 "non-empty %s", path.toUtf8().constData());
+        return;
+      }
     }
   }
 
@@ -3442,6 +3490,31 @@ void ZtoryModel::readShotDocumentWithoutBoard() {
   if (shotDataLoadedFor(path)) return;  // read once per opening, as the Board
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+  const QByteArray bytes = file.readAll();
+  // ONLY a storyboard's .ztoryc is a shot list.  A shot scene's sidecar holds
+  // the back-link and a <project> block, a character's its mouth sets: reading
+  // them here reset the project data (assets, team, tracker shots) and — no
+  // DB reload for a shot scene — left it empty until something saved it: on
+  // 2026-10-07 that emptied Messina's production.ztrack.  For those scenes
+  // only the role is taken (the save guards need it); nothing else is touched.
+  {
+    QString role = QStringLiteral("storyboard");
+    QXmlStreamReader peek(bytes);
+    while (!peek.atEnd())
+      if (peek.readNext() == QXmlStreamReader::StartElement) {
+        if (peek.name() == QLatin1String("ztoryc")) {
+          const QString r = peek.attributes().value("role").toString();
+          if (!r.isEmpty()) role = r;
+        }
+        break;  // the root element is enough
+      }
+    if (role != QLatin1String("storyboard")) {
+      m_docState                  = ShotDocumentState();
+      m_docState.isShotScene      = (role == "shot");
+      m_docState.isCharacterScene = (role == "character");
+      return;
+    }
+  }
   // The same order as StoryboardPanel::loadZtoryc: nothing from the previous
   // scene may leak, the file repopulates, the project DB has the last word.
   reconcileWithXsheet();
@@ -3453,13 +3526,11 @@ void ZtoryModel::readShotDocumentWithoutBoard() {
   std::vector<ShotData *> targets;
   for (int i = 0; i < shotCount(); i++) targets.push_back(&shot(i));
   ShotDocumentRead read;
-  readShotDocument(file.readAll(), targets, read);
-  m_docState.isShotScene      = (read.role == "shot");
-  m_docState.isCharacterScene = (read.role == "character");
+  readShotDocument(bytes, targets, read);
   for (ShotData *sd : targets) markShotLoaded(sd);
   setShotDataLoadedFor(path);
   setScriptFile(read.script);
-  if (!m_docState.isShotScene) loadProjectDb();
+  loadProjectDb();
   emit productionReloaded();
   for (ShotData *sd : targets) notifyShotEdited(sd);
   qWarning("[ZTORY] .ztoryc read by the model (no Board alive): %s",

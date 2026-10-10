@@ -1837,25 +1837,9 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   // leaves it to them (ZtoryModel::writeShotDocumentWithoutBoard).
   ZtoryModel::instance()->addShotDocumentWriter(this);
 
-  // Test mode (ZTORYC_ROUNDTRIP, see refreshFromScene): copies of real
-  // storyboards miss their panel drawings, and Tahoma stops the load with a
-  // modal «file missing» box.  Nobody is there to press OK, so close it: only
-  // the .ztoryc matters to the round trip.
-  static bool s_roundtripWatchdog = qEnvironmentVariableIsSet("ZTORYC_ROUNDTRIP");
-  if (s_roundtripWatchdog) {
-    s_roundtripWatchdog = false;
-    QTimer *dismiss = new QTimer(qApp);
-    dismiss->setInterval(50);
-    QObject::connect(dismiss, &QTimer::timeout, qApp, []() {
-      if (QWidget *w = QApplication::activeModalWidget()) {
-        fprintf(stderr, "[ZTORY] roundtrip: closing dialog '%s'\n",
-                qPrintable(w->windowTitle()));
-        if (QDialog *d = qobject_cast<QDialog *>(w)) d->reject();
-        else w->close();
-      }
-    });
-    dismiss->start();
-  }
+  // Test mode (ZTORYC_ROUNDTRIP): the watchdog that closes modal dialogs is
+  // armed by ZtoryModel's constructor, so it also runs in workflows with no
+  // Board (Cutout, Character).
 
   // The scene's ⌘S is the ONLY moment the .ztoryc is written (step 3b,
   // Franco 2026-10-06): the two files always come from the same moment, so a

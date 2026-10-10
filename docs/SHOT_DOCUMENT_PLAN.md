@@ -202,6 +202,23 @@ spento (`productionTracker="off"`), mai i file veri:
     azzeramenti del Board e poi il DB di progetto). Rete di sicurezza identica; provato a mano in flusso
     Cutout su navtest1: il modello legge all'apertura e al ⌘S scrive un `.ztoryc` identico a quello letto,
     insieme al `.tnz`. **Il passo 3 è chiuso**, salvo le prove a mano elencate sopra.
+- **🚨 INCIDENTE 2026-10-07 — il 3d ha svuotato il production.ztrack di Messina.** Franco ha lavorato con la
+  build del ramo sugli shot di Messina (sh240/sh250, flusso Cutout, senza Board): due crash (ripristini del
+  recupero alle 17:08 e 18:25) e alle 18:51 il `production.ztrack` riscritto vuoto (0 shot, 0 asset, 0
+  storyboard; da 107 KB a 1,7 KB). **Causa**: `readShotDocumentWithoutBoard` leggeva anche il sidecar di una
+  scena SHOT: azzerava i dati di progetto (`resetProjectLevelDefaults`), ne ricaricava solo produzione/titolo
+  dal blocco `<project>` dello shot e — per le scene shot — non ricaricava il DB; il primo salvataggio del DB
+  dopo ha scritto quello stato (il file vuoto ha esattamente quei campi: produzione e titolo dello shot, il
+  resto ai valori iniziali). Le prove non l'avevano visto: solo scene storyboard. **Recupero**: Franco ha
+  scaricato da Drive la versione di prima delle 18:51 (70 shot, 42 asset, 70 legami Kitsu), rimessa al suo
+  posto il 2026-10-10; il file vuoto è conservato come `production.ztrack.vuoto_20261007`. **Correzione**: il
+  modello legge da sé SOLO le scene storyboard (per shot e personaggio prende solo il ruolo e non tocca nulla);
+  in più `saveProjectDb` rifiuta di scrivere un DB senza shot, asset e storyboard sopra un file che ne ha (il
+  firewall esistente guardava solo i metadati, e qui i metadati erano stati riempiti dallo shot). Verificato su
+  una copia di Messina (sh250 in Cutout, con il legame del back-link riscritto verso la copia): il modello non
+  rilegge più il sidecar dello shot, il tracker della copia resta intatto, il file vero non è stato toccato.
+  Il cane da guardia dei dialoghi della modalità di prova ora parte all'avvio dell'applicazione
+  (`Q_COREAPP_STARTUP_FUNCTION`), non dal Board: funziona anche nei flussi senza Board.
 - **Passo 4 — già fatto dal 2c (2026-10-07).** Non restano copie fra Board e modello: gli ascoltatori
   di `shotDataChanged` (Navigator, titolo del viewer, Tracker) aggiornano solo ciò che mostrano; i
   `notifyShotEdited` sono avvisi. Resta solo un doppio ciclo innocuo in «assegna sequenza».
