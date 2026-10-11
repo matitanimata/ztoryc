@@ -2252,6 +2252,12 @@ bool IoCmd::loadScene(const TFilePath &path, bool updateRecentFile,
     pm->setCurrentProjectPath(sceneProject->getProjectPath());
     // Clear existing raster palette so it forces a reloads of the new project's
     // raster palette when loading scene
+    // Ztoryc: on an empty column (autocreate, raster default) the level
+    // palette shown IS this one (TApp::updateCurrentLevel): detach the palette
+    // viewers before freeing it, or a repaint during the load — the «file
+    // missing» box runs its own event loop — reads freed memory (2026-10-11).
+    TApp::instance()->getPaletteController()->getCurrentLevelPalette()->setPalette(
+        nullptr);
     FullColorPalette::instance()->clear();
     //    QString currentProjectName = QString::fromStdWString(
     //        pm->getCurrentProject()->getName().getWideString());
