@@ -50,6 +50,9 @@
 #include <QSaveFile>
 #include <QTimer>
 #include <QLabel>
+#include <QPointer>
+#include <QElapsedTimer>
+#include "iocommand.h"  // ZTORYC_SCENETEST
 #include "ztrackmerge.h"
 #include "ztorylocks.h"
 #include <QSettings>
@@ -164,8 +167,17 @@ static void ztoryArmRoundtripWatchdog() {
   if (qEnvironmentVariableIsSet("ZTORYC_ROUNDTRIP")) {
     QTimer *dismiss = new QTimer(qApp);
     dismiss->setInterval(50);
+    // ZTORYC_DIALOG_HOLD_MS: leave each box up that long before closing it,
+    // as a person reading it would — the windows behind it repaint meanwhile
+    // (the palette crash of 2026-10-11 needed exactly that).
+    static const int holdMs = qEnvironmentVariableIntValue("ZTORYC_DIALOG_HOLD_MS");
     QObject::connect(dismiss, &QTimer::timeout, qApp, []() {
-      if (QWidget *w = QApplication::activeModalWidget()) {
+      static QPointer<QWidget> seen;
+      static QElapsedTimer since;
+      QWidget *active = QApplication::activeModalWidget();
+      if (active && active != seen) { seen = active; since.start(); }
+      if (active && holdMs > 0 && since.elapsed() < holdMs) return;
+      if (QWidget *w = active) {
         QString text;
         for (QLabel *l : w->findChildren<QLabel *>())
           if (!l->text().isEmpty()) text += l->text().left(160) + " | ";
@@ -179,6 +191,45 @@ static void ztoryArmRoundtripWatchdog() {
   }
 }
 Q_COREAPP_STARTUP_FUNCTION(ztoryArmRoundtripWatchdog)
+
+// Test mode (ZTORYC_SCENETEST, docs/SHOT_DOCUMENT_PLAN.md): the shot and
+// character scenes the round trip never covers — the path that emptied a real
+// tracker on 2026-10-07 (a shot opened in Cutout, no Board). Once the scene
+// from the command line is loaded, in whatever workflow the preferences say:
+// write the project DB as an edit would, then ⌘S ("save") or Save As
+// ("saveas:<abs .tnz>"), and exit. Watching the tracker is the script's job.
+static void ztoryArmSceneTest() {
+  QString action = qEnvironmentVariable("ZTORYC_SCENETEST");
+  if (action.isEmpty()) return;
+  QTimer *poll = new QTimer(qApp);
+  poll->setInterval(500);
+  QObject::connect(poll, &QTimer::timeout, qApp, [poll, action]() {
+    TApp *app = TApp::instance();
+    if (!app || !app->getCurrentScene()) return;
+    ToonzScene *scene = app->getCurrentScene()->getScene();
+    if (!scene || scene->isUntitled()) return;
+    poll->stop();
+    QTimer::singleShot(6000, qApp, [action]() {
+      ZtoryModel *m = ZtoryModel::instance();
+      fprintf(stderr, "[ZTORY] scenetest: role=%s shots=%d assets=%d\n",
+              m->shotDocumentState().isShotScene ? "shot"
+              : m->shotDocumentState().isCharacterScene ? "character"
+                                                        : "storyboard",
+              (int)m->projectShots().size(), (int)m->assets().size());
+      m->saveProjectDb();
+      TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+      bool ok = action.startsWith("saveas:")
+                    ? IoCmd::saveScene(TFilePath(action.mid(7).toStdWString()), 0)
+                    : IoCmd::saveAll();
+      fprintf(stderr, "[ZTORY] scenetest: %s %s\n", qPrintable(action),
+              ok ? "saved" : "FAILED");
+      fflush(stderr);
+      QTimer::singleShot(3000, qApp, []() { _exit(0); });
+    });
+  });
+  poll->start();
+}
+Q_COREAPP_STARTUP_FUNCTION(ztoryArmSceneTest)
 
 ZtoryModel::ZtoryModel() : m_fps(24) {
   m_follow = QSettings().value("Ztoryc/followBoardTimeline", false).toBool();
