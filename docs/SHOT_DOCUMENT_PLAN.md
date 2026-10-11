@@ -219,6 +219,29 @@ spento (`productionTracker="off"`), mai i file veri:
   rilegge più il sidecar dello shot, il tracker della copia resta intatto, il file vero non è stato toccato.
   Il cane da guardia dei dialoghi della modalità di prova ora parte all'avvio dell'applicazione
   (`Q_COREAPP_STARTUP_FUNCTION`), non dal Board: funziona anche nei flussi senza Board.
+- **Prove sulle scene shot e personaggio (2026-10-11), modo `ZTORYC_SCENETEST`.** Apre la scena nel flusso
+  scelto, scrive il DB di progetto come farebbe una modifica, fa ⌘S (o Save As) ed esce; lo script
+  `reference/test_projects/scenetest/run_scenetest.sh` confronta i tracker veri di Messina e Arquata e quello
+  della copia. **Passate, con i tracker veri intatti in ogni lancio (circa 35):** sh250 in Cutout ⌘S (shot
+  riconosciuto, 70 shot / 42 asset caricati, salvato; 13 lanci di fila) e Save As; sh250 in Storyboard ⌘S
+  (tracker riscritto con tutti i dati); CH_LEO e ZIO in Character, DRAGONESSA in Cutout (personaggio
+  riconosciuto, nulla toccato). Save As di uno shot non crea il `.ztoryc` della scena nuova: uguale su master
+  (`storyboardpanel.cpp:2776` di master), non toccato.
+- **Crash in Cutout all'apertura (2026-10-11) — non è dei dati degli shot, è Tahoma.** Aprendo una scena di un
+  altro progetto, `IoCmd::loadScene` libera la palette raster (`FullColorPalette::clear()`) mentre i viewer di
+  palette la mostrano ancora (colonna vuota + autocreate + raster, `TApp::updateCurrentLevel`; misurato:
+  stesso indirizzo, un riferimento). Un repaint durante il caricamento — il box «file mancante» ha il suo event
+  loop — legge memoria liberata: preso sotto lldb in `PageViewer::paintEvent` con la palette a
+  `0x0053002000300033` (testo UTF-16). Si vedeva solo in Cutout (l'unica stanza col pannello palette) e quasi
+  solo con la richiesta di macOS per «Documenti» in sospeso (4 crash su 5 lanci; dopo «Consenti» 20 su 20
+  senza). Corretto in `e3ea681fc` (i viewer si staccano prima del `clear()`), anche sul ramo
+  `fix/palette-uaf-project-switch` da master; candidato upstream. Dopo la correzione: 12 lanci in Cutout senza
+  crash, ma non posso dire che la richiesta di macOS fosse in sospeso in tutti — la prova vera è la misura
+  (palette mostrata == palette liberata, sempre). **Probabilmente sono i crash del 7/10** (anche loro in
+  Cutout, build appena compilata, firma ad-hoc → macOS richiede di nuovo i permessi): non dimostrabile, i
+  registri di quel giorno non ci sono più.
+- **Restano prima del merge:** Production Tracker (tecnica/task + salva + riapri) e Send to Board, che
+  vogliono clic nell'app (2026-10-11: lo schermo si è bloccato prima di cominciare).
 - **Passo 4 — già fatto dal 2c (2026-10-07).** Non restano copie fra Board e modello: gli ascoltatori
   di `shotDataChanged` (Navigator, titolo del viewer, Tracker) aggiornano solo ciò che mostrano; i
   `notifyShotEdited` sono avvisi. Resta solo un doppio ciclo innocuo in «assegna sequenza».
