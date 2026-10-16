@@ -134,3 +134,7 @@ thirdparty/superlu/SuperLU_4.1/TESTING/
 /SPONSORS_DRAFT.md
 # SUPPORTERS.md NON va ignorato: e' la pagina pubblica dei ringraziamenti, e il
 # README ci rimanda con un link. Era finito qui insieme ai draft privati.
+
+# Auto Fill harness: generated from the sources by extract.py
+/tools/autofill_halo_harness/*.inc
+/tools/autofill_halo_harness/harness

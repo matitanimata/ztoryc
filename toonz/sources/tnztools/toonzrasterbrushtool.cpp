@@ -1,6 +1,7 @@
 
 
 #include "toonzrasterbrushtool.h"
+#include "autofilllinesplit.h"
 
 // TnzTools includes
 #include "tools/toolhandle.h"
@@ -2678,7 +2679,13 @@ void ToonzRasterBrushTool::finishRasterBrush(const TPointD &pos,
             TPixelCM32 *srow = ras->pixels(y0 + sry) + x0;
             for (int srx = 0; srx < sw; srx++) {
               int seed = sry * sw + srx;
-              if (visited[seed] || exterior[seed] || srow[srx].getPaint() != 0)
+              // Seeds are EMPTY pixels only. Line pixels used to start their
+              // own one-pixel "regions", so every line pixel of the stroke got
+              // the fill colour, outer edge included: that colour peeking out
+              // of the antialiased edge was the rim. Which line pixels get
+              // the fill is decided by pass 2 below.
+              if (visited[seed] || exterior[seed] ||
+                  srow[srx].getPaint() != 0 || srow[srx].getInk() != 0)
                 continue;
               region.clear(); stack.clear();
               stack.push_back(seed); visited[seed] = 1;
@@ -2705,6 +2712,11 @@ void ToonzRasterBrushTool::finishRasterBrush(const TPointD &pos,
                 toFill.insert(toFill.end(), region.begin(), region.end());
             }
           }
+
+          // Pass 2: give the fill colour also to the antialiased line pixels
+          // on the inner side of the line — without it they keep paint 0 and
+          // show as a light halo. See autofilllinesplit.h.
+          AutoFillLineSplit::addInnerLinePixels(ras, x0, y0, sw, sh, toFill);
 
           if (!toFill.empty()) {
             // Bounding rect of the pixels to fill.
