@@ -6,6 +6,8 @@
 #include "trop.h"
 #include "tools/tool.h"
 #include "tstroke.h"
+#include "tproperty.h"
+#include "tcolorstyles.h"
 #include "timageinfo.h"
 #include "timagecache.h"
 #include "tgl.h"
@@ -1050,13 +1052,15 @@ int ToolUtils::UndoModifyListStroke::getSize() const {
 ToolUtils::UndoPencil::UndoPencil(
     TStroke *stroke, std::vector<TFilledRegionInf> *fillInformation,
     TXshSimpleLevel *level, const TFrameId &frameId, bool createdFrame,
-    bool createdLevel, bool autogroup, bool autofill, bool sendToBack)
+    bool createdLevel, bool autogroup, bool autofill, bool sendToBack,
+    int fillStyleId)
     : TToolUndo(level, frameId, createdFrame, createdLevel, 0)
     , m_strokeId(stroke->getId())
     , m_fillInformation(fillInformation)
     , m_autogroup(autogroup)
     , m_autofill(autofill)
-    , m_sendToBack(sendToBack) {
+    , m_sendToBack(sendToBack)
+    , m_fillStyleId(fillStyleId) {
   m_stroke = new TStroke(*stroke);
 }
 
@@ -1140,8 +1144,9 @@ void ToolUtils::UndoPencil::redo() const {
       // to avoid filling other strokes, I enter into the new stroke group
       int currentGroup = image->exitGroup();
       image->enterGroup(index);
-      image->selectFill(stroke->getBBox().enlarge(1, 1), 0, stroke->getStyle(),
-                        false, true, false);
+      int fillStyle = m_fillStyleId >= 0 ? m_fillStyleId : stroke->getStyle();
+      image->selectFill(stroke->getBBox().enlarge(1, 1), 0, fillStyle, false,
+                        true, false);
       if (currentGroup != -1)
         image->enterGroup(currentGroup);
       else
@@ -1896,4 +1901,65 @@ bool ToolUtils::renumberForInsertFId(TXshSimpleLevel *sl, const TFrameId &fid,
   sl->renumber(fids);
 
   return true;
+}
+
+//=============================================================================
+// Auto Fill "Fill Style:" helpers (see toolutils.h)
+//-----------------------------------------------------------------------------
+
+void ToolUtils::rebuildAutoFillStyleProperty(TEnumProperty &prop,
+                                             TPalette *pal,
+                                             bool withLineStyle) {
+  // TEnumProperty::deleteAllValues/addValue/setItemUIName do NOT emit Qt
+  // signals, so this is safe from inside a Qt signal chain.
+  std::wstring cur = prop.getValue();
+  prop.deleteAllValues();
+  if (withLineStyle) {
+    prop.addValue(L"Line Style");
+    prop.setItemUIName(L"Line Style", QObject::tr("Line Style"));
+  }
+  prop.addValue(L"Next Style (N+1)");
+  prop.setItemUIName(L"Next Style (N+1)", QObject::tr("Next Style (N+1)"));
+  prop.addValue(L"Current Style");
+  prop.setItemUIName(L"Current Style", QObject::tr("Current Style"));
+  if (pal) {
+    int nStyles = pal->getStyleCount();
+    for (int i = 0; i < nStyles; i++) {
+      TColorStyle *style = pal->getStyle(i);
+      if (!style) continue;
+      std::wstring name = style->getName();
+      if (name.empty()) name = L"Style " + std::to_wstring(i);
+      std::wstring key = L"palette_" + std::to_wstring(i);
+      prop.addValue(key);
+      prop.setItemUIName(
+          key, QString("[%1] %2").arg(i).arg(QString::fromStdWString(name)));
+    }
+  }
+  if (prop.isValue(cur)) prop.setValue(cur);
+}
+
+//-----------------------------------------------------------------------------
+
+int ToolUtils::resolveAutoFillStyle(const std::wstring &value, int lineStyleId,
+                                    int currentStyleId, TPalette *pal) {
+  // NB: TPalette::getStyle() never returns null — out of range it returns a
+  // shared red placeholder — so existence is checked against the style count.
+  auto exists = [pal](int id) {
+    return pal && id > 0 && id < pal->getStyleCount();
+  };
+  if (value == L"Line Style") return lineStyleId;
+  if (value == L"Current Style") return currentStyleId;
+  if (value.compare(0, 8, L"palette_") == 0) {
+    int id = lineStyleId + 1;
+    try {
+      id = std::stoi(value.substr(8));
+    } catch (...) {
+    }
+    if (!exists(id)) id = lineStyleId;
+    return id;
+  }
+  // "Next Style (N+1)": classic ink -> paint convention.
+  int next = lineStyleId + 1;
+  if (pal && !exists(next)) next = lineStyleId;
+  return next;
 }

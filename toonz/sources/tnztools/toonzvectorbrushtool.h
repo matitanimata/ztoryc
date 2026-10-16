@@ -146,6 +146,11 @@ public:
       std::vector<TStroke *> firstSymmetryStrokes = std::vector<TStroke *>(),
       std::vector<TStroke *> lastSymmetryStrokes  = std::vector<TStroke *>());
   void checkGuideSnapping(bool beforeMousePress, bool invertCheck);
+
+  // Auto Fill "Fill Style:" — rebuild the enum from the palette (safe any
+  // time: emits no Qt signals) and resolve it to a style id for a stroke.
+  void rebuildAutoFillStyleCombo(TPalette *pal);
+  int getAutoFillStyleId(int lineStyleId) const;
   void checkStrokeSnapping(bool beforeMousePress, bool invertCheck);
   bool doGuidedAutoInbetween(TFrameId cFid, const TVectorImageP &cvi,
                              TStroke *cStroke, bool breakAngles,
@@ -164,6 +169,7 @@ protected:
   TBoolProperty m_snap;
   TBoolProperty m_sendToBack;
   TBoolProperty m_autoFill;
+  TEnumProperty m_autoFillStyle;  // see ToolUtils::resolveAutoFillStyle
   TBoolProperty m_autoClose;
   TBoolProperty m_autoGroup;
   TEnumProperty m_frameRange;

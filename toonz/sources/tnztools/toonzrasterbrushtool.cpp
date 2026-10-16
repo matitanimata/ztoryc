@@ -1242,30 +1242,9 @@ void ToonzRasterBrushTool::updateTranslation() {
 //---------------------------------------------------------------------------------------------------
 
 void ToonzRasterBrushTool::rebuildAutoFillStyleCombo(TPalette *pal) {
-  // Preserve current selection across rebuild.
-  // NOTE: TEnumProperty::deleteAllValues/addValue/setItemUIName do NOT emit Qt
-  // signals, so this function is safe to call from inside a Qt signal chain.
-  std::wstring cur = m_autoFillStyle.getValue();
-  m_autoFillStyle.deleteAllValues();
-  m_autoFillStyle.addValue(L"Next Style (N+1)");
-  m_autoFillStyle.setItemUIName(L"Next Style (N+1)", tr("Next Style (N+1)"));
-  m_autoFillStyle.addValue(L"Current Style");
-  m_autoFillStyle.setItemUIName(L"Current Style", tr("Current Style"));
-  if (pal) {
-    int nStyles = pal->getStyleCount();
-    for (int i = 0; i < nStyles; i++) {
-      TColorStyle *style = pal->getStyle(i);
-      if (!style) continue;
-      std::wstring name = style->getName();
-      if (name.empty()) name = L"Style " + std::to_wstring(i);
-      std::wstring key = L"palette_" + std::to_wstring(i);
-      m_autoFillStyle.addValue(key);
-      m_autoFillStyle.setItemUIName(
-          key, QString("[%1] %2").arg(i).arg(QString::fromStdWString(name)));
-    }
-  }
-  if (m_autoFillStyle.isValue(cur))
-    m_autoFillStyle.setValue(cur);
+  // Shared with the vector brush (toolutils.cpp). No "Line Style" entry here:
+  // on Toonz Raster the line is ink, the fill is paint — same id is pointless.
+  ToolUtils::rebuildAutoFillStyleProperty(m_autoFillStyle, pal, false);
 }
 
 //---------------------------------------------------------------------------------------------------
@@ -2635,22 +2614,10 @@ void ToonzRasterBrushTool::finishRasterBrush(const TPointD &pos,
           TTool::Application *app2 = TTool::getApplication();
           int styleId = app2 ? app2->getCurrentLevelStyleIndex() : 1;
           if (styleId <= 0) styleId = 1;
-          int fillStyleId;
-          std::wstring autoFillVal = m_autoFillStyle.getValue();
-          if (autoFillVal == L"Current Style") {
-            fillStyleId = styleId;
-          } else if (autoFillVal.substr(0, 8) == L"palette_") {
-            try { fillStyleId = std::stoi(autoFillVal.substr(8)); }
-            catch (...) { fillStyleId = styleId + 1; }
-            TPaletteP pal = ti->getPalette();
-            if (!pal || !pal->getStyle(fillStyleId)) fillStyleId = styleId;
-          } else {
-            // "Next Style (N+1)": classic ink→fill convention (default)
-            fillStyleId = styleId + 1;
-            TPaletteP pal = ti->getPalette();
-            if (pal && !pal->getStyle(fillStyleId))
-              fillStyleId = styleId;
-          }
+          // Here the line style IS the current style, so both ids match.
+          int fillStyleId = ToolUtils::resolveAutoFillStyle(
+              m_autoFillStyle.getValue(), styleId, styleId,
+              ti->getPalette());
 
           // ── Only NEW shapes ──────────────────────────────────────────────
           // Fill an enclosed region ONLY if its boundary includes ink drawn by

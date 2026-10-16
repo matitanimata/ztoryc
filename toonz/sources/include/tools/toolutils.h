@@ -45,6 +45,7 @@ class TVectorImageP;
 class TTileSetCM32;
 class TTileSetFullColor;
 class TStageObjectSpline;
+class TEnumProperty;
 
 //===================================================================
 
@@ -305,12 +306,16 @@ class UndoPencil final : public TToolUndo {
   bool m_autogroup;
   bool m_autofill;
   bool m_sendToBack;
+  // Style used by Auto Fill; -1 = the stroke's own style (stock behaviour).
+  // Remembered so that redo fills with the same colour as the original stroke.
+  int m_fillStyleId;
 
 public:
   UndoPencil(TStroke *stroke, std::vector<TFilledRegionInf> *fillInformation,
              TXshSimpleLevel *level, const TFrameId &frameId,
              bool m_createdFrame, bool m_createdLevel, bool autogroup = false,
-             bool autofill = false, bool sendToBack = false);
+             bool autofill = false, bool sendToBack = false,
+             int fillStyleId = -1);
   ~UndoPencil();
   void undo() const override;
   void redo() const override;
@@ -521,6 +526,26 @@ bool DVAPI doUpdateXSheet(TXshSimpleLevel *sl, std::vector<TFrameId> oldFids,
 
 bool DVAPI renumberForInsertFId(TXshSimpleLevel *sl, const TFrameId &fid,
                                 const TFrameId &maxFid, TXsheet *xsh);
+
+//-----------------------------------------------------------------------------
+// Auto Fill "Fill Style:" option, shared by the Toonz Raster brush and the
+// Vector brush.  Values of the enum:
+//   "Line Style"        fill with the stroke's own style (vector only: the
+//                       stock Tahoma2D behaviour, a solid silhouette)
+//   "Next Style (N+1)"  the style after the line's one (classic ink/paint)
+//   "Current Style"     the style selected in the palette
+//   "palette_N"         palette style N
+
+//! Rebuilds the enum with the fixed entries plus one entry per style of
+//!  pal, preserving the current selection when it still exists.
+//! Does not emit Qt signals: safe inside a signal chain.
+void DVAPI rebuildAutoFillStyleProperty(TEnumProperty &prop, TPalette *pal,
+                                        bool withLineStyle);
+
+//! Returns the style id to fill with for the enum value  value.
+//! Falls back to  lineStyleId when the requested style does not exist.
+int DVAPI resolveAutoFillStyle(const std::wstring &value, int lineStyleId,
+                               int currentStyleId, TPalette *pal);
 
 }  // namespace ToolUtils
 

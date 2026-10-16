@@ -3177,10 +3177,10 @@ BrushToolOptionsBox::BrushToolOptionsBox(QWidget *parent, TTool *tool,
   // Pre-populate m_autoFillStyle with palette styles BEFORE the builder
   // creates ToolOptionCombo for "Fill Style:". That widget calls loadEntries()
   // in its constructor, so the range must already be correct.
-  if (tool->getTargetType() & TTool::ToonzImage) {
-    auto *brushTool = dynamic_cast<ToonzRasterBrushTool *>(tool);
-    if (brushTool) brushTool->rebuildAutoFillStyleCombo(pltHandle->getPalette());
-  }
+  if (auto *rasterBrush = dynamic_cast<ToonzRasterBrushTool *>(tool))
+    rasterBrush->rebuildAutoFillStyleCombo(pltHandle->getPalette());
+  else if (auto *vectorBrush = dynamic_cast<ToonzVectorBrushTool *>(tool))
+    vectorBrush->rebuildAutoFillStyleCombo(pltHandle->getPalette());
 
   ToolOptionControlBuilder builder(this, tool, pltHandle, toolHandle);
   if (tool && tool->getProperties(0)) tool->getProperties(0)->accept(builder);
@@ -3227,24 +3227,6 @@ BrushToolOptionsBox::BrushToolOptionsBox(QWidget *parent, TTool *tool,
           tr("Auto Fill: automatically fill closed shapes with the selected "
              "palette color after each stroke. Choose the fill color with "
              "\"Fill Style\""));
-    // AutoFill style picker — populated dynamically from palette.
-    // The initial population was done above (before the builder) so the combo
-    // is already correct at construction time. On palette/level switches we
-    // only MARK a rebuild as pending; the actual widget rebuild is deferred
-    // to updateStatus()/onStageObjectChange(), which are safe contexts.
-    m_autoFillStyleCombo =
-        dynamic_cast<ToolOptionCombo *>(m_controls.value("Fill Style:"));
-    if (m_autoFillStyleCombo) {
-      connect(toolHandle, SIGNAL(toolComboBoxListChanged(std::string)),
-              m_autoFillStyleCombo, SLOT(reloadComboBoxList(std::string)));
-      // paletteSwitched: deferred rebuild via QueuedConnection.
-      connect(pltHandle, SIGNAL(paletteSwitched()),
-              this, SLOT(onPaletteSwitched()));
-      // Event filter: rebuild the combo with the current palette the instant
-      // the user clicks on it (MouseButtonPress), so the dropdown always
-      // shows up-to-date colors regardless of signal timing.
-      m_autoFillStyleCombo->installEventFilter(this);
-    }
   } else if (tool->getTargetType() & TTool::Vectors) {
     // Further vector options
     builder.setEnumWidgetType(ToolOptionControlBuilder::POPUPBUTTON);
@@ -3261,8 +3243,9 @@ BrushToolOptionsBox::BrushToolOptionsBox(QWidget *parent, TTool *tool,
         dynamic_cast<ToolOptionCheckbox *>(m_controls.value("Auto Fill"));
     if (m_autoFillCheckbox)
       m_autoFillCheckbox->setStatusTip(
-          tr("Auto Fill: automatically fill closed shapes with the selected "
-             "palette color after each stroke"));
+          tr("Auto Fill: automatically fill closed shapes after each stroke "
+             "(needs Auto Close and Auto Group). Choose the fill color with "
+             "\"Fill Style\""));
     m_snapCheckbox =
         dynamic_cast<ToolOptionCheckbox *>(m_controls.value("Snap"));
     m_snapSensitivityCombo =
@@ -3275,6 +3258,23 @@ BrushToolOptionsBox::BrushToolOptionsBox(QWidget *parent, TTool *tool,
         dynamic_cast<ToolOptionIntSlider *>(m_controls.value("Miter:"));
     m_miterField->setEnabled(m_joinStyleCombo->currentIndex() ==
                              TStroke::OutlineOptions::MITER_JOIN);
+  }
+
+  // AutoFill style picker (Toonz Raster and Vector brushes) — populated
+  // dynamically from the palette. The initial population was done above
+  // (before the builder) so the combo is already correct at construction
+  // time. On palette switches the rebuild is queued, see onPaletteSwitched().
+  m_autoFillStyleCombo =
+      dynamic_cast<ToolOptionCombo *>(m_controls.value("Fill Style:"));
+  if (m_autoFillStyleCombo) {
+    connect(toolHandle, SIGNAL(toolComboBoxListChanged(std::string)),
+            m_autoFillStyleCombo, SLOT(reloadComboBoxList(std::string)));
+    connect(pltHandle, SIGNAL(paletteSwitched()), this,
+            SLOT(onPaletteSwitched()));
+    // Event filter: rebuild the combo with the current palette the instant
+    // the user clicks on it (MouseButtonPress), so the dropdown always
+    // shows up-to-date colors regardless of signal timing.
+    m_autoFillStyleCombo->installEventFilter(this);
   }
 
   if (tool->getTargetType() & TTool::ToonzImage ||
@@ -3453,9 +3453,12 @@ void BrushToolOptionsBox::onStageObjectChange(bool isDragging) {
 
 void BrushToolOptionsBox::doRebuildAutoFillCombo() {
   if (!m_autoFillStyleCombo || !m_pltHandle) return;
-  auto *brushTool = dynamic_cast<ToonzRasterBrushTool *>(m_tool);
-  if (!brushTool) return;
-  brushTool->rebuildAutoFillStyleCombo(m_pltHandle->getPalette());
+  if (auto *rasterBrush = dynamic_cast<ToonzRasterBrushTool *>(m_tool))
+    rasterBrush->rebuildAutoFillStyleCombo(m_pltHandle->getPalette());
+  else if (auto *vectorBrush = dynamic_cast<ToonzVectorBrushTool *>(m_tool))
+    vectorBrush->rebuildAutoFillStyleCombo(m_pltHandle->getPalette());
+  else
+    return;
   m_autoFillStyleCombo->loadEntries();
 }
 

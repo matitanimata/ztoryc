@@ -400,6 +400,16 @@ static void addStroke(TTool::Application *application, const TVectorImageP &vi,
   TFrameId id = application->getCurrentTool()->getTool()->getCurrentFid();
   if (id == TFrameId::NO_FRAME && fid != TFrameId::NO_FRAME) id = fid;
   int addedStrokeIndex                                          = -1;
+
+  // Auto Fill colour: chosen in the brush's "Fill Style:" option. -1 keeps the
+  // stock behaviour (the stroke's own style) when the brush is not the
+  // current tool, e.g. strokes added by another caller.
+  int fillStyleId = -1;
+  if (autoFill) {
+    auto *brush = dynamic_cast<ToonzVectorBrushTool *>(
+        application->getCurrentTool()->getTool());
+    if (brush) fillStyleId = brush->getAutoFillStyleId(stroke->getStyle());
+  }
   if (!corners.empty()) {
     if (breakAngles)
       split(stroke, corners, strokes);
@@ -416,9 +426,9 @@ static void addStroke(TTool::Application *application, const TVectorImageP &vi,
                                                        stroke->getBBox());
       TStroke *str     = new TStroke(*strokes[i]);
       addedStrokeIndex = vi->addStroke(str, true, sendToBack);
-      TUndoManager::manager()->add(
-          new UndoPencil(str, fillInformation, sl, id, frameCreated,
-                         levelCreated, autoGroup, autoFill, sendToBack));
+      TUndoManager::manager()->add(new UndoPencil(
+          str, fillInformation, sl, id, frameCreated, levelCreated, autoGroup,
+          autoFill, sendToBack, fillStyleId));
     }
     TUndoManager::manager()->endBlock();
   } else {
@@ -428,9 +438,9 @@ static void addStroke(TTool::Application *application, const TVectorImageP &vi,
                                                      stroke->getBBox());
     TStroke *str     = new TStroke(*stroke);
     addedStrokeIndex = vi->addStroke(str, true, sendToBack);
-    TUndoManager::manager()->add(
-        new UndoPencil(str, fillInformation, sl, id, frameCreated, levelCreated,
-                       autoGroup, autoFill, sendToBack));
+    TUndoManager::manager()->add(new UndoPencil(
+        str, fillInformation, sl, id, frameCreated, levelCreated, autoGroup,
+        autoFill, sendToBack, fillStyleId));
   }
 
   if (autoGroup) {
@@ -441,8 +451,9 @@ static void addStroke(TTool::Application *application, const TVectorImageP &vi,
       // to avoid filling other strokes, I enter into the new stroke group
       int currentGroup = vi->exitGroup();
       vi->enterGroup(index);
-      vi->selectFill(stroke->getBBox().enlarge(1, 1), 0, stroke->getStyle(),
-                     false, true, false);
+      int fillStyle = fillStyleId >= 0 ? fillStyleId : stroke->getStyle();
+      vi->selectFill(stroke->getBBox().enlarge(1, 1), 0, fillStyle, false,
+                     true, false);
       if (currentGroup != -1)
         vi->enterGroup(currentGroup);
       else
@@ -569,6 +580,7 @@ ToonzVectorBrushTool::ToonzVectorBrushTool(std::string name, int targetType)
     , m_autoClose("Auto Close", false)
     , m_autoGroup("Auto Group", false)
     , m_autoFill("Auto Fill", false)
+    , m_autoFillStyle("Fill Style:")
     , m_targetType(targetType)
     , m_workingFrameId(TFrameId())
     , m_snapGrid("Grid", false)
@@ -590,6 +602,7 @@ ToonzVectorBrushTool::ToonzVectorBrushTool(std::string name, int targetType)
   m_prop[0].bind(m_autoClose);
   m_prop[0].bind(m_autoGroup);
   m_prop[0].bind(m_autoFill);
+  m_prop[0].bind(m_autoFillStyle);
   m_prop[0].bind(m_sendToBack);
   m_prop[0].bind(m_frameRange);
   m_prop[0].bind(m_snap);
@@ -604,6 +617,7 @@ ToonzVectorBrushTool::ToonzVectorBrushTool(std::string name, int targetType)
   m_autoClose.setId("AutoClose");
   m_autoGroup.setId("AutoGroup");
   m_autoFill.setId("Autofill");
+  m_autoFillStyle.setId("AutoFillStyle");
   m_sendToBack.setId("DrawUnder");
   m_breakAngles.setId("BreakSharpAngles");
   m_frameRange.setId("FrameRange");
@@ -628,6 +642,10 @@ ToonzVectorBrushTool::ToonzVectorBrushTool(std::string name, int targetType)
 
   m_preset.addValue(CUSTOM_WSTR);
 
+  // "Line Style" first = default: same result as stock Tahoma2D Auto Fill.
+  // The palette entries are added by rebuildAutoFillStyleCombo().
+  ToolUtils::rebuildAutoFillStyleProperty(m_autoFillStyle, nullptr, true);
+
   m_capStyle.addValue(BUTT_WSTR, QString::fromStdWString(BUTT_WSTR));
   m_capStyle.addValue(ROUNDC_WSTR, QString::fromStdWString(ROUNDC_WSTR));
   m_capStyle.addValue(PROJECTING_WSTR,
@@ -636,6 +654,27 @@ ToonzVectorBrushTool::ToonzVectorBrushTool(std::string name, int targetType)
   m_joinStyle.addValue(MITER_WSTR, QString::fromStdWString(MITER_WSTR));
   m_joinStyle.addValue(ROUNDJ_WSTR, QString::fromStdWString(ROUNDJ_WSTR));
   m_joinStyle.addValue(BEVEL_WSTR, QString::fromStdWString(BEVEL_WSTR));
+}
+
+//-------------------------------------------------------------------------------------------------------
+
+void ToonzVectorBrushTool::rebuildAutoFillStyleCombo(TPalette *pal) {
+  ToolUtils::rebuildAutoFillStyleProperty(m_autoFillStyle, pal, true);
+}
+
+//-------------------------------------------------------------------------------------------------------
+
+int ToonzVectorBrushTool::getAutoFillStyleId(int lineStyleId) const {
+  TTool::Application *app = TTool::getApplication();
+  int currentStyleId      = app ? app->getCurrentLevelStyleIndex() : lineStyleId;
+  if (currentStyleId <= 0) currentStyleId = lineStyleId;
+  TPalette *pal = nullptr;
+  if (app) {
+    if (TXshSimpleLevel *sl = app->getCurrentLevel()->getSimpleLevel())
+      pal = sl->getPalette();
+  }
+  return ToolUtils::resolveAutoFillStyle(m_autoFillStyle.getValue(),
+                                         lineStyleId, currentStyleId, pal);
 }
 
 //-------------------------------------------------------------------------------------------------------
@@ -665,6 +704,7 @@ void ToonzVectorBrushTool::updateTranslation() {
   m_sendToBack.setQStringName(tr("Draw Under"));
   m_autoClose.setQStringName(tr("Auto Close"));
   m_autoFill.setQStringName(tr("Auto Fill"));
+  m_autoFillStyle.setQStringName(tr("Fill Style:"));
   m_autoGroup.setQStringName(tr("Auto Group"));
   m_sizeStylusProperty.setQStringName(tr("Stylus Settings - Size"));
 
