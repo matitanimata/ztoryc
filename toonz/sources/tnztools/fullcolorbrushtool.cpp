@@ -30,6 +30,8 @@
 #include "toonz/toonzfolders.h"
 #include "toonz/tcolumnhandle.h"
 #include "toonz/tstageobjectcmd.h"
+#include "toonz/fill.h"
+#include "toonz/txshsimplelevel.h"
 
 // TnzCore includes
 #include "tgl.h"
@@ -187,7 +189,95 @@ public:
   int getHistoryType() override { return HistoryType::BrushTool; }
 };
 
+//----------------------------------------------------------------------------------
+// Auto Fill: region search
+//
+// A pixel is "line" when its alpha is above the fill depth: that is the same
+// limit the stock full-colour fill uses to stop, so the regions found here are
+// the ones fullColorFill() can actually fill.  Regions reachable from the
+// raster border are outside; of the enclosed ones, only those bordering the
+// line drawn by THIS stroke are returned, so old empty shapes stay empty.
+
+// Enclosed regions with fewer fully transparent pixels than this are skipped:
+// they are the holes inside a textured/MyPaint line, not shapes. To be tuned.
+const int kAutoFillMinArea = 20;
+
+std::vector<TPoint> findAutoFillSeeds(const TRaster32P &ras,
+                                      const TRect &strokeBox,
+                                      int lineAlpha) {
+  std::vector<TPoint> seeds;
+  const int lx = ras->getLx(), ly = ras->getLy();
+  if (lx <= 0 || ly <= 0) return seeds;
+
+  auto isLine = [&](int x, int y) { return ras->pixels(y)[x].m > lineAlpha; };
+  enum : uint8_t { Unvisited = 0, Outside = 1, Visited = 2 };
+  std::vector<uint8_t> mark(size_t(lx) * ly, Unvisited);
+  std::vector<int> stack;
+
+  // 1. Outside: everything reachable from the raster border without lines.
+  auto pushOutside = [&](int x, int y) {
+    int i = y * lx + x;
+    if (mark[i] != Unvisited || isLine(x, y)) return;
+    mark[i] = Outside;
+    stack.push_back(i);
+  };
+  for (int x = 0; x < lx; x++) pushOutside(x, 0), pushOutside(x, ly - 1);
+  for (int y = 0; y < ly; y++) pushOutside(0, y), pushOutside(lx - 1, y);
+  while (!stack.empty()) {
+    int i = stack.back();
+    stack.pop_back();
+    int x = i % lx, y = i / lx;
+    if (x > 0) pushOutside(x - 1, y);
+    if (x < lx - 1) pushOutside(x + 1, y);
+    if (y > 0) pushOutside(x, y - 1);
+    if (y < ly - 1) pushOutside(x, y + 1);
+  }
+
+  // 2. Enclosed regions. Any region bordering the stroke's line has a pixel
+  // inside the stroke box enlarged by one, so seeds are searched only there.
+  TRect searchBox = strokeBox.enlarge(1) * ras->getBounds();
+  for (int sy = searchBox.y0; sy <= searchBox.y1; sy++) {
+    for (int sx = searchBox.x0; sx <= searchBox.x1; sx++) {
+      int start = sy * lx + sx;
+      if (mark[start] != Unvisited || isLine(sx, sy)) continue;
+      mark[start]        = Visited;
+      bool touchesStroke = false;
+      int clearPixels    = 0;
+      TPoint seed(-1, -1);
+      stack.push_back(start);
+      while (!stack.empty()) {
+        int i = stack.back();
+        stack.pop_back();
+        int x = i % lx, y = i / lx;
+        if (ras->pixels(y)[x].m == 0) {
+          if (clearPixels++ == 0) seed = TPoint(x, y);
+        }
+        const int nx[4] = {x - 1, x + 1, x, x};
+        const int ny[4] = {y, y, y - 1, y + 1};
+        for (int k = 0; k < 4; k++) {
+          if (nx[k] < 0 || ny[k] < 0 || nx[k] >= lx || ny[k] >= ly) continue;
+          if (isLine(nx[k], ny[k])) {
+            if (strokeBox.contains(TPoint(nx[k], ny[k]))) touchesStroke = true;
+            continue;
+          }
+          int ni = ny[k] * lx + nx[k];
+          if (mark[ni] != Unvisited) continue;
+          mark[ni] = Visited;
+          stack.push_back(ni);
+        }
+      }
+      if (touchesStroke && clearPixels >= kAutoFillMinArea)
+        seeds.push_back(seed);
+    }
+  }
+  return seeds;
+}
+
 }  // namespace
+
+// Shared with the Fill tool: Auto Fill uses the same Fill Depth, so it can be
+// tuned from the Fill tool's options (fullcolorfilltool.cpp).
+extern TEnv::IntVar FullColorMinFillDepth;
 
 //************************************************************************
 //    FullColor Brush Tool implementation
@@ -217,6 +307,8 @@ FullColorBrushTool::FullColorBrushTool(std::string name)
     , m_firstTime(true)
     , m_snapGrid("Grid", false)
     , m_mypaintTilt("ModifierTilt", false)
+    , m_autoFill("Auto Fill", false)
+    , m_autoFillStyle("Fill Style:")
     , m_enabledTilt(false)
     , m_enabledOPressure(false)
     , m_enabledOTilt(false)
@@ -253,7 +345,15 @@ FullColorBrushTool::FullColorBrushTool(std::string name)
   m_prop.bind(m_mypaintPressure);
   m_prop.bind(m_mypaintTilt);
   m_prop.bind(m_snapGrid);
+  m_prop.bind(m_autoFill);
+  m_prop.bind(m_autoFillStyle);
   m_prop.bind(m_preset);
+
+  m_autoFill.setId("AutoFill");
+  m_autoFillStyle.setId("AutoFillStyle");
+  // Same default as the Toonz Raster brush: Next Style (N+1).
+  ToolUtils::rebuildAutoFillStyleProperty(m_autoFillStyle, nullptr, true);
+  m_autoFillStyle.setValue(L"Next Style (N+1)");
 
   m_preset.setId("BrushPreset");
   m_modifierEraser.setId("RasterEraser");
@@ -305,6 +405,8 @@ void FullColorBrushTool::updateTranslation() {
   m_modifierLockAlpha.setQStringName(tr("Lock Alpha"));
   m_modifierPaintBehind.setQStringName(tr("Paint Behind"));
   m_snapGrid.setQStringName(tr("Grid"));
+  m_autoFill.setQStringName(tr("Auto Fill"));
+  m_autoFillStyle.setQStringName(tr("Fill Style:"));
   m_mypaintPressure.setQStringName(tr("Pressure"));
   m_mypaintTilt.setQStringName(tr("Tilt"));
   m_sizeStylusProperty.setQStringName(tr("Stylus Settings - Size"));
@@ -1287,12 +1389,27 @@ void FullColorBrushTool::leftButtonUp(const TPointD &pos,
   TXshLevel *level          = app->getCurrentLevel()->getLevel();
   TXshSimpleLevelP simLevel = level->getSimpleLevel();
 
+  // Auto Fill: one undo block, so a single Ctrl+Z removes stroke and fill.
+  // Skipped when the brush is erasing (MyPaint eraser modifier).
+  const bool autoFill =
+      m_autoFill.getValue() &&
+      !(m_isMyPaintStyleSelected && m_modifierEraser.getValue());
+  TRect strokeBox = m_strokeRect;
+  for (int i = 0; i < m_tileSet->getTileCount(); i++)
+    strokeBox += m_tileSet->getTile(i)->m_rasterBounds;
+  if (autoFill) TUndoManager::manager()->beginBlock();
+
   if (m_tileSet->getTileCount() > 0) {
     TFrameId frameId = getCurrentFid();
     TRasterP subras  = ras->extract(m_strokeRect)->clone();
     TUndoManager::manager()->add(new FullColorBrushUndo(
         m_tileSet, simLevel.getPointer(), frameId, m_isFrameCreated, subras,
         m_strokeRect.getP00()));
+  }
+
+  if (autoFill) {
+    applyAutoFill(ri, simLevel.getPointer(), getCurrentFid(), strokeBox);
+    TUndoManager::manager()->endBlock();
   }
 
   // Column name renamed to level name only if was originally empty
@@ -1320,6 +1437,59 @@ void FullColorBrushTool::leftButtonUp(const TPointD &pos,
   m_perspectiveIndex = -1;
   m_tiltAngle        = 0;
   m_tileSaver        = 0;
+}
+
+//---------------------------------------------------------------------------------------------------------------
+
+void FullColorBrushTool::rebuildAutoFillStyleCombo(TPalette *pal) {
+  ToolUtils::rebuildAutoFillStyleProperty(m_autoFillStyle, pal, true);
+}
+
+//---------------------------------------------------------------------------------------------------------------
+
+void FullColorBrushTool::applyAutoFill(const TRasterImageP &ri,
+                                       TXshSimpleLevel *sl, const TFrameId &fid,
+                                       const TRect &strokeBox) {
+  if (!ri || !sl || strokeBox.isEmpty()) return;
+  TPalette *pal = sl->getPalette();
+  if (!pal) return;  // fullColorFill takes the colour from the palette
+  TRaster32P ras = ri->getRaster();
+  if (!ras) return;
+
+  // The brush paints with the current style, so line and current coincide.
+  int lineStyleId = getApplication()->getCurrentLevelStyleIndex();
+  int fillStyleId = ToolUtils::resolveAutoFillStyle(
+      m_autoFillStyle.getValue(), lineStyleId, lineStyleId, pal);
+  if (fillStyleId <= 0) return;
+
+  int depth    = std::min(std::max((int)FullColorMinFillDepth, 0), 15);
+  int depth255 = (depth << 4) | depth;  // same conversion as fullColorFill
+
+  ras->lock();
+  std::vector<TPoint> seeds = findAutoFillSeeds(ras, strokeBox, depth255);
+  if (!seeds.empty()) {
+    TTileSetFullColor *tileSet = new TTileSetFullColor(ras->getSize());
+    TTileSaverFullColor saver(ras, tileSet);
+    FillParameters params;
+    params.m_styleId      = fillStyleId;
+    params.m_palette      = pal;
+    params.m_minFillDepth = depth;
+    params.m_maxFillDepth = depth;
+    for (const TPoint &seed : seeds) {
+      params.m_p = seed;
+      fullColorFill(ras, params, &saver);
+    }
+    if (tileSet->getTileCount() > 0) {
+      TRect fillRect = tileSet->getTile(0)->m_rasterBounds;
+      for (int i = 1; i < tileSet->getTileCount(); i++)
+        fillRect += tileSet->getTile(i)->m_rasterBounds;
+      TRasterP after = ras->extract(fillRect)->clone();
+      TUndoManager::manager()->add(new FullColorBrushUndo(
+          tileSet, sl, fid, false, after, fillRect.getP00()));
+    } else
+      delete tileSet;
+  }
+  ras->unlock();
 }
 
 //---------------------------------------------------------------------------------------------------------------

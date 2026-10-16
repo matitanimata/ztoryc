@@ -3181,6 +3181,8 @@ BrushToolOptionsBox::BrushToolOptionsBox(QWidget *parent, TTool *tool,
     rasterBrush->rebuildAutoFillStyleCombo(pltHandle->getPalette());
   else if (auto *vectorBrush = dynamic_cast<ToonzVectorBrushTool *>(tool))
     vectorBrush->rebuildAutoFillStyleCombo(pltHandle->getPalette());
+  else if (auto *fullColorBrush = dynamic_cast<FullColorBrushTool *>(tool))
+    fullColorBrush->rebuildAutoFillStyleCombo(pltHandle->getPalette());
 
   ToolOptionControlBuilder builder(this, tool, pltHandle, toolHandle);
   if (tool && tool->getProperties(0)) tool->getProperties(0)->accept(builder);
@@ -3457,6 +3459,8 @@ void BrushToolOptionsBox::doRebuildAutoFillCombo() {
     rasterBrush->rebuildAutoFillStyleCombo(m_pltHandle->getPalette());
   else if (auto *vectorBrush = dynamic_cast<ToonzVectorBrushTool *>(m_tool))
     vectorBrush->rebuildAutoFillStyleCombo(m_pltHandle->getPalette());
+  else if (auto *fullColorBrush = dynamic_cast<FullColorBrushTool *>(m_tool))
+    fullColorBrush->rebuildAutoFillStyleCombo(m_pltHandle->getPalette());
   else
     return;
   m_autoFillStyleCombo->loadEntries();

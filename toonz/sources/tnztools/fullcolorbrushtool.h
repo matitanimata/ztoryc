@@ -82,6 +82,16 @@ public:
 
   TMyPaintBrushStyle *getBrushStyle();
 
+  // Auto Fill "Fill Style:" — rebuild the enum from the palette (safe any
+  // time: emits no Qt signals).
+  void rebuildAutoFillStyleCombo(TPalette *pal);
+
+private:
+  // Fills the regions closed by the stroke just drawn (Auto Fill), through the
+  // stock full-colour fill. Adds its own undo; call inside the stroke's block.
+  void applyAutoFill(const TRasterImageP &ri, TXshSimpleLevel *sl,
+                     const TFrameId &fid, const TRect &strokeBox);
+
 protected:
   TPropertyGroup m_prop;
 
@@ -98,6 +108,8 @@ protected:
   TEnumProperty m_preset;
   TBoolProperty m_snapGrid;
   TBoolProperty m_mypaintTilt;
+  TBoolProperty m_autoFill;
+  TEnumProperty m_autoFillStyle;  // see ToolUtils::resolveAutoFillStyle
   TStylusProperty m_sizeStylusProperty, m_opacityStylusProperty;
   TBrushTipProperty m_brushTip;
 
