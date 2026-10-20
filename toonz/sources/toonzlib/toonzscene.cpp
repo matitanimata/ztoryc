@@ -102,6 +102,21 @@ bool hasFlashInstanceColumns(const TXsheet *xsheet) {
   }
   return false;
 }
+
+// Ztoryc: what TXshLevelColumn::saveData writes as tags unknown to older
+// builds (animated column opacity, a Flash mask's scope).
+bool hasColumnExtras(const TXsheet *xsheet) {
+  if (!xsheet) return false;
+  for (int index = 0; index < xsheet->getColumnCount(); ++index) {
+    auto *column = xsheet->getColumn(index);
+    if (!column || !column->getLevelColumn()) continue;
+    if (column->getMaskScope() != 1 ||
+        column->getOpacityCurve()->hasKeyframes() ||
+        column->getOpacityCurve()->getDefaultValue() != 1.0)
+      return true;
+  }
+  return false;
+}
 }  // namespace
 
 VersionNumber savedSceneVersion(ToonzScene *scene, TXsheet *subxsheet) {
@@ -125,7 +140,16 @@ VersionNumber savedSceneVersion(ToonzScene *scene, TXsheet *subxsheet) {
                       hasFlashInstanceColumns(subxsheet);
   for (size_t i = 0; !anyInstances && i < childXsheets.size(); ++i)
     anyInstances = hasFlashInstanceColumns(childXsheets[i]);
-  if (!anyInstances) return l_currentVersion;
+  // Ztoryc: a scene with animated column opacity (or a Flash mask scope)
+  // advertises the newer version too, so an older build reports a newer
+  // scene instead of failing on an unknown tag.
+  bool columnExtras = hasColumnExtras(scene->getTopXsheet()) ||
+                      hasColumnExtras(subxsheet);
+  for (size_t i = 0; !columnExtras && i < childXsheets.size(); ++i)
+    columnExtras = hasColumnExtras(childXsheets[i]);
+  const VersionNumber plainVersion =
+      columnExtras ? l_flashInstanceVersion : l_currentVersion;
+  if (!anyInstances) return plainVersion;
   if (!subxsheet) return l_flashInstanceVersion;
   // Saving a sub-xsheet: only the xsheets it actually reaches matter.
   std::set<TXsheet *> pending, visited;
@@ -146,7 +170,7 @@ VersionNumber savedSceneVersion(ToonzScene *scene, TXsheet *subxsheet) {
             pending.insert(child->getXsheet());
     }
   }
-  return l_currentVersion;
+  return plainVersion;
 }
 
 //-----------------------------------------------------------------------------
