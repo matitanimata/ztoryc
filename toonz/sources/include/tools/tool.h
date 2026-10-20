@@ -435,6 +435,7 @@ return true if the method execution can have changed the current tool
     HintReplicators          = 1 << 3,  //!< Draw replicators
     HintReplicatorsPoints    = 1 << 4,  //!< Draw replicated points
     HintReplicatorsEnabled   = 1 << 5,  //!< Mark active replicators
+    HintPerspectiveGrid      = 1 << 6,  //!< Ztoryc: draw the Tahoma perspective grid
     HintAssistantsAll        = HintAssistants | HintAssistantsGuidelines |
                         HintAssistantsEnabled,
     HintReplicatorsAll = HintReplicators | HintReplicatorsEnabled,

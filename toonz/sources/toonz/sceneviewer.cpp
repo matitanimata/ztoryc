@@ -2053,8 +2053,12 @@ void SceneViewer::drawOverlay() {
 
   TTool *perspectiveTool =
       TTool::getTool(T_PerspectiveGrid, TTool::VectorImage);
+  // Ztoryc: Perspective Grids is the general switch of every guide; a brush
+  // shows only the system its Guides menu snaps to (getToolHints)
   if (tool && perspectiveTool &&
-      (ShowPerspectiveGrids || tool == perspectiveTool)) {
+      ((ShowPerspectiveGrids &&
+        (tool->getToolHints() & TTool::HintPerspectiveGrid)) ||
+       tool == perspectiveTool)) {
     glPushMatrix();
     if (m_draw3DMode) {
       mult3DMatrix();
@@ -2095,7 +2099,7 @@ void SceneViewer::drawOverlay() {
 
     // OpenToonz drawing assistants: the assistants of the scene and their
     // guidelines through the pointer, then the replicators.
-    {
+    if (ShowPerspectiveGrids) {
       unsigned int hints = tool->getToolHints();
       TPointD toolPos =
           tool->getMatrix().inv() * winToWorld(m_lastMousePos);

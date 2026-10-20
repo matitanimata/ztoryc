@@ -6,6 +6,11 @@
 // TnzLib includes
 #include "toonz/tobjecthandle.h"
 
+// TnzQt includes
+#include "toonzqt/menubarcommand.h"
+
+#include <QAction>
+
 //-----------------------------------------------------------------------------
 
 bool AssistantStrokeSnap::begin(TTool *tool, const TThickPoint &pos) {
@@ -66,8 +71,16 @@ void AssistantStrokeSnap::end() {
 
 //-----------------------------------------------------------------------------
 
+bool AssistantStrokeSnap::guidesShown() {
+  QAction *action =
+      CommandManager::instance()->getAction("MI_ShowPerspectiveGrids");
+  return !action || action->isChecked();
+}
+
+//-----------------------------------------------------------------------------
+
 void AssistantStrokeSnap::drawGuidelines() const {
-  if (!isActive()) return;
+  if (!isActive() || !guidesShown()) return;
   for (const TGuidelineP &guideline : m_guidelines)
     if (guideline != m_current) guideline->draw();
   if (m_current) m_current->draw(true);
@@ -76,6 +89,7 @@ void AssistantStrokeSnap::drawGuidelines() const {
 //-----------------------------------------------------------------------------
 
 void AssistantStrokeSnap::drawHoverGuidelines(TTool *tool, const TPointD &pos) {
+  if (!guidesShown()) return;
   TAssistant::scanAssistants(tool, &pos, 1, nullptr, false, false, true, true,
                              nullptr);
 }

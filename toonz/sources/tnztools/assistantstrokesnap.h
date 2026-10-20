@@ -51,6 +51,10 @@ public:
   // The guidelines through a hover position, before the stroke starts.
   static void drawHoverGuidelines(TTool *tool, const TPointD &pos);
 
+  // View > Perspective Grids: the general switch of every guide, Tahoma grid
+  // and assistants alike (Franco, 20/10).  Snapping does not depend on it.
+  static bool guidesShown();
+
 private:
   TAffine trackToScreen() const;
 };
@@ -76,6 +80,15 @@ inline void apply(const TEnumProperty &guides, TBoolProperty &grid,
 // a Grid saved by an older build is kept
 inline void load(TEnumProperty &guides, bool grid, bool assistants) {
   guides.setIndex(grid ? 1 : assistants ? 2 : 0);
+}
+
+// What the viewer shows while the brush is active: the system the stroke
+// snaps to, nothing with Off (Franco, 20/10).
+inline unsigned int hints(const TEnumProperty &guides, unsigned int base) {
+  if (guides.getIndex() != 2)
+    base &= ~(TTool::HintAssistantsAll | TTool::HintReplicatorsAll);
+  if (guides.getIndex() != 1) base &= ~TTool::HintPerspectiveGrid;
+  return base;
 }
 
 }  // namespace GuideSnap

@@ -137,7 +137,8 @@ public:
   // a whole-viewer refresh: drawn by the viewer they leave pieces behind in
   // the small areas refreshed while painting.
   unsigned int getToolHints() const override {
-    return TTool::getToolHints() & ~HintAssistantsGuidelines;
+    return GuideSnap::hints(m_guideSnap,
+                            TTool::getToolHints() & ~HintAssistantsGuidelines);
   }
 
   ToolOptionsBox *createOptionsBox() override;
