@@ -87,6 +87,12 @@ public:
   ToonzVectorBrushTool(std::string name, int targetType);
 
   ToolType getToolType() const override { return TTool::LevelWriteTool; }
+  // The guidelines through the pointer are drawn by the brush itself, with
+  // a whole-viewer refresh: drawn by the viewer they leave pieces behind in
+  // the small areas refreshed while painting.
+  unsigned int getToolHints() const override {
+    return TTool::getToolHints() & ~HintAssistantsGuidelines;
+  }
 
   ToolOptionsBox *createOptionsBox() override;
 
