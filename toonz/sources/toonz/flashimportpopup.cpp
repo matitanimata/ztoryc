@@ -239,9 +239,9 @@ FlashImportPopup::FlashImportPopup()
   m_folderName->setMaxLength(160);
   form->addRow(tr("New folder name:"), m_folderName);
 
-  // Ztoryc: the import always goes into the scene you are working in (a
-  // new scene is created and saved first); the only choice is whether it
-  // arrives as one sub-scene or as its columns.
+  // Ztoryc: the import always goes into the scene you are working in, which
+  // must be saved (sceneProblem()); the only choice is whether it arrives as
+  // one sub-scene or as its columns.
   m_importAs = new QComboBox(m_inputs);
   m_importAs->setObjectName("FlashImportAs");
   m_importAs->addItem(tr("Sub-Scene"));
@@ -711,6 +711,12 @@ bool FlashImportPopup::insertIntoScene(const TFilePath &scenePath,
     if (ok && asColumns) {
       app->getCurrentFrame()->setFrame(args.row0);
       SubsceneCmd::explode(args.col0);
+      // explode() does nothing when its question is cancelled: the import
+      // is then cancelled too, not left as a sub-scene the user did not ask
+      if (xsh->getCell(args.row0, args.col0).getChildLevel()) {
+        ok = false;
+        args.errors.append(tr("Exploding the sub-scene was cancelled."));
+      }
     }
   } catch (...) {
     um->endBlock();
