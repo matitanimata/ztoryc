@@ -191,6 +191,7 @@ protected:
   TIntProperty m_miterJoinLimit;
   TBoolProperty m_snapGrid;
   TBoolProperty m_assistants;
+  TEnumProperty m_guideSnap;
   TStylusProperty m_sizeStylusProperty;
 
   bool m_enabledPressure;

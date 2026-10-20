@@ -3316,6 +3316,7 @@ void BrushToolOptionsBox::filterControls() {
     bool isCommon =
         (it.key() == "Lock Alpha" || it.key() == "Pressure" ||
                      it.key() == "Preset:" || it.key() == "Grid" ||
+                     it.key() == "Guides:" ||
                      it.key() == "Smooth:" || it.key() == "Paint Behind" ||
                      it.key() == "Fill Style:" || it.key() == "Fill Depth" ||
                      it.key() == "Auto Close Gap");
@@ -3329,6 +3330,7 @@ void BrushToolOptionsBox::filterControls() {
     bool isCommon =
         (it.key() == "Lock Alpha" || it.key() == "Pressure" ||
                      it.key() == "Preset:" || it.key() == "Grid" ||
+                     it.key() == "Guides:" ||
                      it.key() == "Smooth:" || it.key() == "Paint Behind" ||
                      it.key() == "Auto Fill" || it.key() == "Fill Style:" ||
                      it.key() == "Fill Depth" || it.key() == "Auto Close Gap");

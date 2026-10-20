@@ -209,6 +209,7 @@ protected:
   TBoolProperty m_modifierLockAlpha;
   TBoolProperty m_snapGrid;
   TBoolProperty m_assistants;
+  TEnumProperty m_guideSnap;
   TBoolProperty m_mypaintTilt;
   TStylusProperty m_sizeStylusProperty;
   TBrushTipProperty m_brushTip;
