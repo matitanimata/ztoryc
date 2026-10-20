@@ -326,7 +326,7 @@ bool motionRelative(const MotionObject &motion, const Affine &base,
     return found == motion.properties.cend() ? fallback
                                                                     : motionValue(*found, 0);
   };
-  auto near = [&](double a, double b) {
+  auto nearlyEqual = [&](double a, double b) {
     return std::abs(a - b) <= scaleTolerance * std::max(1.0, std::abs(b));
   };
   // Absolute curves restate the element's transform at time 0.
@@ -336,15 +336,15 @@ bool motionRelative(const MotionObject &motion, const Affine &base,
     const double skewY    = at0("Skew_Y", 0);
     if (sameAngle(rotation + skewX, own.skewX, angleTolerance) &&
         sameAngle(rotation + skewY, own.skewY, angleTolerance) &&
-        near(at0("Scale_X", 100 * own.scaleX) / 100, own.scaleX) &&
-        near(at0("Scale_Y", 100 * own.scaleY) / 100, own.scaleY))
+        nearlyEqual(at0("Scale_X", 100 * own.scaleX) / 100, own.scaleX) &&
+        nearlyEqual(at0("Scale_Y", 100 * own.scaleY) / 100, own.scaleY))
       return false;
   }
   // Relative curves start at the identity.
   const double rotation = at0("Rotation_Z", 0);
   if (sameAngle(rotation + at0("Skew_X", 0), 0, angleTolerance) &&
       sameAngle(rotation + at0("Skew_Y", 0), 0, angleTolerance) &&
-      near(at0("Scale_X", 100) / 100, 1) && near(at0("Scale_Y", 100) / 100, 1))
+      nearlyEqual(at0("Scale_X", 100) / 100, 1) && nearlyEqual(at0("Scale_Y", 100) / 100, 1))
     return true;
   if (ambiguous) *ambiguous = true;
   return false;

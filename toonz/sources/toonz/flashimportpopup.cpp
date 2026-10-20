@@ -368,8 +368,8 @@ void FlashImportPopup::sourceChanged() {
     const QFileInfo info(path);
     if (m_destination->getPath().isEmpty()) {
       // Ztoryc: the bundle goes in the project's extras (+extras, through
-      // the current scene, so per-scene subfolders are honoured) — not next
-      // to the source document (Franco, 2026-10-20).
+      // the current scene, so per-scene subfolders are honoured), not next
+      // to the source document.
       const QString extras = extrasFolder();
       if (!extras.isEmpty())
         m_destination->setPath(extras);
@@ -625,8 +625,8 @@ void FlashImportPopup::importSource() {
   QString openingError;
   try {
     // Ztoryc: into the scene you are working in, as a sub-scene (File >
-    // Load As Sub-Scene), instead of replacing it (Franco, 2026-10-20). With
-    // no scene open, it opens as a scene as before.
+    // Load As Sub-Scene), instead of replacing it. With no scene open, it
+    // opens as a scene as before.
     ToonzScene *current = TApp::instance()->getCurrentScene()->getScene();
     if (current)
       opened = IoCmd::loadSubScene(result.scenePath);

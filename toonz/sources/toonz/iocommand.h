@@ -281,12 +281,9 @@ bool importLipSync(TFilePath levelPath, QList<TFrameId> frameList,
 // cast.
 // if the cast contains the level specified with $scenefolder alias,
 // open a warning popup notifying that such level will lose link.
-// Levels in skipLevels are relocated by another path (Flash Save As) and are
-// neither prompted for nor re-coded here.
 bool takeCareSceneFolderItemsOnSaveSceneAs(
     ToonzScene *scene, const TFilePath &newPath, TXsheet *subxsh,
-    QHash<TXshLevel *, TFilePath> &orgLevelPaths, bool useSceneSubfolders,
-    const std::set<TXshLevel *> *skipLevels = nullptr);
+    QHash<TXshLevel *, TFilePath> &orgLevelPaths, bool useSceneSubfolders);
 
 }  // namespace IoCmd
 

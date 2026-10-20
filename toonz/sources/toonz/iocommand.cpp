@@ -3343,8 +3343,7 @@ bool IoCmd::importLipSync(TFilePath levelPath, QList<TFrameId> frameList,
 // return false if cancelled.
 bool IoCmd::takeCareSceneFolderItemsOnSaveSceneAs(
     ToonzScene *scene, const TFilePath &newPath, TXsheet *subxsh,
-    QHash<TXshLevel *, TFilePath> &orgLevelPaths, bool useSceneSubfolders,
-    const std::set<TXshLevel *> *skipLevels) {
+    QHash<TXshLevel *, TFilePath> &orgLevelPaths, bool useSceneSubfolders) {
   auto setPathToLevel = [&](TXshLevel *level, TFilePath fp) {
     // in case of saving subxsheet, the current scene will not be switched to
     // the saved one
@@ -3385,8 +3384,6 @@ bool IoCmd::takeCareSceneFolderItemsOnSaveSceneAs(
   QString str;
   int count = 0;
   for (TXshLevel *level : levels) {
-    // Relocated by another path (Flash Save As): not prompted for here.
-    if (skipLevels && skipLevels->count(level)) continue;
     if (!level->getPath().isEmpty()) {
       if (TFilePath("$scenefolder").isAncestorOf(level->getPath())) {
         TFilePath levelFullPath = scene->decodeFilePath(level->getPath());
