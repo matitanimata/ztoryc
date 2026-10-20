@@ -362,12 +362,26 @@ class DVAPI TAssistant : public TAssistantBase {
   Q_DECLARE_TR_FUNCTIONS(TAssistant)
 protected:
   const TStringId m_idMagnetism;
+  const TStringId m_idInterpolation;
 
   void onSetDefaults() override;
   void onFixData() override;
 
 public:
+  // Ztoryc: how the assistant moves from its key drawing to the next one
+  // (the drawings of an assistants column are its keys).  Absent from files
+  // written before it existed, which then read as Constant.
+  enum Interpolation {
+    InterpolationConstant,
+    InterpolationLinear,
+    InterpolationEaseIn,
+    InterpolationEaseOut,
+    InterpolationEaseInOut
+  };
+
   TAssistant(TMetaObject &object);
+
+  Interpolation getInterpolation() const;
 
   double getMagnetism() const
     { return data()[m_idMagnetism].getDouble(); }

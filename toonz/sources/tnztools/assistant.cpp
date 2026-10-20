@@ -1,6 +1,9 @@
 
 #include <tools/assistant.h>
 
+#include "tinbetween.h"
+#include <memory>
+
 #include <tools/tool.h>
 
 #include <toonz/tapplication.h>
@@ -708,8 +711,32 @@ TAssistantBase::drawEdit(TTool::Viewer *viewer, int index) const {
 
 TAssistant::TAssistant(TMetaObject &object):
   TAssistantBase(object),
-  m_idMagnetism("magnetism")
-  { addProperty( new TDoubleProperty(m_idMagnetism.str(), 0.0, 1.0, getMagnetism()) ); }
+  m_idMagnetism("magnetism"),
+  m_idInterpolation("interpolation")
+{
+  addProperty( new TDoubleProperty(m_idMagnetism.str(), 0.0, 1.0, getMagnetism()) );
+  // the stored values are the strings below; the menu shows the names
+  // of Cells > Inbetween
+  TEnumProperty *interpolation = new TEnumProperty(m_idInterpolation.str());
+  interpolation->addValueWithUIName(L"constant", tr("Constant"));
+  interpolation->addValueWithUIName(L"linear", tr("Linear"));
+  interpolation->addValueWithUIName(L"easeIn", tr("Ease In"));
+  interpolation->addValueWithUIName(L"easeOut", tr("Ease Out"));
+  interpolation->addValueWithUIName(L"easeInOut", tr("Ease In/Out"));
+  addProperty(interpolation);
+}
+
+//---------------------------------------------------------------------------------------------------
+
+TAssistant::Interpolation
+TAssistant::getInterpolation() const {
+  const std::string &value = data()[m_idInterpolation].getString();
+  if (value == "linear") return InterpolationLinear;
+  if (value == "easeIn") return InterpolationEaseIn;
+  if (value == "easeOut") return InterpolationEaseOut;
+  if (value == "easeInOut") return InterpolationEaseInOut;
+  return InterpolationConstant;
+}
 
 //---------------------------------------------------------------------------------------------------
 
@@ -717,6 +744,7 @@ void
 TAssistant::updateTranslation() const {
   TAssistantBase::updateTranslation();
   setTranslation(m_idMagnetism, tr("Magnetism"));
+  setTranslation(m_idInterpolation, tr("Interpolation"));
 }
 
 //---------------------------------------------------------------------------------------------------
@@ -816,6 +844,80 @@ TAssistant::calcPerspectiveStep(
 }
 
 
+// Ztoryc: the drawings of an assistants column are keys.  On a frame held
+// from a key, the next key is the next different drawing of the same column;
+// outT is where the frame stands between the two (0 at the key).
+static bool findNextKeyDrawing(
+  TXsheet *xsheet, int col, int frame, TImageP &outNext, double &outT)
+{
+  TXshCell cell = xsheet->getCell(frame, col);
+  if (cell.isEmpty()) return false;
+  int first = 0, last = -1;
+  xsheet->getCellRange(col, first, last);
+  int r0 = frame;
+  while (r0 > first && xsheet->getCell(r0 - 1, col) == cell) --r0;
+  int r1 = frame + 1;
+  while (r1 <= last && xsheet->getCell(r1, col) == cell) ++r1;
+  if (r1 > last) return false;
+  TXshCell next = xsheet->getCell(r1, col);
+  if (next.isEmpty() || next.getSimpleLevel() != cell.getSimpleLevel())
+    return false;
+  outNext = next.getImage(false);
+  outT    = double(frame - r0) / double(r1 - r0);
+  return outNext && outNext->getType() == TImage::META;
+}
+
+//---------------------------------------------------------------------------------------------------
+
+// Ztoryc: the assistant `a` (object `objA`, index k in its drawing) moved
+// toward the assistant at the same index of the next key drawing, when it is
+// of the same type.  Points are matched by name, so nothing is guessed.
+// The result lives in `holder`; `a` itself when there is nothing to blend.
+static const TAssistant* interpolatedAssistant(
+  const TMetaObject &objA,
+  const TAssistant *a,
+  const TMetaImage::Reader &nextReader,
+  int k,
+  double t,
+  TMetaObjectP &holder )
+{
+  TInbetween::TweenAlgorithm algorithm;
+  switch (a->getInterpolation()) {
+  case TAssistant::InterpolationLinear:
+    algorithm = TInbetween::LinearInterpolation; break;
+  case TAssistant::InterpolationEaseIn:
+    algorithm = TInbetween::EaseInInterpolation; break;
+  case TAssistant::InterpolationEaseOut:
+    algorithm = TInbetween::EaseOutInterpolation; break;
+  case TAssistant::InterpolationEaseInOut:
+    algorithm = TInbetween::EaseInOutInterpolation; break;
+  default:
+    return a;
+  }
+  if (k >= (int)nextReader->size()) return a;
+  const TMetaObjectPC &objB = (*nextReader)[k];
+  if (!objB || objB->getType() != objA.getType()) return a;
+
+  static const TStringId idPoints("points"), idX("x"), idY("y");
+  double s = TInbetween::interpolation(t, algorithm);
+  TVariant blended = objA.data();
+  const TVariant &pointsA = objA.data()[idPoints];
+  const TVariant &pointsB = objB->data()[idPoints];
+  for(TAssistantPointMap::const_iterator i = a->points().begin(); i != a->points().end(); ++i) {
+    const TVariant &pa = pointsA[i->first];
+    const TVariant &pb = pointsB[i->first];
+    TVariant &out = blended[idPoints][i->first];
+    out[idX].setDouble( pa[idX].getDouble()*(1 - s) + pb[idX].getDouble()*s );
+    out[idY].setDouble( pa[idY].getDouble()*(1 - s) + pb[idY].getDouble()*s );
+  }
+  holder = TMetaObjectP(new TMetaObject(objA.getType()));
+  holder->data() = blended;
+  const TAssistant *result = holder->getHandler<TAssistant>();
+  return result ? result : a;
+}
+
+//---------------------------------------------------------------------------------------------------
+
 bool
 TAssistant::scanAssistants(
   TTool *tool,
@@ -872,6 +974,15 @@ TAssistant::scanAssistants(
       if (TMetaImage *metaImage = dynamic_cast<TMetaImage*>(image.getPointer()))
       {
         TAffine imageToTrack = worldToTrack * tool->getColumnMatrix(i);
+
+        // Ztoryc: between two key drawings the assistants are interpolated
+        TImageP nextImage;
+        double tween = 0;
+        std::unique_ptr<TMetaImage::Reader> nextReader;
+        if (findNextKeyDrawing(Xsheet, i, frame, nextImage, tween))
+          if (TMetaImage *nextMeta = dynamic_cast<TMetaImage*>(nextImage.getPointer()))
+            if (nextMeta != metaImage)
+              nextReader.reset(new TMetaImage::Reader(*nextMeta));
         
         TPixelD origColor = TAssistantBase::colorBase;
         TPixelD color = props && column->getColorFilterId()
@@ -888,9 +999,14 @@ TAssistant::scanAssistants(
         TMetaImage::Reader reader(*metaImage);
         for(TMetaObjectListCW::iterator i = reader->begin(); i != reader->end(); ++i) {
           if (*i)
-          if (const TAssistant *assistant = (*i)->getHandler<TAssistant>())
-          if (!enabledOnly || assistant->getEnabled())
+          if (const TAssistant *keyAssistant = (*i)->getHandler<TAssistant>())
+          if (!enabledOnly || keyAssistant->getEnabled())
           {
+            TMetaObjectP tweenHolder;
+            const TAssistant *assistant = nextReader
+              ? interpolatedAssistant(**i, keyAssistant, *nextReader,
+                                      int(i - reader->begin()), tween, tweenHolder)
+              : keyAssistant;
             found = true;
             if (!doSomething) return true;
             if (findGuidelines)
