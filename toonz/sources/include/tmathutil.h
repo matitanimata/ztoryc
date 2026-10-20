@@ -1,3 +1,4 @@
+#include <complex>
 #pragma once
 
 #ifndef TMATH_UTIL_H
@@ -174,6 +175,17 @@ DVAPI double cubicRoot(double a, double b, double c, double d);
 DVAPI double quadraticRoot(double a, double b, double c);
 
 //-----------------------------------------------------------------------------
+
+
+inline bool isAlmostZero(std::complex<double> val,
+                         double eps = TConsts::epsilon) {
+  return val.real() * val.real() + val.imag() * val.imag() < eps * eps;
+}
+
+// OpenToonz (drawing assistants): complex roots, returns their count.
+DVAPI int solveEquation2(std::complex<double> *roots, double a, double b, double c);
+DVAPI int solveEquation3(std::complex<double> *roots, double a, double b, double c, double d);
+DVAPI int solveEquation4(std::complex<double> *roots, double a, double b, double c, double d, double e);
 
 #endif  // #ifndef TMATH_UTIL_H
 //-----------------------------------------------------------------------------

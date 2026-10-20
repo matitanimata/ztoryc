@@ -135,6 +135,9 @@ void ToolHandle::onImageChanged(TImage::Type imageType) {
   case TImage::MESH:
     targetType = TTool::MeshImage;
     break;
+  case TImage::META:  // OpenToonz drawing assistants
+    targetType = TTool::MetaImage;
+    break;
   }
 
   if (targetType != m_toolTargetType) {

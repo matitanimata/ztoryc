@@ -2,6 +2,7 @@ set(HEADERS
     sgi/tiio_sgi.h
     pli/pli_io.h
     pli/tiio_pli.h
+    tzm/tiio_tzm.h
     tga/tiio_tga.h
     compatibility/inforegion.h
     compatibility/tfile_io.h
@@ -32,6 +33,7 @@ set(SOURCES
     pli/pli_io.cpp
     pli/tags.cpp
     pli/tiio_pli.cpp
+    tzm/tiio_tzm.cpp
     tga/tiio_tga.cpp
     compatibility/inforegion.c
     compatibility/tfile_io.c

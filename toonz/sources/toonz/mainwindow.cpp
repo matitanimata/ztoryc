@@ -3542,6 +3542,11 @@ void MainWindow::defineActions() {
                    tr("Perspective Grid Tool: Set up perspective grids"));
   createToolAction(T_Symmetry, "symmetry", QT_TR_NOOP("Symmetry Tool"), "",
                    tr("Symmetry Tool: Set up symmetrical guide"));
+  // OpenToonz drawing assistants (experiment/ot-assistants).
+  createToolAction(T_EditAssistants, "assistant",
+                   QT_TR_NOOP("Edit Assistants"), "",
+                   tr("Edit Assistants: place vanishing points, perspective "
+                      "grids, ellipses and lines on an assistants level"));
   createToolAction(T_Finger, "finger", QT_TR_NOOP("Finger Tool"), "",
                    tr("Finger Tool: Smudges small areas to cover with line"));
 

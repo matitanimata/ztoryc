@@ -1,4 +1,5 @@
 #include "toonz/txshsimplelevel.h"
+#include "tmetaimage.h"
 #include "imagebuilders.h"
 
 // TnzLib includes
@@ -1080,6 +1081,8 @@ void TXshSimpleLevel::loadData(TIStream &is) {
       type = TZI_XSHLEVEL;
     else if (ext == "mesh")
       type = MESH_XSHLEVEL;
+    else if (ext == "tzm")  // OpenToonz drawing assistants
+      type = META_XSHLEVEL;
     else
       type = OVL_XSHLEVEL;
   }
@@ -2179,6 +2182,10 @@ TImageP TXshSimpleLevel::createEmptyFrame() {
   switch (m_type) {
   case PLI_XSHLEVEL:
     result = new TVectorImage;
+    break;
+
+  case META_XSHLEVEL:  // OpenToonz drawing assistants
+    result = new TMetaImage();
     break;
 
   case MESH_XSHLEVEL:

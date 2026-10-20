@@ -186,12 +186,16 @@ public:
 
   void setNonLinearSlider() { m_isLinearSlider = false; }
   bool isLinearSlider() { return m_isLinearSlider; }
+  // OpenToonz (drawing assistants): shown as a spin box, not a slider.
+  void setSpinner() { m_isSpinner = true; }
+  bool isSpinner() { return m_isSpinner; }
 
 private:
   Range m_range;
   T m_value;
   bool m_isMaxRangeLimited;
   bool m_isLinearSlider;
+  bool m_isSpinner = false;
 };
 
 //---------------------------------------------------------

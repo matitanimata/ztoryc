@@ -298,9 +298,10 @@ public:
     MeshColumns  = 0x40,  //!< Will work on mesh columns
 
     EmptyTarget = 0x80,  //!< Will work on empty cells/columns
+    MetaImage   = 0x100, //!< Will work on meta images (OpenToonz assistants)
 
     CommonImages = VectorImage | ToonzImage | RasterImage,
-    AllImages    = CommonImages | MeshImage,
+    AllImages    = CommonImages | MeshImage | MetaImage,
     Vectors      = VectorImage | Splines,
 
     CommonLevels = CommonImages | LevelColumns,
@@ -423,6 +424,22 @@ return true if the method execution can have changed the current tool
   }  //!< Callback for tool deactivation, includes tool switch.
 
   virtual void onImageChanged() {}  //!< Notifies changes in the image in use.
+
+  // OpenToonz drawing assistants: what the viewer draws while this tool is
+  // active (TTool::getToolHints in tool.cpp).
+  enum ToolHints {
+    HintNone                 = 0,
+    HintAssistants           = 1 << 0,  //!< Draw assistants when tool active
+    HintAssistantsGuidelines = 1 << 1,  //!< Draw assistant guidelines
+    HintAssistantsEnabled    = 1 << 2,  //!< Mark active assistants
+    HintReplicators          = 1 << 3,  //!< Draw replicators
+    HintReplicatorsPoints    = 1 << 4,  //!< Draw replicated points
+    HintReplicatorsEnabled   = 1 << 5,  //!< Mark active replicators
+    HintAssistantsAll        = HintAssistants | HintAssistantsGuidelines |
+                        HintAssistantsEnabled,
+    HintReplicatorsAll = HintReplicators | HintReplicatorsEnabled,
+  };
+  virtual unsigned int getToolHints() const;
 
   virtual void onEnter() {
   }  //!< Callback for the mouse entering the viewer area.
@@ -662,6 +679,10 @@ public:
     return m_visualSettings;
   }
   ImagePainter::VisualSettings &visualSettings() { return m_visualSettings; }
+
+  // OpenToonz (drawing assistants): the 3D view matrix; identity where the
+  // viewer has none.
+  virtual TAffine4 get3dViewMatrix() const { return TAffine4(); }
 
   virtual double getPixelSize() const = 0;  //!< Returns the length of a pixel
                                             //!< in current OpenGL coordinates

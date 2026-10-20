@@ -480,6 +480,7 @@ void Preferences::definePreferenceItems() {
   // Interface
   // Ztoryc: our own dark theme (warm graphite, gold, blue selection) is the
   // default; Tahoma's Dark and the others stay selectable.
+  define(DefAssistantType, "DefAssistantType", QMetaType::QString, "");
   define(CurrentStyleSheetName, "CurrentStyleSheetName", QMetaType::QString,
          "Ztoryc");
   define(additionalStyleSheet, "additionalStyleSheet", QMetaType::QString, "");

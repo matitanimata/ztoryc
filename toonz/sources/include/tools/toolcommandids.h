@@ -32,5 +32,6 @@
 #define T_PerspectiveGrid "T_PerspectiveGrid"
 #define T_Finger "T_Finger"
 #define T_Symmetry "T_Symmetry"
+#define T_EditAssistants "T_EditAssistants"  // OpenToonz drawing assistants
 
 #endif  // TOOL_COMMAND_IDS_H

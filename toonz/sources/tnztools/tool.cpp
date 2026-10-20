@@ -185,6 +185,12 @@ TTool::TTool(std::string name)
 
 //-------------------------------------------------------------------
 
+unsigned int TTool::getToolHints() const {
+  return HintAssistants | HintAssistantsGuidelines | HintReplicators;
+}
+
+//-------------------------------------------------------------------
+
 TTool *TTool::getTool(std::string toolName, ToolTargetType targetType) {
   if (!toolTable) return 0;
   ToolTable::iterator it =
@@ -229,6 +235,8 @@ void TTool::bind(int targetType) {
         std::make_pair(std::make_pair(name, RasterImage), &theDummyTool));
     toolTable->insert(
         std::make_pair(std::make_pair(name, MeshImage), &theDummyTool));
+    toolTable->insert(  // OpenToonz drawing assistants
+        std::make_pair(std::make_pair(name, MetaImage), &theDummyTool));
 
     ToolSelector *toolSelector = new ToolSelector(name);
     CommandManager::instance()->setHandler(
@@ -244,6 +252,8 @@ void TTool::bind(int targetType) {
     (*toolTable)[std::make_pair(name, RasterImage)] = this;
   if (targetType & MeshImage)
     (*toolTable)[std::make_pair(name, MeshImage)] = this;
+  if (targetType & MetaImage)
+    (*toolTable)[std::make_pair(name, MetaImage)] = this;
 }
 
 //-----------------------------------------------------------------------------
@@ -1044,6 +1054,8 @@ QString TTool::updateEnabled(int rowIndex, int columnIndex) {
         tool = TTool::getTool(m_name, RasterImage);
       else if ((levelType == MESH_XSHLEVEL) && !(targetType & MeshImage))
         tool = TTool::getTool(m_name, MeshImage);
+      else if ((levelType == META_XSHLEVEL) && !(targetType & MetaImage))
+        tool = TTool::getTool(m_name, MetaImage);
 
       if (tool && tool != this && tool->getTargetType() != TTool::NoTarget)
         return tool->updateEnabled();
@@ -1165,6 +1177,11 @@ QString TTool::updateEnabled(int rowIndex, int columnIndex) {
         return (
             enable(false),
             QObject::tr("The current tool cannot be used on a Mesh Level."));
+
+      if ((levelType == META_XSHLEVEL) && !(targetType & MetaImage))
+        return (enable(false),
+                QObject::tr(
+                    "The current tool cannot be used on an Assistants Level."));
     }
 
     // Check against impossibly traceable movements on the column

@@ -350,6 +350,8 @@ int TApp::getCurrentImageType() {
       return TImage::VECTOR;
     case MESH_XSHLEVEL:
       return TImage::MESH;
+    case META_XSHLEVEL:  // OpenToonz drawing assistants
+      return TImage::META;
     }
   }
 

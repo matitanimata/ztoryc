@@ -46,6 +46,7 @@
 #include "tsystem.h"
 #include "tpalette.h"
 #include "tvectorimage.h"
+#include "tmetaimage.h"
 #include "trasterimage.h"
 #include "ttoonzimage.h"
 #include "timagecache.h"
@@ -209,6 +210,8 @@ LevelCreatePopup::LevelCreatePopup()
   m_levelTypeOm->addItem(tr("Raster Level"), (int)OVL_XSHLEVEL);
   m_levelTypeOm->addItem(tr("Smart Raster Level"), (int)TZP_XSHLEVEL);
   m_levelTypeOm->addItem(tr("Vector Level"), (int)PLI_XSHLEVEL);
+  // OpenToonz drawing assistants: guides edited with Edit Assistants.
+  m_levelTypeOm->addItem(tr("Assistants Level"), (int)META_XSHLEVEL);
 
   if (Preferences::instance()->getUnits() == "pixel") {
     m_widthFld->setMeasure("camera.lx");
@@ -697,6 +700,8 @@ bool LevelCreatePopup::apply() {
     TFrameId fid(i);
     if (lType == PLI_XSHLEVEL)
       sl->setFrame(fid, new TVectorImage());
+    else if (lType == META_XSHLEVEL)
+      sl->setFrame(fid, new TMetaImage());
     else if (lType == TZP_XSHLEVEL) {
       TRasterCM32P raster(xres, yres);
       raster->fill(TPixelCM32());

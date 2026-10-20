@@ -145,6 +145,7 @@ enum PreferencesItemId {
 
   //----------
   // Tools
+  DefAssistantType,  // OpenToonz drawing assistants
   // dropdownShortcutsCycleOptions, // removed
   FillOnlysavebox,
   multiLayerStylePickerEnabled,
