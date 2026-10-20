@@ -711,8 +711,16 @@ void TPanelTitleBar::paintEvent(QPaintEvent *) {
   }
 
   if (dw->getOrientation() == TDockWidget::vertical) {
+    // Ztoryc: the title stops before the first button on the right (the
+    // viewers have a row of them); a long level name ran under the icons.
+    // The middle goes, so the scene and the zoom at the ends stay readable.
+    int titleRight = rect.width() - 50;
+    for (const auto &button : m_buttons)
+      if (button.second && button.second->isVisible() &&
+          button.second->x() > rect.width() / 3)
+        titleRight = std::min(titleRight, button.second->x() - 6);
     QString titleText = painter.fontMetrics().elidedText(
-        dw->windowTitle(), Qt::ElideRight, rect.width() - 50);
+        dw->windowTitle(), Qt::ElideMiddle, std::max(0, titleRight - 8));
 
     painter.setBrush(Qt::NoBrush);
     painter.setPen(isPanelActive ? m_activeTitleColor : m_titleColor);
