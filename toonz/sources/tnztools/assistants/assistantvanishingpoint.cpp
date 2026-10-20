@@ -258,7 +258,7 @@ void TAssistantVanishingPoint::drawPerspectiveGrid(
 {
   // initial calculations
   double pixelSize = sqrt(tglGetPixelSize2());
-  double minStep = 5.0*pixelSize/TAssistantBase::gridDensity;
+  double minStep = 5.0*pixelSize;
   
   TPointD ox = grid1 - grid0;
   double lx = norm2(ox);
@@ -287,8 +287,10 @@ void TAssistantVanishingPoint::drawPerspectiveGrid(
   if (!(fabs(baseY) > TConsts::epsilon)) return;
   if (baseY < 0) { oy = -oy; baseY = -baseY; }
   double baseX = dg*ox/baseY;
-  double stepX = lx/baseY;
-  double k = stepX*4/minStep;
+  // Ztoryc: Grid Density divides each cell; k (the fading distance) stays
+  // tied to the cell, so the subdivision lines fade with the same rule
+  double k = (lx/baseY)*4/minStep;
+  double stepX = lx/baseY/std::max(1.0, TAssistantBase::gridDensity);
   double dk = 1/k;
   TAffine gridMatrix( ox.x, oy.x, center.x,
                       ox.y, oy.y, center.y );

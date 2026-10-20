@@ -216,7 +216,11 @@ void TAssistantLine::drawGrid(
   TAffine matrix = (projection*modelview).get2d();
   TAffine matrixInv = matrix.inv();
   double pixelSize = sqrt(tglGetPixelSize2());
-  double minStep = (perspective ? 2.5 : 10)*pixelSize/TAssistantBase::gridDensity;
+  double minStep = (perspective ? 2.5 : 10)*pixelSize;
+  // Ztoryc: Grid Density divides each cell (the box edge) into that many
+  // parts; in perspective the unit lines are at integer i, subdivisions at
+  // fractional i of the same projective formula.
+  double density = std::max(1.0, TAssistantBase::gridDensity);
 
   TPointD ab = b - a;
   double abLen2 = norm2(ab);
@@ -273,7 +277,7 @@ void TAssistantLine::drawGrid(
     
     if (!calcPerspectiveStep(minStepX, minX, maxX, 0, x0, x1, w, i0, i1)) return;
     double abk = 1.0/fabs(x0);
-    for(double i = i0; i < i1; i += 1) {
+    for(double i = ceil(i0*density)/density; i < i1; i += 1/density) {
       double x = 1/(i*w + 1);
       
       double curStep = fabs(w*x*x);
@@ -286,7 +290,7 @@ void TAssistantLine::drawGrid(
       drawLine(matrix, matrixInv, pixelSize, ca, cb, restrictA, restrictB, alpha*curAlpha);
     }
   } else {
-    double dx = fabs(x1 - x0);
+    double dx = fabs(x1 - x0)/density;
     if (dx < minStepX) return;
     for(double x = x0 + ceil((minX - x0)/dx)*dx; x < maxX; x += dx) {
       TPointD ca = a + ag*x;
