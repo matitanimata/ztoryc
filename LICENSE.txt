@@ -40,6 +40,24 @@ All rights reserved.
 Each contributor holds copyright over their respective contributions.
 The project versioning (Git) records all such contribution source information.
 
+- - - - - - - - - - - - - - - -
+
+OpenToonz
+
+Ztoryc includes code ported from OpenToonz (the drawing assistants) and from
+OpenAnimationLibrary/opentoonz-dev (the FLA/XFL import), under the same license.
+
+All contributions by DWANGO:
+Copyright (c) 2016 - 2026, DWANGO Co., Ltd.
+All rights reserved.
+
+All other contributions:
+Copyright (c) 2016 - 2026, the respective contributors.
+All rights reserved.
+
+Each contributor holds copyright over their respective contributions.
+The project versioning (Git) records all such contribution source information.
+
 
 LICENSE
 
