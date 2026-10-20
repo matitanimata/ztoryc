@@ -86,26 +86,6 @@ TEnv::IntVar BrushLockAlpha("InknpaintBrushLockAlpha", 0);
 TEnv::IntVar BrushSnapGrid("InknpaintBrushSnapGrid", 0);
 TEnv::IntVar BrushAssistants("InknpaintBrushAssistants", 1);
 
-// Ztoryc: one menu chooses what the stroke snaps to, the Tahoma perspective
-// grid or the OpenToonz assistants, never both (Franco, 20/10).  The two
-// flags stay the ones the code reads; the menu sets them.
-static void applyGuideSnap(const TEnumProperty &guides, TBoolProperty &grid,
-                           TBoolProperty &assistants) {
-  grid.setValue(guides.getIndex() == 1);
-  assistants.setValue(guides.getIndex() == 2);
-}
-
-static void initGuideSnap(TEnumProperty &guides) {
-  guides.addValue(L"Off");
-  guides.addValue(L"Grid");
-  guides.addValue(L"Assistants");
-  guides.setIndex(2);  // matches the flags' defaults
-}
-
-static void loadGuideSnap(TEnumProperty &guides, bool grid, bool assistants) {
-  // a Grid saved by an older build is kept
-  guides.setIndex(grid ? 1 : assistants ? 2 : 0);
-}
 TEnv::IntVar BrushPressureSensitivity("InknpaintBrushPressureSensitivity", 1);
 TEnv::PointListVar BrushPressureCurvePts("InknPaintBrushPressureCurvePts",
                                          DEFAULTPRESSURECURVE);
@@ -1054,7 +1034,7 @@ ToonzRasterBrushTool::ToonzRasterBrushTool(std::string name, int targetType)
   m_snapGrid.setId("SnapGrid");
   m_assistants.setId("Assistants");
   m_guideSnap.setId("GuideSnap");
-  initGuideSnap(m_guideSnap);
+  GuideSnap::init(m_guideSnap);
   m_preset.setId("BrushPreset");
   m_mypaintPressure.setId("PressureSensitivity");
   m_modifierLockAlpha.setId("LockAlpha");
@@ -3310,7 +3290,7 @@ bool ToonzRasterBrushTool::onPropertyChanged(std::string propertyName) {
   RasterBrushAutoCloseGap         = m_autoCloseGap.getValue();
   RasterBrushModifierSize         = m_modifierSize.getValue();
   BrushLockAlpha                  = m_modifierLockAlpha.getValue();
-  applyGuideSnap(m_guideSnap, m_snapGrid, m_assistants);
+  GuideSnap::apply(m_guideSnap, m_snapGrid, m_assistants);
   BrushSnapGrid                   = m_snapGrid.getValue();
   BrushAssistants                 = m_assistants.getValue();
   BrushPressureSensitivity        = m_sizeStylusProperty.isPressureEnabled();
@@ -3496,8 +3476,8 @@ void ToonzRasterBrushTool::loadLastBrush() {
   m_modifierLockAlpha.setValue(BrushLockAlpha ? 1 : 0);
   m_snapGrid.setValue(BrushSnapGrid ? 1 : 0);
   m_assistants.setValue(BrushAssistants ? 1 : 0);
-  loadGuideSnap(m_guideSnap, BrushSnapGrid, BrushAssistants);
-  applyGuideSnap(m_guideSnap, m_snapGrid, m_assistants);
+  GuideSnap::load(m_guideSnap, BrushSnapGrid, BrushAssistants);
+  GuideSnap::apply(m_guideSnap, m_snapGrid, m_assistants);
   m_mypaintPressure.setValue(BrushMyPaintPressureSensitivity ? 1 : 0);
   m_mypaintTilt.setValue(BrushMyPaintTiltSensitivity ? 1 : 0);
 

@@ -17,6 +17,7 @@
 #include "tools/track.h"
 
 #include "tgeometry.h"
+#include "tproperty.h"
 
 #include <memory>
 #include <vector>
@@ -53,5 +54,30 @@ public:
 private:
   TAffine trackToScreen() const;
 };
+
+// One menu chooses what a brush stroke snaps to, the Tahoma perspective grid
+// or the OpenToonz assistants, never both (Franco, 20/10).  The two flags
+// stay the ones the brush code reads; the menu sets them.
+namespace GuideSnap {
+
+inline void init(TEnumProperty &guides) {
+  guides.addValue(L"Off");
+  guides.addValue(L"Grid");
+  guides.addValue(L"Assistants");
+  guides.setIndex(2);  // matches the flags' defaults
+}
+
+inline void apply(const TEnumProperty &guides, TBoolProperty &grid,
+                  TBoolProperty &assistants) {
+  grid.setValue(guides.getIndex() == 1);
+  assistants.setValue(guides.getIndex() == 2);
+}
+
+// a Grid saved by an older build is kept
+inline void load(TEnumProperty &guides, bool grid, bool assistants) {
+  guides.setIndex(grid ? 1 : assistants ? 2 : 0);
+}
+
+}  // namespace GuideSnap
 
 #endif

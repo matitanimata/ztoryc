@@ -93,26 +93,6 @@ TEnv::StringVar V_VectorBrushPreset("VectorBrushPreset", "<custom>");
 TEnv::IntVar V_VectorBrushSnapGrid("VectorBrushSnapGrid", 0);
 TEnv::IntVar V_VectorBrushAssistants("VectorBrushAssistants", 1);
 
-// Ztoryc: one menu chooses what the stroke snaps to, the Tahoma perspective
-// grid or the OpenToonz assistants, never both (Franco, 20/10).  The two
-// flags stay the ones the code reads; the menu sets them.
-static void applyGuideSnap(const TEnumProperty &guides, TBoolProperty &grid,
-                           TBoolProperty &assistants) {
-  grid.setValue(guides.getIndex() == 1);
-  assistants.setValue(guides.getIndex() == 2);
-}
-
-static void initGuideSnap(TEnumProperty &guides) {
-  guides.addValue(L"Off");
-  guides.addValue(L"Grid");
-  guides.addValue(L"Assistants");
-  guides.setIndex(2);  // matches the flags' defaults
-}
-
-static void loadGuideSnap(TEnumProperty &guides, bool grid, bool assistants) {
-  // a Grid saved by an older build is kept
-  guides.setIndex(grid ? 1 : assistants ? 2 : 0);
-}
 TEnv::IntVar V_BrushPressureSensitivity("VectorPressureSensitivity", 1);
 TEnv::PointListVar V_BrushPressureCurvePts("VectorPressureCurvePts",
                                            DEFAULTPRESSURECURVE);
@@ -780,7 +760,7 @@ ToonzVectorBrushTool::ToonzVectorBrushTool(std::string name, int targetType)
   m_snapGrid.setId("SnapGrid");
   m_assistants.setId("Assistants");
   m_guideSnap.setId("GuideSnap");
-  initGuideSnap(m_guideSnap);
+  GuideSnap::init(m_guideSnap);
   m_sizeStylusProperty.setId("SizeStylusConfig");
 
   m_frameRange.addValue(L"Off");
@@ -2509,7 +2489,7 @@ bool ToonzVectorBrushTool::onPropertyChanged(std::string propertyName) {
   V_VectorBrushSnap            = m_snap.getValue();
   int snapSensitivityIndex     = m_snapSensitivity.getIndex();
   V_VectorBrushSnapSensitivity = snapSensitivityIndex;
-  applyGuideSnap(m_guideSnap, m_snapGrid, m_assistants);
+  GuideSnap::apply(m_guideSnap, m_snapGrid, m_assistants);
   V_VectorBrushSnapGrid        = m_snapGrid.getValue();
   V_VectorBrushAssistants      = m_assistants.getValue();
 
@@ -2676,8 +2656,8 @@ void ToonzVectorBrushTool::loadLastBrush() {
   m_autoCloseGap.setValue(V_VectorBrushAutoCloseGap);
   m_snapGrid.setValue(V_VectorBrushSnapGrid);
   m_assistants.setValue(V_VectorBrushAssistants);
-  loadGuideSnap(m_guideSnap, V_VectorBrushSnapGrid, V_VectorBrushAssistants);
-  applyGuideSnap(m_guideSnap, m_snapGrid, m_assistants);
+  GuideSnap::load(m_guideSnap, V_VectorBrushSnapGrid, V_VectorBrushAssistants);
+  GuideSnap::apply(m_guideSnap, m_snapGrid, m_assistants);
 
   // Recalculate based on prior values
   m_minThick = m_thickness.getValue().first;

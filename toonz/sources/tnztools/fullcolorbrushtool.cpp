@@ -90,6 +90,7 @@ TEnv::IntVar FullcolorModifierLockAlpha("FullcolorModifierLockAlpha", 0);
 TEnv::IntVar FullcolorModifierPaintBehind("FullcolorModifierPaintBehind", 0);
 TEnv::StringVar FullcolorBrushPreset("FullcolorBrushPreset", "<custom>");
 TEnv::IntVar FullcolorBrushSnapGrid("FullcolorBrushSnapGrid", 0);
+TEnv::IntVar FullcolorBrushAssistants("FullcolorBrushAssistants", 1);
 TEnv::IntVar FullcolorPressureSensitivity("FullcolorPressureSensitivity", 1);
 TEnv::PointListVar FullcolorPressureCurvePts("FullcolorPressureCurvePts",
                                              DEFAULTPRESSURECURVE);
@@ -306,6 +307,8 @@ FullColorBrushTool::FullColorBrushTool(std::string name)
     , m_presetsLoaded(false)
     , m_firstTime(true)
     , m_snapGrid("Grid", false)
+    , m_assistants("Assistants", true)
+    , m_guideSnap("Guides:")
     , m_mypaintTilt("ModifierTilt", false)
     , m_autoFill("Auto Fill", false)
     , m_autoFillStyle("Fill Style:")
@@ -345,7 +348,7 @@ FullColorBrushTool::FullColorBrushTool(std::string name)
   m_prop.bind(m_modifierLockAlpha);
   m_prop.bind(m_mypaintPressure);
   m_prop.bind(m_mypaintTilt);
-  m_prop.bind(m_snapGrid);
+  m_prop.bind(m_guideSnap);
   m_prop.bind(m_autoFill);
   m_prop.bind(m_autoFillStyle);
   m_prop.bind(m_autoFillDepth);
@@ -363,6 +366,8 @@ FullColorBrushTool::FullColorBrushTool(std::string name)
   m_modifierPaintBehind.setId("PaintBehind");
   m_modifierLockAlpha.setId("LockAlpha");
   m_snapGrid.setId("SnapGrid");
+  m_guideSnap.setId("GuideSnap");
+  GuideSnap::init(m_guideSnap);
   m_mypaintPressure.setId("PressureSensitivity");
   m_mypaintTilt.setId("TiltSensitivity");
   m_sizeStylusProperty.setId("SizeStylusConfig");
@@ -408,6 +413,7 @@ void FullColorBrushTool::updateTranslation() {
   m_modifierLockAlpha.setQStringName(tr("Lock Alpha"));
   m_modifierPaintBehind.setQStringName(tr("Paint Behind"));
   m_snapGrid.setQStringName(tr("Grid"));
+  m_guideSnap.setQStringName(tr("Guides:"));
   m_autoFill.setQStringName(tr("Auto Fill"));
   m_autoFillDepth.setQStringName(tr("Fill Depth"));
   m_autoFillStyle.setQStringName(tr("Fill Style:"));
@@ -602,6 +608,13 @@ void FullColorBrushTool::leftButtonDown(const TPointD &pos,
     m_firstPoint = pos;
     m_lastPoint  = pos;
   }
+
+  // the guidelines pass through the first point: it is painted as it is
+  m_assistPainted = 1;
+  if (!m_isStraight && m_assistants.getValue())
+    m_assistantSnap.begin(this, TThickPoint(pos, 0));
+  else
+    m_assistantSnap.end();
 
   /* update color here since the current style might be switched with numpad
    * shortcut keys */
@@ -812,7 +825,9 @@ void FullColorBrushTool::leftButtonDrag(const TPointD &pos,
   m_lastPoint    = pos;
   TPointD usePos = pos;
 
-  if (e.isAltPressed() || m_snapGrid.getValue()) {
+  // an assistant guideline under the stroke wins over the Tahoma grid
+  if (e.isAltPressed() ||
+      (m_snapGrid.getValue() && !m_assistantSnap.isActive())) {
     double distance = (m_brushPos.x - m_maxCursorThick + 1) * 0.5;
     TRectD brushRect =
         TRectD(TPointD(m_brushPos.x - distance, m_brushPos.y - distance),
@@ -977,6 +992,36 @@ void FullColorBrushTool::leftButtonDrag(const TPointD &pos,
     return;
   }
 
+  if (m_assistantSnap.isActive()) {
+    // Paint is final: while the gesture has not chosen its guideline yet the
+    // points wait, then they are painted all at once on the chosen one.
+    m_assistantSnap.add(TThickPoint(usePos, 0));
+    if (m_assistantSnap.isLocked()) paintPendingAssistedPoints(pos, e);
+    m_brushPos = m_mousePos = pos;
+    invalidate();  // the guidelines cross the whole viewer
+    return;
+  }
+
+  paintDragPoint(usePos, pos, e, invalidateRect);
+}
+
+//---------------------------------------------------------------------------------------------------------------
+
+void FullColorBrushTool::paintPendingAssistedPoints(const TPointD &pos,
+                                                    const TMouseEvent &e) {
+  const std::vector<TThickPoint> &raw = m_assistantSnap.rawPoints();
+  for (; m_assistPainted < raw.size(); ++m_assistPainted) {
+    TThickPoint p = m_assistantSnap.transform(raw[m_assistPainted]);
+    paintDragPoint(TPointD(p.x, p.y), pos, e, TRectD());
+  }
+}
+
+//---------------------------------------------------------------------------------------------------------------
+
+void FullColorBrushTool::paintDragPoint(const TPointD &usePos,
+                                        const TPointD &pos,
+                                        const TMouseEvent &e,
+                                        TRectD invalidateRect) {
   TPointD previousBrushPos = m_brushPos;
   m_brushPos = m_mousePos = pos;
   m_mouseEvent            = e;
@@ -1172,16 +1217,28 @@ void FullColorBrushTool::leftButtonUp(const TPointD &pos,
 
   m_enabled = false;
 
+  TPointD endPos      = pos;
+  bool assistedStroke = m_assistantSnap.isActive();
+  if (assistedStroke) {
+    // a stroke too short to choose: painted on the best guess
+    paintPendingAssistedPoints(pos, e);
+    TThickPoint p = m_assistantSnap.transform(TThickPoint(pos, 0));
+    endPos        = TPointD(p.x, p.y);
+    m_assistantSnap.end();
+    invalidate();
+  }
+
   TRasterImageP ri = (TRasterImageP)getImage(true);
   if (!ri) return;
 
   TRasterP ras      = ri->getRaster();
   TPointD rasCenter = ras->getCenterD();
   TPointD point;
-  if (e.isCtrlPressed() || m_snapGrid.getValue() || e.isAltPressed())
+  if (!assistedStroke &&
+      (e.isCtrlPressed() || m_snapGrid.getValue() || e.isAltPressed()))
     point = TPointD(m_lastPoint + rasCenter);
   else
-    point = TPointD(pos + rasCenter);
+    point = TPointD(endPos + rasCenter);
 
   // Clicked with no movement. Make it look like it moved
   if (m_strokeRect.isEmpty()) point += TPointD(1, 1);
@@ -1575,6 +1632,13 @@ void FullColorBrushTool::draw() {
       tglColor(TPixel32::Red);
       tglDrawSegment(m_firstPoint, m_lastPoint);
     }
+
+    // assistants: the guidelines of the stroke, or the ones under the cursor
+    if (m_assistantSnap.isActive())
+      m_assistantSnap.drawGuidelines();
+    else if (m_assistants.getValue() && !m_enabled)
+      AssistantStrokeSnap::drawHoverGuidelines(this, m_mousePos);
+
     // If toggled off, don't draw brush outline
     if (!Preferences::instance()->isCursorOutlineEnabled()) return;
 
@@ -1770,7 +1834,9 @@ bool FullColorBrushTool::onPropertyChanged(std::string propertyName) {
   FullcolorModifierEraser       = m_modifierEraser.getValue() ? 1 : 0;
   FullcolorModifierLockAlpha    = m_modifierLockAlpha.getValue() ? 1 : 0;
   FullcolorModifierPaintBehind  = m_modifierPaintBehind.getValue() ? 1 : 0;
+  GuideSnap::apply(m_guideSnap, m_snapGrid, m_assistants);
   FullcolorBrushSnapGrid        = m_snapGrid.getValue() ? 1 : 0;
+  FullcolorBrushAssistants      = m_assistants.getValue() ? 1 : 0;
   FullcolorPressureSensitivity  = m_sizeStylusProperty.isPressureEnabled();
   FullcolorPressureCurvePts     = m_sizeStylusProperty.getPressureCurve();
   FullcolorTiltSensitivity      = m_sizeStylusProperty.isTiltEnabled();
@@ -1948,6 +2014,9 @@ void FullColorBrushTool::loadLastBrush() {
   m_modifierLockAlpha.setValue(FullcolorModifierLockAlpha ? true : false);
   m_modifierPaintBehind.setValue(FullcolorModifierPaintBehind ? true : false);
   m_snapGrid.setValue(FullcolorBrushSnapGrid ? true : false);
+  m_assistants.setValue(FullcolorBrushAssistants ? true : false);
+  GuideSnap::load(m_guideSnap, FullcolorBrushSnapGrid, FullcolorBrushAssistants);
+  GuideSnap::apply(m_guideSnap, m_snapGrid, m_assistants);
   m_mypaintPressure.setValue(FullcolorMyPaintPressureSensitivity ? 1 : 0);
   m_mypaintTilt.setValue(FullcolorMyPaintTiltSensitivity ? 1 : 0);
 
