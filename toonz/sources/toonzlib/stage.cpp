@@ -742,6 +742,19 @@ void StageBuilder::addCellWithOnionSkin(PlayerSet &players, ToonzScene *scene,
 
 //-----------------------------------------------------------------------------
 
+// Ztoryc: masks and folders.  A mask inside a folder clips that folder
+// (scope 1); a Flash mask with a scope keeps clipping by count.
+namespace {
+int innermostFolder(TXshColumn *column) {
+  QStack<int> folders = column->getFolderIdStack();
+  return folders.isEmpty() ? 0 : folders.top();
+}
+bool isFolderMask(TXshColumn *column) {
+  return column->isMask() && column->isInFolder() &&
+         column->getMaskScope() == 1;
+}
+}  // namespace
+
 void StageBuilder::addFrame(PlayerSet &players, ToonzScene *scene, TXsheet *xsh,
                             int row, int level, bool includeUnvisible,
                             bool checkPreviewVisibility, int subSheetColIndex) {
@@ -814,10 +827,24 @@ void StageBuilder::addFrame(PlayerSet &players, ToonzScene *scene, TXsheet *xsh,
       if (column->isCamstandVisible() ||
           includeUnvisible)  // se l'"occhietto" non e' chiuso
       {
-        // scan ahead for masks.  A mask clips the getMaskScope() columns on
-        // its left: 1, Tahoma's rule, is the column right before it (or
-        // before the masks stacked after it); a Flash mask layer clips more.
-        // With every scope at 1 this is the original scan, break for break.
+        auto useMask = [&](int x) {
+          isMask = true;
+          std::vector<int> saveMasks;
+          saveMasks.swap(m_masks);
+          int maskIndex   = m_maskPool.size();
+          PlayerSet *mask = new PlayerSet();
+          m_maskPool.push_back(mask);
+          addCellWithOnionSkin(*mask, scene, xsh, row, x, level, true, false, -1);
+          std::stable_sort(mask->begin(), mask->end(), PlayerLt());
+          saveMasks.swap(m_masks);
+          m_masks.insert(m_masks.begin(), maskIndex);
+        };
+
+        // scan ahead for masks.  Tahoma's rule: the masks right after a
+        // column clip it.  A mask inside a folder clips its folder instead
+        // (below).  A Flash mask (scope > 1) clips the getMaskScope() columns
+        // on its left.  With no folder masks and every scope at 1 this is
+        // the original scan, break for break.
         int contentPassed = 0;
         for (int x = c + 1; x < columnCount; x++) {
           TXshColumn *maskCol = xsh->getColumn(x);
@@ -834,19 +861,25 @@ void StageBuilder::addFrame(PlayerSet &players, ToonzScene *scene, TXsheet *xsh,
             if (++contentPassed >= maxMaskScope) break;
             continue;
           }
+          if (isFolderMask(maskCol)) continue;
           if (!usable || contentPassed >= maskCol->getMaskScope()) continue;
-
-          isMask = true;
-          std::vector<int> saveMasks;
-          saveMasks.swap(m_masks);
-          int maskIndex   = m_maskPool.size();
-          PlayerSet *mask = new PlayerSet();
-          m_maskPool.push_back(mask);
-          addCellWithOnionSkin(*mask, scene, xsh, row, x, level, true, false, -1);
-          std::stable_sort(mask->begin(), mask->end(), PlayerLt());
-          saveMasks.swap(m_masks);
-          m_masks.insert(m_masks.begin(), maskIndex);
+          useMask(x);
         }
+
+        // Ztoryc: a mask inside a folder clips every other column of that
+        // folder, subfolders included, wherever they stand.
+        if (column->isInFolder())
+          for (int x = 0; x < columnCount; x++) {
+            TXshColumn *maskCol = xsh->getColumn(x);
+            if (x == c || !maskCol || !isFolderMask(maskCol) ||
+                !column->isContainedInFolder(innermostFolder(maskCol)))
+              continue;
+            if (maskCol->isCellEmpty(row) ||
+                xsh->getCell(row, x).getFrameId().isStopFrame() ||
+                !maskCol->isCamstandVisible())
+              continue;
+            useMask(x);
+          }
 
         addCellWithOnionSkin(players, scene, xsh, row, c, level, false,
                              isAlphaLocked, lockedAlphaColIndex,

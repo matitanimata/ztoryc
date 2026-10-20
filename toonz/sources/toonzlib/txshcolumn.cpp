@@ -933,6 +933,18 @@ void TXshColumn::setInvertedMask(bool on) {
 
 //-----------------------------------------------------------------------------
 
+// Ztoryc: masks and folders (see StageBuilder::addFrame).
+namespace {
+int innermostFolder(TXshColumn *column) {
+  QStack<int> folders = column->getFolderIdStack();
+  return folders.isEmpty() ? 0 : folders.top();
+}
+bool isFolderMask(TXshColumn *column) {
+  return column->isMask() && column->isInFolder() &&
+         column->getMaskScope() == 1;
+}
+}  // namespace
+
 std::vector<TXshColumn *> TXshColumn::getColumnMasks(int frame) {
   std::vector<TXshColumn *> masks;
 
@@ -965,7 +977,8 @@ std::vector<TXshColumn *> TXshColumn::getColumnMasks(int frame) {
     if (!masks.size()) return masks;
   }
 
-  // A mask clips the getMaskScope() columns on its left (1 = Tahoma's rule);
+  // A mask clips the column right before it (Tahoma's rule), or its folder
+  // when it is inside one, or the getMaskScope() columns on its left (Flash);
   // same scan as StageBuilder::addFrame, so render and viewer agree.  With
   // every scope at 1 this is the original loop, break for break.
   int maxMaskScope = 1;
@@ -990,9 +1003,24 @@ std::vector<TXshColumn *> TXshColumn::getColumnMasks(int frame) {
       if (contentPassed == 0) break;
       continue;
     }
+    if (isFolderMask(mcol)) continue;  // it clips its folder (below)
     if (contentPassed >= mcol->getMaskScope()) continue;
     masks.insert(masks.begin(), mcol);
   }
+
+  // Ztoryc: a mask inside a folder clips every other column of that folder,
+  // subfolders included (same rule as StageBuilder::addFrame).
+  if (isInFolder() && !isMask())
+    for (int i = 0; i < xsh->getColumnCount(); i++) {
+      TXshColumn *mcol = xsh->getColumn(i);
+      if (i == m_index || !mcol || !isFolderMask(mcol) ||
+          !isContainedInFolder(innermostFolder(mcol)) ||
+          !mcol->isPreviewVisible())
+        continue;
+      TXshCell cell = xsh->getCell(frame, i);
+      if (cell.isEmpty() || cell.getFrameId().isStopFrame()) continue;
+      masks.insert(masks.begin(), mcol);
+    }
 
   return masks;
 }
