@@ -3,6 +3,8 @@
 #include "iocommand.h"
 #include "menubarcommandids.h"
 #include "tapp.h"
+#include "toonz/toonzscene.h"
+#include "toonz/tscenehandle.h"
 #include "texception.h"
 #include "toonz/tproject.h"
 #include "toonzqt/filefield.h"
@@ -347,18 +349,38 @@ QString FlashImportPopup::destinationProblem() const {
   return QString();
 }
 
+// The project's extras folder for the current scene, created if missing;
+// empty when there is no scene or it cannot be made.
+QString FlashImportPopup::extrasFolder() const {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return QString();
+  const TFilePath fp = scene->decodeFilePath(TFilePath("+extras"));
+  if (fp.isEmpty() || fp.getQString().startsWith("+")) return QString();
+  QDir dir;
+  if (!dir.mkpath(fp.getQString())) return QString();
+  return fp.getQString();
+}
+
 void FlashImportPopup::sourceChanged() {
   if (m_busy) return;
   const QString path = sourcePath();
   if (!path.isEmpty() && QFileInfo::exists(path)) {
     const QFileInfo info(path);
     if (m_destination->getPath().isEmpty()) {
-      QDir parent = info.dir();
-      if (!info.isDir() &&
-          (info.suffix().compare("xfl", Qt::CaseInsensitive) == 0 ||
-           info.fileName() == "DOMDocument.xml"))
-        parent.cdUp();
-      m_destination->setPath(parent.absolutePath());
+      // Ztoryc: the bundle goes in the project's extras (+extras, through
+      // the current scene, so per-scene subfolders are honoured) — not next
+      // to the source document (Franco, 2026-10-20).
+      const QString extras = extrasFolder();
+      if (!extras.isEmpty())
+        m_destination->setPath(extras);
+      else {
+        QDir parent = info.dir();
+        if (!info.isDir() &&
+            (info.suffix().compare("xfl", Qt::CaseInsensitive) == 0 ||
+             info.fileName() == "DOMDocument.xml"))
+          parent.cdUp();
+        m_destination->setPath(parent.absolutePath());
+      }
     }
     if (m_folderName->text().isEmpty())
       m_folderName->setText(suggestedFolder(path));
@@ -602,7 +624,14 @@ void FlashImportPopup::importSource() {
   bool opened = false;
   QString openingError;
   try {
-    opened = IoCmd::loadScene(result.scenePath, true, true, true);
+    // Ztoryc: into the scene you are working in, as a sub-scene (File >
+    // Load As Sub-Scene), instead of replacing it (Franco, 2026-10-20). With
+    // no scene open, it opens as a scene as before.
+    ToonzScene *current = TApp::instance()->getCurrentScene()->getScene();
+    if (current)
+      opened = IoCmd::loadSubScene(result.scenePath);
+    else
+      opened = IoCmd::loadScene(result.scenePath, true, true, true);
   } catch (const TException &error) {
     openingError = QString::fromStdWString(error.getMessage());
   } catch (const std::exception &error) {

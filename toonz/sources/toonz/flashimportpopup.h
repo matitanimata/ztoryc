@@ -54,6 +54,7 @@ protected:
 private:
   QString sourcePath() const;
   QString destinationPath() const;
+  QString extrasFolder() const;  // Ztoryc: default destination
   QString destinationProblem() const;
   void sourceChanged();
   void invalidateInspection();
