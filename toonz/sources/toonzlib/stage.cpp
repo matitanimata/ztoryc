@@ -438,7 +438,7 @@ void StageBuilder::addCell(PlayerSet &players, ToonzScene *scene, TXsheet *xsh,
     player.m_isCurrentColumn     = isCurrent;
     player.m_ancestorColumnIndex = m_ancestorColumnIndex;
     player.m_masks               = m_masks;
-    player.m_opacity             = column->getOpacity();
+    player.m_opacity             = column->getOpacityAt(row);
     player.m_filterColor =
         scene->getProperties()->getColorFilterColor(column->getColorFilterId());
     player.m_isMask              = isMask;
@@ -545,10 +545,13 @@ void StageBuilder::addCell(PlayerSet &players, ToonzScene *scene, TXsheet *xsh,
     double childCameraZ       = childCamera->getZ(childRow);
 
     std::vector<UCHAR> originalOpacity(childXsheet->getColumnCount());
+    const int parentOpacity = column->getOpacityAt(row);
 
     for (int c = 0; c < childXsheet->getColumnCount(); c++) {
       originalOpacity[c] = childXsheet->getColumn(c)->getOpacity();
-      childXsheet->getColumn(c)->setOpacity(column->getOpacity());
+      // A nested column keeps its own transparency within its parent's.
+      childXsheet->getColumn(c)->setOpacity(
+          UCHAR(int(originalOpacity[c]) * parentOpacity / 255));
     }
 
     SubXSheet subXSheet;
@@ -838,6 +841,8 @@ void StageBuilder::addFrame(PlayerSet &players, ToonzScene *scene, TXsheet *xsh,
       while (m_masks.size() > maskCount) m_masks.pop_back();
     }
   }
+  // Ztoryc: OpenToonz-dev PR #267's mask scope is not ported — Tahoma's
+  // masks follow the column they clip and are popped per column above.
   if (level == 0) std::stable_sort(players.begin(), players.end(), PlayerLt());
 }
 

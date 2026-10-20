@@ -449,6 +449,7 @@ void resetColumns(
 // it.
 TXshChildLevel *cloneChildLevel(TXshChildLevel *cl) {
   TXshChildLevel *newLevel = new TXshChildLevel(cl->getName());
+  if (!cl->flashNativeId().isEmpty()) newLevel->ensureFlashNativeId();
   newLevel->setScene(cl->getScene());
 
   TXsheet *childXsh = cl->getXsheet(), *newChildXsh = newLevel->getXsheet();
@@ -466,6 +467,7 @@ TXshChildLevel *cloneChildLevel(TXshChildLevel *cl) {
 
   cloneNotColumnLinkedFxsAndOutputsFx(childXsh, newChildXsh);
   cloneXsheetTStageObjectTree(childXsh, newChildXsh);
+  newChildXsh->cloneFlashFrameLabelsFrom(*childXsh);
 
   return newLevel;
 }
@@ -1562,6 +1564,8 @@ void ColumnCmd::cloneChild(int index) {
   ToonzScene *scene      = TApp::instance()->getCurrentScene()->getScene();
   ChildStack *childStack = scene->getChildStack();
   TXshChildLevel *newChildLevel = childStack->createChild(0, newColumnIndex);
+  if (!childLevel->flashNativeId().isEmpty())
+    newChildLevel->ensureFlashNativeId();
   TXsheet *newChildXsh          = newChildLevel->getXsheet();
 
   // copy columns.
@@ -1579,6 +1583,7 @@ void ColumnCmd::cloneChild(int index) {
 
   cloneNotColumnLinkedFxsAndOutputsFx(childXsh, newChildXsh, &fxTable);
   cloneXsheetTStageObjectTree(childXsh, newChildXsh);
+  newChildXsh->cloneFlashFrameLabelsFrom(*childXsh);
   /*--以下は、Clone SubXsheet
   するときに、SubXsheet内にある子SubXsheetをクローンする関数
   クローンされた中にある子SubXsheetは、同じもので良いので、スキップする --*/

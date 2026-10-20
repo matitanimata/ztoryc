@@ -2456,6 +2456,8 @@ void MainWindow::defineActions() {
       MI_ImportOCA,
       QT_TRANSLATE_NOOP("MainWindow", "Import Open Cel Animation (OCA)"), "",
       "import_oca");
+  createMenuFileAction(MI_ImportFlash,
+                       QT_TR_NOOP("Import Flash / Adobe Animate..."), "");
   createMenuFileAction(
       MI_ExportTvpJson,
       QT_TRANSLATE_NOOP("MainWindow", "Export TVPaint JSON File"), "",
@@ -3162,6 +3164,8 @@ void MainWindow::defineActions() {
                           "Ctrl+`", "toggle_fullscreen");
   createMenuWindowsAction(MI_StartupPopup, QT_TR_NOOP("&Startup Popup..."),
                           "Alt+S", "tahoma2d");
+  createMenuWindowsAction(MI_OpenFlashInstancePanel,
+                          QT_TR_NOOP("Flash Instance"), "", "");
   createMenuWindowsAction(MI_OpenGuidedDrawingControls,
                           QT_TR_NOOP("Guided Tweening Controls"), "",
                           "guided_drawing");

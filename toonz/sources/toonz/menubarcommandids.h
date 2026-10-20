@@ -529,6 +529,7 @@
 #define MI_ExportXDTS "MI_ExportXDTS"
 #define MI_ExportOCA "MI_ExportOCA"
 #define MI_ImportOCA "MI_ImportOCA"
+#define MI_ImportFlash "MI_ImportFlash"
 #define MI_ExportTvpJson "MI_ExportTvpJson"
 #define MI_ExportXsheetPDF "MI_ExportXsheetPDF"
 #define MI_ExportCameraTrack "MI_ExportCameraTrack"
@@ -565,6 +566,7 @@
 #define MI_CurrentDrawingOnTop "MI_CurrentDrawingOnTop"
 
 #define MI_OpenAlignmentPanel "MI_OpenAlignmentPanel"
+#define MI_OpenFlashInstancePanel "MI_OpenFlashInstancePanel"
 
 #define MI_NewFolder "MI_NewFolder"
 #define MI_NewPegbar "MI_NewPegbar"

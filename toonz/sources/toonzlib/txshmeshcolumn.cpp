@@ -50,6 +50,7 @@ TXshColumn *TXshMeshColumn::clone() const {
 
   column->setStatusWord(getStatusWord());
   column->setOpacity(getOpacity());
+  column->getOpacityCurve()->copy(getOpacityCurve());
   column->m_cells = m_cells;
   column->m_first = m_first;
   column->setColorTag(getColorTag());

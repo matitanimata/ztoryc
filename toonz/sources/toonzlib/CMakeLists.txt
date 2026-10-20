@@ -36,6 +36,20 @@ set(MOC_HEADERS
 
 set(HEADERS
     ${MOC_HEADERS}
+    flashvector.h
+    flashtext.h
+    flashbitmap.h
+    flashscene.h
+    flasheffects.h
+    flashpreflight.h
+    flashimport.h
+    flashbundle.h
+    flashprovenance.h
+    flashhandoff.h
+    flashfieldbindings.h
+    flashloadingrange.h
+    ../include/toonz/flashinstance.h
+    ../include/toonz/flashinstanceedit.h
     autoadjust.h
     autopos.h
     cleanupcommon.h
@@ -184,6 +198,19 @@ set(SOURCES
     dpiscale.cpp
     fill.cpp
     fillutil.cpp
+    flashvector.cpp
+    flashtext.cpp
+    flashbitmap.cpp
+    flashscene.cpp
+    flasheffects.cpp
+    flashpreflight.cpp
+    flashimport.cpp
+    flashfieldbindings.cpp
+    flashbundle.cpp
+    flashprovenance.cpp
+    flashhandoff.cpp
+    flashinstance.cpp
+    flashinstanceedit.cpp
     fullcolorpalette.cpp
     fxdag.cpp
     glrasterpainter.cpp
@@ -347,6 +374,8 @@ endif()
 qt5_wrap_cpp(SOURCES ${MOC_HEADERS})
 
 add_library(toonzlib SHARED ${HEADERS} ${SOURCES})
+# FLA/XFL import (OpenToonz-dev PR #267): the Flash document reader.
+target_link_libraries(toonzlib tnzflash)
 if(BUILD_ENV_APPLE)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-install_name,@executable_path/libtoonzlib.dylib")
     add_dependencies(toonzlib tnzcore tnzbase tnzext)

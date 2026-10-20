@@ -139,7 +139,11 @@ set(MOC_HEADERS
     ztoryscriptpanel.h
     ztorystartup.h
     trackerpopup.h
-	vectorguideddrawingpane.h
+    alignmentpane.h
+    flashinstancecontrols.h
+    flashinstancepane.h
+    flashimportpopup.h
+    vectorguideddrawingpane.h
     vectorizerpopup.h
     vectorizerswatch.h
     versioncontrol.h
@@ -372,6 +376,10 @@ set(SOURCES
     kis_tablet_support_win8.cpp
     timestretchpopup.cpp
     trackerpopup.cpp
+    alignmentpane.cpp
+    flashinstancecontrols.cpp
+    flashinstancepane.cpp
+    flashimportpopup.cpp
     vectorguideddrawingpane.cpp
     vectorizerpopup.cpp
     vectorizerswatch.cpp
