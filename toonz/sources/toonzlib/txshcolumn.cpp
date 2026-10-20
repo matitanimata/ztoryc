@@ -965,15 +965,32 @@ std::vector<TXshColumn *> TXshColumn::getColumnMasks(int frame) {
     if (!masks.size()) return masks;
   }
 
+  // A mask clips the getMaskScope() columns on its left (1 = Tahoma's rule);
+  // same scan as StageBuilder::addFrame, so render and viewer agree.  With
+  // every scope at 1 this is the original loop, break for break.
+  int maxMaskScope = 1;
+  for (int i = 0; i < xsh->getColumnCount(); i++)
+    if (TXshColumn *col = xsh->getColumn(i))
+      if (col->isMask()) maxMaskScope = std::max(maxMaskScope, col->getMaskScope());
+  int contentPassed = 0;
   for (int i = m_index + 1; i < xsh->getColumnCount(); i++) {
     TXshColumn *mcol = xsh->getColumn(i);
-
-    if (!mcol || mcol->isEmpty()) break;
+    if (!mcol) break;
+    TXshCell cell      = xsh->getCell(frame, i);
+    const bool usable  = !mcol->isEmpty() && mcol->isPreviewVisible() &&
+                        !cell.isEmpty() && !cell.getFrameId().isStopFrame();
+    if (mcol->isEmpty() && contentPassed == 0) break;
     if (mcol->getColumnType() == TXshColumn::eMeshType)
       continue;  // ignore mesh levels
-    if (!mcol->isMask() || !mcol->isPreviewVisible()) break;
-    TXshCell cell = xsh->getCell(frame, i);
-    if (cell.isEmpty() || cell.getFrameId().isStopFrame()) break;
+    if (!mcol->isMask()) {
+      if (++contentPassed >= maxMaskScope) break;
+      continue;
+    }
+    if (!usable) {
+      if (contentPassed == 0) break;
+      continue;
+    }
+    if (contentPassed >= mcol->getMaskScope()) continue;
     masks.insert(masks.begin(), mcol);
   }
 
