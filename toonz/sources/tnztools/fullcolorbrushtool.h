@@ -6,6 +6,8 @@
 #include <ctime>
 
 #include "toonzrasterbrushtool.h"
+#include "assistantstrokesnap.h"
+#include "replicamap.h"
 #include "mypainttoonzbrush.h"
 #include "toonz/mypaintbrushstyle.h"
 #include <QElapsedTimer>
@@ -39,6 +41,15 @@ public:
   FullColorBrushTool(std::string name);
 
   ToolType getToolType() const override { return TTool::LevelWriteTool; }
+  // The guidelines through the pointer are drawn by the brush itself, with
+  // a whole-viewer refresh (see ToonzRasterBrushTool).
+  unsigned int getToolHints() const override {
+    return GuideSnap::hints(m_guideSnap,
+                            TTool::getToolHints() & ~HintAssistantsGuidelines);
+  }
+  void paintDragPoint(const TPointD &usePos, const TPointD &pos,
+                      const TMouseEvent &e, TRectD invalidateRect);
+  void paintPendingAssistedPoints(const TPointD &pos, const TMouseEvent &e);
 
   ToolOptionsBox *createOptionsBox() override;
 
@@ -107,6 +118,8 @@ protected:
   TBoolProperty m_modifierPaintBehind;
   TEnumProperty m_preset;
   TBoolProperty m_snapGrid;
+  TBoolProperty m_assistants;
+  TEnumProperty m_guideSnap;
   TBoolProperty m_mypaintTilt;
   TBoolProperty m_autoFill;
   // Auto Fill "Fill Depth": the Fill tool's FullColorMinFillDepth, shown here
@@ -132,6 +145,8 @@ protected:
   TRect m_strokeRect, m_strokeSegmentRect, m_lastRect;
 
   SmoothStroke m_smoothStroke;
+  AssistantStrokeSnap m_assistantSnap;
+  size_t m_assistPainted = 0;  // raw points of m_assistantSnap already painted
 
   MyPaintToonzBrush *m_toonz_brush;
   QElapsedTimer m_brushTimer;

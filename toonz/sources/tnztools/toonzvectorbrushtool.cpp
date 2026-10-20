@@ -91,6 +91,8 @@ TEnv::DoubleVar V_VectorBrushAutoCloseGap("VectorBrushAutoCloseGap",
 TEnv::IntVar V_VectorBrushAutoGroup("VectorBrushAutoGroup", 0);
 TEnv::StringVar V_VectorBrushPreset("VectorBrushPreset", "<custom>");
 TEnv::IntVar V_VectorBrushSnapGrid("VectorBrushSnapGrid", 0);
+TEnv::IntVar V_VectorBrushAssistants("VectorBrushAssistants", 1);
+
 TEnv::IntVar V_BrushPressureSensitivity("VectorPressureSensitivity", 1);
 TEnv::PointListVar V_BrushPressureCurvePts("VectorPressureCurvePts",
                                            DEFAULTPRESSURECURVE);
@@ -708,6 +710,8 @@ ToonzVectorBrushTool::ToonzVectorBrushTool(std::string name, int targetType)
     , m_targetType(targetType)
     , m_workingFrameId(TFrameId())
     , m_snapGrid("Grid", false)
+    , m_assistants("Assistants", true)
+    , m_guideSnap("Guides:")
     , m_enabledPressure(false)
     , m_enabledTilt(false)
     , m_sizeStylusProperty("Stylus Settings - Size") {
@@ -732,7 +736,7 @@ ToonzVectorBrushTool::ToonzVectorBrushTool(std::string name, int targetType)
   m_prop[0].bind(m_frameRange);
   m_prop[0].bind(m_snap);
   m_prop[0].bind(m_snapSensitivity);
-  m_prop[0].bind(m_snapGrid);
+  m_prop[0].bind(m_guideSnap);
   m_prop[0].bind(m_preset);
 
   m_prop[1].bind(m_capStyle);
@@ -754,6 +758,9 @@ ToonzVectorBrushTool::ToonzVectorBrushTool(std::string name, int targetType)
   m_joinStyle.setId("Join");
   m_miterJoinLimit.setId("Miter");
   m_snapGrid.setId("SnapGrid");
+  m_assistants.setId("Assistants");
+  m_guideSnap.setId("GuideSnap");
+  GuideSnap::init(m_guideSnap);
   m_sizeStylusProperty.setId("SizeStylusConfig");
 
   m_frameRange.addValue(L"Off");
@@ -818,6 +825,7 @@ void ToonzVectorBrushTool::updateTranslation() {
   m_thickness.setQStringName(tr("Size"));
   m_accuracy.setQStringName(tr("Accuracy:"));
   m_smooth.setQStringName(tr("Smooth:"));
+  m_guideSnap.setQStringName(tr("Guides:"));
   m_preset.setQStringName(tr("Preset:"));
   m_preset.setItemUIName(CUSTOM_WSTR, tr("<custom>"));
   m_breakAngles.setQStringName(tr("Break"));
@@ -911,6 +919,7 @@ bool ToonzVectorBrushTool::preLeftButtonDown() {
 
 void ToonzVectorBrushTool::leftButtonDown(const TPointD &pos,
                                           const TMouseEvent &e) {
+  ReplicaMap::end();  // a stroke left open (tool switched mid-stroke)
   TTool::Application *app = TTool::getApplication();
   if (!app) return;
 
@@ -974,6 +983,11 @@ void ToonzVectorBrushTool::leftButtonDown(const TPointD &pos,
       m_track.addSymmetryBrushes(symmObj.getLines(), symmObj.getRotation(),
                                  symmObj.getCenterPoint(),
                                  symmObj.isUsingLineSymmetry(), dpiScale);
+    } else if (m_assistants.getValue()) {
+      // OpenToonz replicators: the symmetry machinery paints the copies
+      if (int copies = ReplicaMap::begin(this))
+        m_track.addSymmetryBrushes(copies, 0, TPointD(), false,
+                                  getViewer()->getDpiScale());
     }
   }
 
@@ -1023,11 +1037,13 @@ void ToonzVectorBrushTool::leftButtonDown(const TPointD &pos,
   m_currThickness = thickness;
   m_smoothStroke.beginStroke(m_smooth.getValue());
 
-  if (m_foundFirstSnap) {
-    addTrackPoint(TThickPoint(m_firstSnapPoint, thickness),
-                  getPixelSize() * getPixelSize());
-  } else
-    addTrackPoint(TThickPoint(pos, thickness), getPixelSize() * getPixelSize());
+  TThickPoint firstPoint(m_foundFirstSnap ? m_firstSnapPoint : pos, thickness);
+  if (!m_isPath && m_assistants.getValue())
+    m_assistantSnap.begin(this, firstPoint);
+  else
+    m_assistantSnap.end();
+  addTrackPoint(m_assistantSnap.transform(firstPoint),
+                getPixelSize() * getPixelSize());
   TRectD invalidateRect = m_track.getLastModifiedRegion();
   invalidate(invalidateRect.enlarge(2));
 
@@ -1051,9 +1067,11 @@ void ToonzVectorBrushTool::leftButtonDrag(const TPointD &pos,
   bool nonShiftStraight = false;
   TPointD usePos        = pos;
 
+  // an assistant guideline under the stroke wins over the Tahoma grid; the
+  // grid still works where there is none, and ⌥ Option forces it
   if (!m_isPath &&
       ((e.isAltPressed() && !e.isCtrlPressed() && !e.isShiftPressed()) ||
-       m_snapGrid.getValue())) {
+       (m_snapGrid.getValue() && !m_assistantSnap.isActive()))) {
     invalidateRect   = TRectD(m_firstPoint, m_lastPoint).enlarge(2);
     if (!m_snapGrid.getValue()) nonShiftStraight = true;
     double distance  = (m_brushPos.x) * 0.5;
@@ -1285,6 +1303,11 @@ void ToonzVectorBrushTool::leftButtonDrag(const TPointD &pos,
                 getPixelSize() * getPixelSize());
     m_track.removeMiddlePoints();
     invalidateRect += m_track.getModifiedRegion();
+  } else if (m_dragDraw && m_assistantSnap.isActive()) {
+    addAssistedTrackPoint(TThickPoint(usePos, thickness),
+                          getPixelSize() * getPixelSize());
+    // the guidelines cross the whole viewer
+    invalidateRect = TConsts::infiniteRectD;
   } else if (m_dragDraw) {
     addTrackPoint(TThickPoint(usePos, thickness),
                   getPixelSize() * getPixelSize());
@@ -1294,7 +1317,9 @@ void ToonzVectorBrushTool::leftButtonDrag(const TPointD &pos,
   // In order to draw the current brush tip
   invalidateRect += TRectD(m_brushPos - halfThick, m_brushPos + halfThick);
 
-  if (!invalidateRect.isEmpty()) {
+  if (invalidateRect == TConsts::infiniteRectD)
+    invalidate();
+  else if (!invalidateRect.isEmpty()) {
     // for motion path, call the invalidate function directly to ignore dpi of
     // the current level
     if (m_isPath)
@@ -1308,8 +1333,15 @@ void ToonzVectorBrushTool::leftButtonDrag(const TPointD &pos,
 
 void ToonzVectorBrushTool::leftButtonUp(const TPointD &pos,
                                         const TMouseEvent &e) {
+  // the replicators stay active until the strokes are made
+  ReplicaMap::Guard replicaGuard;
   bool isValid = m_enabled && m_active;
   m_enabled    = false;
+  // the points already went through the guideline; what is left (smoothing
+  // flush, end snap) must not be projected again
+  bool wasAssisted = m_assistantSnap.isActive();
+  m_assistantSnap.end();
+  if (wasAssisted) invalidate();
 
   if (!isValid) {
     // in case the current frame is moved to empty cell while dragging
@@ -1999,6 +2031,23 @@ void ToonzVectorBrushTool::addTrackPoint(const TThickPoint &point,
 
 //--------------------------------------------------------------------------------------------------
 
+// A guideline chosen later than the first points (the gesture only says
+// which one it follows after a few pixels) makes the points given so far
+// stale: the stroke is rebuilt from the raw points.
+void ToonzVectorBrushTool::addAssistedTrackPoint(const TThickPoint &point,
+                                                 double pixelSize2) {
+  if (!m_assistantSnap.add(point)) {
+    addTrackPoint(m_assistantSnap.transform(point), pixelSize2);
+    return;
+  }
+  m_track.clear();
+  m_smoothStroke.beginStroke(m_smooth.getValue());
+  for (const TThickPoint &raw : m_assistantSnap.rawPoints())
+    addTrackPoint(m_assistantSnap.transform(raw), pixelSize2);
+}
+
+//-------------------------------------------------------------------------------------------------------------
+
 void ToonzVectorBrushTool::flushTrackPoint() {
   m_smoothStroke.endStroke();
   std::vector<TThickPoint> pts;
@@ -2096,7 +2145,12 @@ void ToonzVectorBrushTool::mouseMove(const TPointD &pos, const TMouseEvent &e) {
   m_mousePos       = pos;
   m_windowMousePos = -e.m_pos;
 
-  invalidate(invalidateRect.enlarge(2));
+  // the hover guidelines cross the whole viewer
+  if (m_assistants.getValue() &&
+      AssistantStrokeSnap::hoverNeedsFullRepaint(this))
+    invalidate();
+  else
+    invalidate(invalidateRect.enlarge(2));
 
   if (m_minThick == 0 && m_maxThick == 0) {
     m_minThick = m_thickness.getValue().first;
@@ -2265,6 +2319,12 @@ void ToonzVectorBrushTool::draw() {
   // Draw track
   tglColor(m_isPrompting ? TPixel32::Green : m_currentColor);
   m_track.drawAllFragments();
+
+  // assistants: the guidelines of the stroke, or the ones under the cursor
+  if (m_assistantSnap.isActive())
+    m_assistantSnap.drawGuidelines();
+  else if (m_assistants.getValue() && m_track.isEmpty())
+    AssistantStrokeSnap::drawHoverGuidelines(this, m_brushPos);
 
   // snapping
   TVectorImageP vi = img;
@@ -2436,7 +2496,9 @@ bool ToonzVectorBrushTool::onPropertyChanged(std::string propertyName) {
   V_VectorBrushSnap            = m_snap.getValue();
   int snapSensitivityIndex     = m_snapSensitivity.getIndex();
   V_VectorBrushSnapSensitivity = snapSensitivityIndex;
+  GuideSnap::apply(m_guideSnap, m_snapGrid, m_assistants);
   V_VectorBrushSnapGrid        = m_snapGrid.getValue();
+  V_VectorBrushAssistants      = m_assistants.getValue();
 
   // Recalculate/reset based on changed settings
   m_minThick = m_thickness.getValue().first;
@@ -2600,6 +2662,9 @@ void ToonzVectorBrushTool::loadLastBrush() {
   m_autoFill.setValue(V_VectorBrushAutoFill);
   m_autoCloseGap.setValue(V_VectorBrushAutoCloseGap);
   m_snapGrid.setValue(V_VectorBrushSnapGrid);
+  m_assistants.setValue(V_VectorBrushAssistants);
+  GuideSnap::load(m_guideSnap, V_VectorBrushSnapGrid, V_VectorBrushAssistants);
+  GuideSnap::apply(m_guideSnap, m_snapGrid, m_assistants);
 
   // Recalculate based on prior values
   m_minThick = m_thickness.getValue().first;

@@ -64,7 +64,10 @@ ToolOptionControl::ToolOptionControl(TTool *tool, std::string propertyName,
 
 void ToolOptionControl::notifyTool(bool addToUndo) {
   std::string tempPropertyName = m_propertyName;
-  if (addToUndo && m_propertyName == "Auto Close Gap")
+  // a slider sends its final value with «withUndo»: the Fill gap, and the
+  // assistants' options (each drag tick would otherwise be an undo step)
+  if (addToUndo && (m_propertyName == "Auto Close Gap" ||
+                    m_tool->getName() == "T_EditAssistants"))
     tempPropertyName = tempPropertyName + "withUndo";
   m_tool->onPropertyChanged(tempPropertyName);
 }

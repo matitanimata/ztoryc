@@ -7,6 +7,8 @@ set(MOC_HEADERS
     ../include/tmsgcore.h
     ../include/tfunctorinvoker.h
     ../include/tvectorimage.h
+    ../include/tmetaimage.h
+    ../include/tconstwrapper.h
 )
 
 set(HEADERS ${MOC_HEADERS}
@@ -165,6 +167,7 @@ set(SOURCES
     ../common/tvectorimage/tsegmentadjuster.cpp
     ../common/tvectorimage/tsweepboundary.cpp
     ../common/tvectorimage/tvectorimage.cpp
+    ../common/tmetaimage/tmetaimage.cpp
     ../common/tgl/tgl.cpp
     ../common/tgl/tstencilcontrol.cpp
     ../common/tgl/tgldisplaylistsmanager.cpp
@@ -277,6 +280,7 @@ add_definitions(
     -DTIMAGE_EXPORTS
     -DTSYSTEM_EXPORTS
     -DTVECTORIMAGE_EXPORTS
+    -DTMETAIMAGE_EXPORTS
     -DTGL_EXPORTS
     -DTSOUND_EXPORTS
     -DTIMAGE_IO_EXPORTS

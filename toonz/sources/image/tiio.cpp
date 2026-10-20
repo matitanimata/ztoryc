@@ -53,6 +53,7 @@
 #include "./psd/tiio_psd.h"
 #include "./avi/tiio_avi.h"
 #include "./pli/tiio_pli.h"
+#include "./tzm/tiio_tzm.h"
 #include "./tzl/tiio_tzl.h"
 #include "./svg/tiio_svg.h"
 #include "./ffmpeg/tiio_gif.h"
@@ -73,6 +74,11 @@ void initImageIo(bool lightVersion) {
   TLevelWriter::define("pli", TLevelWriterPli::create, false);
   TLevelReader::define("pli", TLevelReaderPli::create);
   TFileType::declare("pli", TFileType::VECTOR_LEVEL);
+
+  // OpenToonz drawing assistants: the assistants level.
+  TLevelWriter::define("tzm", tzm::createWriter, false);
+  TLevelReader::define("tzm", tzm::createReader);
+  TFileType::declare("tzm", TFileType::META_LEVEL);
 
   TLevelReader::define("svg", 0, TLevelReaderSvg::create);
   TFileType::declare("svg", TFileType::VECTOR_IMAGE);

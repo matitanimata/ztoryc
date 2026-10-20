@@ -30,6 +30,7 @@
 #define MI_PrintXsheet "MI_PrintXsheet"
 #define MI_NewLevel "MI_NewLevel"
 #define MI_NewVectorLevel "MI_NewVectorLevel"
+#define MI_NewAssistantsLevel "MI_NewAssistantsLevel"  // OpenToonz assistants
 #define MI_NewToonzRasterLevel "MI_NewToonzRasterLevel"
 #define MI_NewRasterLevel "MI_NewRasterLevel"
 #define MI_NewSpline "MI_NewSpline"

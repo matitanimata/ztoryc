@@ -94,6 +94,8 @@
 #include <QMainWindow>
 
 #include "sceneviewer.h"
+#include "tools/assistant.h"   // OpenToonz drawing assistants
+#include "tools/replicator.h"
 #include "ext/plasticvisualsettings.h"
 #include "toonzqt/selectioncommandids.h"
 #include "ztoryanimatic.h"
@@ -2051,8 +2053,12 @@ void SceneViewer::drawOverlay() {
 
   TTool *perspectiveTool =
       TTool::getTool(T_PerspectiveGrid, TTool::VectorImage);
+  // Ztoryc: Perspective Grids is the general switch of every guide; a brush
+  // shows only the system its Guides menu snaps to (getToolHints)
   if (tool && perspectiveTool &&
-      (ShowPerspectiveGrids || tool == perspectiveTool)) {
+      ((ShowPerspectiveGrids &&
+        (tool->getToolHints() & TTool::HintPerspectiveGrid)) ||
+       tool == perspectiveTool)) {
     glPushMatrix();
     if (m_draw3DMode) {
       mult3DMatrix();
@@ -2090,6 +2096,34 @@ void SceneViewer::drawOverlay() {
         !app->getCurrentObject()->isSpline())
       glScaled(m_dpiScale.x, m_dpiScale.y, 1);
     m_pixelSize = sqrt(tglGetPixelSize2()) * getDevPixRatio();
+
+    // OpenToonz drawing assistants: the assistants of the scene and their
+    // guidelines through the pointer, then the replicators.
+    if (ShowPerspectiveGrids) {
+      unsigned int hints = tool->getToolHints();
+      TPointD toolPos =
+          tool->getMatrix().inv() * winToWorld(m_lastMousePos);
+      if (tool->getToolType() & TTool::LevelTool &&
+          !app->getCurrentObject()->isSpline()) {
+        toolPos.x /= m_dpiScale.x;
+        toolPos.y /= m_dpiScale.y;
+      }
+      if (hints & TTool::HintAssistantsAll)
+        TAssistant::scanAssistants(tool, &toolPos, 1, nullptr, true, false,
+                                   hints & TTool::HintAssistantsEnabled,
+                                   hints & TTool::HintAssistantsGuidelines,
+                                   nullptr);
+      if (hints & TTool::HintReplicatorsAll) {
+        TReplicator::PointList points;
+        const bool drawPoints = hints & TTool::HintReplicatorsPoints;
+        if (drawPoints) points.push_back(toolPos);
+        TReplicator::scanReplicators(tool, drawPoints ? &points : nullptr,
+                                     nullptr, true, false,
+                                     hints & TTool::HintReplicatorsEnabled,
+                                     drawPoints, nullptr);
+      }
+    }
+
     tool->draw();
     glPopMatrix();
     // Used (only in the T_RGBPicker tool) to notify and set the currentColor

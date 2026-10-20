@@ -479,6 +479,7 @@ void TopBar::loadMenubar() {
     addMenuItem(newMenu, MI_NewRasterLevel);
     addMenuItem(newMenu, MI_NewToonzRasterLevel);
     addMenuItem(newMenu, MI_NewVectorLevel);
+    addMenuItem(newMenu, MI_NewAssistantsLevel);
     addMenuItem(newMenu, MI_NewNoteLevel);
     newMenu->addSeparator();
     addMenuItem(newMenu, MI_NewPegbar);

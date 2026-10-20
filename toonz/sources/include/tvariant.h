@@ -4,8 +4,10 @@
 #define TVARIANT_INCLUDED
 
 #include <tcommon.h>
+#include <texception.h>
 #include <tstringid.h>
 
+#include <iostream>
 #include <string>
 #include <vector>
 #include <map>
@@ -28,6 +30,18 @@ typedef std::map<TStringId, TVariant> TVariantMap;
 
 //-------------------------------------------------------------------
 
+class TVariantSyntaxException final: public TException {
+public:
+  explicit TVariantSyntaxException(
+    int row = 0,
+    int col = 0,
+    const std::string &msg = std::string()
+  ):
+    TException(std::to_string(row) + ":" + std::to_string(col) + ": " + msg) { }
+};
+
+//-------------------------------------------------------------------
+
 class DVAPI TVariantPathEntry {
 private:
   int m_index;
@@ -46,7 +60,7 @@ public:
     { return !isIndex(); }
   inline int index() const
     { return m_index; }
-  inline int field() const
+  inline TStringId field() const
     { return m_field; }
 
   inline bool operator== (const TVariantPathEntry &other) const
@@ -68,8 +82,13 @@ public:
 
 class DVAPI TVariantPath: public std::vector<TVariantPathEntry> {
 public:
+  inline TVariantPath& append(const TVariantPathEntry &x)
+    { push_back(x); return *this; }
+  inline TVariantPath& append(const TVariantPath &x)
+    { insert(end(), x.begin(), x.end()); return *this; }
+
   inline bool isSubPathOf(const TVariantPath &other) const
-    { return compare(*this, 0, other, 0, (int)size()); }
+    { return compare(*this, 0, other, 0, (int)size()) == 0; }
   inline bool isBasePathOf(const TVariantPath &other) const
     { return other.isSubPathOf(*this); }
   inline int compare(const TVariantPath &other) const
@@ -91,7 +110,7 @@ public:
 class DVAPI TVariantOwner {
 public:
   virtual ~TVariantOwner() { }
-  virtual void onTouchVariant(const TVariant &value) { }
+  virtual void onVariantChanged(const TVariant &value) { }
 };
 
 //-------------------------------------------------------------------
@@ -197,7 +216,7 @@ public:
     m_parent() { setMap(v); }
 
   inline void touch()
-    { if (m_root->m_owner) m_root->m_owner->onTouchVariant(*this); }
+    { if (m_root->m_owner) m_root->m_owner->onVariantChanged(*this); }
 
   inline TVariant& operator=(const TVariant &other) {
     switch(other.m_type) {
@@ -282,19 +301,19 @@ public:
   inline const TVariant& operator[] (const std::string &field) const
     { return (*this)[TStringId::find(field)]; }
   inline TVariant& operator[] (const std::string &field)
-    { return (*this)[TStringId::find(field)]; }
+    { return (*this)[TStringId(field)]; }
   inline void remove(const std::string &field)
     { remove(TStringId::find(field)); }
 
   // path methods
   const TVariant& byPath(const TVariantPath &path, int begin, int end) const;
   TVariant& byPath(const TVariantPath &path, int begin, int end);
-  inline const TVariant& byPath(const TVariantPathEntry &entry) const {
+  inline const TVariant& operator[] (const TVariantPathEntry &entry) const {
     return entry.isIndex()
          ? (m_type == List ? (*this)[entry.index()] : blank())
          : (m_type == Map  ? (*this)[entry.field()] : blank());
   }
-  inline TVariant& byPath(const TVariantPathEntry &entry)
+  inline TVariant& operator[] (const TVariantPathEntry &entry)
     { return entry.isIndex() ? (*this)[entry.index()] : (*this)[entry.field()]; }
   inline const TVariant& byPath(const TVariantPath &path, int begin = 0) const
     { return byPath(path, begin, (int)path.size()); }
@@ -322,16 +341,26 @@ public:
     { return m_parent || !m_parentField ? this - &m_parent->m_list.front() : 0; }
   inline const TStringId& parentField() const
     { return m_parentField; }
+  inline bool isRoot() const
+    { return this == m_root; }
 
-  int getPathSize() const;
-  void getParentPath(TVariantPath &outPath) const;
+  int getParentPathSize(const TVariant &parent) const;
+  bool getParentPath(TVariantPath &outPath, const TVariant &parent) const;
   inline TVariantPathEntry parentPathEntry() const {
     return !m_parent               ? TVariantPathEntry()
          : m_parent->m_type == Map ? TVariantPathEntry(m_parentField)
          : TVariantPathEntry( this - &m_parent->m_list.front() );
   }
-  inline TVariantPath getParentPath() const
-    { TVariantPath path; getParentPath(path); return path; }
+  inline int getParentPathSize() const
+    { return getParentPathSize(*m_root); }
+  inline bool getParentPath(TVariantPath &outPath) const
+    { return getParentPath(outPath, *m_root); }
+
+  inline int getChildPathSize(const TVariant &child) const
+    { return child.getParentPathSize(*this); }
+  inline bool getChildPath(TVariantPath &outPath, const TVariant &child) const
+    { return child.getParentPath(outPath, *this); }
+  bool getChildPathEntry(const TVariant &child, TVariantPathEntry &outEntry) const;
 
   bool isChildOf(const TVariant &other) const;
   bool isChildOrEqual(const TVariant &other) const;
@@ -344,8 +373,15 @@ public:
 
   const TVariant* findCommonParent(const TVariant &other) const;
 
+  // memory
+  size_t getMemSize() const;
+
   // serialization
-  // TODO:
+  void toStream(std::ostream &stream, bool pretty = false, int level = 0) const;
+  void fromStream(std::istream &stream, int *currentRow = 0, int *currentCol = 0);
+
+  std::string toString(bool pretty = false, int level = 0) const;
+  void fromString(const std::string &str, int *currentRow = 0, int *currentCol = 0);
 };
 
 #endif

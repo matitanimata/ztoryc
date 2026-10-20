@@ -213,6 +213,9 @@ public:
   QMap<int, QString> getRoomMap() const { return m_roomMaps; }
 
   QString getCurrentStyleSheet() const;
+  QString getDefAssistantType() const {
+    return getStringValue(DefAssistantType);
+  }
   QString getAdditionalStyleSheet() const {
     return getStringValue(additionalStyleSheet);
   }

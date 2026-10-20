@@ -14,6 +14,8 @@
 #include "mypainttoonzbrush.h"
 #include "bluredbrush.h"
 #include "cmrasterbrush.h"
+#include "assistantstrokesnap.h"
+#include "replicamap.h"
 
 #include <QCoreApplication>
 #include <QRadialGradient>
@@ -132,6 +134,13 @@ public:
   ToonzRasterBrushTool(std::string name, int targetType);
 
   ToolType getToolType() const override { return TTool::LevelWriteTool; }
+  // The guidelines through the pointer are drawn by the brush itself, with
+  // a whole-viewer refresh: drawn by the viewer they leave pieces behind in
+  // the small areas refreshed while painting.
+  unsigned int getToolHints() const override {
+    return GuideSnap::hints(m_guideSnap,
+                            TTool::getToolHints() & ~HintAssistantsGuidelines);
+  }
 
   ToolOptionsBox *createOptionsBox() override;
 
@@ -169,6 +178,9 @@ public:
 
   void loadLastBrush();
 
+  void paintDragPoint(const TPointD &usePos, const TPointD &pos,
+                      const TMouseEvent &e, TRectD invalidateRect);
+  void paintPendingAssistedPoints(const TPointD &pos, const TMouseEvent &e);
   void finishRasterBrush(const TPointD &pos, double pressureVal,
                          double tiltMagnitude, double tiltX, double tiltY,
                          double tiltAngle);
@@ -198,6 +210,8 @@ protected:
   TDoubleProperty m_modifierSize;
   TBoolProperty m_modifierLockAlpha;
   TBoolProperty m_snapGrid;
+  TBoolProperty m_assistants;
+  TEnumProperty m_guideSnap;
   TBoolProperty m_mypaintTilt;
   TStylusProperty m_sizeStylusProperty;
   TBrushTipProperty m_brushTip;
@@ -229,6 +243,8 @@ protected:
       m_strokeSegmentRect;  // used with mypaint brush
 
   SmoothStroke m_smoothStroke;
+  AssistantStrokeSnap m_assistantSnap;
+  size_t m_assistPainted = 0;  // raw points of m_assistantSnap already painted
 
   BrushPresetManager
       m_presetsManager;  //!< Manager for presets of this tool instance
