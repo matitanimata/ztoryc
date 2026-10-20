@@ -1040,6 +1040,7 @@ public slots:
 
   void onToolSwitched();
   void onToolChanged();
+  void onToolOptionsBoxChanged();
   void onStageObjectChange(bool);
   void onObjectSwitched();
   void onXshLevelSwitched(TXshLevel *);

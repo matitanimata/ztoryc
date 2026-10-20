@@ -4868,6 +4868,8 @@ void ToolOptions::showEvent(QShowEvent *) {
     onToolSwitched();
     connect(currTool, SIGNAL(toolSwitched()), SLOT(onToolSwitched()));
     connect(currTool, SIGNAL(toolChanged()), SLOT(onToolChanged()));
+    connect(currTool, SIGNAL(toolOptionsBoxChanged()),
+            SLOT(onToolOptionsBoxChanged()));
   }
 
   TObjectHandle *currObject = app->getCurrentObject();
@@ -4897,6 +4899,24 @@ void ToolOptions::hideEvent(QShowEvent *) {
 
   TXshLevelHandle *currLevel = app->getCurrentLevel();
   if (currLevel) currLevel->disconnect(this);
+}
+
+//-----------------------------------------------------------------------------
+
+// A tool whose options depend on what is selected (Edit Assistants: the
+// selected assistant brings its own) asks for its panel to be built again.
+void ToolOptions::onToolOptionsBoxChanged() {
+  TTool *tool = TTool::getApplication()->getCurrentTool()->getTool();
+  std::map<TTool *, ToolOptionsBox *>::iterator it = m_panels.find(tool);
+  if (it != m_panels.end()) {
+    ToolOptionsBox *panel = it->second;
+    m_panels.erase(it);
+    layout()->removeWidget(panel);
+    panel->hide();
+    if (m_panel == panel) m_panel = 0;
+    panel->deleteLater();
+  }
+  onToolSwitched();
 }
 
 //-----------------------------------------------------------------------------
