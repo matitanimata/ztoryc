@@ -28,6 +28,8 @@ class TStageObjectId;
 class TXshColumn;
 class QComboBox;
 class QPushButton;
+class QLabel;
+class QSpinBox;
 class Orientation;
 class TApp;
 class TXsheet;
@@ -234,6 +236,7 @@ class ColumnTransparencyPopup final : public QWidget {
 
   QTimer *m_keepClosedTimer;
   bool m_keepClosed;
+
 
 public:
   ColumnTransparencyPopup(XsheetViewer *viewer, QWidget *parent);

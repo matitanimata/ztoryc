@@ -1820,6 +1820,9 @@ bool IoCmd::saveScene(const TFilePath &path, int flags) {
     DVGui::error(QObject::tr("Couldn't save %1").arg(toQString(scenePath)));
   }
   TApp::instance()->setSaveInProgress(false);
+  // FLA/XFL import: a Flash source bundle that could not follow the scene.
+  if (sceneWritten && !scene->flashSaveWarning().isEmpty())
+    DVGui::warning(scene->flashSaveWarning());
 
   cp->assign(&keepCP, false);
   // Make sure that the current cleanup palette is set to currentParams' palette
@@ -2187,7 +2190,11 @@ bool IoCmd::loadScene(ToonzScene &scene, const TFilePath &scenePath,
 //---------------------------------------------------------------------------
 
 bool IoCmd::loadScene(const TFilePath &path, bool updateRecentFile,
-                      bool checkSaveOldScene) {
+                      bool checkSaveOldScene,
+                      bool /*preserveOldSceneOnFailure*/) {
+  // FLA/XFL import (OpenToonz-dev PR #267) asks for a «protected» load that
+  // validates the imported bundle before replacing the open scene. Not ported
+  // (Ztoryc's load does much more): the imported scene opens like any other.
   RenderingSuspender suspender;
 
   if (checkSaveOldScene)

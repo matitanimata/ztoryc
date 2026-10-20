@@ -22,6 +22,7 @@
 #include "toonz/txsheethandle.h"
 #include "toonz/fxdag.h"
 #include "toonz/txshzeraryfxcolumn.h"
+#include "toonz/txshlevelcolumn.h"
 #include "toonz/tcolumnfx.h"
 #include "toonz/tfxhandle.h"
 #include "toonz/tobjecthandle.h"
@@ -320,7 +321,7 @@ void FunctionTreeModel::ChannelGroup::setChildrenAllActive(bool active) {
 //-----------------------------------------------------------------------------
 
 StageObjectChannelGroup::StageObjectChannelGroup(TStageObject *stageObject)
-    : m_stageObject(stageObject), m_plasticGroup() {
+    : m_stageObject(stageObject), m_plasticGroup(), m_opacityChannel() {
   m_stageObject->addRef();
 }
 
@@ -1133,6 +1134,28 @@ void FunctionTreeModel::refreshStageObjects(TXsheet *xsh) {
     }
 
     pegbarItem->applyShowFilter();
+  }
+
+  // A level column also has an animatable opacity curve, kept by the column
+  // itself (see TXshColumn::getOpacityCurve()). Refresh ALL stage items: a
+  // column object may have been replaced under the same stage object.
+  iCount = m_stageObjects->getChildCount();
+  for (i = 0; i < iCount; ++i) {
+    StageObjectChannelGroup *stageItem =
+        static_cast<StageObjectChannelGroup *>(m_stageObjects->getChild(i));
+    TStageObjectId id = stageItem->getStageObject()->getId();
+    TXshColumn *column =
+        id.isColumn() ? xsh->getColumn(id.getIndex()) : nullptr;
+    if (!column || !column->getLevelColumn()) continue;
+    TDoubleParam *curve = column->getOpacityCurve();
+    if (!stageItem->m_opacityChannel) {
+      Channel *channel = new Channel(this, curve);
+      stageItem->appendChild(channel);
+      channel->setChannelGroup(stageItem);
+      stageItem->m_opacityChannel = channel;
+      stageItem->applyShowFilter();
+    } else if (stageItem->m_opacityChannel->getParam() != curve)
+      stageItem->m_opacityChannel->setParam(curve);
   }
 
   // As plastic deformations are stored in stage objects, refresh them if

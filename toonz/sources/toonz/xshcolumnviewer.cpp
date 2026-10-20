@@ -68,6 +68,7 @@
 #include <QLabel>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QSpinBox>
 #include <QPushButton>
 #include <QScreen>
 #include <QGroupBox>
@@ -296,6 +297,11 @@ public:
   }
   int getHistoryType() override { return HistoryType::Xsheet; }
 };
+
+//=============================================================================
+// ColumnMaskScopeUndo
+//-----------------------------------------------------------------------------
+
 
 //-----------------------------------------------------------------------------
 
@@ -2861,6 +2867,9 @@ void ColumnTransparencyPopup::onFilterColorChanged() {
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
   ((ColumnArea *)parent())->update();
 }
+
+//----------------------------------------------------------------
+
 
 //----------------------------------------------------------------
 

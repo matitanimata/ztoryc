@@ -43,6 +43,7 @@
 #include "toonz/tframehandle.h"
 #include "toonz/tobjecthandle.h"
 #include "toonz/txsheet.h"
+#include "toonz/flashinstanceedit.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txshchildlevel.h"
 #include "toonz/toonzscene.h"
@@ -75,6 +76,7 @@
 #include <QApplication>
 #include <QClipboard>
 
+#include <limits>
 //=============================================================================
 namespace {
 //-----------------------------------------------------------------------------
@@ -260,14 +262,17 @@ class PasteCellsUndo final : public TUndo {
   TCellSelection *m_oldSelection;
   TCellSelection *m_newSelection;
   TCellData *m_data;
+  std::unique_ptr<FlashInstanceTimelineEdit> m_flashShift;
   std::vector<bool> m_areOldColumnsEmpty;
   bool m_containsSoundColumn;
 
 public:
   PasteCellsUndo(int r0, int c0, int r1, int c1, int oldR0, int oldC0,
                  int oldR1, int oldC1, const std::vector<bool> &areColumnsEmpty,
-                 bool containsSoundColumn)
-      : m_areOldColumnsEmpty(areColumnsEmpty)
+                 bool containsSoundColumn,
+                 std::unique_ptr<FlashInstanceTimelineEdit> flashShift)
+      : m_flashShift(std::move(flashShift))
+      , m_areOldColumnsEmpty(areColumnsEmpty)
       , m_containsSoundColumn(containsSoundColumn) {
     m_data       = new TCellData();
     TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
@@ -305,6 +310,8 @@ public:
         continue;
     }
 
+    if (m_flashShift) m_flashShift->undo(xsh);
+
     TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
     if (m_containsSoundColumn)
       TApp::instance()->getCurrentXsheet()->notifyXsheetSoundChanged();
@@ -320,13 +327,18 @@ public:
     for (int c = c0; c <= c1; c++) {
       xsh->shiftMarkers(r0, c, rowCount);
     }
+    if (m_flashShift) m_flashShift->redo(xsh);
 
     TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
     if (m_containsSoundColumn)
       TApp::instance()->getCurrentXsheet()->notifyXsheetSoundChanged();
   }
 
-  int getSize() const override { return sizeof(*this); }
+  int getSize() const override {
+    return int(std::min<qint64>(
+        qint64(sizeof(*this)) + (m_flashShift ? m_flashShift->getSize() : 0),
+        std::numeric_limits<int>::max()));
+  }
 
   QString getHistoryString() override { return QObject::tr("Paste Cells"); }
   int getHistoryType() override { return HistoryType::Xsheet; }
@@ -340,11 +352,29 @@ public:
 //  cell arrangement.
 //-----------------------------------------------------------------------------
 
+// Flash metadata supplements the native delete/cut; it must never abort it.
+// Same policy as paste/insert: report a failure, but here the native command
+// proceeds without the supplemental shift (its metadata then reads unlinked).
+std::unique_ptr<FlashInstanceTimelineEdit> makeFlashShift(TXsheet *xsh, int c0,
+                                                          int c1, int row,
+                                                          int rowCount) {
+  try {
+    return std::unique_ptr<FlashInstanceTimelineEdit>(
+        new FlashInstanceTimelineEdit(xsh, c0, c1, row, rowCount, false));
+  } catch (const Flash::Error &error) {
+    DVGui::warning(QString::fromUtf8(error.what()));
+  } catch (const TException &error) {
+    DVGui::warning(QString::fromStdWString(error.getMessage()));
+  }
+  return {};
+}
+
 class DeleteCellsUndo final : public TUndo {
   TCellSelection *m_selection;
   TCellData *m_data;
   QMap<int, QList<std::pair<int, int>>> m_loops;
   QMap<int, QMap<int, int>> m_cellMarks;
+  std::unique_ptr<FlashInstanceTimelineEdit> m_flashShift;
 
   bool m_doShift;  // whether clear cell or remove and shift cells up
   bool m_containsSoundColumn;
@@ -359,6 +389,7 @@ public:
     m_selection->selectCells(r0, c0, r1, c1);
 
     TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
+    if (m_doShift) m_flashShift = makeFlashShift(xsh, c0, c1, r0, r1 - r0 + 1);
     for (int c = c0; c <= c1; c++) {
       TXshColumn *column = xsh->getColumn(c);
       if (column) {
@@ -372,6 +403,11 @@ public:
 
   ~DeleteCellsUndo() { delete m_selection; }
 
+  void onAdd() override {
+    if (m_flashShift)
+      m_flashShift->redo(TApp::instance()->getCurrentXsheet()->getXsheet());
+  }
+
   void undo() const override {
     TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
 
@@ -380,6 +416,7 @@ public:
 
     // insert cells if the delete operation had shifted cells up
     pasteCellsWithoutUndo(m_data, r0, c0, r1, c1, m_doShift, false, false);
+    if (m_flashShift) m_flashShift->undo(xsh);
 
     if (m_loops.size()) {
       foreach (int c, m_loops.keys()) {
@@ -405,12 +442,18 @@ public:
     int r0, c0, r1, c1;
     m_selection->getSelectedCells(r0, c0, r1, c1);
     deleteCellsWithoutUndo(r0, c0, r1, c1, m_doShift);
+    if (m_flashShift)
+      m_flashShift->redo(TApp::instance()->getCurrentXsheet()->getXsheet());
     TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
     if (m_containsSoundColumn)
       TApp::instance()->getCurrentXsheet()->notifyXsheetSoundChanged();
 }
 
-  int getSize() const override { return sizeof(*this); }
+  int getSize() const override {
+    return int(std::min<qint64>(
+        qint64(sizeof(*this)) + (m_flashShift ? m_flashShift->getSize() : 0),
+        std::numeric_limits<int>::max()));
+  }
 
   QString getHistoryString() override {
     return m_doShift ? QObject::tr("Remove Cells")
@@ -432,7 +475,8 @@ class CutCellsUndo final : public TUndo {
   TCellData *m_data;
   QMap<int, QList<std::pair<int, int>>> m_loops;
   QMap<int, QMap<int, int>> m_cellMarks;
- 
+  std::unique_ptr<FlashInstanceTimelineEdit> m_flashShift;
+
   bool m_containsSoundColumn;
 
 public:
@@ -443,6 +487,9 @@ public:
     if (c0 < 0) c0 = 0;  // Ignore camera column
     m_selection    = new TCellSelection();
     m_selection->selectCells(r0, c0, r1, c1);
+    m_flashShift =
+        makeFlashShift(TApp::instance()->getCurrentXsheet()->getXsheet(), c0,
+                       c1, r0, r1 - r0 + 1);
   }
 
   void setCurrentData(int r0, int c0, int r1, int c1) {
@@ -466,11 +513,18 @@ public:
     delete m_data;
   }
 
+  void onAdd() override {
+    if (m_flashShift)
+      m_flashShift->redo(TApp::instance()->getCurrentXsheet()->getXsheet());
+  }
+
   void undo() const override {
     int r0, c0, r1, c1;
     m_selection->getSelectedCells(r0, c0, r1, c1);
 
     pasteCellsWithoutUndo(m_data, r0, c0, r1, c1, true, true, false);
+    if (m_flashShift)
+      m_flashShift->undo(TApp::instance()->getCurrentXsheet()->getXsheet());
 
     TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
     if (m_loops.size()) {
@@ -500,6 +554,8 @@ public:
     int r0, c0, r1, c1;
     m_selection->getSelectedCells(r0, c0, r1, c1);
     cutCellsWithoutUndo(r0, c0, r1, c1, true, false);
+    if (m_flashShift)
+      m_flashShift->redo(TApp::instance()->getCurrentXsheet()->getXsheet());
 
     clipboard->setMimeData(currentData, QClipboard::Clipboard);
     TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
@@ -507,7 +563,11 @@ public:
       TApp::instance()->getCurrentXsheet()->notifyXsheetSoundChanged();
   }
 
-  int getSize() const override { return sizeof(*this); }
+  int getSize() const override {
+    return int(std::min<qint64>(
+        qint64(sizeof(*this)) + (m_flashShift ? m_flashShift->getSize() : 0),
+        std::numeric_limits<int>::max()));
+  }
 
   QString getHistoryString() override { return QObject::tr("Cut Cells"); }
   int getHistoryType() override { return HistoryType::Xsheet; }
@@ -524,9 +584,15 @@ class InsertUndo final : public TUndo {
   QMap<int, QList<std::pair<int, int>>> m_loops;
   QMap<int, QMap<int, int>> m_cellMarks;
   bool m_containsSoundColumn;
+  FlashInstanceTimelineEdit m_flashShift;
 
 public:
-  InsertUndo(const TCellSelection::Range &range) : m_range(range) {
+  InsertUndo(const TCellSelection::Range &range)
+      : m_range(range)
+      , m_containsSoundColumn(false)  // was read uninitialised
+      , m_flashShift(TApp::instance()->getCurrentXsheet()->getXsheet(),
+                     range.m_c0, range.m_c1, range.m_r0, range.getRowCount(),
+                     true) {
     TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
     for (int c = m_range.m_c0; c <= m_range.m_c1; c++) {
       TXshColumn *column = xsh->getColumn(c);
@@ -545,6 +611,7 @@ public:
     int c;
     for (c = m_range.m_c0; c <= m_range.m_c1; c++)
       xsh->removeCells(m_range.m_r0, c, rowCount);
+    m_flashShift.undo(xsh);
 
     if (m_loops.size()) {
       foreach (int c, m_loops.keys()) {
@@ -573,11 +640,15 @@ public:
       xsh->insertCells(m_range.m_r0, c, rowCount);
       xsh->shiftMarkers(m_range.m_r0, c, rowCount);
     }
+    m_flashShift.redo(xsh);
     TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
     if (m_containsSoundColumn)
       TApp::instance()->getCurrentXsheet()->notifyXsheetSoundChanged();
   }
-  int getSize() const override { return sizeof(*this); }
+  int getSize() const override {
+    return int(std::min<qint64>(qint64(sizeof(*this)) + m_flashShift.getSize(),
+                                std::numeric_limits<int>::max()));
+  }
   QString getHistoryString() override { return QObject::tr("Insert Cells"); }
   int getHistoryType() override { return HistoryType::Xsheet; }
 };
@@ -2274,6 +2345,15 @@ void TCellSelection::pasteCells() {
       return;
     }
 
+    std::unique_ptr<FlashInstanceTimelineEdit> flashShift;
+    try {
+      flashShift.reset(new FlashInstanceTimelineEdit(
+          xsh, c0, c0 + cellData->getColCount() - 1, r0,
+          cellData->getRowCount(), true));
+    } catch (const Flash::Error &error) {
+      DVGui::error(QString::fromUtf8(error.what()));
+      return;
+    }
     bool isPaste = pasteCellsWithoutUndo(cellData, r0, c0, r1, c1);
     TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
     int rowCount = r1 - r0 + 1;
@@ -2306,6 +2386,7 @@ void TCellSelection::pasteCells() {
                                 (newCr0 >= r0 && newCr1 <= r1));
     }
     if (!isPaste) return;
+    flashShift->redo(xsh);
 
     initUndo = true;
     TUndoManager::manager()->beginBlock();
@@ -2316,9 +2397,9 @@ void TCellSelection::pasteCells() {
     getLevelSetFromData(cellData, pastedLevels);
     LevelCmd::addMissingLevelsToCast(pastedLevels);
 
-    TUndoManager::manager()->add(
-        new PasteCellsUndo(r0, c0, r1, c1, oldR0, oldC0, oldR1, oldC1,
-                           areColumnsEmpty, containsSoundColumn));
+    TUndoManager::manager()->add(new PasteCellsUndo(
+        r0, c0, r1, c1, oldR0, oldC0, oldR1, oldC1, areColumnsEmpty,
+        containsSoundColumn, std::move(flashShift)));
     TApp::instance()->getCurrentScene()->setDirtyFlag(true);
     if (containsSoundColumn)
       TApp::instance()->getCurrentXsheet()->notifyXsheetSoundChanged();
@@ -2979,7 +3060,7 @@ void TCellSelection::pasteDuplicateCells() {
 
     TUndoManager::manager()->add(
         new PasteCellsUndo(r0, c0, r1, c1, oldR0, oldC0, oldR1, oldC1,
-                           areColumnsEmpty, containsSoundColumn));
+                           areColumnsEmpty, containsSoundColumn, nullptr));
     TApp::instance()->getCurrentScene()->setDirtyFlag(true);
   }
 
@@ -3213,9 +3294,14 @@ void TCellSelection::cutCells(bool withoutCopy) {
 
 void TCellSelection::insertCells() {
   if (isEmpty()) return;
-  InsertUndo *undo = new InsertUndo(getSelectedCells());
-  undo->redo();
-  TUndoManager::manager()->add(undo);
+  try {
+    std::unique_ptr<InsertUndo> undo(new InsertUndo(getSelectedCells()));
+    undo->redo();
+    TUndoManager::manager()->add(undo.release());
+  } catch (const Flash::Error &error) {
+    DVGui::error(QString::fromUtf8(error.what()));
+    return;
+  }
   TApp::instance()->getCurrentScene()->setDirtyFlag(true);
 }
 

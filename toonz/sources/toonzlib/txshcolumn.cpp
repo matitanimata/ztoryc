@@ -18,8 +18,11 @@
 #include "toonz/tcolumnfxset.h"
 #include "toonz/preferences.h"
 #include "toonz/txshleveltypes.h"
+#include "toonz/tstageobjecttree.h"
 
 #include <QMap>
+#include <algorithm>
+#include <cmath>
 #include "tstream.h"
 
 namespace {
@@ -643,6 +646,43 @@ void TXshCellColumn::shiftCellMarks(int row, int shiftAmount) {
 //=============================================================================
 // TXshColumn
 
+TXshColumn::TXshColumn()
+    : m_status(0)
+    , m_xsheet(0)
+    , m_colorTag(0)
+    , m_opacity(255)
+    , m_maskScope(1)
+    , m_opacityCurve(new TDoubleParam(1.0))
+    , m_colorFilterId(0)  // None
+    , m_folderSelector(-1)  // Tahoma2D: folder columns
+{
+  m_loops.clear();
+  m_opacityCurve->setName("opacity");
+  m_opacityCurve->setUILabel("Opacity");
+  m_opacityCurve->setMeasureName("percentage");
+  m_opacityCurve->setValueRange(0.0, 1.0);
+}
+
+//-----------------------------------------------------------------------------
+
+void TXshColumn::setXsheet(TXsheet *xsheet) {
+  m_xsheet = xsheet;
+  // Expression keyframes of the opacity curve use the xsheet's grammar, as
+  // the column's stage object curves do.
+  if (xsheet && xsheet->getStageObjectTree())
+    xsheet->getStageObjectTree()->setGrammar(m_opacityCurve);
+}
+
+//-----------------------------------------------------------------------------
+
+UCHAR TXshColumn::getOpacityAt(double frame) const {
+  const double factor =
+      std::min(1.0, std::max(0.0, m_opacityCurve->getValue(frame)));
+  return (UCHAR)std::lround(m_opacity * factor);
+}
+
+//-----------------------------------------------------------------------------
+
 void TXshColumn::setStatusWord(int status) { m_status = status; }
 
 //-----------------------------------------------------------------------------
@@ -893,6 +933,18 @@ void TXshColumn::setInvertedMask(bool on) {
 
 //-----------------------------------------------------------------------------
 
+// Ztoryc: masks and folders (see StageBuilder::addFrame).
+namespace {
+int innermostFolder(TXshColumn *column) {
+  QStack<int> folders = column->getFolderIdStack();
+  return folders.isEmpty() ? 0 : folders.top();
+}
+bool isFolderMask(TXshColumn *column) {
+  return column->isMask() && column->isInFolder() &&
+         column->getMaskScope() == 1;
+}
+}  // namespace
+
 std::vector<TXshColumn *> TXshColumn::getColumnMasks(int frame) {
   std::vector<TXshColumn *> masks;
 
@@ -925,17 +977,50 @@ std::vector<TXshColumn *> TXshColumn::getColumnMasks(int frame) {
     if (!masks.size()) return masks;
   }
 
+  // A mask clips the column right before it (Tahoma's rule), or its folder
+  // when it is inside one, or the getMaskScope() columns on its left (Flash);
+  // same scan as StageBuilder::addFrame, so render and viewer agree.  With
+  // every scope at 1 this is the original loop, break for break.
+  int maxMaskScope = 1;
+  for (int i = 0; i < xsh->getColumnCount(); i++)
+    if (TXshColumn *col = xsh->getColumn(i))
+      if (col->isMask()) maxMaskScope = std::max(maxMaskScope, col->getMaskScope());
+  int contentPassed = 0;
   for (int i = m_index + 1; i < xsh->getColumnCount(); i++) {
     TXshColumn *mcol = xsh->getColumn(i);
-
-    if (!mcol || mcol->isEmpty()) break;
+    if (!mcol) break;
+    TXshCell cell      = xsh->getCell(frame, i);
+    const bool usable  = !mcol->isEmpty() && mcol->isPreviewVisible() &&
+                        !cell.isEmpty() && !cell.getFrameId().isStopFrame();
+    if (mcol->isEmpty() && contentPassed == 0) break;
     if (mcol->getColumnType() == TXshColumn::eMeshType)
       continue;  // ignore mesh levels
-    if (!mcol->isMask() || !mcol->isPreviewVisible()) break;
-    TXshCell cell = xsh->getCell(frame, i);
-    if (cell.isEmpty() || cell.getFrameId().isStopFrame()) break;
+    if (!mcol->isMask()) {
+      if (++contentPassed >= maxMaskScope) break;
+      continue;
+    }
+    if (!usable) {
+      if (contentPassed == 0) break;
+      continue;
+    }
+    if (isFolderMask(mcol)) continue;  // it clips its folder (below)
+    if (contentPassed >= mcol->getMaskScope()) continue;
     masks.insert(masks.begin(), mcol);
   }
+
+  // Ztoryc: a mask inside a folder clips every other column of that folder,
+  // subfolders included (same rule as StageBuilder::addFrame).
+  if (isInFolder() && !isMask())
+    for (int i = 0; i < xsh->getColumnCount(); i++) {
+      TXshColumn *mcol = xsh->getColumn(i);
+      if (i == m_index || !mcol || !isFolderMask(mcol) ||
+          !isContainedInFolder(innermostFolder(mcol)) ||
+          !mcol->isPreviewVisible())
+        continue;
+      TXshCell cell = xsh->getCell(frame, i);
+      if (cell.isEmpty() || cell.getFrameId().isStopFrame()) continue;
+      masks.insert(masks.begin(), mcol);
+    }
 
   return masks;
 }
@@ -955,6 +1040,9 @@ void TXshColumn::setAlphaLocked(bool on) {
 void TXshColumn::resetColumnProperties() {
   setStatusWord(0);
   setOpacity(255);
+  setMaskScope(1);
+  m_opacityCurve->clearKeyframes();
+  m_opacityCurve->setDefaultValue(1.0);
   setColorTag(0);
   setColorFilterId(0);  // None
 }

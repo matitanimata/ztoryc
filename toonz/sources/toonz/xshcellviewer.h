@@ -154,6 +154,9 @@ class CellArea final : public QWidget {
   void drawKeyframeLine(QPainter &p, int col, const NumberRange &rows) const;
 
   void drawNotes(QPainter &p, const QRect toBeUpdated);
+  void drawFlashFrameLabels(QPainter &p, const QRect toBeUpdated);
+  void editFlashFrameLabel(const QString &nativeLabelId);
+  bool chooseFlashFrameLabel(int row, int col, const QPoint &globalPos);
 
   void drawCurrentTimeIndicator(QPainter &p, const QPoint &xy,
                                 bool isFolded = false);

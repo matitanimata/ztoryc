@@ -138,3 +138,6 @@ thirdparty/superlu/SuperLU_4.1/TESTING/
 # Auto Fill harness: generated from the sources by extract.py
 /tools/autofill_halo_harness/*.inc
 /tools/autofill_halo_harness/harness
+
+# build directory of the tnzflash target (FLA import); toonz/sources/flash is source
+/flash/

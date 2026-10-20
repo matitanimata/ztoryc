@@ -1903,6 +1903,7 @@ TXshSimpleLevel *CloneLevelUndo::cloneLevel(
   assert(dstSl);
   dstSl->setPath(scene->codeFilePath(dstPath));
   dstSl->setName(dstName);
+  if (!srcSl->flashNativeId().isEmpty()) dstSl->ensureFlashNativeId();
   dstSl->clonePropertiesFrom(srcSl);
   *dstSl->getHookSet() = *srcSl->getHookSet();
 

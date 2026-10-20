@@ -58,6 +58,7 @@ UrlOpener manual(QUrl("file:///C:/gmt/butta/M&C in EU.pdf"));
 
 TEnv::IntVar LockRoomTabToggle("LockRoomTabToggle", 1);
 
+
 //=============================================================================
 // RoomTabWidget
 //-----------------------------------------------------------------------------
@@ -347,6 +348,7 @@ void TopBar::loadMenubar() {
     addMenuItem(importMenu, MI_ImportAssets);
     addMenuItem(importMenu, MI_ImportMagpieFile);
     addMenuItem(importMenu, MI_ImportOCA);
+    addMenuItem(importMenu, MI_ImportFlash);
   }
   QMenu *exportMenu = fileMenu->addMenu(tr("Export"));
   {
@@ -752,6 +754,7 @@ void TopBar::loadMenubar() {
   addMenuItem(windowsMenu, MI_StartupPopup);
   addMenuItem(windowsMenu, MI_OpenGuidedDrawingControls);
   addMenuItem(windowsMenu, MI_OpenAlignmentPanel);
+  addMenuItem(windowsMenu, MI_OpenFlashInstancePanel);
   addMenuItem(windowsMenu, MI_OpenCustomPanels);
   // windowsMenu->addSeparator();
   // addMenuItem(windowsMenu, MI_OpenExport);
