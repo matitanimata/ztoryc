@@ -9,6 +9,8 @@
 #include <functional>
 
 class QCheckBox;
+class QComboBox;
+class TFilePath;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
@@ -28,6 +30,7 @@ class FlashImportPopup final : public DVGui::Dialog {
   DVGui::FileField *m_source      = nullptr;
   DVGui::FileField *m_destination = nullptr;
   QLineEdit *m_folderName         = nullptr;
+  QComboBox *m_importAs           = nullptr;  // Ztoryc: sub-scene or columns
   QCheckBox *m_symbolGuides       = nullptr;
   QCheckBox *m_unusedSymbols      = nullptr;
   QLabel *m_destinationStatus     = nullptr;
@@ -55,6 +58,9 @@ private:
   QString sourcePath() const;
   QString destinationPath() const;
   QString extrasFolder() const;  // Ztoryc: default destination
+  QString sceneProblem() const;  // Ztoryc: why the scene cannot take it
+  bool insertIntoScene(const TFilePath &scenePath, bool asColumns,
+                       QString &error);  // Ztoryc: protected load
   QString destinationProblem() const;
   void sourceChanged();
   void invalidateInspection();

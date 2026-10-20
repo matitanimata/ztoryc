@@ -1,6 +1,13 @@
 #include "flashimportpopup.h"
 
 #include "iocommand.h"
+#include "subscenecommand.h"
+#include "ztorymaingate.h"
+#include "toonz/txsheet.h"
+#include "toonz/txsheethandle.h"
+#include "toonz/tframehandle.h"
+#include "toonz/txshcell.h"
+#include "tundo.h"
 #include "menubarcommandids.h"
 #include "tapp.h"
 #include "toonz/toonzscene.h"
@@ -15,6 +22,8 @@
 #include "../toonzlib/flashpreflight.h"
 
 #include <QCheckBox>
+#include <QComboBox>
+#include <QSettings>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -230,6 +239,20 @@ FlashImportPopup::FlashImportPopup()
   m_folderName->setMaxLength(160);
   form->addRow(tr("New folder name:"), m_folderName);
 
+  // Ztoryc: the import always goes into the scene you are working in (a
+  // new scene is created and saved first); the only choice is whether it
+  // arrives as one sub-scene or as its columns.
+  m_importAs = new QComboBox(m_inputs);
+  m_importAs->setObjectName("FlashImportAs");
+  m_importAs->addItem(tr("Sub-Scene"));
+  m_importAs->addItem(tr("Columns"));
+  m_importAs->setCurrentIndex(
+      QSettings().value("FlashImport/ImportAs", 0).toInt() == 1 ? 1 : 0);
+  m_importAs->setToolTip(
+      tr("Sub-Scene: the whole document in one column of the current scene.\n"
+         "Columns: its layers as columns of the current scene."));
+  form->addRow(tr("Import as:"), m_importAs);
+
   m_unusedSymbols =
       new QCheckBox(tr("Include unused library symbols"), m_inputs);
   m_unusedSymbols->setObjectName("FlashImportUnusedSymbols");
@@ -317,7 +340,20 @@ QString FlashImportPopup::destinationPath() const {
       .filePath(m_folderName->text());
 }
 
+QString FlashImportPopup::sceneProblem() const {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene || scene->isUntitled())
+    return tr("Save the scene first: the import goes into the scene you are "
+              "working in.");
+  if (ZtoryMainGate::isStoryboardMain())
+    return tr("Open a shot first: the main timeline of a storyboard holds "
+              "only shots.");
+  return QString();
+}
+
 QString FlashImportPopup::destinationProblem() const {
+  const QString scene = sceneProblem();
+  if (!scene.isEmpty()) return scene;
   const QFileInfo parent(m_destination->getPath().trimmed());
   if (m_destination->getPath().trimmed().isEmpty() || !parent.isDir())
     return tr("Choose an existing folder in Save inside.");
@@ -624,14 +660,9 @@ void FlashImportPopup::importSource() {
   bool opened = false;
   QString openingError;
   try {
-    // Ztoryc: into the scene you are working in, as a sub-scene (File >
-    // Load As Sub-Scene), instead of replacing it. With no scene open, it
-    // opens as a scene as before.
-    ToonzScene *current = TApp::instance()->getCurrentScene()->getScene();
-    if (current)
-      opened = IoCmd::loadSubScene(result.scenePath);
-    else
-      opened = IoCmd::loadScene(result.scenePath, true, true, true);
+    const bool asColumns = m_importAs->currentIndex() == 1;
+    QSettings().setValue("FlashImport/ImportAs", asColumns ? 1 : 0);
+    opened = insertIntoScene(result.scenePath, asColumns, openingError);
   } catch (const TException &error) {
     openingError = QString::fromStdWString(error.getMessage());
   } catch (const std::exception &error) {
@@ -646,14 +677,52 @@ void FlashImportPopup::importSource() {
     accept();
     return;
   }
-  m_summary->setText(tr("Import was saved, but the scene was not opened.\n"
-                        "Use File > Load Scene to open:\n%1")
+  m_summary->setText(tr("Import was saved, but it could not be added to the "
+                        "scene; the scene was left as it was.\n"
+                        "Use File > Load As Sub-Scene to add:\n%1")
                          .arg(result.scenePath.getQString()));
   m_diagnostics->setPlainText(tr("Import report: %1").arg(result.reportPath) +
                               (openingError.isEmpty()
                                    ? QString()
                                    : "\n\n" + displayText(openingError, 4000)));
   updateActions();
+}
+
+// Ztoryc: protected load.  The imported scene goes into the current one in
+// a single undo block; when anything fails the block is undone and dropped,
+// so the scene is left exactly as it was and no redo brings back half an
+// import.  Columns = the sub-scene exploded right away (Sub-Scene > Explode,
+// which asks how to keep the parenting).
+bool FlashImportPopup::insertIntoScene(const TFilePath &scenePath,
+                                       bool asColumns, QString &error) {
+  TApp *app         = TApp::instance();
+  TUndoManager *um  = TUndoManager::manager();
+  const int history = um->getHistoryCount();
+
+  IoCmd::LoadResourceArguments args(scenePath);
+  args.silent = true;  // errors collected, no dialog over this one
+  bool ok     = false;
+  um->beginBlock();
+  try {
+    const int loaded = IoCmd::loadResources(args);
+    TXsheet *xsh     = app->getCurrentXsheet()->getXsheet();
+    ok = loaded > 0 && args.errors.isEmpty() && args.col0 >= 0 &&
+         xsh->getCell(args.row0, args.col0).getChildLevel() != nullptr;
+    if (ok && asColumns) {
+      app->getCurrentFrame()->setFrame(args.row0);
+      SubsceneCmd::explode(args.col0);
+    }
+  } catch (...) {
+    um->endBlock();
+    if (um->getHistoryCount() > history && um->undo()) um->popUndo(1, true);
+    throw;
+  }
+  um->endBlock();
+  if (!ok) {
+    if (um->getHistoryCount() > history && um->undo()) um->popUndo(1, true);
+    error = args.errors.join("\n");
+  }
+  return ok;
 }
 
 void openFlashImportPopup() {
