@@ -1057,9 +1057,11 @@ void ToonzVectorBrushTool::leftButtonDrag(const TPointD &pos,
   bool nonShiftStraight = false;
   TPointD usePos        = pos;
 
+  // an assistant guideline under the stroke wins over the Tahoma grid; the
+  // grid still works where there is none, and ⌥ Option forces it
   if (!m_isPath &&
       ((e.isAltPressed() && !e.isCtrlPressed() && !e.isShiftPressed()) ||
-       m_snapGrid.getValue())) {
+       (m_snapGrid.getValue() && !m_assistantSnap.isActive()))) {
     invalidateRect   = TRectD(m_firstPoint, m_lastPoint).enlarge(2);
     if (!m_snapGrid.getValue()) nonShiftStraight = true;
     double distance  = (m_brushPos.x) * 0.5;

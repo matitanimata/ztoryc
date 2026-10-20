@@ -1465,7 +1465,7 @@ void ToonzRasterBrushTool::leftButtonDown(const TPointD &pos,
 
   // the guidelines pass through the first point: it is painted as it is
   m_assistPainted = 1;
-  if (!m_isStraight && !m_snapGrid.getValue() && m_assistants.getValue())
+  if (!m_isStraight && m_assistants.getValue())
     m_assistantSnap.begin(this, TThickPoint(pos, 0));
   else
     m_assistantSnap.end();
@@ -1721,7 +1721,10 @@ void ToonzRasterBrushTool::leftButtonDrag(const TPointD &pos,
   m_lastPoint    = pos;
   TPointD usePos = pos;
 
-  if (e.isAltPressed() || m_snapGrid.getValue()) {
+  // an assistant guideline under the stroke wins over the Tahoma grid; the
+  // grid still works where there is none, and ⌥ Option forces it
+  if (e.isAltPressed() ||
+      (m_snapGrid.getValue() && !m_assistantSnap.isActive())) {
     double distance = (m_brushPos.x - m_maxCursorThick + 1) * 0.5;
     TRectD brushRect =
         TRectD(TPointD(m_brushPos.x - distance, m_brushPos.y - distance),
@@ -2187,8 +2190,9 @@ void ToonzRasterBrushTool::leftButtonUp(const TPointD &pos,
     m_assistantSnap.end();
     return;
   }
-  TPointD endPos = pos;
-  if (m_assistantSnap.isActive()) {
+  TPointD endPos     = pos;
+  bool assistedStroke = m_assistantSnap.isActive();
+  if (assistedStroke) {
     // a stroke too short to choose: painted on the best guess
     paintPendingAssistedPoints(pos, e);
     TThickPoint p = m_assistantSnap.transform(TThickPoint(pos, 0));
@@ -2197,7 +2201,8 @@ void ToonzRasterBrushTool::leftButtonUp(const TPointD &pos,
     invalidate();
   }
   TPointD centeredPos = getCenteredCursorPos(endPos);
-  if (e.isCtrlPressed() || m_snapGrid.getValue() || e.isAltPressed())
+  if (!assistedStroke &&
+      (e.isCtrlPressed() || m_snapGrid.getValue() || e.isAltPressed()))
     centeredPos   = getCenteredCursorPos(m_lastPoint);
   double pressure = m_enabledPressure ? e.m_pressure : 0.5;
 
