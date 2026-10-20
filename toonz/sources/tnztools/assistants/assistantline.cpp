@@ -148,7 +148,7 @@ void TAssistantLine::drawRuler(
   double alpha )
 {
   double pixelSize = sqrt(tglGetPixelSize2());
-  double minStep = (perspectiveBase ? 5 : 10)*pixelSize;
+  double minStep = (perspectiveBase ? 5 : 10)*pixelSize/TAssistantBase::gridDensity;
 
   TPointD direction = b - a;
   double l2 = norm2(direction);
@@ -216,7 +216,7 @@ void TAssistantLine::drawGrid(
   TAffine matrix = (projection*modelview).get2d();
   TAffine matrixInv = matrix.inv();
   double pixelSize = sqrt(tglGetPixelSize2());
-  double minStep = (perspective ? 2.5 : 10)*pixelSize;
+  double minStep = (perspective ? 2.5 : 10)*pixelSize/TAssistantBase::gridDensity;
 
   TPointD ab = b - a;
   double abLen2 = norm2(ab);

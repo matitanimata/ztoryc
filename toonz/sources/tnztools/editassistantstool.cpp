@@ -861,7 +861,10 @@ public:
             ++index;
             base->drawEdit(getViewer(), index);
           } else {
+            const TAssistant *assistant = dynamic_cast<const TAssistant*>(base);
+            TAssistantBase::gridDensity = assistant ? assistant->getGridDensity() : 1.0;
             base->drawEdit(getViewer());
+            TAssistantBase::gridDensity = 1.0;
           }
           
           if (const TAssistant *assistant = dynamic_cast<const TAssistant*>(base))

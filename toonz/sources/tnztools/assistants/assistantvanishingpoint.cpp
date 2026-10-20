@@ -179,7 +179,7 @@ void TAssistantVanishingPoint::drawSimpleGrid(
   double alpha )
 {
   double pixelSize = sqrt(tglGetPixelSize2());
-  double minStep = 5.0*pixelSize;
+  double minStep = 5.0*pixelSize/TAssistantBase::gridDensity;
 
   // calculate rays count and step
   TPointD d0 = grid0 - center;
@@ -258,7 +258,7 @@ void TAssistantVanishingPoint::drawPerspectiveGrid(
 {
   // initial calculations
   double pixelSize = sqrt(tglGetPixelSize2());
-  double minStep = 5.0*pixelSize;
+  double minStep = 5.0*pixelSize/TAssistantBase::gridDensity;
   
   TPointD ox = grid1 - grid0;
   double lx = norm2(ox);

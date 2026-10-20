@@ -210,6 +210,9 @@ public:
   static TPixelD colorEdit;
   static TPixelD colorSelect;
   static unsigned int drawFlags;
+  // Ztoryc: grid lines are spaced on screen; the assistant being drawn sets
+  // how much denser than the default (1) they are.
+  static double gridDensity;
   static const double lineWidthScale;
   
 protected:
@@ -363,6 +366,7 @@ class DVAPI TAssistant : public TAssistantBase {
 protected:
   const TStringId m_idMagnetism;
   const TStringId m_idInterpolation;
+  const TStringId m_idGridDensity;
 
   void onSetDefaults() override;
   void onFixData() override;
@@ -382,6 +386,10 @@ public:
   TAssistant(TMetaObject &object);
 
   Interpolation getInterpolation() const;
+  double getGridDensity() const;
+
+  // draws with this assistant's grid density
+  void drawWithDensity(TTool::Viewer *viewer, bool enabled) const;
 
   double getMagnetism() const
     { return data()[m_idMagnetism].getDouble(); }

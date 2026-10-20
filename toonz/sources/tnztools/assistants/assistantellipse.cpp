@@ -254,7 +254,7 @@ void TAssistantEllipse::drawRuler(
   double alpha
 ) {
   double pixelSize = sqrt(tglGetPixelSize2());
-  double minStep = (perspective ? 5 : 10)*pixelSize;
+  double minStep = (perspective ? 5 : 10)*pixelSize/TAssistantBase::gridDensity;
 
   TAffine em = ellipseMatrix;
   TAffine ellipseMatrixInv = ellipseMatrix.inv();
@@ -335,7 +335,7 @@ void TAssistantEllipse::drawConcentricGrid(
   TAffine screenMatrixInv = screenMatrix.inv();
   
   double pixelSize = sqrt(tglGetPixelSize2());
-  double minStep = (perspective ? 2.5 : 10.0)*pixelSize;
+  double minStep = (perspective ? 2.5 : 10.0)*pixelSize/TAssistantBase::gridDensity;
   TAffine ellipseMatrixInv = ellipseMatrix.inv();
 
   // calculate bounds
@@ -440,7 +440,7 @@ void TAssistantEllipse::drawParallelGrid(
   TAffine screenMatrixInv = screenMatrix.inv();
   
   double pixelSize = sqrt(tglGetPixelSize2());
-  double minStep = (perspective ? 5 : 10)*pixelSize;
+  double minStep = (perspective ? 5 : 10)*pixelSize/TAssistantBase::gridDensity;
 
   const TAffine &em = ellipseMatrix;
   double r = sqrt(0.5*(norm2(TPointD(em.a11, em.a21)) + norm2(TPointD(em.a12, em.a22))));

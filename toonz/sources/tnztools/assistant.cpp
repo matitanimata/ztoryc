@@ -34,6 +34,7 @@ const double TAssistantBase::lineWidthScale = 1.0;
 
 
 unsigned int TAssistantBase::drawFlags = 0;
+double TAssistantBase::gridDensity = 1.0;
 TPixelD TAssistantBase::colorBase  (0, 0, 0, 1);
 TPixelD TAssistantBase::colorError (1, 0, 0, 1);
 TPixelD TAssistantBase::colorEdit  (0, 0, 0, 1);
@@ -712,7 +713,8 @@ TAssistantBase::drawEdit(TTool::Viewer *viewer, int index) const {
 TAssistant::TAssistant(TMetaObject &object):
   TAssistantBase(object),
   m_idMagnetism("magnetism"),
-  m_idInterpolation("interpolation")
+  m_idInterpolation("interpolation"),
+  m_idGridDensity("gridDensity")
 {
   addProperty( new TDoubleProperty(m_idMagnetism.str(), 0.0, 1.0, getMagnetism()) );
   // the stored values are the strings below; the menu shows the names
@@ -724,6 +726,25 @@ TAssistant::TAssistant(TMetaObject &object):
   interpolation->addValueWithUIName(L"easeOut", tr("Ease Out"));
   interpolation->addValueWithUIName(L"easeInOut", tr("Ease In/Out"));
   addProperty(interpolation);
+  addProperty( createSpinProperty(m_idGridDensity, 1, 1, 10) );
+}
+
+//---------------------------------------------------------------------------------------------------
+
+double
+TAssistant::getGridDensity() const {
+  // absent from files written before it existed
+  double density = data()[m_idGridDensity].getDouble();
+  return density < 1.0 ? 1.0 : density;
+}
+
+//---------------------------------------------------------------------------------------------------
+
+void
+TAssistant::drawWithDensity(TTool::Viewer *viewer, bool enabled) const {
+  gridDensity = getGridDensity();
+  draw(viewer, enabled);
+  gridDensity = 1.0;
 }
 
 //---------------------------------------------------------------------------------------------------
@@ -745,6 +766,7 @@ TAssistant::updateTranslation() const {
   TAssistantBase::updateTranslation();
   setTranslation(m_idMagnetism, tr("Magnetism"));
   setTranslation(m_idInterpolation, tr("Interpolation"));
+  setTranslation(m_idGridDensity, tr("Grid Density"));
 }
 
 //---------------------------------------------------------------------------------------------------
@@ -1012,7 +1034,7 @@ TAssistant::scanAssistants(
             if (findGuidelines)
               for(int i = 0; i < positionsCount; ++i)
                 assistant->getGuidelines(positions[i], imageToTrack, color, *outGuidelines);
-            if (draw) assistant->draw(viewer, assistant->getEnabled() && markEnabled);
+            if (draw) assistant->drawWithDensity(viewer, assistant->getEnabled() && markEnabled);
           }
         } // for each meta object
         
