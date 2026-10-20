@@ -634,6 +634,8 @@ centralWidget->setLayout(centralWidgetLayout);*/
   setCommandHandler(MI_FullScreenWindow, this, &MainWindow::fullScreenWindow);
   setCommandHandler("MI_NewVectorLevel", this,
                     &MainWindow::onNewVectorLevelButtonPressed);
+  setCommandHandler(MI_NewAssistantsLevel, this,
+                    &MainWindow::onNewAssistantsLevelButtonPressed);
   setCommandHandler("MI_NewToonzRasterLevel", this,
                     &MainWindow::onNewToonzRasterLevelButtonPressed);
   setCommandHandler("MI_NewRasterLevel", this,
@@ -2579,6 +2581,10 @@ void MainWindow::defineActions() {
 
   createMenuLevelAction(MI_NewLevel, QT_TR_NOOP("&New Level..."), "Alt+N",
                         "new_level", tr("Create a new drawing layer."));
+  createMenuLevelAction(MI_NewAssistantsLevel,
+                        QT_TR_NOOP("New Assistants Level"), "", "",
+                        tr("Create a level for drawing assistants: vanishing "
+                           "points, perspective grids, ellipses, lines."));
   createMenuLevelAction(MI_NewVectorLevel, QT_TR_NOOP("&New Vector Level"), "",
                         "new_vector_level",
                         tr("Create a new vector level.") + separator +
@@ -4169,6 +4175,16 @@ void MainWindow::onInk1CheckTriggered(bool on) {
 void MainWindow::onNewVectorLevelButtonPressed() {
   int defaultLevelType = Preferences::instance()->getDefLevelType();
   Preferences::instance()->setValue(DefLevelType, PLI_XSHLEVEL);
+  CommandManager::instance()->execute("MI_NewLevel");
+  Preferences::instance()->setValue(DefLevelType, defaultLevelType);
+}
+
+//-----------------------------------------------------------------------------
+
+// OpenToonz drawing assistants: New Level with «Assistants Level» chosen.
+void MainWindow::onNewAssistantsLevelButtonPressed() {
+  int defaultLevelType = Preferences::instance()->getDefLevelType();
+  Preferences::instance()->setValue(DefLevelType, META_XSHLEVEL);
   CommandManager::instance()->execute("MI_NewLevel");
   Preferences::instance()->setValue(DefLevelType, defaultLevelType);
 }

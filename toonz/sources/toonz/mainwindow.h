@@ -128,6 +128,7 @@ public:
   void updateZtoryToolbarDedup();
 
   void onNewVectorLevelButtonPressed();
+  void onNewAssistantsLevelButtonPressed();
   void onNewToonzRasterLevelButtonPressed();
   void onNewRasterLevelButtonPressed();
   void clearCacheFolder();
