@@ -14,6 +14,7 @@
 
 #include "toonzrasterbrushtool.h"
 #include "vectorbrush.h"
+#include "assistantstrokesnap.h"
 
 #include <QCoreApplication>
 #include <QRadialGradient>
@@ -127,6 +128,7 @@ public:
   // Tools.
   bool isPencilModeActive() override;
 
+  void addAssistedTrackPoint(const TThickPoint &point, double pixelSize2);
   void addTrackPoint(const TThickPoint &point, double pixelSize2);
   void flushTrackPoint();
   bool doFrameRangeStrokes(
@@ -182,6 +184,7 @@ protected:
   TEnumProperty m_joinStyle;
   TIntProperty m_miterJoinLimit;
   TBoolProperty m_snapGrid;
+  TBoolProperty m_assistants;
   TStylusProperty m_sizeStylusProperty;
 
   bool m_enabledPressure;
@@ -222,6 +225,7 @@ protected:
   TRect m_strokeRect, m_lastRect;
 
   SmoothStroke m_smoothStroke;
+  AssistantStrokeSnap m_assistantSnap;
 
   VectorBrushPresetManager
       m_presetsManager;  //!< Manager for presets of this tool instance

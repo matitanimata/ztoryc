@@ -58,6 +58,7 @@ set(HEADERS
     ../include/tools/inputmanager.h
     ../include/tools/assistant.h
     ../include/tools/editassistantstool.h
+    assistantstrokesnap.h
     ../include/tools/replicator.h
     ../include/tools/modifiers/modifierassistants.h
     ../include/tools/modifiers/modifierclone.h
@@ -85,6 +86,7 @@ set(SOURCES
     track.cpp
     inputmanager.cpp
     assistant.cpp
+    assistantstrokesnap.cpp
     replicator.cpp
     modifiers/modifierassistants.cpp
     modifiers/modifierclone.cpp

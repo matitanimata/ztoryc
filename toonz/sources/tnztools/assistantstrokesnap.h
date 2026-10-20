@@ -1,0 +1,55 @@
+#pragma once
+
+#ifndef ASSISTANTSTROKESNAP_H
+#define ASSISTANTSTROKESNAP_H
+
+// Snaps a brush stroke to the drawing assistants (OpenToonz assistants,
+// phase 2 of experiment/ot-assistants).
+//
+// OpenToonz feeds its brushes through TInputManager, a modifier chain the
+// Tahoma2D brushes do not have.  This is the part of TModifierAssistants
+// that matters, without the chain: at the first point the guidelines of the
+// enabled assistants are collected; while the stroke is short the one the
+// gesture follows best is chosen (TGuideline::findBest), then it is locked;
+// every raw point is projected on it before reaching the brush.
+
+#include "tools/assistant.h"
+#include "tools/track.h"
+
+#include "tgeometry.h"
+
+#include <memory>
+#include <vector>
+
+class TTool;
+
+class AssistantStrokeSnap {
+  TTool *m_tool = nullptr;
+  TGuidelineList m_guidelines;
+  TGuidelineP m_current;
+  std::unique_ptr<TTrack> m_track;  // TTrack cannot be reassigned
+  std::vector<TThickPoint> m_raw;
+  bool m_locked = false;
+
+public:
+  // Collects the guidelines through pos; false when no assistant is near.
+  bool begin(TTool *tool, const TThickPoint &pos);
+  // Adds a raw point.  Returns true when the chosen guideline changed: the
+  // points given so far are then stale and the stroke must be rebuilt from
+  // rawPoints().
+  bool add(const TThickPoint &raw);
+  TThickPoint transform(const TThickPoint &raw) const;
+  const std::vector<TThickPoint> &rawPoints() const { return m_raw; }
+  bool isActive() const { return m_tool && !m_guidelines.empty(); }
+  void end();
+
+  // The guidelines of the current stroke, the chosen one highlighted.
+  void drawGuidelines() const;
+  // The guidelines through a hover position, before the stroke starts.
+  static void drawHoverGuidelines(TTool *tool, const TPointD &pos);
+
+private:
+  TAffine trackToScreen() const;
+};
+
+#endif
