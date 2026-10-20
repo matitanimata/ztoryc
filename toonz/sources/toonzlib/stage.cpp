@@ -758,6 +758,13 @@ void StageBuilder::addFrame(PlayerSet &players, ToonzScene *scene, TXsheet *xsh,
   }
   std::stable_sort(shuffle.begin(), shuffle.end(), StackingOrder());
 
+  // the farthest a mask reaches to its left (Flash masks), 1 in Tahoma
+  int maxMaskScope = 1;
+  for (int c = 0; c < columnCount; c++)
+    if (TXshColumn *column = xsh->getColumn(c))
+      if (column->isMask())
+        maxMaskScope = std::max(maxMaskScope, column->getMaskScope());
+
   for (int i = 0; i < columnCount; i++) {
     int c = shuffle[i].second;
     if (CameraTestCheck::instance()->isEnabled() && c != m_currentColumnIndex)
@@ -807,18 +814,27 @@ void StageBuilder::addFrame(PlayerSet &players, ToonzScene *scene, TXsheet *xsh,
       if (column->isCamstandVisible() ||
           includeUnvisible)  // se l'"occhietto" non e' chiuso
       {
-        // scan ahead for masks
+        // scan ahead for masks.  A mask clips the getMaskScope() columns on
+        // its left: 1, Tahoma's rule, is the column right before it (or
+        // before the masks stacked after it); a Flash mask layer clips more.
+        // With every scope at 1 this is the original scan, break for break.
+        int contentPassed = 0;
         for (int x = c + 1; x < columnCount; x++) {
           TXshColumn *maskCol = xsh->getColumn(x);
-          if (!maskCol || maskCol->isCellEmpty(row) ||
-              xsh->getCell(row, x).getFrameId().isStopFrame() ||
-              !maskCol->isCamstandVisible())
-            break;
+          if (!maskCol) break;
+          const bool usable = !maskCol->isCellEmpty(row) &&
+                              !xsh->getCell(row, x).getFrameId().isStopFrame() &&
+                              maskCol->isCamstandVisible();
+          if (!usable && contentPassed == 0) break;
 
           // Skip mesh files
           if (maskCol->getColumnType() == TXshColumn::eMeshType) continue;
 
-          if (!maskCol->isMask()) break;
+          if (!maskCol->isMask()) {
+            if (++contentPassed >= maxMaskScope) break;
+            continue;
+          }
+          if (!usable || contentPassed >= maskCol->getMaskScope()) continue;
 
           isMask = true;
           std::vector<int> saveMasks;
@@ -841,8 +857,6 @@ void StageBuilder::addFrame(PlayerSet &players, ToonzScene *scene, TXsheet *xsh,
       while (m_masks.size() > maskCount) m_masks.pop_back();
     }
   }
-  // Ztoryc: OpenToonz-dev PR #267's mask scope is not ported — Tahoma's
-  // masks follow the column they clip and are popped per column above.
   if (level == 0) std::stable_sort(players.begin(), players.end(), PlayerLt());
 }
 
