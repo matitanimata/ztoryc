@@ -108,9 +108,10 @@ degli status).
   deformatori, fisica, auto-shadow → Otter), senza pero' spendere tempo nella
   separazione vera. Non proporre il fork come lavoro; non incrociare i due
   mondi in modo che poi separarli costi. Vedi `COMPETITIVE_ROADMAP.md` sez. 8.
-- **Assistenti al disegno da OpenToonz** (2026-08-13): candidato misurato e
-  registrato in `OPENTOONZ_PORT_CANDIDATES.md`, ma Franco ha scelto di passare
-  prima al rig. Non e' il prossimo lavoro.
+- **Import FLA come nuova scena — NO (Franco, 20/10).** In Ztoryc una scena si crea e si salva prima;
+  l'import va sempre nella scena aperta, come sotto-scena o come colonne. Niente terza scelta.
+- **Comando «Import Tahoma Perspective Grid» negli assistenti — NO (Franco, 20/10: «a che servirebbe?»).**
+  Si tengono tutti e due i sistemi; il pennello sceglie con il menu **Guides: Off / Grid / Assistants**.
 - 🆕 **OpenPose ↔ scheletro Plastic** (2026-09-29, design, nessun codice):
   export della posa verso ControlNet e import di animazioni estratte da video,
   una tabella di corrispondenza per personaggio in comune. Prima prova su un
@@ -157,6 +158,43 @@ degli status).
 
 ## 🎬 Ztoryc — storyboard, animatic, thumbs
 
+### 🆕 Aperti dopo la sessione del 20/10 (assistenti e import FLA — in master, NON ancora pushato)
+
+- **Domattina 21/10: `git push origin master` con `SKIP_LICENSE_SCAN=1`** (falso positivo «otx» sui file
+  OpenToonz degli assistenti, verificato; il sì di Franco c'e', 20/10). Poi **build sul Dell** (Windows,
+  e Linux gcc/clang): gli header `tsmartpointer.h`/`tvariant.h`/`tstringid.h` sostituiti con quelli OT
+  (overload su 0/NULL, `operator bool`, `template class DVAPI TSmartPointerT<TGuideline>`), simboli DVAPI
+  di tnztools usati da toonz; per il FLA zlib, `renameat2`/`RENAME_NOREPLACE`, `restartmanager.h`.
+- **Release dopo il Dell: 0.19.0 (minor)** — Franco: «c'e' parecchia roba nuova». Checklist dal punto 0:
+  review dei commit dalla 0.18.0; quelli di assistenti e FLA sono revisionati il 20/10
+  (`reviews/2026-10-20_*`). Nelle note: assistenti, Guides, replicatori, import FLA e i suoi limiti,
+  maschere che seguono le cartelle (cambia l'aspetto di scene esistenti con maschere in cartella),
+  opacita' delle colonne dentro gli shot che ora si vede nell'Animatic, formati nuovi (`.tzm`; PLI 151 e
+  scene 71.2-71.4 per i FLA; 71.2 anche per l'opacita' animata).
+- **Collaudi ancora da fare** (installato, non provato da Franco): pennello Smart Raster con stile MyPaint
+  e le guide; replicatori + ⌘Z/⌘Y sullo Smart Raster a bordo morbido; correzioni della review assistenti
+  (`e4438b008`: cambio strumento a meta' tratto, Magnetism un solo undo); FLA: Import as Columns, maschere
+  nel viewer, istanze dopo inserimento/cancellazione celle + undo, import su un progetto in Drive;
+  **maschere dentro cartelle** in viewer e render, e una scena vecchia con maschere identica a prima.
+- **FLA, limiti aperti** (review 20/10): rinomina atomica senza ripiego su Drive/NFS/exFAT (D8, l'import
+  puo' fallire con messaggio tecnico); livello importato chiamato sempre «scene» (D6); cartella extras
+  creata gia' alla scelta del file (D9); costo O(N) delle etichette in insert/remove/moveColumn e nel
+  disegno delle celle; profondita' dei simboli annidati in un FLA ostile non verificata; le maschere FLA
+  tengono la «portata» numerica (si potrebbero portare a cartelle: lavoro sull'importatore, non urgente).
+- **Assistenti, debito** (review 20/10): colonne META grigie nello xsheet (manca `case META_XSHLEVEL`) e
+  `assert(false)` di `icongenerator` per livelli META in debug; moduli Ztoryc che enumerano i livelli
+  (export, castviewer, ztoriglibrary...) da provare con un `.tzm` in uno shot; nei pennelli `m_snapGrid` e
+  `m_assistants` derivati a mano da `m_guideSnap` (unificare); `.tzm` con `"version": 0`.
+- **Domattina, PRIMA del push: `build_and_deploy` su master** — `bbe07129d` (Import as Columns annullato
+  se si annulla l'esplosione) e' compilato ma non nel bundle: l'app era aperta.
+- **Review 20/10 sera, voci di lavoro**: regola delle maschere duplicata fra `stage.cpp` e
+  `txshcolumn.cpp` (`innermostFolder`, `isFolderMask`, `maxMaskScope`): unificarla in un posto solo, se
+  divergono viewer e render smettono di coincidere; incolla-duplica, trascinamento e reframe delle celle
+  non spostano le istanze Flash; `Flash::Error`/`TException` gestiti diversamente fra paste/insert e
+  delete/cut; contesto `GuideSnap` da aggiungere ai file `.ts`.
+- **Le scene con le guide si aprono solo con una build che ha gli assistenti**: Ztoryc 0.18 e Tahoma stock
+  vedono il `.tzm` come file sconosciuto (visto da Franco il 20/10 aprendo con l'app del FLA).
+
 ### 🆕 Aperti dopo la sessione del 19/10 (tema, auto-matte, Auto Close Gap — tutto in master)
 
 - **Vettoriale: il colore di un'area lontana si perde aggiungendo un tratto, e l'undo non lo rimette
@@ -179,10 +217,6 @@ degli status).
   schizzi molto aperti (taglio di grafo di `naru_lazybrush.cpp`, vedi OPENTOONZ_PORT_CANDIDATES); la
   **tacca a V** sul bordo della sagoma dove c'era l'apertura; la correzione della misura sui vettoriali
   riaperti da file (`dca45f1ce`) e' verificata solo leggendo il codice.
-- **PR di Three.Star per l'import dei FLA** su opentoonz-dev (annunciata il 19/10, non ancora pubblicata):
-  provarla in un worktree, prima importatore e lettore, poi le ~4.900 righe di modifiche al core
-  (maschere, regioni, stili, renderer: Tahoma diverge, e le regioni le abbiamo toccate noi);
-  `license-guard` sul lettore Flash. Non urgente (Franco).
 - **.pli a tolleranza > 1,15 aperti in Tahoma/OpenToonz** (review 2026-10-19b, punto 1): il formato e'
   lo stesso, ma il minimo assoluto della chiusura (`ztorycAutocloseFloor2`) chiude in Ztoryc regioni che
   lo stock, sullo stesso file, non chiude: un disegno riempito qui potrebbe avere aree vuote la'. Provare
@@ -1129,8 +1163,7 @@ onion skin del pupazzo. Restano:
      `bind(TTool::AllImages)`, quindi un deformatore ANIMABILE su tutti i tipi
      di livello **esiste gia'** — il buco e' il ritocco DIRETTO, senza mesh ne'
      rig. Nessuna sovrapposizione, l'inquadramento di Claudio era giusto.
-   - **Assistenti al disegno da OpenToonz** — Franco li ha ricordati il
-     2026-08-16 come ancora in sospeso. Restano sotto al blocco A.
+   - ~~Assistenti al disegno da OpenToonz~~ — ✅ su master il 2026-10-20 (`6465b829e`).
    - 2.5D Cartoon Models (ricerca), auto-shadow (per ultimo, sua indicazione).
 
 ---

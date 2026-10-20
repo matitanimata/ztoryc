@@ -1,3 +1,54 @@
+## [2026-10-20] — Assistenti al disegno da OpenToonz e import FLA, tutti e due su master (push domattina)
+
+### Added
+- **Assistenti al disegno da OpenToonz** (merge `6465b829e`): Level > New > New Assistants Level, strumento
+  Edit Assistants (Perspective, Vanishing Point, Line, Ellipse, Fisheye; replicatori Mirror, Star, Grid,
+  Affine, Jitter). Il tratto si aggancia alle guide sui pennelli **vettoriale**, **Smart Raster** e **raster a
+  colori pieni** senza la catena `TInputManager` di OpenToonz (`tnztools/assistantstrokesnap`: guida scelta
+  nei primi ~40 px, poi bloccata; sui raster i punti aspettano la scelta). **Replicatori** che disegnano le
+  copie passando dalla simmetria dei pennelli (`tnztools/replicamap`, max 16 tratti, gli annulla che
+  ridipingono conservano la fotografia). Collaudati da Franco.
+- **Nostri sugli assistenti**: **interpolazione fra i disegni chiave** del livello (Constant, Linear, Ease
+  In/Out, come Cells > Inbetween); **Grid Density** che divide le celle della scatola in prospettiva
+  corretta; menu **Guides: Off / Grid / Assistants** nei tre pennelli al posto delle caselle Grid e
+  Assistants (la guida vince sulla griglia di Tahoma, ⌥ Option forza Tahoma); **View > Perspective Grids**
+  interruttore generale di tutte le guide, il pennello mostra solo il sistema che usa.
+- **Import FLA/XFL** (merge `decc66d37`, PR #267 di opentoonz-dev): sempre nella scena aperta e salvata,
+  **come sotto-scena o come colonne**, in un solo passo di annulla (**caricamento protetto**: se fallisce la
+  scena resta com'era); bundle negli extras del progetto; rifiutato nel main di uno storyboard. Maschere su
+  piu' livelli nel viewer; istanze Flash che seguono inserisci/cancella/taglia/incolla celle.
+
+### Modified
+- **Maschere che seguono le cartelle** (`92dd967f7`, decisione di Franco): una maschera dentro una cartella
+  ritaglia tutte le colonne della cartella, sottocartelle comprese, nel viewer e nel render. Cambia
+  l'aspetto di scene esistenti con maschere in cartella (accettato). Fuori dalle cartelle, regola di Tahoma.
+- **Opacita' delle colonne dentro gli shot**: ora si moltiplica con quella dello shot e si vede anche
+  nell'Animatic (dal ramo FLA; Franco: «si deve vedere», aveva un animatic con questo problema).
+- **Versione della scena 71.2** quando una colonna ha l'opacita' animata o una maschera con portata
+  (`0dbc9297e`): le versioni vecchie dicono «scena piu' recente» invece di fallire su un tag sconosciuto.
+
+### Fixed
+- **Crash: alzando Grid Density** (RangeError alla prima scrittura di un campo nuovo della guida, non
+  raccolto) e prima scelta di un'opzione nuova persa — `9ec4f3081`; riprodotto con una sonda contro le
+  librerie del bundle (`reference/test_projects/assist_crash_2026-10-20`).
+- Sporcature delle guide sullo Smart Raster (le guide sotto il cursore ora le disegna il pennello).
+- Correzioni della review: Smart Raster disattivato a meta' tratto lasciava attivi guida e replicatori;
+  ridisegno a tutto schermo con le guide nascoste; Magnetism un solo undo; `near` rinominato nel FLA.
+
+### Upstream candidates
+- `InsertUndo::m_containsSoundColumn` mai inizializzato (`cellselection.cpp`, Tahoma2D) — `ddd481902`.
+- RangeError nelle opzioni degli assistenti (`TAssistantBase::updateProperty`, OpenToonz) — `9ec4f3081`.
+
+### Notes
+- Review: `ztoryc-reviewer` e `license-guard` sui due branch (bloccante unico: build Windows/Linux, per gli
+  header OpenToonz sostituiti) e sul lavoro successivo; report in `reviews/2026-10-20_*`. Licenze: LIBERO,
+  attribuzione OpenToonz aggiunta in `LICENSE.txt`, voci in `OPENTOONZ_IMPORTS.md` (`fb6ba88fa`).
+- Push: i due branch experiment/ sono su GitHub; **master no, domattina** con `SKIP_LICENSE_SCAN=1`
+  (falso positivo «otx», sì di Franco), poi build sul Dell e release 0.19.0.
+- Errore mio: un `ninja` lanciato con l'app di prova aperta ha sostituito eseguibile e libreria nel bundle in
+  uso (il controllo stampava «aperta» senza fermare). Memoria aggiornata: il controllo deve fermare.
+- Le scene con le guide si aprono solo con una build che ha gli assistenti (l'app del FLA non li vedeva).
+
 ## [2026-10-19b] — Tema Ztoryc, auto-matte, Auto Close Gap e autofill rifatto (vettoriale e smart raster)
 
 ### Added

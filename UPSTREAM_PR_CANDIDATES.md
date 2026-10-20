@@ -591,6 +591,28 @@ not portable.
   trigger to try: Plastic Animate, select a vertex, then undo an animation
   change made on another column with a skeleton.)*
 
+- **`InsertUndo` reads `m_containsSoundColumn` uninitialised** —
+  `toonz/cellselection.cpp`, `InsertUndo::InsertUndo` (`upstream/master:528`):
+  the member is only ever set to `true`, never initialised, so undo/redo of
+  Insert Cells may emit `notifyXsheetSoundChanged()` at random. Fix: initialise
+  it to `false` in the constructor's list. Ztoryc `ddd481902` (found while
+  merging the FLA import). *(Read in the code, upstream line identical; no
+  visible symptom reproduced.)* Small, safe, for Tahoma2D.
+
+- **OpenToonz drawing assistants: a new option terminates the app** —
+  `tnztools/assistant.cpp`, `TAssistantBase::updateProperty()` /
+  `onPropertyChanged()` (OpenToonz master). The first write of an assistant
+  field (`data()[name]`) creates it empty and notifies; the reload sets the
+  empty value on the property: a `TIntProperty` whose range starts at 1 throws
+  `RangeError` (uncaught → terminate), and a `TEnumProperty` falls back to its
+  first item, so the first choice of a new option is lost. Fix: crop values
+  and ignore unknown enum values on reload, read the property before touching
+  `data()[name]`. Ztoryc `9ec4f3081`. *(Reproduced with a probe against the
+  bundle dylibs, `reference/test_projects/assist_crash_2026-10-20`: old code
+  terminates, fixed code stores the value. In OpenToonz the stock assistants
+  have no option with a range starting above 0, so it may only bite new
+  options — verify on stock before proposing.)* For OpenToonz.
+
 ---
 
 ### 2.2 — Features that can go upstream as they are
@@ -702,6 +724,9 @@ one large contribution or split.
 
 15. 🟢 **AutoFill fill-style picker** *(Update 2026-10-18: no longer blocked — Rodney ported Auto Close and the vector Auto Fill to OT-Dev on 2026-10-15, commit `02d38527`, PR #214. The Ztoryc Auto Fill work (#5 vector Fill Style + multi-stroke fill, #6 full-colour raster Auto Fill with Fill Depth, #7 Smart Raster rim fix + offline harness) is merged in Ztoryc and handed to Rodney for OT-Dev: https://claude.ai/artifact/MxnTdU2JNgdE9LW9GjtGTS. Tahoma2D does not accept AI-written code, PR #2285.)* — choose the colour AutoFill uses: "Next Style (N+1)" (default) or "Current Style", plus a dynamic palette picker listing all styles as `[N] StyleName` (rebuilds on palette/level change). `toonzrasterbrushtool.h/.cpp`, `tooloptions.cpp`.
 16. 🟡 **Tilt that follows the surface, not the screen** *(⚠️ same for OpenToonz: OT has no pen-tilt support yet. Rodney, 2026-08-18. Tahoma2D directly is fine.)* *(August 2026)* — with the elbow bent, a tablet's tilt axes do not line up with the screen axes, and the brush ends up shaped by how you are sitting rather than how you are drawing.
+
+16b. 🟡 **Vector Auto Close Gap: 5 by default instead of 1.15, slider to 30** *(2026-10-19, commit `782a84ff4`; ⚠️ a change of DEFAULTS — propose it as a question with the pictures, not as a patch)* — `include/tvectorimage.h` (`c_ztorycAutocloseTolerance`), `tvectorimage.cpp` (constructor), `tnztools/filltool.cpp/.h` (slider range and default; drawings still at 1.15 raised when the Fill tool works on them), `toonzvectorbrushtool.cpp` (same for the brush Auto Fill). **Why:** the end-point closing rule (`tregionutil.cpp`, `makeEndPointConnections`) accepts `dist² <= tol·(t0+t1)²`, so at 1.15 hand-drawn strokes that touch without crossing rarely make a region and the fill cannot paint a shape that looks closed — the oldest complaint about the Toonz vector fill. **Measured** on a real sketch with a probe linked against the real libs (`reference/test_projects/vecfill_2026-10-19/vprobe.cpp`): frame 1 has 3 regions at 1.15, the whole body becomes one region at 5; frame 2 closes at 10. Existing fills survived the change (14 → 19 filled regions at 5 on frame 3, regions split, none lost). The `.pli` format is unchanged: a tolerance different from 1.15 already goes in the frame's `AutoCloseToleranceTag`, which stock reads. Diagnosed and fixed in Ztoryc only, not tried on stock Tahoma2D.
+    **Second part (commit `543275922`) — the floor.** The live code is `tcomputeregions.cpp` (`tregionutil.cpp` is not even compiled). Every closing distance there is `fac·(t0+t1)²`, and pressure-stroke tips measured 0.35-0.6 units thick, so even at 30 two tips closed only within ~5 units. Above 1.15 the tolerance now also sets an absolute floor of 0.6 units per step (`ztorycAutocloseFloor2`, in `isCloseEnoughP2P`/`P2L`, the L2L autocloser's max distance and the box reach). At 1.15 the floor is 0, so untouched drawings close exactly as before (verified: same region counts). Measured: the head of frame 3 closed only at 20, now at 10. Plus an «Auto Close Gap» option on the vector brush (commit `555900417`), applied by its Auto Fill.
 
 #### 🔹 File handling
 
