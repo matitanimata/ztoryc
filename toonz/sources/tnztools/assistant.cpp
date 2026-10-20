@@ -386,20 +386,25 @@ TAssistantBase::updateProperty(const TStringId &name, const TVariant &value) {
   if (!property)
     return;
 
+  // Ztoryc: a value out of range must not throw.  The first write of a field
+  // creates it empty (0, "") and notifies before the value arrives: a range
+  // starting at 1 threw RangeError and terminated the app (crash 20/10, Grid
+  // Density).  Values are cropped, unknown enum values ignored.
   if (TBoolProperty *boolProperty = dynamic_cast<TBoolProperty*>(property)) {
     boolProperty->setValue( value.getBool() );
   } else
   if (TDoubleProperty *doubleProperty = dynamic_cast<TDoubleProperty*>(property)) {
-    doubleProperty->setValue( value.getDouble() );
+    doubleProperty->setValue( value.getDouble(), true );
   } else
   if (TIntProperty *intProperty = dynamic_cast<TIntProperty*>(property)) {
-    intProperty->setValue( (int)value.getDouble() );
+    intProperty->setValue( (int)value.getDouble(), true );
   } else
   if (TStringProperty *stringProperty = dynamic_cast<TStringProperty*>(property)) {
     stringProperty->setValue( to_wstring(value.getString()) );
   } else
   if (TEnumProperty *enumProperty = dynamic_cast<TEnumProperty*>(property)) {
-    enumProperty->setValue( to_wstring(value.getString()) );
+    std::wstring v = to_wstring(value.getString());
+    if (enumProperty->indexOf(v) >= 0) enumProperty->setValue(v);
   }
 }
 
@@ -414,20 +419,29 @@ TAssistantBase::onPropertyChanged(const TStringId &name) {
   if (name == m_idPoints)
     return;
 
+  // Ztoryc: read the property BEFORE touching data()[name].  The first
+  // access creates the field empty and notifies, and the notification reloads
+  // every property from data: the new value was overwritten by the empty one
+  // and the first choice of a new option was lost.
   if (TBoolProperty *boolProperty = dynamic_cast<TBoolProperty*>(property)) {
-    data()[name].setBool( boolProperty->getValue() );
+    bool v = boolProperty->getValue();
+    data()[name].setBool(v);
   } else
   if (TDoubleProperty *doubleProperty = dynamic_cast<TDoubleProperty*>(property)) {
-    data()[name].setDouble( doubleProperty->getValue() );
+    double v = doubleProperty->getValue();
+    data()[name].setDouble(v);
   } else
   if (TIntProperty *intProperty = dynamic_cast<TIntProperty*>(property)) {
-    data()[name].setDouble( (double)intProperty->getValue() );
+    double v = (double)intProperty->getValue();
+    data()[name].setDouble(v);
   } else
   if (TStringProperty *stringProperty = dynamic_cast<TStringProperty*>(property)) {
-    data()[name].setString( to_string(stringProperty->getValue()) );
+    std::string v = to_string(stringProperty->getValue());
+    data()[name].setString(v);
   } else
   if (TEnumProperty *enumProperty = dynamic_cast<TEnumProperty*>(property)) {
-    data()[name].setString( to_string(enumProperty->getValue()) );
+    std::string v = to_string(enumProperty->getValue());
+    data()[name].setString(v);
   }
 }
 
