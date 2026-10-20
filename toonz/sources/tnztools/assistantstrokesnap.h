@@ -41,6 +41,8 @@ public:
   TThickPoint transform(const TThickPoint &raw) const;
   const std::vector<TThickPoint> &rawPoints() const { return m_raw; }
   bool isActive() const { return m_tool && !m_guidelines.empty(); }
+  // The guideline is final: points can be painted for good (raster).
+  bool isLocked() const { return m_locked; }
   void end();
 
   // The guidelines of the current stroke, the chosen one highlighted.

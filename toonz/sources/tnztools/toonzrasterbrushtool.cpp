@@ -84,6 +84,7 @@ TEnv::DoubleVar RasterBrushModifierSize("RasterBrushModifierSize", 0);
 TEnv::StringVar RasterBrushPreset("RasterBrushPreset", "<custom>");
 TEnv::IntVar BrushLockAlpha("InknpaintBrushLockAlpha", 0);
 TEnv::IntVar BrushSnapGrid("InknpaintBrushSnapGrid", 0);
+TEnv::IntVar BrushAssistants("InknpaintBrushAssistants", 1);
 TEnv::IntVar BrushPressureSensitivity("InknpaintBrushPressureSensitivity", 1);
 TEnv::PointListVar BrushPressureCurvePts("InknPaintBrushPressureCurvePts",
                                          DEFAULTPRESSURECURVE);
@@ -992,6 +993,7 @@ ToonzRasterBrushTool::ToonzRasterBrushTool(std::string name, int targetType)
     , m_notifier(0)
     , m_modifierLockAlpha("Lock Alpha", false)
     , m_snapGrid("Grid", false)
+    , m_assistants("Assistants", true)
     , m_mypaintTilt("ModifierTilt", false)
     , m_enabledPressure(false)
     , m_enabledTilt(false)
@@ -1021,6 +1023,7 @@ ToonzRasterBrushTool::ToonzRasterBrushTool(std::string name, int targetType)
   m_prop[0].bind(m_mypaintPressure);
   m_prop[0].bind(m_mypaintTilt);
   m_prop[0].bind(m_snapGrid);
+  m_prop[0].bind(m_assistants);
   m_prop[0].bind(m_preset);
 
   m_pencil.setId("PencilMode");
@@ -1028,6 +1031,7 @@ ToonzRasterBrushTool::ToonzRasterBrushTool(std::string name, int targetType)
   m_autoCloseGap.setId("AutoCloseGap");
   m_drawOrder.setId("DrawOrder");
   m_snapGrid.setId("SnapGrid");
+  m_assistants.setId("Assistants");
   m_preset.setId("BrushPreset");
   m_mypaintPressure.setId("PressureSensitivity");
   m_modifierLockAlpha.setId("LockAlpha");
@@ -1243,6 +1247,7 @@ void ToonzRasterBrushTool::updateTranslation() {
   m_autoFillStyle.setItemUIName(L"Current Style",    tr("Current Style"));
   m_modifierLockAlpha.setQStringName(tr("Lock Alpha"));
   m_snapGrid.setQStringName(tr("Grid"));
+  m_assistants.setQStringName(tr("Assistants"));
   m_mypaintPressure.setQStringName(tr("Pressure"));
   m_mypaintTilt.setQStringName(tr("Tilt"));
   m_sizeStylusProperty.setQStringName(tr("Stylus Settings - Size"));
@@ -1457,6 +1462,13 @@ void ToonzRasterBrushTool::leftButtonDown(const TPointD &pos,
     m_firstPoint = pos;
     m_lastPoint  = pos;
   }
+
+  // the guidelines pass through the first point: it is painted as it is
+  m_assistPainted = 1;
+  if (!m_isStraight && !m_snapGrid.getValue() && m_assistants.getValue())
+    m_assistantSnap.begin(this, TThickPoint(pos, 0));
+  else
+    m_assistantSnap.end();
 
   // assert(0<=m_styleId && m_styleId<2);
   TImageP img = getImage(true);
@@ -1934,6 +1946,37 @@ void ToonzRasterBrushTool::leftButtonDrag(const TPointD &pos,
     return;
   }
 
+  if (m_assistantSnap.isActive()) {
+    // Paint is final: while the gesture has not chosen its guideline yet the
+    // points wait, then they are painted all at once on the chosen one.
+    m_assistantSnap.add(TThickPoint(usePos, 0));
+    if (m_assistantSnap.isLocked()) paintPendingAssistedPoints(pos, e);
+    m_mousePos = pos;
+    m_brushPos = getCenteredCursorPos(pos);
+    invalidate();  // the guidelines cross the whole viewer
+    return;
+  }
+
+  paintDragPoint(usePos, pos, e, invalidateRect);
+}
+
+//---------------------------------------------------------------------------------------------------------------
+
+void ToonzRasterBrushTool::paintPendingAssistedPoints(const TPointD &pos,
+                                                      const TMouseEvent &e) {
+  const std::vector<TThickPoint> &raw = m_assistantSnap.rawPoints();
+  for (; m_assistPainted < raw.size(); ++m_assistPainted) {
+    TThickPoint p = m_assistantSnap.transform(raw[m_assistPainted]);
+    paintDragPoint(TPointD(p.x, p.y), pos, e, TRectD());
+  }
+}
+
+//---------------------------------------------------------------------------------------------------------------
+
+void ToonzRasterBrushTool::paintDragPoint(const TPointD &usePos,
+                                          const TPointD &pos,
+                                          const TMouseEvent &e,
+                                          TRectD invalidateRect) {
   TPointD centeredPos = getCenteredCursorPos(usePos);
 
   TToonzImageP ti   = TImageP(getImage(true));
@@ -2141,9 +2184,19 @@ void ToonzRasterBrushTool::leftButtonUp(const TPointD &pos,
   m_enabled    = false;
   m_active     = false;
   if (!isValid) {
+    m_assistantSnap.end();
     return;
   }
-  TPointD centeredPos = getCenteredCursorPos(pos);
+  TPointD endPos = pos;
+  if (m_assistantSnap.isActive()) {
+    // a stroke too short to choose: painted on the best guess
+    paintPendingAssistedPoints(pos, e);
+    TThickPoint p = m_assistantSnap.transform(TThickPoint(pos, 0));
+    endPos        = TPointD(p.x, p.y);
+    m_assistantSnap.end();
+    invalidate();
+  }
+  TPointD centeredPos = getCenteredCursorPos(endPos);
   if (e.isCtrlPressed() || m_snapGrid.getValue() || e.isAltPressed())
     centeredPos   = getCenteredCursorPos(m_lastPoint);
   double pressure = m_enabledPressure ? e.m_pressure : 0.5;
@@ -3016,7 +3069,13 @@ void ToonzRasterBrushTool::mouseMove(const TPointD &pos, const TMouseEvent &e) {
   m_mousePos       = pos;
   m_windowMousePos = -e.m_pos;
 
-  invalidate(invalidateRect.enlarge(2));
+  // the hover guidelines cross the whole viewer
+  if (m_assistants.getValue() &&
+      TAssistant::scanAssistants(this, nullptr, 0, nullptr, false, true, false,
+                                 false, nullptr))
+    invalidate();
+  else
+    invalidate(invalidateRect.enlarge(2));
 
   if (m_minThick == 0 && m_maxThick == 0) {
     m_minThick = m_rasThickness.getValue().first;
@@ -3035,6 +3094,13 @@ void ToonzRasterBrushTool::draw() {
     tglColor(TPixel32::Red);
     tglDrawSegment(m_firstPoint, m_lastPoint);
   }
+
+  // assistants: the guidelines of the stroke, or the ones under the cursor
+  if (m_assistantSnap.isActive())
+    m_assistantSnap.drawGuidelines();
+  else if (m_assistants.getValue() && !m_enabled)
+    AssistantStrokeSnap::drawHoverGuidelines(this, m_mousePos);
+
   if (m_minThick == 0 && m_maxThick == 0 &&
       !Preferences::instance()->getShow0ThickLines())
     return;
@@ -3216,6 +3282,7 @@ bool ToonzRasterBrushTool::onPropertyChanged(std::string propertyName) {
   RasterBrushModifierSize         = m_modifierSize.getValue();
   BrushLockAlpha                  = m_modifierLockAlpha.getValue();
   BrushSnapGrid                   = m_snapGrid.getValue();
+  BrushAssistants                 = m_assistants.getValue();
   BrushPressureSensitivity        = m_sizeStylusProperty.isPressureEnabled();
   BrushPressureCurvePts           = m_sizeStylusProperty.getPressureCurve();
   BrushTiltSensitivity            = m_sizeStylusProperty.isTiltEnabled();
@@ -3398,6 +3465,7 @@ void ToonzRasterBrushTool::loadLastBrush() {
   m_modifierSize.setValue(RasterBrushModifierSize);
   m_modifierLockAlpha.setValue(BrushLockAlpha ? 1 : 0);
   m_snapGrid.setValue(BrushSnapGrid ? 1 : 0);
+  m_assistants.setValue(BrushAssistants ? 1 : 0);
   m_mypaintPressure.setValue(BrushMyPaintPressureSensitivity ? 1 : 0);
   m_mypaintTilt.setValue(BrushMyPaintTiltSensitivity ? 1 : 0);
 

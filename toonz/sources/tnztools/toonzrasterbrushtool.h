@@ -14,6 +14,7 @@
 #include "mypainttoonzbrush.h"
 #include "bluredbrush.h"
 #include "cmrasterbrush.h"
+#include "assistantstrokesnap.h"
 
 #include <QCoreApplication>
 #include <QRadialGradient>
@@ -169,6 +170,9 @@ public:
 
   void loadLastBrush();
 
+  void paintDragPoint(const TPointD &usePos, const TPointD &pos,
+                      const TMouseEvent &e, TRectD invalidateRect);
+  void paintPendingAssistedPoints(const TPointD &pos, const TMouseEvent &e);
   void finishRasterBrush(const TPointD &pos, double pressureVal,
                          double tiltMagnitude, double tiltX, double tiltY,
                          double tiltAngle);
@@ -198,6 +202,7 @@ protected:
   TDoubleProperty m_modifierSize;
   TBoolProperty m_modifierLockAlpha;
   TBoolProperty m_snapGrid;
+  TBoolProperty m_assistants;
   TBoolProperty m_mypaintTilt;
   TStylusProperty m_sizeStylusProperty;
   TBrushTipProperty m_brushTip;
@@ -229,6 +234,8 @@ protected:
       m_strokeSegmentRect;  // used with mypaint brush
 
   SmoothStroke m_smoothStroke;
+  AssistantStrokeSnap m_assistantSnap;
+  size_t m_assistPainted = 0;  // raw points of m_assistantSnap already painted
 
   BrushPresetManager
       m_presetsManager;  //!< Manager for presets of this tool instance
