@@ -919,6 +919,7 @@ bool ToonzVectorBrushTool::preLeftButtonDown() {
 
 void ToonzVectorBrushTool::leftButtonDown(const TPointD &pos,
                                           const TMouseEvent &e) {
+  ReplicaMap::end();  // a stroke left open (tool switched mid-stroke)
   TTool::Application *app = TTool::getApplication();
   if (!app) return;
 
@@ -982,6 +983,11 @@ void ToonzVectorBrushTool::leftButtonDown(const TPointD &pos,
       m_track.addSymmetryBrushes(symmObj.getLines(), symmObj.getRotation(),
                                  symmObj.getCenterPoint(),
                                  symmObj.isUsingLineSymmetry(), dpiScale);
+    } else if (m_assistants.getValue()) {
+      // OpenToonz replicators: the symmetry machinery paints the copies
+      if (int copies = ReplicaMap::begin(this))
+        m_track.addSymmetryBrushes(copies, 0, TPointD(), false,
+                                  getViewer()->getDpiScale());
     }
   }
 
@@ -1327,6 +1333,10 @@ void ToonzVectorBrushTool::leftButtonDrag(const TPointD &pos,
 
 void ToonzVectorBrushTool::leftButtonUp(const TPointD &pos,
                                         const TMouseEvent &e) {
+  // the replicators stay active until the strokes are made
+  struct ReplicaEnd {
+    ~ReplicaEnd() { ReplicaMap::end(); }
+  } replicaEnd;
   bool isValid = m_enabled && m_active;
   m_enabled    = false;
   // the points already went through the guideline; what is left (smoothing

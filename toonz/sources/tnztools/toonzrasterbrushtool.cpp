@@ -487,6 +487,8 @@ class RasterBrushUndo final : public TRasterUndo {
   double m_rotation;
   TPointD m_centerPoint;
   bool m_useLineSymmetry;
+  // the replicators the stroke was painted with, for redo (replicamap.h)
+  std::shared_ptr<const ReplicaMap> m_replicas = ReplicaMap::activeShared();
   BrushTipData m_brushTip;
 
 public:
@@ -512,6 +514,7 @@ public:
       , m_useLineSymmetry(useLineSymmetry) {}
 
   void redo() const override {
+    ReplicaMap::Scope replicaScope(m_replicas);
     insertLevelAndFrameIfNeeded();
     TToonzImageP image = getImage();
     TRasterCM32P ras   = image->getRaster();
@@ -561,6 +564,8 @@ class RasterBluredBrushUndo final : public TRasterUndo {
   double m_rotation;
   TPointD m_centerPoint;
   bool m_useLineSymmetry;
+  // the replicators the stroke was painted with, for redo (replicamap.h)
+  std::shared_ptr<const ReplicaMap> m_replicas = ReplicaMap::activeShared();
   double m_brushTipRotation;
   double m_brushTipSpacing;
   bool m_brushTipFlipH;
@@ -600,6 +605,7 @@ public:
 
   void redo() const override {
     if (m_points.size() == 0) return;
+    ReplicaMap::Scope replicaScope(m_replicas);
     insertLevelAndFrameIfNeeded();
     TToonzImageP image     = getImage();
     TRasterCM32P ras       = image->getRaster();
@@ -1411,6 +1417,7 @@ bool ToonzRasterBrushTool::preLeftButtonDown() {
 
 void ToonzRasterBrushTool::leftButtonDown(const TPointD &pos,
                                           const TMouseEvent &e) {
+  ReplicaMap::end();  // a stroke left open (tool switched mid-stroke)
   TTool::Application *app = TTool::getApplication();
   if (!app) return;
 
@@ -1583,6 +1590,11 @@ void ToonzRasterBrushTool::leftButtonDown(const TPointD &pos,
         m_toonz_brush->addSymmetryBrushes(
             symmObj.getLines(), symmObj.getRotation(), symmObj.getCenterPoint(),
             symmObj.isUsingLineSymmetry(), dpiScale);
+      } else if (m_assistants.getValue()) {
+        // OpenToonz replicators: the symmetry machinery paints the copies
+        if (int copies = ReplicaMap::begin(this))
+          m_toonz_brush->addSymmetryBrushes(copies, 0, TPointD(), false,
+                                    getViewer()->getDpiScale());
       }
 
       m_strokeRect.empty();
@@ -1636,6 +1648,11 @@ void ToonzRasterBrushTool::leftButtonDown(const TPointD &pos,
         m_cmRasterBrush->addSymmetryBrushes(
             symmObj.getLines(), symmObj.getRotation(), symmObj.getCenterPoint(),
             symmObj.isUsingLineSymmetry(), dpiScale);
+      } else if (m_assistants.getValue()) {
+        // OpenToonz replicators: the symmetry machinery paints the copies
+        if (int copies = ReplicaMap::begin(this))
+          m_cmRasterBrush->addSymmetryBrushes(copies, 0, TPointD(), false,
+                                    getViewer()->getDpiScale());
       }
 
       if (drawOrder == PaletteOrder)
@@ -1674,6 +1691,11 @@ void ToonzRasterBrushTool::leftButtonDown(const TPointD &pos,
         m_bluredBrush->addSymmetryBrushes(
             symmObj.getLines(), symmObj.getRotation(), symmObj.getCenterPoint(),
             symmObj.isUsingLineSymmetry(), dpiScale);
+      } else if (m_assistants.getValue()) {
+        // OpenToonz replicators: the symmetry machinery paints the copies
+        if (int copies = ReplicaMap::begin(this))
+          m_bluredBrush->addSymmetryBrushes(copies, 0, TPointD(), false,
+                                    getViewer()->getDpiScale());
       }
 
       if (drawOrder == PaletteOrder)
@@ -2187,6 +2209,10 @@ void ToonzRasterBrushTool::paintDragPoint(const TPointD &usePos,
 
 void ToonzRasterBrushTool::leftButtonUp(const TPointD &pos,
                                         const TMouseEvent &e) {
+  // the replicators stay active until the stroke is finished
+  struct ReplicaEnd {
+    ~ReplicaEnd() { ReplicaMap::end(); }
+  } replicaEnd;
   bool isValid = m_enabled && m_active;
   m_enabled    = false;
   m_active     = false;
@@ -2444,6 +2470,8 @@ void ToonzRasterBrushTool::finishRasterBrush(const TPointD &pos,
         centerPoint            = symmObj.getCenterPoint();
         useLineSymmetry        = symmObj.isUsingLineSymmetry();
       }
+      if (const ReplicaMap *replicas = ReplicaMap::active())
+        symmetryLines = replicas->count();
 
       TPointD dpiScale = getViewer()->getDpiScale();
       TUndoManager::manager()->add(new RasterBrushUndo(
@@ -2591,6 +2619,8 @@ void ToonzRasterBrushTool::finishRasterBrush(const TPointD &pos,
         centerPoint            = symmObj.getCenterPoint();
         useLineSymmetry        = symmObj.isUsingLineSymmetry();
       }
+      if (const ReplicaMap *replicas = ReplicaMap::active())
+        symmetryLines = replicas->count();
 
       TUndoManager::manager()->add(new RasterBluredBrushUndo(
           m_tileSet, m_points, m_styleId, (DrawOrder)m_drawOrder.getIndex(),

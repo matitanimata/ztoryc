@@ -15,6 +15,7 @@
 #include "bluredbrush.h"
 #include "cmrasterbrush.h"
 #include "assistantstrokesnap.h"
+#include "replicamap.h"
 
 #include <QCoreApplication>
 #include <QRadialGradient>

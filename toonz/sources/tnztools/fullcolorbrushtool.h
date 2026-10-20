@@ -7,6 +7,7 @@
 
 #include "toonzrasterbrushtool.h"
 #include "assistantstrokesnap.h"
+#include "replicamap.h"
 #include "mypainttoonzbrush.h"
 #include "toonz/mypaintbrushstyle.h"
 #include <QElapsedTimer>

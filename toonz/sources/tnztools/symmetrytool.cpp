@@ -1,4 +1,5 @@
 #include "symmetrytool.h"
+#include "replicamap.h"
 
 #include "tgl.h"
 #include "tenv.h"
@@ -821,6 +822,16 @@ std::vector<TPointD> SymmetryTool::getSymmetryPoints(TPointD firstPoint,
 std::vector<TPointD> SymmetryTool::getSymmetryPoints(
     TPointD firstPoint, TPointD rasCenter, TPointD dpiScale, double lines,
     double rotation, TPointD centerPoint, bool useLineSymmetry) {
+  // Ztoryc: while a brush paints with the OpenToonz replicators, the copies
+  // are theirs (replicamap.h); `lines` is their count
+  if (const ReplicaMap *replicas = ReplicaMap::active()) {
+    std::vector<TPointD> copies(1, firstPoint - rasCenter);
+    replicas->apply(copies);
+    copies.resize(std::max(1, (int)lines), copies.front());
+    for (TPointD &p : copies) p += rasCenter;
+    return copies;
+  }
+
   std::vector<TPointD> points;
 
   double step = 360.0 / lines;

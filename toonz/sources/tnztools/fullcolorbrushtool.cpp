@@ -554,6 +554,7 @@ bool FullColorBrushTool::preLeftButtonDown() {
 
 void FullColorBrushTool::leftButtonDown(const TPointD &pos,
                                         const TMouseEvent &e) {
+  ReplicaMap::end();  // a stroke left open (tool switched mid-stroke)
   if (!m_active) return;
 
   TPointD previousBrushPos = m_brushPos;
@@ -678,6 +679,11 @@ void FullColorBrushTool::leftButtonDown(const TPointD &pos,
       m_toonz_brush->addSymmetryBrushes(
           symmObj.getLines(), symmObj.getRotation(), symmObj.getCenterPoint(),
           symmObj.isUsingLineSymmetry(), dpiScale);
+    } else if (m_assistants.getValue()) {
+      // OpenToonz replicators: the symmetry machinery paints the copies
+      if (int copies = ReplicaMap::begin(this))
+        m_toonz_brush->addSymmetryBrushes(copies, 0, TPointD(), false,
+                                  getViewer()->getDpiScale());
     }
 
     m_strokeRect.empty();
@@ -781,6 +787,11 @@ void FullColorBrushTool::leftButtonDown(const TPointD &pos,
       m_bluredBrush->addSymmetryBrushes(
           symmObj.getLines(), symmObj.getRotation(), symmObj.getCenterPoint(),
           symmObj.isUsingLineSymmetry(), dpiScale);
+    } else if (m_assistants.getValue()) {
+      // OpenToonz replicators: the symmetry machinery paints the copies
+      if (int copies = ReplicaMap::begin(this))
+        m_bluredBrush->addSymmetryBrushes(copies, 0, TPointD(), false,
+                                  getViewer()->getDpiScale());
     }
 
     m_strokeRect = m_bluredBrush->getBoundFromPoints(m_points);
@@ -1210,6 +1221,10 @@ void FullColorBrushTool::paintDragPoint(const TPointD &usePos,
 
 void FullColorBrushTool::leftButtonUp(const TPointD &pos,
                                       const TMouseEvent &e) {
+  // the replicators stay active until the stroke is finished
+  struct ReplicaEnd {
+    ~ReplicaEnd() { ReplicaMap::end(); }
+  } replicaEnd;
   if (!m_active) return;
 
   TPointD previousBrushPos = m_brushPos;
