@@ -20,7 +20,7 @@
 static TFrameId tzmFrameId(const std::string &text) {
   size_t k = 0;
   while (k < text.size() && isdigit((unsigned char)text[k])) ++k;
-  if (k == 0) return TFrameId(-1);
+  if (k == 0 || k > 9) return TFrameId(-1);  // std::stoi would throw
   return TFrameId(std::stoi(text.substr(0, k)),
                   QString::fromStdString(text.substr(k)));
 }

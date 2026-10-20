@@ -1222,10 +1222,11 @@ void FullColorBrushTool::paintDragPoint(const TPointD &usePos,
 void FullColorBrushTool::leftButtonUp(const TPointD &pos,
                                       const TMouseEvent &e) {
   // the replicators stay active until the stroke is finished
-  struct ReplicaEnd {
-    ~ReplicaEnd() { ReplicaMap::end(); }
-  } replicaEnd;
-  if (!m_active) return;
+  ReplicaMap::Guard replicaGuard;
+  if (!m_active) {
+    m_assistantSnap.end();
+    return;
+  }
 
   TPointD previousBrushPos = m_brushPos;
   m_brushPos = m_mousePos = pos;

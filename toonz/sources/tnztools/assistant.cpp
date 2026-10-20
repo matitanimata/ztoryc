@@ -756,9 +756,8 @@ TAssistant::getGridDensity() const {
 
 void
 TAssistant::drawWithDensity(TTool::Viewer *viewer, bool enabled) const {
-  gridDensity = getGridDensity();
+  GridDensityScope scope(getGridDensity());
   draw(viewer, enabled);
-  gridDensity = 1.0;
 }
 
 //---------------------------------------------------------------------------------------------------
@@ -942,6 +941,7 @@ static const TAssistant* interpolatedAssistant(
   for(TAssistantPointMap::const_iterator i = a->points().begin(); i != a->points().end(); ++i) {
     const TVariant &pa = pointsA[i->first];
     const TVariant &pb = pointsB[i->first];
+    if (pb.isNone()) continue;  // keep the key's point
     TVariant &out = blended[idPoints][i->first];
     out[idX].setDouble( pa[idX].getDouble()*(1 - s) + pb[idX].getDouble()*s );
     out[idY].setDouble( pa[idY].getDouble()*(1 - s) + pb[idY].getDouble()*s );
@@ -1015,7 +1015,8 @@ TAssistant::scanAssistants(
         TImageP nextImage;
         double tween = 0;
         std::unique_ptr<TMetaImage::Reader> nextReader;
-        if (findNextKeyDrawing(Xsheet, i, frame, nextImage, tween))
+        if (doSomething &&
+            findNextKeyDrawing(Xsheet, i, frame, nextImage, tween))
           if (TMetaImage *nextMeta = dynamic_cast<TMetaImage*>(nextImage.getPointer()))
             if (nextMeta != metaImage)
               nextReader.reset(new TMetaImage::Reader(*nextMeta));

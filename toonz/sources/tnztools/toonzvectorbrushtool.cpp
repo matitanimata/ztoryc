@@ -1334,9 +1334,7 @@ void ToonzVectorBrushTool::leftButtonDrag(const TPointD &pos,
 void ToonzVectorBrushTool::leftButtonUp(const TPointD &pos,
                                         const TMouseEvent &e) {
   // the replicators stay active until the strokes are made
-  struct ReplicaEnd {
-    ~ReplicaEnd() { ReplicaMap::end(); }
-  } replicaEnd;
+  ReplicaMap::Guard replicaGuard;
   bool isValid = m_enabled && m_active;
   m_enabled    = false;
   // the points already went through the guideline; what is left (smoothing
@@ -2149,8 +2147,7 @@ void ToonzVectorBrushTool::mouseMove(const TPointD &pos, const TMouseEvent &e) {
 
   // the hover guidelines cross the whole viewer
   if (m_assistants.getValue() &&
-      TAssistant::scanAssistants(this, nullptr, 0, nullptr, false, true, false,
-                                 false, nullptr))
+      AssistantStrokeSnap::hoverNeedsFullRepaint(this))
     invalidate();
   else
     invalidate(invalidateRect.enlarge(2));

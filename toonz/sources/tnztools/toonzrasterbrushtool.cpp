@@ -1380,6 +1380,10 @@ void ToonzRasterBrushTool::onDeactivate() {
                             : 0); /*-- 最後のストロークの筆圧は1とする --*/
     }
   }
+  // the stroke ends here, not in leftButtonUp: its guideline and its
+  // replicators must not outlive it
+  m_assistantSnap.end();
+  ReplicaMap::end();
   m_workRas   = TRaster32P();
   m_backupRas = TRasterCM32P();
 }
@@ -2210,9 +2214,7 @@ void ToonzRasterBrushTool::paintDragPoint(const TPointD &usePos,
 void ToonzRasterBrushTool::leftButtonUp(const TPointD &pos,
                                         const TMouseEvent &e) {
   // the replicators stay active until the stroke is finished
-  struct ReplicaEnd {
-    ~ReplicaEnd() { ReplicaMap::end(); }
-  } replicaEnd;
+  ReplicaMap::Guard replicaGuard;
   bool isValid = m_enabled && m_active;
   m_enabled    = false;
   m_active     = false;
@@ -3110,8 +3112,7 @@ void ToonzRasterBrushTool::mouseMove(const TPointD &pos, const TMouseEvent &e) {
 
   // the hover guidelines cross the whole viewer
   if (m_assistants.getValue() &&
-      TAssistant::scanAssistants(this, nullptr, 0, nullptr, false, true, false,
-                                 false, nullptr))
+      AssistantStrokeSnap::hoverNeedsFullRepaint(this))
     invalidate();
   else
     invalidate(invalidateRect.enlarge(2));

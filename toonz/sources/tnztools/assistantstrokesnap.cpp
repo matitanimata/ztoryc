@@ -79,6 +79,14 @@ bool AssistantStrokeSnap::guidesShown() {
 
 //-----------------------------------------------------------------------------
 
+bool AssistantStrokeSnap::hoverNeedsFullRepaint(TTool *tool) {
+  return guidesShown() &&
+         TAssistant::scanAssistants(tool, nullptr, 0, nullptr, false, false,
+                                    false, false, nullptr);
+}
+
+//-----------------------------------------------------------------------------
+
 void AssistantStrokeSnap::drawGuidelines() const {
   if (!isActive() || !guidesShown()) return;
   for (const TGuidelineP &guideline : m_guidelines)

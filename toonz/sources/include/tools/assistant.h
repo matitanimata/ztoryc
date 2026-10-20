@@ -213,6 +213,12 @@ public:
   // Ztoryc: grid lines are spaced on screen; the assistant being drawn sets
   // how much denser than the default (1) they are.
   static double gridDensity;
+
+  // Sets gridDensity for a scope, back to 1 on exit (exceptions included).
+  struct GridDensityScope {
+    explicit GridDensityScope(double density) { gridDensity = density; }
+    ~GridDensityScope() { gridDensity = 1.0; }
+  };
   static const double lineWidthScale;
   
 protected:

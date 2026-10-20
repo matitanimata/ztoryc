@@ -46,6 +46,12 @@ public:
   static int begin(TTool *tool);
   static void end();
 
+  // Ends the stroke's map when the scope closes (leftButtonUp).
+  class Guard {
+  public:
+    ~Guard() { end(); }
+  };
+
   // Makes `map` active for a scope (an undo repainting its stroke).
   class Scope {
     std::shared_ptr<const ReplicaMap> m_previous;

@@ -19,6 +19,8 @@
 #include "tgeometry.h"
 #include "tproperty.h"
 
+#include <QCoreApplication>
+
 #include <memory>
 #include <vector>
 
@@ -55,6 +57,10 @@ public:
   // and assistants alike (Franco, 20/10).  Snapping does not depend on it.
   static bool guidesShown();
 
+  // Whether moving the pointer must repaint the whole viewer: the guidelines
+  // under it are shown and cross it.  Same assistants as drawHoverGuidelines.
+  static bool hoverNeedsFullRepaint(TTool *tool);
+
 private:
   TAffine trackToScreen() const;
 };
@@ -65,9 +71,10 @@ private:
 namespace GuideSnap {
 
 inline void init(TEnumProperty &guides) {
-  guides.addValue(L"Off");
-  guides.addValue(L"Grid");
-  guides.addValue(L"Assistants");
+  guides.addValueWithUIName(L"Off", QCoreApplication::translate("GuideSnap", "Off"));
+  guides.addValueWithUIName(L"Grid", QCoreApplication::translate("GuideSnap", "Grid"));
+  guides.addValueWithUIName(L"Assistants",
+                            QCoreApplication::translate("GuideSnap", "Assistants"));
   guides.setIndex(2);  // matches the flags' defaults
 }
 

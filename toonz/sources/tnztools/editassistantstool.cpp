@@ -365,8 +365,12 @@ public:
                      kWithUndo) == 0) {
       name.resize(name.size() - kWithUndo.size());
       addToUndo = true;
-    } else
-      addToUndo = true;  // non-slider properties: every change is final
+    } else {
+      // a slider's ticks are not final (its release comes with «withUndo»);
+      // every other control's change is
+      TProperty *p = m_allProperties.getProperty(name);
+      addToUndo    = !dynamic_cast<TDoubleProperty *>(p);
+    }
     if (m_replicatorIndex.getName() == name) {
       writeReplicatorIndex(m_replicatorIndex.getValue());
     } else if (name == m_autoSwitchAndKeep.getName()) {
@@ -862,9 +866,9 @@ public:
             base->drawEdit(getViewer(), index);
           } else {
             const TAssistant *assistant = dynamic_cast<const TAssistant*>(base);
-            TAssistantBase::gridDensity = assistant ? assistant->getGridDensity() : 1.0;
+            TAssistantBase::GridDensityScope scope(
+                assistant ? assistant->getGridDensity() : 1.0);
             base->drawEdit(getViewer());
-            TAssistantBase::gridDensity = 1.0;
           }
           
           if (const TAssistant *assistant = dynamic_cast<const TAssistant*>(base))
