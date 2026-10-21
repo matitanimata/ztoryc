@@ -14,6 +14,7 @@
 #include "toonz/stage.h"  // Stage::inch (column X/Y are in inches)
 
 #include "plastictool.h"
+#include "toonz/preferences.h"
 #include "ext/plasticdeformerstorage.h"
 #include "tmeshimage.h"
 #include <cstdio>
@@ -43,6 +44,14 @@ namespace {
 // the new pose, and the "no key before" test saw the drag's own plastic keys —
 // so undo left the transform keys and put the new pose back (Franco,
 // 2026-09-27). Usage: construct BEFORE keying, then apply().
+// The Global Key scope (0 Stage, 1 Plastic, 2 All) as the preference holds it
+// NOW.  The tool's combo is a copy refreshed only on activation: changed while
+// this tool was active (the cycle command, the Animate tool in another
+// viewer, the ZtoRig panel) it keyed with the previous scope (Franco, 21/10).
+static int currentGlobalKeyScope() {
+  return Preferences::instance()->getIntValue(GlobalKeyScope);
+}
+
 class StageTransformKeyUndo final : public TUndo {
   // The channels TStageObject::setKeyframeWithoutUndo(frame) keys.
   static constexpr TStageObject::Channel kChannels[] = {
@@ -3074,7 +3083,7 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
     // Ztoryc: the Global Key SCOPE, as on the vertex paths below — 0 Stage,
     // 1 Plastic, 2 All. This path keyed the plastic side whatever the scope
     // and the transform never (Franco, 2026-10-03).
-    const int scope          = m_globalKeyScope.getIndex();
+    const int scope          = currentGlobalKeyScope();
     const bool globalKey     = m_globalKey.getValue();
     const bool doTransform   = globalKey && scope != 1;  // Stage or All
     const bool doFullPlastic = globalKey && scope != 0;  // Plastic or All
@@ -3122,7 +3131,7 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
     // every column's stage unkeyed (Franco, 2026-09-27; the gap noted when the
     // single-vertex path was fixed, 201b76d46). One undo block for all of it:
     // the transform keys, the plastic keys and the drag's own undo.
-    const int scope          = m_globalKeyScope.getIndex();
+    const int scope          = currentGlobalKeyScope();
     const bool globalKey     = m_globalKey.getValue();
     const bool doTransform   = globalKey && scope != 1;  // Stage or All
     const bool doFullPlastic = globalKey && scope != 0;  // Plastic or All
@@ -3165,7 +3174,7 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
     // Ztoryc: with scope All (or Stage) a pose must also drop a TRANSFORM key
     // on the column — otherwise the column stays un-keyed and drifts relative
     // to the plastic keys ("in global all, posing must also key the transform").
-    const int scope       = m_globalKeyScope.getIndex();
+    const int scope       = currentGlobalKeyScope();
     const bool globalKey  = m_globalKey.getValue();
     const bool doTransform = globalKey && scope != 1;  // Stage or All
     const bool doFullPlastic = globalKey && scope != 0;  // Plastic or All
@@ -3225,7 +3234,7 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
 // No undo here: the whole field edit is one curve snapshot (see below).
 void PlasticTool::globalKeyAfterFieldEdit_animate() {
   if (!m_sd || !m_globalKey.getValue()) return;
-  const int scope = m_globalKeyScope.getIndex();
+  const int scope = currentGlobalKeyScope();
   if (scope != 1) {  // Stage or All
     if (TStageObject *o = stageObject()) {
       o->setKeyframeWithoutUndo((int)::frame());
