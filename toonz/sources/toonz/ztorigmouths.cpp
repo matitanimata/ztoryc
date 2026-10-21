@@ -594,7 +594,7 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
   const QString keep = m_levelCombo->currentData().toString();
   m_levelCombo->clear();
 
-  QVector<QPair<QString, TXshLevel *>> mapped, others, unused;
+  QVector<QPair<QString, TXshLevel *>> mapped, marked, others, unused;
   if (scene) {
     // UNA passata per i nomi di colonna, e UNA lettura del file di scena.
     // Prima si rileggeva e riparsificava lo stesso .zmouth una volta per
@@ -699,10 +699,24 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
         continue;
       }
       const bool hasMap = withSets.contains(lv);
-      if (hasMap)
+      if (hasMap) {
         mapped.append(qMakePair(label, lv));
-      else
-        others.append(qMakePair(label, lv));
+        continue;
+      }
+      // Ztoryc: a drawing level MARKED as a character's mouths (column header
+      // > Mark as Mouth Level...) but with no set yet: the one to map, listed
+      // right after the mapped ones (Franco, 2026-10-21).
+      if (sl) {
+        MouthMap mark;
+        const TFilePath lp = scene->decodeFilePath(sl->getPath());
+        if (ZtoryMouthMap::load(lp, QString(), mark) &&
+            !mark.characterName.isEmpty()) {
+          marked.append(qMakePair(
+              tr("%1  — %2, to map").arg(label, mark.characterName), lv));
+          continue;
+        }
+      }
+      others.append(qMakePair(label, lv));
     }
   }
 
@@ -711,6 +725,11 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
   // nomi (CH_nome#7#group) non dicono niente e indovinare sarebbe peggio.
   for (const auto &p : mapped)
     m_levelCombo->addItem("● " + p.first,
+                          QVariant::fromValue(quintptr(p.second)));
+  // Marked, to map: shown even with the «only mapped» filter on — finding the
+  // level to map is why they were marked.
+  for (const auto &p : marked)
+    m_levelCombo->addItem("○ " + p.first,
                           QVariant::fromValue(quintptr(p.second)));
   // Col filtro acceso ci si ferma ai mappati: sono gli unici su cui il pallino
   // dice qualcosa di certo. Gli altri restano un elenco della scena, utile solo
@@ -744,6 +763,7 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
   //      indicarlo e non sceglierlo e' meta' lavoro (Franco, 2026-08-16);
   //   4. quello corrente, o il primo.
   const int mappedCount = mapped.size();
+  const int markedCount = marked.size();
   int idx = keep.isEmpty() ? -1 : m_levelCombo->findData(keep);
   int currentIdx = -1;
   if (TXshLevelHandle *lh = TApp::instance()->getCurrentLevel())
@@ -752,8 +772,12 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
   if (idx < 0) {
     // I mappati stanno in testa all'elenco, quindi «indice < mappedCount»
     // vuol dire «ha una mappa».
-    if (currentIdx >= 0 && currentIdx < mappedCount) idx = currentIdx;
+    // the current level when mapped or marked; else the first mapped; else
+    // the first marked (it waits for its visemes); else the current one
+    if (currentIdx >= 0 && currentIdx < mappedCount + markedCount)
+      idx = currentIdx;
     else if (mappedCount > 0) idx = 0;
+    else if (markedCount > 0) idx = 0;
     else idx = currentIdx;
   }
   m_filling = true;

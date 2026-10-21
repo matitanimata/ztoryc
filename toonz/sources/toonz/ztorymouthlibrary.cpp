@@ -876,6 +876,105 @@ QSet<QString> ZtoryMouthLibrary::drawingFingerprint(TXsheet *xsh) {
   return out;
 }
 
+// The project's characters, this scene's own first when it is one; false
+// when there are none or the question is cancelled.
+static bool chooseMouthCharacter(const QString &title, const QString &prompt,
+                                 const QString &ownerFile, QString *name,
+                                 QString *uuid) {
+  ZtoryModel *m = ZtoryModel::instance();
+  QStringList names;
+  QHash<QString, QString> uuidOf;
+  QString mineName;
+  for (const Asset &a : m->assets()) {
+    if (!ZtoryModel::isCharacterType(a.type)) continue;
+    names << a.name;
+    uuidOf.insert(a.name, a.uuid);
+    if (QFileInfo(m->resolveAssetFile(a)) == QFileInfo(ownerFile))
+      mineName = a.name;
+  }
+  names.sort(Qt::CaseInsensitive);
+  if (names.isEmpty()) {
+    QMessageBox::information(
+        ZtoryMouthLibrary::dialogParent(), title,
+        QObject::tr("The project has no characters: add the character in "
+                    "the Production Tracker first."));
+    return false;
+  }
+  bool ok = false;
+  const QString who = QInputDialog::getItem(
+      ZtoryMouthLibrary::dialogParent(), title, prompt, names,
+      qMax(0, names.indexOf(mineName)), false, &ok);
+  if (!ok || who.isEmpty()) return false;
+  *name = who;
+  *uuid = uuidOf.value(who);
+  return true;
+}
+
+// Ztoryc: a drawing level marked as a character's mouths before its visemes
+// are assigned (Franco, 2026-10-21): the mark is the <character> of the
+// level's own .zmouth, so ZtoRig > Mouths finds it first.
+static void addMouthLevelActions(QMenu *menu, TXshSimpleLevel *sl) {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene || !sl) return;
+  const TFilePath levelPath = scene->decodeFilePath(sl->getPath());
+  if (levelPath.isEmpty()) return;
+  MouthMap map;
+  const bool hasFile = ZtoryMouthMap::load(levelPath, QString(), map);
+  const QString title = QObject::tr("Mark as Mouth Level");
+  const QString level = QString::fromStdWString(sl->getName());
+
+  if (hasFile && !map.characterName.isEmpty()) {
+    QAction *change = menu->addAction(
+        QObject::tr("Mouths of %1: Change Character...").arg(map.characterName));
+    QObject::connect(change, &QAction::triggered, [levelPath, level, title]() {
+      MouthMap now;
+      ZtoryMouthMap::load(levelPath, QString(), now);
+      QString who, uuid;
+      if (!chooseMouthCharacter(
+              title, QObject::tr("The mouths in «%1» belong to:").arg(level),
+              QString(), &who, &uuid))
+        return;
+      now.characterName = who;
+      now.characterUuid = uuid;
+      QString why;
+      if (!ZtoryMouthMap::save(levelPath, QString(), now, &why))
+        QMessageBox::warning(ZtoryMouthLibrary::dialogParent(), title, why);
+    });
+    if (map.sets.isEmpty()) {  // only marked: the mark can go
+      QAction *unmark = menu->addAction(QObject::tr("Unmark Mouth Level"));
+      QObject::connect(unmark, &QAction::triggered, [levelPath, title]() {
+        QString why;
+        if (!ZtoryMouthMap::save(levelPath, QString(), MouthMap(), &why))
+          QMessageBox::warning(ZtoryMouthLibrary::dialogParent(), title, why);
+      });
+    }
+    return;
+  }
+
+  QAction *mark = menu->addAction(QObject::tr("Mark as Mouth Level..."));
+  QObject::connect(mark, &QAction::triggered, [levelPath, level, title]() {
+    MouthMap now;
+    ZtoryMouthMap::load(levelPath, QString(), now);  // absent = empty map
+    QString who, uuid;
+    if (!chooseMouthCharacter(
+            title, QObject::tr("The mouths in «%1» belong to:").arg(level),
+            QString(), &who, &uuid))
+      return;
+    now.characterName = who;
+    now.characterUuid = uuid;
+    QString why;
+    if (!ZtoryMouthMap::save(levelPath, QString(), now, &why)) {
+      QMessageBox::warning(ZtoryMouthLibrary::dialogParent(), title, why);
+      return;
+    }
+    QMessageBox::information(
+        ZtoryMouthLibrary::dialogParent(), title,
+        QObject::tr("«%1» is marked as the mouths of %2.\nAssign the visemes in "
+                    "ZtoRig > Mouths: the level is listed first.")
+            .arg(level, who));
+  });
+}
+
 void ZtoryMouthLibrary::addMouthColumnActions(QMenu *menu, TXsheet *xsh,
                                               int col) {
   if (!menu || !xsh || col < 0 || col >= xsh->getColumnCount()) return;
@@ -890,7 +989,17 @@ void ZtoryMouthLibrary::addMouthColumnActions(QMenu *menu, TXsheet *xsh,
     sub = QString::fromStdWString(cell.m_level->getName());
     break;
   }
-  if (!cl) return;  // a level column: its map sits next to its file already
+  if (!cl) {
+    // A drawing level: its map sits next to its file.
+    for (int r = r0; r <= r1; r++) {
+      const TXshCell cell = xsh->getCell(r, col);
+      if (cell.isEmpty() || !cell.m_level) continue;
+      if (TXshSimpleLevel *sl = cell.m_level->getSimpleLevel())
+        addMouthLevelActions(menu, sl);
+      return;
+    }
+    return;
+  }
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   if (!scene) return;
 
@@ -926,39 +1035,18 @@ void ZtoryMouthLibrary::addMouthColumnActions(QMenu *menu, TXsheet *xsh,
   act = menu->addAction(QObject::tr("Mark as Mouth Column..."));
   TXsheet *subXsh = cl->getXsheet();
   QObject::connect(act, &QAction::triggered, [owner, sub, subXsh]() {
-    // The characters of the project; this scene's own first when it is one.
-    ZtoryModel *m = ZtoryModel::instance();
-    QStringList names;
-    QHash<QString, QString> uuidOf;
-    QString mineName;
-    const QString ownerFile = owner.getQString();
-    for (const Asset &a : m->assets()) {
-      if (!ZtoryModel::isCharacterType(a.type)) continue;
-      names << a.name;
-      uuidOf.insert(a.name, a.uuid);
-      if (QFileInfo(m->resolveAssetFile(a)) == QFileInfo(ownerFile))
-        mineName = a.name;
-    }
-    names.sort(Qt::CaseInsensitive);
-    if (names.isEmpty()) {
-      QMessageBox::information(
-          dialogParent(), QObject::tr("Mark as Mouth Column"),
-          QObject::tr("The project has no characters: add the character in "
-                      "the Production Tracker first."));
+    QString who, uuid;
+    if (!chooseMouthCharacter(
+            QObject::tr("Mark as Mouth Column"),
+            QObject::tr("The mouths in «%1» belong to:").arg(sub),
+            owner.getQString(), &who, &uuid))
       return;
-    }
-    bool ok = false;
-    const QString who = QInputDialog::getItem(
-        dialogParent(), QObject::tr("Mark as Mouth Column"),
-        QObject::tr("The mouths in «%1» belong to:").arg(sub), names,
-        qMax(0, names.indexOf(mineName)), false, &ok);
-    if (!ok || who.isEmpty()) return;
 
     MouthColumnTag tag;
     tag.subScene      = sub;
     tag.id            = QUuid::createUuid().toString(QUuid::WithoutBraces);
     tag.character     = who;
-    tag.characterUuid = uuidOf.value(who);
+    tag.characterUuid = uuid;
     tag.files         = drawingFingerprint(subXsh);
     if (tag.files.isEmpty()) {
       QMessageBox::warning(dialogParent(), QObject::tr("Mark as Mouth Column"),

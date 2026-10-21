@@ -4311,12 +4311,14 @@ void ColumnArea::contextMenuEvent(QContextMenuEvent *event) {
         menu.addAction(cmdManager->getAction(MI_Resequence));
         menu.addAction(cmdManager->getAction(MI_CloneChild));
         menu.addAction(cmdManager->getAction(MI_ExplodeChild));
-        // Ztoryc: mark the character's mouth sub-scene (ztorymouthlibrary.h).
-        ZtoryMouthLibrary::addMouthColumnActions(&menu, xsh, m_menuCol);
       } else if (cell.m_level && cell.m_level->getSimpleLevel()) {
         // Ztoryc: a solid silhouette in the column below (ztoryautomatte.h).
         ZtoryAutoMatte::addColumnActions(&menu, xsh, m_menuCol);
       }
+      // Ztoryc: mark the character's mouths, a sub-scene or a drawing level,
+      // looking at the whole column (ztorymouthlibrary.h); it was offered only
+      // when the FIRST cell was a sub-scene.
+      ZtoryMouthLibrary::addMouthColumnActions(&menu, xsh, m_menuCol);
       menu.addSeparator();
     }
 

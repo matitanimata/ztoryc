@@ -261,7 +261,13 @@ bool ZtoryMouthMap::save(const TFilePath &ownerPath, const QString &subScene,
   QVector<MouthColumnTag> tags;
   loadColumnTags(ownerPath, &tags);
 
-  if (keep.isEmpty() && tags.isEmpty()) {
+  // Ztoryc: a level MARKED as a character's mouths before its visemes are
+  // assigned keeps just <character> (Franco, 2026-10-21: «to find the level
+  // to map more easily»). Puppetoonz only writes .zmouth files, never reads
+  // them; the variant is to be documented in its CLAUDE.md.
+  const bool marked =
+      !map.characterUuid.isEmpty() || !map.characterName.isEmpty();
+  if (keep.isEmpty() && tags.isEmpty() && !marked) {
     // L'ESISTENZA del file dichiara «questo livello e' delle bocche». Lasciarne
     // uno vuoto direbbe una cosa falsa a chiunque lo controlli dopo.
     if (QFile::exists(file) && !QFile::remove(file))
