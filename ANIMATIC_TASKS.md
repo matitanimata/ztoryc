@@ -158,9 +158,29 @@ degli status).
 
 ## 🎬 Ztoryc — storyboard, animatic, thumbs
 
-### 🆕 Aperti dopo la sessione del 20/10 (assistenti e import FLA — in master, NON ancora pushato)
+### 🆕 Aperti dopo la sessione del 21/10 (chiavi, bocche, scheletro, controller — su master, pushato)
 
-- **Domattina 21/10: `git push origin master` con `SKIP_LICENSE_SCAN=1`** (falso positivo «otx» sui file
+- **Collaudi da fare** (installati, non provati da Franco):
+  - **Global Key unica, accesa di base** (`13a9a9deb`): la stessa casella in Animate, Skeleton e Plastic; menu
+    Key anche nello Skeleton; la scelta letta dalla preferenza al momento della chiave (`bcf5d904c`);
+  - **due chiavi uguali ferme ovunque** (`426fb4391`): Set Key, chiave globale, pose del Plastic, campi;
+  - **Mark as Mouth Level / Column** (`c54fdf61f`, `95a29589f`): livelli e sotto-scene marcati in testa al
+    pannello Bocche, anche col filtro;
+  - **lo scheletro con le chiavi** (`f6f627a0d`): celle+chiavi su una colonna vuota, poi ⌘Z/⌘Y;
+  - **Plastic Skeleton ▸ Controller** nel Function Editor e braccio della scala globale uniforme (`98ff3c345`).
+- **Limiti noti**: chiavi uguali — nell'Animate tool cambiare il valore di una chiave GIA' completa fino a
+  renderla uguale alla vicina non scatta; l'undo di una chiave nuova lascia Linear il tratto precedente (il
+  valore e' giusto). Controller — le espressioni che citassero quei canali col vecchio percorso (dentro il
+  vertice radice) andrebbero riscritte. Global Key — ora accesa anche in Animate e Skeleton per chi la teneva
+  spenta.
+- **Da decidere (Franco)**: un canale «Scale» globale del controller che moltiplichi H e V (voce nuova nel
+  formato della scena); oggi la scala globale e' H = V.
+- **Review del 21/10 fatta inline** (limite settimanale): da ripassare con `ztoryc-reviewer` prima della 0.19.0
+  insieme a tutto il resto dalla 0.18.0.
+
+### 🆕 Aperti dopo la sessione del 20/10 (assistenti e import FLA — pushato il 21/10)
+
+- ✅ **Push fatto il 21/10** (`92451adf4`, poi `f3c0a0532`). ~~`git push origin master` con `SKIP_LICENSE_SCAN=1`~~ (falso positivo «otx» sui file
   OpenToonz degli assistenti, verificato; il sì di Franco c'e', 20/10). Poi **build sul Dell** (Windows,
   e Linux gcc/clang): gli header `tsmartpointer.h`/`tvariant.h`/`tstringid.h` sostituiti con quelli OT
   (overload su 0/NULL, `operator bool`, `template class DVAPI TSmartPointerT<TGuideline>`), simboli DVAPI

@@ -1,3 +1,36 @@
+## [2026-10-21] — push di assistenti e FLA; Global Key unica, chiavi uguali ferme, bocche marcate, scheletro con le chiavi, controller nel Function Editor
+
+### Added
+- **Mark as Mouth Level…** sui livelli di disegni (`c54fdf61f`): il personaggio va nel `.zmouth` del livello,
+  che ora puo' contenere solo `<character>` finche' i viseme non sono assegnati; il pannello ZtoRig ▸ Bocche
+  elenca livelli e sotto-scene marcati subito dopo i mappati, anche col filtro (`95a29589f`). Il menu della
+  colonna guarda tutta la colonna, non solo la prima cella.
+- **Plastic Skeleton ▸ Controller** nel Function Editor (`98ff3c345`): scala, perno, posizione, rotazione e
+  shear del controller in un gruppo loro, tolti dai singoli vertici.
+
+### Modified
+- **Global Key unica, accesa di base** (`13a9a9deb`): una preferenza per Animate, Skeleton e Plastic; lo
+  Skeleton mostra anche il menu Key. Il Plastic tool legge la scelta dalla preferenza al momento della chiave
+  (`bcf5d904c`).
+- **Due chiavi uguali tengono ferma la posa ovunque** (`426fb4391`): la regola del 4/10 valeva solo per
+  incolla/sposta/inserisci; ora anche Set Key, chiave globale, pose del Plastic e campi.
+- **Le chiavi portano con se' lo scheletro Plastic** su una colonna che non ce l'ha (`f6f627a0d`); prima
+  l'incolla veniva rifiutato (Tahoma stock perdeva la posa in silenzio).
+- **Braccio della scala globale del controller sempre uniforme** (`98ff3c345`), anche con «Maintain: Mass».
+- Titolo dei pannelli che si ferma prima dei pulsanti (`92451adf4`).
+
+### Fixed
+- `TKeyframeData`: la copia usata dagli annulla non copiava i centri; il redo leggeva oltre la fine di una
+  lista vuota (`f6f627a0d`).
+- Import FLA as Columns annullato se si annulla l'esplosione (`bbe07129d`).
+
+### Notes
+- Push di master: `3c2b2a0dd..92451adf4` (assistenti + FLA) e `..f3c0a0532`, entrambi con
+  `SKIP_LICENSE_SCAN=1` (falso positivo «otx», si' di Franco). Prompt per la build sul Dell in
+  `Il mio Drive/Ztoryc/DELL_BUILD_PROMPT_2026-10-21.md`.
+- Review del 21/10 fatta inline per il limite settimanale (`reviews/2026-10-21_*`): da ripassare coi
+  subagent prima della 0.19.0.
+
 ## [2026-10-20] — Assistenti al disegno da OpenToonz e import FLA, tutti e due su master (push domattina)
 
 ### Added
