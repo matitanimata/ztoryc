@@ -185,13 +185,18 @@ degli status).
   `assert(false)` di `icongenerator` per livelli META in debug; moduli Ztoryc che enumerano i livelli
   (export, castviewer, ztoriglibrary...) da provare con un `.tzm` in uno shot; nei pennelli `m_snapGrid` e
   `m_assistants` derivati a mano da `m_guideSnap` (unificare); `.tzm` con `"version": 0`.
-- **Domattina, PRIMA del push: `build_and_deploy` su master** — `bbe07129d` (Import as Columns annullato
-  se si annulla l'esplosione) e' compilato ma non nel bundle: l'app era aperta.
+- **Installato il 21/10 notte** (`build_and_deploy` su master fino a `92451adf4`): Import as Columns
+  annullato se si annulla l'esplosione, titolo del visore che non passa piu' sotto le icone. Collaudo del
+  titolo da fare.
 - **Review 20/10 sera, voci di lavoro**: regola delle maschere duplicata fra `stage.cpp` e
   `txshcolumn.cpp` (`innermostFolder`, `isFolderMask`, `maxMaskScope`): unificarla in un posto solo, se
   divergono viewer e render smettono di coincidere; incolla-duplica, trascinamento e reframe delle celle
   non spostano le istanze Flash; `Flash::Error`/`TException` gestiti diversamente fra paste/insert e
   delete/cut; contesto `GuideSnap` da aggiungere ai file `.ts`.
+- **`.zmouth` con il solo `<character>` (livello marcato, non ancora mappato)** — nuovo dal 21/10
+  (Mark as Mouth Level, `ztorymouthmap.cpp`): da documentare nel `CLAUDE.md` di **Puppetoonz**, padrone del
+  formato, in una sessione aperta la' (Puppetoonz scrive il file e non lo rilegge: nessun effetto sul suo
+  codice).
 - **Le scene con le guide si aprono solo con una build che ha gli assistenti**: Ztoryc 0.18 e Tahoma stock
   vedono il `.tzm` come file sconosciuto (visto da Franco il 20/10 aprendo con l'app del FLA).
 
