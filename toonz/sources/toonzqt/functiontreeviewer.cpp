@@ -98,6 +98,63 @@ public:
   QVariant data(int role) const override;
 };
 
+//=============================================================================
+// Ztoryc: the squash & stretch controller of a Plastic skeleton, a group of
+// its own under «Plastic Skeleton» (Franco, 2026-10-21). Its params live on
+// the ROOT vertex's deformation; listed under every vertex they were buried
+// among 25 channels, and meaningless on all vertices but the root.
+//-----------------------------------------------------------------------------
+
+class SkControllerChannelGroup final : public FunctionTreeModel::ChannelGroup {
+  StageObjectChannelGroup *m_stageObjectGroup;
+  const void *m_key;  //!< the root deformation: identifies the group
+
+public:
+  SkControllerChannelGroup(const void *key, StageObjectChannelGroup *stageGroup)
+      : ChannelGroup(QObject::tr("Controller"))
+      , m_stageObjectGroup(stageGroup)
+      , m_key(key) {}
+
+  QString getShortName() const override {
+    return m_stageObjectGroup->getShortName();
+  }
+  QString getLongName() const override { return QObject::tr("Controller"); }
+  void *getInternalPointer() const override { return (void *)m_key; }
+};
+
+namespace {
+bool isControllerParam(int k) {
+  switch (k) {
+  case SkVD::SCALEX:
+  case SkVD::SCALEY:
+  case SkVD::PIVOTX:
+  case SkVD::PIVOTY:
+  case SkVD::TRANSX:
+  case SkVD::TRANSY:
+  case SkVD::ROT:
+  case SkVD::SHEARX:
+  case SkVD::SHEARY:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// The root vertex's deformation, home of the controller params.
+SkVD *controllerVd(const PlasticSkeletonDeformationP &sd) {
+  if (!sd) return nullptr;
+  PlasticSkeletonDeformation::skelId_iterator st, sEnd;
+  sd->skeletonIds(st, sEnd);
+  if (st == sEnd) return nullptr;
+  PlasticSkeletonP skel = sd->skeleton(*st);
+  if (!skel) return nullptr;
+  const auto &vs = skel->vertices();
+  for (auto vt = vs.begin(); vt != vs.end(); ++vt)
+    if (vt->parent() < 0) return sd->vertexDeformation(vt->name());
+  return nullptr;
+}
+}  // namespace
+
 }  // namespace
 
 //=============================================================================
@@ -1280,6 +1337,11 @@ void FunctionTreeModel::refreshPlasticDeformations() {
           plasticItems.insert(plasticItems.begin(), skelIdsChannel);
           skelIdsChannel->setChannelGroup(plasticGroup);
         }
+
+        // Ztoryc: the controller, right after the skeleton id
+        if (SkVD *rootVd = controllerVd(sd))
+          plasticItems.insert(plasticItems.begin() + 1,
+                              new SkControllerChannelGroup(rootVd, stageItem));
       }
 
       if (plasticItems.empty()) plasticGroup->setIsOpen(false);
@@ -1296,6 +1358,20 @@ void FunctionTreeModel::refreshPlasticDeformations() {
       for (pi = 0; pi != piCount;
            ++pi)  // of the specified items - those considered
       {           // 'new' by internal pointer comparison...
+        if (SkControllerChannelGroup *ctrlGroup =
+                dynamic_cast<SkControllerChannelGroup *>(plasticItems[pi])) {
+          if (SkVD *rootVd = controllerVd(sd))
+            for (int k = 0; k < SkVD::PARAMS_COUNT; ++k) {
+              if (!isControllerParam(k) || !rootVd->m_params[k]) continue;
+              Channel *channel =
+                  new Channel(this, rootVd->m_params[k].getPointer());
+              channel->setChannelGroup(ctrlGroup);
+              ctrlGroup->appendChild(channel);
+            }
+          ctrlGroup->applyShowFilter();
+          continue;
+        }
+
         SkVDChannelGroup *vxGroup =
             dynamic_cast<SkVDChannelGroup *>(plasticItems[pi]);
         if (!vxGroup) continue;
@@ -1304,6 +1380,8 @@ void FunctionTreeModel::refreshPlasticDeformations() {
             sd->vertexDeformation(vxGroup->ChannelGroup::getShortName());
 
         for (int k = 0; k < SkVD::PARAMS_COUNT; ++k) {
+          // Ztoryc: the controller's params have their own group
+          if (isControllerParam(k)) continue;
           // Add channel in the vertex deformation
           Channel *channel = new Channel(this, skvd->m_params[k].getPointer());
           channel->setChannelGroup(vxGroup);

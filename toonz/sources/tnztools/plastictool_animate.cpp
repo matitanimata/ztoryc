@@ -769,9 +769,11 @@ void PlasticTool::scaleDrag_animate(const TPointD &pos, const TMouseEvent &me) {
 
   int constraint = m_scaleConstraint.getIndex();  // 0 none, 1 A/R, 2 mass
   if (constraint == 0 && me.isShiftPressed()) constraint = 1;
-  // The main scale handle is UNIFORM (like the Animate tool's "Scale"): free
-  // per-axis scaling belongs to the offset square (CtrlScaleXY)
-  if (m_ctrlDevice == CtrlScale && constraint == 0) constraint = 1;
+  // The main scale handle is UNIFORM (like the Animate tool's "Scale"), with
+  // any «Maintain:» choice: free per-axis scaling and the A/R-Mass constraint
+  // belong to the offset square (CtrlScaleXY). With «Mass» the global arm
+  // squashed and stretched instead (Franco, 2026-10-21).
+  if (m_ctrlDevice == CtrlScale) constraint = 1;
 
   if (constraint == 1) {
     TPointD c = pos - m_pressedPos;
