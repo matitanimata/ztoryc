@@ -668,6 +668,16 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
       if (!show) m_characters = MouthCharacters();  // no filtering
     }
 
+    // the sub-scenes marked as mouths in this scene (column tags), by name
+    QHash<QString, QString> columnTagCharacter;
+    if (!scene->isUntitled()) {
+      QVector<MouthColumnTag> tags;
+      ZtoryMouthMap::loadColumnTags(scene->decodeFilePath(scene->getScenePath()),
+                                    &tags);
+      for (const MouthColumnTag &t : tags)
+        columnTagCharacter.insert(t.subScene, t.character);
+    }
+
     TLevelSet *ls = scene->getLevelSet();
     for (int i = 0; i < ls->getLevelCount(); i++) {
       TXshLevel *lv = ls->getLevel(i);
@@ -713,6 +723,16 @@ void ZtoRigMouthsTab::refreshLevelCombo() {
             !mark.characterName.isEmpty()) {
           marked.append(qMakePair(
               tr("%1  — %2, to map").arg(label, mark.characterName), lv));
+          continue;
+        }
+      }
+      // A sub-scene marked with Mark as Mouth Column...: its mark is a column
+      // tag in the scene's own .zmouth.
+      if (cl) {
+        const QString character = columnTagCharacter.value(name);
+        if (!character.isEmpty()) {
+          marked.append(
+              qMakePair(tr("%1  — %2, to map").arg(label, character), lv));
           continue;
         }
       }
