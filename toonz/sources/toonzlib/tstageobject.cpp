@@ -1055,26 +1055,30 @@ void TStageObject::setKeyframeWithoutUndo(int frame,
                                                    k.m_easeIn, k.m_easeOut) ||
                 keyWasSet;
 
-  if (keyWasSet) {
-    for (TDoubleParam *p :
-         {m_rot.getPointer(), m_x.getPointer(), m_y.getPointer(),
-          m_z.getPointer(), m_so.getPointer(), m_posPath.getPointer(),
-          m_scalex.getPointer(), m_scaley.getPointer(), m_scale.getPointer(),
-          m_shearx.getPointer(), m_sheary.getPointer()})
-      holdEqualNeighbours(p, frame);
-    if (m_skeletonDeformation) {
-      PlasticSkeletonDeformation::vd_iterator vdt, vdEnd;
-      m_skeletonDeformation->vertexDeformations(vdt, vdEnd);
-      for (; vdt != vdEnd; ++vdt)
-        if (SkVD *vd = (*vdt).second)
-          for (int p = 0; p < SkVD::PARAMS_COUNT; ++p)
-            holdEqualNeighbours(vd->m_params[p].getPointer(), frame);
-    }
-  }
+  if (keyWasSet) holdEqualKeyframesAt(frame);
 
   if (keyWasSet) keyframes[frame] = k;
 
   invalidate();
+}
+
+//-----------------------------------------------------------------------------
+
+void TStageObject::holdEqualKeyframesAt(double frame) {
+  for (TDoubleParam *p :
+       {m_rot.getPointer(), m_x.getPointer(), m_y.getPointer(),
+        m_z.getPointer(), m_so.getPointer(), m_posPath.getPointer(),
+        m_scalex.getPointer(), m_scaley.getPointer(), m_scale.getPointer(),
+        m_shearx.getPointer(), m_sheary.getPointer()})
+    holdEqualNeighbours(p, frame);
+  if (m_skeletonDeformation) {
+    PlasticSkeletonDeformation::vd_iterator vdt, vdEnd;
+    m_skeletonDeformation->vertexDeformations(vdt, vdEnd);
+    for (; vdt != vdEnd; ++vdt)
+      if (SkVD *vd = (*vdt).second)
+        for (int p = 0; p < SkVD::PARAMS_COUNT; ++p)
+          holdEqualNeighbours(vd->m_params[p].getPointer(), frame);
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -1093,6 +1097,10 @@ void TStageObject::setKeyframeWithoutUndo(int frame) {
   setkey(m_scale, frame);
   setkey(m_shearx, frame);
   setkey(m_sheary, frame);
+
+  // Ztoryc: a new key equal to a neighbour holds (Set Key, global keys,
+  // posing): the rule was only on paste/move/insert (Franco, 2026-10-21).
+  holdEqualKeyframesAt(frame);
 
   // setkey() writes into each TDoubleParam but does not update m_keyframes
   // in the lazy data. Invalidate so isKeyframe() / getKeyframeRange() rebuild.
@@ -1165,6 +1173,7 @@ void TStageObject::setPlasticPoseKeyframe(double frame) {
       if (vd->m_params[p]) setkey(vd->m_params[p], (int)frame);
     }
   }
+  holdEqualKeyframesAt((int)frame);  // two identical poses hold
 }
 
 //-----------------------------------------------------------------------------

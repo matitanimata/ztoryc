@@ -376,6 +376,11 @@ with the frame.
 
   void setKeyframeWithoutUndo(int frame, const Keyframe &);
   void setKeyframeWithoutUndo(int frame);
+  //! Ztoryc: every segment from the keys at frame to a neighbour key of the
+  //! SAME value becomes a hold (Linear), on the stage channels and the
+  //! plastic pose: two identical poses must not move between them. Called
+  //! by the operations that write keys, never by hand edits in the curves.
+  void holdEqualKeyframesAt(double frame);
 
   //! SuperPlastic: key the plastic POSE parameters (skeleton pose, free-root
   //! offset, squash & stretch controller) of every vertex deformation. Pins and

@@ -3099,6 +3099,9 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
       }
     }
     if (doFullPlastic) ::setKeyframe(m_sd, ::frame());
+    // Ztoryc: two identical poses hold between them (before the undo
+    // snapshot, so redo has it too).
+    if (TStageObject *o = stageObject()) o->holdEqualKeyframesAt(::frame());
 
     AnimateValuesUndo *undo =
         new AnimateValuesUndo(m_svSel.hasSingleObject() ? (int)m_svSel : -1);
@@ -3158,6 +3161,16 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
         }
       }
     }
+    // Ztoryc: two identical poses hold between them (before the undo
+    // snapshot, so redo has it too).
+    if (TXsheet *xsh = TTool::getApplication()->getCurrentXsheet()->getXsheet())
+      for (auto &kv : m_ikCrossDefs)
+        if (TStageObject *obj =
+                xsh->getStageObject(TStageObjectId::ColumnId(kv.first))) {
+          double pf = ::frame();
+          if (kv.first != ::column()) pf = obj->paramsTime(pf);
+          obj->holdEqualKeyframesAt(pf);
+        }
     finishCrossLevelUndo_animate(::frame());
     TUndoManager::manager()->endBlock();
     m_dragged = false;
@@ -3200,6 +3213,9 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
       ::setKeyframe(m_sd, ::frame());  // Already invokes keyframes rebuild
     else
       ::updateStageObjectKeyframes();  // Otherwise, must be explicit
+    // Ztoryc: two identical poses hold between them (before the undo
+    // snapshot, so redo has it too).
+    if (TStageObject *o = stageObject()) o->holdEqualKeyframesAt(::frame());
 
     // Add a corresponding undo
     AnimateValuesUndo *undo = new AnimateValuesUndo(m_svSel);
@@ -3242,6 +3258,7 @@ void PlasticTool::globalKeyAfterFieldEdit_animate() {
     }
   }
   if (scope != 0) ::setKeyframe(m_sd, ::frame());  // Plastic or All
+  if (TStageObject *o = stageObject()) o->holdEqualKeyframesAt(::frame());
   TTool::getApplication()->getCurrentXsheet()->notifyXsheetChanged();
 }
 
