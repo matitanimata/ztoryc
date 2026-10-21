@@ -130,6 +130,7 @@ enum PreferencesItemId {
   EnableAutocreation,
   KeyframesFollowExposure,  // i keyframe seguono le celle in insert/remove/extend
   GlobalKeyScope,  // Ztoryc: portata della chiave globale — 0 Stage, 1 Plastic, 2 All
+  GlobalKeyEnabled,  // Ztoryc: la casella Global Key, una sola per Animate, Skeleton e Plastic
   NumberingSystem,
   EnableAutoStretch,
   EnableImplicitHold,

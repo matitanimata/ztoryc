@@ -60,6 +60,7 @@ class SkeletonTool : public TTool {
   TEnumProperty m_mode;
   TBoolProperty m_showOnlyActiveSkeleton;
   TBoolProperty m_globalKeyframes;
+  TEnumProperty m_globalKeyScope;  // Ztoryc: shared with Animate and Plastic
 
   TPropertyGroup m_prop;
 

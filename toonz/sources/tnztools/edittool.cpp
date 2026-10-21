@@ -68,7 +68,7 @@ TEnv::IntVar ShowCenterPosition("EditToolShowCenterPosition", 0);
 TEnv::StringVar Active("EditToolActiveAxis", "Position");
 TEnv::StringVar AutoSelect("EditToolAutoSelect", "None");
 TEnv::StringVar ScaleConstraint("EditToolScaleConstraint", "None");
-TEnv::IntVar ArrowGlobalKeyFrame("EditToolGlobalKeyFrame", 0);
+// Ztoryc: Global Key now lives in the preferences (GlobalKeyEnabled).
 
 //=============================================================================
 namespace {
@@ -1841,7 +1841,8 @@ void EditTool::onActivate() {
     m_activeAxis.setValue(::to_wstring(Active.getValue()));
     m_autoSelect.setValue(::to_wstring(AutoSelect.getValue()));
     m_scaleConstraint.setValue(::to_wstring(ScaleConstraint.getValue()));
-    m_globalKeyframes.setValue(ArrowGlobalKeyFrame ? 1 : 0);
+    m_globalKeyframes.setValue(
+        Preferences::instance()->getBoolValue(GlobalKeyEnabled));
     // Scope lives in the preference, not in a tool-local TEnv var: the
     // Plastic tool reads the same value, and both must show the same
     // choice however the user changed it (either combo, or the menu
@@ -1966,7 +1967,8 @@ bool EditTool::onPropertyChanged(std::string propertyName) {
     ScaleConstraint = ::to_string(m_scaleConstraint.getValue());
 
   else if (propertyName == m_globalKeyframes.getName())
-    ArrowGlobalKeyFrame = (int)m_globalKeyframes.getValue();
+    Preferences::instance()->setValue(GlobalKeyEnabled,
+                                      m_globalKeyframes.getValue());
 
   else if (propertyName == m_globalKeyScope.getName())
     Preferences::instance()->setValue(GlobalKeyScope,

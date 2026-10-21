@@ -48,10 +48,12 @@
 
 #include "skeletonsubtools.h"
 #include "skeletontool.h"
+#include "toonz/preferences.h"
+#include "toonz/preferencesitemids.h"
 
 using namespace SkeletonSubtools;
 
-TEnv::IntVar SkeletonGlobalKeyFrame("SkeletonToolGlobalKeyFrame", 0);
+// Ztoryc: Global Key now lives in the preferences (GlobalKeyEnabled).
 TEnv::IntVar SkeletonInverseKinematics("SkeletonToolInverseKinematics", 0);
 
 const double alpha = 0.4;
@@ -233,7 +235,8 @@ SkeletonTool::SkeletonTool()
     , m_device(TD_None)
     , m_mode("Mode:")
     , m_showOnlyActiveSkeleton("Show Only Active Skeleton", false)
-    , m_globalKeyframes("Global Key", false)
+    , m_globalKeyframes("Global Key", true)
+    , m_globalKeyScope("Key:")
     , m_dragTool(0)
     , m_firstTime(true)
     , m_currentFrame(-1)
@@ -247,9 +250,14 @@ SkeletonTool::SkeletonTool()
   bind(TTool::CommonLevels);
   m_prop.bind(m_mode);
   m_prop.bind(m_globalKeyframes);
+  m_prop.bind(m_globalKeyScope);
   m_prop.bind(m_showOnlyActiveSkeleton);
   m_mode.setId("SkeletonMode");
   m_globalKeyframes.setId("GlobalKey");
+  m_globalKeyScope.addValue(L"Stage");
+  m_globalKeyScope.addValue(L"Plastic");
+  m_globalKeyScope.addValue(L"All");
+  m_globalKeyScope.setId("GlobalKeyScope");
   m_showOnlyActiveSkeleton.setId("ShowOnlyActiveSkeleton");
 
   m_mode.addValue(BUILD_SKELETON);
@@ -267,7 +275,14 @@ SkeletonTool::~SkeletonTool() { delete m_dragTool; }
 //-------------------------------------------------------------------
 
 bool SkeletonTool::onPropertyChanged(std::string propertyName) {
-  SkeletonGlobalKeyFrame = (int)(m_globalKeyframes.getValue());
+  // Ztoryc: Global Key and its scope are one choice for the Animate, Skeleton
+  // and Plastic tools (preferences), on by default.
+  if (propertyName == m_globalKeyframes.getName())
+    Preferences::instance()->setValue(GlobalKeyEnabled,
+                                      m_globalKeyframes.getValue());
+  else if (propertyName == m_globalKeyScope.getName())
+    Preferences::instance()->setValue(GlobalKeyScope,
+                                      m_globalKeyScope.getIndex());
   // SkeletonInverseKinematics=(int)(m_ikEnabled.getValue());
   invalidate();
   return false;
@@ -285,6 +300,10 @@ void SkeletonTool::updateTranslation() {
   // m_ikEnabled.setQStringName(tr("Inverse Kinematics"));
   m_showOnlyActiveSkeleton.setQStringName(tr("Show Only Active Skeleton"));
   m_globalKeyframes.setQStringName(tr("Global Key"));
+  m_globalKeyScope.setQStringName(tr("Key:"));
+  m_globalKeyScope.setItemUIName(L"Stage", tr("Stage"));
+  m_globalKeyScope.setItemUIName(L"Plastic", tr("Plastic"));
+  m_globalKeyScope.setItemUIName(L"All", tr("All"));
   m_mode.setQStringName(tr("Mode:"));
   m_mode.setItemUIName(BUILD_SKELETON, tr("Build Skeleton"));
   m_mode.setItemUIName(ANIMATE, tr("Animate"));
@@ -1523,8 +1542,12 @@ void SkeletonTool::draw() {
 
 void SkeletonTool::onActivate() {
   TTool::Application *app = TTool::getApplication();
+  // re-read on every activation: another tool may have changed them
+  m_globalKeyframes.setValue(
+      Preferences::instance()->getBoolValue(GlobalKeyEnabled));
+  m_globalKeyScope.setIndex(
+      Preferences::instance()->getIntValue(GlobalKeyScope));
   if (m_firstTime) {
-    m_globalKeyframes.setValue(SkeletonGlobalKeyFrame ? 1 : 0);
     m_mode.setValue(BUILD_SKELETON);
     // m_ikEnabled.setValue(SkeletonInverseKinematics ? 1 : 0);
     m_firstTime = false;

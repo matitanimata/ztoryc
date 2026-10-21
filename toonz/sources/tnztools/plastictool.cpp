@@ -1692,6 +1692,8 @@ void PlasticTool::onActivate() {
   // every activation rather than kept in tool-local state.
   m_globalKeyScope.setIndex(
       Preferences::instance()->getIntValue(GlobalKeyScope));
+  // Ztoryc: the Global Key box too, shared with the Animate and Skeleton tools
+  m_globalKey.setValue(Preferences::instance()->getBoolValue(GlobalKeyEnabled));
 
   bool ret;
   ret = connect(TTool::m_application->getCurrentFrame(),
@@ -2543,6 +2545,11 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
   if (propertyName == m_globalKeyScope.getName()) {
     Preferences::instance()->setValue(GlobalKeyScope,
                                       m_globalKeyScope.getIndex());
+    return true;
+  }
+
+  if (propertyName == m_globalKey.getName()) {
+    Preferences::instance()->setValue(GlobalKeyEnabled, m_globalKey.getValue());
     return true;
   }
 

@@ -636,6 +636,9 @@ void Preferences::definePreferenceItems() {
   // combo in both the Animate and Plastic tool option bars, so the two tools
   // always agree on what "global" means.
   define(GlobalKeyScope, "GlobalKeyScope", QMetaType::Int, 2);
+  // Ztoryc: one Global Key for the Animate, Skeleton and Plastic tools, on by
+  // default (Franco, 21/10); each kept its own and two were off by default.
+  define(GlobalKeyEnabled, "GlobalKeyEnabled", QMetaType::Bool, true);
   define(NumberingSystem, "NumberingSystem", QMetaType::Int, 0);  // Incremental
   define(EnableAutoStretch, "EnableAutoStretch", QMetaType::Bool, false);
   define(EnableImplicitHold, "EnableImplicitHold", QMetaType::Bool,
