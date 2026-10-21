@@ -195,6 +195,17 @@ public:
     if (-(m_r1 - m_r0 + 1) != 0)
       shiftKeyframesWithoutUndo(m_r0, m_r1, m_c0, m_c1, true, true);
     if (m_oldData) setXshFromData(m_oldData);
+    // Ztoryc: a skeleton the paste brought along goes away with its keys.
+    {
+      int c0 = INT_MAX, c1 = INT_MIN;
+      for (const auto &p : m_selection->getSelection()) {
+        c0 = std::min(c0, p.second);
+        c1 = std::max(c1, p.second);
+      }
+      if (c0 <= c1)
+        TKeyframeData::releasePastedSkeletons(
+            TApp::instance()->getCurrentXsheet()->getXsheet(), c0, c1);
+    }
     TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
   }
   void redo() const override {

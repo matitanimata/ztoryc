@@ -15,6 +15,8 @@ class TXsheet;
 // TKeyframeData
 //-----------------------------------------------------------------------------
 
+#include "ext/plasticskeletondeformation.h"
+
 class TKeyframeData final : public DvMimeData {
 public:
   typedef TKeyframeSelection::Position Position;
@@ -34,6 +36,15 @@ public:
   // Numero di colonna della pegbar associato al booleano isCycleEnabled della
   // pegbar
   std::map<int, bool> m_isPegbarsCycleEnabled;
+
+  // Ztoryc: the Plastic skeleton of each copied column (by column offset),
+  // without keys: pasted on a column with no skeleton, the keys bring it
+  // along — the skeleton goes with the key (Franco, 2026-10-21).
+  std::map<int, PlasticSkeletonDeformationP> m_skeletons;
+
+  // Undo of a paste: drops from columns c0..c1 a skeleton that a paste put
+  // there and that has no key left. Never a skeleton made by hand.
+  static void releasePastedSkeletons(TXsheet *xsh, int c0, int c1);
 
   TKeyframeData();
   TKeyframeData(const TKeyframeData *src);

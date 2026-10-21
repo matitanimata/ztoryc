@@ -1884,6 +1884,11 @@ public:
   void undo() const override {
     removeKeysAt(m_dstPositions);
     pasteKeysAt(m_data, m_srcPositions);
+    // Ztoryc: a skeleton the move brought along goes away with its keys.
+    for (const auto &p : m_dstPositions)
+      TKeyframeData::releasePastedSkeletons(
+          TApp::instance()->getCurrentXsheet()->getXsheet(), p.second,
+          p.second);
     TApp::instance()->getCurrentScene()->setDirtyFlag(true);
     TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
   }

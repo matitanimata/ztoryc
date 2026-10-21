@@ -24,10 +24,67 @@ TKeyframeData::TKeyframeData() {}
 
 //-----------------------------------------------------------------------------
 
+// Ztoryc: the centres and the spans too — getKeyframes() walks m_centerData
+// alongside m_keyData, and a copy (the undos keep one to redo) read past the
+// end of an empty map.
 TKeyframeData::TKeyframeData(const TKeyframeData *src)
     : m_keyData(src->m_keyData)
+    , m_centerData(src->m_centerData)
+    , m_columnSpanCount(src->m_columnSpanCount)
+    , m_rowSpanCount(src->m_rowSpanCount)
+    , m_offset(src->m_offset)
     , m_isPegbarsCycleEnabled(src->m_isPegbarsCycleEnabled)
-    , m_offset(src->m_offset) {}
+    , m_skeletons(src->m_skeletons) {}
+
+//-----------------------------------------------------------------------------
+
+namespace {
+// The skeletons a paste attached, so an undo removes those and only those.
+// Held, so no other skeleton can reuse the address of a released one.
+std::map<PlasticSkeletonDeformation *, PlasticSkeletonDeformationP> &
+pastedSkeletons() {
+  static std::map<PlasticSkeletonDeformation *, PlasticSkeletonDeformationP> s;
+  return s;
+}
+
+// The skeletons of `sd` with no animation: the pasted keys bring the pose.
+PlasticSkeletonDeformationP keylessCopy(const PlasticSkeletonDeformation &sd) {
+  PlasticSkeletonDeformationP copy(new PlasticSkeletonDeformation(sd));
+  copy->skeletonIdsParam()->clearKeyframes();
+  PlasticSkeletonDeformation::vd_iterator vdt, vdEnd;
+  copy->vertexDeformations(vdt, vdEnd);
+  for (; vdt != vdEnd; ++vdt)
+    if (SkVD *vd = (*vdt).second)
+      for (int p = 0; p < SkVD::PARAMS_COUNT; ++p)
+        if (vd->m_params[p]) vd->m_params[p]->clearKeyframes();
+  return copy;
+}
+
+bool hasNoKeys(const PlasticSkeletonDeformation &sd) {
+  if (sd.skeletonIdsParam()->getKeyframeCount() > 0) return false;
+  PlasticSkeletonDeformation::vd_iterator vdt, vdEnd;
+  sd.vertexDeformations(vdt, vdEnd);
+  for (; vdt != vdEnd; ++vdt)
+    if (SkVD *vd = (*vdt).second)
+      for (int p = 0; p < SkVD::PARAMS_COUNT; ++p)
+        if (vd->m_params[p] && vd->m_params[p]->getKeyframeCount() > 0)
+          return false;
+  return true;
+}
+}  // namespace
+
+void TKeyframeData::releasePastedSkeletons(TXsheet *xsh, int c0, int c1) {
+  if (!xsh) return;
+  for (int c = std::max(0, c0); c <= c1; ++c) {
+    TStageObject *obj = xsh->getStageObject(xsh->getColumnObjectId(c));
+    if (!obj) continue;
+    const PlasticSkeletonDeformationP &sd = obj->getPlasticSkeletonDeformation();
+    if (!sd || !pastedSkeletons().count(sd.getPointer()) || !hasNoKeys(*sd))
+      continue;
+    pastedSkeletons().erase(sd.getPointer());
+    obj->setPlasticSkeletonDeformation(PlasticSkeletonDeformationP());
+  }
+}
 
 //-----------------------------------------------------------------------------
 
@@ -71,6 +128,11 @@ void TKeyframeData::setKeyframes(std::set<Position> positions, TXsheet *xsh,
     TStageObject *pegbar = xsh->getStageObject(col >= 0 ? xsh->getColumnObjectId(col) : cameraId);
     assert(pegbar);
     m_isPegbarsCycleEnabled[col] = pegbar->isCycleEnabled();
+    // Ztoryc: the column's skeleton travels with its keys (keyless copy).
+    if (col >= 0 && !m_skeletons.count(col - c0))
+      if (const PlasticSkeletonDeformationP &sd =
+              pegbar->getPlasticSkeletonDeformation())
+        m_skeletons[col - c0] = keylessCopy(*sd);
     if (pegbar->isKeyframe(row)) {
       Position p(row - r0, col - c0);
       TStageObject::Keyframe k = pegbar->getKeyframe(row);
@@ -106,7 +168,9 @@ bool TKeyframeData::losesPlasticPose(const std::set<Position> &dest,
     TXshColumn *column = xsh->getColumn(col);
     if (!column) return true;  // an empty column: no skeleton there
     TStageObject *obj = xsh->getStageObject(xsh->getColumnObjectId(col));
-    if (!obj || !obj->getPlasticSkeletonDeformation()) return true;
+    if ((!obj || !obj->getPlasticSkeletonDeformation()) &&
+        !m_skeletons.count(kv.first.second))
+      return true;  // no skeleton there, and none copied to bring along
   }
   return false;
 }
@@ -164,6 +228,18 @@ bool TKeyframeData::getKeyframes(std::set<Position> &positions,
     if (!pegbar) continue;
 
     keyFrameChanged = true;
+
+    // Ztoryc: a column with no skeleton receives the copied one with the
+    // keys (the skeleton goes with the key); an existing skeleton is kept.
+    if (col >= 0 && !pegbar->getPlasticSkeletonDeformation()) {
+      auto skel = m_skeletons.find(pos.second);
+      if (skel != m_skeletons.end() && skel->second) {
+        PlasticSkeletonDeformationP sd(
+            new PlasticSkeletonDeformation(*skel->second));
+        pastedSkeletons()[sd.getPointer()] = sd;
+        pegbar->setPlasticSkeletonDeformation(sd);
+      }
+    }
 
     int kF, kL, kP, kN;
     double e0, e1;
