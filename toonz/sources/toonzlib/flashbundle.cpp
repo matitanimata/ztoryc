@@ -322,6 +322,53 @@ QString processesHoldingFiles(const QString &directory) {
 }  // namespace
 #endif
 
+#ifdef Q_OS_WIN
+// Ztoryc: the fallback when Windows keeps refusing the rename. Something can
+// hold the staging FOLDER (not a file in it) open — a sync client, Defender,
+// a folder watch — and the Restart Manager above only sees files: tried on a
+// companion PC, every attempt failed with error 5 (2026-10-23). Copy into a
+// destination created now (mkdir fails if it exists: still no replace),
+// check every file arrived with its size, then drop the staging folder. A
+// failed copy removes what it wrote, so the import stays all-or-nothing.
+bool copyDirectoryNoReplace(const QString &source, const QString &destination) {
+  if (!QDir().mkdir(destination)) return false;
+  bool ok = true;
+  QDirIterator it(source, QDir::AllEntries | QDir::Hidden | QDir::System |
+                              QDir::NoDotAndDotDot,
+                  QDirIterator::Subdirectories);
+  const QDir from(source), to(destination);
+  qint64 files = 0, bytes = 0;
+  while (ok && it.hasNext()) {
+    const QString path = it.next();
+    const QFileInfo info(path);
+    const QString target = to.filePath(from.relativeFilePath(path));
+    if (linkedPath(info)) ok = false;  // staging never holds links
+    else if (info.isDir()) ok = QDir().mkpath(target);
+    else {
+      ok = QFile::copy(path, target) && QFileInfo(target).size() == info.size();
+      ++files, bytes += info.size();
+    }
+  }
+  if (ok) {
+    // Check what arrived, not what was meant to.
+    qint64 gotFiles = 0, gotBytes = 0;
+    QDirIterator check(destination, QDir::Files | QDir::Hidden | QDir::System,
+                       QDirIterator::Subdirectories);
+    while (check.hasNext()) {
+      check.next();
+      ++gotFiles, gotBytes += check.fileInfo().size();
+    }
+    ok = gotFiles == files && gotBytes == bytes;
+  }
+  if (!ok) {
+    QDir(destination).removeRecursively();
+    return false;
+  }
+  QDir(source).removeRecursively();  // best effort: it stays hidden if held
+  return true;
+}
+#endif
+
 void commitDirectoryNoReplaceWithRetry(
     const QString &source, const QString &destination, const QString &kind,
     const std::function<void()> &beforeAttempt) {
@@ -364,8 +411,14 @@ void commitDirectoryNoReplaceWithRetry(
     systemError          = GetLastError();
     const bool transient = systemError == ERROR_ACCESS_DENIED ||
                            systemError == ERROR_SHARING_VIOLATION;
-    if (!transient || attempts > int(sizeof(backoffMs) / sizeof(backoffMs[0])))
+    if (!transient) break;
+    if (attempts > int(sizeof(backoffMs) / sizeof(backoffMs[0]))) {
+      if (beforeAttempt) beforeAttempt();
+      if (!QFileInfo(destination).exists() &&
+          copyDirectoryNoReplace(source, destination))
+        return;
       break;
+    }
     Sleep(backoffMs[attempts - 1]);
 #else
     systemError = errno;
