@@ -97,9 +97,11 @@ class FillTool final : public QObject, public TTool {
   // last gap value explicitly set by the user in this session; propagated to
   // images still having the default tolerance, so the slider does not reset
   // on every frame switch
-  // Ztoryc: starts at our default, so drawings still at Tahoma's 1.15 are
-  // raised to it as soon as the Fill tool works on them (Franco, 2026-10-19).
-  double m_lastUserGapValue = c_ztorycAutocloseTolerance;
+  // -1 = no choice of the user yet, as in Tahoma (Franco, 2026-10-23). It
+  // started at our 5 (19/10), and merely showing an old drawing at 1.15 with
+  // the Fill tool raised it and recomputed its regions, without undo:
+  // coloured areas could merge or split. New drawings start at 5 anyway.
+  double m_lastUserGapValue = -1.0;
   TXshSimpleLevelP m_level;
   TFrameId m_firstFrameId, m_veryFirstFrameId;
   int m_onionStyleId;
