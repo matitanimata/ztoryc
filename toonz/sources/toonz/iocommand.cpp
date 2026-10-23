@@ -3935,6 +3935,24 @@ public:
     StudioPalette::instance()->save(palettePath, palette);
     TApp::instance()->getPaletteController()->setDefaultPalette(levelType,
                                                                 palette);
+
+    // Ztoryc: the brushes each style remembers go with the default palette
+    // (the level's «.brushes», tnztools/brushstylememory), so a new level
+    // starts with colours and brushes (TXshSimpleLevel::save). Without any,
+    // the old default brushes go: they belonged to another palette.
+    const TFilePath defaultBrushes = palettePath.withType("brushes");
+    TFilePath levelBrushes;
+    if (TXshSimpleLevel *sl = TApp::instance()->getCurrentLevel()->getSimpleLevel())
+      if (sl->getPalette() == TApp::instance()->getCurrentPalette()->getPalette())
+        levelBrushes = TApp::instance()->getCurrentScene()->getScene()
+                           ->decodeFilePath(sl->getPath()).withType("brushes");
+    try {
+      if (!levelBrushes.isEmpty() && TFileStatus(levelBrushes).doesExist())
+        TSystem::copyFile(defaultBrushes, levelBrushes, true);
+      else if (TFileStatus(defaultBrushes).doesExist())
+        TSystem::deleteFile(defaultBrushes);
+    } catch (...) {
+    }
   }
 } saveDefaultPaletteCommandHandler;
 

@@ -36,6 +36,7 @@
 #include "tlogger.h"
 #include "tstream.h"
 #include "tsystem.h"
+#include "toonz/toonzfolders.h"
 #include "tcontenthistory.h"
 #include "tfilepath.h"
 
@@ -1666,6 +1667,27 @@ void TXshSimpleLevel::save(const TFilePath &fp, const TFilePath &oldFp,
       }
     }
   }
+  // Ztoryc: a level saved for the first time takes the brushes of the default
+  // palette of its type, as it took its colours (Franco, 2026-10-23). Save
+  // As Default Palette keeps them next to it, «<type>_default.brushes». Not
+  // for a copy of an existing level: copyFiles() carries its own twin.
+  // Raster levels draw with the scene's full-colour palette, whose brushes
+  // sit next to that palette instead.
+  if (!TSystem::doesExistFileOrLevel(dDstPath) &&
+      !TSystem::doesExistFileOrLevel(dOldPath)) {
+    const char *typeName = getType() == TZP_XSHLEVEL   ? "smart_raster"
+                           : getType() == PLI_XSHLEVEL ? "vector"
+                                                       : nullptr;
+    const TFilePath twin = dDstPath.withType("brushes");
+    if (typeName && !TFileStatus(twin).doesExist()) {
+      const TFilePath defaults =
+          ToonzFolder::getMyPalettesDir() +
+          TFilePath(std::string(typeName) + "_default.brushes");
+      if (TFileStatus(defaults).doesExist())
+        TSystem::copyFile(twin, defaults, true);
+    }
+  }
+
   // touchParentDir is now just a sanity-check (dir was just created or already
   // existed). Fail only if something truly unexpected prevents access.
   if (!TSystem::touchParentDir(dDstPath))
