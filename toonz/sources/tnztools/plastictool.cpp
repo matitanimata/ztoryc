@@ -1096,7 +1096,7 @@ void PlasticToolOptionsBox::onRemoveSkeleton() {
 //-----------------------------------------------------------------------------
 
 void PlasticToolOptionsBox::onSetKey() {
-  if (l_plasticTool.m_globalKey.getValue())
+  if (Preferences::instance()->getBoolValue(GlobalKeyEnabled))
     l_plasticTool.setGlobalKey_undo();
   else if (TSelection::getCurrent() == &l_plasticTool.m_svSel)
     l_plasticTool.setKey_undo();
@@ -1105,7 +1105,7 @@ void PlasticToolOptionsBox::onSetKey() {
 //-----------------------------------------------------------------------------
 
 void PlasticToolOptionsBox::onSetRestKey() {
-  if (l_plasticTool.m_globalKey.getValue())
+  if (Preferences::instance()->getBoolValue(GlobalKeyEnabled))
     l_plasticTool.setGlobalRestKey_undo();
   else if (TSelection::getCurrent() == &l_plasticTool.m_svSel)
     l_plasticTool.setRestKey_undo();

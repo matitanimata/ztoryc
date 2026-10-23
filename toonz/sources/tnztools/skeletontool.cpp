@@ -291,7 +291,18 @@ bool SkeletonTool::onPropertyChanged(std::string propertyName) {
 //-------------------------------------------------------------------
 
 bool SkeletonTool::isGlobalKeyframesEnabled() const {
-  return m_globalKeyframes.getValue();
+  // Ztoryc: read from the preference when keying (the box is a copy), and the
+  // «Key:» scope honoured as in the Animate tool (DragChannelTool::
+  // globalKeyIsPoseOnly): «Plastic» keys the pose only, so the transform
+  // channels stay out where the column has a pose (review of 2026-10-23).
+  Preferences *prefs = Preferences::instance();
+  if (!prefs->getBoolValue(GlobalKeyEnabled)) return false;
+  if (prefs->getIntValue(GlobalKeyScope) != 1) return true;
+  TTool::Application *app = TTool::getApplication();
+  TXsheet *xsh            = app->getCurrentXsheet()->getXsheet();
+  TStageObject *obj =
+      xsh ? xsh->getStageObject(app->getCurrentObject()->getObjectId()) : 0;
+  return !(obj && obj->getPlasticSkeletonDeformation());
 }
 
 //-------------------------------------------------------------------

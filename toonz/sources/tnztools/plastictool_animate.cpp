@@ -51,6 +51,10 @@ namespace {
 static int currentGlobalKeyScope() {
   return Preferences::instance()->getIntValue(GlobalKeyScope);
 }
+// Same for the Global Key switch itself (review of 2026-10-23).
+static bool currentGlobalKey() {
+  return Preferences::instance()->getBoolValue(GlobalKeyEnabled);
+}
 
 class StageTransformKeyUndo final : public TUndo {
   // The channels TStageObject::setKeyframeWithoutUndo(frame) keys.
@@ -3086,7 +3090,7 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
     // 1 Plastic, 2 All. This path keyed the plastic side whatever the scope
     // and the transform never (Franco, 2026-10-03).
     const int scope          = currentGlobalKeyScope();
-    const bool globalKey     = m_globalKey.getValue();
+    const bool globalKey     = currentGlobalKey();
     const bool doTransform   = globalKey && scope != 1;  // Stage or All
     const bool doFullPlastic = globalKey && scope != 0;  // Plastic or All
 
@@ -3137,7 +3141,7 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
     // single-vertex path was fixed, 201b76d46). One undo block for all of it:
     // the transform keys, the plastic keys and the drag's own undo.
     const int scope          = currentGlobalKeyScope();
-    const bool globalKey     = m_globalKey.getValue();
+    const bool globalKey     = currentGlobalKey();
     const bool doTransform   = globalKey && scope != 1;  // Stage or All
     const bool doFullPlastic = globalKey && scope != 0;  // Plastic or All
     TUndoManager::manager()->beginBlock();
@@ -3190,7 +3194,7 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
     // on the column — otherwise the column stays un-keyed and drifts relative
     // to the plastic keys ("in global all, posing must also key the transform").
     const int scope       = currentGlobalKeyScope();
-    const bool globalKey  = m_globalKey.getValue();
+    const bool globalKey  = currentGlobalKey();
     const bool doTransform = globalKey && scope != 1;  // Stage or All
     const bool doFullPlastic = globalKey && scope != 0;  // Plastic or All
 
@@ -3251,7 +3255,7 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
 // the rest of the pose unkeyed (Franco, 2026-10-03). Same rule as the drag.
 // No undo here: the whole field edit is one curve snapshot (see below).
 void PlasticTool::globalKeyAfterFieldEdit_animate() {
-  if (!m_sd || !m_globalKey.getValue()) return;
+  if (!m_sd || !currentGlobalKey()) return;
   const int scope = currentGlobalKeyScope();
   if (scope != 1) {  // Stage or All
     if (TStageObject *o = stageObject()) {
