@@ -101,6 +101,7 @@ public:
   QString currentPresetName() override;
   void selectPreset(const QString &name) override;
   void removeNamedPreset(const QString &name) override;
+  std::shared_ptr<TPersist> presetData(const QString &name) override;
   void applyStyleBrush(const TPersist *data) override;
 
   void onCanvasSizeChanged();

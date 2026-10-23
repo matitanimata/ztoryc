@@ -33,14 +33,24 @@ public:
   class Provider {
   public:
     virtual ~Provider() {}
-    //! Empty when the current tool is not a brush.
-    virtual QString toolName() const                 = 0;
-    virtual QStringList presets() const              = 0;
-    //! Empty for <custom>.
-    virtual QString currentPreset() const            = 0;
-    virtual void choosePreset(const QString &name)   = 0;
-    virtual void addPreset(const QString &name)      = 0;
-    virtual void removePreset(const QString &name)   = 0;
+    //! The current tool, when it is a brush; empty otherwise.
+    virtual QString toolName() const = 0;
+    //! "vector", "smartraster" or "raster"; empty when not a brush.
+    virtual QString toolKind() const = 0;
+    //! Saves the current brush settings as a preset of the current brush.
+    virtual void addPreset(const QString &name) = 0;
+
+    //! The presets of a brush kind, whatever the current tool.
+    virtual QStringList presets(const QString &kind) const = 0;
+    //! The preset that brush is using; empty for <custom>.
+    virtual QString currentPreset(const QString &kind) const = 0;
+    //! The style the preset was made with («.tpl» holding one style), or an
+    //! empty string for presets saved before Ztoryc 0.19.
+    virtual QString presetStylePath(const QString &kind,
+                                    const QString &name) const = 0;
+    //! Gives the preset's settings to the selected style of the palette.
+    virtual void applyPreset(const QString &kind, const QString &name) = 0;
+    virtual void removePreset(const QString &kind, const QString &name) = 0;
   };
 
   static BrushPresetBridge *instance();

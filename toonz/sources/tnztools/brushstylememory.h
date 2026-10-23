@@ -39,6 +39,9 @@ public:
   virtual void addPreset(QString name)                  = 0;
   virtual void removeNamedPreset(const QString &name)   = 0;
 
+  //! A copy of the named preset, or null.
+  virtual std::shared_ptr<TPersist> presetData(const QString &name) = 0;
+
   //! Applies the settings a style remembers.
   virtual void applyStyleBrush(const TPersist *data) = 0;
 };
@@ -55,6 +58,11 @@ void remember(const std::string &kind, std::shared_ptr<TPersist> brush);
 //! When the current style differs from the last one this brush saw, applies
 //! what that style remembers.
 void applyTo(BrushPresetClient *client);
+
+//! Keeps the current style next to a new preset, so that the Style Editor
+//! shows it as its icon and gives it to the style the preset is applied to.
+void saveCard(const std::string &kind, const QString &name);
+void removeCard(const std::string &kind, const QString &name);
 
 //! The tool, its presets or its current preset changed: tells the Style
 //! Editor.

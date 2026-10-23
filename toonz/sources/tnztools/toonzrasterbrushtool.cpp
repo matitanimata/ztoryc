@@ -3500,6 +3500,7 @@ void ToonzRasterBrushTool::addPreset(QString name) {
   RasterBrushPreset = m_preset.getValueAsString();
 
   storeStyleBrush();
+  BrushStyleMemory::saveCard(brushKind(), name);
   getApplication()->getCurrentTool()->notifyToolComboBoxListChanged(
       m_preset.getName());
   BrushStyleMemory::notifyChanged();
@@ -3512,6 +3513,7 @@ void ToonzRasterBrushTool::removePreset() {
   if (name == CUSTOM_WSTR) return;
 
   m_presetsManager.removePreset(name);
+  BrushStyleMemory::removeCard(brushKind(), QString::fromStdWString(name));
   initPresets();
 
   // No parameter change, and set the preset value to custom
@@ -3573,11 +3575,22 @@ void ToonzRasterBrushTool::removeNamedPreset(const QString &name) {
   }
   const std::wstring current = m_preset.getValue();
   m_presetsManager.removePreset(wname);
+  BrushStyleMemory::removeCard(brushKind(), name);
   initPresets();
   m_preset.setValue(current);
   getApplication()->getCurrentTool()->notifyToolComboBoxListChanged(
       m_preset.getName());
   BrushStyleMemory::notifyChanged();
+}
+
+//------------------------------------------------------------------
+
+std::shared_ptr<TPersist> ToonzRasterBrushTool::presetData(const QString &name) {
+  if (!m_presetsLoaded) initPresets();
+  const std::set<BrushData> &presets = m_presetsManager.presets();
+  auto it = presets.find(BrushData(name.toStdWString()));
+  if (it == presets.end()) return nullptr;
+  return std::make_shared<BrushData>(*it);
 }
 
 //------------------------------------------------------------------

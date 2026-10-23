@@ -3,6 +3,7 @@
 // TnzTools includes
 #include "tools/tool.h"
 #include "tools/toolhandle.h"
+#include "tools/toolcommandids.h"
 
 // TnzQt includes
 #include "toonzqt/brushpresetbridge.h"
@@ -16,12 +17,15 @@
 #include "toonz/txshsimplelevel.h"
 #include "toonz/toonzscene.h"
 #include "toonz/fullcolorpalette.h"
+#include "toonz/toonzfolders.h"
 
 // TnzCore includes
 #include "tpersist.h"
 #include "tstream.h"
 #include "tsystem.h"
 #include "tfilepath_io.h"
+#include "tpalette.h"
+#include "tcolorstyles.h"
 
 #include <QDateTime>
 #include <QTimer>
@@ -166,32 +170,83 @@ BrushPresetClient *currentClient() {
       app()->getCurrentTool()->getTool());
 }
 
+// The brush of a kind, current or not: T_Brush has one instance per target.
+BrushPresetClient *clientFor(const QString &kind) {
+  TTool::ToolTargetType target =
+      kind == "vector"        ? TTool::VectorImage
+      : kind == "smartraster" ? TTool::ToonzImage
+      : kind == "raster"      ? TTool::RasterImage
+                              : TTool::NoTarget;
+  if (target == TTool::NoTarget) return nullptr;
+  return dynamic_cast<BrushPresetClient *>(TTool::getTool(T_Brush, target));
+}
+
+// File names cannot hold every character a preset name can.
+QString cardFileName(const QString &name) {
+  QString safe = name;
+  for (QChar &ch : safe)
+    if (QString("/\\:*?\"<>|").contains(ch)) ch = '_';
+  return safe + ".tpl";
+}
+
+TFilePath cardPath(const std::string &kind, const QString &name) {
+  return ToonzFolder::getMyModuleDir() + TFilePath("brush presets") +
+         TFilePath(kind) + TFilePath(cardFileName(name).toStdWString());
+}
+
 class Provider final : public BrushPresetBridge::Provider {
 public:
   QString toolName() const override {
     BrushPresetClient *client = currentClient();
     return client ? client->brushName() : QString();
   }
-  QStringList presets() const override {
+  QString toolKind() const override {
     BrushPresetClient *client = currentClient();
-    return client ? client->presetNames() : QStringList();
-  }
-  QString currentPreset() const override {
-    BrushPresetClient *client = currentClient();
-    return client ? client->currentPresetName() : QString();
-  }
-  void choosePreset(const QString &name) override {
-    if (BrushPresetClient *client = currentClient())
-      client->selectPreset(name);
+    return client ? QString::fromStdString(client->brushKind()) : QString();
   }
   void addPreset(const QString &name) override {
     if (BrushPresetClient *client = currentClient()) client->addPreset(name);
   }
-  void removePreset(const QString &name) override {
-    if (BrushPresetClient *client = currentClient())
+  QStringList presets(const QString &kind) const override {
+    BrushPresetClient *client = clientFor(kind);
+    return client ? client->presetNames() : QStringList();
+  }
+  QString currentPreset(const QString &kind) const override {
+    BrushPresetClient *client = clientFor(kind);
+    return client ? client->currentPresetName() : QString();
+  }
+  QString presetStylePath(const QString &kind,
+                          const QString &name) const override {
+    const TFilePath fp = cardPath(kind.toStdString(), name);
+    return TFileStatus(fp).doesExist() ? fp.getQString() : QString();
+  }
+  void applyPreset(const QString &kind, const QString &name) override {
+    BrushPresetClient *client = clientFor(kind);
+    if (!client) return;
+    std::shared_ptr<TPersist> data = client->presetData(name);
+    if (!data) return;
+    const std::string k = kind.toStdString();
+    BrushStyleMemory::remember(k, data);
+    if (client == currentClient())
+      client->applyStyleBrush(data.get());
+    else
+      // The brush picks the settings up when it becomes current again.
+      s_lastSeen.erase(k);
+    BrushStyleMemory::notifyChanged();
+  }
+  void removePreset(const QString &kind, const QString &name) override {
+    if (BrushPresetClient *client = clientFor(kind))
       client->removeNamedPreset(name);
   }
 };
+
+// The Style Editor lists the custom brushes before any brush is used.
+struct ProviderInstaller {
+  ProviderInstaller() {
+    static Provider provider;
+    BrushPresetBridge::instance()->setProvider(&provider);
+  }
+} s_providerInstaller;
 
 // Listens to style and tool switches once, the first time a brush needs it.
 void ensureWatcher() {
@@ -204,8 +259,6 @@ void ensureWatcher() {
   s_saveTimer->setInterval(500);
   QObject::connect(s_saveTimer, &QTimer::timeout, watcher, saveDirty);
 
-  static Provider provider;
-  BrushPresetBridge::instance()->setProvider(&provider);
 
   auto onStyle = []() {
     if (BrushPresetClient *client = currentClient())
@@ -263,4 +316,31 @@ void BrushStyleMemory::applyTo(BrushPresetClient *client) {
 void BrushStyleMemory::notifyChanged() {
   ensureWatcher();
   BrushPresetBridge::instance()->notifyChanged();
+}
+
+//-----------------------------------------------------------------------------
+
+void BrushStyleMemory::saveCard(const std::string &kind, const QString &name) {
+  TColorStyle *style = app() ? app()->getCurrentLevelStyle() : nullptr;
+  if (!style || name.isEmpty()) return;
+  try {
+    const TFilePath fp = cardPath(kind, name);
+    TSystem::touchParentDir(fp);
+    TPaletteP palette = new TPalette;
+    palette->addStyle(style->clone());
+    TOStream os(fp);
+    os << *palette;
+  } catch (...) {
+  }
+}
+
+//-----------------------------------------------------------------------------
+
+void BrushStyleMemory::removeCard(const std::string &kind,
+                                  const QString &name) {
+  const TFilePath fp = cardPath(kind, name);
+  try {
+    if (TFileStatus(fp).doesExist()) TSystem::deleteFile(fp);
+  } catch (...) {
+  }
 }

@@ -33,6 +33,7 @@
 #include "tundo.h"
 #include "tcolorstyles.h"
 #include "tpalette.h"
+#include "tstream.h"
 #include "tpixel.h"
 #include "tvectorimage.h"
 #include "trasterimage.h"
@@ -44,9 +45,10 @@
 #include "tvectorbrushstyle.h"
 
 // Qt includes
-#include <QGroupBox>
 #include <QInputDialog>
 #include <QListWidget>
+#include <functional>
+#include <QCoreApplication>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QGridLayout>
@@ -3751,34 +3753,15 @@ SettingsPage::SettingsPage(QWidget *parent)
   m_paramsLayout->setHorizontalSpacing(5);
   paramsContainerLayout->addLayout(m_paramsLayout);
 
-  // Ztoryc: the custom brushes of the current brush tool. Choosing one here
-  // or in the tool options links it to the current style.
-  m_brushBox = new QGroupBox(this);
-  QVBoxLayout *brushLayout = new QVBoxLayout(m_brushBox);
-  brushLayout->setContentsMargins(6, 6, 6, 6);
-  brushLayout->setSpacing(4);
-  m_brushList = new QListWidget(m_brushBox);
-  m_brushList->setSelectionMode(QAbstractItemView::SingleSelection);
-  m_brushList->setMinimumHeight(80);
-  brushLayout->addWidget(m_brushList);
-  QHBoxLayout *brushButtons = new QHBoxLayout;
-  brushButtons->setSpacing(4);
-  QPushButton *addBrush = new QPushButton(tr("Save Brush..."), m_brushBox);
-  addBrush->setToolTip(
-      tr("Save the current brush settings as a preset, linked to this style"));
-  m_removeBrushButton = new QPushButton(tr("Remove"), m_brushBox);
-  brushButtons->addWidget(addBrush);
-  brushButtons->addWidget(m_removeBrushButton);
-  brushButtons->addStretch(1);
-  brushLayout->addLayout(brushButtons);
-  paramsContainerLayout->addWidget(m_brushBox);
-
-  connect(m_brushList, &QListWidget::itemClicked, this,
-          &SettingsPage::onBrushPresetClicked);
-  connect(addBrush, &QPushButton::clicked, this,
+  // Ztoryc: the current brush settings become a preset, listed under Custom
+  // Brushes in the Raster or Vector tab.
+  m_saveBrushButton = new QPushButton(tr("Save Brush as Preset..."), this);
+  m_saveBrushButton->setToolTip(
+      tr("Save the current brush settings as a preset, listed under Custom "
+         "Brushes in the Raster or Vector tab"));
+  paramsContainerLayout->addWidget(m_saveBrushButton, 0, Qt::AlignLeft);
+  connect(m_saveBrushButton, &QPushButton::clicked, this,
           &SettingsPage::onAddBrushPreset);
-  connect(m_removeBrushButton, &QPushButton::clicked, this,
-          &SettingsPage::onRemoveBrushPreset);
   connect(BrushPresetBridge::instance(), &BrushPresetBridge::changed, this,
           &SettingsPage::refreshBrushPresets);
   refreshBrushPresets();
@@ -3790,27 +3773,7 @@ SettingsPage::SettingsPage(QWidget *parent)
 
 void SettingsPage::refreshBrushPresets() {
   BrushPresetBridge::Provider *provider = BrushPresetBridge::instance()->provider();
-  const QString toolName = provider ? provider->toolName() : QString();
-  m_brushBox->setVisible(!toolName.isEmpty());
-  if (toolName.isEmpty()) return;
-
-  m_brushBox->setTitle(tr("Custom Brushes - %1").arg(toolName));
-  const QString current = provider->currentPreset();
-  m_brushList->blockSignals(true);
-  m_brushList->clear();
-  for (const QString &name : provider->presets()) {
-    QListWidgetItem *item = new QListWidgetItem(name, m_brushList);
-    if (name == current) item->setSelected(true);
-  }
-  m_brushList->blockSignals(false);
-  m_removeBrushButton->setEnabled(!current.isEmpty());
-}
-
-//-----------------------------------------------------------------------------
-
-void SettingsPage::onBrushPresetClicked(QListWidgetItem *item) {
-  BrushPresetBridge::Provider *provider = BrushPresetBridge::instance()->provider();
-  if (provider && item) provider->choosePreset(item->text());
+  m_saveBrushButton->setVisible(provider && !provider->toolName().isEmpty());
 }
 
 //-----------------------------------------------------------------------------
@@ -3826,14 +3789,6 @@ void SettingsPage::onAddBrushPreset() {
   if (ok && !name.isEmpty()) provider->addPreset(name);
 }
 
-//-----------------------------------------------------------------------------
-
-void SettingsPage::onRemoveBrushPreset() {
-  BrushPresetBridge::Provider *provider = BrushPresetBridge::instance()->provider();
-  if (!provider) return;
-  const QString current = provider->currentPreset();
-  if (!current.isEmpty()) provider->removePreset(current);
-}
 
 //-----------------------------------------------------------------------------
 
@@ -4902,6 +4857,171 @@ return textureOutsideFrame;
 
 //-----------------------------------------------------------------------------
 
+namespace {
+
+// Ztoryc: the custom brushes, on top of the Vector and Raster tabs like the
+// brush sets below them. Each shows the style it was saved with and its name;
+// a click gives the selected style that brush (its own colour stays) and the
+// preset's settings (tnztools/brushstylememory); right click removes it.
+class CustomBrushesSection final : public QFrame {
+  QStringList m_kinds;
+  std::function<void(const TColorStyle &)> m_selectStyle;
+  QListWidget *m_list;
+  QLabel *m_hint;
+
+  enum { KindRole = Qt::UserRole, NameRole };
+
+  static BrushPresetBridge::Provider *provider() {
+    return BrushPresetBridge::instance()->provider();
+  }
+  static QString text(const char *source) {
+    return QCoreApplication::translate("CustomBrushesSection", source);
+  }
+
+  static TColorStyleP loadStyle(const QString &path) {
+    if (path.isEmpty()) return TColorStyleP();
+    try {
+      // A palette streams itself untagged (TPalette::saveData), so it is
+      // read with loadData, not as a tagged TPersist.
+      TIStream is(TFilePath(path.toStdWString()));
+      if (!is) return TColorStyleP();
+      TPaletteP palette = new TPalette;
+      palette->loadData(is);
+      int count = palette->getStyleCount();
+      return count > 0 ? TColorStyleP(palette->getStyle(count - 1)->clone())
+                       : TColorStyleP();
+    } catch (...) {
+    }
+    return TColorStyleP();
+  }
+
+  QIcon makeIcon(const TColorStyleP &style, const QString &name) const {
+    const QSize size = m_list->iconSize();
+    QImage image(size, QImage::Format_ARGB32_Premultiplied);
+    image.fill(QColor(128, 128, 128));
+    if (style) {
+      TRaster32P ras = style->getIcon(TDimension(size.width(), size.height()));
+      if (ras) image = rasterToQImage(ras, false).scaled(size);
+    }
+    QPainter p(&image);
+    QRect band(0, size.height() - 15, size.width(), 15);
+    p.fillRect(band, QColor(0, 0, 0, 150));
+    p.setPen(Qt::white);
+    QFont font = p.font();
+    font.setPixelSize(11);
+    p.setFont(font);
+    p.drawText(band.adjusted(3, 0, -3, 0), Qt::AlignVCenter | Qt::AlignLeft,
+               p.fontMetrics().elidedText(name, Qt::ElideRight,
+                                          band.width() - 6));
+    return QIcon(QPixmap::fromImage(image));
+  }
+
+  void fitHeight() {
+    const int count = m_list->count();
+    if (!count) return;
+    const QSize grid = m_list->gridSize();
+    const int cols   = std::max(1, m_list->viewport()->width() / grid.width());
+    const int rows   = (count + cols - 1) / cols;
+    m_list->setFixedHeight(rows * grid.height() + 2 * m_list->frameWidth() + 4);
+  }
+
+protected:
+  void resizeEvent(QResizeEvent *e) override {
+    QFrame::resizeEvent(e);
+    fitHeight();
+  }
+
+public:
+  CustomBrushesSection(const QStringList &kinds,
+                       std::function<void(const TColorStyle &)> selectStyle,
+                       QWidget *parent)
+      : QFrame(parent), m_kinds(kinds), m_selectStyle(selectStyle) {
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(4, 4, 4, 8);
+    layout->setSpacing(3);
+
+    QLabel *title = new QLabel(text("Custom Brushes"), this);
+    title->setStyleSheet("font-weight: bold;");
+    m_list = new QListWidget(this);
+    m_list->setViewMode(QListView::IconMode);
+    m_list->setIconSize(QSize(64, 64));  // as the MyPaint chips
+    m_list->setGridSize(QSize(68, 68));
+    m_list->setMovement(QListView::Static);
+    m_list->setResizeMode(QListView::Adjust);
+    m_list->setWrapping(true);
+    m_list->setFrameShape(QFrame::NoFrame);
+    m_list->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_list->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_hint = new QLabel(
+        text("No custom brushes yet: save one from the Settings tab."), this);
+    m_hint->setWordWrap(true);
+    layout->addWidget(title);
+    layout->addWidget(m_list);
+    layout->addWidget(m_hint);
+
+    connect(m_list, &QListWidget::itemClicked, this,
+            [this](QListWidgetItem *item) {
+              BrushPresetBridge::Provider *p = provider();
+              if (!p || !item) return;
+              const QString kind = item->data(KindRole).toString();
+              const QString name = item->data(NameRole).toString();
+              // The brush first, then its settings for the style it became.
+              TColorStyleP style = loadStyle(p->presetStylePath(kind, name));
+              if (style && m_selectStyle) m_selectStyle(*style);
+              p->applyPreset(kind, name);
+            });
+    connect(m_list, &QWidget::customContextMenuRequested, this,
+            [this](const QPoint &pos) {
+              QListWidgetItem *item = m_list->itemAt(pos);
+              if (!item || !provider()) return;
+              QMenu menu(this);
+              QAction *remove = menu.addAction(text("Remove"));
+              if (menu.exec(m_list->mapToGlobal(pos)) == remove)
+                provider()->removePreset(item->data(KindRole).toString(),
+                                         item->data(NameRole).toString());
+            });
+    connect(BrushPresetBridge::instance(), &BrushPresetBridge::changed, this,
+            [this]() { refresh(); });
+    refresh();
+  }
+
+  void refresh() {
+    BrushPresetBridge::Provider *p = provider();
+    m_list->blockSignals(true);
+    m_list->clear();
+    if (p) {
+      const QString toolKind = p->toolKind();
+      for (const QString &kind : m_kinds) {
+        const QString current = kind == toolKind ? p->currentPreset(kind)
+                                                 : QString();
+        for (const QString &name : p->presets(kind)) {
+          TColorStyleP style = loadStyle(p->presetStylePath(kind, name));
+          QListWidgetItem *item =
+              new QListWidgetItem(makeIcon(style, name), QString(), m_list);
+          item->setData(KindRole, kind);
+          item->setData(NameRole, name);
+          item->setToolTip(kind == "vector" ? name + text(" (Vector)")
+                           : kind == "smartraster"
+                               ? name + text(" (Smart Raster)")
+                               : name + text(" (Raster)"));
+          if (name == current) item->setSelected(true);
+        }
+      }
+    }
+    m_list->blockSignals(false);
+
+    const int count = m_list->count();
+    m_list->setVisible(count > 0);
+    m_hint->setVisible(count == 0);
+    fitHeight();
+  }
+};
+
+}  // namespace
+
+//-----------------------------------------------------------------------------
+
 QFrame *StyleEditor::createVectorPage() {
   QFrame *vectorOutsideFrame = new QFrame(this);
   vectorOutsideFrame->setMinimumWidth(50);
@@ -4923,6 +5043,9 @@ QFrame *StyleEditor::createVectorPage() {
     vectorLayout->setContentsMargins(0, 0, 0, 0);
     vectorLayout->setSpacing(0);
     vectorLayout->setSizeConstraint(QLayout::SetNoConstraint);
+    vectorLayout->addWidget(new CustomBrushesSection(
+        QStringList() << "vector",
+        [this](const TColorStyle &style) { selectStyle(style); }, this));
     {
       std::vector<StyleChooserPage *>::iterator itP = m_vectorPages.begin();
       std::vector<ClickableLabel *>::iterator itL   = m_vectorLabels.begin();
@@ -4996,6 +5119,9 @@ QFrame *StyleEditor::createRasterPage() {
     rasterLayout->setContentsMargins(0, 0, 0, 0);
     rasterLayout->setSpacing(0);
     rasterLayout->setSizeConstraint(QLayout::SetNoConstraint);
+    rasterLayout->addWidget(new CustomBrushesSection(
+        QStringList() << "smartraster" << "raster",
+        [this](const TColorStyle &style) { selectStyle(style); }, this));
     {
       std::vector<StyleChooserPage *>::iterator itP = m_rasterPages.begin();
       std::vector<ClickableLabel *>::iterator itL   = m_rasterLabels.begin();
