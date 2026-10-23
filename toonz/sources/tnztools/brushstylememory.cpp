@@ -4,6 +4,8 @@
 #include "tools/tool.h"
 #include "tools/toolhandle.h"
 #include "tools/toolcommandids.h"
+#include "toonzvectorbrushtool.h"
+#include "toonzrasterbrushtool.h"
 
 // TnzQt includes
 #include "toonzqt/brushpresetbridge.h"
@@ -90,6 +92,14 @@ QDateTime modifiedTime(const TFilePath &fp) {
   return status.doesExist() ? status.getLastModificationTime() : QDateTime();
 }
 
+// The settings class of a brush kind: what the tools keep in their presets.
+std::shared_ptr<TPersist> newBrushData(const std::string &kind) {
+  if (kind == "vector") return std::make_shared<VectorBrushData>();
+  if (kind == "smartraster" || kind == "raster")
+    return std::make_shared<BrushData>();
+  return nullptr;
+}
+
 // Read again whenever the file changed on disk: a level copied or replaced
 // meanwhile brings its own twin.
 Twin &twin(const TFilePath &fp) {
@@ -119,12 +129,13 @@ Twin &twin(const TFilePath &fp) {
         int id           = -1;
         std::string kind = is.getTagAttribute("kind");
         is.getTagParam("id", id);
-        TPersist *data = nullptr;
-        is >> data;
-        if (data && id >= 0 && !kind.empty())
-          t.m_entries[EntryKey(id, kind)].reset(data);
-        else
-          delete data;
+        std::shared_ptr<TPersist> data = newBrushData(kind);
+        if (!data || id < 0) {
+          is.skipCurrentTag();
+          continue;
+        }
+        is >> *data;
+        t.m_entries[EntryKey(id, kind)] = data;
         is.matchEndTag();
       }
       is.matchEndTag();
@@ -154,9 +165,12 @@ void save(const TFilePath &fp, Twin &t) {
         attr["id"]   = std::to_string(entry.first.first);
         attr["kind"] = entry.first.second;
         os.openChild("style", attr);
-        // The pointer form writes the class tag that `is >> TPersist *&`
-        // needs to rebuild the object; `os << *p` writes only its data.
-        os << entry.second.get();
+        // Data only, as BrushPresetManager writes its presets: the reader
+        // builds the object from the «kind» attribute (newBrushData) and
+        // loads it. (Written with the class tag for a few hours on
+        // 2026-10-23, read back with a reader that wanted it: neither form
+        // survived a restart.)
+        os << *entry.second;
         os.closeChild();
       }
       os.closeChild();
