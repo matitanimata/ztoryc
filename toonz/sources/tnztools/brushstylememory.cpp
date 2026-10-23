@@ -39,6 +39,9 @@ typedef std::pair<int, std::string> EntryKey;  // style id, brush kind
 
 struct Twin {
   QDateTime m_modified;
+  // A file that could not be read is never overwritten: what it held would
+  // be lost with it.
+  bool m_unreadable = false;
   std::map<EntryKey, std::shared_ptr<TPersist>> m_entries;
 };
 
@@ -72,8 +75,12 @@ TFilePath twinPath(int &styleId) {
   else if (TXshSimpleLevel *sl = app()->getCurrentLevel()->getSimpleLevel()) {
     if (sl->getPalette() == palette) fp = scene->decodeFilePath(sl->getPath());
   }
-  if (fp.isEmpty()) return fp;
-  return fp.getParentDir() + TFilePath(fp.getWideName() + L".brushes");
+  // A level not saved yet has only a provisional path (the project's sandbox
+  // for an untitled scene): a twin written there stays behind when the level
+  // is saved, and the next level of that name inherits it (review of
+  // 2026-10-23). Its styles remember once the level is on disk.
+  if (fp.isEmpty() || !TSystem::doesExistFileOrLevel(fp)) return TFilePath();
+  return fp.withType("brushes");  // as the .zmouth: TXshSimpleLevel twins
 }
 
 //-----------------------------------------------------------------------------
@@ -91,7 +98,8 @@ Twin &twin(const TFilePath &fp) {
   if (t.m_modified == modified) return t;
 
   t.m_entries.clear();
-  t.m_modified = modified;
+  t.m_modified   = modified;
+  t.m_unreadable = false;
   if (modified.isNull()) return t;
 
   try {
@@ -122,6 +130,7 @@ Twin &twin(const TFilePath &fp) {
       is.matchEndTag();
     }
   } catch (...) {
+    t.m_unreadable = true;
   }
   return t;
 }
@@ -129,6 +138,7 @@ Twin &twin(const TFilePath &fp) {
 //-----------------------------------------------------------------------------
 
 void save(const TFilePath &fp, Twin &t) {
+  if (t.m_unreadable) return;
   try {
     if (t.m_entries.empty()) {
       if (TFileStatus(fp).doesExist()) TSystem::deleteFile(fp);
@@ -144,7 +154,9 @@ void save(const TFilePath &fp, Twin &t) {
         attr["id"]   = std::to_string(entry.first.first);
         attr["kind"] = entry.first.second;
         os.openChild("style", attr);
-        os << *entry.second;
+        // The pointer form writes the class tag that `is >> TPersist *&`
+        // needs to rebuild the object; `os << *p` writes only its data.
+        os << entry.second.get();
         os.closeChild();
       }
       os.closeChild();
