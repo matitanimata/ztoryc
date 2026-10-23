@@ -662,7 +662,6 @@ private slots:
   // Called when FlipConsole play starts: overrides m_sound built by base
   // onPlayingStatusChanged() (which reads from the wrong sub-scene xsheet).
   void onAnimaticPlayingStatusChanged(bool playing);
-  void onAudioToggleChanged();
 
 private:
   // Rebuilds m_sound from the main xsheet (not the current/sub-scene xsheet).

@@ -311,7 +311,10 @@ void ZtoryAnimaticController::startPerColumnAudio(int startMainFrame) {
   if (!scene) return;
   double fps = scene->getProperties()->getOutputProperties()->getFrameRate();
   if (fps <= 0.0) fps = 24.0;
-  if (!TXsheet::isMainAudioEnabled()) return;
+  // No Main Audio check: in the Animatic the tracks' own mute and solo
+  // decide. The toggle is about hearing the main soundtrack from inside a
+  // sub-scene (ownsSubSceneAudio), and off it left the timeline silent while
+  // scrubbing sounded (Franco, 2026-10-23).
   if (!TSoundOutputDevice::installed()) return;
   for (int c = 0; c < xsh->getColumnCount(); c++) {
     TXshColumn *column = xsh->getColumn(c);
@@ -3756,7 +3759,7 @@ void ZtoryAnimaticViewer::onDrawFrame(
             if (ar1 >= 0) stopFr = ar1 + 1;
           }
           TINT32 endSmp = std::min((TINT32)(stopFr * spf3), totalSmp - 1);
-          if (startSmp <= endSmp && TXsheet::isMainAudioEnabled()) {
+          if (startSmp <= endSmp) {
             ctrl->startPerColumnAudio(newStart);
             m_continuousPlay = true;
           }
@@ -3893,7 +3896,6 @@ void ZtoryAnimaticViewer::refreshAnimaticSound() {
 // no-op so it does not interrupt or replace the streaming buffer.
 void ZtoryAnimaticViewer::playAnimaticAudioFrame(int frame) {
   if (m_continuousPlay) return;   // audio already streaming — do nothing
-  if (!TXsheet::isMainAudioEnabled()) return;  // audio toggle OFF
   if (!m_sound) return;
   if (m_first) {
     m_first           = false;
@@ -4010,7 +4012,6 @@ void ZtoryAnimaticViewer::onAnimaticPlayingStatusChanged(bool playing) {
   // TSoundOutputDeviceImp uses QAudioOutput with a 100 ms hardware buffer,
   // refilled every 50 ms via QAudioOutput::notify.  One call avoids the
   // per-frame m_buffer replacement that caused glitches in the old approach.
-  if (!TXsheet::isMainAudioEnabled()) return;  // audio toggle OFF
   // Per-column audio playback only — no mainXsh mix.  Each column's
   // m_player runs at its column's m_volume (real-time updates via
   // column->setVolume).  The audio-master clock for onDrawFrame comes from
@@ -4072,7 +4073,6 @@ void ZtoryAnimaticViewer::restartAudioIfPlaying() {
   m_playStartFrame  = startFrame;
   m_lastMasterAudioUsecs = 0;  // reset audio-clock tracker for the new play
 
-  if (!TXsheet::isMainAudioEnabled()) return;
   // Per-column audio playback only.  Each column's player carries audible
   // audio at its own volume; clock comes from getMasterAudioUsecs().
   ctrl->startPerColumnAudio(startFrame);
@@ -4087,14 +4087,6 @@ void ZtoryAnimaticViewer::stopAudio() {
   if (ctrl) ctrl->stopNativeAudio();
 }
 
-void ZtoryAnimaticViewer::onAudioToggleChanged() {
-  if (!TXsheet::isMainAudioEnabled()) return;  // audio already OFF — nothing to stop
-  // Audio toggled OFF — stop any active playback immediately
-  ZtoryAnimaticController *ctrl = ZtoryAnimaticController::instance();
-  TXsheet *mainXsh = ctrl ? ctrl->mainXsheet() : nullptr;
-  if (mainXsh) mainXsh->stopScrub();
-  m_continuousPlay = false;
-}
 
 void ZtoryAnimaticViewer::setEssential() {
   m_essential = true;
@@ -4207,8 +4199,6 @@ void ZtoryAnimaticViewer::showEvent(QShowEvent *e) {
           this, &ZtoryAnimaticViewer::updateAnimaticFrameRange);
   connect(app->getCurrentScene(), &TSceneHandle::sceneChanged,
           this, &ZtoryAnimaticViewer::updateAnimaticFrameMarkers);
-  connect(app->getCurrentScene(), &TSceneHandle::sceneChanged,
-          this, &ZtoryAnimaticViewer::onAudioToggleChanged);
 
   // xsheetChanged needs the same correction: the base connects it to
   // onSceneChanged() too (viewerpane.cpp), and updateFrameRange() there reads

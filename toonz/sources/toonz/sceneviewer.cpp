@@ -308,9 +308,8 @@ void ToggleCommandHandler::execute() {
     // without depending on sceneviewer.h (cross-module constraint).
     TXsheet::setMainAudioEnabled(m_status);
     if (!m_status) {
-      ZtoryAnimaticViewer *v = ZtoryAnimaticController::instance()->viewer();
-      if (v) v->stopAudio();
-      // Also stop audio started by the controller for sub-scene native playback.
+      // Only the main soundtrack heard from inside a sub-scene: the Animatic
+      // timeline keeps its audio (its tracks have mute and solo).
       ZtoryAnimaticController::instance()->stopNativeAudio();
     } else {
       // Re-enabled while playing in a sub-scene: restart streaming audio.
