@@ -87,7 +87,7 @@ ResolvedFont resolveFont(const QString &face) {
     if (spacedStyle.contains(weights[i])) result.weight = qtWeights[i];
 
   QStringList candidates{face.trimmed()};
-  QStringList words = splitCamelCase(name).split(' ', QString::SkipEmptyParts);
+  QStringList words = splitCamelCase(name).split(' ', Qt::SkipEmptyParts);
   if (!spacedStyle.isEmpty()) candidates << words.join(' ') + " " + spacedStyle;
   for (; !words.isEmpty(); words.removeLast()) candidates << words.join(' ');
   for (const auto &candidate : candidates) {
