@@ -60,6 +60,7 @@ set(HEADERS
     ../include/tools/editassistantstool.h
     assistantstrokesnap.h
     replicamap.h
+    brushstylememory.h
     ../include/tools/replicator.h
     ../include/tools/modifiers/modifierassistants.h
     ../include/tools/modifiers/modifierclone.h
@@ -89,6 +90,7 @@ set(SOURCES
     assistant.cpp
     assistantstrokesnap.cpp
     replicamap.cpp
+    brushstylememory.cpp
     replicator.cpp
     modifiers/modifierassistants.cpp
     modifiers/modifierclone.cpp

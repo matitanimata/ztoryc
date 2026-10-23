@@ -3193,6 +3193,10 @@ BrushToolOptionsBox::BrushToolOptionsBox(QWidget *parent, TTool *tool,
     m_hardnessLabel = m_labels.value(m_hardnessField->propertyName());
   m_pencilMode = dynamic_cast<ToolOptionCheckbox *>(m_controls.value("Pencil"));
   m_presetCombo = dynamic_cast<ToolOptionCombo *>(m_controls.value("Preset:"));
+  // Ztoryc: presets are also added and removed from the Style Editor.
+  if (m_presetCombo)
+    connect(toolHandle, SIGNAL(toolComboBoxListChanged(std::string)),
+            m_presetCombo, SLOT(reloadComboBoxList(std::string)));
   m_brushTips =
       dynamic_cast<ToolOptionBrushTipButton *>(m_controls.value("Brush Tip"));
 

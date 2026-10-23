@@ -59,6 +59,7 @@ set(MOC_HEADERS
     ../include/toonzqt/stageschematicnode.h
     ../include/toonzqt/stageschematicscene.h
     ../include/toonzqt/studiopaletteviewer.h
+    ../include/toonzqt/brushpresetbridge.h
     ../include/toonzqt/styleeditor.h
     ../include/toonzqt/styleindexlineedit.h
     ../include/toonzqt/stylenameeditor.h
@@ -151,6 +152,7 @@ set(SOURCES
     spreadsheetviewer.cpp
     strokesdata.cpp
     studiopaletteviewer.cpp
+    brushpresetbridge.cpp
     styleeditor.cpp
     styleindexlineedit.cpp
     swatchviewer.cpp

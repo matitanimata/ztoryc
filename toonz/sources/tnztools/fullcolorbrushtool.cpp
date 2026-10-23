@@ -1,6 +1,7 @@
 
 
 #include "fullcolorbrushtool.h"
+#include "brushstylememory.h"
 
 // TnzTools includes
 #include "tools/tool.h"
@@ -454,6 +455,9 @@ void FullColorBrushTool::onActivate() {
 
   setWorkAndBackupImages();
   onColorStyleChanged();
+
+  // Ztoryc: the style may have changed while another tool was current.
+  BrushStyleMemory::applyTo(this);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -1799,6 +1803,8 @@ bool FullColorBrushTool::onPropertyChanged(std::string propertyName) {
       loadPreset();
     else  // Chose <custom>, go back to last saved brush settings
       loadLastBrush();
+    storeStyleBrush();
+    BrushStyleMemory::notifyChanged();
 
     FullcolorBrushPreset = m_preset.getValueAsString();
     m_propertyUpdating   = true;
@@ -1881,6 +1887,9 @@ bool FullColorBrushTool::onPropertyChanged(std::string propertyName) {
     m_propertyUpdating = false;
   }
 
+  // Ztoryc: the style remembers the brush, as it remembers its colour.
+  storeStyleBrush();
+
   return true;
 }
 
@@ -1913,8 +1922,12 @@ void FullColorBrushTool::loadPreset() {
   it = presets.find(BrushData(m_preset.getValue()));
   if (it == presets.end()) return;
 
-  const BrushData &preset = *it;
+  loadPresetData(*it);
+}
 
+//------------------------------------------------------------------
+
+void FullColorBrushTool::loadPresetData(const BrushData &preset) {
   try  // Don't bother with RangeErrors
   {
     m_thickness.setValue(
@@ -1955,9 +1968,8 @@ void FullColorBrushTool::loadPreset() {
 
 //------------------------------------------------------------------
 
-void FullColorBrushTool::addPreset(QString name) {
-  // Build the preset
-  BrushData preset(name.toStdWString());
+BrushData FullColorBrushTool::currentBrushData(const std::wstring &name) {
+  BrushData preset(name);
 
   preset.m_min                 = m_thickness.getValue().first;
   preset.m_max                 = m_thickness.getValue().second;
@@ -1990,6 +2002,15 @@ void FullColorBrushTool::addPreset(QString name) {
                                      ? m_brushTip.getBrushTip()->m_idName
                                      : DEFAULTBRUSHTIPID;
 
+  return preset;
+}
+
+//------------------------------------------------------------------
+
+void FullColorBrushTool::addPreset(QString name) {
+  // Build the preset
+  BrushData preset = currentBrushData(name.toStdWString());
+
   // Pass the preset to the manager
   m_presetsManager.addPreset(preset);
 
@@ -1999,6 +2020,11 @@ void FullColorBrushTool::addPreset(QString name) {
   // Set the value to the specified one
   m_preset.setValue(preset.m_name);
   FullcolorBrushPreset = m_preset.getValueAsString();
+
+  storeStyleBrush();
+  getApplication()->getCurrentTool()->notifyToolComboBoxListChanged(
+      m_preset.getName());
+  BrushStyleMemory::notifyChanged();
 }
 
 //------------------------------------------------------------------
@@ -2013,6 +2039,85 @@ void FullColorBrushTool::removePreset() {
   // No parameter change, and set the preset value to custom
   m_preset.setValue(CUSTOM_WSTR);
   FullcolorBrushPreset = m_preset.getValueAsString();
+
+  storeStyleBrush();
+  getApplication()->getCurrentTool()->notifyToolComboBoxListChanged(
+      m_preset.getName());
+  m_propertyUpdating = true;
+  getApplication()->getCurrentTool()->notifyToolChanged();
+  m_propertyUpdating = false;
+  BrushStyleMemory::notifyChanged();
+}
+
+//------------------------------------------------------------------
+
+void FullColorBrushTool::storeStyleBrush() {
+  BrushStyleMemory::remember(
+      brushKind(), std::make_shared<BrushData>(currentBrushData(m_preset.getValue())));
+}
+
+//------------------------------------------------------------------
+
+QStringList FullColorBrushTool::presetNames() {
+  if (!m_presetsLoaded) initPresets();
+  QStringList names;
+  for (const BrushData &preset : m_presetsManager.presets())
+    names << QString::fromStdWString(preset.m_name);
+  return names;
+}
+
+//------------------------------------------------------------------
+
+QString FullColorBrushTool::currentPresetName() {
+  const std::wstring name = m_preset.getValue();
+  return name == CUSTOM_WSTR ? QString() : QString::fromStdWString(name);
+}
+
+//------------------------------------------------------------------
+
+void FullColorBrushTool::selectPreset(const QString &name) {
+  if (!m_presetsLoaded) initPresets();
+  const std::wstring wname = name.isEmpty() ? CUSTOM_WSTR : name.toStdWString();
+  if (!m_preset.isValue(wname)) return;
+  m_preset.setValue(wname);
+  onPropertyChanged(m_preset.getName());
+}
+
+//------------------------------------------------------------------
+
+void FullColorBrushTool::removeNamedPreset(const QString &name) {
+  if (!m_presetsLoaded) initPresets();
+  const std::wstring wname = name.toStdWString();
+  if (wname == CUSTOM_WSTR || !m_preset.isValue(wname)) return;
+  if (wname == m_preset.getValue()) {
+    removePreset();
+    return;
+  }
+  const std::wstring current = m_preset.getValue();
+  m_presetsManager.removePreset(wname);
+  initPresets();
+  m_preset.setValue(current);
+  getApplication()->getCurrentTool()->notifyToolComboBoxListChanged(
+      m_preset.getName());
+  BrushStyleMemory::notifyChanged();
+}
+
+//------------------------------------------------------------------
+
+void FullColorBrushTool::applyStyleBrush(const TPersist *data) {
+  const BrushData *brush = dynamic_cast<const BrushData *>(data);
+  if (!brush) return;
+  if (!m_presetsLoaded) initPresets();
+  // The preset the style was drawn with, if this user has it; otherwise the
+  // settings are the style's own.
+  const std::wstring name =
+      m_preset.isValue(brush->m_name) ? brush->m_name : CUSTOM_WSTR;
+  m_preset.setValue(name);
+  loadPresetData(*brush);
+  FullcolorBrushPreset = m_preset.getValueAsString();
+  m_propertyUpdating = true;
+  getApplication()->getCurrentTool()->notifyToolChanged();
+  m_propertyUpdating = false;
 }
 
 //------------------------------------------------------------------

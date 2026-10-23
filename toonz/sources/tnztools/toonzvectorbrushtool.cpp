@@ -1,6 +1,7 @@
 
 
 #include "toonzvectorbrushtool.h"
+#include "brushstylememory.h"
 
 // TnzTools includes
 #include "tools/toolhandle.h"
@@ -878,6 +879,9 @@ void ToonzVectorBrushTool::onActivate() {
   }
   resetFrameRange();
   // TODO:app->editImageOrSpline();
+
+  // Ztoryc: the style may have changed while another tool was current.
+  BrushStyleMemory::applyTo(this);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -2446,6 +2450,8 @@ bool ToonzVectorBrushTool::onPropertyChanged(std::string propertyName) {
       loadPreset();
     else  // Chose <custom>, go back to last saved brush settings
       loadLastBrush();
+    storeStyleBrush();
+    BrushStyleMemory::notifyChanged();
 
     V_VectorBrushPreset = m_preset.getValueAsString();
     m_propertyUpdating  = true;
@@ -2531,6 +2537,9 @@ bool ToonzVectorBrushTool::onPropertyChanged(std::string propertyName) {
     m_propertyUpdating = false;
   }
 
+  // Ztoryc: the style remembers the brush, as it remembers its colour.
+  storeStyleBrush();
+
   return true;
 }
 
@@ -2563,8 +2572,12 @@ void ToonzVectorBrushTool::loadPreset() {
   it = presets.find(VectorBrushData(m_preset.getValue()));
   if (it == presets.end()) return;
 
-  const VectorBrushData &preset = *it;
+  loadPresetData(*it);
+}
 
+//------------------------------------------------------------------
+
+void ToonzVectorBrushTool::loadPresetData(const VectorBrushData &preset) {
   try  // Don't bother with RangeErrors
   {
     m_thickness.setValue(
@@ -2590,9 +2603,8 @@ void ToonzVectorBrushTool::loadPreset() {
 
 //------------------------------------------------------------------
 
-void ToonzVectorBrushTool::addPreset(QString name) {
-  // Build the preset
-  VectorBrushData preset(name.toStdWString());
+VectorBrushData ToonzVectorBrushTool::currentBrushData(const std::wstring &name) {
+  VectorBrushData preset(name);
 
   preset.m_min = m_thickness.getValue().first;
   preset.m_max = m_thickness.getValue().second;
@@ -2609,6 +2621,15 @@ void ToonzVectorBrushTool::addPreset(QString name) {
   preset.m_tilt          = m_sizeStylusProperty.isTiltEnabled();
   preset.m_tiltCurve     = m_sizeStylusProperty.getTiltCurve();
 
+  return preset;
+}
+
+//------------------------------------------------------------------
+
+void ToonzVectorBrushTool::addPreset(QString name) {
+  // Build the preset
+  VectorBrushData preset = currentBrushData(name.toStdWString());
+
   // Pass the preset to the manager
   m_presetsManager.addPreset(preset);
 
@@ -2618,6 +2639,11 @@ void ToonzVectorBrushTool::addPreset(QString name) {
   // Set the value to the specified one
   m_preset.setValue(preset.m_name);
   V_VectorBrushPreset = m_preset.getValueAsString();
+
+  storeStyleBrush();
+  getApplication()->getCurrentTool()->notifyToolComboBoxListChanged(
+      m_preset.getName());
+  BrushStyleMemory::notifyChanged();
 }
 
 //------------------------------------------------------------------
@@ -2632,6 +2658,85 @@ void ToonzVectorBrushTool::removePreset() {
   // No parameter change, and set the preset value to custom
   m_preset.setValue(CUSTOM_WSTR);
   V_VectorBrushPreset = m_preset.getValueAsString();
+
+  storeStyleBrush();
+  getApplication()->getCurrentTool()->notifyToolComboBoxListChanged(
+      m_preset.getName());
+  m_propertyUpdating = true;
+  getApplication()->getCurrentTool()->notifyToolChanged();
+  m_propertyUpdating = false;
+  BrushStyleMemory::notifyChanged();
+}
+
+//------------------------------------------------------------------
+
+void ToonzVectorBrushTool::storeStyleBrush() {
+  BrushStyleMemory::remember(
+      brushKind(), std::make_shared<VectorBrushData>(currentBrushData(m_preset.getValue())));
+}
+
+//------------------------------------------------------------------
+
+QStringList ToonzVectorBrushTool::presetNames() {
+  if (!m_presetsLoaded) initPresets();
+  QStringList names;
+  for (const VectorBrushData &preset : m_presetsManager.presets())
+    names << QString::fromStdWString(preset.m_name);
+  return names;
+}
+
+//------------------------------------------------------------------
+
+QString ToonzVectorBrushTool::currentPresetName() {
+  const std::wstring name = m_preset.getValue();
+  return name == CUSTOM_WSTR ? QString() : QString::fromStdWString(name);
+}
+
+//------------------------------------------------------------------
+
+void ToonzVectorBrushTool::selectPreset(const QString &name) {
+  if (!m_presetsLoaded) initPresets();
+  const std::wstring wname = name.isEmpty() ? CUSTOM_WSTR : name.toStdWString();
+  if (!m_preset.isValue(wname)) return;
+  m_preset.setValue(wname);
+  onPropertyChanged(m_preset.getName());
+}
+
+//------------------------------------------------------------------
+
+void ToonzVectorBrushTool::removeNamedPreset(const QString &name) {
+  if (!m_presetsLoaded) initPresets();
+  const std::wstring wname = name.toStdWString();
+  if (wname == CUSTOM_WSTR || !m_preset.isValue(wname)) return;
+  if (wname == m_preset.getValue()) {
+    removePreset();
+    return;
+  }
+  const std::wstring current = m_preset.getValue();
+  m_presetsManager.removePreset(wname);
+  initPresets();
+  m_preset.setValue(current);
+  getApplication()->getCurrentTool()->notifyToolComboBoxListChanged(
+      m_preset.getName());
+  BrushStyleMemory::notifyChanged();
+}
+
+//------------------------------------------------------------------
+
+void ToonzVectorBrushTool::applyStyleBrush(const TPersist *data) {
+  const VectorBrushData *brush = dynamic_cast<const VectorBrushData *>(data);
+  if (!brush) return;
+  if (!m_presetsLoaded) initPresets();
+  // The preset the style was drawn with, if this user has it; otherwise the
+  // settings are the style's own.
+  const std::wstring name =
+      m_preset.isValue(brush->m_name) ? brush->m_name : CUSTOM_WSTR;
+  m_preset.setValue(name);
+  loadPresetData(*brush);
+  V_VectorBrushPreset = m_preset.getValueAsString();
+  m_propertyUpdating = true;
+  getApplication()->getCurrentTool()->notifyToolChanged();
+  m_propertyUpdating = false;
 }
 
 //------------------------------------------------------------------

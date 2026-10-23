@@ -57,6 +57,10 @@
 
 class TColorStyle;
 class TPalette;
+class QGroupBox;
+class QListWidget;
+class QListWidgetItem;
+class QPushButton;
 
 class TXshLevelHandle;
 class PaletteController;
@@ -715,6 +719,11 @@ class SettingsPage final : public QScrollArea {
   StylusConfigPopup *m_stylusConfig;
   int m_parameterId;
 
+  // Ztoryc: the presets of the current brush tool (BrushPresetBridge).
+  QGroupBox *m_brushBox;
+  QListWidget *m_brushList;
+  QPushButton *m_removeBrushButton;
+
   bool
       m_updating;  //!< Whether the page is copying style content to its widget,
                    //!  to be displayed.
@@ -743,6 +752,11 @@ private slots:
   void onOpenStylusConfig();
   void onConfigStateChanged(int);
   void onConfigCurveChanged(int, bool);
+
+  void refreshBrushPresets();
+  void onBrushPresetClicked(QListWidgetItem *item);
+  void onAddBrushPreset();
+  void onRemoveBrushPreset();
 };
 
 //=============================================================================

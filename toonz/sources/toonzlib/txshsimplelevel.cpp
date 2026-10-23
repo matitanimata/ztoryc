@@ -2391,6 +2391,14 @@ void TXshSimpleLevel::renumber(const std::vector<TFrameId> &fids) {
 
 //-----------------------------------------------------------------------------
 
+namespace {
+// Ztoryc: files that belong to the level and sit beside it with its name —
+// the mouth mapping (.zmouth) and the brushes of its palette's styles
+// (.brushes, see tnztools/brushstylememory). copyFiles(), renameFiles(),
+// removeFiles() and getFiles() all walk this one list.
+const wchar_t *const levelTwinTypes[] = {L"zmouth", L"brushes"};
+}  // namespace
+
 void TXshSimpleLevel::copyFiles(const TFilePath &dst, const TFilePath &src) {
   if (dst == src) return;
   TSystem::touchParentDir(dst);
@@ -2414,25 +2422,23 @@ void TXshSimpleLevel::copyFiles(const TFilePath &dst, const TFilePath &src) {
           srcPltPath, true);
   }
 
-  // Ztoryc: la mappatura delle bocche (.zmouth) segue il livello come la
-  // palette. Per QUALSIASI tipo di livello, non solo tlv: un personaggio puo'
+  // Ztoryc: la mappatura delle bocche (.zmouth) e i pennelli degli stili
+  // (.brushes) seguono il livello come la palette. Per QUALSIASI tipo di livello, non solo tlv: un personaggio puo'
   // essere vettoriale, smart raster o un gruppo di PSD.
   //
-  // ⚠️ Questo elenco e' scritto a mano ed e' uno di QUATTRO che devono dire la
-  // stessa cosa: copyFiles(), renameFiles(), removeFiles(), getFiles(). Non
-  // concordano gia' fra loro (qui ci sono anche .plt e la cartella _files,
-  // altrove no). Chi aggiunge un file che appartiene al livello deve toccarli
-  // tutti e quattro, o il file viaggia in un percorso e non negli altri — al
-  // .zmouth e' successo davvero: copiato e elencato, ma non rinominato ne'
-  // cancellato, e rinominare un livello di bocche perdeva la mappa in
-  // silenzio (2026-08-27).
-  {
-    const TFilePath srcMouths =
-        src.getParentDir() + TFilePath(src.getWideName() + L".zmouth");
-    if (TFileStatus(srcMouths).doesExist())
+  // ⚠️ I file gemelli stanno in UN elenco, levelTwinTypes, che copyFiles(),
+  // renameFiles(), removeFiles() e getFiles() percorrono tutte e quattro.
+  // Prima erano quattro blocchi scritti a mano, e al .zmouth e' successo
+  // davvero: copiato e elencato, ma non rinominato ne' cancellato, e
+  // rinominare un livello di bocche perdeva la mappa in silenzio (2026-08-27).
+  // Il resto (.plt, la cartella _files) non concorda ancora fra le quattro.
+  for (const wchar_t *twin : levelTwinTypes) {
+    const TFilePath srcTwin =
+        src.getParentDir() + TFilePath(src.getWideName() + L"." + twin);
+    if (TFileStatus(srcTwin).doesExist())
       TSystem::copyFile(
-          dst.getParentDir() + TFilePath(dst.getWideName() + L".zmouth"),
-          srcMouths, true);
+          dst.getParentDir() + TFilePath(dst.getWideName() + L"." + twin),
+          srcTwin, true);
   }
 
   const TFilePath &srcHookFile = TXshSimpleLevel::getExistingHookFile(src);
@@ -2459,10 +2465,13 @@ void TXshSimpleLevel::renameFiles(const TFilePath &dst, const TFilePath &src) {
   // nome. Senza questo il livello si rinominava e il .zmouth restava indietro
   // col nome vecchio: nessun errore, nessun file mancante da nessuna parte —
   // semplicemente il personaggio smetteva di avere le bocche mappate.
-  {
-    const TFilePath srcMouths = src.withType("zmouth");
-    if (TFileStatus(srcMouths).doesExist())
-      TSystem::renameFile(dst.withType("zmouth"), srcMouths);
+  for (const wchar_t *twin : levelTwinTypes) {
+    const TFilePath srcTwin =
+        src.getParentDir() + TFilePath(src.getWideName() + L"." + twin);
+    if (TFileStatus(srcTwin).doesExist())
+      TSystem::renameFile(
+          dst.getParentDir() + TFilePath(dst.getWideName() + L"." + twin),
+          srcTwin);
   }
 
   const TFilePath &srcHookFile = TXshSimpleLevel::getExistingHookFile(src);
@@ -2488,9 +2497,9 @@ void TXshSimpleLevel::removeFiles(const TFilePath &fp) {
   // Ztoryc: se ne va anche la mappatura delle bocche. Restando indietro
   // sarebbe un file orfano che ricompare addosso al PRIMO livello che riprende
   // quel nome, portandogli i viseme di un personaggio che non c'e' piu'.
-  {
-    TFilePath zmouth = fp.withType("zmouth");
-    if (TFileStatus(zmouth).doesExist()) TSystem::moveFileToRecycleBin(zmouth);
+  for (const wchar_t *twin : levelTwinTypes) {
+    TFilePath twinFp = fp.getParentDir() + TFilePath(fp.getWideName() + L"." + twin);
+    if (TFileStatus(twinFp).doesExist()) TSystem::moveFileToRecycleBin(twinFp);
   }
 
   // Delete ALL hook files (ie from every Toonz version)
@@ -2518,9 +2527,9 @@ void TXshSimpleLevel::getFiles(const TFilePath &fp, TFilePathSet &fpset) {
   // personaggio arriva all'animatore con le bocche e senza le istruzioni per
   // usarle. Vale per QUALSIASI tipo di livello, non solo tlv: un personaggio
   // puo' essere vettoriale, smart raster o un gruppo di PSD.
-  {
-    TFilePath zmouth = fp.withType("zmouth");
-    if (TFileStatus(zmouth).doesExist()) fpset.push_back(zmouth);
+  for (const wchar_t *twin : levelTwinTypes) {
+    TFilePath twinFp = fp.getParentDir() + TFilePath(fp.getWideName() + L"." + twin);
+    if (TFileStatus(twinFp).doesExist()) fpset.push_back(twinFp);
   }
 
   // Store the hooks file if any (NOTE: there could be more than one hooks

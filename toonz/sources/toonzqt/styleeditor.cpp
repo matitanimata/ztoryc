@@ -1,6 +1,7 @@
 
 
 #include "toonzqt/styleeditor.h"
+#include "toonzqt/brushpresetbridge.h"
 
 // TnzQt includes
 #include "toonzqt/gutil.h"
@@ -43,6 +44,9 @@
 #include "tvectorbrushstyle.h"
 
 // Qt includes
+#include <QGroupBox>
+#include <QInputDialog>
+#include <QListWidget>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QGridLayout>
@@ -3747,7 +3751,88 @@ SettingsPage::SettingsPage(QWidget *parent)
   m_paramsLayout->setHorizontalSpacing(5);
   paramsContainerLayout->addLayout(m_paramsLayout);
 
+  // Ztoryc: the custom brushes of the current brush tool. Choosing one here
+  // or in the tool options links it to the current style.
+  m_brushBox = new QGroupBox(this);
+  QVBoxLayout *brushLayout = new QVBoxLayout(m_brushBox);
+  brushLayout->setContentsMargins(6, 6, 6, 6);
+  brushLayout->setSpacing(4);
+  m_brushList = new QListWidget(m_brushBox);
+  m_brushList->setSelectionMode(QAbstractItemView::SingleSelection);
+  m_brushList->setMinimumHeight(80);
+  brushLayout->addWidget(m_brushList);
+  QHBoxLayout *brushButtons = new QHBoxLayout;
+  brushButtons->setSpacing(4);
+  QPushButton *addBrush = new QPushButton(tr("Save Brush..."), m_brushBox);
+  addBrush->setToolTip(
+      tr("Save the current brush settings as a preset, linked to this style"));
+  m_removeBrushButton = new QPushButton(tr("Remove"), m_brushBox);
+  brushButtons->addWidget(addBrush);
+  brushButtons->addWidget(m_removeBrushButton);
+  brushButtons->addStretch(1);
+  brushLayout->addLayout(brushButtons);
+  paramsContainerLayout->addWidget(m_brushBox);
+
+  connect(m_brushList, &QListWidget::itemClicked, this,
+          &SettingsPage::onBrushPresetClicked);
+  connect(addBrush, &QPushButton::clicked, this,
+          &SettingsPage::onAddBrushPreset);
+  connect(m_removeBrushButton, &QPushButton::clicked, this,
+          &SettingsPage::onRemoveBrushPreset);
+  connect(BrushPresetBridge::instance(), &BrushPresetBridge::changed, this,
+          &SettingsPage::refreshBrushPresets);
+  refreshBrushPresets();
+
   paramsContainerLayout->addStretch(1);
+}
+
+//-----------------------------------------------------------------------------
+
+void SettingsPage::refreshBrushPresets() {
+  BrushPresetBridge::Provider *provider = BrushPresetBridge::instance()->provider();
+  const QString toolName = provider ? provider->toolName() : QString();
+  m_brushBox->setVisible(!toolName.isEmpty());
+  if (toolName.isEmpty()) return;
+
+  m_brushBox->setTitle(tr("Custom Brushes - %1").arg(toolName));
+  const QString current = provider->currentPreset();
+  m_brushList->blockSignals(true);
+  m_brushList->clear();
+  for (const QString &name : provider->presets()) {
+    QListWidgetItem *item = new QListWidgetItem(name, m_brushList);
+    if (name == current) item->setSelected(true);
+  }
+  m_brushList->blockSignals(false);
+  m_removeBrushButton->setEnabled(!current.isEmpty());
+}
+
+//-----------------------------------------------------------------------------
+
+void SettingsPage::onBrushPresetClicked(QListWidgetItem *item) {
+  BrushPresetBridge::Provider *provider = BrushPresetBridge::instance()->provider();
+  if (provider && item) provider->choosePreset(item->text());
+}
+
+//-----------------------------------------------------------------------------
+
+void SettingsPage::onAddBrushPreset() {
+  BrushPresetBridge::Provider *provider = BrushPresetBridge::instance()->provider();
+  if (!provider) return;
+  bool ok = false;
+  const QString name =
+      QInputDialog::getText(this, tr("Save Brush"), tr("Preset name:"),
+                            QLineEdit::Normal, QString(), &ok)
+          .trimmed();
+  if (ok && !name.isEmpty()) provider->addPreset(name);
+}
+
+//-----------------------------------------------------------------------------
+
+void SettingsPage::onRemoveBrushPreset() {
+  BrushPresetBridge::Provider *provider = BrushPresetBridge::instance()->provider();
+  if (!provider) return;
+  const QString current = provider->currentPreset();
+  if (!current.isEmpty()) provider->removePreset(current);
 }
 
 //-----------------------------------------------------------------------------

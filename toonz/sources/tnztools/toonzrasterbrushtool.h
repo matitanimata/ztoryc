@@ -10,6 +10,7 @@
 #include "tstroke.h"
 
 #include "tools/tool.h"
+#include "brushstylememory.h"
 #include "tools/cursors.h"
 #include "mypainttoonzbrush.h"
 #include "bluredbrush.h"
@@ -124,7 +125,7 @@ private:
 //   Toonz Raster Brush Tool declaration
 //************************************************************************
 
-class ToonzRasterBrushTool final : public TTool, public RasterController {
+class ToonzRasterBrushTool final : public TTool, public RasterController, public BrushPresetClient {
   Q_DECLARE_TR_FUNCTIONS(ToonzRasterBrushTool)
 
   void updateCurrentStyle();
@@ -173,10 +174,25 @@ public:
 
   void initPresets();
   void loadPreset();
-  void addPreset(QString name);
+  void addPreset(QString name) override;
   void removePreset();
 
   void loadLastBrush();
+
+  // Ztoryc: each style remembers the brush it was drawn with
+  // (BrushStyleMemory); these read and write the settings apart from presets.
+  void loadPresetData(const BrushData &preset);
+  BrushData currentBrushData(const std::wstring &name);
+  void storeStyleBrush();
+
+  // BrushPresetClient
+  std::string brushKind() const override { return "smartraster"; }
+  QString brushName() const override { return tr("Smart Raster Brush"); }
+  QStringList presetNames() override;
+  QString currentPresetName() override;
+  void selectPreset(const QString &name) override;
+  void removeNamedPreset(const QString &name) override;
+  void applyStyleBrush(const TPersist *data) override;
 
   void paintDragPoint(const TPointD &usePos, const TPointD &pos,
                       const TMouseEvent &e, TRectD invalidateRect);

@@ -10,6 +10,7 @@
 #include "tstroke.h"
 
 #include "tools/tool.h"
+#include "brushstylememory.h"
 #include "tools/cursors.h"
 
 #include "toonzrasterbrushtool.h"
@@ -81,7 +82,7 @@ public:
 //    Brush Tool declaration
 //************************************************************************
 
-class ToonzVectorBrushTool final : public TTool {
+class ToonzVectorBrushTool final : public TTool, public BrushPresetClient {
   Q_DECLARE_TR_FUNCTIONS(ToonzVectorBrushTool)
 
 public:
@@ -127,10 +128,25 @@ public:
 
   void initPresets();
   void loadPreset();
-  void addPreset(QString name);
+  void addPreset(QString name) override;
   void removePreset();
 
   void loadLastBrush();
+
+  // Ztoryc: each style remembers the brush it was drawn with
+  // (BrushStyleMemory); these read and write the settings apart from presets.
+  void loadPresetData(const VectorBrushData &preset);
+  VectorBrushData currentBrushData(const std::wstring &name);
+  void storeStyleBrush();
+
+  // BrushPresetClient
+  std::string brushKind() const override { return "vector"; }
+  QString brushName() const override { return tr("Vector Brush"); }
+  QStringList presetNames() override;
+  QString currentPresetName() override;
+  void selectPreset(const QString &name) override;
+  void removeNamedPreset(const QString &name) override;
+  void applyStyleBrush(const TPersist *data) override;
 
   // return true if the pencil mode is active in the Brush / PaintBrush / Eraser
   // Tools.

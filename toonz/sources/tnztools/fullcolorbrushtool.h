@@ -30,7 +30,7 @@ class Brush;
 //    FullColor Brush Tool declaration
 //************************************************************************
 
-class FullColorBrushTool final : public TTool, public RasterController {
+class FullColorBrushTool final : public TTool, public RasterController, public BrushPresetClient {
   Q_DECLARE_TR_FUNCTIONS(FullColorBrushTool)
 
   void updateCurrentStyle();
@@ -83,10 +83,25 @@ public:
 
   void initPresets();
   void loadPreset();
-  void addPreset(QString name);
+  void addPreset(QString name) override;
   void removePreset();
 
   void loadLastBrush();
+
+  // Ztoryc: each style remembers the brush it was drawn with
+  // (BrushStyleMemory); these read and write the settings apart from presets.
+  void loadPresetData(const BrushData &preset);
+  BrushData currentBrushData(const std::wstring &name);
+  void storeStyleBrush();
+
+  // BrushPresetClient
+  std::string brushKind() const override { return "raster"; }
+  QString brushName() const override { return tr("Raster Brush"); }
+  QStringList presetNames() override;
+  QString currentPresetName() override;
+  void selectPreset(const QString &name) override;
+  void removeNamedPreset(const QString &name) override;
+  void applyStyleBrush(const TPersist *data) override;
 
   void onCanvasSizeChanged();
   void onColorStyleChanged();
