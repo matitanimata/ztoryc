@@ -974,7 +974,14 @@ TFilePath TFilePath::withFrame(const TFrameId &frame,
       return TFilePath(m_path + ::to_wstring(ch + frame.expand(format)));
   }
 
-  int k = rfindFrameSep(str, j, m_underscoreFormatAllowed);
+  // Ztoryc: '_' and '-' separate a frame number only for a type that can be a
+  // sequence ("frame-0006.jpg"). For any other type the only separator is the
+  // dot, as in Tahoma: with '_' a TLV "P_matte.tlv" took withNoFrame() →
+  // "P.tlv", so it saved its palette in P.tpl, over level P's (Cascina,
+  // 2026-10-23). Any two levels like "x.tlv" and "x_y.tlv" in one folder
+  // shared — and overwrote — one palette file, from 0.10.0 on.
+  int k = checkForSeqNum(type) ? rfindFrameSep(str, j, m_underscoreFormatAllowed)
+                               : (int)str.substr(0, j).rfind(L'.');
 
   bool hasValidFrameNum = false;
   if (!isFfmpegType() && checkForSeqNum(type)) {
