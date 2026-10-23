@@ -2053,6 +2053,12 @@ void FullColorBrushTool::removePreset() {
 
 //------------------------------------------------------------------
 
+std::shared_ptr<TPersist> FullColorBrushTool::currentStyleData() {
+  return std::make_shared<BrushData>(currentBrushData(m_preset.getValue()));
+}
+
+//------------------------------------------------------------------
+
 void FullColorBrushTool::storeStyleBrush() {
   BrushStyleMemory::remember(
       brushKind(), std::make_shared<BrushData>(currentBrushData(m_preset.getValue())));

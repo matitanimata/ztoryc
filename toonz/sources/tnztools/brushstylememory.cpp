@@ -46,6 +46,10 @@ struct Twin {
   // be lost with it.
   bool m_unreadable = false;
   std::map<EntryKey, std::shared_ptr<TPersist>> m_entries;
+  // Per brush kind, the brush as it was when this level was first drawn on
+  // in the session: what a style never used yet starts from, so a size set
+  // on one style never reaches another (Franco, 2026-10-23).
+  std::map<std::string, std::shared_ptr<TPersist>> m_base;
 };
 
 std::map<std::wstring, Twin> s_twins;
@@ -360,12 +364,16 @@ void BrushStyleMemory::applyTo(BrushPresetClient *client) {
   s_lastSeen[kind] = seen;
   if (fp.isEmpty() || styleId < 0) return;
 
-  // A style seen for the first time takes the brush as it is, and keeps it
-  // from now on: what is changed on another style no longer reaches it.
+  // A style never used yet starts from the level's base brush — not from the
+  // style the brush comes from — and keeps it from then on.
   Twin &t = twin(fp);
+  if (!t.m_base.count(kind)) t.m_base[kind] = client->currentStyleData();
   auto it = t.m_entries.find(EntryKey(styleId, kind));
   if (it == t.m_entries.end()) {
+    if (const std::shared_ptr<TPersist> &base = t.m_base[kind])
+      client->applyStyleBrush(base.get());
     client->storeStyleBrush();
+    notifyChanged();
     return;
   }
   client->applyStyleBrush(it->second.get());

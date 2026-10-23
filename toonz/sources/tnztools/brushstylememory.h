@@ -46,6 +46,8 @@ public:
   virtual void applyStyleBrush(const TPersist *data) = 0;
   //! Stores the current settings for the current style.
   virtual void storeStyleBrush() = 0;
+  //! A copy of the current settings.
+  virtual std::shared_ptr<TPersist> currentStyleData() = 0;
 };
 
 //=============================================================================

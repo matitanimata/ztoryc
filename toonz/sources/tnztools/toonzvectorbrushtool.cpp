@@ -2672,6 +2672,12 @@ void ToonzVectorBrushTool::removePreset() {
 
 //------------------------------------------------------------------
 
+std::shared_ptr<TPersist> ToonzVectorBrushTool::currentStyleData() {
+  return std::make_shared<VectorBrushData>(currentBrushData(m_preset.getValue()));
+}
+
+//------------------------------------------------------------------
+
 void ToonzVectorBrushTool::storeStyleBrush() {
   BrushStyleMemory::remember(
       brushKind(), std::make_shared<VectorBrushData>(currentBrushData(m_preset.getValue())));

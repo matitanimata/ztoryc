@@ -138,6 +138,7 @@ public:
   void loadPresetData(const VectorBrushData &preset);
   VectorBrushData currentBrushData(const std::wstring &name);
   void storeStyleBrush() override;
+  std::shared_ptr<TPersist> currentStyleData() override;
 
   // BrushPresetClient
   std::string brushKind() const override { return "vector"; }

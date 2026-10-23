@@ -93,6 +93,7 @@ public:
   void loadPresetData(const BrushData &preset);
   BrushData currentBrushData(const std::wstring &name);
   void storeStyleBrush() override;
+  std::shared_ptr<TPersist> currentStyleData() override;
 
   // BrushPresetClient
   std::string brushKind() const override { return "raster"; }

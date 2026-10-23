@@ -3532,6 +3532,12 @@ void ToonzRasterBrushTool::removePreset() {
 
 //------------------------------------------------------------------
 
+std::shared_ptr<TPersist> ToonzRasterBrushTool::currentStyleData() {
+  return std::make_shared<BrushData>(currentBrushData(m_preset.getValue()));
+}
+
+//------------------------------------------------------------------
+
 void ToonzRasterBrushTool::storeStyleBrush() {
   BrushStyleMemory::remember(
       brushKind(), std::make_shared<BrushData>(currentBrushData(m_preset.getValue())));
