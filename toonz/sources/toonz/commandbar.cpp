@@ -333,6 +333,9 @@ void CommandBar::buildDefaultToolbar(CommandBar *toolbar) {
     QAction *mainAudio =
         CommandManager::instance()->getAction("MI_ToggleMainAudio");
     toolbar->addAction(mainAudio);
+    // Ztoryc: keys moving with the cells is a mode one must see at a glance.
+    toolbar->addAction(CommandManager::instance()->getAction(
+        "MI_ToggleKeyframesFollowExposure"));
   }
 }
 
