@@ -259,18 +259,36 @@ void applyShotIds(const QHash<QString, QString> &byKey) {
   if (dirty) mm->saveProjectDb();
 }
 
-// The Kitsu ids of the assets a push created or matched.
-void applyAssetIds(const QHash<QString, QString> &byKey) {
+// The Kitsu ids of the assets a push created or matched.  Kitsu answers by
+// type + name, so two local assets with the same type and name are the same
+// key: the id goes to ONE of them (the one that already has it, else the
+// first without an id), never to all.  Giving it to all is how thirteen
+// «New asset» ended up sharing one Kitsu id (CS2605 Cascina, 2026-10-23).
+// Returns the names found more than once, to be told.
+QStringList applyAssetIds(const QHash<QString, QString> &byKey) {
   ZtoryModel *mm = ZtoryModel::instance();
   bool dirty     = false;
-  for (Asset &a : mm->assets()) {
-    auto it = byKey.find(a.type + "\n" + a.name.trimmed());
-    if (it != byKey.end() && a.kitsuAssetId != it.value()) {
-      a.kitsuAssetId = it.value();
-      dirty          = true;
+  QHash<QString, QVector<Asset *>> byLocalKey;
+  for (Asset &a : mm->assets())
+    byLocalKey[a.type + "\n" + a.name.trimmed()].push_back(&a);
+  QStringList duplicated;
+  for (auto it = byKey.constBegin(); it != byKey.constEnd(); ++it) {
+    const QVector<Asset *> same = byLocalKey.value(it.key());
+    if (same.isEmpty()) continue;
+    if (same.size() > 1) duplicated << same.first()->name.trimmed();
+    Asset *target = nullptr;
+    for (Asset *a : same)
+      if (a->kitsuAssetId == it.value()) target = a;
+    if (!target)
+      for (Asset *a : same)
+        if (a->kitsuAssetId.isEmpty()) { target = a; break; }
+    if (target && target->kitsuAssetId != it.value()) {
+      target->kitsuAssetId = it.value();
+      dirty                = true;
     }
   }
   if (dirty) mm->saveProjectDb();
+  return duplicated;
 }
 
 // Shot task statuses from Kitsu, merged on the base.
@@ -538,7 +556,16 @@ ZtoryKitsuSync::ZtoryKitsuSync(QObject *parent) : QObject(parent) {
   KitsuClient *kc = KitsuClient::instance();
   // Ids: applied whenever they come.
   connect(kc, &KitsuClient::shotIdsResolved, this, &applyShotIds);
-  connect(kc, &KitsuClient::assetIdsResolved, this, &applyAssetIds);
+  connect(kc, &KitsuClient::assetIdsResolved, this,
+          [this](const QHash<QString, QString> &byKey) {
+            const QStringList dup = applyAssetIds(byKey);
+            if (!dup.isEmpty())
+              warn(tr("These assets appear more than once with the same type "
+                      "and name, and Kitsu keeps them as ONE asset: only one "
+                      "of each was linked to it. Rename or remove the "
+                      "copies in the Production Tracker:\n\n%1")
+                       .arg(dup.join("\n")));
+          });
   connect(kc, &KitsuClient::taskTypesMissing, this,
           [this](const QStringList &names) {
             warn(tr("These workflow tasks were NOT created in Kitsu: the server "

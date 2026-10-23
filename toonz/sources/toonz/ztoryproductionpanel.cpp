@@ -2254,7 +2254,22 @@ QWidget *ZtoryProductionPanel::buildAssetsTab() {
           &ZtoryProductionPanel::onAssetContextMenu);
 
   connect(addBtn, &QPushButton::clicked, this, [this] {
-    ZtoryModel::instance()->addAsset(ZtoryModel::kCharacterType, QObject::tr("New asset"));
+    // A name of its own («New asset 2», …): identical names are the same
+    // asset for Kitsu, which matches by type + name.
+    ZtoryModel *m    = ZtoryModel::instance();
+    const QString base = QObject::tr("New asset");
+    QString name       = base;
+    for (int n = 2;; ++n) {
+      bool taken = false;
+      for (const Asset &a : m->assets())
+        if (a.name.trimmed().compare(name, Qt::CaseInsensitive) == 0) {
+          taken = true;
+          break;
+        }
+      if (!taken) break;
+      name = QString("%1 %2").arg(base).arg(n);
+    }
+    m->addAsset(ZtoryModel::kCharacterType, name);
     persistAssets();
   });
   connect(remBtn, &QPushButton::clicked, this, [this] {
