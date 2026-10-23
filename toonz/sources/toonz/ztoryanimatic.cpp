@@ -4104,6 +4104,11 @@ void ZtoryAnimaticViewer::setEssential() {
   // On the playbar, the playback buttons and nothing else (Franco,
   // 2026-10-20): no fps, sound, viewer controls (☰ can bring them back).
   m_flipConsole->setCustomizemask(eShowVcr);
+  // Hiding the Soundtrack button also switches it off (FlipConsole::
+  // enableButton presses a checked button it disables), and the monitor
+  // played silent while scrubbing still sounded. The sound stays on.
+  m_flipConsole->setChecked(FlipConsole::eSound, true);
+  m_playSound = true;
   m_sceneViewer->setReferenceMode(SceneViewer::CAMERA_REFERENCE);
   QTimer::singleShot(0, this, [this]() { m_sceneViewer->fitToCamera(); });
 }
