@@ -276,9 +276,12 @@ QStringList applyAssetIds(const QHash<QString, QString> &byKey) {
     const QVector<Asset *> same = byLocalKey.value(it.key());
     if (same.isEmpty()) continue;
     if (same.size() > 1) duplicated << same.first()->name.trimmed();
-    Asset *target = nullptr;
-    for (Asset *a : same)
-      if (a->kitsuAssetId == it.value()) target = a;
+    // One asset: it takes the id, even replacing an old one (an asset
+    // recreated on Kitsu). Several: the one that has it, else an empty one.
+    Asset *target = same.size() == 1 ? same.first() : nullptr;
+    if (!target)
+      for (Asset *a : same)
+        if (a->kitsuAssetId == it.value()) target = a;
     if (!target)
       for (Asset *a : same)
         if (a->kitsuAssetId.isEmpty()) { target = a; break; }
