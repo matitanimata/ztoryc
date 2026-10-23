@@ -370,9 +370,13 @@ void BrushStyleMemory::applyTo(BrushPresetClient *client) {
   if (!t.m_base.count(kind)) t.m_base[kind] = client->currentStyleData();
   auto it = t.m_entries.find(EntryKey(styleId, kind));
   if (it == t.m_entries.end()) {
-    if (const std::shared_ptr<TPersist> &base = t.m_base[kind])
+    // In memory only: a style merely clicked writes no file; the first real
+    // change stores it (review of 2026-10-24, D4).
+    if (const std::shared_ptr<TPersist> &base = t.m_base[kind]) {
       client->applyStyleBrush(base.get());
-    client->storeStyleBrush();
+      t.m_entries[EntryKey(styleId, kind)] = base;
+    } else
+      t.m_entries[EntryKey(styleId, kind)] = client->currentStyleData();
     notifyChanged();
     return;
   }

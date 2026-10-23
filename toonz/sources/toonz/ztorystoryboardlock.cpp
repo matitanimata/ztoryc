@@ -157,7 +157,11 @@ bool isLocked() {
 }
 
 bool refuse(bool silent) {
-  if (s_bypass > 0 || !isLocked()) return false;
+  if (!isLocked()) return false;
+  // An export lets saves through for its own duration — but not the timed
+  // autosave (silent) that can fire inside its dialogs and progress bars:
+  // it would write over the locked storyboard (review of 2026-10-24, D1).
+  if (s_bypass > 0 && !silent) return false;
   if (!silent)
     DVGui::warning(
         tr("This storyboard is locked (approved): it can only be exported.\n\n"
@@ -216,8 +220,10 @@ bool lock(QWidget *) {
   m->setAutoRenumber(false);
   bool saved = false;
   {
+    // Drawings too: once locked nothing can be saved, and unsaved drawings
+    // would be lost at closing (review of 2026-10-24, D2).
     SaveBypass bypass;
-    saved = IoCmd::saveScene(0);
+    saved = IoCmd::saveAll(0);
   }
   if (!saved || !isLocked()) {
     cfg.storyboardLocked = false;

@@ -1461,8 +1461,30 @@ bool TLevelWriterTzl::optimize() {
 //
 //-------------------------------------------------------------------
 
+// Ztoryc: from 0.10.0 to 0.18 a TLV named «x_y» (or «x-y») kept its palette
+// in «x.tpl» (TFilePath::withFrame took '_' and '-' for a frame separator).
+// When «x_y.tpl» is missing, that older file is read instead — unless a level
+// «x.tlv» sits there too: then «x.tpl» is that level's, and taking it would
+// hand one level's colours to the other. The next save writes «x_y.tpl».
+static TFilePath legacyPalettePath(const TFilePath &levelPath) {
+  const std::wstring name = levelPath.getWideName();
+  const size_t cut        = name.find_last_of(L"_-");
+  if (cut == std::wstring::npos || cut == 0) return TFilePath();
+  const TFilePath dir = levelPath.getParentDir();
+  const std::wstring prefix = name.substr(0, cut);
+  const TFilePath legacy    = dir + TFilePath(prefix + L".tpl");
+  if (!TFileStatus(legacy).doesExist() ||
+      TFileStatus(dir + TFilePath(prefix + L".tlv")).doesExist())
+    return TFilePath();
+  return legacy;
+}
+
 void TLevelReaderTzl::readPalette() {
   TFilePath pltfp = m_path.withNoFrame().withType("tpl");
+  if (!TFileStatus(pltfp).doesExist()) {
+    const TFilePath legacy = legacyPalettePath(m_path);
+    if (!legacy.isEmpty()) pltfp = legacy;
+  }
   TPersist *p     = 0;
   TIStream is(pltfp);
   TPalette *palette = 0;

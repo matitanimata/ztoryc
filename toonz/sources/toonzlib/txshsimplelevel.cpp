@@ -1683,8 +1683,11 @@ void TXshSimpleLevel::save(const TFilePath &fp, const TFilePath &oldFp,
       const TFilePath defaults =
           ToonzFolder::getMyPalettesDir() +
           TFilePath(std::string(typeName) + "_default.brushes");
-      if (TFileStatus(defaults).doesExist())
-        TSystem::copyFile(twin, defaults, true);
+      try {  // an accessory copy never stops the level's save
+        if (TFileStatus(defaults).doesExist())
+          TSystem::copyFile(twin, defaults, true);
+      } catch (...) {
+      }
     }
   }
 

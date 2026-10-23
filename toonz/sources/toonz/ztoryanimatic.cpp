@@ -2936,10 +2936,13 @@ void ZtoryAnimaticTrack::mousePressEvent(QMouseEvent *e) {
     setCursor(Qt::SizeVerCursor);
     return;
   }
-  // Ztoryc: a locked (approved) storyboard's clips are not moved, trimmed or
-  // cut; the grip above only sizes the track.
-  if (e->button() == Qt::LeftButton && ZtoryStoryboardLock::refuse()) return;
   int mx = e->x() - kLabelW;
+  // Ztoryc: a locked (approved) storyboard's clips are not moved, trimmed or
+  // cut. Silently: a popup at every click made the track unusable; the label
+  // (track lock, mute) and the grip above still work.
+  if (mx >= 0 && e->button() == Qt::LeftButton &&
+      ZtoryStoryboardLock::refuse(true))
+    return;
   // Lock button hit-test in label area
   if (mx < 0) {
     if (e->button() == Qt::LeftButton) {
