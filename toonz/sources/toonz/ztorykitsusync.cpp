@@ -937,8 +937,10 @@ void ZtoryKitsuSync::advance(bool ok, const QString &msg) {
         KitsuClient::buildShotPushFromProject(m_handles, m_pendingTasks,
                                               skipped);
     if (shots.isEmpty()) break;
+    // Not locked yet: the storyboard's names win on Kitsu too.
     kc->pushShots(m->kitsuProjectId(), m->episode(),
-                  m->productionType() == "tvshow", shots);
+                  m->productionType() == "tvshow", shots,
+                  !m->storyboardLocked());
     return;
   }
   case 2: {

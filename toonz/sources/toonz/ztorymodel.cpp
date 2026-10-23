@@ -3407,6 +3407,7 @@ void ZtoryModel::readShotDocument(const QByteArray &bytes,
         if (a.hasAttribute("seqNumber"))   cfg.seqNumber   = a.value("seqNumber").toInt();
         if (a.hasAttribute("resetOnSeqChange"))
           cfg.resetOnSeqChange = a.value("resetOnSeqChange").toInt() != 0;
+        cfg.storyboardLocked = a.value("locked").toInt() != 0;
         model->setNumberingConfig(cfg);
       }
       else if (xml.name() == QLatin1String("sequence")) {
@@ -3768,6 +3769,7 @@ bool ZtoryModel::writeShotDocument(const QString &path,
     xml.writeAttribute("startNumber", QString::number(cfg.startNumber));
     xml.writeAttribute("seqNumber",   QString::number(cfg.seqNumber));
     xml.writeAttribute("resetOnSeqChange", cfg.resetOnSeqChange ? "1" : "0");
+    if (cfg.storyboardLocked) xml.writeAttribute("locked", "1");
     xml.writeEndElement();
     for (const SequenceData &seq : model->sequences()) {
       xml.writeStartElement("sequence");

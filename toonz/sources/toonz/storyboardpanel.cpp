@@ -1480,6 +1480,18 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_numberingBtn->setToolTip(tr("Numbering options"));
   m_numberingBtn->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
 
+  // Ztoryc: Lock Storyboard — once the board is approved, numbering freezes
+  // to Keep # and Kitsu keeps the shot names. Until then shots are reordered
+  // and renumbered freely, Kitsu or not (Franco, 2026-10-23).
+  m_lockBoardBtn = new QToolButton();
+  m_lockBoardBtn->setCheckable(true);
+  m_lockBoardBtn->setIconSize(QSize(20, 20));
+  m_lockBoardBtn->setFixedSize(28, 28);
+  m_lockBoardBtn->setStyleSheet(
+      "QToolButton{background:transparent;border:none;border-radius:4px;}"
+      "QToolButton:hover{background:#555;}"
+      "QToolButton:checked{background:#5a4620;}");
+
 
     m_exportPdfButton = new QToolButton();
   m_exportPdfButton->setIcon(createQIcon("ztoryc_export_pdf"));
@@ -1585,6 +1597,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   tb->addSpacing(8);
   tb->addWidget(m_numberingCombo);
   tb->addWidget(m_numberingBtn);
+  tb->addWidget(m_lockBoardBtn);
   tb->addSpacing(8);
   tb->addWidget(colLabel);
   tb->addWidget(m_columnsPerRowSpin);
@@ -1817,9 +1830,17 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   });
   connect(m_numberingCombo, QOverload<int>::of(&QComboBox::activated),
           this, &StoryboardPanel::onNumberingChanged);
+  connect(m_lockBoardBtn, &QToolButton::toggled, this, [this](bool on) {
+    NumberingConfig cfg  = ZtoryModel::instance()->numberingConfig();
+    if (cfg.storyboardLocked == on) return;
+    cfg.storyboardLocked = on;
+    ZtoryModel::instance()->setNumberingConfig(cfg);
+    updateNumberingLock();
+    markShotDocumentChanged();
+  });
   connect(m_numberingBtn, &QToolButton::clicked,
           this, &StoryboardPanel::onNumberingConfig);
-  updateNumberingLock();  // freeze numbering if this project already has Kitsu shots
+  updateNumberingLock();  // freeze numbering if the storyboard is locked
   // Re-apply the lock whenever the project DB (re)loads — that's when the Kitsu
   // shot ids become known (e.g. right after a push from the Connect dialog).
   connect(ZtoryModel::instance(), &ZtoryModel::productionReloaded, this,
@@ -6292,10 +6313,23 @@ void StoryboardPanel::onNumberingChanged(int comboIndex) {
 
 void StoryboardPanel::updateNumberingLock() {
   if (!m_numberingCombo) return;
-  // Once shots are created in Kitsu, lock to Keep # so existing shot labels stay
-  // put — auto/renumber would shift them (SH020→SH030…) and desync the Kitsu
-  // links + Production Tracker statuses. New shots get a letter suffix instead.
-  const bool lock = ZtoryModel::instance()->hasKitsuShots();
+  // Lock Storyboard (approved): Keep # so the shot labels stay put — renumber
+  // would shift them (SH020→SH030…) — and new shots get a letter suffix.
+  // Shots in Kitsu no longer lock by themselves: they are linked by id, and
+  // until the lock a push renames them there too.
+  const bool lock = ZtoryModel::instance()->storyboardLocked();
+  if (m_lockBoardBtn) {
+    m_lockBoardBtn->blockSignals(true);
+    m_lockBoardBtn->setChecked(lock);
+    m_lockBoardBtn->blockSignals(false);
+    m_lockBoardBtn->setIcon(createQIcon(lock ? "ztoryc_lock_on" : "ztoryc_lock"));
+    m_lockBoardBtn->setToolTip(
+        lock ? tr("Storyboard locked (approved): numbering frozen to Keep #, "
+                  "shot names kept on Kitsu. Click to unlock.")
+             : tr("Lock Storyboard: freeze the numbering once the board is "
+                  "approved. Until then shots can be reordered and renumbered, "
+                  "and a Kitsu push renames them there too."));
+  }
   if (lock) {
     ZtoryModel::instance()->setAutoRenumber(false);
     m_numberingCombo->blockSignals(true);
@@ -6303,8 +6337,7 @@ void StoryboardPanel::updateNumberingLock() {
     m_numberingCombo->blockSignals(false);
     m_numberingCombo->setEnabled(false);
     m_numberingCombo->setToolTip(
-        tr("Locked to Keep # — shots exist in Kitsu, so numbering is frozen to "
-           "keep their links and statuses aligned."));
+        tr("Locked to Keep # — the storyboard is locked (approved)."));
   } else {
     m_numberingCombo->setEnabled(true);
     m_numberingCombo->setToolTip(QString());

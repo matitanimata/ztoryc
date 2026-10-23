@@ -484,7 +484,10 @@ void KitsuClient::pushFail(const QString &message) {
 }
 
 void KitsuClient::pushShots(const QString &projectId, const QString &episodeName,
-                            bool tvshow, const QVector<KitsuShotPush> &shots) {
+                            bool tvshow, const QVector<KitsuShotPush> &shots,
+                            bool renameExisting) {
+  m_pushRenames = renameExisting;
+  m_pushRenameRetried.clear();
   if (!isLoggedIn()) { emit shotsPushed(false, 0, 0, tr("Not logged in.")); return; }
   if (projectId.isEmpty()) {
     emit shotsPushed(false, 0, 0, tr("Project not linked to Kitsu."));
@@ -601,7 +604,9 @@ QJsonObject KitsuClient::pushBodyFor(const KitsuShotPush &sh,
   // e' l'autorita': in una produzione con piu' persone che pushano, rimandare
   // il nome vorrebbe dire che l'ultimo che sincronizza rinomina gli shot a
   // tutti gli altri. Ztoryc resta padrone di durata e timecode, non del nome.
-  if (shotId.isEmpty()) body["name"] = sh.name;
+  // Ztoryc: until the storyboard is locked, Ztoryc is the authority on names
+  // and a renumber reaches Kitsu too (Franco, 2026-10-23).
+  if (shotId.isEmpty() || m_pushRenames) body["name"] = sh.name;
   return body;
 }
 
@@ -641,6 +646,17 @@ void KitsuClient::pushProcessNext() {
                     ur->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
                 if (code == 404 && m_pushIndex < m_pushQueue.size()) {
                   m_pushQueue[m_pushIndex].kitsuShotId.clear();
+                  pushProcessNext();
+                  return;
+                }
+                // A rename can hit a name another shot still holds (SH020 →
+                // SH030 before SH030 moves on): try it once more at the end,
+                // when the others have been renamed.
+                if (m_pushRenames && !m_pushRenameRetried.contains(id) &&
+                    m_pushIndex < m_pushQueue.size()) {
+                  m_pushRenameRetried.insert(id);
+                  m_pushQueue.append(m_pushQueue[m_pushIndex]);
+                  ++m_pushIndex;
                   pushProcessNext();
                   return;
                 }

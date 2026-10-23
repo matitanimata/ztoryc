@@ -37,6 +37,10 @@ struct NumberingConfig {
   // time the sequence changes (SQ01→SH010, SQ02→SH010…).
   // When false: shot counter is global and continuous across all sequences.
   bool    resetOnSeqChange = false;
+  // «Lock Storyboard» (approved): numbering frozen to Keep # and Kitsu the
+  // authority on shot names. Unlocked, shots are reordered and renumbered
+  // freely and a push renames them on Kitsu too (Franco, 2026-10-23).
+  bool    storyboardLocked = false;
 
   // Returns the shot name for a 0-based index (legacy; new code uses shotLabel)
   QString shotName(int idx) const;
@@ -614,8 +618,8 @@ public:
   bool    useKitsu()         const { return m_useKitsu || isKitsuLinked(); }
   void    setUseKitsu(bool on)     { m_useKitsu = on; }
   // True once at least one project shot has been created in Kitsu (has an id).
-  // The Board locks numbering to Keep mode in this case so shot labels stay put
-  // and the Kitsu links / statuses don't drift when a shot is added.
+  // No longer locks the numbering by itself: Lock Storyboard does
+  // (storyboardLocked), since shots are linked to Kitsu by id.
   bool    hasKitsuShots()    const {
     for (const ProjectShot &ps : m_projectShots)
       if (!ps.kitsuShotId.isEmpty()) return true;
@@ -1156,6 +1160,7 @@ public:
   // on the model makes all panels agree. true = Auto (renumber all on insert),
   // false = Keep (preserve existing labels, midpoint the new shot).
   bool autoRenumber() const { return m_autoRenumber; }
+  bool storyboardLocked() const { return m_numberingConfig.storyboardLocked; }
   void setAutoRenumber(bool on) { m_autoRenumber = on; }
 
   // Assign shotLabel + orderIndex to shot at si using the midpoint algorithm.

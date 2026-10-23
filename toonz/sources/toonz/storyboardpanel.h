@@ -194,6 +194,7 @@ class StoryboardPanel final : public TPanel {
   void setFollowMarker(int shotIdx, int panelIdx, bool scroll);
   void onFollowFrameChanged();
 QToolButton *m_numberingBtn;   // ⚙ Numbering config button
+QToolButton *m_lockBoardBtn = nullptr;  // Lock Storyboard (approved)
   QTimer      *m_panelDetectTimer;
   QToolButton *m_exportPdfButton;
   QToolButton *m_exportSpreadsheetButton;

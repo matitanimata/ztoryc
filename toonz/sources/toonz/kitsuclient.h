@@ -330,8 +330,11 @@ public:
 
   // Push-only shot sync (Ztoryc -> Kitsu). Ensures the episode (tvshow) and the
   // sequences exist, then upserts each shot by name. -> shotsPushed().
+  // renameExisting: also send the name of shots that already exist in Kitsu
+  // (storyboard not locked yet: Ztoryc is the authority on names).
   void pushShots(const QString &projectId, const QString &episodeName,
-                 bool tvshow, const QVector<KitsuShotPush> &shots);
+                 bool tvshow, const QVector<KitsuShotPush> &shots,
+                 bool renameExisting = false);
 
   // Push-only task + status sync (Phase 3b): ensure each task exists on its shot
   // and set its status to match Ztoryc. Requires task statuses already fetched.
@@ -549,6 +552,8 @@ private:
   QHash<QString, QJsonObject> m_pushShotData;  // shot id -> data gia' su Kitsu
   QHash<QString, QString>    m_pushResolved; // "seq\nlabel" -> resolved kitsu shot id
   int m_pushIndex   = 0;
+  bool m_pushRenames = false;
+  QSet<QString> m_pushRenameRetried;  // shot ids already sent to the back once
   int m_pushCreated = 0;
   int m_pushUpdated = 0;
 
