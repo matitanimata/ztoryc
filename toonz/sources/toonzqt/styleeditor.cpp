@@ -47,6 +47,9 @@
 // Qt includes
 #include <QInputDialog>
 #include <QListWidget>
+#include <QDateTime>
+#include <QHash>
+#include <QFileInfo>
 #include <functional>
 #include <QCoreApplication>
 #include <QHBoxLayout>
@@ -4868,6 +4871,7 @@ class CustomBrushesSection final : public QFrame {
   std::function<void(const TColorStyle &)> m_selectStyle;
   QListWidget *m_list;
   QLabel *m_hint;
+  bool m_stale = true;  // changed while hidden: rebuilt when shown
 
   enum { KindRole = Qt::UserRole, NameRole };
 
@@ -4878,8 +4882,24 @@ class CustomBrushesSection final : public QFrame {
     return QCoreApplication::translate("CustomBrushesSection", source);
   }
 
+  // Reading a card is a palette parse: kept until the file changes, since
+  // every style switch and tool switch asks for a refresh (review 23/10).
   static TColorStyleP loadStyle(const QString &path) {
     if (path.isEmpty()) return TColorStyleP();
+    struct Cached {
+      QDateTime modified;
+      TColorStyleP style;
+    };
+    static QHash<QString, Cached> cache;
+    const QDateTime modified = QFileInfo(path).lastModified();
+    auto it                  = cache.find(path);
+    if (it != cache.end() && it->modified == modified) return it->style;
+    TColorStyleP style = readStyle(path);
+    cache.insert(path, Cached{modified, style});
+    return style;
+  }
+
+  static TColorStyleP readStyle(const QString &path) {
     try {
       // A palette streams itself untagged (TPalette::saveData), so it is
       // read with loadData, not as a tagged TPersist.
@@ -4929,6 +4949,10 @@ protected:
   void resizeEvent(QResizeEvent *e) override {
     QFrame::resizeEvent(e);
     fitHeight();
+  }
+  void showEvent(QShowEvent *e) override {
+    QFrame::showEvent(e);
+    if (m_stale) refresh();
   }
 
 public:
@@ -4981,12 +5005,21 @@ public:
                 provider()->removePreset(item->data(KindRole).toString(),
                                          item->data(NameRole).toString());
             });
+    // Queued: a click applies a preset, and the refresh it triggers must not
+    // rebuild the list under the item being clicked.
     connect(BrushPresetBridge::instance(), &BrushPresetBridge::changed, this,
-            [this]() { refresh(); });
+            [this]() { refresh(); }, Qt::QueuedConnection);
     refresh();
   }
 
   void refresh() {
+    // Every Style Editor of every room has these sections, most of them
+    // hidden: only a visible one rebuilds now.
+    if (!isVisible()) {
+      m_stale = true;
+      return;
+    }
+    m_stale                        = false;
     BrushPresetBridge::Provider *p = provider();
     m_list->blockSignals(true);
     m_list->clear();

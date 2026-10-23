@@ -35,6 +35,7 @@
 #include "tsystem.h"
 
 // Qt includes
+#include <limits>
 #include <QMenu>
 #include <QAction>
 #include <QDialog>
@@ -327,6 +328,22 @@ public:
   }
 };
 
+// Bytes the kept frames really hold: the undo manager drops old undos by
+// this, and a flat guess let a long column keep hundreds of MB (review 23/10).
+static qint64 imagesBytes(const std::map<TFrameId, TImageP> &imgs) {
+  qint64 bytes = 0;
+  for (const auto &it : imgs) {
+    if (TToonzImageP ti = it.second) {
+      if (TRasterCM32P ras = ti->getCMapped())
+        bytes += (qint64)ras->getLx() * ras->getLy() * ras->getPixelSize();
+    } else if (TRasterImageP ri = it.second) {
+      if (TRasterP ras = ri->getRaster())
+        bytes += (qint64)ras->getLx() * ras->getLy() * ras->getPixelSize();
+    }
+  }
+  return bytes;
+}
+
 class UpdateUndo final : public TUndo {
   TXsheetP m_xsh;
   int m_col;
@@ -369,7 +386,10 @@ public:
 
   void undo() const override { apply(m_old, m_oldFrame, m_oldCells); }
   void redo() const override { apply(m_new, m_newFrame, m_newCells); }
-  int getSize() const override { return sizeof(*this) + (2 << 20); }
+  int getSize() const override {
+    const qint64 bytes = sizeof(*this) + imagesBytes(m_old) + imagesBytes(m_new);
+    return (int)std::min<qint64>(bytes, std::numeric_limits<int>::max());
+  }
   QString getHistoryString() override {
     return QObject::tr("Update Auto-Matte  %1")
         .arg(QString::fromStdWString(m_matte->getName()));

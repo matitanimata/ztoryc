@@ -2705,12 +2705,13 @@ void ToonzRasterBrushTool::finishRasterBrush(const TPointD &pos,
             for (int rx = 0; rx < sw; rx++)
               lineMask[ry * sw + rx] = row[rx].getInk() != 0;
           }
-          std::vector<uint8_t> exterior =
-              ZtoryAutoMatteCore::exteriorWithGaps(lineMask, sw, sh, gap);
           // Distance from the line, to tell a shape from the crumbs the gap
-          // closing makes along a rough line (pass 1).
+          // closing makes along a rough line (pass 1); the gap closing reuses
+          // it instead of computing it again.
           std::vector<int> lineDist;
           ZtoryAutoMatteCore::chamferDistance(lineMask, sw, sh, lineDist);
+          std::vector<uint8_t> exterior = ZtoryAutoMatteCore::exteriorWithGaps(
+              lineMask, sw, sh, gap, &lineDist);
 
           // The ink THIS stroke laid: ink now where the undo tiles (the
           // raster before the stroke) had none. A region counts as closed by

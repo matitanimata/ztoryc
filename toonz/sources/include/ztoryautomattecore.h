@@ -56,22 +56,29 @@ inline void chamferDistance(const std::vector<uint8_t> &source, int w, int h,
 }
 
 // solid: 1 where the drawing has ink or paint.  Returns 1 inside the matte.
+// solidDist: chamferDistance(solid) when the caller already has it.  With
+// gap 0 no distance is needed at all: «farther than 0» is «not solid», and
+// growing back by 0 leaves the outside as it is — same result, two distance
+// transforms fewer (review of 2026-10-23).
 inline std::vector<uint8_t> computeMatte(const std::vector<uint8_t> &solid,
-                                         int w, int h, int gap) {
+                                         int w, int h, int gap,
+                                         const std::vector<int> *solidDist =
+                                             nullptr) {
   std::vector<uint8_t> matte((size_t)w * h, 0);
   if (w <= 0 || h <= 0) return matte;
   gap = std::max(0, gap);
   const int limit = 3 * gap;  // chamfer units
 
-  std::vector<int> dist;
-  chamferDistance(solid, w, h, dist);
+  std::vector<int> ownDist;
+  if (gap > 0 && !solidDist) chamferDistance(solid, w, h, ownDist);
+  const std::vector<int> &dist = solidDist ? *solidDist : ownDist;
 
   // 1. outside: flood from the border through pixels farther than `gap`.
   std::vector<uint8_t> outside((size_t)w * h, 0);
   std::vector<int> stack;
   auto seed = [&](int x, int y) {
     const size_t i = (size_t)y * w + x;
-    if (!outside[i] && !solid[i] && dist[i] > limit) {
+    if (!outside[i] && !solid[i] && (gap == 0 || dist[i] > limit)) {
       outside[i] = 1;
       stack.push_back((int)i);
     }
@@ -91,6 +98,10 @@ inline std::vector<uint8_t> computeMatte(const std::vector<uint8_t> &solid,
   // 2-3. grow the outside back by `gap`; the rest is the matte.  Without any
   // outside pixel (drawing touching every border) the whole frame is matte,
   // which is what an opaque drawing filling the frame means anyway.
+  if (gap == 0) {
+    for (size_t i = 0; i < matte.size(); i++) matte[i] = !outside[i];
+    return matte;
+  }
   std::vector<int> distOut;
   chamferDistance(outside, w, h, distOut);
   for (size_t i = 0; i < matte.size(); i++)
@@ -103,9 +114,10 @@ inline std::vector<uint8_t> computeMatte(const std::vector<uint8_t> &solid,
 // opening narrower than about 2 x gap; the outside then grows back up to the
 // line, so a closed shape keeps all its pixels.  gap 0 = the plain flood from
 // the border (stock behaviour).
-inline std::vector<uint8_t> exteriorWithGaps(const std::vector<uint8_t> &line,
-                                             int w, int h, int gap) {
-  std::vector<uint8_t> matte = computeMatte(line, w, h, gap);
+inline std::vector<uint8_t> exteriorWithGaps(
+    const std::vector<uint8_t> &line, int w, int h, int gap,
+    const std::vector<int> *lineDist = nullptr) {
+  std::vector<uint8_t> matte = computeMatte(line, w, h, gap, lineDist);
   for (auto &v : matte) v = !v;  // not matte = outside
   return matte;
 }
