@@ -2580,6 +2580,19 @@ int ZtoryModel::removeProjectShotsFromSource(const QString &sourceFile) {
   return before - (int)m_projectShots.size();
 }
 
+int ZtoryModel::renameStoryboardSource(const QString &from,
+                                       const QString &to) {
+  int moved = 0;
+  for (ProjectShot &ps : m_projectShots)
+    if (ps.source.compare(from, Qt::CaseInsensitive) == 0) {
+      ps.source = to;
+      ++moved;
+    }
+  for (QString &f : m_storyboardFiles)
+    if (f.compare(from, Qt::CaseInsensitive) == 0) f = to;
+  return moved;
+}
+
 QStringList ZtoryModel::collidingShotLabels(const QString &sourceFile) const {
   // ⚠️ Solo gli shot che vengono da scene che sono ANCORA storyboard.
   // Una scena diventata personaggio (o shot) lascia dietro di se' gli shot che

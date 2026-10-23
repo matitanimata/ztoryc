@@ -860,6 +860,9 @@ public:
   // un progetto finisce con quattro SH010 di quattro file diversi.
   // Ritorna quanti ne ha tolti. Non salva: salva chi chiama.
   int removeProjectShotsFromSource(const QString &sourceFile);
+  // Ztoryc: an unlocked storyboard's new version takes over its shots (same
+  // uuids, same Kitsu ids). Returns how many moved.
+  int renameStoryboardSource(const QString &from, const QString &to);
   // Upsert scene shots (m_shots) into m_projectShots keyed by uuid; sourceFile
   // is the .tnz basename.  Preserves existing task progress; initialises tasks
   // for new shots from the scene's current task state. Removes shots whose
@@ -1160,7 +1163,6 @@ public:
   // on the model makes all panels agree. true = Auto (renumber all on insert),
   // false = Keep (preserve existing labels, midpoint the new shot).
   bool autoRenumber() const { return m_autoRenumber; }
-  bool storyboardLocked() const { return m_numberingConfig.storyboardLocked; }
   void setAutoRenumber(bool on) { m_autoRenumber = on; }
 
   // Assign shotLabel + orderIndex to shot at si using the midpoint algorithm.

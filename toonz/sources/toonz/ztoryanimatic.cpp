@@ -1,6 +1,7 @@
 
 #include "ztorymaingate.h"  // kInsideShotColor
 #include "ztoryanimatic.h"
+#include "ztorystoryboardlock.h"
 #include "toonzqt/ztorytheme.h"
 #include "ztorylightgizmo.h"
 #include "viewerpane.h"
@@ -2935,6 +2936,9 @@ void ZtoryAnimaticTrack::mousePressEvent(QMouseEvent *e) {
     setCursor(Qt::SizeVerCursor);
     return;
   }
+  // Ztoryc: a locked (approved) storyboard's clips are not moved, trimmed or
+  // cut; the grip above only sizes the track.
+  if (e->button() == Qt::LeftButton && ZtoryStoryboardLock::refuse()) return;
   int mx = e->x() - kLabelW;
   // Lock button hit-test in label area
   if (mx < 0) {
@@ -6733,6 +6737,7 @@ void ZtoryAnimaticPanel::onCopyShots() {
 // Cut = immediate: shot disappears right away; TXshLevel kept alive in cutLevel
 // so paste can restore sub-scene content without loss.
 void ZtoryAnimaticPanel::onCutShots() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // Structural op: works from inside a sub-scene by closing it first — the
   // same Cut as the Board's (step 5): the clip carries the shot's data (from
   // the model, so no Board is needed) and the Delete drops the orphan levels.
@@ -6762,6 +6767,7 @@ void ZtoryAnimaticPanel::onCutShots() {
 
 
 void ZtoryAnimaticPanel::onPasteShots() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   const auto &clip = ZtoryModel::instance()->sharedClip();
   if (clip.empty()) return;
   // Structural op: closes any open sub-scene below, then pastes into the main
@@ -6794,6 +6800,7 @@ void ZtoryAnimaticPanel::onPasteShots() {
 }
 
 void ZtoryAnimaticPanel::onDeleteShots() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   const std::set<int> *selPtr = &m_track->selectedCols();
   const std::set<int> &shared = ZtoryModel::instance()->sharedSelection();
   if (selPtr->empty() && !shared.empty()) selPtr = &shared;
@@ -6824,6 +6831,7 @@ void ZtoryAnimaticPanel::onDeleteShots() {
 
 // Cmd+D: puts selected shots in clipboard as clones; Cmd+V inserts them.
 void ZtoryAnimaticPanel::onCloneShots() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // Non-destructive: read from the MAIN xsheet (top) without leaving edit mode.
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   if (!scene) return;
@@ -7024,6 +7032,7 @@ void ZtoryAnimaticPanel::onShotClicked(int col) {
 }
 
 void ZtoryAnimaticPanel::onShotDoubleClicked(int col) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // On the shot you are inside: back to the animatic (ztorymodel.h).
   if (ztoryIsInsideShot(col)) {
     ztoryExitShot();
@@ -7084,6 +7093,7 @@ void ZtoryAnimaticPanel::onReturnToMain() {
 }
 
 void ZtoryAnimaticPanel::onShotMoved(int col, int newStartFrame) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // NOTE: this signal fires after resequenceXsheet() has already run, so
   // delta computation from getRange() would always be 0.  Audio shifting
   // on ripple is handled directly inside onShotDurationChanged().
@@ -7438,6 +7448,7 @@ std::vector<TXshLevelP> mergeShotColumns(std::vector<int> cols,
 }  // namespace ZtoryShotOps
 
 void ZtoryAnimaticPanel::onMergeShots() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
   before = ztoryCaptureShotSnapshot();  // from the model (step 6)
@@ -7476,6 +7487,7 @@ void ZtoryAnimaticPanel::onMergeShots() {
 
 // ---- Add Shot ----
 void ZtoryAnimaticPanel::onAddShot() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   if (!ZtoryModel::assertMainXsheet(/*showWarning=*/false)) {
     // Inside a sub-scene: instead of refusing with a warning, behave like the
     // global New Shot After Current — add after the shot being edited and
@@ -7521,6 +7533,7 @@ void ZtoryAnimaticPanel::onAddShot() {
 }
 
 void ZtoryAnimaticPanel::onMergeWithNext(int col) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   if (!ZtoryModel::assertMainXsheet(/*showWarning=*/true)) return;
 
   StoryboardPanel *board = findBoardPanel();
@@ -7548,6 +7561,7 @@ void ZtoryAnimaticPanel::onMergeWithNext(int col) {
 // Helper: log column range to debug file
 
 void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   if (!ZtoryModel::assertMainXsheet(/*showWarning=*/true)) return;
 
   // A razor cut does not move any absolute frame position (shot 1 keeps its
@@ -7731,6 +7745,7 @@ void ZtoryAnimaticPanel::onRazorRequested(int col, int splitFrame) {
 }
 
 void ZtoryAnimaticPanel::onAudioRazorRequested(int col, int frame) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // Audio lives in the MAIN xsheet only and this handler operates on it
   // explicitly (controller->mainXsheet()), so the razor is allowed even while
   // a shot's sub-scene is open — handy for trimming/moving the guide audio
@@ -7767,6 +7782,7 @@ void ZtoryAnimaticPanel::onAudioRazorRequested(int col, int frame) {
 void ZtoryAnimaticPanel::onSegmentDroppedOutside(int srcCol, int origR0,
                                                   int origR1, int dragOffset,
                                                   QPoint globalPos) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // Find the target audio track under the drop position
   ZtoryAudioTrack *target = nullptr;
   for (auto *at : m_audioTracks) {
@@ -7848,6 +7864,7 @@ void ZtoryAnimaticPanel::onSegmentDroppedOutside(int srcCol, int origR0,
 // Resize colA and colB symmetrically so the seam moves without changing total
 // animatic duration.  resequenceXsheet() re-packs the columns afterwards.
 void ZtoryAnimaticPanel::onRollEdit(int colA, int newDurA, int colB, int newDurB) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   StoryboardPanel *board = findBoardPanel();
   ZtoryBoardSnap before;
   before = ztoryCaptureShotSnapshot();  // from the model (step 6)
@@ -8060,6 +8077,7 @@ public:
 // can work on the dissolve content.  A SoundText column (XD-out / XD-in) marks
 // the extra frames visually in SHOTEDITOR.
 void ZtoryAnimaticPanel::onTransitionChanged(int colA, int colB, int frames) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene) return;
@@ -8286,6 +8304,7 @@ void ZtoryAnimaticPanel::undoRedoTransition(int colA, int colB, int frames) {
 }
 
 void ZtoryAnimaticPanel::onShotDurationChanged(int col, int newF1) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // Belt-and-suspenders: if newF1 somehow arrives < 0 the duration becomes
   // 0 or negative and removeCells() would wipe the entire column — i.e.
   // delete the shot's cells from the main xsheet.  The drag math already
@@ -8619,6 +8638,7 @@ void ZtoryAnimaticPanel::resequenceXsheet() {
 }
 
 void ZtoryAnimaticPanel::onMatchSubsceneDuration(int col) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   TApp *app = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
   if (!scene) return;

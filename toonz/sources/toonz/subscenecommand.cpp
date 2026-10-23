@@ -63,6 +63,7 @@ static QMap<TXsheet*, QPair<int,int>> s_frameRangeMap;
 #include "cellselection.h"
 #include "expressionreferencemanager.h"
 
+#include "ztorystoryboardlock.h"
 #include "subscenecommand.h"
 
 //*****************************************************************************
@@ -1150,6 +1151,9 @@ public:
 //=============================================================================
 
 void openSubXsheet() {
+  // Ztoryc: a locked (approved) storyboard only exports — its shots are not
+  // entered, so nothing in them is drawn or animated.
+  if (ZtoryStoryboardLock::refuse()) return;
   TApp *app = TApp::instance();
   /*- Enter only when ChildLevel exists in selected cell or selected column -*/
   TCellSelection *cellSelection =

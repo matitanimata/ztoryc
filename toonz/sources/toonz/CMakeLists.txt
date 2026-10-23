@@ -112,6 +112,7 @@ set(MOC_HEADERS
     ztorylocks.h
     ztoryinstance.h
     ztoryshotops.h
+    ztorystoryboardlock.h
     ztorytaskflow.h
     ztorycharacterreview.h
     ztorykitsusync.h
@@ -286,6 +287,7 @@ set(SOURCES
     ztorylocks.cpp
     ztoryinstance.cpp
     ztoryshotops.cpp
+    ztorystoryboardlock.cpp
     ztorytaskflow.cpp
     ztorycharacterreview.cpp
     ztorykitsusync.cpp

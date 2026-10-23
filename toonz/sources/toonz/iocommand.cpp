@@ -1,6 +1,7 @@
 #include <memory>
 
 #include "iocommand.h"
+#include "ztorystoryboardlock.h"
 #include "ztorymaingate.h"
 #include "xsheetdragtool.h"  // isOutputSyncedWithPlayRange
 
@@ -1472,6 +1473,11 @@ IoCmd::ConvertingPopup::~ConvertingPopup() {}
 //---------------------------------------------------------------------------
 
 bool IoCmd::saveSceneIfNeeded(QString msg) {
+  // Ztoryc: a locked storyboard cannot be saved, so there is nothing to ask —
+  // asking would only end in a refusal, and closing would be blocked.
+  if (ZtoryStoryboardLock::isLocked() &&
+      !ZtoryStoryboardLock::SaveBypass::active())
+    return true;
   TApp *app = TApp::instance();
   bool changesDiscarded = false;  // Ztoryc: see offerWfaOnClose below
 
@@ -1670,6 +1676,16 @@ bool IoCmd::saveScene(const TFilePath &path, int flags) {
   TApp *app          = TApp::instance();
 
   assert(!path.isEmpty());
+
+  // Ztoryc: nothing is saved over a locked (approved) storyboard. Saving it
+  // elsewhere, or a sub-scene to its own file, is an export and goes through.
+  if (!saveSubxsheet && ZtoryStoryboardLock::isLocked()) {
+    ToonzScene *current = app->getCurrentScene()->getScene();
+    if (current->decodeFilePath(path) ==
+            current->decodeFilePath(current->getScenePath()) &&
+        ZtoryStoryboardLock::refuse(isAutosave))
+      return false;
+  }
   TFilePath scenePath                      = path;
   if (scenePath.getType() == "") scenePath = scenePath.withType("tnz");
   if (scenePath.getType() != "tnz") {
@@ -1971,6 +1987,7 @@ bool IoCmd::saveLevel() {
 bool IoCmd::saveLevel(const TFilePath &fp, TXshSimpleLevel *sl,
                       bool overwrite) {
   assert(sl);
+  if (ZtoryStoryboardLock::refuse()) return false;  // locked: export only
   bool fileDoesExist = TSystem::doesExistFileOrLevel(fp);
   if (!overwrite && fileDoesExist) {
     QString question;
@@ -2068,6 +2085,7 @@ bool IoCmd::saveLevel(TXshSimpleLevel *sl) {
 //---------------------------------------------------------------------------
 
 bool IoCmd::saveAll(int flags) {
+  if (ZtoryStoryboardLock::refuse((flags & AUTO_SAVE) != 0)) return false;
   // try to save as much as possible
   // if anything is wrong, return false
   // NOTE: saveScene already check saveInProgress
@@ -2104,6 +2122,7 @@ bool IoCmd::saveAll(int flags) {
 //---------------------------------------------------------------------------
 
 void IoCmd::saveNonSceneFiles() {
+  if (ZtoryStoryboardLock::refuse(true)) return;  // locked: export only
   // try to save non scene files
 
   TApp *app         = TApp::instance();

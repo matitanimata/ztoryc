@@ -1,4 +1,5 @@
 #include "ztorykitsusync.h"
+#include "ztorystoryboardlock.h"
 
 #include "ztoryassetpreview.h"
 #include "ztorymodel.h"
@@ -940,7 +941,7 @@ void ZtoryKitsuSync::advance(bool ok, const QString &msg) {
     // Not locked yet: the storyboard's names win on Kitsu too.
     kc->pushShots(m->kitsuProjectId(), m->episode(),
                   m->productionType() == "tvshow", shots,
-                  !m->storyboardLocked());
+                  !ZtoryStoryboardLock::isLocked());
     return;
   }
   case 2: {

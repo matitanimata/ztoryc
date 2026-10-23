@@ -1,6 +1,7 @@
 #include "ztorymaingate.h"  // kInsideShotColor, currentShotName
 #include "toonzqt/ztorytheme.h"
 #include "storyboardpanel.h"
+#include "ztorystoryboardlock.h"
 #include "ztoryshotops.h"
 #include "ztorysceneclass.h"
 #include "ztorytaskflow.h"
@@ -1830,13 +1831,17 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   });
   connect(m_numberingCombo, QOverload<int>::of(&QComboBox::activated),
           this, &StoryboardPanel::onNumberingChanged);
-  connect(m_lockBoardBtn, &QToolButton::toggled, this, [this](bool on) {
-    NumberingConfig cfg  = ZtoryModel::instance()->numberingConfig();
-    if (cfg.storyboardLocked == on) return;
-    cfg.storyboardLocked = on;
-    ZtoryModel::instance()->setNumberingConfig(cfg);
+  // Locking checks the approvals and saves the file locked; unlocking asks
+  // for the file name and opens a new version (ZtoryStoryboardLock). The
+  // button shows the file's state whatever the dialog answered.
+  connect(m_lockBoardBtn, &QToolButton::clicked, this, [this]() {
+    if (ZtoryStoryboardLock::isLocked())
+      ZtoryStoryboardLock::unlock(this);
+    else {
+      markShotDocumentChanged();
+      ZtoryStoryboardLock::lock(this);
+    }
     updateNumberingLock();
-    markShotDocumentChanged();
   });
   connect(m_numberingBtn, &QToolButton::clicked,
           this, &StoryboardPanel::onNumberingConfig);
@@ -4560,6 +4565,7 @@ void StoryboardPanel::onModelResequenced() {
 }
 
 void StoryboardPanel::onMergeShots() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   auto before = captureSnapshot();
 
   // The xsheet columns to merge: own selection (>= 2 shots), else the shared
@@ -5329,6 +5335,7 @@ void StoryboardPanel::onCopyShot() {
 }
 
 void StoryboardPanel::onCutShot() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // Immediate cut: the clip keeps the shot's data and its sub-scene alive, then
   // the shot is deleted (onDeleteShot: the same Delete as the Animatic's).
   ZtoryShotOps::closeSubScenes();
@@ -5347,6 +5354,7 @@ void StoryboardPanel::onCutShot() {
 }
 
 void StoryboardPanel::onCloneShot() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // Non-destructive, like Copy: the artist stays in the shot being drawn.
   std::set<int> indices = m_selectedIndices;
   if (indices.empty() && m_selectedShotIndex >= 0) indices.insert(m_selectedShotIndex);
@@ -5365,6 +5373,7 @@ void StoryboardPanel::onCloneShot() {
 
 
 void StoryboardPanel::onPasteShot() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // The shared clipboard is the single source of truth (written by both Board
   // and Animatic copy/cut/clone). Paste delegates to the shared xsheet op, then
   // rebuilds the Board from the scene — same flow as ZtoryAnimaticPanel::onPasteShots.
@@ -5689,6 +5698,7 @@ void UndoBoardState::redo() const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void StoryboardPanel::onDeleteShot() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // Raccogli indici da cancellare (selezione multipla o singola)
   std::vector<int> toDelete(m_selectedIndices.begin(), m_selectedIndices.end());
   if (toDelete.empty() && m_selectedShotIndex >= 0) toDelete.push_back(m_selectedShotIndex);
@@ -5739,6 +5749,7 @@ void StoryboardPanel::onDeleteShot() {
 }
 
 void StoryboardPanel::onAddShot() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   auto before = captureSnapshot();
 
   // Enforce Keep numbering if shots already live in Kitsu, so this insert can't
@@ -5797,6 +5808,7 @@ void StoryboardPanel::onAddShot() {
 }
 
 void StoryboardPanel::onEditShot(int shotIdx) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   // On the shot you are inside: back to the animatic (ztorymodel.h).
   if (m_shots[shotIdx].data &&
@@ -5850,6 +5862,7 @@ void StoryboardPanel::onLightPlaced(int shotIdx, int panelIdx,
                                     double tailX, double tailY,
                                     double tipX, double tipY,
                                     double depth, double spread) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   Shot &shot = m_shots[shotIdx];
   if (panelIdx < 0 || panelIdx >= (int)shot.data->panels.size()) return;
@@ -5871,6 +5884,7 @@ void StoryboardPanel::onLightPlaced(int shotIdx, int panelIdx,
 }
 
 void StoryboardPanel::onLightRemoved(int shotIdx, int panelIdx) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   Shot &shot = m_shots[shotIdx];
   if (panelIdx < 0 || panelIdx >= (int)shot.data->panels.size()) return;
@@ -5886,6 +5900,7 @@ void StoryboardPanel::onLightRemoved(int shotIdx, int panelIdx) {
 }
 
 void StoryboardPanel::onMatchDuration(int shotIdx) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // Resize the main xsheet column to match the sub-scene's actual frame count.
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   auto before = captureSnapshot();
@@ -6107,6 +6122,7 @@ void StoryboardPanel::onFollowFrameChanged() {
 }
 
 void StoryboardPanel::onDurationChanged(int shotIdx, int panelIdx, int frames) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   if (panelIdx < 0 || panelIdx >= (int)m_shots[shotIdx].data->panels.size()) return;
   // Capture "before" only on the first change in a coalescing window.
@@ -6154,6 +6170,7 @@ void StoryboardPanel::commitTextUndo() {
 }
 
 void StoryboardPanel::onMoveShot(int fromShot, int toShot) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   if (!ZtoryModel::assertMainXsheet(true)) return;   // warn: exit edit mode first
   if (fromShot == toShot) return;
   if (fromShot < 0 || fromShot >= (int)m_shots.size()) return;
@@ -6294,6 +6311,7 @@ void StoryboardPanel::onPanelNavRequested(int shotIdx, int delta) {
 }
 
 void StoryboardPanel::onNumberingChanged(int comboIndex) {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   if (comboIndex == 0) {
     ZtoryModel::instance()->setAutoRenumber(true);
     // Non rinumera subito - lo farà al prossimo addShot
@@ -6317,18 +6335,22 @@ void StoryboardPanel::updateNumberingLock() {
   // would shift them (SH020→SH030…) — and new shots get a letter suffix.
   // Shots in Kitsu no longer lock by themselves: they are linked by id, and
   // until the lock a push renames them there too.
-  const bool lock = ZtoryModel::instance()->storyboardLocked();
+  const bool lock = ZtoryStoryboardLock::isLocked();
+  // Locked: Dialog, Action and Notes read only — nothing could save them.
+  for (PanelWidget *pw : findChildren<PanelWidget *>())
+    for (QTextEdit *field : pw->textFields()) field->setReadOnly(lock);
   if (m_lockBoardBtn) {
     m_lockBoardBtn->blockSignals(true);
     m_lockBoardBtn->setChecked(lock);
     m_lockBoardBtn->blockSignals(false);
     m_lockBoardBtn->setIcon(createQIcon(lock ? "ztoryc_lock_on" : "ztoryc_lock"));
     m_lockBoardBtn->setToolTip(
-        lock ? tr("Storyboard locked (approved): numbering frozen to Keep #, "
-                  "shot names kept on Kitsu. Click to unlock.")
-             : tr("Lock Storyboard: freeze the numbering once the board is "
-                  "approved. Until then shots can be reordered and renumbered, "
-                  "and a Kitsu push renames them there too."));
+        lock ? tr("Storyboard locked (approved): it can only be exported. "
+                  "Click to unlock: a new version is created.")
+             : tr("Lock Storyboard, once every shot's Storyboard task is "
+                  "approved: the file then only exports. Until then shots can "
+                  "be reordered and renumbered, and a Kitsu push renames them "
+                  "there too."));
   }
   if (lock) {
     ZtoryModel::instance()->setAutoRenumber(false);
@@ -6353,6 +6375,7 @@ void StoryboardPanel::updateNumberingLock() {
 }
 
 void StoryboardPanel::onNumberingConfig() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   // Inline dialog for configuring the project's shot numbering scheme.
   NumberingConfig &cfg = ZtoryModel::instance()->numberingConfig();
 
@@ -6998,6 +7021,7 @@ static void removeExportColumns(TXsheet *childXsh, QList<int> cols) {
 // nessuno le toglie dopo.
 //-----------------------------------------------------------------------------
 void StoryboardPanel::onLipSyncShots() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   const QString why = ZtoryLipSync::unavailableReason();
   if (!why.isEmpty()) {
     QMessageBox::warning(this, tr("Generate Lip Sync Columns"), why);
@@ -7153,6 +7177,8 @@ void StoryboardPanel::onLipSyncShots() {
 //-----------------------------------------------------------------------------
 
 void StoryboardPanel::onExportShots() {
+  // Exports work on a locked storyboard too, entering shots if they must.
+  ZtoryStoryboardLock::SaveBypass exporting;
   if (m_shots.empty()) {
     QMessageBox::information(this, tr("Export Shots"), tr("No shots to export."));
     return;
@@ -7669,6 +7695,8 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
 //-----------------------------------------------------------------------------
 
 void StoryboardPanel::onExportShotsToProject() {
+  // Exports work on a locked storyboard too, entering shots if they must.
+  ZtoryStoryboardLock::SaveBypass exporting;
   if (m_shots.empty()) {
     QMessageBox::information(this, tr("Export Shots to New Project"),
                              tr("No shots to export."));
@@ -8604,6 +8632,8 @@ bool writeAnimaticXmeml(const QString &path, const QString &projectName,
 }  // namespace
 
 void StoryboardPanel::onExportAnimatic() {
+  // Exports work on a locked storyboard too, entering shots if they must.
+  ZtoryStoryboardLock::SaveBypass exporting;
   if (m_shots.empty()) {
     QMessageBox::information(this, tr("Export Animatic"), tr("No shots to export."));
     return;
@@ -9422,6 +9452,8 @@ static QString resolvePdfLogoFile(const QString &logoPath, ToonzScene *scene) {
 }
 
 void StoryboardPanel::onExportPdf() {
+  // Exports work on a locked storyboard too, entering shots if they must.
+  ZtoryStoryboardLock::SaveBypass exporting;
   if (m_shots.empty()) {
     QMessageBox::information(this, tr("Export PDF"), tr("No shots to export."));
     return;
@@ -9879,6 +9911,8 @@ void StoryboardPanel::onExportPdf() {
 //-----------------------------------------------------------------------------
 
 void StoryboardPanel::onExportSpreadsheet() {
+  // Exports work on a locked storyboard too, entering shots if they must.
+  ZtoryStoryboardLock::SaveBypass exporting;
   if (m_shots.empty()) {
     QMessageBox::information(this, tr("Export Spreadsheet"),
                             tr("No shots to export."));
@@ -10159,6 +10193,8 @@ void StoryboardPanel::onExportSpreadsheet() {
 //-----------------------------------------------------------------------------
 
 void StoryboardPanel::onExportSpreadsheetCsv() {
+  // Exports work on a locked storyboard too, entering shots if they must.
+  ZtoryStoryboardLock::SaveBypass exporting;
   if (m_shots.empty()) {
     QMessageBox::information(this, tr("Export Spreadsheet CSV"),
                             tr("No shots to export."));
@@ -10255,6 +10291,7 @@ void StoryboardPanel::onExportSpreadsheetCsv() {
 //-----------------------------------------------------------------------------
 
 void StoryboardPanel::onStoryboardSettings() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   ZtoryModel *model = ZtoryModel::instance();
   QDialog dlg(this);
   dlg.setWindowTitle(tr("Storyboard Settings"));
@@ -10339,6 +10376,7 @@ void StoryboardPanel::onStoryboardSettings() {
 //-----------------------------------------------------------------------------
 
 void StoryboardPanel::onSetTechnique() {
+  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
   std::vector<int> sel(m_selectedIndices.begin(), m_selectedIndices.end());
   if (sel.empty() && m_selectedShotIndex >= 0) sel.push_back(m_selectedShotIndex);
   if (sel.empty()) {

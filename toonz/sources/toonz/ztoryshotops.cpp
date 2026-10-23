@@ -1,4 +1,5 @@
 #include "ztoryshotops.h"
+#include "ztorystoryboardlock.h"
 #include "columncommand.h"
 #include "toonzqt/menubarcommand.h"
 
@@ -667,7 +668,7 @@ TXshChildLevel *insertNewShot(int insertCol, int duration) {
   TXsheet *xsh      = scene ? scene->getChildStack()->getTopXsheet() : nullptr;
   if (!xsh) return nullptr;
   ZtoryModel *model = ZtoryModel::instance();
-  if (model->storyboardLocked()) model->setAutoRenumber(false);
+  if (ZtoryStoryboardLock::isLocked()) model->setAutoRenumber(false);
   TXshLevel *xl = scene->createNewLevel(CHILD_XSHLEVEL);
   if (!xl || !xl->getChildLevel()) return nullptr;
   TXshChildLevel *cl = xl->getChildLevel();
