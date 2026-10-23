@@ -41,6 +41,7 @@ typedef std::pair<int, std::string> EntryKey;  // style id, brush kind
 
 struct Twin {
   QDateTime m_modified;
+  TFilePath m_level;  // the level (or palette) the twin sits beside
   // A file that could not be read is never overwritten: what it held would
   // be lost with it.
   bool m_unreadable = false;
@@ -62,7 +63,7 @@ TTool::Application *app() { return TTool::getApplication(); }
 // The file next to the palette the brushes draw with. Only level palettes and
 // the scene's full-colour palette have a file of their own to sit beside;
 // anything else (a studio palette being edited) gives an empty path.
-TFilePath twinPath(int &styleId) {
+TFilePath twinPath(int &styleId, TFilePath *level = nullptr) {
   styleId = -1;
   if (!app()) return TFilePath();
   TPaletteHandle *ph = app()->getPaletteController()->getCurrentLevelPalette();
@@ -77,11 +78,11 @@ TFilePath twinPath(int &styleId) {
   else if (TXshSimpleLevel *sl = app()->getCurrentLevel()->getSimpleLevel()) {
     if (sl->getPalette() == palette) fp = scene->decodeFilePath(sl->getPath());
   }
-  // A level not saved yet has only a provisional path (the project's sandbox
-  // for an untitled scene): a twin written there stays behind when the level
-  // is saved, and the next level of that name inherits it (review of
-  // 2026-10-23). Its styles remember once the level is on disk.
-  if (fp.isEmpty() || !TSystem::doesExistFileOrLevel(fp)) return TFilePath();
+  if (fp.isEmpty()) return fp;
+  if (level) *level = fp;
+  // A level not saved yet remembers in memory all the same; its file is
+  // written once the level is on disk (saveDirty), so no twin is left behind
+  // at a provisional path (review of 2026-10-23).
   return fp.withType("brushes");  // as the .zmouth: TXshSimpleLevel twins
 }
 
@@ -100,21 +101,12 @@ std::shared_ptr<TPersist> newBrushData(const std::string &kind) {
   return nullptr;
 }
 
-// Read again whenever the file changed on disk: a level copied or replaced
-// meanwhile brings its own twin.
-Twin &twin(const TFilePath &fp) {
-  Twin &t                  = s_twins[fp.getWideString()];
-  const QDateTime modified = modifiedTime(fp);
-  if (t.m_modified == modified) return t;
-
-  t.m_entries.clear();
-  t.m_modified   = modified;
-  t.m_unreadable = false;
-  if (modified.isNull()) return t;
-
+// The entries of a twin file; false when it cannot be read.
+bool readEntries(const TFilePath &fp,
+                 std::map<EntryKey, std::shared_ptr<TPersist>> &entries) {
   try {
     TIStream is(fp);
-    if (!is) return t;
+    if (!is) return false;
     std::string tagName;
     while (is.matchTag(tagName)) {
       if (tagName != "styles") {
@@ -135,14 +127,29 @@ Twin &twin(const TFilePath &fp) {
           continue;
         }
         is >> *data;
-        t.m_entries[EntryKey(id, kind)] = data;
+        entries[EntryKey(id, kind)] = data;
         is.matchEndTag();
       }
       is.matchEndTag();
     }
   } catch (...) {
-    t.m_unreadable = true;
+    return false;
   }
+  return true;
+}
+
+// Read again whenever the file changed on disk: a level copied or replaced
+// meanwhile brings its own twin. Not while changes wait to be written: they
+// are newer than the file.
+Twin &twin(const TFilePath &fp) {
+  Twin &t                  = s_twins[fp.getWideString()];
+  const QDateTime modified = modifiedTime(fp);
+  if (t.m_modified == modified || s_dirty.count(fp.getWideString())) return t;
+
+  t.m_entries.clear();
+  t.m_modified   = modified;
+  t.m_unreadable = false;
+  if (!modified.isNull()) t.m_unreadable = !readEntries(fp, t.m_entries);
   return t;
 }
 
@@ -180,12 +187,27 @@ void save(const TFilePath &fp, Twin &t) {
   t.m_modified = modifiedTime(fp);
 }
 
+// Writes the twins whose level is on disk; the others wait for its save.
 void saveDirty() {
+  std::set<std::wstring> waiting;
   for (const std::wstring &path : s_dirty) {
     const TFilePath fp(path);
-    save(fp, twin(fp));
+    Twin &t = s_twins[path];
+    if (!t.m_level.isEmpty() && !TSystem::doesExistFileOrLevel(t.m_level)) {
+      waiting.insert(path);
+      continue;
+    }
+    // A file that appeared meanwhile (the default palette's brushes given to
+    // a level at its first save) keeps the styles memory has not touched.
+    if (modifiedTime(fp) != t.m_modified && TFileStatus(fp).doesExist()) {
+      std::map<EntryKey, std::shared_ptr<TPersist>> onDisk;
+      if (readEntries(fp, onDisk))
+        for (auto &entry : onDisk) t.m_entries.insert(entry);
+    }
+    save(fp, t);
   }
-  s_dirty.clear();
+  s_dirty.swap(waiting);
+  if (!s_dirty.empty()) s_saveTimer->start(5000);
 }
 
 //=============================================================================
@@ -252,7 +274,7 @@ public:
     std::shared_ptr<TPersist> data = client->presetData(name);
     if (!data) return;
     const std::string k = kind.toStdString();
-    BrushStyleMemory::remember(k, data);
+    BrushStyleMemory::remember(k, data, true);
     if (client == currentClient())
       client->applyStyleBrush(data.get());
     else
@@ -282,7 +304,6 @@ void ensureWatcher() {
 
   s_saveTimer = new QTimer(watcher);
   s_saveTimer->setSingleShot(true);
-  s_saveTimer->setInterval(500);
   QObject::connect(s_saveTimer, &QTimer::timeout, watcher, saveDirty);
 
 
@@ -302,17 +323,27 @@ void ensureWatcher() {
 //=============================================================================
 
 void BrushStyleMemory::remember(const std::string &kind,
-                                std::shared_ptr<TPersist> brush) {
+                                std::shared_ptr<TPersist> brush, bool force) {
   int styleId;
-  const TFilePath fp = twinPath(styleId);
+  TFilePath level;
+  const TFilePath fp = twinPath(styleId, &level);
   if (fp.isEmpty() || styleId < 0 || !brush) return;
-  twin(fp).m_entries[EntryKey(styleId, kind)] = brush;
-  s_lastSeen[kind] = std::make_pair(fp.getWideString(), styleId);
+  const std::pair<std::wstring, int> current(fp.getWideString(), styleId);
+  // Only on the style this brush already took on: right after a style
+  // switch the tool can report an option change while it still holds the
+  // previous style's brush, and that brush must not be written on the new
+  // style (Franco, 2026-10-23: «the next styles take the same size»).
+  if (!force && !(s_lastSeen.count(kind) && s_lastSeen[kind] == current))
+    return;
+  Twin &t                                = twin(fp);
+  t.m_level                              = level;
+  t.m_entries[EntryKey(styleId, kind)]   = brush;
+  s_lastSeen[kind]                       = current;
 
   // A slider sends a change at every step: write once it settles.
   s_dirty.insert(fp.getWideString());
   ensureWatcher();
-  s_saveTimer->start();
+  s_saveTimer->start(500);
 }
 
 //-----------------------------------------------------------------------------
@@ -329,10 +360,14 @@ void BrushStyleMemory::applyTo(BrushPresetClient *client) {
   s_lastSeen[kind] = seen;
   if (fp.isEmpty() || styleId < 0) return;
 
-  // A style never drawn with keeps the brush as it is.
+  // A style seen for the first time takes the brush as it is, and keeps it
+  // from now on: what is changed on another style no longer reaches it.
   Twin &t = twin(fp);
   auto it = t.m_entries.find(EntryKey(styleId, kind));
-  if (it == t.m_entries.end()) return;
+  if (it == t.m_entries.end()) {
+    client->storeStyleBrush();
+    return;
+  }
   client->applyStyleBrush(it->second.get());
   notifyChanged();
 }

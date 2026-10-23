@@ -44,6 +44,8 @@ public:
 
   //! Applies the settings a style remembers.
   virtual void applyStyleBrush(const TPersist *data) = 0;
+  //! Stores the current settings for the current style.
+  virtual void storeStyleBrush() = 0;
 };
 
 //=============================================================================
@@ -53,7 +55,10 @@ public:
 namespace BrushStyleMemory {
 
 //! Stores the brush settings for the current style of the current palette.
-void remember(const std::string &kind, std::shared_ptr<TPersist> brush);
+//! force: also when the brush has not taken on that style yet (a preset
+//! applied from the Style Editor).
+void remember(const std::string &kind, std::shared_ptr<TPersist> brush,
+              bool force = false);
 
 //! When the current style differs from the last one this brush saw, applies
 //! what that style remembers.

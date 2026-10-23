@@ -183,7 +183,7 @@ public:
   // (BrushStyleMemory); these read and write the settings apart from presets.
   void loadPresetData(const BrushData &preset);
   BrushData currentBrushData(const std::wstring &name);
-  void storeStyleBrush();
+  void storeStyleBrush() override;
 
   // BrushPresetClient
   std::string brushKind() const override { return "smartraster"; }
