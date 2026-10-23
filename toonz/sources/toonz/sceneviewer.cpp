@@ -58,6 +58,7 @@
 #include "toonz/palettecontroller.h"
 #include "toonz/tpalettehandle.h"
 #include "toonz/childstack.h"
+#include "toonz/textureutils.h"
 #include "toonz/dpiscale.h"
 #include "toonz/txshlevel.h"
 #include "toonz/txshlevelcolumn.h"
@@ -2371,6 +2372,19 @@ void SceneViewer::drawScene() {
   ChildStack *childStack = scene->getChildStack();
   bool editInPlace       = (editInPlaceToggle.getStatus() || m_alwaysMainXsheet) &&
                      !fh->isEditingLevel();
+
+  // A sub-scene deformed by a Plastic mesh in its parent is drawn from a
+  // texture cached per xsheet, and edits made inside it never reach that
+  // texture: only leaving the sub-scene rebuilt it (TXsheetHandle::setXsheet).
+  // While editing in place, drop the textures of the open path so the context
+  // follows the work. Not during playback, where the cache is the point.
+  if (editInPlace && !m_alwaysMainXsheet && !fh->isPlaying() &&
+      childStack->getAncestorCount() > 0) {
+    texture_utils::invalidateTextures(xsh);
+    for (int i = 1; i < childStack->getAncestorCount(); ++i)
+      if (AncestorNode *node = childStack->getAncestorInfo(i))
+        texture_utils::invalidateTextures(node->m_xsheet);
+  }
 
   bool fillFullColorRaster = TXshSimpleLevel::m_fillFullColorRaster;
   TXshSimpleLevel::m_fillFullColorRaster = false;
