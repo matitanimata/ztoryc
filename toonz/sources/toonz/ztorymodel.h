@@ -355,7 +355,7 @@ struct BreakdownEntry {
 
 struct ProjectShot {
   QString uuid;
-  QString source;    // basename of the originating .tnz storyboard (e.g. "reel1.tnz")
+  QString source;    // the originating storyboard, by its sidecar name (e.g. "reel1.ztoryc")
   QString seq;       // e.g. "SQ010"
   QString label;     // e.g. "SH010"
   int     frames = 0;
@@ -861,7 +861,8 @@ public:
   // Ritorna quanti ne ha tolti. Non salva: salva chi chiama.
   int removeProjectShotsFromSource(const QString &sourceFile);
   // Ztoryc: an unlocked storyboard's new version takes over its shots (same
-  // uuids, same Kitsu ids). Returns how many moved.
+  // uuids, same Kitsu ids). Sources are sidecar names («reel1.ztoryc»).
+  // Returns how many moved.
   int renameStoryboardSource(const QString &from, const QString &to);
   // Upsert scene shots (m_shots) into m_projectShots keyed by uuid; sourceFile
   // is the .tnz basename.  Preserves existing task progress; initialises tasks

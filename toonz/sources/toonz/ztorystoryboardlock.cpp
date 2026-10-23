@@ -268,7 +268,11 @@ bool unlock(QWidget *parent) {
 
   // The new version takes over the shots in the Production Tracker (same
   // uuids, same Kitsu ids): otherwise it would read as a copy of the old one.
+  // The tracker names a storyboard by its sidecar («name.ztoryc»); the .tnz
+  // form is moved too, for entries written by older versions.
   ZtoryModel *m = ZtoryModel::instance();
+  m->renameStoryboardSource(QFileInfo(sidecarOf(src)).fileName(),
+                            QFileInfo(sidecarOf(dst)).fileName());
   m->renameStoryboardSource(name + ".tnz", newName + ".tnz");
   m->saveProjectDb();
 
