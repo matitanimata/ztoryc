@@ -158,6 +158,22 @@ degli status).
 
 ## 🎬 Ztoryc — storyboard, animatic, thumbs
 
+### 🆕 Aperti dopo la sessione del 23/10 (lock, pennelli per stile, palette e trattino basso — 0.19.0)
+
+- **Collaudi ancora da fare**: Custom Brushes da un preset fatto prima del 23/10 (senza icona, solo impostazioni);
+  palette di default con i pennelli → livello nuovo al primo salvataggio; Edit in Place con mesh su un
+  personaggio pesante (ridisegna la texture a ogni aggiornamento: se scatta, invalidare solo al rilascio);
+  push Kitsu con rinomina di shot che si scambiano il nome (la riprova in coda copre solo un giro).
+- **Lock, limiti noti**: il Board di uno storyboard locked mostra gli stati dalla sua copia nel `.ztoryc`, che
+  non si aggiorna (il tracker sì); la `_vN` copia i disegni ma condivide audio e altri riferimenti; nel Board
+  gli stati dei task non si vedono affatto (eventuale pallino per shot: funzione nuova, da decidere).
+- **Pennelli**: la memoria di un livello non salvato è legata al percorso provvisorio (se il livello si salva
+  altrove la memoria in sessione non lo segue); `selectPreset` senza chiamanti; metodi duplicati ×3 nei pennelli.
+- **Matte senza palette** nel progetto di test `kitsuTest01` (A/C/D/G_matte): da rigenerare se servono.
+- **Review 23/10 sera**: vedi `reviews/2026-10-23_reviewer.md` (secondo giro) per i non bloccanti.
+- **«Il mio Drive» sparito dalla vista** sul Mac durante la sessione: riavviare Google Drive prima di
+  «sessione chiusa» (i symlink di `~/ZtorYc` puntano lì).
+
 ### 🆕 Aperti dopo la sessione del 21/10 (chiavi, bocche, scheletro, controller — su master, pushato)
 
 - **Collaudi da fare** (installati, non provati da Franco):
@@ -175,8 +191,6 @@ degli status).
   spenta.
 - **Da decidere (Franco)**: un canale «Scale» globale del controller che moltiplichi H e V (voce nuova nel
   formato della scena); oggi la scala globale e' H = V.
-- **Review del 21/10 fatta inline** (limite settimanale): da ripassare con `ztoryc-reviewer` prima della 0.19.0
-  insieme a tutto il resto dalla 0.18.0.
 
 ### 🆕 Aperti dopo la sessione del 20/10 (assistenti e import FLA — pushato il 21/10)
 
@@ -185,19 +199,13 @@ degli status).
   e Linux gcc/clang): gli header `tsmartpointer.h`/`tvariant.h`/`tstringid.h` sostituiti con quelli OT
   (overload su 0/NULL, `operator bool`, `template class DVAPI TSmartPointerT<TGuideline>`), simboli DVAPI
   di tnztools usati da toonz; per il FLA zlib, `renameat2`/`RENAME_NOREPLACE`, `restartmanager.h`.
-- **Release dopo il Dell: 0.19.0 (minor)** — Franco: «c'e' parecchia roba nuova». Checklist dal punto 0:
-  review dei commit dalla 0.18.0; quelli di assistenti e FLA sono revisionati il 20/10
-  (`reviews/2026-10-20_*`). Nelle note: assistenti, Guides, replicatori, import FLA e i suoi limiti,
-  maschere che seguono le cartelle (cambia l'aspetto di scene esistenti con maschere in cartella),
-  opacita' delle colonne dentro gli shot che ora si vede nell'Animatic, formati nuovi (`.tzm`; PLI 151 e
-  scene 71.2-71.4 per i FLA; 71.2 anche per l'opacita' animata).
 - **Collaudi ancora da fare** (installato, non provato da Franco): pennello Smart Raster con stile MyPaint
   e le guide; replicatori + ⌘Z/⌘Y sullo Smart Raster a bordo morbido; correzioni della review assistenti
   (`e4438b008`: cambio strumento a meta' tratto, Magnetism un solo undo); FLA: Import as Columns, maschere
   nel viewer, istanze dopo inserimento/cancellazione celle + undo, import su un progetto in Drive;
   **maschere dentro cartelle** in viewer e render, e una scena vecchia con maschere identica a prima.
-- **FLA, limiti aperti** (review 20/10): rinomina atomica senza ripiego su Drive/NFS/exFAT (D8, l'import
-  puo' fallire con messaggio tecnico); livello importato chiamato sempre «scene» (D6); cartella extras
+- **FLA, limiti aperti** (review 20/10): ~~rinomina atomica senza ripiego (D8)~~ corretta su Windows il 23/10
+  con la copia verificata (`c7b7408f0`; Drive/NFS su Mac/Linux non provati); livello importato chiamato sempre «scene» (D6); cartella extras
   creata gia' alla scelta del file (D9); costo O(N) delle etichette in insert/remove/moveColumn e nel
   disegno delle celle; profondita' dei simboli annidati in un FLA ostile non verificata; le maschere FLA
   tengono la «portata» numerica (si potrebbero portare a cartelle: lavoro sull'importatore, non urgente).

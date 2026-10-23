@@ -1,3 +1,43 @@
+## [2026-10-23] — Lock Storyboard, pennelli per stile, palette sovrascritte dal trattino basso, 0.19.0
+
+### Added
+- **Lock Storyboard** (`46f1d30f8`, `0227618e0`, `a1b8d5be6`, `toonz/ztorystoryboardlock.*`): il lucchetto nel
+  Board si chiude solo con il task Storyboard di tutti gli shot in Done; da locked solo export (negli shot non
+  si entra, niente salvataggi sopra scena e livelli, autosave muto, niente domanda alla chiusura, Board e
+  Animatic rifiutano le modifiche, Dialog/Action/Notes in sola lettura; gli export passano). Unlock: si
+  riscrive il nome del file, nasce `nome_vN` (copia completa: livelli in una cartella loro, `.ztoryc`
+  sbloccato) che prende in carico gli shot nel tracker (stessi uuid e id Kitsu), in Keep #. Lo stato sta nel
+  `.ztoryc` della scena, non nel modello. Collaudato da Franco su Messina. Finché non è locked la numerazione
+  è libera anche con shot su Kitsu, e il push rinomina gli shot su Kitsu (riprova in coda sui nomi occupati).
+- **Ogni stile della palette ricorda il suo pennello** (`a2fd8e15f` … `c84ac99fe`, `tnztools/brushstylememory.*`):
+  `.brushes` accanto al livello; memoria anche per livelli non salvati (scritta quando il livello esiste);
+  uno stile mai usato parte dal pennello base del livello; nessuna scrittura su uno stile che il pennello non
+  ha ancora preso. Collaudato da Franco (persiste alla riapertura).
+- **Custom Brushes nello Style Editor** (`2a4038cb9`): riquadri in cima a Raster/Vector con l'icona dello
+  stile; un clic dà allo stile selezionato il pennello (colore suo) e le impostazioni; Settings ▸ Save Brush
+  as Preset. **Palette di default con i `.brushes`** (`7b64ff806`).
+- **Edit in Place** con personaggio con mesh aggiornato dal vivo (`6c6ea6fbb`). **Icone** Show Mesh e Keys
+  Follow Exposure (on/off) rifatte come le native (`4a36fd22e`). Quick toolbar con Toggle Main Audio e Keys
+  Follow (`0fb8da42a`).
+
+### Fixed
+- **Palette di un livello sovrascritta da un altro, dalla 0.10.0** (`ce9e2ebac`, `common/tsystem/tfilepath.cpp`):
+  `withFrame` usava `rfindFrameSep` ('_' e '-') per ogni tipo; `"P_matte.tlv".withNoFrame()` = `P.tlv`, la
+  matte salvava la palette in `P.tpl` (Cascina). Ora '_' e '-' solo per i tipi sequenza, come Tahoma. Danno
+  solo con nomi che collidono: nei progetti di Franco 5 matte senza `.tpl` (Cascina P_matte rigenerata).
+- **Import FLA su Windows** (`c7b7408f0`): rinomina della cartella di staging rifiutata (errore 5): copia
+  verificata di ripiego. `Qt::SkipEmptyParts` per la Qt di Windows (`d23a0af6a`). Collaudato sulla companion.
+- **Audio dell'Animatic negli storyboard**: Toggle Main Audio ora vale solo dentro le sotto-scene (`ddeb56e22`);
+  il monitor piccolo suonava muto (`25284b156`).
+- Review del pomeriggio: `.brushes` illeggibili dopo un riavvio, `.zmouth` dei livelli a sequenza, id Kitsu
+  non sostituito, Global Key letta dalla preferenza (Plastic, Skeleton), Fill tool come Tahoma sui disegni
+  vecchi, autofill senza distanze doppie, undo dell'auto-matte con la memoria vera (`9a164c4ea` … `ee5429512`).
+- Asset del tracker con nomi unici, id Kitsu mai condiviso (`8751b9bf0`).
+
+### Notes
+- Messina: database del progetto ripuntato a mano sulla `_v2` (backup `production.ztrack.bak-2026-10-23-unlock`).
+- Build Windows di prova da CI (non c'era il Dell): due giri, il primo fallito su `QString::SkipEmptyParts`.
+- Review: `reviews/2026-10-23_reviewer.md` e `_license.md` (due giri). Release 0.19.0 lanciata a fine sessione.
 ## [2026-10-21] — push di assistenti e FLA; Global Key unica, chiavi uguali ferme, bocche marcate, scheletro con le chiavi, controller nel Function Editor
 
 ### Added
