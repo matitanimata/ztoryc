@@ -43,19 +43,26 @@ set VCINSTALLDIR="C:\Program Files\Microsoft Visual Studio\2022\Community\VC"
 IF EXIST "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC" set VCINSTALLDIR="C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC"
 echo "VCINSTALLDIR=%VCINSTALLDIR%"
 
+REM The runtime must be at least as new as the compiler. The old loop took the FIRST
+REM 14.* folder in alphabetical order, i.e. VS2019's 14.29 (VC142), while we compile with
+REM MSVC 19.44: since VS 17.10 the std::mutex constructor changed, and with an older
+REM msvcp140.dll the first lock crashes (0.19.1, opening a Plastic scene on Windows).
+REM Newest redist folder first, and stop the build if none is found.
 set VCRUNTIME_PATH=
-for /d /r ""%VCINSTALLDIR%"" %%a in (14.*) do (
-    if exist "%%a\x64" (
-        for /d %%b in ("%%a\x64\*") do (
-            if exist "%%b\vcruntime*.dll" (
-                set "VCRUNTIME_PATH=%%b"
-                goto :done
-            )
+for /f "delims=" %%v in ('dir /b /ad /o-n "%VCINSTALLDIR:"=%\Redist\MSVC\14.*"') do (
+    for /d %%c in ("%VCINSTALLDIR:"=%\Redist\MSVC\%%v\x64\Microsoft.VC*.CRT") do (
+        if exist "%%c\msvcp140.dll" (
+            set "VCRUNTIME_PATH=%%c"
+            goto :done
         )
     )
 )
 :done
 echo "VCRUNTIME_PATH=%VCRUNTIME_PATH%"
+if not defined VCRUNTIME_PATH (
+    echo ERROR: no MSVC redistributable runtime found
+    exit /b 1
+)
 
 copy /Y "%VCRUNTIME_PATH%\vcruntime140.dll" Ztoryc
 copy /Y "%VCRUNTIME_PATH%\vcruntime140_1.dll" Ztoryc
