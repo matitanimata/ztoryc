@@ -72,6 +72,10 @@ bool anyLevelDirty(ToonzScene *scene) {
   return false;
 }
 
+//! Where a recovery offered and left unanswered (Esc) waits for the next
+//! opening of its scene.
+QString laterDir(const QString &dir) { return dir + "_later"; }
+
 void removeDir(const QString &dir) {
   if (!dir.isEmpty() && QDir(dir).exists()) QDir(dir).removeRecursively();
 }
@@ -112,9 +116,10 @@ QString ZtoryRecovery::rootFolder() {
   // minutes on a streaming disk, synced to every computer sharing it, and a
   // write Windows refused (Messina, Crash-20261024-165757). The position is
   // here, and only here.
-  return QStandardPaths::writableLocation(
-             QStandardPaths::AppLocalDataLocation) +
-         "/recovery";
+  QString base =
+      QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+  if (base.isEmpty()) base = QDir::tempPath();  // never "/recovery" at the root
+  return base + "/recovery";
 }
 
 void ZtoryRecovery::start() {
@@ -338,11 +343,24 @@ void ZtoryRecovery::afterSceneSaved() {
   // «Salva con nome», che e' in m_activeDir.
   removeDir(m_activeDir);
   const QString sp = currentScenePath();
-  if (!sp.isEmpty()) removeDir(dirFor(sp));
+  if (!sp.isEmpty()) {
+    removeDir(dirFor(sp));
+    removeDir(laterDir(dirFor(sp)));
+  }
   m_activeDir.clear();
 }
 
 void ZtoryRecovery::onSceneSwitched() {
+  // Entering or leaving a shot emits sceneSwitched too, with the SAME scene
+  // object (see ZtoryModel's constructor): the work is still only in memory,
+  // and its snapshot must stay (review 0.19.2, B1).
+  // Nor is there anything to offer: checking again would ask about a copy
+  // left with Esc at every shot entered.
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  const QString path = currentScenePath();
+  if (scene == m_seenScene && path == m_seenScenePath) return;
+  m_seenScene     = scene;
+  m_seenScenePath = path;
   // Si e' lasciata la scena: salvata (gia' tolto da afterSceneSaved) o
   // scartata a domanda di Tahoma. Scartata vuol dire scartata: il recupero
   // si butta (Franco, 2026-10-24, che rivede la settimana in kept/ del 2/10).
@@ -371,7 +389,9 @@ void ZtoryRecovery::checkForRecovery() {
   if (m_busy) return;
   const QString scenePath = currentScenePath();
   if (scenePath.isEmpty()) return;
-  const QString dir = dirFor(scenePath);
+  // A copy from a new crash wins over one set aside earlier with Esc.
+  QString dir = dirFor(scenePath);
+  if (!QFile::exists(dir + "/" + kManifest)) dir = laterDir(dirFor(scenePath));
   if (!QFile::exists(dir + "/" + kManifest)) return;
 
   QDateTime when;
@@ -405,13 +425,25 @@ void ZtoryRecovery::checkForRecovery() {
       // che cancella il recupero — dopo un crash, il gesto d'istinto
       // (review del 25/09).
       tr("Recover"), tr("Discard"), 0);
-  if (answer != 1) {
-    // Discard, or the box closed without choosing: a recovery not used when
-    // the scene is reopened is thrown away (Franco, 2026-10-24).
+  const QString later = laterDir(dirFor(scenePath));
+  if (answer == 2) {
+    // Discard: a recovery not used when the scene is reopened is thrown away
+    // (Franco, 2026-10-24) — with any older copy set aside.
     removeDir(dir);
+    removeDir(later);
     return;
   }
-  restore(dir, scenePath);
+  if (answer != 1) {
+    // Closed with Esc or the X: not a choice. Set aside, out of the way of
+    // the next snapshot (same folder), and offered again at the next opening
+    // of the scene (Franco, 2026-10-24, review 0.19.2 M2).
+    if (dir != later) {
+      removeDir(later);
+      QDir().rename(dir, later);
+    }
+    return;
+  }
+  if (restore(dir, scenePath) && dir != later) removeDir(later);
 }
 
 bool ZtoryRecovery::restore(const QString &dir, const QString &scenePath) {

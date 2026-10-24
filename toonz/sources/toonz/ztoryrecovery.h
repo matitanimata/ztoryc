@@ -42,6 +42,7 @@
 #include <QString>
 
 class QTimer;
+class ToonzScene;
 
 class ZtoryRecovery final : public QObject {
   Q_OBJECT
@@ -74,6 +75,10 @@ private:
   //! La cartella di recupero scritta in QUESTA sessione per la scena
   //! corrente: e' quella da togliere quando la scena si salva o si lascia.
   QString m_activeDir;
+  //! The scene of the last sceneSwitched: another one with the same object
+  //! and path is a shot being entered or left, not the scene being left.
+  ToonzScene *m_seenScene = nullptr;
+  QString m_seenScenePath;
   bool m_busy = false;
   //! Un giro saltato perche' il tool era a meta' di un gesto: la copia si fa
   //! appena il gesto finisce, non tre minuti dopo.

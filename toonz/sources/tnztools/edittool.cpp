@@ -65,7 +65,9 @@ TEnv::IntVar ShowGlobalScale("EditToolShowGlobalScale", 1);
 TEnv::IntVar ShowHVscale("EditToolShowHVscale", 1);
 TEnv::IntVar ShowShear("EditToolShowShear", 0);
 TEnv::IntVar ShowCenterPosition("EditToolShowCenterPosition", 0);
-TEnv::StringVar Active("EditToolActiveAxis", "Position");
+// Ztoryc: All by default (Franco, 2026-10-24): one drag moves, rotates and
+// scales by where you grab. A value already saved in env.ini still wins.
+TEnv::StringVar Active("EditToolActiveAxis", "All");
 TEnv::StringVar AutoSelect("EditToolAutoSelect", "None");
 TEnv::StringVar ScaleConstraint("EditToolScaleConstraint", "None");
 // Ztoryc: Global Key now lives in the preferences (GlobalKeyEnabled).
@@ -843,9 +845,7 @@ EditTool::EditTool()
   m_activeAxis.addValue(L"Drawing #", "edit_drawingnumber");
   m_activeAxis.addValue(L"Center", "edit_center");
   m_activeAxis.addValue(L"All", "edit_all");
-  // Ztoryc: start on All (Franco, 2026-10-24): one drag moves, rotates and
-  // scales by where you grab, instead of only moving.
-  m_activeAxis.setValue(L"All");
+  m_activeAxis.setValue(L"All");  // overwritten by Active at first activation
 
   m_activeAxis.setId("EditToolActiveAxis");
 }
