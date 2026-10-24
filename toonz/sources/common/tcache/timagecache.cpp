@@ -571,6 +571,21 @@ template class DVAPI
 typedef TDerivedSmartPointerT<UncompressedOnDiskCacheItem, CacheItem>
     UncompressedOnDiskCacheItemP;
 
+// Ztoryc: only a raster or Toonz raster image can be compressed or moved to
+// disk — the compressed items build nothing else, and for any other image the
+// on-disk item dereferenced a null raster. m_cantCompress said so for vectors
+// and meshes only, and get() resets it to false for every image: once the
+// cache ran short of memory with an Assistants level (TMetaImage) in it, it
+// crashed (Windows tester, 0.19.0, 2026-10-24: drawLevelColumnHead →
+// IconGenerator::getIcon → TImageCache::get → doCompress).
+static bool isCompressible(const TImageP &img) {
+  if (TRasterImageP(img)) return true;
+#ifndef TNZCORE_LIGHT
+  if (TToonzImageP(img)) return true;
+#endif
+  return false;
+}
+
 //------------------------------------------------------------------------------
 
 UncompressedOnDiskCacheItem::UncompressedOnDiskCacheItem(const TFilePath &fp,
@@ -822,7 +837,7 @@ void TImageCache::Imp::doCompress() {
     CacheItemP item = it->second;
 
     UncompressedOnMemoryCacheItemP uitem = item;
-    if (item->m_cantCompress ||
+    if (item->m_cantCompress || (uitem && !isCompressible(uitem->m_image)) ||
         (uitem && (!uitem->m_image || hasExternalReferences(uitem->m_image)))) {
       ++itu;
       continue;
@@ -908,7 +923,7 @@ void TImageCache::Imp::doCompress(std::string id) {
   // is item suitable for compression ?
   CacheItemP item                      = it->second;
   UncompressedOnMemoryCacheItemP uitem = item;
-  if (item->m_cantCompress ||
+  if (item->m_cantCompress || (uitem && !isCompressible(uitem->m_image)) ||
       (uitem && (!uitem->m_image || hasExternalReferences(uitem->m_image))))
     return;
 
@@ -1014,7 +1029,7 @@ UCHAR *TImageCache::Imp::compressAndMalloc(TUINT32 size) {
     CacheItemP item = it->second;
 
     UncompressedOnMemoryCacheItemP uitem = item;
-    if (item->m_cantCompress ||
+    if (item->m_cantCompress || (uitem && !isCompressible(uitem->m_image)) ||
         (uitem && (!uitem->m_image || hasExternalReferences(uitem->m_image)))) {
       ++itu;
       continue;
@@ -1264,8 +1279,7 @@ void TImageCache::Imp::add(const std::string &id, const TImageP &img,
 #ifdef TNZCORE_LIGHT
   item->m_cantCompress = false;
 #else
-  item->m_cantCompress =
-      (TVectorImageP(img) || TMeshImageP(img) ? true : false);
+  item->m_cantCompress = !isCompressible(img);
 #endif
   item->m_id                             = id;
   m_uncompressedItems[id]                = item;
