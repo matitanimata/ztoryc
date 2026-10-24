@@ -87,6 +87,8 @@ TEnv::IntVar V_VectorBrushSnapSensitivity("VectorBrushSnapSensitivity", 0);
 TEnv::IntVar V_VectorBrushDrawBehind("VectorBrushDrawBehind", 0);
 TEnv::IntVar V_VectorBrushAutoClose("VectorBrushAutoClose", 0);
 TEnv::IntVar V_VectorBrushAutoFill("VectorBrushAutoFill", 0);
+TEnv::StringVar V_VectorBrushAutoFillStyle("VectorBrushAutoFillStyle",
+                                           "Line Style");
 TEnv::DoubleVar V_VectorBrushAutoCloseGap("VectorBrushAutoCloseGap",
                                           c_ztorycAutocloseTolerance);
 TEnv::IntVar V_VectorBrushAutoGroup("VectorBrushAutoGroup", 0);
@@ -876,6 +878,14 @@ void ToonzVectorBrushTool::onActivate() {
       loadPreset();
     } else
       loadLastBrush();
+
+    // Auto Fill is not part of a preset: restore it whether or not one is
+    // chosen (loadLastBrush runs only for <custom>). A palette_N fill style
+    // comes back only if this palette has it.
+    m_autoFill.setValue(V_VectorBrushAutoFill ? true : false);
+    std::wstring fillStyle =
+        QString::fromStdString(V_VectorBrushAutoFillStyle.getValue()).toStdWString();
+    if (m_autoFillStyle.isValue(fillStyle)) m_autoFillStyle.setValue(fillStyle);
   }
   resetFrameRange();
   // TODO:app->editImageOrSpline();
@@ -2498,6 +2508,7 @@ bool ToonzVectorBrushTool::onPropertyChanged(std::string propertyName) {
   V_VectorBrushAutoClose       = m_autoClose.getValue();
   V_VectorBrushAutoGroup       = m_autoGroup.getValue();
   V_VectorBrushAutoFill        = m_autoFill.getValue();
+  V_VectorBrushAutoFillStyle   = m_autoFillStyle.getValueAsString();
   V_VectorBrushAutoCloseGap    = m_autoCloseGap.getValue();
   V_VectorBrushSnap            = m_snap.getValue();
   int snapSensitivityIndex     = m_snapSensitivity.getIndex();

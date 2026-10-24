@@ -2810,6 +2810,7 @@ bool FillTool::onPropertyChanged(std::string propertyName) {
   }
   // Selective
   else if (propertyName == m_selective.getName()) {
+    FillSelective       = (int)(m_selective.getValue());
     rectPropChangedflag = true;
   }
   // Fill Depth
@@ -3124,7 +3125,7 @@ void FillTool::onActivate() {
         TDoublePairProperty::Value(MinFillDepth, MaxFillDepth));
     m_fillType.setValue(::to_wstring(FillType.getValue()));
     m_colorType.setValue(::to_wstring(FillColorType.getValue()));
-    //		m_onlyEmpty.setValue(FillSelective ? 1 :0);
+    m_selective.setValue(FillSelective ? 1 : 0);
     m_onion.setValue(FillOnion ? 1 : 0);
     m_segment.setValue(FillSegment ? 1 : 0);
     m_frameRange.setIndex(FillRange);

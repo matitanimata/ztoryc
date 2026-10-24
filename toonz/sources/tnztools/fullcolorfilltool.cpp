@@ -396,6 +396,10 @@ bool FullColorFillTool::onPropertyChanged(std::string propertyName) {
     resetMulti();
   }
 
+  else if (propertyName == m_referenced.getName()) {
+    FullColorFillReferenced = (int)(m_referenced.getValue());
+  }
+
   return true;
 }
 
@@ -404,6 +408,7 @@ void FullColorFillTool::onActivate() {
   if (firstTime) {
     m_fillDepth.setValue(TDoublePairProperty::Value(FullColorMinFillDepth,
                                                     FullColorMaxFillDepth));
+    m_referenced.setValue(FullColorFillReferenced ? 1 : 0);
     firstTime = false;
   }
 

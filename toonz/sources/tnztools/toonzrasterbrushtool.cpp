@@ -81,6 +81,9 @@ TEnv::IntVar RasterBrushPencilMode("InknpaintRasterBrushPencilMode", 0);
 TEnv::DoubleVar RasterBrushHardness("RasterBrushHardness", 100);
 // Ztoryc: Auto Fill closes openings up to about twice this, in pixels.
 TEnv::IntVar RasterBrushAutoCloseGap("RasterBrushAutoCloseGap", 4);
+TEnv::IntVar RasterBrushAutoFill("RasterBrushAutoFill", 0);
+TEnv::StringVar RasterBrushAutoFillStyle("RasterBrushAutoFillStyle",
+                                         "Next Style (N+1)");
 TEnv::DoubleVar RasterBrushModifierSize("RasterBrushModifierSize", 0);
 TEnv::StringVar RasterBrushPreset("RasterBrushPreset", "<custom>");
 TEnv::IntVar BrushLockAlpha("InknpaintBrushLockAlpha", 0);
@@ -1355,6 +1358,14 @@ void ToonzRasterBrushTool::onActivate() {
       loadPreset();
     } else
       loadLastBrush();
+
+    // Auto Fill is not part of a preset: restore it whether or not one is
+    // chosen (loadLastBrush runs only for <custom>). A palette_N fill style
+    // comes back only if this palette has it.
+    m_autoFill.setValue(RasterBrushAutoFill ? true : false);
+    std::wstring fillStyle =
+        QString::fromStdString(RasterBrushAutoFillStyle.getValue()).toStdWString();
+    if (m_autoFillStyle.isValue(fillStyle)) m_autoFillStyle.setValue(fillStyle);
   }
   m_brushPad = ToolUtils::getBrushPad(m_rasThickness.getValue().second,
                                       m_hardness.getValue() * 0.01);
@@ -3326,6 +3337,8 @@ bool ToonzRasterBrushTool::onPropertyChanged(std::string propertyName) {
   RasterBrushPencilMode           = m_pencil.getValue();
   RasterBrushHardness             = m_hardness.getValue();
   RasterBrushAutoCloseGap         = m_autoCloseGap.getValue();
+  RasterBrushAutoFill             = m_autoFill.getValue() ? 1 : 0;
+  RasterBrushAutoFillStyle        = m_autoFillStyle.getValueAsString();
   RasterBrushModifierSize         = m_modifierSize.getValue();
   BrushLockAlpha                  = m_modifierLockAlpha.getValue();
   GuideSnap::apply(m_guideSnap, m_snapGrid, m_assistants);

@@ -843,7 +843,9 @@ EditTool::EditTool()
   m_activeAxis.addValue(L"Drawing #", "edit_drawingnumber");
   m_activeAxis.addValue(L"Center", "edit_center");
   m_activeAxis.addValue(L"All", "edit_all");
-  m_activeAxis.setValue(L"Position");
+  // Ztoryc: start on All (Franco, 2026-10-24): one drag moves, rotates and
+  // scales by where you grab, instead of only moving.
+  m_activeAxis.setValue(L"All");
 
   m_activeAxis.setId("EditToolActiveAxis");
 }

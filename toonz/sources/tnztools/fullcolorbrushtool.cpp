@@ -92,6 +92,9 @@ TEnv::IntVar FullcolorModifierPaintBehind("FullcolorModifierPaintBehind", 0);
 TEnv::StringVar FullcolorBrushPreset("FullcolorBrushPreset", "<custom>");
 TEnv::IntVar FullcolorBrushSnapGrid("FullcolorBrushSnapGrid", 0);
 TEnv::IntVar FullcolorBrushAssistants("FullcolorBrushAssistants", 1);
+TEnv::IntVar FullcolorBrushAutoFill("FullcolorBrushAutoFill", 0);
+TEnv::StringVar FullcolorBrushAutoFillStyle("FullcolorBrushAutoFillStyle",
+                                            "Line Style");
 TEnv::IntVar FullcolorPressureSensitivity("FullcolorPressureSensitivity", 1);
 TEnv::PointListVar FullcolorPressureCurvePts("FullcolorPressureCurvePts",
                                              DEFAULTPRESSURECURVE);
@@ -448,6 +451,14 @@ void FullColorBrushTool::onActivate() {
       loadPreset();
     } else
       loadLastBrush();
+
+    // Auto Fill is not part of a preset: restore it whether or not one is
+    // chosen (loadLastBrush runs only for <custom>). A palette_N fill style
+    // comes back only if this palette has it.
+    m_autoFill.setValue(FullcolorBrushAutoFill ? true : false);
+    std::wstring fillStyle =
+        QString::fromStdString(FullcolorBrushAutoFillStyle.getValue()).toStdWString();
+    if (m_autoFillStyle.isValue(fillStyle)) m_autoFillStyle.setValue(fillStyle);
   }
 
   m_brushPad = ToolUtils::getBrushPad(m_thickness.getValue().second,
@@ -1856,6 +1867,8 @@ bool FullColorBrushTool::onPropertyChanged(std::string propertyName) {
   FullcolorModifierEraser       = m_modifierEraser.getValue() ? 1 : 0;
   FullcolorModifierLockAlpha    = m_modifierLockAlpha.getValue() ? 1 : 0;
   FullcolorModifierPaintBehind  = m_modifierPaintBehind.getValue() ? 1 : 0;
+  FullcolorBrushAutoFill        = m_autoFill.getValue() ? 1 : 0;
+  FullcolorBrushAutoFillStyle   = m_autoFillStyle.getValueAsString();
   GuideSnap::apply(m_guideSnap, m_snapGrid, m_assistants);
   FullcolorBrushSnapGrid        = m_snapGrid.getValue() ? 1 : 0;
   FullcolorBrushAssistants      = m_assistants.getValue() ? 1 : 0;
