@@ -20,7 +20,8 @@
 //   - salvare la scena cancella il recupero; anche cambiare scena o uscire,
 //     perche' li' la domanda «salvare?» l'ha gia' fatta Tahoma;
 //   - quindi un recupero che sopravvive vuol dire che Ztoryc NON e' uscito
-//     pulito: riaprendo quella scena si chiede se rimetterlo.
+//     pulito: riaprendo quella scena si chiede se rimetterlo; se non lo si
+//     usa, si butta (Franco, 2026-10-24).
 //
 // I livelli si scrivono con TXshSimpleLevel::save(dst, orig): verso un
 // percorso diverso e' una COPIA — rimette il percorso in memoria, e
@@ -51,8 +52,8 @@ public:
   //! Avvia il timer e aggancia i segnali. Una volta, all'avvio.
   void start();
 
-  //! La cartella dei recuperi (una sottocartella per scena): dentro il
-  //! progetto della scena corrente, `.ztoryc_recovery/`.
+  //! La cartella dei recuperi (una sottocartella per scena): su questo
+  //! computer, `recovery/` nella cartella dati di Ztoryc.
   static QString rootFolder();
 
 private slots:

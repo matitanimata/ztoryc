@@ -10,7 +10,6 @@
 #include "toonz/levelset.h"
 #include "toonz/sceneproperties.h"
 #include "toonz/toonzscene.h"
-#include "toonz/tproject.h"
 #include "toonz/tscenehandle.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonzqt/dvdialog.h"
@@ -77,32 +76,6 @@ void removeDir(const QString &dir) {
   if (!dir.isEmpty() && QDir(dir).exists()) QDir(dir).removeRecursively();
 }
 
-//! Ztoryc: work left WITHOUT saving (quit, or another scene opened and the
-//! changes discarded) — the snapshot is moved to `kept/` beside it instead of
-//! being deleted, and kept there for a week. Deleting it threw away the only
-//! copy of those changes: Franco closed without saving after a pin/Auto Bezier
-//! accident and the walk cycle could not be recovered (2026-10-02; Drive's
-//! trash held only older snapshots).
-void keepInsteadOfRemove(const QString &dir) {
-  if (dir.isEmpty() || !QDir(dir).exists()) return;
-  const QString keptRoot = QFileInfo(dir).absolutePath() + "/kept";
-  QDir().mkpath(keptRoot);
-  const QString dst = keptRoot + "/" + QFileInfo(dir).fileName() + "_" +
-                      QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
-  if (!QDir().rename(dir, dst)) return;  // left where it is: never lost
-  // A week is enough to notice; older ones go. The age is the time it was
-  // KEPT, read from the name: a rename keeps the folder's modification time,
-  // so a snapshot untouched for a week was pruned the moment it was kept.
-  const QDateTime limit = QDateTime::currentDateTime().addDays(-7);
-  for (const QFileInfo &fi :
-       QDir(keptRoot).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-    const QDateTime kept = QDateTime::fromString(
-        fi.fileName().right(15), "yyyyMMdd-HHmmss");
-    if (kept.isValid() && kept < limit)
-      QDir(fi.absoluteFilePath()).removeRecursively();
-  }
-}
-
 //! Copia \p src su \p dst, mettendo prima da parte in \p backupDir cio' che
 //! \p dst conteneva. Mai sovrascrivere senza una copia.
 bool replaceFile(const QString &src, const QString &dst,
@@ -131,18 +104,17 @@ ZtoryRecovery *ZtoryRecovery::instance() {
 ZtoryRecovery::ZtoryRecovery() : QObject(nullptr) {}
 
 QString ZtoryRecovery::rootFolder() {
-  // Dentro il PROGETTO della scena, in una cartella nascosta (Franco,
-  // 2026-09-25): i dati restano sul disco del progetto, non su quello di
-  // avvio. La posizione e' qui, e solo qui.
-  std::shared_ptr<TProject> project;
-  if (ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene())
-    project = scene->getProject();
-  if (!project) project = TProjectManager::instance()->getCurrentProject();
-  if (!project)
-    return QStandardPaths::writableLocation(
-               QStandardPaths::AppLocalDataLocation) +
-           "/recovery";
-  return toQ(project->getProjectFolder()) + "/.ztoryc_recovery";
+  // On this computer, in Ztoryc's own data folder (Franco, 2026-10-24) — the
+  // one that holds the profiles on macOS, since the stuff folder sits inside
+  // the app bundle there (and under Program Files with the Windows
+  // installer), where we cannot write. It used to be inside the project:
+  // on Google Drive that meant a folder deleted and recreated every three
+  // minutes on a streaming disk, synced to every computer sharing it, and a
+  // write Windows refused (Messina, Crash-20261024-165757). The position is
+  // here, and only here.
+  return QStandardPaths::writableLocation(
+             QStandardPaths::AppLocalDataLocation) +
+         "/recovery";
 }
 
 void ZtoryRecovery::start() {
@@ -372,8 +344,9 @@ void ZtoryRecovery::afterSceneSaved() {
 
 void ZtoryRecovery::onSceneSwitched() {
   // Si e' lasciata la scena: salvata (gia' tolto da afterSceneSaved) o
-  // scartata a domanda di Tahoma. Se scartata, il recupero va in kept/.
-  keepInsteadOfRemove(m_activeDir);
+  // scartata a domanda di Tahoma. Scartata vuol dire scartata: il recupero
+  // si butta (Franco, 2026-10-24, che rivede la settimana in kept/ del 2/10).
+  removeDir(m_activeDir);
   m_activeDir.clear();
   // Dopo che il caricamento e' finito del tutto.
   QTimer::singleShot(0, this, &ZtoryRecovery::checkForRecovery);
@@ -386,8 +359,9 @@ void ZtoryRecovery::onToolEditingFinished() {
 }
 
 void ZtoryRecovery::onAboutToQuit() {
-  // Quitting with a snapshot still active means changes left unsaved.
-  keepInsteadOfRemove(m_activeDir);
+  // Quitting with a snapshot still active means changes the user chose not
+  // to save when Tahoma asked: thrown away, like the changes themselves.
+  removeDir(m_activeDir);
   m_activeDir.clear();
 }
 
@@ -431,18 +405,10 @@ void ZtoryRecovery::checkForRecovery() {
       // che cancella il recupero — dopo un crash, il gesto d'istinto
       // (review del 25/09).
       tr("Recover"), tr("Discard"), 0);
-  if (answer == 2) {
-    removeDir(dir);
-    return;
-  }
   if (answer != 1) {
-    // Finestra chiusa senza scegliere: non si butta via niente, ma il
-    // prossimo recupero di questa scena lo sovrascriverebbe — lo si sposta.
-    const QString kept = rootFolder() + "/kept/" + QFileInfo(dir).fileName() +
-                         "_" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
-    QDir().mkpath(rootFolder() + "/kept");
-    QDir().rename(dir, kept);
-    DVGui::info(tr("The unsaved work was kept in:\n%1").arg(kept));
+    // Discard, or the box closed without choosing: a recovery not used when
+    // the scene is reopened is thrown away (Franco, 2026-10-24).
+    removeDir(dir);
     return;
   }
   restore(dir, scenePath);
