@@ -95,7 +95,6 @@
 #include <QToolButton>
 #include <QSpinBox>
 #include <QSettings>
-#include "saveloadqsettings.h"
 #include <QFrame>
 #include <QMouseEvent>
 #include <QDrag>
@@ -239,22 +238,6 @@ static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
 TEnv::IntVar ZtoryBoardColumns("ZtoryBoardColumns", 3);
 // "Compact view": one card per shot (collapse panels). Persisted.
 TEnv::IntVar ZtoryBoardCollapsePanels("ZtoryBoardCollapsePanels", 0);
-
-namespace {
-// Room::save/load only look for SaveLoadQSettings on the panel's widget(), and
-// the Board is the TPanel itself: this host widget forwards to it.
-class BoardRoomSettingsHost final : public QWidget, public SaveLoadQSettings {
-  StoryboardPanel *m_board;
-
-public:
-  BoardRoomSettingsHost(StoryboardPanel *board)
-      : QWidget(board), m_board(board) {}
-  void save(QSettings &settings, bool) const override {
-    m_board->saveRoomSettings(settings);
-  }
-  void load(QSettings &settings) override { m_board->loadRoomSettings(settings); }
-};
-}  // namespace
 
 // Strip leading alphabetic characters from a label; optionally capture the prefix.
 // E.g. "SH010" → "010" (prefix="SH"),  "010" → "010" (prefix=""),  "SQ001" → "001"
@@ -1367,7 +1350,8 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
 
   setWindowTitle(tr("Ztoryc Board"));
 
-  QWidget *main = new BoardRoomSettingsHost(this);
+  BoardRoomSettingsHost *main = new BoardRoomSettingsHost(this);
+  main->setBoard(this);
   QVBoxLayout *mainLayout = new QVBoxLayout(main);
   mainLayout->setSpacing(4);
   mainLayout->setContentsMargins(6, 6, 6, 6);

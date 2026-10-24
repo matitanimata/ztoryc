@@ -170,6 +170,8 @@ private slots:
   void onDurationSpinChanged(int value);
 };
 
+#include "saveloadqsettings.h"
+
 class QSettings;
 
 class StoryboardPanel final : public TPanel {
@@ -528,6 +530,23 @@ private:
       const QList<int> &indices, const TFilePath &outDirFp, int version,
       const ShotExportOptions &opts, int &fail,
       QHash<QString, QList<QPair<TFilePath, TFilePath>>> *assetCopies = nullptr);
+};
+
+// Room::save/load only look for SaveLoadQSettings on a pane's widget(). The
+// Board is a TPanel itself, and in Ztoryc X / T it sits inside a composite
+// panel: in both cases the pane's widget is one of these, forwarding to it.
+class BoardRoomSettingsHost final : public QWidget, public SaveLoadQSettings {
+  StoryboardPanel *m_board = nullptr;
+
+public:
+  explicit BoardRoomSettingsHost(QWidget *parent) : QWidget(parent) {}
+  void setBoard(StoryboardPanel *board) { m_board = board; }
+  void save(QSettings &settings, bool) const override {
+    if (m_board) m_board->saveRoomSettings(settings);
+  }
+  void load(QSettings &settings) override {
+    if (m_board) m_board->loadRoomSettings(settings);
+  }
 };
 
 #endif // STORYBOARDPANEL_H

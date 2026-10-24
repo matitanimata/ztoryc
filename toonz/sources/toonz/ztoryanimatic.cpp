@@ -5175,7 +5175,7 @@ ZtoryLeftPanel::ZtoryLeftPanel(QWidget *parent)
   setWindowTitle("");
   setPanelType("ZtoryLeftPanel");
 
-  QWidget *container  = new QWidget(this);
+  BoardRoomSettingsHost *container = new BoardRoomSettingsHost(this);
   QVBoxLayout *lay    = new QVBoxLayout(container);
   lay->setContentsMargins(0, 0, 0, 0);
   lay->setSpacing(0);
@@ -5220,6 +5220,7 @@ ZtoryLeftPanel::ZtoryLeftPanel(QWidget *parent)
   m_boardPanel = new StoryboardPanel(m_stack);
   m_boardPanel->getTitleBar()->hide();
   m_boardPanel->setEmbedded();  // prevents drag-to-float when inside ZtoryLeftPanel
+  container->setBoard(m_boardPanel);  // its columns are saved with this room
   m_stack->addWidget(m_boardPanel);  // page 0
 
   lay->addWidget(m_stack, 1);
@@ -8935,7 +8936,7 @@ ZtoryDrawLeftPanel::ZtoryDrawLeftPanel(QWidget *parent)
   setWindowTitle("");
   setPanelType("ZtoryDrawLeftPanel");
 
-  QWidget *container = new QWidget(this);
+  BoardRoomSettingsHost *container = new BoardRoomSettingsHost(this);
   QVBoxLayout *lay   = new QVBoxLayout(container);
   lay->setContentsMargins(0, 0, 0, 0);
   lay->setSpacing(0);
@@ -8978,6 +8979,7 @@ ZtoryDrawLeftPanel::ZtoryDrawLeftPanel(QWidget *parent)
   m_boardPanel = new StoryboardPanel(m_stack);
   m_boardPanel->getTitleBar()->hide();
   m_boardPanel->setEmbedded();
+  container->setBoard(m_boardPanel);  // its columns are saved with this room
   m_stack->addWidget(m_boardPanel);  // page 0
 
   // Page 1: Panel Navigator
