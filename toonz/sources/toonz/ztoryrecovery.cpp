@@ -225,6 +225,9 @@ void ZtoryRecovery::snapshot() {
     const bool palDirty   = sl->getPalette() && sl->getPalette()->getDirtyFlag();
     try {
       sl->save(dst, orig, true);
+      // A writer that fails while closing can no longer throw (the .tzm one
+      // used to terminate the app): it removes the file, and we look for it.
+      if (!TSystem::doesExistFileOrLevel(dst)) throw TSystemException(dst, "not written");
       entries.push_back({sub, toQ(orig.getParentDir()),
                          QString::fromStdWString(sl->getName())});
     } catch (...) {

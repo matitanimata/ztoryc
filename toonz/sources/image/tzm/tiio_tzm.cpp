@@ -79,15 +79,29 @@ namespace {
       }
     }
 
+    // Ztoryc: a destructor must never throw. It used to rethrow a failed write
+    // as TImageException, and a throw out of a destructor is std::terminate:
+    // the autosave of an Assistants level to a Google Drive folder that
+    // refused the write closed the app (Messina, 2026-10-24). Now the partial
+    // file is removed instead: LevelUpdater::close, writing to a temporary,
+    // then fails with «cant find!» and the original stays as it was.
     ~TLevelWriterTzm() {
+      bool written = false;
       try {
         m_data["creator"].setString( m_creator.toStdString() );
         m_data.toStream(*m_stream, true);
-        delete m_stream;
+        written = true;
       } catch (const std::exception &e) {
-        throw TImageException(m_path, e.what());
+        std::cerr << to_string(m_path.getWideString()) << ": " << e.what() << std::endl;
       } catch (const TException &e) {
-        throw TImageException(m_path, to_string(e.getMessage()));
+        std::cerr << to_string(m_path.getWideString()) << ": "
+                  << to_string(e.getMessage()) << std::endl;
+      } catch (...) {
+      }
+      try {
+        delete m_stream;
+        if (!written) TSystem::deleteFile(m_path);
+      } catch (...) {
       }
     }
   };
