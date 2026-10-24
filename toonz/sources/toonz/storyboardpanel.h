@@ -170,6 +170,8 @@ private slots:
   void onDurationSpinChanged(int value);
 };
 
+class QSettings;
+
 class StoryboardPanel final : public TPanel {
   Q_OBJECT
   QScrollArea *m_scrollArea;
@@ -461,6 +463,15 @@ protected:
   void onDurationChanged(int shotIdx, int panelIdx, int frames);
   void onMoveShot(int fromShot, int toShot);
   void onColumnsChanged(int value);
+
+public:
+  // Columns and Compact view are saved in the room's ini, one value per Board
+  // pane: a 5-column "Panels" room and a 1-column "Storyboard" room no longer
+  // overwrite each other. The env vars stay as the default for a new pane.
+  void saveRoomSettings(QSettings &settings) const;
+  void loadRoomSettings(QSettings &settings);
+
+protected:
   void onToggleCollapsePanels(bool on);          // "Compact view" view toggle
   void onPanelNavRequested(int shotIdx, int delta); // ◀ ▶ in collapsed view
   void onNumberingChanged(int comboIndex);

@@ -95,6 +95,7 @@
 #include <QToolButton>
 #include <QSpinBox>
 #include <QSettings>
+#include "saveloadqsettings.h"
 #include <QFrame>
 #include <QMouseEvent>
 #include <QDrag>
@@ -238,6 +239,22 @@ static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
 TEnv::IntVar ZtoryBoardColumns("ZtoryBoardColumns", 3);
 // "Compact view": one card per shot (collapse panels). Persisted.
 TEnv::IntVar ZtoryBoardCollapsePanels("ZtoryBoardCollapsePanels", 0);
+
+namespace {
+// Room::save/load only look for SaveLoadQSettings on the panel's widget(), and
+// the Board is the TPanel itself: this host widget forwards to it.
+class BoardRoomSettingsHost final : public QWidget, public SaveLoadQSettings {
+  StoryboardPanel *m_board;
+
+public:
+  BoardRoomSettingsHost(StoryboardPanel *board)
+      : QWidget(board), m_board(board) {}
+  void save(QSettings &settings, bool) const override {
+    m_board->saveRoomSettings(settings);
+  }
+  void load(QSettings &settings) override { m_board->loadRoomSettings(settings); }
+};
+}  // namespace
 
 // Strip leading alphabetic characters from a label; optionally capture the prefix.
 // E.g. "SH010" → "010" (prefix="SH"),  "010" → "010" (prefix=""),  "SQ001" → "001"
@@ -1350,7 +1367,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
 
   setWindowTitle(tr("Ztoryc Board"));
 
-  QWidget *main = new QWidget(this);
+  QWidget *main = new BoardRoomSettingsHost(this);
   QVBoxLayout *mainLayout = new QVBoxLayout(main);
   mainLayout->setSpacing(4);
   mainLayout->setContentsMargins(6, 6, 6, 6);
@@ -6260,6 +6277,27 @@ void StoryboardPanel::onMoveShot(int fromShot, int toShot) {
 void StoryboardPanel::onColumnsChanged(int value) {
   m_columnsPerRow = value;
   ZtoryBoardColumns = value;  // persist across sessions
+  rebuildGrid();
+}
+
+void StoryboardPanel::saveRoomSettings(QSettings &settings) const {
+  settings.setValue("boardColumns", m_columnsPerRow);
+  settings.setValue("boardCompact", m_collapsePanels);
+}
+
+void StoryboardPanel::loadRoomSettings(QSettings &settings) {
+  // A room saved before this existed has no keys: keep the env defaults.
+  int  columns = qBound(1, settings.value("boardColumns", m_columnsPerRow).toInt(), 8);
+  bool compact = settings.value("boardCompact", m_collapsePanels).toBool();
+  if (columns == m_columnsPerRow && compact == m_collapsePanels) return;
+  // Set the widgets without their slots: those would write the env vars, and
+  // loading every room at startup would leave the last one as everyone's default.
+  m_columnsPerRow  = columns;
+  m_collapsePanels = compact;
+  QSignalBlocker blockSpin(m_columnsPerRowSpin);
+  QSignalBlocker blockCompact(m_collapsePanelsButton);
+  m_columnsPerRowSpin->setValue(columns);
+  m_collapsePanelsButton->setChecked(compact);
   rebuildGrid();
 }
 
