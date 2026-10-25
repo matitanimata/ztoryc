@@ -449,7 +449,14 @@ public:
 #else
     setWindowModality(Qt::ApplicationModal);
 #endif
+#ifdef MACOSX
+    // Ztoryc: a tool window, as DVGui::Dialog is on macOS — a plain dialog
+    // went behind the main window at the first click on it (Franco,
+    // 2026-10-25), and the render looked stuck.
+    setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::CustomizeWindowHint);
+#else
     setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::CustomizeWindowHint);
+#endif
     m_progressBarString =
         QString::number(steps) +
         ((isPreview)
@@ -760,7 +767,11 @@ public:
 #else
     setWindowModality(Qt::ApplicationModal);
 #endif
+#ifdef MACOSX
+    setWindowFlags(Qt::Tool | Qt::WindowTitleHint | Qt::CustomizeWindowHint);  // Ztoryc: see RenderListener
+#else
     setWindowFlags(Qt::WindowTitleHint | Qt::CustomizeWindowHint);
+#endif
     m_progressBarString =
         QObject::tr("%1 of %2",
                     "MultimediaProgressBar - [totalframe] of [path]")

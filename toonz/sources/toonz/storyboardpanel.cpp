@@ -1502,6 +1502,13 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_exportPdfButton->setToolTip(tr("Export PDF"));
   m_exportPdfButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
 
+  m_exportAiButton = new QToolButton();
+  m_exportAiButton->setIcon(createQIcon("ztoryc_export_ai"));
+  m_exportAiButton->setIconSize(QSize(20, 20));
+  m_exportAiButton->setFixedSize(28, 28);
+  m_exportAiButton->setToolTip(tr("Export for AI"));
+  m_exportAiButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
+
     m_exportSpreadsheetButton = new QToolButton();
   m_exportSpreadsheetButton->setIcon(createQIcon("ztoryc_export_spreadsheet"));
   m_exportSpreadsheetButton->setIconSize(QSize(20, 20));
@@ -1620,6 +1627,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   tb->addSpacing(8);
   tb->addWidget(m_techniqueButton);
   tb->addWidget(m_exportPdfButton);
+  tb->addWidget(m_exportAiButton);
   tb->addWidget(m_exportSpreadsheetButton);
   tb->addWidget(m_exportShotsButton);
   tb->addWidget(m_exportAnimaticButton);
@@ -1752,6 +1760,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   connect(m_techniqueButton, &QToolButton::clicked, this, &StoryboardPanel::onSetTechnique);
   connect(m_exportShotsButton, &QToolButton::clicked, this, &StoryboardPanel::onExportShots);
   connect(m_exportAnimaticButton, &QToolButton::clicked, this, &StoryboardPanel::onExportAnimatic);
+  connect(m_exportAiButton, &QToolButton::clicked, this, &StoryboardPanel::onExportForAI);
   connect(m_camLabelButton, &QToolButton::toggled, this, [this](bool on) {
     m_showCamMoveType = on;
     QSettings().setValue("Ztoryc/ShowCamMoveType", on);
@@ -2117,6 +2126,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     {m_pasteButton,          "Paste the last copied shot after the current selection"},
     {m_mergeButton,          "Merge two adjacent shots into one (durations are summed)"},
     {m_exportPdfButton,      "Export the Board as PDF: thumbnails, dialog, and per-panel/shot durations"},
+    {m_exportAiButton,       "Export for AI: per shot, every panel as an image named with its start and duration, a CSV and a manifest, the breakdown's files and the shot's audio"},
     {m_exportSpreadsheetButton, "Export a storyboard spreadsheet (.xlsx): one row per shot in THIS storyboard with thumbnail, timing, technique and per-task Kitsu status. For the whole project (all storyboards + all tabs) use Export Project Spreadsheet in the Production Tracker"},
     {m_techniqueButton,      "Assign a production technique (Tradigital, Cut-out, 3D…) to the selected shot(s); it drives which tasks apply in the spreadsheet"},
     {m_exportShotsButton,    "Export each shot as a standalone scene"},
@@ -4225,8 +4235,11 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
 
   Shot &shot = m_shots[shotIdx];
   int newPanelCount = (int)panelFrames.size();
+  bool sameStarts = newPanelCount == (int)shot.data->panels.size();
+  for (int i = 0; sameStarts && i < newPanelCount; i++)
+    sameStarts = shot.data->panels[i].startFrame == panelFrames[i];
 
-  if (newPanelCount == (int)shot.data->panels.size()) {
+  if (sameStarts) {
     // Count unchanged — update durations only (timeline may have been resized)
     for (int i = 0; i < newPanelCount; i++) {
       shot.data->panels[i].startFrame = panelFrames[i];
@@ -4245,13 +4258,33 @@ void StoryboardPanel::detectAndUpdatePanels(int shotIdx) {
     return;
   }
 
-  // Panel count changed — rebuild panel data and widgets
-  while ((int)shot.data->panels.size() < newPanelCount) {
-    PanelData pd;
-    shot.data->panels.push_back(pd);
+  // Panels changed — rebuild panel data and widgets. A panel's data (texts,
+  // light, label) belongs to the frame where it starts, not to its position:
+  // raising «max panels per second» put new panels in between, and the texts
+  // slid onto the wrong ones (Franco, 2026-10-25). A panel that disappears
+  // gives its texts to the panel that now holds its frame, so nothing written
+  // is lost by lowering the limit.
+  const std::vector<PanelData> oldPanels = shot.data->panels;
+  std::vector<PanelData> newPanels(newPanelCount);
+  for (int i = 0; i < newPanelCount; i++)
+    for (const PanelData &op : oldPanels)
+      if (op.startFrame == panelFrames[i]) { newPanels[i] = op; break; }
+  auto appendText = [](QString &to, const QString &text) {
+    if (text.trimmed().isEmpty()) return;
+    to = to.trimmed().isEmpty() ? text : to + "\n" + text;
+  };
+  for (const PanelData &op : oldPanels) {
+    if (std::find(panelFrames.begin(), panelFrames.end(), op.startFrame) !=
+        panelFrames.end())
+      continue;
+    int holder = 0;
+    for (int i = 0; i < newPanelCount; i++)
+      if (panelFrames[i] <= op.startFrame) holder = i;
+    appendText(newPanels[holder].dialog, op.dialog);
+    appendText(newPanels[holder].action, op.action);
+    appendText(newPanels[holder].notes, op.notes);
   }
-  while ((int)shot.data->panels.size() > newPanelCount)
-    shot.data->panels.pop_back();
+  shot.data->panels = newPanels;
   for (int i = 0; i < newPanelCount; i++) {
     shot.data->panels[i].startFrame = panelFrames[i];
     shot.data->panels[i].duration   = panelDur[i];

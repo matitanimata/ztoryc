@@ -205,6 +205,7 @@ QToolButton *m_lockBoardBtn = nullptr;  // Lock Storyboard (approved)
   QToolButton *m_techniqueButton;
   QToolButton *m_exportShotsButton;
   QToolButton *m_exportAnimaticButton;
+  QToolButton *m_exportAiButton = nullptr;
   QToolButton *m_camLabelButton;   // toggle camera-move type labels on thumbnails
   bool         m_showCamMoveType = true;  // persisted in QSettings
   // Light-direction gizmo (task 40 FASE 3)
@@ -244,6 +245,9 @@ struct Shot {
     TXshChildLevel *childLevel = nullptr;
   };
   std::vector<Shot> m_shots;
+  // Export for AI, one shot: its folder, or empty with the reason (ztoryaiexport.cpp).
+  QString exportShotForAI(int si, const QString &root, const QString &sceneName,
+                          bool withClip, QString *why);
   int  m_columnsPerRow;
   int              m_selectedShotIndex;
   std::set<int>     m_selectedIndices;
@@ -425,6 +429,7 @@ public:
   // ExportScenePopup which creates the project and collects the assets.
   void onExportShotsToProject();
   void onExportAnimatic();
+  void onExportForAI();  // ztoryaiexport.cpp
   // Lip sync degli shot scelti nel Board, senza entrare in ogni sotto-scena.
   // E' l'altra meta' dell'opzione nell'export: li' le colonne nascono nella
   // scena esportata, qui restano nello storyboard — servono a CONTROLLARE il

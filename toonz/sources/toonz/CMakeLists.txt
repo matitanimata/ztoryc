@@ -310,6 +310,7 @@ set(SOURCES
     ztorymouthapply.cpp
     ztoryrecovery.cpp
     ztoryaudiowatch.cpp
+    ztoryaiexport.cpp
     ztorymouthapplypopup.cpp
     ztorigmouths.cpp
     kitsuclient.cpp
