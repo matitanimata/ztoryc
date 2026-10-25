@@ -6917,6 +6917,20 @@ static void addLipSyncOption(QCheckBox *chk) {
 // COSA fa e DA DOVE prende: «automatic import» direbbe quando e non cosa, e si
 // confonderebbe con le opzioni di organizzazione degli asset li' accanto.
 static bool g_ztoryExportAssets = false;
+static bool g_ztoryExportReferences = false;
+
+// Under the assets' box: the Reference assets (guide videos and pictures for
+// the AI) stay out of the shot unless this is ticked.
+static QCheckBox *addReferenceImportOption(QCheckBox *assetsChk, QWidget *parent) {
+  auto *chk = new QCheckBox(QObject::tr("…including Reference assets"), parent);
+  chk->setChecked(g_ztoryExportReferences);
+  chk->setEnabled(assetsChk->isChecked());
+  chk->setToolTip(QObject::tr(
+      "Reference assets (a guide video, a picture) are for the AI export and "
+      "stay out of the shot.\nTick to import them in the shot too."));
+  QObject::connect(assetsChk, &QCheckBox::toggled, chk, &QCheckBox::setEnabled);
+  return chk;
+}
 
 static void addAssetImportOption(QCheckBox *chk) {
   chk->setChecked(g_ztoryExportAssets);
@@ -6932,7 +6946,8 @@ static void addAssetImportOption(QCheckBox *chk) {
 // Il rapporto e' in un dialogo con il testo scorribile e non in un QMessageBox:
 // gli asset che non si risolvono possono essere decine, e nascosti dietro a
 // «mostra dettagli» non li guarda nessuno.
-static bool ztoryConfirmShotAssets(QWidget *parent, const QStringList &uuids) {
+static bool ztoryConfirmShotAssets(QWidget *parent, const QStringList &uuids,
+                                   bool withReferences) {
   // The check loads every PSD layer by layer (the first time): seconds. A
   // guard, so an exception does not leave the cursor spinning.
   struct WaitCursor {
@@ -6942,7 +6957,7 @@ static bool ztoryConfirmShotAssets(QWidget *parent, const QStringList &uuids) {
   QVector<ZtoryAssetCheck> checks;
   {
     WaitCursor wait;
-    checks = ztoryCheckShotAssets(uuids);
+    checks = ztoryCheckShotAssets(uuids, withReferences);
   }
   // Gli shot guardati, come li conosce il tracker. Servono nel messaggio del
   // caso vuoto: un progetto ha piu' storyboard, ognuno con il suo SH010, e
@@ -7289,6 +7304,8 @@ void StoryboardPanel::onExportShots() {
       tr("Import each shot's assets from the breakdown"), &dlg);
   addAssetImportOption(assetsChk);
   form->addRow(QString(), assetsChk);
+  QCheckBox *refsChk = addReferenceImportOption(assetsChk, &dlg);
+  form->addRow(QString(), refsChk);
 
   // Naming preview
   auto *previewLabel = new QLabel(&dlg);
@@ -7349,8 +7366,10 @@ void StoryboardPanel::onExportShots() {
   opts.writeLink       = backLinkChk->isChecked();
   opts.lipSync         = lipSyncChk->isChecked();
   opts.importAssets    = assetsChk->isChecked();
+  opts.importReferences = opts.importAssets && refsChk->isChecked();
   g_ztoryExportLipSync = opts.lipSync;
   g_ztoryExportAssets  = opts.importAssets;
+  g_ztoryExportReferences = refsChk->isChecked();
 
   // Il controllo degli asset viene PRIMA di toccare il disco: chi si ferma per
   // sistemare cio' che manca non deve trovarsi mezza cartella gia' esportata.
@@ -7358,7 +7377,7 @@ void StoryboardPanel::onExportShots() {
     QStringList uuids;
     for (int i : indices)
       if (!m_shots[i].data->uuid.isEmpty()) uuids << m_shots[i].data->uuid;
-    if (!ztoryConfirmShotAssets(this, uuids)) return;
+    if (!ztoryConfirmShotAssets(this, uuids, opts.importReferences)) return;
   }
 
   int fail = 0;
@@ -7470,7 +7489,8 @@ QList<TFilePath> StoryboardPanel::exportShotScenesToDir(
     ZtoryImportedAssets imported;
     int undoBefore = TUndoManager::manager()->getHistoryCount();
     if (opts.importAssets && childXsh && !sd.uuid.isEmpty()) {
-      imported = ztoryImportShotAssets(sd.uuid, childXsh, shotScene);
+      imported = ztoryImportShotAssets(sd.uuid, childXsh, shotScene,
+                                       opts.importReferences);
       for (const QString &line : imported.log)
         exportLog(QString("[%1] asset %2").arg(baseName, line));
     }
@@ -7950,6 +7970,8 @@ void StoryboardPanel::onExportShotsToProject() {
       tr("Import each shot's assets from the breakdown"), shotsBox);
   addAssetImportOption(assetsChk);
   shotsForm->addRow(QString(), assetsChk);
+  QCheckBox *refsChk = addReferenceImportOption(assetsChk, shotsBox);
+  shotsForm->addRow(QString(), refsChk);
   lay->addWidget(shotsBox);
 
   auto *bbox = new QDialogButtonBox(
@@ -8009,7 +8031,9 @@ void StoryboardPanel::onExportShotsToProject() {
     for (int i : indices)
       if (i >= 0 && i < (int)m_shots.size() && !m_shots[i].data->uuid.isEmpty())
         uuids << m_shots[i].data->uuid;
-    if (!ztoryConfirmShotAssets(this, uuids)) return;
+    if (!ztoryConfirmShotAssets(this, uuids,
+                                refsChk->isEnabled() && refsChk->isChecked()))
+      return;
   }
 
   ExportScenePopup::ExportTarget exportTarget =
@@ -8058,8 +8082,10 @@ void StoryboardPanel::onExportShotsToProject() {
   opts.writeLink       = trackerChk->isChecked();
   opts.lipSync         = lipSyncChk->isChecked();
   opts.importAssets    = assetsChk->isChecked();
+  opts.importReferences = opts.importAssets && refsChk->isChecked();
   g_ztoryExportLipSync = opts.lipSync;
   g_ztoryExportAssets  = opts.importAssets;
+  g_ztoryExportReferences = refsChk->isChecked();
   QList<TFilePath> staged = exportShotScenesToDir(
       indices, stagingDir, verSpin->value(), opts, fail, &assetCopies);
   if (staged.isEmpty()) {

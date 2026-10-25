@@ -559,6 +559,9 @@ public:
   static const QString kCharacterType;   // the asset type of characters
   static const QString kStoryboardTask;  // the board pass, before the shot scene
   static bool isCharacterType(const QString &type);
+  // A guide for the shot (a video, a picture), not something drawn in it:
+  // left out of the shot's import unless asked (Franco, 2026-10-25).
+  static bool isReferenceType(const QString &type);
   static bool isStoryboardTask(const QString &taskType);
   // The six statuses in pipeline order, and their colours (Kitsu's): one copy
   // for the tracker and the Board's spreadsheet export, which had one each.

@@ -136,6 +136,10 @@ bool ZtoryModel::isCharacterType(const QString &type) {
   return type.compare(kCharacterType, Qt::CaseInsensitive) == 0;
 }
 
+bool ZtoryModel::isReferenceType(const QString &type) {
+  return type.compare("Reference", Qt::CaseInsensitive) == 0;
+}
+
 bool ZtoryModel::isStoryboardTask(const QString &taskType) {
   return taskType.compare(kStoryboardTask, Qt::CaseInsensitive) == 0;
 }

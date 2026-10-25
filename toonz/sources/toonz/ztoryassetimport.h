@@ -66,7 +66,9 @@ ZtoryPsdCheck ztoryCheckPsd(const QString &file);
 
 // Controlla il breakdown degli shot indicati (uuid dello shot di progetto).
 // Una voce per asset distinto, nell'ordine in cui compaiono.
-QVector<ZtoryAssetCheck> ztoryCheckShotAssets(const QStringList &shotUuids);
+// Reference assets are left out unless `withReferences`.
+QVector<ZtoryAssetCheck> ztoryCheckShotAssets(const QStringList &shotUuids,
+                                              bool withReferences = false);
 
 // Il rapporto da mostrare: solo cio' che non si risolve, una riga per asset con
 // il MOTIVO — che e' gia' una frase che dice cosa fare — e chi lo chiede.
@@ -94,7 +96,8 @@ struct ZtoryImportedAssets {
 // quella dello storyboard aperto.
 ZtoryImportedAssets ztoryImportShotAssets(const QString &shotUuid,
                                           TXsheet *subXsheet,
-                                          const TFilePath &shotScenePath);
+                                          const TFilePath &shotScenePath,
+                                          bool withReferences = false);
 
 // Carica UN psd nello xsheet corrente, dalla colonna `col0`, con le opzioni
 // PSD e il modo (Load / Import) di `policy`. Restituisce i livelli caricati.

@@ -1872,7 +1872,7 @@ void ZtoryProductionPanel::onBreakdownContextMenu(const QPoint &pos) {
 
   QMenu menu(this);
   QAction *linkAct = menu.addAction(isChar
-                                        ? QObject::tr("Link character scene…")
+                                        ? QObject::tr("Link scene or sheet…")
                                         : QObject::tr("Link file…"));
   QAction *clearAct = a.filePath.isEmpty()
                           ? nullptr
@@ -2465,7 +2465,7 @@ void ZtoryProductionPanel::onAssetContextMenu(const QPoint &pos) {
 
     QMenu rowMenu(this);
     QAction *linkAct  = rowMenu.addAction(isChar
-                                              ? QObject::tr("Link character scene…")
+                                              ? QObject::tr("Link scene or sheet…")
                                               : QObject::tr("Link file…"));
     // No file on purpose: drawn inside another asset (the books in the
     // library background). Stops any search or deduction of a wrong file.

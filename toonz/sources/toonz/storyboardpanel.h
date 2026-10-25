@@ -516,6 +516,8 @@ public:
     bool lipSync = false;
     // Ogni shot esportato nasce con dentro gli asset del suo breakdown.
     bool importAssets = false;
+    // ...and the Reference assets too (a guide video in the shot).
+    bool importReferences = false;
   };
 
 private:

@@ -147,7 +147,8 @@ static QStringList psdsBehind(const QString &file) {
   return {};
 }
 
-QVector<ZtoryAssetCheck> ztoryCheckShotAssets(const QStringList &shotUuids) {
+QVector<ZtoryAssetCheck> ztoryCheckShotAssets(const QStringList &shotUuids,
+                                              bool withReferences) {
   ZtoryModel *m = ZtoryModel::instance();
   QVector<ZtoryAssetCheck> out;
   // ⚠️ UNA volta per asset distinto. Gli asset si ripetono su molti shot, e
@@ -159,6 +160,9 @@ QVector<ZtoryAssetCheck> ztoryCheckShotAssets(const QStringList &shotUuids) {
     const ProjectShot *ps = shotByUuid(su);
     if (!ps) continue;
     for (const BreakdownEntry &be : ps->breakdown) {
+      if (!withReferences)
+        if (const Asset *ra = m->assetByUuid(be.assetUuid))
+          if (ZtoryModel::isReferenceType(ra->type)) continue;
       auto it = seen.find(be.assetUuid);
       if (it != seen.end()) {
         // Gia' risolto: qui si aggiunge solo CHI lo chiede, che e' l'altra
@@ -310,7 +314,8 @@ QList<TXshLevel *> ztoryLoadPsdWithPolicy(const TFilePath &psd,
 
 ZtoryImportedAssets ztoryImportShotAssets(const QString &shotUuid,
                                           TXsheet *subXsheet,
-                                          const TFilePath &shotScenePath) {
+                                          const TFilePath &shotScenePath,
+                                          bool withReferences) {
   ZtoryImportedAssets res;
   if (!subXsheet) return res;
   const ProjectShot *ps = shotByUuid(shotUuid);
@@ -340,6 +345,7 @@ ZtoryImportedAssets ztoryImportShotAssets(const QString &shotUuid,
   for (const BreakdownEntry &be : ps->breakdown) {
     const Asset *a = m->assetByUuid(be.assetUuid);
     if (!a) continue;
+    if (!withReferences && ZtoryModel::isReferenceType(a->type)) continue;
     if (a->noFile) {
       res.log << QObject::tr("%1: no file on purpose (drawn inside another "
                              "asset)").arg(a->name);
