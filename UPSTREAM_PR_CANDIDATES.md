@@ -112,6 +112,7 @@ not portable.
 11. ❓ **Set Key (Z) not showing the keyframe diamond on peg columns** — `cellselectioncommand.cpp`. Used `ColumnId(col)` instead of `xsh->getColumnObjectId(col)`.
 12. ❓ **Peg column width reset after delete** — `columnfan.cpp` (1 line). The column after a deleted peg inherits the reduced width. `b8ddea829`.
 13. ❓ **PSD first layer lost when loaded as sub-scene** — `txshsimplelevel.cpp`, `tiio_psd.cpp`. Affinity 16-bit PSD, empty Pascal names, group mode: `##`→`#` replace corrupts the path. `5b8eeb3c1`.
+13b. ❓ **CRASH compressing a non-raster image in `TImageCache`** — `common/tcache/timagecache.cpp`. The compressed and on-disk cache items only build raster / Toonz raster images; for anything else `UncompressedOnDiskCacheItem` dereferences a null raster. `m_cantCompress` lists vectors and meshes only, and `get()` resets it to false for every image, so any other `TImage` (OpenToonz's `TMetaImage`, i.e. an Assistants level) crashes as soon as `doCompress()` runs under memory pressure. Fix: `isCompressible()` (raster or Toonz raster) checked at the three compression points and in `add()`. `23d7138c2`. Reproduced with a probe against the real cache (old: SIGSEGV, new: survives) — *on Ztoryc code; stock has the same lines, not reproduced on stock*. Note: on Windows `memoryShortage()` always worked, on macOS/Linux only after #17 — fixing #17 upstream makes this crash reachable there too.
 
 #### 🟠 Medium
 
@@ -127,6 +128,7 @@ not portable.
 
 21. ❓ **Alternative tokens `not`/`and`/`or` → `!`/`&&`/`||`** (48 sites). `105588c14`.
 22. ❓ **Local variable `near` renamed** — collides with the `windef.h` macro on Windows. `8a4dbc294`.
+22b. ❗ **Windows package ships an MSVC runtime OLDER than the compiler** — `ci-scripts/windows/tahoma-buildpkg.bat`, the `for /d /r ... (14.*)` loop. It takes the FIRST `14.*` folder in alphabetical order, so on the GitHub runner it copies VS2019's `Redist\MSVC\14.29.30133\x64\Microsoft.VC142.CRT` while the code is built with MSVC 19.44 (VS 17.14). Since VS 17.10 the `std::mutex` constructor is constexpr and needs a newer `msvcp140.dll`: with the old one the first lock crashes (`EXCEPTION_ACCESS_VIOLATION` in MSVCP140, symbolised as `Thrd_yield`). In Ztoryc 0.19.1 it hit the first `std::mutex` on a common path, opening a Plastic scene. Fix: newest `Redist\MSVC\14.*` folder first (`dir /b /ad /o-n`), and fail the build if none is found. Verified from the CI log (compiler 19.44, runtime path 14.29); the fix itself *not yet verified by a CI run*. Stock has the identical loop — latent there until stock code locks a `std::mutex` on a hot path.
 
 #### 🆕 Added August 2026
 
@@ -439,6 +441,20 @@ not portable.
   *(Written, built and verified in the running app here; wants a stock Tahoma
   build to confirm no level-naming regression — the underscore frame format is
   the part to exercise.)*
+
+#### 🆕 Found 2026-10-25
+
+- ❓ **Drawing assistants (and replicators) are not drawn when there is no current level** — `tnztools/assistant.cpp`, `TAssistant::scanAssistants()`, and `tnztools/replicator.cpp`, `TReplicator::scanReplicators()` (OpenToonz master). The guard chain requires a current `TXshSimpleLevel` and gives up otherwise, but the level is used only to compute the DPI scale for a level tool. With the camera column or an empty column selected, the scene's assistants simply vanish from the viewer, while other guides still show. Fix: the level is optional, the DPI scale defaults to (1,1) without it. On Ztoryc there was a second cause in our own viewer port (assistants drawn only inside the «tool enabled» block), not relevant to OpenToonz's viewer. `2460cf9ff`. *(Diagnosed on Ztoryc; not checked on stock OpenToonz, whose viewer draws assistants through its own path.)*
+- ❓ **Finger tool missing from the toolbar** — `toonz/toolbar.h` (Tahoma2D): `{T_Finger, …}` is commented out in `m_buttonLayout`, already before 2020 (`7672e2ebc` carries it over), with no reason in the history. The tool itself is compiled, registered (`createToolAction(T_Finger, …)`) and works on Toonz Raster levels: it fills small gaps inside lines, and with Invert removes isolated ink specks. OpenToonz shows it in its toolbar. Fix: the entry back, after Tape (array size +1). *(Feature visibility, not a bug; to ask Tahoma2D whether it was hidden on purpose.)*
+
+#### 🆕 Found 2026-10-24
+
+- ✅ **CRASH: a failed write of a drawing-assistants level (`.tzm`) terminates the app** — `image/tzm/tiio_tzm.cpp`, `~TLevelWriterTzm()`: the whole file is written in the destructor, and a failed write is rethrown as `TImageException` — out of a destructor, i.e. `std::terminate` (`~TLevelWriter` is implicitly `noexcept`, so `noexcept(false)` on the override is not an option). `Tofstream` never throws when `fopen` fails, it only sets `failbit`, so the first throw is `TVariant::toStream`'s «write to stream failed», inside the destructor. Identical in OpenToonz master (`opentoonz/master:71`). On Ztoryc: an autosave to a Google Drive folder on Windows that refused the file closed the app (Messina, 2026-10-24, `Crash-20261024-165757`: `LevelUpdater::close` → `reset` → `~TLevelWriterTzm` → `terminate`). Reproduced on macOS with a probe against the real `libimage` writing to a missing folder: `terminating due to uncaught exception of type TImageException`, exit 134; after the fix exit 0 and no file left. Fix: the destructor catches everything, logs to `std::cerr`, and deletes the partial file — `LevelUpdater::close`, which writes over an existing level through a temporary, then throws «cant find!» normally and the original stays untouched. *(Reproduced and fixed on Ztoryc; the code is OpenToonz's, unchanged.)*
+- ❓ **Three tool options are never remembered between sessions** — each has its `TEnv` variable, but it is either never written or only read back on one path:
+  - Fill tool **Selective** — `tnztools/filltool.cpp`: `FillSelective` is declared, the `m_selective` branch of `onPropertyChanged` never assigns it, and `onActivate` has the read-back commented out (`//m_onlyEmpty.setValue(FillSelective ...)`, a leftover of the old property name).
+  - Raster fill **Refer Visible** — `tnztools/fullcolorfilltool.cpp`: `FullColorFillReferenced` is declared and never read nor written.
+  - Vector brush **Auto Fill** — `tnztools/toonzvectorbrushtool.cpp`: `V_VectorBrushAutoFill` is restored only in `loadLastBrush()`, which `onActivate` calls only when the preset is `<custom>`; with a brush preset chosen the option comes back off at every start (it is not part of the preset data).
+  Fix on Ztoryc: write the variable in `onPropertyChanged`, read it back at first activation outside the preset branch. *(Diagnosed and fixed on Ztoryc; stock code — not yet verified on Tahoma2D stock.)*
 
 #### 🆕 Found 2026-10-03
 
