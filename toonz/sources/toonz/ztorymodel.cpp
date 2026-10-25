@@ -3363,6 +3363,8 @@ void ZtoryModel::readShotDocument(const QByteArray &bytes,
              a.value("projectPublication").toString() == QLatin1String("local"));
         shotDocumentState().shotIdentityAsked = (a.value("shotIdentityAsked").toString() ==
                                QLatin1String("1"));
+        shotDocumentState().animaticVideoLocked =
+            a.value("animaticVideoLocked").toString() == QLatin1String("1");
         out.backLinkUuid      = a.value("projectShot").toString();
         out.backLinkProject   = a.value("project").toString();
         out.backLinkTaskStage = QString();  // read from <project> below
@@ -3768,6 +3770,7 @@ bool ZtoryModel::writeShotDocument(const QString &path,
     xml.writeAttribute("projectPublication", "local");
   }
   if (m_docState.shotIdentityAsked) xml.writeAttribute("shotIdentityAsked", "1");
+  if (m_docState.animaticVideoLocked) xml.writeAttribute("animaticVideoLocked", "1");
   // Project metadata (production + title entered by user at scene creation).
   {
     ZtoryModel *model = this;

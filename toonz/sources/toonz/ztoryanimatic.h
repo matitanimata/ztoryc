@@ -1022,7 +1022,6 @@ private:
   // Per-column mute/solo/lock state — persists across refreshAudioTracks() rebuilds
   QMap<int, bool> m_colMuted;
   QSet<int>       m_colSolo;
-  QMap<int, bool> m_colLocked;
   // Apply effective mute/solo volumes to all audio columns and rebuild soundtrack
   void applyMuteSolo();
   // Restore muted/solo/locked state onto freshly-created track widgets

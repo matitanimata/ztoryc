@@ -35,6 +35,10 @@
 
 ### Modified
 - Disk Holes spenti di default, e la scelta resta salvata.
+- **Lucchetti della timeline dell'animatic salvati con la scena**: le tracce audio usano il lucchetto della
+  colonna (bloccate anche nello xsheet, e non seguono gli shot col link acceso); la traccia video si salva nel
+  `.ztoryc` e, chiusa, blocca le operazioni sugli shot anche nel Board (aggiungere, cancellare, spostare,
+  durate…). Per bloccare anche il contenuto degli shot resta il Lock dello storyboard (Franco).
 
 ### Notes
 - Scene invisibili su miniVip dopo un riavvio = permessi macOS della build ad-hoc (tre voci Ztoryc in File e

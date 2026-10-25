@@ -170,6 +170,18 @@ bool refuse(bool silent) {
   return true;
 }
 
+bool refuseShotEdit(bool silent) {
+  if (refuse(silent)) return true;
+  if (!ZtoryModel::instance()->shotDocumentState().animaticVideoLocked)
+    return false;
+  if (!silent)
+    DVGui::warning(
+        tr("The animatic is locked (the lock on its video track): the shots "
+           "and their durations cannot change.\n\nUnlock the video track in "
+           "the animatic timeline to edit them."));
+  return true;
+}
+
 QStringList shotsNotApproved() {
   const ZtoryModel *m = ZtoryModel::instance();
   QStringList missing;

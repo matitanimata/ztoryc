@@ -4566,7 +4566,7 @@ void StoryboardPanel::onModelResequenced() {
 }
 
 void StoryboardPanel::onMergeShots() {
-  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
+  if (ZtoryStoryboardLock::refuseShotEdit()) return;  // locked: export only
   auto before = captureSnapshot();
 
   // The xsheet columns to merge: own selection (>= 2 shots), else the shared
@@ -5336,7 +5336,7 @@ void StoryboardPanel::onCopyShot() {
 }
 
 void StoryboardPanel::onCutShot() {
-  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
+  if (ZtoryStoryboardLock::refuseShotEdit()) return;  // locked: export only
   // Immediate cut: the clip keeps the shot's data and its sub-scene alive, then
   // the shot is deleted (onDeleteShot: the same Delete as the Animatic's).
   ZtoryShotOps::closeSubScenes();
@@ -5355,7 +5355,7 @@ void StoryboardPanel::onCutShot() {
 }
 
 void StoryboardPanel::onCloneShot() {
-  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
+  if (ZtoryStoryboardLock::refuseShotEdit()) return;  // locked: export only
   // Non-destructive, like Copy: the artist stays in the shot being drawn.
   std::set<int> indices = m_selectedIndices;
   if (indices.empty() && m_selectedShotIndex >= 0) indices.insert(m_selectedShotIndex);
@@ -5374,7 +5374,7 @@ void StoryboardPanel::onCloneShot() {
 
 
 void StoryboardPanel::onPasteShot() {
-  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
+  if (ZtoryStoryboardLock::refuseShotEdit()) return;  // locked: export only
   // The shared clipboard is the single source of truth (written by both Board
   // and Animatic copy/cut/clone). Paste delegates to the shared xsheet op, then
   // rebuilds the Board from the scene — same flow as ZtoryAnimaticPanel::onPasteShots.
@@ -5699,7 +5699,7 @@ void UndoBoardState::redo() const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void StoryboardPanel::onDeleteShot() {
-  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
+  if (ZtoryStoryboardLock::refuseShotEdit()) return;  // locked: export only
   // Raccogli indici da cancellare (selezione multipla o singola)
   std::vector<int> toDelete(m_selectedIndices.begin(), m_selectedIndices.end());
   if (toDelete.empty() && m_selectedShotIndex >= 0) toDelete.push_back(m_selectedShotIndex);
@@ -5750,7 +5750,7 @@ void StoryboardPanel::onDeleteShot() {
 }
 
 void StoryboardPanel::onAddShot() {
-  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
+  if (ZtoryStoryboardLock::refuseShotEdit()) return;  // locked: export only
   auto before = captureSnapshot();
 
   // Enforce Keep numbering if shots already live in Kitsu, so this insert can't
@@ -5885,7 +5885,7 @@ void StoryboardPanel::onLightPlaced(int shotIdx, int panelIdx,
 }
 
 void StoryboardPanel::onLightRemoved(int shotIdx, int panelIdx) {
-  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
+  if (ZtoryStoryboardLock::refuseShotEdit()) return;  // locked: export only
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   Shot &shot = m_shots[shotIdx];
   if (panelIdx < 0 || panelIdx >= (int)shot.data->panels.size()) return;
@@ -5901,7 +5901,7 @@ void StoryboardPanel::onLightRemoved(int shotIdx, int panelIdx) {
 }
 
 void StoryboardPanel::onMatchDuration(int shotIdx) {
-  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
+  if (ZtoryStoryboardLock::refuseShotEdit()) return;  // locked: export only
   // Resize the main xsheet column to match the sub-scene's actual frame count.
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   auto before = captureSnapshot();
@@ -6123,7 +6123,7 @@ void StoryboardPanel::onFollowFrameChanged() {
 }
 
 void StoryboardPanel::onDurationChanged(int shotIdx, int panelIdx, int frames) {
-  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
+  if (ZtoryStoryboardLock::refuseShotEdit()) return;  // locked: export only
   if (shotIdx < 0 || shotIdx >= (int)m_shots.size()) return;
   if (panelIdx < 0 || panelIdx >= (int)m_shots[shotIdx].data->panels.size()) return;
   // Capture "before" only on the first change in a coalescing window.
@@ -6171,7 +6171,7 @@ void StoryboardPanel::commitTextUndo() {
 }
 
 void StoryboardPanel::onMoveShot(int fromShot, int toShot) {
-  if (ZtoryStoryboardLock::refuse()) return;  // locked: export only
+  if (ZtoryStoryboardLock::refuseShotEdit()) return;  // locked: export only
   if (!ZtoryModel::assertMainXsheet(true)) return;   // warn: exit edit mode first
   if (fromShot == toShot) return;
   if (fromShot < 0 || fromShot >= (int)m_shots.size()) return;

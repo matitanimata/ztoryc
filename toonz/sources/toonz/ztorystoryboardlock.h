@@ -26,6 +26,12 @@ bool isLocked();
 //! true, so the caller stops.
 bool refuse(bool silent = false);
 
+//! For an operation on the shots (add, delete, move, cut, paste, merge, a
+//! duration): refused also when the animatic's video track is locked — an
+//! animatic sent to the musician stays put before the storyboard is locked
+//! (Franco, 2026-10-25).
+bool refuseShotEdit(bool silent = false);
+
 //! Shot labels whose Storyboard task is not approved yet.
 QStringList shotsNotApproved();
 

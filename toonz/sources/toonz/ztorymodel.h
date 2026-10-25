@@ -1088,6 +1088,7 @@ public:
     bool trackerOff        = false;  // productionTracker="off": the user kept
                                      // this storyboard out of the Tracker
     bool shotIdentityAsked = false;  // the duplicate-shot question was answered
+    bool animaticVideoLocked = false;  // the animatic's video track is locked
     bool isShotScene       = false;  // role="shot": sidecar written once, at export
     bool isCharacterScene  = false;  // role="character": the sidecar holds mouth sets
     bool isPlainScene      = false;  // role="plain": a scene of the project that
