@@ -1072,8 +1072,8 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   // Dove stanno i file degli asset, UNA CARTELLA PER CATEGORIA. Con 145 asset
   // un percorso per ciascuno non lo compila nessuno: qui si indica la cartella
   // e il file si risolve per convenzione dal nome dell'asset.
-  // I Character non hanno cartella: nel cutout sono SCENE, e la scena si lega
-  // sull'asset stesso (scheda Assets → Link file).
+  // I Character hanno la cartella dei model sheet: la loro tavola si trova per
+  // nome come un fondo; la scena del cutout si lega sull'asset (Link file).
   auto addDirRow = [&](const QString &label, QLineEdit *&edit,
                        const QString &tip) {
     auto *row  = new QWidget(w);
@@ -1100,9 +1100,9 @@ QWidget *ZtoryProductionPanel::buildProjectTab() {
   addDirRow(QObject::tr("Backgrounds folder:"), m_bgDirEdit,
             QObject::tr("Folder holding the background/environment files."));
   addDirRow(QObject::tr("Model sheets folder:"), m_modelSheetDirEdit,
-            QObject::tr("Tradigital: folder holding the character model "
-                        "sheets, imported as images.\nIn digital cutout a "
-                        "character is a scene instead — link it on the asset."));
+            QObject::tr("Folder holding the character sheets, found by the "
+                        "character's name like a background.\nA cutout "
+                        "character's scene is linked on the asset instead."));
 
   // Come l'export porta gli asset dentro lo shot. Default di progetto: i
   // singoli asset possono scostarsene dalla scheda Assets.
@@ -1791,16 +1791,21 @@ bool ZtoryProductionPanel::linkAssetFileInteractive(int assetIndex) {
       start = m->assetDirForType(a.type);
     }
   }
+  // A character is linked to its scene (cutout) or to a sheet, an image like
+  // a background's: each sheet is an asset of its own (Franco, 2026-10-25).
   const QString f = QFileDialog::getOpenFileName(
       this, QObject::tr("Link file to %1").arg(a.name), start,
-      isChar ? QObject::tr("Scenes (*.tnz)") : QObject::tr("All files (*)"));
+      isChar ? QObject::tr("Scenes and sheets (*.tnz *.png *.jpg *.jpeg *.tif "
+                           "*.tiff *.psd *.tga *.bmp *.webp);;All files (*)")
+             : QObject::tr("All files (*)"));
   if (f.isEmpty()) return false;
+  const bool isScene = f.endsWith(".tnz", Qt::CaseInsensitive);
   // ⚠️ Collegare DICHIARA la scena personaggio (sotto): su uno shot o uno
   // storyboard ne cambia il ruolo, su un altro personaggio ne ruba la scena.
   // Due nomi quasi uguali bastano a sbagliare — FATINA finì su
   // «Companion_non_chiamate,i_princess.tnz», uno shot vecchio, invece che su
   // «…chiamatemi_princess.tnz» (Franco, 2026-09-25). Si chiede, non si fa.
-  if (isChar) {
+  if (isChar && isScene) {
     const QString role = ZtoryCharacter::roleOf(f);
     QString otherUuid, otherName;
     ZtoryCharacter::characterRef(f, &otherUuid, &otherName);
@@ -1826,7 +1831,7 @@ bool ZtoryProductionPanel::linkAssetFileInteractive(int assetIndex) {
   // tracker sa qual e' la scena, e la scena (il suo .ztoryc) sa di essere
   // questo personaggio — e' da li' che le mappe delle bocche prendono il
   // personaggio a cui appartengono (Franco, 2026-09-25).
-  if (isChar) {
+  if (isChar && isScene) {
     QString why;
     if (!ZtoryCharacter::declareCharacterScene(f, a.uuid, a.name, &why))
       DVGui::warning(

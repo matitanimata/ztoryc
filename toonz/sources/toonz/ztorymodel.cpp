@@ -941,7 +941,7 @@ QString ZtoryModel::resolveAssetFile(const Asset &a, QString *why,
   const QString dir = assetDirForType(a.type);
   if (dir.isEmpty())
     return fail(ZtoryModel::isCharacterType(a.type)
-                    ? tr("a character has no folder: link its scene")
+                    ? tr("no Model Sheet folder set: link its scene or sheet")
                     : tr("no folder set for type %1").arg(a.type));
   if (!QDir(dir).exists()) return fail(tr("folder not found: %1").arg(dir));
 
@@ -1094,12 +1094,14 @@ QString ZtoryModel::resolveAssetFile(const Asset &a, QString *why,
 }
 
 QString ZtoryModel::assetDirForType(const QString &type) const {
-  // Character: nessuna cartella. Nel cutout digitale un personaggio e' una
-  // SCENA dello stesso progetto e si importa come sotto-scena; nel tradigital
-  // di lui si importa il model sheet, che ha la sua cartella a parte.
+  // Character: la cartella dei model sheet. Nel cutout il personaggio e' una
+  // SCENA, collegata sull'asset; senza collegamento si cerca la sua tavola per
+  // nome fra i model sheet, come un fondo o un prop (Franco, 2026-10-25: ogni
+  // tavola e' un asset a se', il nome dice di chi e').
   if (type.compare("Prop", Qt::CaseInsensitive) == 0) return m_propsDir;
   if (type.compare("Environment", Qt::CaseInsensitive) == 0)
     return m_backgroundsDir;
+  if (isCharacterType(type)) return m_modelSheetDir;
   return QString();
 }
 
