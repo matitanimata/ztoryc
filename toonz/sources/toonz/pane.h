@@ -142,6 +142,25 @@ signals:
 };
 
 //-----------------------------------------------------------------------------
+// Ztoryc: chooses what Show Perspective Grids shows for a tool without a
+// Guides menu of its own: the Tahoma grid, the assistants, or both.
+
+class TPanelTitleBarButtonForGuides final : public TPanelTitleBarButton {
+  Q_OBJECT
+
+  QMenu *m_menu;
+
+public:
+  TPanelTitleBarButtonForGuides(QWidget *parent,
+                                const QString &standardPixmapName);
+
+protected:
+  void mousePressEvent(QMouseEvent *event) override;
+signals:
+  void updateViewer();
+};
+
+//-----------------------------------------------------------------------------
 /*! specialized button for safe area which enables to choose safe area size by
  * context menu
  */

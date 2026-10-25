@@ -5403,11 +5403,28 @@ ZtoryAnimaticViewerPanel::ZtoryAnimaticViewerPanel(QWidget *parent)
             CommandManager::instance()->getAction(actionId), SLOT(trigger()));
     connect(CommandManager::instance()->getAction(actionId),
             SIGNAL(triggered(bool)), btn, SLOT(setPressed(bool)));
+    // the switch is shared with the other viewers: start from its state
+    btn->setPressed(
+        CommandManager::instance()->getAction(actionId)->isChecked());
     btn->hide();
     return btn;
   };
-  m_overlayButtons.append(makeOverlayBtn(-198, "pane_symmetry",    "Show Symmetry Guide",    MI_ShowSymmetryGuide));
-  m_overlayButtons.append(makeOverlayBtn(-177, "pane_perspective", "Show Perspective Grids", MI_ShowPerspectiveGrids));
+  m_overlayButtons.append(makeOverlayBtn(-219, "pane_symmetry",    "Show Symmetry Guide",    MI_ShowSymmetryGuide));
+  m_overlayButtons.append(makeOverlayBtn(-198, "pane_perspective", "Show Perspective Grids", MI_ShowPerspectiveGrids));
+  // What the grids switch shows, as in the other viewers (viewerpane.cpp)
+  {
+    auto *guidesBtn = new TPanelTitleBarButtonForGuides(
+        getTitleBar(), getIconPath("pane_more"));
+    guidesBtn->setToolTip(tr("Perspective Grids Settings"));
+    getTitleBar()->add(QPoint(-177, 0), guidesBtn);
+    connect(guidesBtn, &TPanelTitleBarButtonForGuides::updateViewer, this,
+            [this]() {
+              if (m_shotViewer && m_shotViewer->sceneViewer())
+                m_shotViewer->sceneViewer()->update();
+            });
+    guidesBtn->hide();
+    m_overlayButtons.append(guidesBtn);
+  }
 
   // Fit to Window, the same icon as the timeline's Fit All: one click, not a
   // toggle. Acts on whichever viewer is showing, animatic or shot (Franco,
@@ -5416,7 +5433,7 @@ ZtoryAnimaticViewerPanel::ZtoryAnimaticViewerPanel(QWidget *parent)
     auto *fitBtn = new TPanelTitleBarButton(getTitleBar(),
                                             getIconPath("pane_fit"));
     fitBtn->setToolTip(tr("Fit to Window"));
-    getTitleBar()->add(QPoint(-229, 0), fitBtn);
+    getTitleBar()->add(QPoint(-250, 0), fitBtn);
     connect(fitBtn, &TPanelTitleBarButton::toggled, this, [this, fitBtn]() {
       fitBtn->setPressed(false);
       BaseViewerPanel *v = m_viewer;

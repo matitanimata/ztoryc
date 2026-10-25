@@ -45,7 +45,7 @@ public:
   // a whole-viewer refresh (see ToonzRasterBrushTool).
   unsigned int getToolHints() const override {
     return GuideSnap::hints(m_guideSnap,
-                            TTool::getToolHints() & ~HintAssistantsGuidelines);
+                            TTool::allGuideHints() & ~HintAssistantsGuidelines);
   }
   void paintDragPoint(const TPointD &usePos, const TPointD &pos,
                       const TMouseEvent &e, TRectD invalidateRect);

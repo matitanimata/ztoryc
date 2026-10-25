@@ -1,3 +1,64 @@
+## [2026-10-25] — Assistants senza colonna disegno, Duplicate con Auto-stretch, Kitsu fra episodi e rinomini, sentinella audio
+
+### Fixed
+- **Kitsu: il Sync di Cascina scriveva sugli shot di Messina.** Il tracker di Cascina aveva memorizzato gli id
+  degli shot di Messina (abbinati per nome in un Sync di prima del 29/09, quando l'episodio non era ancora
+  obbligatorio). Il push ora scarta un id che non appartiene al nostro episodio e cerca lo shot per nome solo
+  li'. Riparati a mano: durate e timecode di Messina sh010-sh130 nel database, id tolti da Cascina (copie in
+  `reference/kitsu_fix_2026-10-25/`).
+- **Kitsu: rinomina di shot che si scambiano il nome (D6).** Rinomini a due passaggi; uno shot che occupa un
+  nome e non e' piu' nello storyboard prende `_removed`. Gli shot tolti dallo storyboard (il tracker li
+  ricorda in `removedKitsuShots`) si cancellano da Kitsu se non hanno lavoro, altrimenti `_removed` + annullati.
+  Il Sync salva la scena prima di partire. Collaudato su renameTest / ZTORYC-AI.
+- **Duplicate Drawing (D) dava sequenze senza senso** (1 2 1 3 3 3): Implicit Hold spento (nostro) e
+  Auto-stretch spento (di Tahoma). Auto-stretch ora acceso di default, come in OpenToonz.
+- **Assistants non disegnati con colonna camera o vuota**: il viewer li disegnava solo con lo strumento attivo,
+  e il codice OT pretendeva un livello corrente. Ora si vedono come la griglia di Tahoma.
+- **Griglie e Assistants nel viewer dell'animatic**: non compaiono piu' (l'interruttore e' comune a tutti i
+  viewer); il pulsante dentro lo shot parte dallo stato vero.
+- **Export uno-per-shot: il `.fcpxml` prendeva il nome dell'ultimo shot**: il campo del nome era riscritto dal
+  timer della finestra durante il render. Il nome si legge una volta prima di cominciare.
+
+### Added
+- Menu accanto a Show Perspective Grids (viewer e viewer dello shot): griglia, Assistants o tutti e due, per gli
+  strumenti senza menu Guides proprio.
+- Interpolazione degli Assistants visibile anche con Edit Assistants attivo (chiave attenuata, interpolati pieni).
+- Finger tool rimesso nella barra degli strumenti (Toonz Raster: riempie i buchi delle linee; Invert toglie i
+  puntini).
+- **Sentinella audio temporanea** (`ztoryaudiowatch`): ogni spostamento di un clip audio va in
+  `crash/audio_watch.log` con l'ultima operazione e lo stack. Da togliere trovata la causa dei fuori sync.
+
+### Modified
+- Disk Holes spenti di default, e la scelta resta salvata.
+
+### Notes
+- Scene invisibili su miniVip dopo un riavvio = permessi macOS della build ad-hoc (tre voci Ztoryc in File e
+  cartelle): tolte col −, tutto normale.
+- groundzero (fork OT di Rodney): presentazione nell'issue #8 scritta, non pubblicata. Da tenere d'occhio
+  Kinematic Output e export PSD. Verificato che non hanno copiato da noi.
+- Puppetoonz: si finisce in Python, poi room nelle scene personaggio (1.0 o 1.x da decidere).
+- Review della sessione fatta a mano (`reviews/2026-10-25_*`). Prossimo rilascio: MINOR (Auto-stretch).
+
+## [2026-10-24] — 0.19.1 e 0.19.2: runtime MSVC, crash del .tzm, recupero in locale
+
+### Fixed
+- **Windows: crash su std::mutex** (0.19.1 cancellata: runtime MSVC sbagliata) — il pacchetto porta la runtime
+  14.44 di VS2022.
+- **Crash scrivendo un livello di Assistants (.tzm)** su Drive durante il salvataggio di recupero: l'eccezione
+  usciva dal distruttore del writer (std::terminate). Riprodotto e corretto con una sonda.
+- **Board**: colonne e vista compatta per stanza, anche in Ztoryc X e Ztoryc T.
+- Strumenti: Auto Fill, Fill Style, Selective e Refer Visible ricordati; Animate parte su All.
+
+### Modified
+- **Recupero in locale** (Application Support / AppData), non piu' nel progetto: una copia non usata alla
+  riapertura si butta; Esc la tiene e la ripropone; entrare e uscire da uno shot non la cancella.
+
+### Upstream candidates
+- Crash del writer `.tzm` che lancia dal distruttore (UPSTREAM_PR_CANDIDATES, «Found 2026-10-24»).
+
+### Notes
+- 0.19.2 Latest con 9 asset; 0.19.0 pre-release con avviso; collaudo sulla Companion ancora da fare.
+
 ## [2026-10-23] — Lock Storyboard, pennelli per stile, palette sovrascritte dal trattino basso, 0.19.0
 
 ### Added

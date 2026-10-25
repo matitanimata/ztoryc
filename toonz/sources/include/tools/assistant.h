@@ -432,6 +432,12 @@ public:
     bool markEnabled,
     bool drawGuidelines,
     TImage *skipImage );
+
+  // Ztoryc: on a frame held from a key drawing of the current column, the
+  // assistants of `image` as they are interpolated there.  False on the key
+  // itself, with no next key, or with constant interpolation: nothing differs
+  // from the key.  With draw false it only answers.
+  static bool drawInterpolated(TTool *tool, TImage *image, bool draw);
 };
 
 

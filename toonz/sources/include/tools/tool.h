@@ -442,6 +442,14 @@ return true if the method execution can have changed the current tool
   };
   virtual unsigned int getToolHints() const;
 
+  // Ztoryc: which guide systems the viewer shows for a tool without a Guides
+  // menu of its own (the menu next to Show Perspective Grids). A brush
+  // chooses for itself from allGuideHints().
+  enum ShownGuides { ShowBothGuides, ShowGridOnly, ShowAssistantsOnly };
+  static ShownGuides shownGuides();
+  static void setShownGuides(ShownGuides shown);
+  static unsigned int allGuideHints();
+
   virtual void onEnter() {
   }  //!< Callback for the mouse entering the viewer area.
   virtual void onLeave() {

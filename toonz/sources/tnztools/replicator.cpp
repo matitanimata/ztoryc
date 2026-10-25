@@ -134,16 +134,20 @@ TReplicator::scanReplicators(
   if (tool)
   if (TTool::Viewer *viewer = tool->getViewer())
   if (TApplication *application = tool->getApplication())
-  if (TXshLevelHandle *levelHandle = application->getCurrentLevel())
-  if (TXshLevel *level = levelHandle->getLevel())
-  if (TXshSimpleLevel *simpleLevel = level->getSimpleLevel())
   if (TFrameHandle *frameHandle = application->getCurrentFrame())
   if (TXsheetHandle *XsheetHandle = application->getCurrentXsheet())
   if (TXsheet *Xsheet = XsheetHandle->getXsheet())
   {
     ToonzScene *scene = Xsheet->getScene();
     TSceneProperties *props = scene ? scene->getProperties() : nullptr;
-    TPointD dpiScale = getCurrentDpiScale(simpleLevel, tool->getCurrentFid());
+    // Ztoryc: the guides of the scene are shown also with no current level
+    // (camera or empty column selected); the level only scales a level tool.
+    TXshSimpleLevel *simpleLevel = application->getCurrentLevel()
+                                 ? application->getCurrentLevel()->getSimpleLevel()
+                                 : nullptr;
+    TPointD dpiScale = simpleLevel
+                     ? getCurrentDpiScale(simpleLevel, tool->getCurrentFid())
+                     : TPointD(1, 1);
     int frame = frameHandle->getFrame();
     int count = Xsheet->getColumnCount();
     TAffine worldToTrack;

@@ -25,6 +25,7 @@ extern ToggleCommandHandler showMeshToggle;
 #include "filebrowserpopup.h"
 #include "ztorymodel.h"
 #include "ztoryrecovery.h"
+#include "ztoryaudiowatch.h"
 #include "ztoryinstance.h"
 #include "ztorylocks.h"
 #include "storyboardpanel.h"
@@ -80,6 +81,8 @@ extern ToggleCommandHandler showMeshToggle;
 
 TEnv::IntVar ViewCameraToggleAction("ViewCameraToggleAction", 1);
 TEnv::IntVar ViewTableToggleAction("ViewTableToggleAction", 0);
+// Ztoryc: off by default, and remembered like the table (Franco, 2026-10-25)
+TEnv::IntVar ViewDiskHolesToggleAction("ViewDiskHolesToggleAction", 0);
 TEnv::IntVar FieldGuideToggleAction("FieldGuideToggleAction", 0);
 TEnv::IntVar ViewBBoxToggleAction("ViewBBoxToggleAction1", 1);
 TEnv::IntVar EditInPlaceToggleAction("EditInPlaceToggleAction", 0);
@@ -671,6 +674,8 @@ centralWidget->setLayout(centralWidgetLayout);*/
   // Copia di recupero della scena e dei livelli modificati, per un crash
   // (vedi ztoryrecovery.h).
   ZtoryRecovery::instance()->start();
+  // Temporary: who moves the audio (crash/audio_watch.log, ztoryaudiowatch.h)
+  ZtoryAudioWatch::instance()->start();
 }
 
 //-----------------------------------------------------------------------------
@@ -1813,6 +1818,8 @@ void MainWindow::onMenuCheckboxChanged() {
     ViewCameraToggleAction = isChecked;
   else if (cm->getAction(MI_ViewTable) == action)
     ViewTableToggleAction = isChecked;
+  else if (cm->getAction(MI_ViewDiskHoles) == action)
+    ViewDiskHolesToggleAction = isChecked;
   else if (cm->getAction(MI_ToggleEditInPlace) == action)
     EditInPlaceToggleAction = isChecked;
   else if (cm->getAction(MI_ToggleMainAudio) == action)
@@ -2994,7 +3001,7 @@ void MainWindow::defineActions() {
   createToggle(MI_ViewTable, QT_TR_NOOP("&Table"), "",
                ViewTableToggleAction ? 1 : 0, MenuViewCommandType);
   createToggle(MI_ViewDiskHoles, QT_TR_NOOP("&Disk Holes"), "",
-               1, MenuViewCommandType);
+               ViewDiskHolesToggleAction ? 1 : 0, MenuViewCommandType);
   createToggle(MI_ShowSymmetryGuide, QT_TR_NOOP("&Symmetry Guide"), "",
                ShowSymmetryGuide ? 1 : 0, MenuViewCommandType);
   createToggle(MI_ShowPerspectiveGrids, QT_TR_NOOP("&Perspective Grids"), "",

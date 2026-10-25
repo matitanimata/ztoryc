@@ -48,6 +48,7 @@
 #include "trasterimage.h"
 #include "strokeselection.h"
 #include "tundo.h"
+#include "tenv.h"
 
 #include "toonzvectorbrushtool.h"
 
@@ -185,9 +186,37 @@ TTool::TTool(std::string name)
 
 //-------------------------------------------------------------------
 
-unsigned int TTool::getToolHints() const {
+namespace {
+TEnv::IntVar ShownGuidesVar("ShownGuides", TTool::ShowBothGuides);
+}
+
+TTool::ShownGuides TTool::shownGuides() {
+  int value = ShownGuidesVar;
+  return value == ShowGridOnly         ? ShowGridOnly
+         : value == ShowAssistantsOnly ? ShowAssistantsOnly
+                                       : ShowBothGuides;
+}
+
+void TTool::setShownGuides(ShownGuides shown) { ShownGuidesVar = shown; }
+
+unsigned int TTool::allGuideHints() {
   return HintAssistants | HintAssistantsGuidelines | HintReplicators |
          HintPerspectiveGrid;
+}
+
+unsigned int TTool::getToolHints() const {
+  unsigned int hints = allGuideHints();
+  switch (shownGuides()) {
+  case ShowGridOnly:
+    hints &= ~(HintAssistantsAll | HintReplicatorsAll);
+    break;
+  case ShowAssistantsOnly:
+    hints &= ~HintPerspectiveGrid;
+    break;
+  default:
+    break;
+  }
+  return hints;
 }
 
 //-------------------------------------------------------------------

@@ -52,6 +52,7 @@ degli status).
 > ricapita da solo lavorando.
 
 
+- **Interpolazione dei replicatori fra i disegni chiave** (Mirror, Star, Grid, Affine, Jitter): oggi cambiano a scatti, solo le guide degli assistenti si interpolano. Franco, 2026-10-24: «non credo abbia molto senso per ora, lasciamo così».
 - **Esc per uscire dallo shot — TOLTO (Franco, 19/10).** Nel visore Esc serve agli strumenti (selezione,
   polilinea) e creerebbe confusione; si esce col **doppio clic sullo shot in cui si e'** (vignetta, clip
   della timeline, Monitor — `6b96cdb12`).
@@ -59,6 +60,9 @@ degli status).
   disegno prima di ogni tratto e rimetterli dopo coprirebbe il colore che si perde, ma rallenta il disegno
   e non dice la causa: si cerca la causa vera (voce fra gli aperti del 19/10).
 - **Type tool / testo con l'editor dei pannelli — lasciato a Rodney (Franco, 19/10)**: ci sta lavorando lui.
+- **Controllo dell'episodio su «Upload shot previews», e verifica degli altri tracker delle scuole — NON SERVE (Franco, 25/10).**
+  Upload previews usa l'id memorizzato senza guardare l'episodio; il push ora scarta gli id di un altro episodio
+  e li sostituisce, Cascina e' ripulita.
 
 - **Il Clone NON copia dialoghi, azione e note dello shot — SI LASCIA COSI'**
   (Franco, 2026-09-24). Lo shot clonato non si porta dietro l'audio, che resta
@@ -158,12 +162,28 @@ degli status).
 
 ## 🎬 Ztoryc — storyboard, animatic, thumbs
 
+### 🆕 Aperti dopo la sessione del 25/10 (Assistants, Kitsu fra episodi, rinomini, sentinella audio)
+
+- **Fuori sync dell'audio sull'animatic (Franco, 25/10): SENTINELLA ATTIVA.** `ztoryaudiowatch.cpp` scrive in
+  `crash/audio_watch.log` ogni spostamento di un clip audio dello xsheet principale, con l'ultima operazione e lo
+  stack. Al prossimo fuori sync Franco dice l'ora: si legge il log, si trova la causa, poi la sentinella SI TOGLIE.
+  Sospetti letti dal codice e non verificati: l'annullamento di una modifica del Board rimette la foto dell'audio
+  (`ztoryRestoreAudioSnap`); i comandi Tahoma che inseriscono/tolgono fotogrammi su tutte le colonne.
+- **Collaudi**: Finger tool rimesso nella barra (Toonz Raster); Assistants visibili anche su colonna camera/vuota,
+  menu accanto a Show Perspective Grids (anche nel viewer dello shot), interpolazione con Edit Assistants attivo;
+  nome del `.fcpxml` al prossimo export uno-per-shot (era quello dell'ultimo shot).
+- **Rilascio**: Auto-stretch acceso di default cambia un comportamento → la prossima e' una MINOR, se Franco non la
+  considera una correzione.
+- **groundzero** (fork OT di Rodney): presentazione nell'issue #8 scritta ma NON pubblicata, Franco aspetta; tenere
+  d'occhio Kinematic Output (#22) e export PSD (#16).
+- **Puppetoonz come room nelle scene personaggio**: Franco d'accordo; prima si finisce il Python (sessione nella sua
+  cartella), poi si decide se la room entra nella 1.0 o nella 1.x.
+
 ### 🆕 Aperti dopo la sessione del 23/10 (lock, pennelli per stile, palette e trattino basso — 0.19.0)
 
 - **Collaudi ancora da fare**: Custom Brushes da un preset fatto prima del 23/10 (senza icona, solo impostazioni);
   palette di default con i pennelli → livello nuovo al primo salvataggio; Edit in Place con mesh su un
-  personaggio pesante (ridisegna la texture a ogni aggiornamento: se scatta, invalidare solo al rilascio);
-  push Kitsu con rinomina di shot che si scambiano il nome (la riprova in coda copre solo un giro).
+  personaggio pesante (ridisegna la texture a ogni aggiornamento: se scatta, invalidare solo al rilascio).
 - **Lock, limiti noti**: il Board di uno storyboard locked mostra gli stati dalla sua copia nel `.ztoryc`, che
   non si aggiorna (il tracker sì); la `_vN` copia i disegni ma condivide audio e altri riferimenti; nel Board
   gli stati dei task non si vedono affatto (eventuale pallino per shot: funzione nuova, da decidere).

@@ -25,7 +25,7 @@ QString keyAttrFor(const QString &name) {
       {"asset", "uuid"},      {"shot", "uuid"},         {"person", "name"},
       {"technique", "name"},  {"assetType", "name"},    {"storyboard", "file"},
       {"alias", "name"},      {"atask", "type"},        {"task", "type"},
-      {"needs", "asset"},     {"castSynced", "asset"}};
+      {"needs", "asset"},     {"castSynced", "asset"},  {"removed", "kitsuShotId"}};
   return keys.value(name);
 }
 

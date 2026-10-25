@@ -485,8 +485,12 @@ void KitsuClient::pushFail(const QString &message) {
 
 void KitsuClient::pushShots(const QString &projectId, const QString &episodeName,
                             bool tvshow, const QVector<KitsuShotPush> &shots,
-                            bool renameExisting) {
+                            bool renameExisting,
+                            const QStringList &removedShotIds) {
   m_pushRenames = renameExisting;
+  m_pushRemoved = removedShotIds;
+  m_pushRemovedDone.clear();
+  m_pushRemovedIndex = 0;
   m_pushRenameRetried.clear();
   if (!isLoggedIn()) { emit shotsPushed(false, 0, 0, tr("Not logged in.")); return; }
   if (projectId.isEmpty()) {
@@ -500,6 +504,10 @@ void KitsuClient::pushShots(const QString &projectId, const QString &episodeName
   m_pushSeqIds.clear();
   m_pushShotIds.clear();
   m_pushShotData.clear();
+  m_pushShotSeq.clear();
+  m_pushShotName.clear();
+  m_pushRenamePlan.clear();
+  m_pushRenameIndex = 0;
   m_pushResolved.clear();
   m_pushEpisodeId.clear();
   m_pushIndex = m_pushCreated = m_pushUpdated = 0;
@@ -585,8 +593,181 @@ void KitsuClient::pushLoadShots() {
           o.value("parent_id").toString() + "/" + o.value("name").toString().toLower(),
           shotId);
       m_pushShotData.insert(shotId, o.value("data").toObject());
+      m_pushShotSeq.insert(shotId, o.value("parent_id").toString());
+      m_pushShotName.insert(shotId, o.value("name").toString());
     }
-    pushProcessNext();
+    pushNextRemoved();
+  });
+}
+
+// Ztoryc: a renumber renames shots in a chain (sh150 -> sh140, sh160 ->
+// sh150 …), and Kitsu refuses a name another shot of the sequence still holds
+// (Cascina, 2026-10-25). Before the push, two kinds of renames clear the way:
+//  - a shot that holds a name we need and is not ours to push — gone from the
+//    storyboard — takes «_removed» (never deleted: its tasks and comments
+//    stay, the production decides);
+//  - every shot of ours whose name changes takes a provisional name first.
+// The push then gives the final names, which are all free.
+// Ztoryc: a shot deleted from the storyboard goes from Kitsu too (Franco,
+// 2026-10-25), as Kitsu itself does it: deleted for good when it holds no
+// work (every task Todo or Ready, no comment, no preview), cancelled when it
+// does — hidden from Kitsu's lists, recoverable — and renamed «_removed» so
+// its name is free for the renumbered shots. Only our own shots, the ones the
+// tracker remembers: a shot the production made on Kitsu is never touched.
+void KitsuClient::pushNextRemoved() {
+  if (!m_pushRenames || m_pushRemovedIndex >= m_pushRemoved.size()) {
+    if (!m_pushRemovedDone.isEmpty()) emit removedShotsHandled(m_pushRemovedDone);
+    pushPlanRenames();
+    return;
+  }
+  const QString id = m_pushRemoved[m_pushRemovedIndex];
+  bool stillOurs   = false;
+  for (const KitsuShotPush &sh : m_pushQueue) stillOurs = stillOurs || sh.kitsuShotId == id;
+  bool inEpisode = false;
+  for (const QString &seqId : m_pushSeqIds)
+    inEpisode = inEpisode || seqId == m_pushShotSeq.value(id);
+  // still in a storyboard, already gone from Kitsu, or not of this episode
+  if (stillOurs || !m_pushShotSeq.contains(id) || !inEpisode) {
+    pushRemovedDone(id);
+    return;
+  }
+  emit shotsPushProgress(tr("Removing %1 from Kitsu…").arg(m_pushShotName.value(id)));
+  QNetworkReply *r = m_nam->get(authGet("/api/data/shots/" + id + "/tasks"));
+  connect(r, &QNetworkReply::finished, this, [this, r, id]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { pushFail(errorMessage(r, b)); return; }
+    bool work = false;
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject t     = v.toObject();
+      const TaskStatus status = toZtoryStatus(t.value("task_status_id").toString());
+      work = work || (status != TaskStatus::Todo && status != TaskStatus::Ready) ||
+             !t.value("last_comment_date").toString().isEmpty() ||
+             !t.value("last_preview_file_id").toString().isEmpty();
+    }
+    if (work) { pushRetireRemoved(id, true); return; }
+    QNetworkRequest req(QUrl(m_baseUrl + "/api/data/shots/" + id + "?force=true"));
+    req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
+    QNetworkReply *d = m_nam->deleteResource(req);
+    connect(d, &QNetworkReply::finished, this, [this, d, id]() {
+      d->deleteLater();
+      // Deleting needs a manager (or the shot's creator): refused, the shot
+      // is retired like one that holds work.
+      if (d->error() != QNetworkReply::NoError) { pushRetireRemoved(id, true); return; }
+      pushForgetShot(id);
+      pushRemovedDone(id);
+    });
+  });
+}
+
+// Renamed «_removed», then cancelled with Kitsu's own delete without force.
+void KitsuClient::pushRetireRemoved(const QString &id, bool cancel) {
+  const QString seqId = m_pushShotSeq.value(id);
+  const QString name  = pushFreeName(seqId, m_pushShotName.value(id) + "_removed");
+  QJsonObject body;
+  body["name"] = name;
+  QNetworkReply *r = authPut("/api/data/shots/" + id,
+                             QJsonDocument(body).toJson(QJsonDocument::Compact));
+  connect(r, &QNetworkReply::finished, this, [this, r, id, seqId, name, cancel]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { pushFail(errorMessage(r, b)); return; }
+    m_pushShotIds.remove(seqId + "/" + m_pushShotName.value(id).toLower());
+    m_pushShotIds.insert(seqId + "/" + name.toLower(), id);
+    m_pushShotName.insert(id, name);
+    if (!cancel) { pushRemovedDone(id); return; }
+    QNetworkRequest req(QUrl(m_baseUrl + "/api/data/shots/" + id));
+    req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
+    QNetworkReply *d = m_nam->deleteResource(req);
+    connect(d, &QNetworkReply::finished, this, [this, d, id]() {
+      d->deleteLater();  // a refused cancel leaves it renamed: enough
+      pushRemovedDone(id);
+    });
+  });
+}
+
+void KitsuClient::pushRemovedDone(const QString &id) {
+  m_pushRemovedDone << id;
+  ++m_pushRemovedIndex;
+  pushNextRemoved();
+}
+
+void KitsuClient::pushForgetShot(const QString &id) {
+  m_pushShotIds.remove(m_pushShotSeq.value(id) + "/" +
+                       m_pushShotName.value(id).toLower());
+  m_pushShotSeq.remove(id);
+  m_pushShotName.remove(id);
+  m_pushShotData.remove(id);
+}
+
+// base, or base2, base3 … : the first name no shot of the sequence holds.
+QString KitsuClient::pushFreeName(const QString &seqId, const QString &base) const {
+  QSet<QString> taken;
+  for (auto it = m_pushShotSeq.constBegin(); it != m_pushShotSeq.constEnd(); ++it)
+    if (it.value() == seqId) taken.insert(m_pushShotName.value(it.key()).toLower());
+  QString name = base;
+  for (int n = 2; taken.contains(name.toLower()); ++n) name = base + QString::number(n);
+  return name;
+}
+
+void KitsuClient::pushPlanRenames() {
+  m_pushRenamePlan.clear();
+  m_pushRenameIndex = 0;
+  if (!m_pushRenames) { pushProcessNext(); return; }
+
+  QSet<QString> ours;  // the shots this push updates by id, in our episode
+  QSet<QString> episodeSeqs;
+  for (const QString &id : m_pushSeqIds) episodeSeqs.insert(id);
+  for (const KitsuShotPush &sh : m_pushQueue)
+    if (!sh.kitsuShotId.isEmpty() &&
+        episodeSeqs.contains(m_pushShotSeq.value(sh.kitsuShotId)))
+      ours.insert(sh.kitsuShotId);
+
+  auto rename = [this](const QString &id, const QString &name) {
+    const QString seqId = m_pushShotSeq.value(id);
+    m_pushShotIds.remove(seqId + "/" + m_pushShotName.value(id).toLower());
+    m_pushShotIds.insert(seqId + "/" + name.toLower(), id);
+    m_pushShotName.insert(id, name);
+    m_pushRenamePlan.push_back({id, name});
+  };
+
+  for (const KitsuShotPush &sh : m_pushQueue) {
+    const QString seqId = ours.contains(sh.kitsuShotId)
+                              ? m_pushShotSeq.value(sh.kitsuShotId)
+                              : m_pushSeqIds.value(sh.seq.toLower());
+    if (seqId.isEmpty()) continue;
+    const QString holder = m_pushShotIds.value(seqId + "/" + sh.name.toLower());
+    if (holder.isEmpty() || holder == sh.kitsuShotId || ours.contains(holder))
+      continue;
+    // a shot without a valid id of ours is matched by name: it IS that shot
+    if (!ours.contains(sh.kitsuShotId)) continue;
+    rename(holder, pushFreeName(seqId, m_pushShotName.value(holder) + "_removed"));
+  }
+  for (const KitsuShotPush &sh : m_pushQueue) {
+    if (!ours.contains(sh.kitsuShotId)) continue;
+    const QString now = m_pushShotName.value(sh.kitsuShotId);
+    if (now.compare(sh.name, Qt::CaseInsensitive) == 0) continue;
+    rename(sh.kitsuShotId, now + "_renaming_" + sh.kitsuShotId.left(8));
+  }
+  pushNextRename();
+}
+
+void KitsuClient::pushNextRename() {
+  if (m_pushRenameIndex >= m_pushRenamePlan.size()) { pushProcessNext(); return; }
+  const QPair<QString, QString> step = m_pushRenamePlan[m_pushRenameIndex];
+  emit shotsPushProgress(tr("Renaming shots on Kitsu (%1/%2)…")
+                             .arg(m_pushRenameIndex + 1)
+                             .arg(m_pushRenamePlan.size()));
+  QJsonObject body;
+  body["name"] = step.second;
+  QNetworkReply *r = authPut("/api/data/shots/" + step.first,
+                             QJsonDocument(body).toJson(QJsonDocument::Compact));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { pushFail(errorMessage(r, b)); return; }
+    ++m_pushRenameIndex;
+    pushNextRename();
   });
 }
 
@@ -625,6 +806,22 @@ void KitsuClient::pushProcessNext() {
   // Il corpo si costruisce per singolo shot, perche' il 'data' da preservare
   // dipende da QUALE shot di Kitsu si sta per aggiornare: vedi pushBodyFor().
   // Su uno shot esistente il nome NON viene toccato: e' Kitsu l'autorita'.
+
+  // A stored id must be a shot of OUR episode. A tracker could hold ids of
+  // another episode, matched by name before the episode was linked: Cascina
+  // held Messina's, and a Sync wrote Cascina's durations on Messina's shots
+  // (2026-10-25). Such an id is dropped and the shot found by name, in the
+  // episode's sequences only.
+  if (!sh.kitsuShotId.isEmpty() && m_pushShotSeq.contains(sh.kitsuShotId)) {
+    const QString seqId = m_pushShotSeq.value(sh.kitsuShotId);
+    bool ours = false;
+    for (const QString &id : m_pushSeqIds) ours = ours || id == seqId;
+    if (!ours) {
+      m_pushQueue[m_pushIndex].kitsuShotId.clear();
+      pushProcessNext();
+      return;
+    }
+  }
 
   // 1) Known Kitsu shot id → update THAT shot directly (rename-proof): no name
   //    lookup, so a shot renamed in Kitsu isn't duplicated.

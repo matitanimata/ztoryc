@@ -332,9 +332,13 @@ public:
   // sequences exist, then upserts each shot by name. -> shotsPushed().
   // renameExisting: also send the name of shots that already exist in Kitsu
   // (storyboard not locked yet: Ztoryc is the authority on names).
+  // removedShotIds: Kitsu shots of ours that left the storyboard (the
+  // tracker remembers them). With renameExisting they are deleted when they
+  // hold no work, cancelled and renamed «_removed» when they do.
   void pushShots(const QString &projectId, const QString &episodeName,
                  bool tvshow, const QVector<KitsuShotPush> &shots,
-                 bool renameExisting = false);
+                 bool renameExisting = false,
+                 const QStringList &removedShotIds = QStringList());
 
   // Push-only task + status sync (Phase 3b): ensure each task exists on its shot
   // and set its status to match Ztoryc. Requires task statuses already fetched.
@@ -460,6 +464,8 @@ signals:
   // Resolved Kitsu shot ids per "seq\nlabel" key — lets the caller record them so
   // later syncs are rename-proof. Emitted just before shotsPushed.
   void shotIdsResolved(const QHash<QString, QString> &byKey);
+  // The removed shots this push has dealt with: the tracker forgets them.
+  void removedShotsHandled(const QStringList &ids);
   // The episode the shot push found or created on Kitsu, by id. A project that
   // named its episode but was never bound to its id (a show with no episodes
   // at link time) records it from here — without, every pull of that project
@@ -540,6 +546,13 @@ private:
   // vivono solo la' (spoglio, categorie, note del produttore).
   QJsonObject pushBodyFor(const KitsuShotPush &sh, const QString &shotId) const;
   void pushProcessNext();
+  void pushPlanRenames();
+  void pushNextRemoved();
+  void pushRetireRemoved(const QString &id, bool cancel);
+  void pushRemovedDone(const QString &id);
+  void pushForgetShot(const QString &id);
+  QString pushFreeName(const QString &seqId, const QString &base) const;
+  void pushNextRename();
   void pushFail(const QString &message);
 
   QString m_pushProjectId;
@@ -550,6 +563,12 @@ private:
   QHash<QString, QString>    m_pushSeqIds;   // seqName  -> sequence id
   QHash<QString, QString>    m_pushShotIds;  // "seqId/shotName" -> shot id
   QHash<QString, QJsonObject> m_pushShotData;  // shot id -> data gia' su Kitsu
+  QHash<QString, QString>    m_pushShotSeq;  // shot id -> sequence id, whole project
+  QHash<QString, QString>    m_pushShotName; // shot id -> its name on Kitsu now
+  QVector<QPair<QString, QString>> m_pushRenamePlan;  // shot id -> name, before the push
+  int m_pushRenameIndex = 0;
+  QStringList m_pushRemoved, m_pushRemovedDone;
+  int m_pushRemovedIndex = 0;
   QHash<QString, QString>    m_pushResolved; // "seq\nlabel" -> resolved kitsu shot id
   int m_pushIndex   = 0;
   bool m_pushRenames = false;

@@ -9064,6 +9064,10 @@ void StoryboardPanel::onExportAnimatic() {
   // ── Collect parameters ─────────────────────────────────���────────────────
   int mode       = btnGroup->checkedId();  // 0=full, 1=range, 2=each
   QString outDir = folderEdit->text();
+  // Read once: while the shots render, the dialog's poll copies each shot's
+  // output path into nameEdit, and the .fcpxml took the last shot's name
+  // (SB__sh690.fcpxml, Cascina, 2026-10-25).
+  const QString exportName = nameEdit->text();
   QDir().mkpath(outDir);
 
   // Save original output props
@@ -9180,7 +9184,7 @@ void StoryboardPanel::onExportAnimatic() {
     auto [r0, _1] = shotFrameRange(0);
     auto [_2, r1] = shotFrameRange((int)m_shots.size() - 1);
     TFilePath outPath = TFilePath(outDir.toStdWString()) +
-                        TFilePath((nameEdit->text() + "." + ext).toStdWString());
+                        TFilePath((exportName + "." + ext).toStdWString());
     prop->setPath(outPath);
     prop->setRange(r0, r1, 1);
     CommandManager::instance()->execute(MI_Render);
@@ -9193,7 +9197,7 @@ void StoryboardPanel::onExportAnimatic() {
     auto [r0, _1] = shotFrameRange(fromIdx);
     auto [_2, r1] = shotFrameRange(toIdx);
     TFilePath outPath = TFilePath(outDir.toStdWString()) +
-                        TFilePath((nameEdit->text() + "." + ext).toStdWString());
+                        TFilePath((exportName + "." + ext).toStdWString());
     prop->setPath(outPath);
     prop->setRange(r0, r1, 1);
     CommandManager::instance()->execute(MI_Render);
@@ -9393,14 +9397,14 @@ void StoryboardPanel::onExportAnimatic() {
     int h = scene->getCurrentCamera()->getRes().ly;
     QStringList written;
     if (fcpxmlCheck->isChecked()) {
-      QString fcpxmlPath = QDir(outDir).filePath(nameEdit->text() + ".fcpxml");
+      QString fcpxmlPath = QDir(outDir).filePath(exportName + ".fcpxml");
       if (writeAnimaticFcpxml(fcpxmlPath, sceneName, fps, w, h, clips,
                               audioClips))
         written << tr("%1  (DaVinci Resolve, Final Cut Pro)").arg(fcpxmlPath);
     }
     if (premiereCheck->isChecked()) {
       QString xmlPath =
-          QDir(outDir).filePath(nameEdit->text() + "_premiere.xml");
+          QDir(outDir).filePath(exportName + "_premiere.xml");
       if (writeAnimaticXmeml(xmlPath, sceneName, fps, w, h, clips, audioClips))
         written << tr("%1  (Premiere Pro, DaVinci Resolve)")
                        .arg(xmlPath);

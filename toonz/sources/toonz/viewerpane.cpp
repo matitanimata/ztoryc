@@ -474,6 +474,14 @@ void BaseViewerPanel::initializeTitleBar(TPanelTitleBar *titleBar) {
                 SLOT(onPerspectiveGuideToggled(bool)));
   onPerspectiveGuideToggled(ShowPerspectiveGrids);
 
+  TPanelTitleBarButtonForGuides *guidesMoreButton =
+      new TPanelTitleBarButtonForGuides(titleBar, getIconPath("pane_more"));
+  guidesMoreButton->setToolTip(tr("Perspective Grids Settings"));
+  x += 1 + iconWidth;
+  titleBar->add(QPoint(x, 0), guidesMoreButton);
+  connect(guidesMoreButton, &TPanelTitleBarButtonForGuides::updateViewer,
+          [=]() { m_sceneViewer->update(); });
+
   // buttons for show / hide toggle for the field guide and the safe area
   TPanelTitleBarButtonForSafeArea *safeAreaButton =
       new TPanelTitleBarButtonForSafeArea(titleBar, getIconPath("pane_safe"));

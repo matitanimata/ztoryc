@@ -94,7 +94,7 @@ public:
   // the small areas refreshed while painting.
   unsigned int getToolHints() const override {
     return GuideSnap::hints(m_guideSnap,
-                            TTool::getToolHints() & ~HintAssistantsGuidelines);
+                            TTool::allGuideHints() & ~HintAssistantsGuidelines);
   }
 
   ToolOptionsBox *createOptionsBox() override;

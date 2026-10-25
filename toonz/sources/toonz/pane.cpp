@@ -18,6 +18,7 @@
 #include "toonz/tscenehandle.h"
 
 #include "tools/toolhandle.h"
+#include "tools/tool.h"
 
 // TnzCore includes
 #include "tsystem.h"
@@ -578,6 +579,45 @@ TPanelTitleBarButtonForGrids::TPanelTitleBarButtonForGrids(
 //-----------------------------------------------------------------------------
 
 void TPanelTitleBarButtonForGrids::mousePressEvent(QMouseEvent *e) {
+  m_menu->exec(e->globalPos() + QPoint(-100, 12));
+}
+
+//=============================================================================
+// TPanelTitleBarButtonForGuides
+//-----------------------------------------------------------------------------
+
+TPanelTitleBarButtonForGuides::TPanelTitleBarButtonForGuides(
+    QWidget *parent, const QString &standardPixmapName)
+    : TPanelTitleBarButton(parent, standardPixmapName) {
+  m_menu = new QMenu(this);
+  QActionGroup *group = new QActionGroup(this);
+  const struct {
+    const char *label;
+    TTool::ShownGuides shown;
+  } choices[] = {
+      {QT_TR_NOOP("Perspective Grid and Assistants"), TTool::ShowBothGuides},
+      {QT_TR_NOOP("Perspective Grid Only"), TTool::ShowGridOnly},
+      {QT_TR_NOOP("Assistants Only"), TTool::ShowAssistantsOnly},
+  };
+  for (const auto &choice : choices) {
+    QAction *action = m_menu->addAction(tr(choice.label));
+    action->setCheckable(true);
+    action->setChecked(TTool::shownGuides() == choice.shown);
+    group->addAction(action);
+    const TTool::ShownGuides shown = choice.shown;
+    connect(action, &QAction::triggered, [this, shown]() {
+      TTool::setShownGuides(shown);
+      emit updateViewer();
+    });
+  }
+  m_menu->addSeparator();
+  QAction *note = m_menu->addAction(tr("A brush follows its own Guides menu"));
+  note->setEnabled(false);
+}
+
+//-----------------------------------------------------------------------------
+
+void TPanelTitleBarButtonForGuides::mousePressEvent(QMouseEvent *e) {
   m_menu->exec(e->globalPos() + QPoint(-100, 12));
 }
 

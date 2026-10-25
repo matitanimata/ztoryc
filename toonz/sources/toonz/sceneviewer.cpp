@@ -2054,8 +2054,11 @@ void SceneViewer::drawOverlay() {
   TTool *perspectiveTool =
       TTool::getTool(T_PerspectiveGrid, TTool::VectorImage);
   // Ztoryc: Perspective Grids is the general switch of every guide; a brush
-  // shows only the system its Guides menu snaps to (getToolHints)
-  if (tool && perspectiveTool &&
+  // shows only the system its Guides menu snaps to (getToolHints). The
+  // animatic viewer (always the main xsheet) shows no guide: the switch is
+  // shared by every viewer, and it has no button for it.
+  const bool guidesAllowed = !m_alwaysMainXsheet;
+  if (guidesAllowed && tool && perspectiveTool &&
       ((ShowPerspectiveGrids &&
         (tool->getToolHints() & TTool::HintPerspectiveGrid)) ||
        tool == perspectiveTool)) {
@@ -2070,7 +2073,8 @@ void SceneViewer::drawOverlay() {
   }
 
   TTool *symmetryTool = TTool::getTool(T_Symmetry, TTool::VectorImage);
-  if (tool && symmetryTool && (ShowSymmetryGuide || tool == symmetryTool)) {
+  if (guidesAllowed && tool && symmetryTool &&
+      (ShowSymmetryGuide || tool == symmetryTool)) {
     glPushMatrix();
     if (m_draw3DMode) {
       mult3DMatrix();
@@ -2080,6 +2084,33 @@ void SceneViewer::drawOverlay() {
     symmetryTool->draw(this);
     glPopMatrix();
   }
+
+  // OpenToonz drawing assistants: the assistants of the scene and their
+  // guidelines through the pointer, then the replicators.
+  auto drawAssistantGuides = [&](TTool *tool) {
+    if (!ShowPerspectiveGrids || !guidesAllowed) return;
+    unsigned int hints = tool->getToolHints();
+    TPointD toolPos = tool->getMatrix().inv() * winToWorld(m_lastMousePos);
+    if (tool->getToolType() & TTool::LevelTool &&
+        !app->getCurrentObject()->isSpline()) {
+      toolPos.x /= m_dpiScale.x;
+      toolPos.y /= m_dpiScale.y;
+    }
+    if (hints & TTool::HintAssistantsAll)
+      TAssistant::scanAssistants(tool, &toolPos, 1, nullptr, true, false,
+                                 hints & TTool::HintAssistantsEnabled,
+                                 hints & TTool::HintAssistantsGuidelines,
+                                 nullptr);
+    if (hints & TTool::HintReplicatorsAll) {
+      TReplicator::PointList points;
+      const bool drawPoints = hints & TTool::HintReplicatorsPoints;
+      if (drawPoints) points.push_back(toolPos);
+      TReplicator::scanReplicators(tool, drawPoints ? &points : nullptr,
+                                   nullptr, true, false,
+                                   hints & TTool::HintReplicatorsEnabled,
+                                   drawPoints, nullptr);
+    }
+  };
 
   // Call tool->draw() even if the level is read only (i.e. to show hooks)
   if (tool && (tool->isEnabled() || (sl && sl->isReadOnly()))) {
@@ -2097,32 +2128,7 @@ void SceneViewer::drawOverlay() {
       glScaled(m_dpiScale.x, m_dpiScale.y, 1);
     m_pixelSize = sqrt(tglGetPixelSize2()) * getDevPixRatio();
 
-    // OpenToonz drawing assistants: the assistants of the scene and their
-    // guidelines through the pointer, then the replicators.
-    if (ShowPerspectiveGrids) {
-      unsigned int hints = tool->getToolHints();
-      TPointD toolPos =
-          tool->getMatrix().inv() * winToWorld(m_lastMousePos);
-      if (tool->getToolType() & TTool::LevelTool &&
-          !app->getCurrentObject()->isSpline()) {
-        toolPos.x /= m_dpiScale.x;
-        toolPos.y /= m_dpiScale.y;
-      }
-      if (hints & TTool::HintAssistantsAll)
-        TAssistant::scanAssistants(tool, &toolPos, 1, nullptr, true, false,
-                                   hints & TTool::HintAssistantsEnabled,
-                                   hints & TTool::HintAssistantsGuidelines,
-                                   nullptr);
-      if (hints & TTool::HintReplicatorsAll) {
-        TReplicator::PointList points;
-        const bool drawPoints = hints & TTool::HintReplicatorsPoints;
-        if (drawPoints) points.push_back(toolPos);
-        TReplicator::scanReplicators(tool, drawPoints ? &points : nullptr,
-                                     nullptr, true, false,
-                                     hints & TTool::HintReplicatorsEnabled,
-                                     drawPoints, nullptr);
-      }
-    }
+    drawAssistantGuides(tool);
 
     tool->draw();
     glPopMatrix();
@@ -2141,6 +2147,21 @@ void SceneViewer::drawOverlay() {
       tglDrawSegment(TPointD(-4, 0), TPointD(5, 0));
       tglDrawSegment(TPointD(0, -4), TPointD(0, 5));
     }
+  } else if (tool && !m_isLocator) {
+    // Ztoryc: a disabled tool (camera or empty column selected) still shows
+    // the assistants, as the Tahoma perspective grid above already does.
+    glPushMatrix();
+    if (m_draw3DMode) {
+      mult3DMatrix();
+      tglMultMatrix(tool->getMatrix());
+    } else
+      tglMultMatrix(getViewMatrix() * tool->getMatrix());
+    if (tool->getToolType() & TTool::LevelTool &&
+        !app->getCurrentObject()->isSpline())
+      glScaled(m_dpiScale.x, m_dpiScale.y, 1);
+    m_pixelSize = sqrt(tglGetPixelSize2()) * getDevPixRatio();
+    drawAssistantGuides(tool);
+    glPopMatrix();
   }
 }
 

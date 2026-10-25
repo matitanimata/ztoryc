@@ -852,6 +852,14 @@ public:
       color.m *= column->getOpacity()/255.0;
     }
 
+    // Ztoryc: on a frame between two keys the key stays editable, faint, and
+    // the assistants are drawn as they are interpolated there.
+    TImage *currentImage = getImage(false);
+    TPixelD tweenColor = color;
+    const bool tweened =
+      TAssistant::drawInterpolated(this, currentImage, false);
+    if (tweened) color.m *= 0.35;
+
     // draw assistants
     int index = 0;
     if (Closer closer = read(ModeImage)) {
@@ -879,6 +887,13 @@ public:
               m_currentGuidelines );
         }
       }
+      TAssistantBase::colorBase = origColor;
+    }
+
+    if (tweened) {
+      TPixelD origColor = TAssistantBase::colorBase;
+      TAssistantBase::colorBase = tweenColor;
+      TAssistant::drawInterpolated(this, currentImage, true);
       TAssistantBase::colorBase = origColor;
     }
     

@@ -640,7 +640,10 @@ void Preferences::definePreferenceItems() {
   // default (Franco, 21/10); each kept its own and two were off by default.
   define(GlobalKeyEnabled, "GlobalKeyEnabled", QMetaType::Bool, true);
   define(NumberingSystem, "NumberingSystem", QMetaType::Int, 0);  // Incremental
-  define(EnableAutoStretch, "EnableAutoStretch", QMetaType::Bool, false);
+  // Ztoryc: on, as in OpenToonz. With explicit holds (Implicit Hold off, below)
+  // a drawing made or duplicated inside a hold must take the rest of the hold;
+  // off, it replaced one cell and Duplicate gave 1 2 1 3 3 3 (2026-10-25).
+  define(EnableAutoStretch, "EnableAutoStretch", QMetaType::Bool, true);
   define(EnableImplicitHold, "EnableImplicitHold", QMetaType::Bool,
          false);  // Ztoryc default OFF (explicit holds preferred for 2D workflow)
   define(EnableCreationInHoldCells, "EnableCreationInHoldCells",

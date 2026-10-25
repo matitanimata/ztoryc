@@ -1360,6 +1360,7 @@ void ZtoryModel::resetProjectLevelDefaults() {
   m_assetTypes.clear();
   m_projectShots.clear();
   m_storyboardFiles.clear();
+  m_removedKitsuShots.clear();
   // Kitsu binding + opt-in flag are per-project too: clear them so a new project
   // doesn't inherit the previous project's Kitsu link (which would wrongly keep
   // the Kitsu UI visible even when the new project disabled it).
@@ -1726,6 +1727,16 @@ QByteArray ZtoryModel::serializeProjectDb() const {
   }
   xml.writeEndElement();  // shots
 
+  if (!m_removedKitsuShots.isEmpty()) {
+    xml.writeStartElement("removedKitsuShots");
+    for (const QString &id : m_removedKitsuShots) {
+      xml.writeStartElement("removed");
+      xml.writeAttribute("kitsuShotId", id);
+      xml.writeEndElement();
+    }
+    xml.writeEndElement();  // removedKitsuShots
+  }
+
   xml.writeEndElement();  // ztrack
   xml.writeEndDocument();
   return bytes;
@@ -1894,6 +1905,7 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
   std::vector<Asset> assets;
   std::vector<ProjectShot> pshots;
   QVector<QString> sboards;
+  QStringList removedShots;
   int ai = -1, psi = -1;
   QXmlStreamReader xml(&file);
   while (!xml.atEnd()) {
@@ -1986,6 +1998,9 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
     } else if (xml.name() == QLatin1String("storyboard")) {
       QString f = xml.attributes().value("file").toString();
       if (!f.isEmpty() && !sboards.contains(f)) sboards << f;
+    } else if (xml.name() == QLatin1String("removed")) {
+      const QString id = xml.attributes().value("kitsuShotId").toString();
+      if (!id.isEmpty() && !removedShots.contains(id)) removedShots << id;
     } else if (xml.name() == QLatin1String("shot")) {
       auto a = xml.attributes();
       ProjectShot ps;
@@ -2062,6 +2077,7 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
   m_assets    = assets;
   m_projectShots   = pshots;
   m_storyboardFiles = sboards;
+  m_removedKitsuShots = removedShots;
   // Task names are not case-sensitive. A pull from before addAssetTaskType
   // compared names without case left «modeling»/«Modeling» and
   // «rigging»/«Rigging» on every character of an episode (2026-09-26), the
@@ -2125,6 +2141,11 @@ void ZtoryModel::publishShotsToProjectDb(const QString &sourceFile) {
     if (!sd.uuid.isEmpty()) sceneUuids.insert(sd.uuid);
 
   // Remove shots that belonged to this source but are no longer in the scene.
+  // Their Kitsu shots are remembered: the next Sync removes them there too.
+  for (const ProjectShot &ps : m_projectShots)
+    if (ps.source == sourceFile && !sceneUuids.contains(ps.uuid) &&
+        !ps.kitsuShotId.isEmpty() && !m_removedKitsuShots.contains(ps.kitsuShotId))
+      m_removedKitsuShots << ps.kitsuShotId;
   m_projectShots.erase(
       std::remove_if(m_projectShots.begin(), m_projectShots.end(),
                      [&](const ProjectShot &ps) {
@@ -2561,6 +2582,12 @@ int ZtoryModel::projectShotCountFromSource(const QString &sourceFile) const {
   for (const ProjectShot &ps : m_projectShots)
     if (ps.source.compare(sourceFile, Qt::CaseInsensitive) == 0) n++;
   return n;
+}
+
+void ZtoryModel::forgetRemovedKitsuShots(const QStringList &ids) {
+  bool changed = false;
+  for (const QString &id : ids) changed = m_removedKitsuShots.removeAll(id) > 0 || changed;
+  if (changed) saveProjectDb();
 }
 
 int ZtoryModel::removeProjectShotsFromSource(const QString &sourceFile) {

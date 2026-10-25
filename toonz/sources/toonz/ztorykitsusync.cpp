@@ -6,6 +6,10 @@
 #include "ztorylocks.h"
 #include "ztorytaskflow.h"
 
+#include "iocommand.h"
+#include "tapp.h"
+#include "toonz/tscenehandle.h"
+
 #include "toonzqt/dvdialog.h"
 
 #include <QFileInfo>
@@ -560,6 +564,9 @@ ZtoryKitsuSync::ZtoryKitsuSync(QObject *parent) : QObject(parent) {
   KitsuClient *kc = KitsuClient::instance();
   // Ids: applied whenever they come.
   connect(kc, &KitsuClient::shotIdsResolved, this, &applyShotIds);
+  connect(kc, &KitsuClient::removedShotsHandled, this, [](const QStringList &ids) {
+    ZtoryModel::instance()->forgetRemovedKitsuShots(ids);
+  });
   connect(kc, &KitsuClient::assetIdsResolved, this,
           [this](const QHash<QString, QString> &byKey) {
             const QStringList dup = applyAssetIds(byKey);
@@ -872,6 +879,13 @@ bool ZtoryKitsuSync::start(int handles, QString *why) {
                 "moment.");
     return false;
   }
+  // The tracker is written when the scene is saved: a Sync after an unsaved
+  // change in the Board sent the shots as they were (a deleted shot went up
+  // again, renameTest 2026-10-25). Save first, as ⌘S does (Franco).
+  if (TApp::instance()->getCurrentScene()->getDirtyFlag() && !IoCmd::saveAll()) {
+    if (why) *why = tr("The scene was not saved: Sync cancelled.");
+    return false;
+  }
   m_projectLock.reset(
       new QLockFile(ZtoryLocks::lockFilePath("kitsusync", m->projectDbPath())));
   m_projectLock->setStaleLockTime(0);  // a crashed holder: freed by its pid
@@ -941,7 +955,7 @@ void ZtoryKitsuSync::advance(bool ok, const QString &msg) {
     // Not locked yet: the storyboard's names win on Kitsu too.
     kc->pushShots(m->kitsuProjectId(), m->episode(),
                   m->productionType() == "tvshow", shots,
-                  !ZtoryStoryboardLock::isLocked());
+                  !ZtoryStoryboardLock::isLocked(), m->removedKitsuShots());
     return;
   }
   case 2: {

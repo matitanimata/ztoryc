@@ -11,6 +11,7 @@
 #include <toonz/txsheethandle.h>
 #include <toonz/txshlevelhandle.h>
 #include <toonz/tframehandle.h>
+#include <toonz/tcolumnhandle.h>
 #include <toonz/tobjecthandle.h>
 #include <toonz/dpiscale.h>
 #include <toonz/toonzscene.h>
@@ -955,6 +956,46 @@ static const TAssistant* interpolatedAssistant(
 //---------------------------------------------------------------------------------------------------
 
 bool
+TAssistant::drawInterpolated(TTool *tool, TImage *image, bool draw) {
+  TMetaImage *metaImage = dynamic_cast<TMetaImage*>(image);
+  if (!tool || !metaImage) return false;
+  TTool::Viewer *viewer = tool->getViewer();
+  TApplication *application = tool->getApplication();
+  if (!viewer || !application) return false;
+  TXsheet *xsheet = application->getCurrentXsheet()->getXsheet();
+  int col   = application->getCurrentColumn()->getColumnIndex();
+  int frame = application->getCurrentFrame()->getFrame();
+  if (!xsheet || col < 0) return false;
+
+  TImageP nextImage;
+  double tween = 0;
+  if (!findNextKeyDrawing(xsheet, col, frame, nextImage, tween) || tween <= 0)
+    return false;
+  TMetaImage *nextMeta = dynamic_cast<TMetaImage*>(nextImage.getPointer());
+  if (!nextMeta || nextMeta == metaImage) return false;
+
+  bool found = false;
+  TMetaImage::Reader nextReader(*nextMeta);
+  TMetaImage::Reader reader(*metaImage);
+  for(TMetaObjectListCW::iterator i = reader->begin(); i != reader->end(); ++i) {
+    if (*i)
+    if (const TAssistant *keyAssistant = (*i)->getHandler<TAssistant>())
+    {
+      TMetaObjectP tweenHolder;
+      const TAssistant *assistant = interpolatedAssistant(
+        **i, keyAssistant, nextReader, int(i - reader->begin()), tween, tweenHolder);
+      if (assistant == keyAssistant) continue;
+      found = true;
+      if (!draw) return true;
+      assistant->drawWithDensity(viewer, false);
+    }
+  }
+  return found;
+}
+
+//---------------------------------------------------------------------------------------------------
+
+bool
 TAssistant::scanAssistants(
   TTool *tool,
   const TPointD *positions,
@@ -978,16 +1019,20 @@ TAssistant::scanAssistants(
   if (tool)
   if (TTool::Viewer *viewer = tool->getViewer())
   if (TApplication *application = tool->getApplication())
-  if (TXshLevelHandle *levelHandle = application->getCurrentLevel())
-  if (TXshLevel *level = levelHandle->getLevel())
-  if (TXshSimpleLevel *simpleLevel = level->getSimpleLevel())
   if (TFrameHandle *frameHandle = application->getCurrentFrame())
   if (TXsheetHandle *XsheetHandle = application->getCurrentXsheet())
   if (TXsheet *Xsheet = XsheetHandle->getXsheet())
   {
     ToonzScene *scene = Xsheet->getScene();
     TSceneProperties *props = scene ? scene->getProperties() : nullptr;
-    TPointD dpiScale = getCurrentDpiScale(simpleLevel, tool->getCurrentFid());
+    // Ztoryc: the guides of the scene are shown also with no current level
+    // (camera or empty column selected); the level only scales a level tool.
+    TXshSimpleLevel *simpleLevel = application->getCurrentLevel()
+                                 ? application->getCurrentLevel()->getSimpleLevel()
+                                 : nullptr;
+    TPointD dpiScale = simpleLevel
+                     ? getCurrentDpiScale(simpleLevel, tool->getCurrentFid())
+                     : TPointD(1, 1);
     int frame = frameHandle->getFrame();
     int count = Xsheet->getColumnCount();
     TAffine worldToTrack;

@@ -434,6 +434,10 @@ class ZtoryModel : public QObject {
   QHash<QString, QPair<QString, QString>> m_psdChecks;  // problem, note
   std::vector<ProjectShot>          m_projectShots; // all project shots (from production.ztrack)
   QVector<QString>                  m_storyboardFiles; // registered storyboard basenames
+  // Kitsu ids of shots deleted from a storyboard, until a Sync has removed
+  // them from Kitsu too: forgotten with the shot, they could not be told
+  // from a shot the production made on Kitsu by hand.
+  QStringList                       m_removedKitsuShots;
   std::vector<SequenceData>         m_sequences;
   std::vector<std::vector<QPixmap>> m_previews; // [shotIdx][panelIdx]
   // Which scene column each m_shots entry is, kept in parallel (runtime only,
@@ -850,6 +854,8 @@ public:
   // Kitsu's frame_in/frame_out (the shot's start/end timecode in the edit).
   std::vector<std::pair<int, int>> projectShotFrameRanges() const;
   const QVector<QString> &storyboardFiles() const { return m_storyboardFiles; }
+  const QStringList &removedKitsuShots() const { return m_removedKitsuShots; }
+  void forgetRemovedKitsuShots(const QStringList &ids);
   // Quanti shot del progetto vengono da questo storyboard (per chiederlo prima
   // di toglierli: «ne stai per buttare quattro» e' un'altra cosa da «uno»).
   int projectShotCountFromSource(const QString &sourceFile) const;
