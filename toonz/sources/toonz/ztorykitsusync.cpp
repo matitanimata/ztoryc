@@ -955,7 +955,8 @@ void ZtoryKitsuSync::advance(bool ok, const QString &msg) {
     // Not locked yet: the storyboard's names win on Kitsu too.
     kc->pushShots(m->kitsuProjectId(), m->episode(),
                   m->productionType() == "tvshow", shots,
-                  !ZtoryStoryboardLock::isLocked(), m->removedKitsuShots());
+                  !ZtoryStoryboardLock::isLocked(), m->removedKitsuShots(),
+                  m->kitsuEpisodeId());
     return;
   }
   case 2: {

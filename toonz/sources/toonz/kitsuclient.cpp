@@ -486,7 +486,8 @@ void KitsuClient::pushFail(const QString &message) {
 void KitsuClient::pushShots(const QString &projectId, const QString &episodeName,
                             bool tvshow, const QVector<KitsuShotPush> &shots,
                             bool renameExisting,
-                            const QStringList &removedShotIds) {
+                            const QStringList &removedShotIds,
+                            const QString &episodeId) {
   m_pushRenames = renameExisting;
   m_pushRemoved = removedShotIds;
   m_pushRemovedDone.clear();
@@ -509,14 +510,21 @@ void KitsuClient::pushShots(const QString &projectId, const QString &episodeName
   m_pushRenamePlan.clear();
   m_pushRenameIndex = 0;
   m_pushResolved.clear();
-  m_pushEpisodeId.clear();
+  // Ztoryc: the episode bound by id wins over a name and over the production
+  // type, which a tracker may lack: without it Cascina's push took any «SQ01»
+  // of the show — Messina's, then «boh»'s (2026-10-25).
+  m_pushEpisodeId = episodeId;
+  if (!episodeId.isEmpty()) m_pushTvshow = true;
   m_pushIndex = m_pushCreated = m_pushUpdated = 0;
   pushEnsureEpisode();
 }
 
 void KitsuClient::pushEnsureEpisode() {
   // Only tvshow productions have episodes; a blank episode name means "none".
-  if (!m_pushTvshow || m_pushEpisodeName.isEmpty()) { pushLoadSequences(); return; }
+  if (!m_pushEpisodeId.isEmpty() || !m_pushTvshow || m_pushEpisodeName.isEmpty()) {
+    pushLoadSequences();
+    return;
+  }
   emit shotsPushProgress(tr("Ensuring episode %1…").arg(m_pushEpisodeName));
   QNetworkReply *reply =
       m_nam->get(authGet("/api/data/projects/" + m_pushProjectId + "/episodes"));

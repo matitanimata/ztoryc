@@ -338,7 +338,8 @@ public:
   void pushShots(const QString &projectId, const QString &episodeName,
                  bool tvshow, const QVector<KitsuShotPush> &shots,
                  bool renameExisting = false,
-                 const QStringList &removedShotIds = QStringList());
+                 const QStringList &removedShotIds = QStringList(),
+                 const QString &episodeId = QString());
 
   // Push-only task + status sync (Phase 3b): ensure each task exists on its shot
   // and set its status to match Ztoryc. Requires task statuses already fetched.

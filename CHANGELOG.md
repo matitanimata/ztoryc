@@ -10,6 +10,11 @@
   nome e non e' piu' nello storyboard prende `_removed`. Gli shot tolti dallo storyboard (il tracker li
   ricorda in `removedKitsuShots`) si cancellano da Kitsu se non hanno lavoro, altrimenti `_removed` + annullati.
   Il Sync salva la scena prima di partire. Collaudato su renameTest / ZTORYC-AI.
+- **La causa vera di Cascina su Messina (e poi su «boh»)**: al `production.ztrack` di Cascina (e di Messina)
+  manca `productionType`, quindi Ztoryc lo trattava come un corto e il push prendeva una «SQ01» qualsiasi del
+  progetto. Ora il push filtra per l'id dell'episodio memorizzato, comunque sia il tipo. Gli shot veri di
+  Cascina (69, 700 task) stavano dal 29/09 nell'episodio «boh»: la sequenza e' stata spostata in
+  CS2605_CASCINA nel database (copie in `reference/kitsu_fix_2026-10-25/`); sh700 cancellato da Franco.
 - **Duplicate Drawing (D) dava sequenze senza senso** (1 2 1 3 3 3): Implicit Hold spento (nostro) e
   Auto-stretch spento (di Tahoma). Auto-stretch ora acceso di default, come in OpenToonz.
 - **Assistants non disegnati con colonna camera o vuota**: il viewer li disegnava solo con lo strumento attivo,
