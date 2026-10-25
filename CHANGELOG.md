@@ -25,6 +25,15 @@
   timer della finestra durante il render. Il nome si legge una volta prima di cominciare.
 
 ### Added
+- **Export for AI** (pulsante nel Board): per shot, ogni pannello reso dalla camera e nominato con inizio e
+  durata (`sh010_p17_f0217_d24.png`), CSV e `manifest.json` con Action/Dialog/Notes, i file del breakdown
+  (Reference compresi) in `refs/`, l'audio dello shot e, a scelta, il mp4 dell'animatic. Provato su filorosso.
+- **Un asset, un file** (Franco): ogni tavola e' un asset a se', il nome dice di chi e'; un Character si collega
+  anche a una tavola («Link scene or sheet…») e senza collegamento si cerca per nome nella cartella Model Sheet.
+- Tipo di asset **Reference** (anche su Kitsu): nel breakdown, ma non importato nello shot salvo la casella
+  «…including Reference assets» nelle finestre di export.
+- Sceneggiatura di filorosso in Final Draft (`01_script/filorosso_sceneggiatura.fdx`, 15 scene), ricavata dal
+  brief con le proposte di Franco.
 - Menu accanto a Show Perspective Grids (viewer e viewer dello shot): griglia, Assistants o tutti e due, per gli
   strumenti senza menu Guides proprio.
 - Interpolazione degli Assistants visibile anche con Edit Assistants attivo (chiave attenuata, interpolati pieni).
@@ -35,6 +44,11 @@
 
 ### Modified
 - Disk Holes spenti di default, e la scelta resta salvata.
+- **I testi dei pannelli seguono il fotogramma in cui il pannello comincia**: alzando «max panels per second»
+  scivolavano sui pannelli nuovi; un pannello che sparisce passa i testi a quello che lo contiene.
+- macOS: le finestre di avanzamento del render restano sopra la finestra principale (Qt::Tool).
+- filorosso: casting su Kitsu (82 legami del 28/08, sulla vecchia numerazione) e breakdown del tracker v4
+  azzerati, con copia in `reference/filorosso_breakdown_reset_2026-10-25/`.
 - **Lucchetti della timeline dell'animatic salvati con la scena**: le tracce audio usano il lucchetto della
   colonna (bloccate anche nello xsheet, e non seguono gli shot col link acceso); la traccia video si salva nel
   `.ztoryc` e, chiusa, blocca le operazioni sugli shot anche nel Board (aggiungere, cancellare, spostare,

@@ -176,6 +176,12 @@ degli status).
   considera una correzione.
 - **groundzero** (fork OT di Rodney): presentazione nell'issue #8 scritta ma NON pubblicata, Franco aspetta; tenere
   d'occhio Kinematic Output (#22) e export PSD (#16).
+- **Export for AI — prova vera su filorosso sh010 (domani, 26/10)**: con la clip di riferimento della sigla
+  (asset REF_INTRO_DISNEY, arriva il 26) e il mp4 dello shot. Dalla prova esce cosa manca al manifest. Poi:
+  l'opzione «Export panels as image sequence» nella finestra dell'export degli shot (concordata, non fatta);
+  cartella predefinita locale invece di +outputs (su filorosso era finita su Drive, 72 MB — Franco sposta).
+  Minori in `reviews/2026-10-25_reviewer.md` (M8-M12).
+- **filorosso v4 sh010: testi dei pannelli gia' scivolati** prima della correzione: da rimettere a mano (Franco).
 - **Puppetoonz come room nelle scene personaggio**: Franco d'accordo; prima si finisce il Python (sessione nella sua
   cartella), poi si decide se la room entra nella 1.0 o nella 1.x.
 
