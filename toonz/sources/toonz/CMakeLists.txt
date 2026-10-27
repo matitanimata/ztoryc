@@ -136,6 +136,7 @@ set(MOC_HEADERS
     ztorythumbnailcanvas.h
     ztoryrecovery.h
     ztoryaudiowatch.h
+    ztorypsdwriter.h
     ztorypapersheet.h
     ztorypapercapture.h
     ztoryscriptpanel.h
@@ -310,7 +311,8 @@ set(SOURCES
     ztorymouthapply.cpp
     ztoryrecovery.cpp
     ztoryaudiowatch.cpp
-    ztoryaiexport.cpp
+    ztorylayoutexport.cpp
+    ztorypsdwriter.cpp
     ztorymouthapplypopup.cpp
     ztorigmouths.cpp
     kitsuclient.cpp

@@ -1502,12 +1502,12 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   m_exportPdfButton->setToolTip(tr("Export PDF"));
   m_exportPdfButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
 
-  m_exportAiButton = new QToolButton();
-  m_exportAiButton->setIcon(createQIcon("ztoryc_export_ai"));
-  m_exportAiButton->setIconSize(QSize(20, 20));
-  m_exportAiButton->setFixedSize(28, 28);
-  m_exportAiButton->setToolTip(tr("Export for AI"));
-  m_exportAiButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
+  m_exportLayoutButton = new QToolButton();
+  m_exportLayoutButton->setIcon(createQIcon("ztoryc_export_layout"));
+  m_exportLayoutButton->setIconSize(QSize(20, 20));
+  m_exportLayoutButton->setFixedSize(28, 28);
+  m_exportLayoutButton->setToolTip(tr("Export Layout"));
+  m_exportLayoutButton->setStyleSheet("QToolButton{background:transparent;border:none;border-radius:4px;}""QToolButton:hover{background:#555;}");
 
     m_exportSpreadsheetButton = new QToolButton();
   m_exportSpreadsheetButton->setIcon(createQIcon("ztoryc_export_spreadsheet"));
@@ -1627,7 +1627,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   tb->addSpacing(8);
   tb->addWidget(m_techniqueButton);
   tb->addWidget(m_exportPdfButton);
-  tb->addWidget(m_exportAiButton);
+  tb->addWidget(m_exportLayoutButton);
   tb->addWidget(m_exportSpreadsheetButton);
   tb->addWidget(m_exportShotsButton);
   tb->addWidget(m_exportAnimaticButton);
@@ -1760,7 +1760,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
   connect(m_techniqueButton, &QToolButton::clicked, this, &StoryboardPanel::onSetTechnique);
   connect(m_exportShotsButton, &QToolButton::clicked, this, &StoryboardPanel::onExportShots);
   connect(m_exportAnimaticButton, &QToolButton::clicked, this, &StoryboardPanel::onExportAnimatic);
-  connect(m_exportAiButton, &QToolButton::clicked, this, &StoryboardPanel::onExportForAI);
+  connect(m_exportLayoutButton, &QToolButton::clicked, this, &StoryboardPanel::onExportLayout);
   connect(m_camLabelButton, &QToolButton::toggled, this, [this](bool on) {
     m_showCamMoveType = on;
     QSettings().setValue("Ztoryc/ShowCamMoveType", on);
@@ -2126,7 +2126,7 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
     {m_pasteButton,          "Paste the last copied shot after the current selection"},
     {m_mergeButton,          "Merge two adjacent shots into one (durations are summed)"},
     {m_exportPdfButton,      "Export the Board as PDF: thumbnails, dialog, and per-panel/shot durations"},
-    {m_exportAiButton,       "Export for AI: per shot, every panel as an image named with its start and duration, a CSV and a manifest, the breakdown's files and the shot's audio"},
+    {m_exportLayoutButton,       "Export Layout: per shot, the panels and every drawing of every visible column as images, an FCPXML to rebuild the compositing, a PSD, a CSV and a manifest, the breakdown's files, the audio and the animatic clip"},
     {m_exportSpreadsheetButton, "Export a storyboard spreadsheet (.xlsx): one row per shot in THIS storyboard with thumbnail, timing, technique and per-task Kitsu status. For the whole project (all storyboards + all tabs) use Export Project Spreadsheet in the Production Tracker"},
     {m_techniqueButton,      "Assign a production technique (Tradigital, Cut-out, 3D…) to the selected shot(s); it drives which tasks apply in the spreadsheet"},
     {m_exportShotsButton,    "Export each shot as a standalone scene"},
