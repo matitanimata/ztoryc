@@ -1,3 +1,20 @@
+## [2026-10-27] — Export Layout (ex Export for AI), PSD a livelli
+
+### Added
+- **Export Layout** al posto di Export for AI: in `<cartella>/layout/<shot>/` ogni posa di ogni colonna con la
+  preview accesa, sola e con alfa (`NN_nome/NN_nome.FFFF.png`), un FCPXML con le colonne come tracce, un PSD
+  (pannelli appiattiti, o colonne come livelli con un gruppo per colonna a piu' disegni, FIELD_GUIDE sempre e
+  CAMERA_pNN per i movimenti), manifest v2 (holdOf, key/beat, casting per pannello, missing). Barra di
+  avanzamento unica, niente Flipbook a ogni render.
+- Scrittore PSD a livelli e gruppi (`ztorypsdwriter`, PackBits), sul formato di Puppetoonz.
+
+### Notes
+- Provato su filorosso v4 sh010: `holdOf` trova le 6 coppie del feedback di filorosso.
+- Da fare in una sessione dedicata: nel PSD il disegno intero (panoramiche), non solo la parte inquadrata.
+- groundzero: la #16 scrive un PSD piatto per fotogramma (non a livelli); build quotidiane automatiche (#62).
+  Mark Millard invitato da Rodney. Proposto commento sull'issue #65 (storyboard): Ztoryc integrabile in OT.
+- Rimandata alla prossima settimana la documentazione del formato `.ztoryc`.
+
 ## [2026-10-25] — Assistants senza colonna disegno, Duplicate con Auto-stretch, Kitsu fra episodi e rinomini, sentinella audio
 
 ### Fixed
