@@ -108,7 +108,7 @@ QHash<QString, TFilePath> indexProjectMaps(ToonzScene *scene) {
 void collectTargets(ToonzScene *scene, TXsheet *xsh, int depth,
                     QSet<TXshLevel *> &seen,
                     const QHash<QString, TFilePath> &mapIndex,
-                    QVector<MouthApplyTarget> &out) {
+                    QVector<MouthApplyTarget> &out, QStringList *problems) {
   // Come in ztorigmouths: un limite alla discesa, perche' una scena malfatta
   // puo' contenere un ciclo e qui si sta solo compilando un elenco.
   if (!xsh || depth > 8) return;
@@ -141,7 +141,7 @@ void collectTargets(ToonzScene *scene, TXsheet *xsh, int depth,
         // Si scende comunque: la bocca puo' stare PIU' IN FONDO, ed e' il caso
         // normale di un personaggio riggato (bocca dentro testa dentro corpo).
         collectTargets(scene, cl->getXsheet(), depth + 1, seen, mapIndex,
-                       out);
+                       out, problems);
         continue;
       }
 
@@ -170,6 +170,46 @@ void collectTargets(ToonzScene *scene, TXsheet *xsh, int depth,
             out.push_back(t);
             continue;
           }
+        }
+        // A PSD group whose original still has the map under the group's
+        // number: the index knows that name, not this one. The folders that
+        // hold maps of the same PSD are where to look.
+        QString why;
+        TXshSimpleLevel::findMouthMap(t.owner, &why);
+        if (t.owner.getType() == "psd") {
+          const QString file = base.section('#', 0, 0) + "#";
+          QSet<QString> dirs;
+          for (auto m = mapIndex.constBegin(); m != mapIndex.constEnd(); ++m)
+            if (m.key().startsWith(file))
+              dirs.insert(m.value().getParentDir().getQString());
+          for (const QString &d : dirs) {
+            QString whyThere;
+            const TFilePath found = TXshSimpleLevel::findMouthMap(
+                t.owner, &whyThere, TFilePath(d.toStdWString()));
+            if (why.isEmpty()) why = whyThere;
+            if (found.isEmpty()) continue;
+            const TFilePath alt = found.withType(t.owner.getType());
+            if (ZtoryMouthMap::load(alt, QString(), t.map) &&
+                !t.map.sets.isEmpty()) {
+              t.owner = alt;
+              t.label = QObject::tr("%1  (map found next to the original)")
+                            .arg(QString::fromStdWString(lv->getName()));
+              break;
+            }
+          }
+          if (!t.map.sets.isEmpty()) {
+            out.push_back(t);
+            continue;
+          }
+        }
+        if (!why.isEmpty() && problems) {
+          // Said of the FILE, not of this level: every group of the PSD
+          // without a map meets the same lost file, and says it once.
+          for (const QString &line : why.split('\n'))
+            if (!problems->contains(line)) {
+              problems->push_back(line);
+              qWarning("Ztoryc mouths: %s", qPrintable(line));
+            }
         }
       }
       if (!t.map.sets.isEmpty()) {
@@ -353,13 +393,15 @@ TXsheet *ZtoryMouthApply::workingXsheet() {
   return scene ? scene->getChildStack()->getTopXsheet() : nullptr;
 }
 
-QVector<MouthApplyTarget> ZtoryMouthApply::findTargets(ToonzScene *scene) {
+QVector<MouthApplyTarget> ZtoryMouthApply::findTargets(ToonzScene *scene,
+                                                      QStringList *problems) {
+  if (problems) problems->clear();
   QVector<MouthApplyTarget> out;
   if (!scene) return out;
   QSet<TXshLevel *> seen;
   // Indicizzato una volta sola, prima di scendere.
   const QHash<QString, TFilePath> mapIndex = indexProjectMaps(scene);
-  collectTargets(scene, workingXsheet(), 0, seen, mapIndex, out);
+  collectTargets(scene, workingXsheet(), 0, seen, mapIndex, out, problems);
 
   // ⚠️ UNA SCENA PERSONAGGIO NON EREDITA DA NESSUNO. Il recupero qui sotto
   // serve allo SHOT, dove il personaggio arriva importato e la sua mappa e'

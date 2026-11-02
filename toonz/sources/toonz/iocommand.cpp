@@ -3486,9 +3486,11 @@ bool IoCmd::takeCareSceneFolderItemsOnSaveSceneAs(
       // niente da applicare — senza che nessuno veda un errore.
       // Vale per QUALSIASI tipo di livello (vettoriale, smart raster, PSD),
       // non solo per i TZP come la palette.
-      if (TSystem::doesExistFileOrLevel(srcFp.withType("zmouth")) &&
-          !TSystem::copyFileOrLevel(fp.withType("zmouth"),
-                                    srcFp.withType("zmouth")))
+      // Found as the level's files are (a PSD group may still have the map
+      // under its number), copied under the level's name.
+      const TFilePath srcMouths = TXshSimpleLevel::findMouthMap(srcFp);
+      if (!srcMouths.isEmpty() &&
+          !TSystem::copyFileOrLevel(fp.withType("zmouth"), srcMouths))
         warning(QObject::tr("Failed to overwrite %1")
                     .arg(fp.withType("zmouth").getQString()));
     }
@@ -3558,9 +3560,11 @@ bool IoCmd::takeCareSceneFolderItemsOnSaveSceneAs(
       // niente da applicare — senza che nessuno veda un errore.
       // Vale per QUALSIASI tipo di livello (vettoriale, smart raster, PSD),
       // non solo per i TZP come la palette.
-      if (TSystem::doesExistFileOrLevel(srcFp.withType("zmouth")) &&
-          !TSystem::copyFileOrLevel(fp.withType("zmouth"),
-                                    srcFp.withType("zmouth")))
+      // Found as the level's files are (a PSD group may still have the map
+      // under its number), copied under the level's name.
+      const TFilePath srcMouths = TXshSimpleLevel::findMouthMap(srcFp);
+      if (!srcMouths.isEmpty() &&
+          !TSystem::copyFileOrLevel(fp.withType("zmouth"), srcMouths))
         warning(QObject::tr("Failed to overwrite %1")
                     .arg(fp.withType("zmouth").getQString()));
     }

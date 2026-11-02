@@ -296,7 +296,9 @@ void ztoryShowLipSyncDialog(QWidget *parent) {
     // mentre ci sono e' il peggior errore in una finestra di stato.
     const QVector<int> phon = ZtoryMouthApply::findPhonemeColumns(ctx.subXsheet);
     const bool hasCols      = !phon.isEmpty();
-    const QVector<MouthApplyTarget> targets = ZtoryMouthApply::findTargets(scene);
+    QStringList lostMaps;
+    const QVector<MouthApplyTarget> targets =
+        ZtoryMouthApply::findTargets(scene, &lostMaps);
     const bool hasSets                      = !targets.isEmpty();
 
     rGen.state->setText(
@@ -318,7 +320,11 @@ void ztoryShowLipSyncDialog(QWidget *parent) {
                             : QObject::tr("none reachable from this shot — map "
                                           "the mouth drawings once, and they "
                                           "travel with the character"));
-    rMap.state->setStyleSheet(hasSets ? kOk : kMiss);
+    // A map that is there and could not be used: said here, or the
+    // character just has no mouths and nobody knows why.
+    if (!lostMaps.isEmpty())
+      rMap.state->setText(rMap.state->text() + "\n" + lostMaps.join("\n"));
+    rMap.state->setStyleSheet(hasSets && lostMaps.isEmpty() ? kOk : kMiss);
     rMap.btn->setText(hasSets ? QObject::tr("Map more…")
                               : QObject::tr("Map mouths…"));
 

@@ -117,7 +117,12 @@ TXsheet *workingXsheet();
 //! Tutti i posti della scena che hanno una mappa delle bocche, scendendo nelle
 //! sotto-scene. Un personaggio riggato le ha annidate, quindi cercare solo in
 //! cima non troverebbe niente.
-QVector<MouthApplyTarget> findTargets(ToonzScene *scene);
+//! \p problems: the maps that are there and could not be used, one line
+//! each — so that a character without mouths says why instead of keeping
+//! quiet (Franco, 2026-11-02: the alien's mouths were not found, and nothing
+//! said so).
+QVector<MouthApplyTarget> findTargets(ToonzScene *scene,
+                                      QStringList *problems = nullptr);
 
 //! The characters of the scene and which levels belong to each.
 MouthCharacters characters(ToonzScene *scene);

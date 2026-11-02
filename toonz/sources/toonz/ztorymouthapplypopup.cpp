@@ -126,7 +126,8 @@ void ZtoryMouthApplyPopup::showEvent(QShowEvent *) {
   // Riaprendo il popup si riparte pulito: la scelta manuale vale per la
   // sessione di lavoro, non per sempre.
   m_targetChosenByHand = false;
-  m_targets     = ZtoryMouthApply::findTargets(scene);
+  QStringList lostMaps;
+  m_targets     = ZtoryMouthApply::findTargets(scene, &lostMaps);
   m_phonemeCols = ZtoryMouthApply::findPhonemeColumns(top);
 
   // The characters that HAVE mouths here, in column order; ● none needed:
@@ -187,7 +188,9 @@ void ZtoryMouthApplyPopup::showEvent(QShowEvent *) {
   m_table->setEnabled(ready);
   m_addBt->setEnabled(ready);
   m_removeBt->setEnabled(ready);
-  m_note->setText(ready ? QString() : missing.join("\n"));
+  // The maps that are there and could not be used are said even when
+  // another character is ready: they are the mouths someone expects to see.
+  m_note->setText((ready ? lostMaps : missing + lostMaps).join("\n"));
 
   if (ready) {
     pairColumnWithTarget();

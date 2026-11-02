@@ -2420,11 +2420,189 @@ namespace {
 // Ztoryc: files that belong to the level and sit beside it with its name —
 // the mouth mapping (.zmouth) and the brushes of its palette's styles
 // (.brushes, see tnztools/brushstylememory). copyFiles(), renameFiles(),
-// removeFiles() and getFiles() all walk this one list, and name them with
-// withType(): the name ztorymouthmap and the exports use (for a sequence
-// «A..png» it is «A..zmouth», not «A.zmouth»).
+// removeFiles() and getFiles() all walk this one list. They find a twin with
+// existingTwin() and name the copy with withType(): the name ztorymouthmap and
+// the exports use (for a sequence «A..png» it is «A..zmouth», not «A.zmouth»).
 const char *const levelTwinTypes[] = {"zmouth", "brushes"};
+
+// The twin of \p fp with type \p twin, if it exists: for the mouths the
+// lookup of findMouthMap(), which also finds the maps named with the number.
+TFilePath existingTwin(const TFilePath &fp, const char *twin) {
+  if (QLatin1String(twin) == QLatin1String("zmouth"))
+    return TXshSimpleLevel::findMouthMap(fp);
+  const TFilePath p = fp.withType(twin);
+  return TFileStatus(p).doesExist() ? p : TFilePath();
+}
+
+// The layers of a PSD — id and name, in the file's order — read once per
+// file version: the lookup runs for every level of a scene, and a PSD can
+// weigh a hundred MB.
+typedef QVector<QPair<int, QString>> PsdLayerNames;
+PsdLayerNames psdLayerNames(const TFilePath &levelPath) {
+  static QMutex mutex;
+  static QHash<QString, QPair<QDateTime, PsdLayerNames>> cache;
+  QString file = levelPath.getQString();
+  {
+    // the PSD itself: the name without the part from the first «#»
+    const QFileInfo fi(file);
+    QString n = fi.fileName();
+    const int sep = n.indexOf('#'), dot = n.lastIndexOf('.');
+    if (sep >= 0 && dot > sep) n.remove(sep, dot - sep);
+    file = fi.dir().filePath(n);
+  }
+  const QDateTime stamp = QFileInfo(file).lastModified();
+  QMutexLocker lock(&mutex);
+  auto it = cache.constFind(file);
+  if (it != cache.constEnd() && it.value().first == stamp)
+    return it.value().second;
+  PsdLayerNames names;
+  try {
+    QTextCodec *codec = QTextCodec::codecForName(
+        Preferences::instance()->getLayerNameEncoding().c_str());
+    TPSDParser parser(levelPath);
+    for (int i = 0; i < parser.getLevelsCount(); i++) {
+      const int id = parser.getLevelId(i);
+      const std::string n = parser.getLevelName(id);
+      names.push_back(qMakePair(
+          id, codec ? codec->toUnicode(n.c_str()) : QString::fromStdString(n)));
+    }
+  } catch (...) {
+    // an unreadable PSD has no groups to look for: the map is not found
+  }
+  cache.insert(file, qMakePair(stamp, names));
+  return names;
+}
+
+// The names of the mouth sets in a .zmouth.
+QStringList mouthSetNames(const QString &file) {
+  QStringList out;
+  QFile f(file);
+  if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return out;
+  QXmlStreamReader xml(&f);
+  while (!xml.atEnd()) {
+    xml.readNext();
+    if (xml.isStartElement() && xml.name() == QLatin1String("mouthSet"))
+      out << xml.attributes().value("name").toString().trimmed();
+  }
+  return out;
+}
+
+// Whether the sets of a map are the mouths of the group \p group. Puppetoonz
+// names a set after its group, «bocche fronte», or «bocche fronte 2» when a
+// group holds more than one (puppetoonz_core.scrivi_zmouth). It is what keeps
+// a map whose number now belongs to another group off the wrong group: the
+// mouths of another group are worse than none.
+bool setsBelongTo(const QStringList &sets, const QString &group) {
+  const QString g = group.trimmed();
+  if (sets.isEmpty() || g.isEmpty()) return false;
+  for (const QString &n : sets) {
+    if (n.compare(g, Qt::CaseInsensitive) == 0) continue;
+    bool num = false;
+    if (n.startsWith(g + " ", Qt::CaseInsensitive))
+      n.mid(g.size() + 1).toInt(&num);
+    if (!num) return false;
+  }
+  return true;
+}
 }  // namespace
+
+TFilePath TXshSimpleLevel::findMouthMap(const TFilePath &fp, QString *problem,
+                                        const TFilePath &searchDir) {
+  if (problem) problem->clear();
+  if (fp.isEmpty()) return TFilePath();
+  const TFilePath named =
+      searchDir.isEmpty() ? fp.withType("zmouth")
+                          : searchDir + fp.withType("zmouth").withoutParentDir();
+  if (TFileStatus(named).doesExist()) return named;
+  if (fp.getType() != "psd") return TFilePath();
+
+  // «CH_ALIENO#bocche fronte#group»: file, group, mode. A number in the
+  // group's place is already the numbered name, and there is nothing else.
+  QStringList parts =
+      QString::fromStdWString(fp.getWideName()).split('#', Qt::KeepEmptyParts);
+  if (parts.size() < 2 || parts[0].isEmpty() || parts[1].isEmpty())
+    return TFilePath();
+  bool isNumber = false;
+  parts[1].toInt(&isNumber);
+  if (isNumber) return TFilePath();
+
+  const PsdLayerNames layers = psdLayerNames(fp);
+  if (layers.isEmpty()) return TFilePath();
+  // The group the level shows, found as TPSDParser::getLevelIdByName finds
+  // it: by name, «name@n» for the n-th one of the same name.
+  QString token = parts[1];
+  int nth       = 0;
+  const int at  = token.lastIndexOf('@');
+  if (at > 0) {
+    bool ok     = false;
+    const int n = token.mid(at + 1).toInt(&ok);
+    if (ok) {
+      nth   = n;
+      token = token.left(at);
+    }
+  }
+  int id = -1;
+  for (const auto &l : layers)
+    if (l.second == token && nth-- == 0) {
+      id = l.first;
+      break;
+    }
+  if (id < 0) return TFilePath();
+
+  const QDir dir(searchDir.isEmpty() ? fp.getParentDir().getQString()
+                                     : searchDir.getQString());
+  const QString tail = parts.mid(2).join('#');
+  auto numbered = [&](int n) {
+    QStringList p = parts;
+    p[1]          = QString::number(n);
+    return p.join('#') + ".zmouth";
+  };
+
+  // The numbered maps of this PSD, the group's own number first. Another
+  // program that saves the PSD again renumbers the groups, so a map is
+  // taken by the name of its sets, not by its number.
+  const QString mine = numbered(id);
+  const QRegExp numberedName(
+      QRegExp::escape(parts[0]) + "#\\d+" +
+      (parts.size() > 2 ? "#" + QRegExp::escape(tail) : QString()) +
+      "\\.zmouth");
+  QStringList files;
+  for (const QString &f : dir.entryList(QStringList() << parts[0] + "#*.zmouth",
+                                        QDir::Files))
+    if (numberedName.exactMatch(f)) files << f;
+  if (files.removeAll(mine)) files.prepend(mine);
+
+  QStringList found, lost;
+  for (const QString &f : files) {
+    const QStringList sets = mouthSetNames(dir.filePath(f));
+    if (setsBelongTo(sets, token)) {
+      if (f == mine) return TFilePath(dir.filePath(f).toStdWString());
+      found << f;
+      continue;
+    }
+    // Another group's, if its name is still in the PSD: nothing wrong. If
+    // no group has that name any more the map is lost, and someone has to
+    // know — it is how the alien's mouths went missing in silence.
+    bool someone = false;
+    for (const auto &l : layers)
+      if (setsBelongTo(sets, l.second)) someone = true;
+    if (!someone)
+      lost << QObject::tr("%1 holds the mouths «%2», and no group of %3 is "
+                          "called that any more: they are not used")
+                  .arg(f, sets.join("», «"), parts[0] + ".psd");
+  }
+  if (found.size() == 1)
+    return TFilePath(dir.filePath(found.first()).toStdWString());
+  if (problem) {
+    if (found.size() > 1)
+      *problem = QObject::tr("%1 all hold the mouths of «%2»: none is used, "
+                             "rather than the wrong one")
+                     .arg(found.join(", "), token);
+    else
+      *problem = lost.join("\n");
+  }
+  return TFilePath();
+}
 
 void TXshSimpleLevel::copyFiles(const TFilePath &dst, const TFilePath &src) {
   if (dst == src) return;
@@ -2460,9 +2638,8 @@ void TXshSimpleLevel::copyFiles(const TFilePath &dst, const TFilePath &src) {
   // rinominare un livello di bocche perdeva la mappa in silenzio (2026-08-27).
   // Il resto (.plt, la cartella _files) non concorda ancora fra le quattro.
   for (const char *twin : levelTwinTypes) {
-    const TFilePath srcTwin = src.withType(twin);
-    if (TFileStatus(srcTwin).doesExist())
-      TSystem::copyFile(dst.withType(twin), srcTwin, true);
+    const TFilePath srcTwin = existingTwin(src, twin);
+    if (!srcTwin.isEmpty()) TSystem::copyFile(dst.withType(twin), srcTwin, true);
   }
 
   const TFilePath &srcHookFile = TXshSimpleLevel::getExistingHookFile(src);
@@ -2490,9 +2667,8 @@ void TXshSimpleLevel::renameFiles(const TFilePath &dst, const TFilePath &src) {
   // col nome vecchio: nessun errore, nessun file mancante da nessuna parte —
   // semplicemente il personaggio smetteva di avere le bocche mappate.
   for (const char *twin : levelTwinTypes) {
-    const TFilePath srcTwin = src.withType(twin);
-    if (TFileStatus(srcTwin).doesExist())
-      TSystem::renameFile(dst.withType(twin), srcTwin);
+    const TFilePath srcTwin = existingTwin(src, twin);
+    if (!srcTwin.isEmpty()) TSystem::renameFile(dst.withType(twin), srcTwin);
   }
 
   const TFilePath &srcHookFile = TXshSimpleLevel::getExistingHookFile(src);
@@ -2519,8 +2695,8 @@ void TXshSimpleLevel::removeFiles(const TFilePath &fp) {
   // sarebbe un file orfano che ricompare addosso al PRIMO livello che riprende
   // quel nome, portandogli i viseme di un personaggio che non c'e' piu'.
   for (const char *twin : levelTwinTypes) {
-    TFilePath twinFp = fp.withType(twin);
-    if (TFileStatus(twinFp).doesExist()) TSystem::moveFileToRecycleBin(twinFp);
+    const TFilePath twinFp = existingTwin(fp, twin);
+    if (!twinFp.isEmpty()) TSystem::moveFileToRecycleBin(twinFp);
   }
 
   // Delete ALL hook files (ie from every Toonz version)
@@ -2549,8 +2725,8 @@ void TXshSimpleLevel::getFiles(const TFilePath &fp, TFilePathSet &fpset) {
   // usarle. Vale per QUALSIASI tipo di livello, non solo tlv: un personaggio
   // puo' essere vettoriale, smart raster o un gruppo di PSD.
   for (const char *twin : levelTwinTypes) {
-    TFilePath twinFp = fp.withType(twin);
-    if (TFileStatus(twinFp).doesExist()) fpset.push_back(twinFp);
+    const TFilePath twinFp = existingTwin(fp, twin);
+    if (!twinFp.isEmpty()) fpset.push_back(twinFp);
   }
 
   // Store the hooks file if any (NOTE: there could be more than one hooks

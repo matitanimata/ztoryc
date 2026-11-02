@@ -490,7 +490,7 @@ bool mergeInto(const TFilePath &owner, const QString &sub,
   MouthMap map;
   QString readError;
   if (!ZtoryMouthMap::load(owner, sub, map, &readError) &&
-      QFile::exists(ZtoryMouthMap::pathFor(owner).getQString())) {
+      QFile::exists(ZtoryMouthMap::readPathFor(owner).getQString())) {
     // The file is there and cannot be read: saving would rewrite it with
     // only these sets, and the rest would be lost.
     if (why) *why = readError;

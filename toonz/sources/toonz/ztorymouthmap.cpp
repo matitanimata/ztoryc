@@ -1,5 +1,7 @@
 #include "ztorymouthmap.h"
 
+#include "toonz/txshsimplelevel.h"
+
 #include <QFile>
 #include <QFileInfo>
 #include <QXmlStreamReader>
@@ -47,8 +49,15 @@ TFilePath ZtoryMouthMap::pathFor(const TFilePath &ownerPath) {
   return ownerPath.withType("zmouth");
 }
 
+TFilePath ZtoryMouthMap::readPathFor(const TFilePath &ownerPath) {
+  // The lookup lives in toonzlib, beside the copy of the level's files, so
+  // that finding and copying agree (TXshSimpleLevel::findMouthMap).
+  const TFilePath found = TXshSimpleLevel::findMouthMap(ownerPath);
+  return found.isEmpty() ? pathFor(ownerPath) : found;
+}
+
 bool ZtoryMouthMap::exists(const TFilePath &ownerPath, const QString &subScene) {
-  const TFilePath p = pathFor(ownerPath);
+  const TFilePath p = readPathFor(ownerPath);
   if (p.isEmpty()) return false;
   if (!QFile::exists(QString::fromStdWString(p.getWideString()))) return false;
   // Il file c'e', ma potrebbe contenere le mappe di ALTRE sotto-scene: dire di
@@ -64,7 +73,7 @@ void ZtoryMouthMap::mappedSubScenes(const TFilePath &ownerPath,
                                     QSet<QString> *out) {
   if (!out) return;
   out->clear();
-  const TFilePath p = pathFor(ownerPath);
+  const TFilePath p = readPathFor(ownerPath);
   if (p.isEmpty()) return;
   const QString file = QString::fromStdWString(p.getWideString());
   if (!QFile::exists(file)) return;
@@ -95,7 +104,7 @@ bool ZtoryMouthMap::load(const TFilePath &ownerPath, const QString &subScene,
   };
   if (error) error->clear();
 
-  const TFilePath p = pathFor(ownerPath);
+  const TFilePath p = readPathFor(ownerPath);
   if (p.isEmpty()) return fail(QObject::tr("no level to read the mouths of"));
   const QString file = QString::fromStdWString(p.getWideString());
   if (!QFile::exists(file))
@@ -205,9 +214,12 @@ bool ZtoryMouthMap::save(const TFilePath &ownerPath, const QString &subScene,
   // rileggono TUTTE, cosi' salvare i labiali di «testa» non cancella quelli di
   // «testa_profilo». Senza questo passaggio il secondo salvataggio butterebbe
   // via il primo, in silenzio.
+  // Read from the map found, which may still carry the group's number;
+  // written under the level's name, so the next lookup finds it first.
+  const QString source = readPathFor(ownerPath).getQString();
   QVector<MouthSet> others;
-  if (QFile::exists(file)) {
-    QFile rf(file);
+  if (QFile::exists(source)) {
+    QFile rf(source);
     if (rf.open(QIODevice::ReadOnly | QIODevice::Text)) {
       MouthSet cur;
       bool inSet   = false;
@@ -270,8 +282,10 @@ bool ZtoryMouthMap::save(const TFilePath &ownerPath, const QString &subScene,
   if (keep.isEmpty() && tags.isEmpty() && !marked) {
     // L'ESISTENZA del file dichiara «questo livello e' delle bocche». Lasciarne
     // uno vuoto direbbe una cosa falsa a chiunque lo controlli dopo.
-    if (QFile::exists(file) && !QFile::remove(file))
-      return fail(QObject::tr("cannot remove %1").arg(QFileInfo(file).fileName()));
+    // Both: the numbered one left behind would bring the sets back.
+    for (const QString &gone : {file, source})
+      if (QFile::exists(gone) && !QFile::remove(gone))
+        return fail(QObject::tr("cannot remove %1").arg(QFileInfo(gone).fileName()));
     return true;
   }
 
@@ -350,7 +364,7 @@ void ZtoryMouthMap::loadColumnTags(const TFilePath &ownerPath,
                                    QVector<MouthColumnTag> *out) {
   if (!out) return;
   out->clear();
-  const TFilePath p = pathFor(ownerPath);
+  const TFilePath p = readPathFor(ownerPath);
   if (p.isEmpty()) return;
   QFile f(QString::fromStdWString(p.getWideString()));
   if (!f.exists() || !f.open(QIODevice::ReadOnly | QIODevice::Text)) return;
@@ -394,9 +408,10 @@ bool ZtoryMouthMap::saveColumnTags(const TFilePath &ownerPath,
   // Everything but the old marks, copied token by token: the sets stay
   // exactly as written, whatever wrote them.
   QByteArray body;
-  bool anySet = false;
-  if (QFile::exists(file)) {
-    QFile rf(file);
+  bool anySet          = false;
+  const QString source = readPathFor(ownerPath).getQString();
+  if (QFile::exists(source)) {
+    QFile rf(source);
     if (!rf.open(QIODevice::ReadOnly | QIODevice::Text)) {
       if (error) *error = QObject::tr("cannot read %1").arg(QFileInfo(file).fileName());
       return false;

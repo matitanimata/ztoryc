@@ -182,6 +182,12 @@ int shapeIndex(const QString &shape);
 //! per una sotto-scena — quello della SCENA che la contiene.
 TFilePath pathFor(const TFilePath &ownerPath);
 
+//! Il file da LEGGERE per \p ownerPath: quello di pathFor() se c'e',
+//! altrimenti quello col numero del gruppo del PSD (i personaggi esportati da
+//! Puppetoonz prima del 2026-11-02), solo se i suoi set portano il nome del
+//! gruppo. Si scrive sempre in pathFor(). Vedi TXshSimpleLevel::findMouthMap.
+TFilePath readPathFor(const TFilePath &ownerPath);
+
 //! Vero se c'e' una mappa per \p subScene (vuoto = il livello stesso). La sua
 //! esistenza DICHIARA che li' ci sono le bocche, che e' meta' del problema.
 bool exists(const TFilePath &ownerPath, const QString &subScene = QString());

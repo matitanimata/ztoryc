@@ -367,6 +367,25 @@ the existence of said hook file).
 */
   static TFilePath getExistingHookFile(const TFilePath &decodedLevelPath);
 
+  /*!
+\brief    Ztoryc: the \a existing mouth mapping (.zmouth) of the \b decoded
+        level path, or an empty path. The format is Puppetoonz's, documented
+        in its CLAUDE.md («L'incrocio con Ztoryc»).
+
+        First the level's own name (withType("zmouth")). For a PSD group
+        level, whose name OpenToonz turns from the group's number into its
+        name on load, then the name with the number — Puppetoonz wrote only
+        that one before 2026-11-02 — and, failing that, any numbered map of
+        the same PSD whose sets carry the group's name: the numbers change
+        when another program saves the PSD again. A numbered map is used only
+        if its sets carry the group's name; \p problem says why one was not.
+        \p searchDir looks for the numbered maps in another folder (a copy of
+        the character elsewhere in the project).
+*/
+  static TFilePath findMouthMap(const TFilePath &decodedLevelPath,
+                                QString *problem           = nullptr,
+                                const TFilePath &searchDir = TFilePath());
+
   static void setCompatibilityMasks(int writeMask, int neededMask,
                                     int forbiddenMask);
 
