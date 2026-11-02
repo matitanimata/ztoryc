@@ -934,6 +934,13 @@ Milestone:
 
 ## 🦴 ZtoRig / personaggio
 
+- **Proxy 3D per il giro di testa — esperimento PARCHEGGIATO, da riprendere (Franco, 2026-11-02: «non ce lo
+  dimentichiamo»).** Idea: agganciare il disegno vero a una forma di riferimento (un ovale) per far girare la testa
+  meglio dell'intercalazione 2D. Prova del 2026-08-03 in `reference/exp_3dproxy/` (`RISULTATI.md`: lo scarto del 2D
+  cresce con l'ampiezza del giro, e il confronto era favorevole al 2D). Lo strumento che serve, «Dump Vector Level»
+  (tratti di un livello vettoriale in JSON, coordinate esatte di Toonz), resta nel codice (`levelcommand.cpp`,
+  `MI_ZtoryDumpVectorLevel`) ma e' stato tolto dal menu il 2/11: si rimette in `menubar.cpp` quando si riprende.
+
 ### 🟡 FATTO 2026-10-14 (`a882cbf0d`), DA COLLAUDARE — «Mark as Mouth Column…»: il legame bocche ↔ personaggio senza passare dai nomi
 
 **Stato (14/10 sera):** fatto come descritto sotto, provato su copia (sh440 + SOFIA del progetto di prova:

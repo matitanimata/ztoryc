@@ -363,7 +363,8 @@ void TopBar::loadMenubar() {
     QMenu *ztoryExportMenu = exportMenu->addMenu(tr("Ztoryc"));
     {
       addMenuItem(ztoryExportMenu, MI_ZtoryExportPdf);
-      addMenuItem(ztoryExportMenu, MI_ZtoryDumpVectorLevel);
+      // MI_ZtoryDumpVectorLevel: a work tool for the 3D proxy experiment, kept in
+      // the code but out of the menu (Franco, 2026-11-02; ANIMATIC_TASKS).
       addMenuItem(ztoryExportMenu, MI_ZtoryExportSpreadsheetXlsx);
       addMenuItem(ztoryExportMenu, MI_ZtoryExportSpreadsheetCsv);
       addMenuItem(ztoryExportMenu, MI_ZtoryExportShots);
