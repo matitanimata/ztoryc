@@ -45,6 +45,13 @@
 #include "toonz/txshsoundcolumn.h"
 #include "toonz/tscenehandle.h"
 #include "toonz/preferences.h"
+#include "toonz/dpiscale.h"
+#include "toonz/txshsimplelevel.h"
+#include "toonz/tstageobjecttree.h"
+#include "toonzqt/gutil.h"
+#include "trasterimage.h"
+#include "ttoonzimage.h"
+#include "trop.h"
 #include "toutputproperties.h"
 
 // TnzCore includes
@@ -231,6 +238,92 @@ QImage fieldGuide(int w, int h) {
   const double cx = w / 2.0, cy = h / 2.0, arm = h / 20.0;
   g.drawLine(QPointF(cx - arm, cy), QPointF(cx + arm, cy));
   g.drawLine(QPointF(cx, cy - arm), QPointF(cx, cy + arm));
+  return img;
+}
+
+// ── The PSD in scene space (Franco, 2026-10-27) ─────────────────────────────
+// A layer is the WHOLE drawing, not what the camera frames: a panorama comes
+// out entire, ready to be the base of a final background. The resolution is
+// set by the tightest framing of the shot, which gets the camera's own
+// resolution (HD → 1920 pixels across it); the canvas is as large as the
+// drawings need. The camera fields are drawn where the camera is, so a
+// camera move moves the field, not the drawings.
+
+// A drawing as an image (top row first) and the affine that places it in the
+// stage: its pixel grid, origin at the raster's centre and y up, through the
+// level's dpi and the column's placement — how Tahoma places it.
+bool drawingInStage(TXsheet *sub, int col, int row, QImage &img, TAffine &aff,
+                    int &lx, int &ly) {
+  const TXshCell cell = sub->getCell(row, col);
+  TXshSimpleLevel *sl = cell.getSimpleLevel();
+  if (!sl) return false;
+  TImageP ip = sl->getFrame(cell.getFrameId(), false);
+  TRasterP ras;
+  if (TToonzImageP ti = ip) {
+    TRasterCM32P cm = ti->getRaster();
+    if (!cm) return false;
+    TRaster32P out(cm->getLx(), cm->getLy());
+    out->clear();
+    TRop::over(out, cm, sl->getPalette());
+    ras = out;
+  } else if (TRasterImageP ri = ip) {
+    ras = ri->getRaster();
+  }
+  if (!ras) return false;  // vector, mesh: not yet
+  lx  = ras->getLx();
+  ly  = ras->getLy();
+  img = rasterToQImage(ras, true, true).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  aff = sub->getPlacement(TStageObjectId::ColumnId(col), row) *
+        getDpiAffine(sl, cell.getFrameId());
+  return true;
+}
+
+struct StageCanvas {
+  double minX = 1e30, minY = 1e30, maxX = -1e30, maxY = -1e30, ppu = 1;
+  int w = 0, h = 0;
+  void add(const TPointD &p) {
+    minX = qMin(minX, p.x); maxX = qMax(maxX, p.x);
+    minY = qMin(minY, p.y); maxY = qMax(maxY, p.y);
+  }
+  QPointF px(const TPointD &p) const {
+    return QPointF((p.x - minX) * ppu, (maxY - p.y) * ppu);
+  }
+  // the transform from a drawing's QImage pixels to canvas pixels
+  QTransform transform(const TAffine &a, int lx, int ly) const {
+    return QTransform(ppu * a.a11, -ppu * a.a21, -ppu * a.a12, ppu * a.a22,
+                      ppu * (-a.a11 * lx / 2.0 + a.a12 * ly / 2.0 + a.a13 - minX),
+                      ppu * (maxY + a.a21 * lx / 2.0 - a.a22 * ly / 2.0 - a.a23));
+  }
+};
+
+// The camera's four corners in the stage at sub-xsheet row `row`.
+QPolygonF cameraCorners(TXsheet *sub, int row, const StageCanvas *cv,
+                        QVector<TPointD> *stage = nullptr) {
+  const TStageObjectId camId = sub->getStageObjectTree()->getCurrentCameraId();
+  TCamera *cam = sub->getStageObject(camId)->getCamera();
+  const TDimensionD sz = cam->getSize();
+  const double hw = sz.lx * Stage::inch / 2.0, hh = sz.ly * Stage::inch / 2.0;
+  const TAffine a = sub->getPlacement(camId, row);
+  QPolygonF poly;
+  for (const TPointD &q : {TPointD(-hw, hh), TPointD(hw, hh), TPointD(hw, -hh), TPointD(-hw, -hh)}) {
+    const TPointD s = a * q;
+    if (stage) *stage << s;
+    if (cv) poly << cv->px(s);
+  }
+  return poly;
+}
+
+QImage fieldLayer(const StageCanvas &cv, const QPolygonF &cam) {
+  QImage img(cv.w, cv.h, QImage::Format_ARGB32);
+  img.fill(Qt::transparent);
+  QPainter g(&img);
+  g.setRenderHint(QPainter::Antialiasing);
+  g.setPen(QPen(QColor(255, 60, 60), qMax(2.0, cv.ppu * 2)));
+  g.drawPolygon(cam);
+  const QPointF c = (cam[0] + cam[2]) / 2;
+  const double arm = QLineF(cam[0], cam[3]).length() / 20;
+  g.drawLine(c - QPointF(arm, 0), c + QPointF(arm, 0));
+  g.drawLine(c - QPointF(0, arm), c + QPointF(0, arm));
   return img;
 }
 
@@ -666,41 +759,114 @@ QString StoryboardPanel::exportShotLayout(int si, const QString &root,
 
   // ── PSD ─────────────────────────────────────────────────────────────────
   QString psd;
-  if (opt.psdMode > 0) {
+  if (opt.psdMode == 1) {
+    // the panels flattened, as the camera sees them, with the camera fields
     QVector<ZtoryPsdGroup> groups;
-    // the camera fields on top, one layer per panel with a camera move
     ZtoryPsdGroup camGroup;
     for (int pi = 0; pi < (int)sd.panels.size(); pi++)
       if (sd.panels[pi].cameraMoveType != PanelData::CamNone)
-        camGroup.layers << ZtoryPsdLayer{
-            QString("CAMERA_%1").arg(panelFiles[pi].first),
-            cameraFields(sd.panels[pi], res.lx, res.ly), true};
+        camGroup.layers << ZtoryPsdLayer{QString("CAMERA_%1").arg(panelFiles[pi].first),
+                                         cameraFields(sd.panels[pi], res.lx, res.ly), true};
     camGroup.layers << ZtoryPsdLayer{"FIELD_GUIDE", fieldGuide(res.lx, res.ly), true};
     groups << camGroup;
-    if (opt.psdMode == 1) {
-      ZtoryPsdGroup g;
-      g.name = shotName;
-      for (const auto &pf : panelFiles)
-        g.layers << ZtoryPsdLayer{QFileInfo(pf.second).completeBaseName(),
-                                  QImage(dir + "/" + pf.second), true};
-      groups << g;
-    } else {
-      for (int k = cols.size() - 1; k >= 0; k--) {  // the higher column on top
-        const Column &cd = cols[k];
-        ZtoryPsdGroup g;
-        if (cd.poses.size() > 1) g.name = cd.folder;
-        for (const Pose &p : cd.poses)
-          g.layers << ZtoryPsdLayer{
-              cd.poses.size() > 1 ? QFileInfo(p.file).completeBaseName() : cd.folder,
-              QImage(dir + "/" + p.file), true};
-        if (!g.layers.isEmpty()) groups << g;
-      }
-    }
+    ZtoryPsdGroup g;
+    g.name = shotName;
+    for (const auto &pf : panelFiles)
+      g.layers << ZtoryPsdLayer{QFileInfo(pf.second).completeBaseName(),
+                                QImage(dir + "/" + pf.second), true};
+    groups << g;
     psd = shotName + ".psd";
     QString why;
     const QImage merged = panelFiles.isEmpty() ? QImage()
                                                : QImage(dir + "/" + panelFiles.first().second);
     if (!ztoryWritePsd(dir + "/" + psd, res.lx, res.ly, groups, merged, &why)) {
+      if (warnings) *warnings << tr("the PSD was not written: %1").arg(why);
+      psd.clear();
+    }
+  } else if (opt.psdMode == 2 && sub) {
+    // the columns in SCENE space: whole drawings, at the resolution the
+    // tightest framing of the shot needs
+    StageCanvas cv;
+    double minCamW = 1e30;
+    QVector<QVector<TPointD>> camAt(sd.panels.size());
+    for (int r = 0; r < rows; r++) {
+      QVector<TPointD> c;
+      cameraCorners(sub, r, nullptr, &c);
+      minCamW = qMin(minCamW, std::hypot(c[1].x - c[0].x, c[1].y - c[0].y));
+    }
+    for (int pi = 0; pi < (int)sd.panels.size(); pi++) {
+      cameraCorners(sub, sd.panels[pi].startFrame, nullptr, &camAt[pi]);
+      for (const TPointD &q : camAt[pi]) cv.add(q);
+    }
+    struct Placed { QString name; QImage img; TAffine aff; int lx, ly; };
+    QVector<QVector<Placed>> placed(cols.size());
+    for (int k = 0; k < cols.size(); k++)
+      for (const Pose &p : cols[k].poses) {
+        Placed pl;
+        pl.name = cols[k].poses.size() > 1 ? QFileInfo(p.file).completeBaseName() : cols[k].folder;
+        if (!drawingInStage(sub, cols[k].index, p.start - 1, pl.img, pl.aff, pl.lx, pl.ly)) {
+          if (warnings) *warnings << tr("%1: not a raster drawing, left out of the PSD").arg(pl.name);
+          continue;
+        }
+        for (const TPointD &q : {TPointD(-pl.lx / 2.0, pl.ly / 2.0), TPointD(pl.lx / 2.0, pl.ly / 2.0),
+                                 TPointD(pl.lx / 2.0, -pl.ly / 2.0), TPointD(-pl.lx / 2.0, -pl.ly / 2.0)})
+          cv.add(pl.aff * q);
+        placed[k] << pl;
+      }
+    cv.ppu = minCamW > 0 ? res.lx / minCamW : 1;
+    const double maxSide = 16000;  // Photoshop's PSD limit is 30000
+    const double big = qMax(cv.maxX - cv.minX, cv.maxY - cv.minY) * cv.ppu;
+    if (big > maxSide) {
+      cv.ppu *= maxSide / big;
+      if (warnings) *warnings << tr("the PSD was scaled down to %1 pixels on its long side").arg(maxSide);
+    }
+    cv.w = qMax(1, int(std::ceil((cv.maxX - cv.minX) * cv.ppu)));
+    cv.h = qMax(1, int(std::ceil((cv.maxY - cv.minY) * cv.ppu)));
+
+    QVector<ZtoryPsdGroup> groups;
+    // the camera fields: one layer while the framing stays, a new one where it changes
+    ZtoryPsdGroup fields;
+    QPolygonF last;
+    for (int pi = 0; pi < (int)sd.panels.size(); pi++) {
+      QPolygonF poly;
+      for (const TPointD &q : camAt[pi]) poly << cv.px(q);
+      bool same = !last.isEmpty();
+      for (int i = 0; same && i < 4; i++) same = QLineF(poly[i], last[i]).length() < 1.0;
+      if (same) continue;
+      fields.layers.prepend(ZtoryPsdLayer{QString("FIELD_%1").arg(panelFiles[pi].first),
+                                          fieldLayer(cv, poly), true});
+      last = poly;
+    }
+    if (fields.layers.size() == 1) fields.layers[0].name = "FIELD_GUIDE";
+    groups << fields;
+    QImage merged(cv.w, cv.h, QImage::Format_ARGB32_Premultiplied);
+    merged.fill(Qt::transparent);
+    for (int k = cols.size() - 1; k >= 0; k--) {  // the higher column on top
+      ZtoryPsdGroup g;
+      if (placed[k].size() > 1) g.name = cols[k].folder;
+      for (const Placed &pl : placed[k]) {
+        QImage layer(cv.w, cv.h, QImage::Format_ARGB32_Premultiplied);
+        layer.fill(Qt::transparent);
+        QPainter pt(&layer);
+        pt.setRenderHint(QPainter::SmoothPixmapTransform);
+        pt.setTransform(cv.transform(pl.aff, pl.lx, pl.ly));
+        pt.drawImage(0, 0, pl.img);
+        pt.end();
+        g.layers << ZtoryPsdLayer{pl.name, layer, true};
+      }
+      if (!g.layers.isEmpty()) groups << g;
+    }
+    {  // the flattened picture: every column's first drawing, bottom up
+      QPainter pm(&merged);
+      for (int k = 0; k < cols.size(); k++)
+        if (!placed[k].isEmpty()) {
+          pm.setTransform(cv.transform(placed[k][0].aff, placed[k][0].lx, placed[k][0].ly));
+          pm.drawImage(0, 0, placed[k][0].img);
+        }
+    }
+    psd = shotName + ".psd";
+    QString why;
+    if (!ztoryWritePsd(dir + "/" + psd, cv.w, cv.h, groups, merged, &why)) {
       if (warnings) *warnings << tr("the PSD was not written: %1").arg(why);
       psd.clear();
     }

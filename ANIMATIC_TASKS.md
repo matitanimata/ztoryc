@@ -179,9 +179,10 @@ degli status).
 - **Export Layout (ex Export for AI, 27/10)**: fatto — colonne visibili come sequenze di pose (`NN_nome/NN_nome.FFFF.png`),
   FCPXML a tracce, PSD (pannelli appiattiti o colonne come livelli/gruppi, FIELD_GUIDE sempre + CAMERA_pNN), manifest v2
   (holdOf, key/beat, casting per pannello, missing). Provato su filorosso sh010 (holdOf = le 6 coppie del feedback).
-  **Da fare (sessione dedicata):** nel PSD il disegno INTERO, non la parte inquadrata (panoramiche): camera allargata a
-  parita' di dpi durante l'export, poi riallineamento delle pose quando la camera si muove (pan = traslazione, zoom =
-  scala). Prima su sh010, poi su uno shot con panoramica. Da collaudare: reimport del PSD con «frames in a column».
+  **2/11: PSD a colonne in coordinate di scena** — disegni interi (il fondale di sh010 esce intero, Franco), risoluzione
+  data dall'inquadratura piu' stretta = risoluzione di camera, tela grande quanto serve (tetto 16000 px), campi camera
+  dove sta la camera (FIELD_GUIDE, o FIELD_pNN dove cambia). Reimport con «frames in a column» collaudato il 27/10.
+  **Restano:** vettoriali e sotto-scene fuori dal PSD (avviso); da provare uno shot con panoramica e movimento di camera.
 - **Export for AI — prova vera su filorosso sh010 (domani, 26/10)**: con la clip di riferimento della sigla
   (asset REF_INTRO_DISNEY, arriva il 26) e il mp4 dello shot. Dalla prova esce cosa manca al manifest. Poi:
   l'opzione «Export panels as image sequence» nella finestra dell'export degli shot (concordata, non fatta);
