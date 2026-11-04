@@ -253,22 +253,27 @@ bool TSystem::memoryShortage() {
   // MemAvailable (kernel 3.14+) is the best estimate of memory that can be
   // made available without swapping: it includes free RAM plus reclaimable
   // page-cache and slab entries.  Fall back to MemFree if unavailable.
+  // MemAvailable comes AFTER MemFree in the file: the loop used to stop at
+  // MemFree, which is small on any machine that has been up for a while, and
+  // reported a shortage almost always (found porting this to groundzero,
+  // 2026-11-04).
   FILE *f = fopen("/proc/meminfo", "r");
   if (!f) return false;
-  uint64_t memTotal     = 0;
-  uint64_t memAvailable = 0;
-  uint64_t memFree      = 0;
+  unsigned long long memTotal = 0, memAvailable = 0, memFree = 0, val = 0;
   char line[256];
   while (fgets(line, sizeof(line), f)) {
-    uint64_t val = 0;
-    if (sscanf(line, "MemTotal: %llu kB", &val) == 1)      memTotal     = val;
-    if (sscanf(line, "MemAvailable: %llu kB", &val) == 1)  memAvailable = val;
-    if (sscanf(line, "MemFree: %llu kB", &val) == 1)       memFree      = val;
-    if (memTotal && (memAvailable || memFree)) break;
+    if (sscanf(line, "MemTotal: %llu kB", &val) == 1)
+      memTotal = val;
+    else if (sscanf(line, "MemFree: %llu kB", &val) == 1)
+      memFree = val;
+    else if (sscanf(line, "MemAvailable: %llu kB", &val) == 1) {
+      memAvailable = val;
+      break;
+    }
   }
   fclose(f);
   if (!memTotal) return false;
-  uint64_t available = memAvailable ? memAvailable : memFree;
+  unsigned long long available = memAvailable ? memAvailable : memFree;
   // Shortage when less than 15% of physical RAM is readily available.
   return available < memTotal / 7;  // ~14.3%
 
