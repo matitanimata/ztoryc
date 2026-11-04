@@ -15,6 +15,7 @@
 
 #include <sstream>
 #include <memory>
+#include <new>
 
 using namespace std;
 
@@ -96,6 +97,10 @@ bool lz4decompress(LZ4F_decompressionContext_t lz4dctx, char *out,
                                  (const void *)in, &in_read, NULL);
 
     if (LZ4F_isError(res)) return false;
+
+    // No progress: the output is full and the data goes on. Only a damaged
+    // file declares a size too small, and without this the loop never ends.
+    if (in_read == 0 && out_written == 0) return false;
 
     *out_len_res += out_written;
 
@@ -837,38 +842,43 @@ TIStream::TIStream(const TFilePath &fp) : m_imp(new Imp) {
     unique_ptr<std::istream> is(m_imp->m_is);
     m_imp->m_is = 0;
 
-    char magicBuffer[4];
+    char magicBuffer[4] = {0, 0, 0, 0};  // a file cut short reads less
     is->read(magicBuffer, 4);
     string magic(magicBuffer, 4);
-    size_t in_len, out_len;
+    size_t in_len = 0, out_len = 0;
 
     if (magic == "TNZC") {
       // Tab3.0 beta
       is->read((char *)&out_len, sizeof out_len);
       is->read((char *)&in_len, sizeof in_len);
     } else if (magic == "TABc") {
-      TINT32 v;
-      is->read((char *)&v, sizeof v);
-      printf("magic = %08X\n", v);
+      TINT32 byteOrder = 0, declaredOut = 0, declaredIn = 0;
+      is->read((char *)&byteOrder, sizeof byteOrder);
+      is->read((char *)&declaredOut, sizeof declaredOut);
+      is->read((char *)&declaredIn, sizeof declaredIn);
+      if (is->fail()) throw TException("Corrupted file");
 
-      if (v == 0x0A0B0C0D)
+      if (byteOrder == 0x0A0B0C0D)
         swapForEndianness = false;
-      else if (v == 0x0D0C0B0A)
+      else if (byteOrder == 0x0D0C0B0A)
         swapForEndianness = true;
-      else {
-        swapForEndianness = true;
-        printf("UH OH!\n");
-      }
+      else
+        throw TException("Corrupted file");
 
-      is->read((char *)&v, sizeof v);
-      out_len = swapForEndianness ? swapTINT32(v) : v;
-      is->read((char *)&v, sizeof v);
-      in_len = swapForEndianness ? swapTINT32(v) : v;
+      out_len = (TUINT32)(swapForEndianness ? swapTINT32(declaredOut)
+                                            : declaredOut);
+      in_len  = (TUINT32)(swapForEndianness ? swapTINT32(declaredIn)
+                                            : declaredIn);
     } else
       throw TException("Bad magic number");
 
-    if (in_len <= 0 || in_len > 100000000)  // 100M di tnzfile (compresso)
-                                            // sembrano proprio esagerati
+    // The buffers are allocated from the sizes in the header, before a byte
+    // is decompressed: a header cut short, or a damaged one, could ask for
+    // many GB. LZ4 expands at most ~255 times, and 256M of text is far more
+    // than any scene or mesh (from groundzero, OpenAnimationLibrary).
+    if (is->fail() || in_len == 0 ||
+        in_len > 100000000 ||  // 100M of compressed data
+        out_len > in_len * 256 + 1024 || out_len > (size_t(1) << 28))
       throw TException("Corrupted file");
 
     LZ4F_decompressionContext_t lz4dctx;
@@ -878,9 +888,24 @@ TIStream::TIStream(const TFilePath &fp) : m_imp(new Imp) {
     if (LZ4F_isError(err)) throw TException("Couldn't decompress file");
 
     char *in = (char *)malloc(in_len);
+    if (!in) {
+      LZ4F_freeDecompressionContext(lz4dctx);
+      throw TException("Couldn't decompress file");
+    }
     is->read((char *)in, in_len);
+    if ((size_t)is->gcount() != in_len) {  // data cut short
+      free(in);
+      LZ4F_freeDecompressionContext(lz4dctx);
+      throw TException("Corrupted file");
+    }
 
-    m_imp->m_strbuffer.resize(out_len + 1000);  // per prudenza
+    try {
+      m_imp->m_strbuffer.resize(out_len + 1000);  // per prudenza
+    } catch (const std::bad_alloc &) {
+      free(in);
+      LZ4F_freeDecompressionContext(lz4dctx);
+      throw TException("Couldn't decompress file");
+    }
     char *out = (char *)m_imp->m_strbuffer.c_str();
 
     size_t check_len = out_len;

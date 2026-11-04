@@ -47,7 +47,8 @@ OpenToonz
 Ztoryc includes code ported from OpenToonz (the drawing assistants) and from
 OpenAnimationLibrary/opentoonz-dev (the FLA/XFL import) and from
 OpenAnimationLibrary/groundzero (the async-signal-safe crash report on macOS
-and Linux), under the same license.
+and Linux, and the checks on damaged compressed files), under the same
+license.
 
 All contributions by DWANGO:
 Copyright (c) 2016 - 2026, DWANGO Co., Ltd.
