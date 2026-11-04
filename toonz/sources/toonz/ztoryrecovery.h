@@ -70,6 +70,7 @@ private:
   ZtoryRecovery();
 
   bool restore(const QString &dir, const QString &scenePath);
+  void remindUntitled(ToonzScene *scene);
 
   QTimer *m_timer = nullptr;
   //! La cartella di recupero scritta in QUESTA sessione per la scena
@@ -83,4 +84,8 @@ private:
   //! Un giro saltato perche' il tool era a meta' di un gesto: la copia si fa
   //! appena il gesto finisce, non tre minuti dopo.
   bool m_pending = false;
+  //! Rounds of the timer in a row with an untitled scene holding unsaved
+  //! work, and the scene already reminded to be saved with a name.
+  int m_untitledRounds        = 0;
+  ToonzScene *m_remindedScene = nullptr;
 };

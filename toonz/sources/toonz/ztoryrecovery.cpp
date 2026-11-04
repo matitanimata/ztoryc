@@ -1,19 +1,25 @@
 #include "ztoryrecovery.h"
 
 #include "iocommand.h"
+#include "menubarcommandids.h"
 #include "tapp.h"
 #include "ztorymodel.h"
 
 #include "tools/toolhandle.h"
 #include "toonz/cleanupparameters.h"
+#include "toonz/fullcolorpalette.h"
 #include "toonz/levelproperties.h"
+#include "toonz/palettecontroller.h"
+#include "toonz/tpalettehandle.h"
 #include "toonz/levelset.h"
 #include "toonz/sceneproperties.h"
 #include "toonz/toonzscene.h"
 #include "toonz/tscenehandle.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonzqt/dvdialog.h"
+#include "toonzqt/menubarcommand.h"
 #include "tpalette.h"
+#include "tstream.h"
 #include "tsystem.h"
 
 #include <QCoreApplication>
@@ -149,7 +155,11 @@ void ZtoryRecovery::snapshot() {
   if (m_busy) return;
   TApp *app         = TApp::instance();
   ToonzScene *scene = app->getCurrentScene()->getScene();
-  if (!scene || scene->isUntitled()) return;
+  if (!scene) return;
+  if (scene->isUntitled()) {
+    remindUntitled(scene);
+    return;
+  }
   if (!app->getCurrentScene()->getDirtyFlag() && !anyLevelDirty(scene)) return;
   // Mai a meta' di un gesto o di un salvataggio: si riprova al giro dopo.
   if (app->getCurrentTool()->isToolBusy() || app->isSaveInProgress()) {
@@ -176,6 +186,9 @@ void ZtoryRecovery::snapshot() {
   };
   QVector<Entry> entries;
   int failed = 0;
+  // Levels with unsaved changes whose copy failed: the copy lacks those
+  // changes, and the question at the next opening says so.
+  QStringList failedNames;
 
   // ── I livelli modificati ────────────────────────────────────────────────
   TLevelSet *ls = scene->getLevelSet();
@@ -183,8 +196,13 @@ void ZtoryRecovery::snapshot() {
     TXshLevel *lv = ls->getLevel(i);
     TXshSimpleLevel *sl = lv ? lv->getSimpleLevel() : nullptr;
     if (!sl || sl->getPath().isEmpty()) continue;
-    const bool dirty = sl->getProperties()->getDirtyFlag() ||
-                       (sl->getPalette() && sl->getPalette()->getDirtyFlag());
+    // The palette of a raster level is the project's full-color palette,
+    // shared by all of them and not stored with the level: it is copied once,
+    // below, and a change to it alone is no reason to copy the drawings.
+    const bool fullColor = sl->getType() & FULLCOLOR_TYPE;
+    const bool dirty =
+        sl->getProperties()->getDirtyFlag() ||
+        (!fullColor && sl->getPalette() && sl->getPalette()->getDirtyFlag());
     if (!dirty) continue;
 
     const TFilePath orig = scene->decodeFilePath(sl->getPath());
@@ -200,6 +218,12 @@ void ZtoryRecovery::snapshot() {
     // perdeva in silenzio (review del 25/09).
     const bool levelDirty = sl->getProperties()->getDirtyFlag();
     const bool palDirty   = sl->getPalette() && sl->getPalette()->getDirtyFlag();
+    // ⚠️ Saving a raster level with its palette modified writes the project's
+    // Raster_Drawing_Palette.tpl IN PLACE (saveSimpleLevel →
+    // FullColorPalette::savePalette, which looks at no destination): the
+    // recovery copy wrote unsaved changes into the project. Seen clean, it
+    // skips it. From groundzero's autosave recovery, 2026-11-04.
+    if (fullColor && palDirty) sl->getPalette()->setDirtyFlag(false);
     try {
       sl->save(dst, orig, true);
       // A writer that fails while closing can no longer throw (the .tzm one
@@ -209,11 +233,47 @@ void ZtoryRecovery::snapshot() {
                          QString::fromStdWString(sl->getName())});
     } catch (...) {
       ++failed;
+      failedNames << QString::fromStdWString(sl->getName());
       qWarning("[RECOVERY] level %s not written",
                QString::fromStdWString(sl->getName()).toUtf8().constData());
     }
     sl->getProperties()->setDirtyFlag(levelDirty);
     if (sl->getPalette()) sl->getPalette()->setDirtyFlag(palDirty);
+  }
+
+  // ── The full-color palette ──────────────────────────────────────────────
+  // Written as a copy, to go back where it belongs like a level.
+  {
+    FullColorPalette *fcp = FullColorPalette::instance();
+    TPalette *pal         = nullptr;
+    for (int i = 0; i < ls->getLevelCount() && !pal; i++) {
+      TXshSimpleLevel *sl =
+          ls->getLevel(i) ? ls->getLevel(i)->getSimpleLevel() : nullptr;
+      if (sl && sl->getPalette() && fcp->isFullColorPalette(sl->getPalette()))
+        pal = sl->getPalette();
+    }
+    if (pal && pal->getDirtyFlag()) {
+      const TFilePath orig = scene->decodeFilePath(fcp->getPath());
+      const QString sub    = "levels/fullcolor";
+      QDir().mkpath(tmp + "/" + sub);
+      const TFilePath dst =
+          TFilePath((tmp + "/" + sub).toStdWString()) + orig.withoutParentDir();
+      bool ok = false;
+      try {
+        TOStream os(dst);
+        os << pal;
+        ok = os.checkStatus();
+      } catch (...) {
+      }
+      ok = ok && TSystem::doesExistFileOrLevel(dst);
+      if (ok)
+        entries.push_back({sub, toQ(orig.getParentDir()),
+                           QString::fromStdWString(orig.getWideName())});
+      else {
+        ++failed;
+        failedNames << QString::fromStdWString(orig.getWideName());
+      }
+    }
   }
 
   // ── La scena ────────────────────────────────────────────────────────────
@@ -301,6 +361,11 @@ void ZtoryRecovery::snapshot() {
         xml.writeAttribute("dst", e.dst);
         xml.writeEndElement();
       }
+      for (const QString &name : failedNames) {
+        xml.writeStartElement("missing");
+        xml.writeAttribute("name", name);
+        xml.writeEndElement();
+      }
       xml.writeEndElement();
       xml.writeEndDocument();
     }
@@ -318,6 +383,31 @@ void ZtoryRecovery::snapshot() {
                   : "",
            (long long)clock.elapsed());
   m_busy = false;
+}
+
+//----------------------------------------------------------------------------
+
+void ZtoryRecovery::remindUntitled(ToonzScene *scene) {
+  // A scene with no name has nowhere to be put back, so it gets no copy: a
+  // copy would mean splitting ToonzScene::save, which every save goes
+  // through, for a case that should not happen (Franco, 2026-11-04). It gets
+  // a reminder instead, once per scene, at the second round with unsaved
+  // work (three to six minutes in), and never in the middle of a gesture.
+  TApp *app = TApp::instance();
+  if (scene == m_remindedScene) return;
+  if (!app->getCurrentScene()->getDirtyFlag() && !anyLevelDirty(scene)) {
+    m_untitledRounds = 0;
+    return;
+  }
+  if (++m_untitledRounds < 2) return;
+  if (app->getCurrentTool()->isToolBusy() || app->isSaveInProgress()) return;
+  m_remindedScene = scene;
+  const int answer = DVGui::MsgBox(
+      tr("This scene has no name yet, and the recovery copy does not protect "
+         "it: if Ztoryc closes badly, its work is lost.\n\n"
+         "Save it with a name now?"),
+      tr("Save Scene As..."), tr("Later"), 0);
+  if (answer == 1) CommandManager::instance()->execute(MI_SaveSceneAs);
 }
 
 //----------------------------------------------------------------------------
@@ -359,8 +449,10 @@ void ZtoryRecovery::onSceneSwitched() {
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   const QString path = currentScenePath();
   if (scene == m_seenScene && path == m_seenScenePath) return;
-  m_seenScene     = scene;
-  m_seenScenePath = path;
+  m_seenScene      = scene;
+  m_seenScenePath  = path;
+  m_untitledRounds = 0;
+  m_remindedScene  = nullptr;  // a new scene may sit at the same address
   // Si e' lasciata la scena: salvata (gia' tolto da afterSceneSaved) o
   // scartata a domanda di Tahoma. Scartata vuol dire scartata: il recupero
   // si butta (Franco, 2026-10-24, che rivede la settimana in kept/ del 2/10).
@@ -395,15 +487,19 @@ void ZtoryRecovery::checkForRecovery() {
   if (!QFile::exists(dir + "/" + kManifest)) return;
 
   QDateTime when;
+  QStringList missing;
   {
     QFile f(dir + "/" + kManifest);
     if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
       QXmlStreamReader xml(&f);
       while (!xml.atEnd()) {
         xml.readNext();
-        if (xml.isStartElement() && xml.name() == QLatin1String("ztoryrecovery"))
+        if (!xml.isStartElement()) continue;
+        if (xml.name() == QLatin1String("ztoryrecovery"))
           when = QDateTime::fromString(
               xml.attributes().value("time").toString(), Qt::ISODate);
+        else if (xml.name() == QLatin1String("missing"))
+          missing << xml.attributes().value("name").toString();
       }
     }
   }
@@ -416,11 +512,18 @@ void ZtoryRecovery::checkForRecovery() {
   }
 
   const QString sceneName = QFileInfo(scenePath).completeBaseName();
-  const int answer = DVGui::MsgBox(
+  QString question =
       tr("Ztoryc did not close properly while «%1» had unsaved changes.\n"
-         "A copy of that work from %2 was kept.\n\n"
-         "Recover it? The current files are set aside first, not deleted.")
-          .arg(sceneName, when.toString("dd/MM HH:mm")),
+         "A copy of that work from %2 was kept.\n\n")
+          .arg(sceneName, when.toString("dd/MM HH:mm"));
+  if (!missing.isEmpty())
+    question += tr("These levels could not be copied, and the copy does not "
+                   "have their changes: %1\n\n")
+                    .arg(missing.join(", "));
+  question +=
+      tr("Recover it? The current files are set aside first, not deleted.");
+  const int answer = DVGui::MsgBox(
+      question,
       // ⚠️ Pulsanti contati da 0: Invio = Recover. Con 1 Invio era Discard,
       // che cancella il recupero — dopo un crash, il gesto d'istinto
       // (review del 25/09).
@@ -475,9 +578,11 @@ bool ZtoryRecovery::restore(const QString &dir, const QString &scenePath) {
     }
   }
 
-  bool ok = true;
-  int i   = 0;
+  bool ok               = true;
+  bool fullColorRestored = false;
+  int i                  = 0;
   for (const auto &lv : levels) {
+    if (lv.first == QLatin1String("levels/fullcolor")) fullColorRestored = true;
     const QDir src(dir + "/" + lv.first);
     const QString bak = backup + "/levels/" + QString::number(i++);
     for (const QString &name : src.entryList(QDir::Files))
@@ -504,6 +609,17 @@ bool ZtoryRecovery::restore(const QString &dir, const QString &scenePath) {
   // Si ricarica la scena dai file appena rimessi. Pulita, o Tahoma
   // chiederebbe di salvare quella che si sta sostituendo.
   TApp::instance()->getCurrentScene()->setDirtyFlag(false);
+  if (fullColorRestored) {
+    // The full-color palette stays in memory for the whole project, and a
+    // scene load does not read it again: without this the old one would be
+    // shown, and saved over the recovered file. Viewers detached first, as
+    // IoCmd::loadScene does when the project changes.
+    TApp::instance()
+        ->getPaletteController()
+        ->getCurrentLevelPalette()
+        ->setPalette(nullptr);
+    FullColorPalette::instance()->clear();
+  }
   IoCmd::loadScene(TFilePath(scenePath.toStdWString()), true, false);
   DVGui::info(tr("Work recovered. The files it replaced are in:\n%1")
                   .arg(backup));
