@@ -21,6 +21,9 @@
 #include <unistd.h>
 #include <err.h>
 #include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <atomic>
 #endif
 
 #include "tgl.h"
@@ -48,6 +51,11 @@
 #include <QLabel>
 #include <QTextEdit>
 #include <QPushButton>
+#include <QFile>
+#include <QFileInfo>
+#include <QDateTime>
+#include <QProcess>
+#include <QRegularExpression>
 
 #include <QDebug>
 
@@ -421,8 +429,128 @@ static void printBacktrace(std::string &out) {
   }
 }
 
+// Ztoryc (2026-11-04, from groundzero PR #13): the signal handler used to
+// build the report in place — atos/addr2line through popen(), std::string,
+// QString and a modal Qt dialog. After a SIGSEGV the heap or Qt can be broken,
+// and the handler then hung or crashed again: the lzo deadlock blocked signals
+// around fork() for this reason. Now the handler only writes, with
+// async-signal-safe calls, a raw report (prepared text, the return addresses,
+// where every library was loaded) to PendingCrashReport.log. The next launch
+// turns the addresses into function names and lines, files it as
+// Crash-<time>.log and shows it (prepareReport / showPendingReport).
+
+static char s_pendingReportPath[1024] = {0};
+static char s_reportIntro[4096]       = {0};
+static size_t s_reportIntroLen        = 0;
+static char s_sceneInfo[2048]         = {0};
+static std::atomic<size_t> s_sceneInfoLen(0);
+static QString s_previousReport;
+static TFilePath s_previousReportFile;
+
+#ifdef MACOSX
+// Every image dyld loads, as "0x<header> <path>\n": dladdr() is not safe in
+// the handler, so the table is filled when an image is loaded.
+static char s_imageTable[256 * 1024] = {0};
+static std::atomic<size_t> s_imageTableLen(0);
+
+static void onImageAdded(const struct mach_header *mh, intptr_t) {
+  Dl_info info;
+  if (!dladdr(mh, &info) || !info.dli_fname) return;
+  char line[1100];
+  int n = snprintf(line, sizeof(line), "%p %s\n", (const void *)mh,
+                   info.dli_fname);
+  size_t len = s_imageTableLen.load();
+  if (n <= 0 || len + n >= sizeof(s_imageTable)) return;
+  memcpy(s_imageTable + len, line, n);
+  s_imageTableLen.store(len + n);
+}
+#endif
+
+static size_t copyToBuffer(char *dst, size_t capacity, const char *src,
+                           size_t len) {
+  if (len > capacity - 1) len = capacity - 1;
+  memcpy(dst, src, len);
+  dst[len] = 0;
+  return len;
+}
+
+static void writeAll(int fd, const char *data, size_t len) {
+  while (len > 0) {
+    ssize_t n = write(fd, data, len);
+    if (n <= 0) {
+      if (n < 0 && errno == EINTR) continue;
+      return;
+    }
+    data += n;
+    len -= (size_t)n;
+  }
+}
+
+static void writeText(int fd, const char *text) {
+  writeAll(fd, text, strlen(text));
+}
+
+static void writeNumber(int fd, unsigned long long value, int minDigits) {
+  char buf[24];
+  int pos = sizeof(buf);
+  do {
+    buf[--pos] = (char)('0' + value % 10);
+    value /= 10;
+    --minDigits;
+  } while (pos > 0 && (value > 0 || minDigits > 0));
+  writeAll(fd, buf + pos, sizeof(buf) - pos);
+}
+
+static void writeHex(int fd, unsigned long long value) {
+  char buf[20];
+  int pos = sizeof(buf);
+  do {
+    buf[--pos] = "0123456789abcdef"[value & 15];
+    value >>= 4;
+  } while (pos > 2 && value > 0);
+  buf[--pos] = 'x';
+  buf[--pos] = '0';
+  writeAll(fd, buf + pos, sizeof(buf) - pos);
+}
+
+// localtime() and strftime() are not async-signal-safe: a UTC date with plain
+// arithmetic (days-to-civil, Howard Hinnant).
+static void writeUtcTime(int fd, time_t t) {
+  long long days = (long long)t / 86400;
+  long long secs = (long long)t % 86400;
+  if (secs < 0) {
+    secs += 86400;
+    --days;
+  }
+  days += 719468;
+  const long long era  = (days >= 0 ? days : days - 146096) / 146097;
+  const unsigned doe   = (unsigned)(days - era * 146097);
+  const unsigned yoe   = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  const unsigned doy   = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  const unsigned mp    = (5 * doy + 2) / 153;
+  const unsigned day   = doy - (153 * mp + 2) / 5 + 1;
+  const unsigned month = mp < 10 ? mp + 3 : mp - 9;
+  const long long year = (long long)yoe + era * 400 + (month <= 2 ? 1 : 0);
+
+  writeNumber(fd, (unsigned long long)year, 4);
+  writeText(fd, "-");
+  writeNumber(fd, month, 2);
+  writeText(fd, "-");
+  writeNumber(fd, day, 2);
+  writeText(fd, " ");
+  writeNumber(fd, (unsigned long long)(secs / 3600), 2);
+  writeText(fd, ":");
+  writeNumber(fd, (unsigned long long)(secs / 60 % 60), 2);
+  writeText(fd, ":");
+  writeNumber(fd, (unsigned long long)(secs % 60), 2);
+  writeText(fd, " UTC");
+}
+
+// The handler runs on this stack, so that a stack overflow is reported too.
+alignas(16) static char s_signalStack[65536];
+
 void signalHandler(int sig) {
-  static volatile bool handling = false;
+  static std::atomic_flag handling = ATOMIC_FLAG_INIT;
 
   const char *reason = "Unknown";
   switch (sig) {
@@ -435,27 +563,188 @@ void signalHandler(int sig) {
   case SIGILL:
     reason = "(SIGILL) Illegal instruction";
     break;
-  case SIGINT:
-    reason = "(SIGINT) Interactive attention signal, (usually ctrl+c)";
-    break;
   case SIGSEGV:
     reason = "(SIGSEGV) Segmentation Fault";
     break;
-  case SIGTERM:
-    reason = "(SIGTERM) A termination request was sent to the program";
+#ifdef SIGBUS
+  case SIGBUS:
+    reason = "(SIGBUS) Bus error, such as an invalid memory access";
     break;
+#endif
   }
 
-  // During app shutdown (static destructors) Qt is already partially
-  // destroyed — opening a QDialog would abort. Exit silently instead.
+  // A crash in the static destructors at shutdown is not reported, as before.
   if (s_appExiting) _Exit(0);
 
-  // Avoid new signals inside the crash handler
-  if (handling) return;
+  // Only async-signal-safe calls below. A second crash (another thread, or
+  // this handler) waits for the report to be written, then dies.
+  if (handling.test_and_set()) {
+    struct timespec step = {0, 100000000};  // 0.1 s
+    for (int i = 0; i < 50; ++i) nanosleep(&step, NULL);
+  } else if (s_pendingReportPath[0]) {
+    int fd = open(s_pendingReportPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd >= 0) {
+      writeAll(fd, s_reportIntro, s_reportIntroLen);
+      writeText(fd, "\nReport Date: ");
+      writeUtcTime(fd, time(NULL));
+      writeText(fd, "\nCrash Reason: ");
+      writeText(fd, reason);
+      writeText(fd, "\n");
+      writeAll(fd, s_sceneInfo, s_sceneInfoLen.load());
 
-  handling = true;
-  if (CrashHandler::trigger(reason, true)) _Exit(1);
-  handling = false;
+      writeText(fd, "\n==== Raw Frames ====\n");
+      void *frames[256];
+      int nptrs = backtrace(frames, 256);
+      for (int i = 1; i < nptrs; ++i) {  // frame 0 is this handler
+        writeHex(fd, (unsigned long long)(uintptr_t)frames[i]);
+        writeText(fd, "\n");
+      }
+      writeText(fd, "==== Raw Images ====\n");
+#ifdef MACOSX
+      writeAll(fd, s_imageTable, s_imageTableLen.load());
+#else
+      int maps = open("/proc/self/maps", O_RDONLY);
+      if (maps >= 0) {
+        char buf[4096];
+        ssize_t n;
+        while ((n = read(maps, buf, sizeof(buf))) > 0 ||
+               (n < 0 && errno == EINTR))
+          if (n > 0) writeAll(fd, buf, (size_t)n);
+        close(maps);
+      }
+#endif
+      writeText(fd, "==== Raw End ====\n");
+      close(fd);
+    }
+  }
+
+  // The OS still does its own crash handling (crash report, exit status).
+  signal(sig, SIG_DFL);
+  raise(sig);
+}
+
+//-----------------------------------------------------------------------------
+
+// The next launch: the raw addresses of the pending report become function
+// names and lines, the way printBacktrace() writes them.
+static QString runTool(const QString &tool, const QStringList &args) {
+  QProcess p;
+  p.start(tool, args);
+  if (!p.waitForFinished(20000)) {
+    p.kill();
+    return QString();
+  }
+  return QString::fromLocal8Bit(p.readAllStandardOutput());
+}
+
+static QString symbolicate(const QString &raw) {
+  const int framesAt = raw.indexOf("\n==== Raw Frames ====\n");
+  const int imagesAt = raw.indexOf("==== Raw Images ====\n");
+  const int endAt    = raw.indexOf("==== Raw End ====");
+  if (framesAt < 0 || imagesAt < framesAt) return raw;  // cut short: as it is
+
+  const QString head = raw.left(framesAt + 1);
+  QVector<quint64> frames;
+  for (const QString &l :
+       raw.mid(framesAt + 22, imagesAt - framesAt - 22).split('\n'))
+    if (l.startsWith("0x")) frames << l.mid(2).toULongLong(nullptr, 16);
+  const QStringList imageLines =
+      raw.mid(imagesAt + 21, (endAt < 0 ? raw.size() : endAt) - imagesAt - 21)
+          .split('\n', Qt::SkipEmptyParts);
+
+  // the image of every frame: base and path
+  struct Image {
+    quint64 base;
+    QString path;
+  };
+  QVector<Image> images;
+#ifdef MACOSX
+  for (const QString &l : imageLines) {
+    int sp = l.indexOf(' ');
+    if (sp > 2) images.push_back({l.left(sp).mid(2).toULongLong(nullptr, 16),
+                                  l.mid(sp + 1)});
+  }
+#else
+  // /proc/self/maps: "start-end perms offset dev inode path"; the base of a
+  // file is the start of its mapping at offset 0
+  struct Range {
+    quint64 from, to;
+    QString path;
+  };
+  QVector<Range> ranges;
+  QHash<QString, quint64> bases;
+  for (const QString &l : imageLines) {
+    const QStringList f = l.split(' ', Qt::SkipEmptyParts);
+    if (f.size() < 6 || !f[5].startsWith('/')) continue;
+    const QStringList r = f[0].split('-');
+    if (r.size() != 2) continue;
+    Range range{r[0].toULongLong(nullptr, 16), r[1].toULongLong(nullptr, 16),
+                f.mid(5).join(' ')};
+    ranges << range;
+    if (f[2].toULongLong(nullptr, 16) == 0 && !bases.contains(range.path))
+      bases[range.path] = range.from;
+  }
+#endif
+
+  QVector<int> imageOf(frames.size(), -1);
+  QStringList lines;
+  for (int i = 0; i < frames.size(); ++i) lines << QString();
+#ifdef MACOSX
+  QHash<int, QVector<int>> byImage;
+  for (int i = 0; i < frames.size(); ++i) {
+    int best = -1;
+    for (int k = 0; k < images.size(); ++k)
+      if (images[k].base <= frames[i] &&
+          (best < 0 || images[k].base > images[best].base))
+        best = k;
+    imageOf[i] = best;
+    if (best >= 0) byImage[best] << i;
+  }
+  for (auto it = byImage.begin(); it != byImage.end(); ++it) {
+    QString module = images[it.key()].path;
+    if (module.contains("Ztoryc.app/Contents/MacOS") ||
+        module.contains("Tahoma2D.app/Contents/MacOS")) {
+      QString dsym = module;
+      dsym.replace(dsym.indexOf("Contents"), 14,
+                   "DSYM/Contents/Resources/DWARF");
+      if (QFileInfo::exists(dsym)) module = dsym;
+    }
+    QStringList args{"-o", module, "-l",
+                     "0x" + QString::number(images[it.key()].base, 16)};
+    for (int i : it.value()) args << "0x" + QString::number(frames[i], 16);
+    const QStringList out = runTool("atos", args).split('\n');
+    for (int j = 0; j < it.value().size() && j < out.size(); ++j)
+      if (!out[j].startsWith("0x")) lines[it.value()[j]] = out[j];
+  }
+#else
+  for (int i = 0; i < frames.size(); ++i)
+    for (const Range &r : ranges)
+      if (r.from <= frames[i] && frames[i] < r.to) {
+        const QString line = runTool(
+            "addr2line",
+            {"-fpCis", "-e", r.path,
+             "0x" + QString::number(frames[i] - bases.value(r.path, 0), 16)})
+                                 .trimmed();
+        if (!line.isEmpty() && !line.startsWith("??")) lines[i] = line;
+        break;
+      }
+#endif
+
+  QString out = head + "\n==== Backtrace ====\n";
+  for (int i = 0; i < frames.size(); ++i) {
+    QString line = lines[i];
+    if (line.isEmpty()) {
+      line = "0x" + QString::number(frames[i], 16);
+#ifdef MACOSX
+      if (imageOf[i] >= 0) line += " (in " + images[imageOf[i]].path + ")";
+#endif
+    }
+    out += QString("%1> ").arg(i + 1, 3) + line + "\n";
+  }
+  out += "==== End ====\n\n==== Modules ====\n";
+  for (const QString &l : imageLines) out += l + "\n";
+  out += "==== End ====\n";
+  return obfuscateUsername(out);
 }
 
 #endif
@@ -486,12 +775,20 @@ static void printGPUInfo(std::string &out) {
 
 //-----------------------------------------------------------------------------
 
-CrashHandler::CrashHandler(QWidget *parent, TFilePath crashFile, QString crashReport)
-    : QDialog(parent), m_crashFile(crashFile), m_crashReport(crashReport) {
-  setWindowFlags(Qt::Window | Qt::WindowTitleHint | Qt::CustomizeWindowHint);
+CrashHandler::CrashHandler(QWidget *parent, TFilePath crashFile,
+                           QString crashReport, bool previousSession)
+    : QDialog(parent)
+    , m_crashFile(crashFile)
+    , m_crashReport(crashReport)
+    , m_previousSession(previousSession) {
+  setWindowFlags(Qt::Window | Qt::WindowTitleHint | Qt::CustomizeWindowHint |
+                 (previousSession ? Qt::WindowCloseButtonHint
+                                  : Qt::WindowFlags()));
 
   QStringList sl;
-  sl.append(tr("<b>Ztoryc crashed unexpectedly.</b>"));
+  sl.append(previousSession
+                ? tr("<b>Ztoryc crashed during the last session.</b>")
+                : tr("<b>Ztoryc crashed unexpectedly.</b>"));
   sl.append("");
   sl.append(tr("A crash report has been generated."));
   sl.append(
@@ -517,7 +814,8 @@ CrashHandler::CrashHandler(QWidget *parent, TFilePath crashFile, QString crashRe
   QPushButton *copyBtn   = new QPushButton(tr("Copy to Clipboard"));
   QPushButton *webBtn    = new QPushButton(tr("Open Issue Webpage"));
   QPushButton *folderBtn = new QPushButton(tr("Open Reports Folder"));
-  QPushButton *closeBtn  = new QPushButton(tr("Close Application"));
+  QPushButton *closeBtn  = new QPushButton(
+      previousSession ? tr("Close") : tr("Close Application"));
   buttonsLay->addWidget(copyBtn);
   buttonsLay->addWidget(webBtn);
   buttonsLay->addWidget(folderBtn);
@@ -538,6 +836,8 @@ CrashHandler::CrashHandler(QWidget *parent, TFilePath crashFile, QString crashRe
 }
 
 void CrashHandler::reject() {
+  // the report of the last session is only information: Esc closes it
+  if (m_previousSession) QDialog::reject();
 /*
   QStringList sl;
   sl.append(tr("Application is in unstable state and must be restarted."));
@@ -635,12 +935,102 @@ void CrashHandler::install() {
   _set_invalid_parameter_handler(invalidParameterHandler);
   _set_purecall_handler(pureCallHandler);
 #else
-  signal(SIGABRT, signalHandler);
-  signal(SIGFPE, signalHandler);
-  signal(SIGILL, signalHandler);
-  signal(SIGINT, signalHandler);
-  signal(SIGSEGV, signalHandler);
-  signal(SIGTERM, signalHandler);
+  // backtrace() may allocate while loading the unwinder on its first call:
+  // not in the handler, then
+  void *frames[1];
+  backtrace(frames, 1);
+#ifdef MACOSX
+  // called at once for the images already loaded, then for every new one
+  _dyld_register_func_for_add_image(onImageAdded);
+#endif
+
+  // the alternate stack covers the thread calling install(), the main one
+  stack_t ss;
+  memset(&ss, 0, sizeof(ss));
+  ss.ss_sp   = s_signalStack;
+  ss.ss_size = sizeof(s_signalStack);
+  sigaltstack(&ss, NULL);
+
+  // SIGINT and SIGTERM are not crashes (Ctrl+C, logging out): they keep their
+  // default action and leave no report
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = signalHandler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = SA_ONSTACK | SA_RESTART;
+  sigaction(SIGABRT, &sa, NULL);
+  sigaction(SIGFPE, &sa, NULL);
+  sigaction(SIGILL, &sa, NULL);
+  sigaction(SIGSEGV, &sa, NULL);
+#ifdef SIGBUS
+  sigaction(SIGBUS, &sa, NULL);
+#endif
+#endif
+}
+
+//-----------------------------------------------------------------------------
+
+void CrashHandler::prepareReport() {
+#ifndef _WIN32
+  // everything the handler writes besides the addresses, gathered while Qt
+  // and the heap can still be used
+  TFilePath folder = ToonzFolder::getCrashReportFolder();
+  if (folder.isEmpty()) return;
+
+  std::string intro;
+  try {
+    intro.append(TEnv::getApplicationFullName() + " (Tahoma2D base " +
+                 TEnv::getTahomaBaseVersionString() + ")  (Build " __DATE__
+                 ")\n");
+    intro.append("\n");
+    printSysInfo(intro);
+    intro.append(
+        "\nReport Type: written at crash time with async-signal-safe calls, "
+        "names resolved at the next launch; no GPU details\n");
+  } catch (...) {
+  }
+  s_reportIntroLen = copyToBuffer(s_reportIntro, sizeof(s_reportIntro),
+                                  intro.c_str(), intro.size());
+
+  // the report of a crash in the last session, taken before a new crash can
+  // overwrite it; it is filed and shown by showPendingReport()
+  const QString pendingPath = (folder + "PendingCrashReport.log").getQString();
+  QFile file(pendingPath);
+  if (file.exists()) {
+    if (file.open(QIODevice::ReadOnly)) {
+      s_previousReport = QString::fromUtf8(file.readAll());
+      file.close();
+    }
+    const QDateTime crashTime = QFileInfo(pendingPath).lastModified();
+    s_previousReportFile =
+        folder + ("Crash-" + crashTime.toString("yyyyMMdd-HHmmss") + ".log")
+                     .toStdString();
+    QFile::remove(pendingPath);
+  }
+
+  // the path last: the handler writes nothing while it is empty
+  const QByteArray path = QFile::encodeName(pendingPath);
+  if (path.size() < (int)sizeof(s_pendingReportPath))
+    copyToBuffer(s_pendingReportPath, sizeof(s_pendingReportPath),
+                 path.constData(), path.size());
+#endif
+}
+
+//-----------------------------------------------------------------------------
+
+void CrashHandler::showPendingReport() {
+#ifndef _WIN32
+  if (s_previousReport.isEmpty()) return;
+  const QString report = symbolicate(s_previousReport);
+  s_previousReport.clear();
+
+  QFile out(s_previousReportFile.getQString());
+  if (out.open(QIODevice::WriteOnly)) {
+    out.write(report.toUtf8());
+    out.close();
+  }
+  CrashHandler crashdialog(s_parentWindow, s_previousReportFile, report, true);
+  crashdialog.exec();
 #endif
 }
 
@@ -648,6 +1038,33 @@ void CrashHandler::install() {
 
 void CrashHandler::reportProjectInfo(bool enableReport) {
   s_reportProjInfo = enableReport;
+#ifndef _WIN32
+  // the handler cannot ask the scene: it is told here whenever it changes
+  static bool connected = false;
+  if (!enableReport || connected) return;
+  connected       = true;
+  auto noteScene = []() {
+    std::string info;
+    try {
+      ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+      auto project      = TProjectManager::instance()->getCurrentProject();
+      info.append("\nProject Name: " +
+                  project->getName().getQString().toStdString());
+      info.append("\nScene Path: " +
+                  obfuscateUsername(scene->getScenePath().getQString())
+                      .toStdString());
+      info.append("\n");
+    } catch (...) {
+    }
+    s_sceneInfoLen.store(0);
+    s_sceneInfoLen.store(copyToBuffer(s_sceneInfo, sizeof(s_sceneInfo),
+                                      info.c_str(), info.size()));
+  };
+  TSceneHandle *sh = TApp::instance()->getCurrentScene();
+  QObject::connect(sh, &TSceneHandle::sceneSwitched, noteScene);
+  QObject::connect(sh, &TSceneHandle::nameSceneChanged, noteScene);
+  noteScene();
+#endif
 }
 
 //-----------------------------------------------------------------------------

@@ -93,6 +93,7 @@
 #include <QDir>
 #include <QStandardPaths>
 #include <QMessageBox>
+#include <QTimer>
 
 #ifdef _WIN32
 #ifndef x64
@@ -735,6 +736,9 @@ int main(int argc, char *argv[]) {
   // Toonz environment
   initToonzEnv(argumentPathValues);
 
+  // the crash report folder is known only now
+  CrashHandler::prepareReport();
+
   // Rescan stuff/config/qss now that ZTORYCROOT/stuff is validated; fix theme
   // preference if the saved .qss file is missing (avoids empty/broken QSS load).
   Preferences::instance()->refreshStyleSheetThemeIndex();
@@ -1073,6 +1077,9 @@ int main(int argc, char *argv[]) {
 
   // In case cleanup palette loaded last, switch to level palette
   TApp::instance()->getPaletteController()->editLevelPalette();
+
+  // the report of a crash in the last session, once the window is up
+  QTimer::singleShot(0, []() { CrashHandler::showPendingReport(); });
 
   int ret = a.exec();
 

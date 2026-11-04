@@ -13,13 +13,22 @@ class CrashHandler : public QDialog {
 
   TFilePath m_crashFile;
   QString m_crashReport;
+  bool m_previousSession;
 
 public:
-  CrashHandler(QWidget *parent, TFilePath crashFile, QString crashTxt);
+  CrashHandler(QWidget *parent, TFilePath crashFile, QString crashTxt,
+               bool previousSession = false);
 
   void reject();
 
   static void install();
+  // Unix: call once the crash report folder is known. It prepares what the
+  // signal handler writes, and takes the report of a crash in the last
+  // session, if there is one.
+  static void prepareReport();
+  // Unix: files that report under its crash time, with function names and
+  // lines, and shows it once. Nothing to do when the last session ended well.
+  static void showPendingReport();
   static void reportProjectInfo(bool enableReport);
   static void attachParentWindow(QWidget *parent);
   static bool trigger(const QString reason, bool showDialog);
