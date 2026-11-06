@@ -519,6 +519,7 @@ class ZtoryModel : public QObject {
   QString                           m_resolution;       // Kitsu: e.g. 1920x1080
   std::vector<Technique>            m_techniques;       // editable presets (seeded with defaults)
   QString                           m_defaultTechnique; // project default technique name
+  int                               m_techniquePresets = 0;  // preset generation the list has seen
   std::vector<AssetType>            m_assetTypes;       // custom asset types + their task pipelines
   QStringList                       m_team;             // project roster (names) for the assignee picker
   QString                           m_pdfLogoPath; // custom PDF header logo (abs or scene-relative); empty = default Ztoryc logo
@@ -1022,6 +1023,8 @@ public:
   const std::vector<Technique> &techniques() const { return m_techniques; }
   std::vector<Technique>       &techniques()       { return m_techniques; }
   void seedDefaultTechniques();                       // populate presets if empty
+  // Presets added after a project was created: see the .cpp.
+  void addNewPresetTechniques(int presetsInProject);
   const Technique *findTechnique(const QString &name) const;
   QString defaultTechnique() const { return m_defaultTechnique; }
   void    setDefaultTechnique(const QString &s) { m_defaultTechnique = s; }

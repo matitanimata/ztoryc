@@ -343,6 +343,28 @@ void ZtoryModel::onSceneSwitchedAdvanceShot() {
 
 // ─── Production techniques / tasks ──────────────────────────────────────────
 
+// Generation of the preset list. A project remembers the one it has seen
+// (presets= on <techniques>), so a preset added later reaches it once: one the
+// user deleted from the Workflows tab does not come back at every opening.
+static const int kTechniquePresets = 1;
+
+// Shots made with generative AI (Franco, 2026-11-06): the steps of traditional
+// animation done by another hand, so the existing tasks plus two.
+// «AI - setup» holds the shot's generation recipe; «Matte» pulls the alpha off
+// the paper background.
+static Technique aiTechnique() {
+  return {"AI", {"Storyboard", "Layout", "AI - setup", "Key Animation",
+                 "Inbetweening", "Clean up", "Matte", "Compositing"}};
+}
+
+void ZtoryModel::addNewPresetTechniques(int presetsInProject) {
+  // Never over a technique of the same name: it is the project's own, with its
+  // own tasks, and shots may be using it.
+  if (presetsInProject < 1 && !findTechnique("AI"))
+    m_techniques.push_back(aiTechnique());
+  m_techniquePresets = kTechniquePresets;
+}
+
 void ZtoryModel::seedDefaultTechniques() {
   if (!m_techniques.empty()) return;
   // Editable presets — tasks per technique.  Stop-motion / Traditional / Live
@@ -365,7 +387,9 @@ void ZtoryModel::seedDefaultTechniques() {
     {"Generic", canonicalTaskOrder()},
     {"Live",    {"Storyboard", "Layout", "Shooting", "Editing", "VFX",
                  "Compositing"}},
+    aiTechnique(),
   };
+  m_techniquePresets = kTechniquePresets;
   if (m_defaultTechnique.isEmpty()) m_defaultTechnique = "Tradigital";
 }
 
@@ -1630,6 +1654,7 @@ QByteArray ZtoryModel::serializeProjectDb() const {
   xml.writeEndElement();  // team
 
   xml.writeStartElement("techniques");
+  xml.writeAttribute("presets", QString::number(m_techniquePresets));
   for (const Technique &t : m_techniques) {
     xml.writeStartElement("technique");
     xml.writeAttribute("name",  t.name);
@@ -1907,6 +1932,7 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
 
   QStringList team;
   std::vector<Technique> techs;
+  int techPresets = 0;  // no attribute: a project older than the generations
   std::vector<AssetType> atypes;
   std::vector<Asset> assets;
   std::vector<ProjectShot> pshots;
@@ -1953,6 +1979,8 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
     } else if (xml.name() == QLatin1String("person")) {
       QString nm = xml.attributes().value("name").toString().trimmed();
       if (!nm.isEmpty()) team << nm;
+    } else if (xml.name() == QLatin1String("techniques")) {
+      techPresets = xml.attributes().value("presets").toInt();
     } else if (xml.name() == QLatin1String("technique")) {
       Technique t;
       t.name      = xml.attributes().value("name").toString();
@@ -2069,7 +2097,10 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
     }
   }
   m_team = team;  // project file is authoritative
-  if (!techs.empty()) m_techniques = techs;
+  if (!techs.empty()) {
+    m_techniques = techs;
+    addNewPresetTechniques(techPresets);  // persisted on the next project save
+  }
   // Migration: older projects were seeded without the Storyboard task. Prepend
   // it where missing so the board/animatic task exists (and can be pushed to
   // Kitsu + receive preview uploads). Persisted on the next project save.
@@ -2308,6 +2339,8 @@ QString ZtoryModel::taskShortCode(const QString &taskType) {
   // NABA-aligned short codes. Unknown types use the first 3-4 letters uppercased.
   static const QHash<QString, QString> codes = {
     { "Layout",          "LAY"  },
+    { "AI - setup",      "AIS"  },
+    { "Matte",           "MTE"  },
     { "Key Animation",   "KAN"  },
     { "Animation",       "ANIM" },
     { "Inbetweening",    "INB"  },
@@ -2501,8 +2534,8 @@ QString ZtoryModel::resolvePattern(const QString &pattern,
 const QStringList &ZtoryModel::canonicalTaskOrder() {
   // Master column order: union of all known task types, stable across exports.
   static const QStringList order = {
-    "Storyboard", "Set-up", "Layout", "Key Animation", "Animation",
-    "Inbetweening", "Clean up", "Scan & Clean", "Ink & Paint", "X-Sheet",
+    "Storyboard", "Set-up", "Layout", "AI - setup", "Key Animation", "Animation",
+    "Inbetweening", "Clean up", "Scan & Clean", "Ink & Paint", "Matte", "X-Sheet",
     "Lighting", "Rig Removal", "Shooting", "Editing", "VFX", "Render",
     "Compositing",
   };
@@ -3582,8 +3615,11 @@ void ZtoryModel::readShotDocument(const QByteArray &bytes,
 
   // Replace the seeded technique presets with the ones saved in this scene
   // (only when present, so old files keep the built-in defaults).
-  if (!loadedTechs.empty())
+  // Such a list predates the generations: it counts as generation 0.
+  if (!loadedTechs.empty()) {
     techniques() = loadedTechs;
+    addNewPresetTechniques(0);
+  }
   if (hasTeamBlock) setTeam(loadedTeam);
   if (hasAssetsBlock) assets() = loadedAssets;
 }
