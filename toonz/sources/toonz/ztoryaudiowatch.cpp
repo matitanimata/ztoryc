@@ -73,6 +73,13 @@ ZtoryAudioWatch *ZtoryAudioWatch::instance() {
 ZtoryAudioWatch::ZtoryAudioWatch() : QObject(nullptr) {}
 
 void ZtoryAudioWatch::start() {
+  // Only where it was asked for: the file crash/audio_watch.on exists on
+  // Franco's machine and nowhere else (Franco, 2026-11-06). Published builds
+  // must not write this log on the computers of the people using them.
+  if (!QFile::exists(
+          QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+          "/crash/audio_watch.on"))
+    return;
   if (m_started) return;
   m_started = true;
   TApp *app = TApp::instance();

@@ -9,7 +9,7 @@
 // operation in the undo history and the call stack that notified it.
 //
 // Read only: it takes snapshots on xsheetChanged and compares them. Temporary,
-// to be removed once the cause is found.
+// to be removed once the cause is found. Off unless crash/audio_watch.on exists.
 
 #include <QObject>
 #include <QString>
