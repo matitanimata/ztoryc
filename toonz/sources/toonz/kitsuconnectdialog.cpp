@@ -85,6 +85,11 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
   projRow->addWidget(m_linkBtn);
   projRow->addWidget(m_createBtn);
   root->addLayout(projRow);
+  // Being connected says nothing about which production this project writes to:
+  // the login is per server. So it is said here, all the time.
+  m_bindingLabel = new QLabel(this);
+  m_bindingLabel->setWordWrap(true);
+  root->addWidget(m_bindingLabel);
   m_linkBtn->setEnabled(false);
   m_createBtn->setEnabled(false);
 
@@ -122,6 +127,9 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
 
   connect(m_connectBtn, &QPushButton::clicked, this,
           &KitsuConnectDialog::onConnectClicked);
+  for (QLineEdit *edit : {m_urlEdit, m_emailEdit, m_pwdEdit})
+    connect(edit, &QLineEdit::textChanged, this,
+            [this](const QString &) { updateConnectButton(); });
   connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
   connect(m_linkBtn, &QPushButton::clicked, this,
           &KitsuConnectDialog::onLinkClicked);
@@ -136,7 +144,9 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
             m_statusLabel->setText(msg);
             m_statusLabel->setStyleSheet(ok ? "color:#22D160;"
                                             : "color:#FF3860;");
+            if (ok) m_loginPassword = m_pwdEdit->text();
             updateBindingButtons();
+            updateConnectButton();
           });
   connect(m_client, &KitsuClient::networkError, this,
           [this](const QString &msg) {
@@ -192,6 +202,8 @@ KitsuConnectDialog::KitsuConnectDialog(QWidget *parent)
   } else if (!m_client->email().isEmpty() && m_client->hasSavedPassword()) {
     onConnectClicked();
   }
+  updateConnectButton();
+  updateBindingButtons();  // the link is known with or without a connection
 }
 
 void KitsuConnectDialog::rebuildProjectCombo() {
@@ -248,6 +260,9 @@ void KitsuConnectDialog::rebuildProjectCombo() {
   ZtoryModel *m           = ZtoryModel::instance();
   const QString boundProj = m->kitsuProjectId();
   const QString boundEp   = m->kitsuEpisodeId();
+  // Not linked: no row. Left on row 0, the first production of the list looked
+  // like the linked one (Franco, 2026-11-06).
+  if (boundProj.isEmpty()) m_projectCombo->setCurrentIndex(-1);
   if (!boundProj.isEmpty()) {
     int found = -1;
     for (int i = 0; i < m_projectCombo->count(); ++i) {
@@ -272,7 +287,36 @@ void KitsuConnectDialog::rebuildProjectCombo() {
   updateBindingButtons();
 }
 
+// «Connect» next to «Connected as…» read as if the connection were still to be
+// made (Franco, 2026-11-06). Connected, the button has no use, so it goes; it
+// comes back as «Reconnect» once a field differs from the session in use.
+void KitsuConnectDialog::updateConnectButton() {
+  QString url = m_urlEdit->text().trimmed();
+  while (url.endsWith('/')) url.chop(1);
+  const bool connected = m_client->isLoggedIn();
+  const bool same =
+      connected && url == m_client->baseUrl() &&
+      m_emailEdit->text().trimmed() == m_client->email() &&
+      (m_pwdEdit->text().isEmpty() || m_pwdEdit->text() == m_loginPassword);
+  m_connectBtn->setText(connected ? tr("Reconnect") : tr("Connect"));
+  m_connectBtn->setVisible(!same);
+}
+
 void KitsuConnectDialog::updateBindingButtons() {
+  ZtoryModel *model = ZtoryModel::instance();
+  if (model->isKitsuLinked()) {
+    const QString name =
+        model->isKitsuEpisodeLinked()
+            ? QString("%1 — %2").arg(model->kitsuProjectName(), model->episode())
+            : model->kitsuProjectName();
+    m_bindingLabel->setStyleSheet("color:#22D160;");
+    m_bindingLabel->setText(tr("This project is linked to: %1").arg(name));
+  } else {
+    m_bindingLabel->setStyleSheet("color:#FFB000;");
+    m_bindingLabel->setText(
+        tr("This project is not linked to any Kitsu production. Nothing is "
+           "sent until you choose one and press Link selected."));
+  }
   const bool connected = m_client->isLoggedIn();
   m_linkBtn->setEnabled(connected && m_projectCombo->currentIndex() >= 0);
   const bool canManage = connected && m_client->canManageProjects();

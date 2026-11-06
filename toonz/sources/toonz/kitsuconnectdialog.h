@@ -41,6 +41,7 @@ private:
   // else keeps a single row. Each row carries the project id in Qt::UserRole
   // and the episode id (empty when there is none) in Qt::UserRole + 1.
   void rebuildProjectCombo();
+  void updateConnectButton();  // hidden while connected with these very fields
 
   KitsuClient  *m_client   = nullptr;
   QLineEdit    *m_urlEdit  = nullptr;
@@ -50,6 +51,8 @@ private:
   QCheckBox    *m_savePwd  = nullptr;
   QPushButton  *m_connectBtn = nullptr;
   QLabel       *m_statusLabel = nullptr;
+  QLabel       *m_bindingLabel = nullptr;  // which production this project writes to
+  QString       m_loginPassword;  // what the password field held at login
   QComboBox    *m_projectCombo = nullptr;
   QPushButton  *m_linkBtn   = nullptr;
   QPushButton  *m_createBtn = nullptr;
