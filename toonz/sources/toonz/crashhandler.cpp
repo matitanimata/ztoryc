@@ -15,6 +15,7 @@
 #include <mach-o/dyld.h>
 #else
 #include <link.h>
+#include <ucontext.h>
 #endif
 #include <execinfo.h>
 #include <signal.h>
@@ -549,7 +550,27 @@ static void writeUtcTime(int fd, time_t t) {
 // The handler runs on this stack, so that a stack overflow is reported too.
 alignas(16) static char s_signalStack[65536];
 
-void signalHandler(int sig) {
+// Where the crash happened, from the context the kernel saved. backtrace() does
+// not give it: it walks return addresses from the signal frame, so the function
+// that crashed — when it has no frame of its own yet — is not among them.
+static uintptr_t faultingAddress(void *context) {
+  if (!context) return 0;
+  ucontext_t *uc = static_cast<ucontext_t *>(context);
+#if defined(__APPLE__) && defined(__arm64__)
+  return (uintptr_t)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
+#elif defined(__APPLE__) && defined(__x86_64__)
+  return (uintptr_t)uc->uc_mcontext->__ss.__rip;
+#elif defined(__linux__) && defined(__x86_64__)
+  return (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
+#elif defined(__linux__) && defined(__aarch64__)
+  return (uintptr_t)uc->uc_mcontext.pc;
+#else
+  (void)uc;
+  return 0;
+#endif
+}
+
+void signalHandler(int sig, siginfo_t *, void *context) {
   static std::atomic_flag handling = ATOMIC_FLAG_INIT;
 
   const char *reason = "Unknown";
@@ -595,7 +616,22 @@ void signalHandler(int sig) {
       writeText(fd, "\n==== Raw Frames ====\n");
       void *frames[256];
       int nptrs = backtrace(frames, 256);
-      for (int i = 1; i < nptrs; ++i) {  // frame 0 is this handler
+      // Frame 0 is this handler and frame 1 the system's signal trampoline
+      // (a private symbol, named at random: _os_semaphore_wait on macOS). The
+      // first line is the address that crashed; if the walk also found it, as
+      // it does on Linux, it starts right after, so it is not listed twice.
+      const uintptr_t pc = faultingAddress(context);
+      int first          = 2;
+      if (pc) {
+        writeHex(fd, (unsigned long long)pc);
+        writeText(fd, "\n");
+        for (int i = 2; i < nptrs; ++i)
+          if ((uintptr_t)frames[i] == pc) {
+            first = i + 1;
+            break;
+          }
+      }
+      for (int i = first; i < nptrs; ++i) {
         writeHex(fd, (unsigned long long)(uintptr_t)frames[i]);
         writeText(fd, "\n");
       }
@@ -955,9 +991,9 @@ void CrashHandler::install() {
   // default action and leave no report
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
-  sa.sa_handler = signalHandler;
+  sa.sa_sigaction = signalHandler;
   sigemptyset(&sa.sa_mask);
-  sa.sa_flags = SA_ONSTACK | SA_RESTART;
+  sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
   sigaction(SIGABRT, &sa, NULL);
   sigaction(SIGFPE, &sa, NULL);
   sigaction(SIGILL, &sa, NULL);
