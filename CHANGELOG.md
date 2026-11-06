@@ -1,3 +1,23 @@
+## [2026-11-07] — 0.20.0: workflow AI, cambio di workflow su Kitsu, uuid doppi, crash del tasto O, gestore crash
+
+### Added
+- **Workflow «AI»** (Storyboard, Layout, AI - setup, Key Animation, Inbetweening, Clean up, Matte, Compositing); nei progetti esistenti arriva una volta sola (`presets=` su `<techniques>`), senza scrivere sopra una tecnica omonima.
+- **Tracker:** selezione multipla di workflow e tipo col clic destro; nome e workflow selezionabili; Sync asset crea i tipi di task mancanti.
+- **Export Layout:** `refs/<tipo>/` opzionale, avvisi per breakdown vuoto e file mancanti; PSD a colonne in coordinate di scena.
+- **Kitsu:** domanda prima di inviare da una cartella diversa da quella del collegamento (`kitsuLinkFolder`); la finestra dice a cosa e' collegato il progetto.
+
+### Fixed
+- **Shot con lo stesso uuid nel .ztoryc:** il tracker ne perdeva uno per coppia e i fotogrammi su Kitsu erano sfalsati. Riparati all'apertura e al salvataggio. Filorosso riparato e sincronizzato. La causa che li crea NON e' dimostrata (file salvati con la 0.15).
+- **Crash del tasto O** senza timeline mai toccata dal mouse, e comandi simili (candidato upstream).
+- **Cambio di workflow:** i task vecchi non si sommano piu' su Kitsu; i nuovi si creano subito; la pulizia dei vecchi la sceglie l'utente.
+- **Recupero:** la palette raster non viene scritta nel progetto; livelli non copiati nominati; avviso per le scene senza nome.
+- **Gestore dei crash** async-signal-safe, da groundzero; file compressi danneggiati non bloccano la lettura, da groundzero #94; memoryShortage Linux con MemAvailable.
+
+### Notes
+- Rilascio deciso da Franco il 07/11 senza le ultime prove: Export Layout su sh030 e riesportazione di sh020, refs per tipo, test_asset. Da fare comunque.
+- Linux: memoryShortage e gestore crash mai eseguiti (Dell fuori uso).
+- Sentinella audio spenta nelle build pubblicate; attiva se esiste crash/audio_watch.on.
+
 ## [2026-10-27] — Export Layout (ex Export for AI), PSD a livelli
 
 ### Added
