@@ -2800,17 +2800,13 @@ void ZtoryProductionPanel::offerKitsuCleanup(bool isAsset,
       tasks.push_back(t);
     }
 
-  auto missing = std::make_shared<QStringList>();
-  auto connMissing = std::make_shared<QMetaObject::Connection>();
-  *connMissing = connect(kc, &KitsuClient::taskTypesMissing, this,
-                         [missing](const QStringList &names) { *missing = names; });
+  // A type Kitsu refuses to create is reported by ZtoryKitsuSync, always there.
   auto connPush = std::make_shared<QMetaObject::Connection>();
   *connPush = connect(
       kc, &KitsuClient::tasksPushed, this,
-      [this, kc, connPush, connMissing, missing, queries, anyTask = !tasks.isEmpty()](
+      [this, kc, connPush, queries, anyTask = !tasks.isEmpty()](
           bool ok, int, const QString &message) {
         QObject::disconnect(*connPush);
-        QObject::disconnect(*connMissing);
         persistProjectDb();  // the new tasks' base
         // Without the new tasks the old ones are all that is left: keep them.
         if (!ok) {
@@ -2819,12 +2815,6 @@ void ZtoryProductionPanel::offerKitsuCleanup(bool isAsset,
               tr("Could not create the new tasks on Kitsu:\n%1").arg(message));
           return;
         }
-        if (!missing->isEmpty())
-          QMessageBox::warning(
-              this, tr("Kitsu"),
-              tr("Kitsu refused these task types, so their tasks were not "
-                 "created:\n%1")
-                  .arg(missing->join(", ")));
         // With nothing to send the client does not start, nor reset its count.
         askStaleTasks(false, queries, anyTask ? kc->lastTasksCreated() : 0);
       });
@@ -2874,10 +2864,12 @@ void ZtoryProductionPanel::askStaleTasks(bool isAsset,
         box.setIcon(QMessageBox::Question);
         box.setText(
             (createdLine.isEmpty() ? QString() : createdLine + "\n\n") +
-            (isAsset ? tr("%1 tasks of the previous asset type are still on "
-                          "Kitsu (%2 assets).")
-                     : tr("%1 tasks of the previous workflow are still on "
-                          "Kitsu (%2 shots)."))
+            (isAsset ? tr("%1 tasks on Kitsu are not part of this asset type "
+                          "(%2 assets): left by a previous type, or added on "
+                          "Kitsu.")
+                     : tr("%1 tasks on Kitsu are not part of this workflow "
+                          "(%2 shots): left by a previous workflow, or added "
+                          "on Kitsu."))
                 .arg(tasks.size())
                 .arg(entities.size()));
         QString info = tr("Never touched: %1.").arg(untouchedIds.size());
@@ -2898,7 +2890,9 @@ void ZtoryProductionPanel::askStaleTasks(bool isAsset,
           allBtn = box.addButton(tr("Delete all (%1)…").arg(allIds.size()),
                                  QMessageBox::DestructiveRole);
         QPushButton *leaveBtn = box.addButton(tr("Leave them"), QMessageBox::RejectRole);
-        box.setDefaultButton(untouchedBtn ? untouchedBtn : leaveBtn);
+        // Deleting cannot be undone, and Return must not do it by accident:
+        // picking a workflow again is an everyday gesture.
+        box.setDefaultButton(leaveBtn);
         box.setEscapeButton(leaveBtn);
         box.exec();
 

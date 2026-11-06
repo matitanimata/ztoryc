@@ -3018,7 +3018,13 @@ void StoryboardPanel::repairDuplicateShotUuids() {
       qWarning("[ZTORY] shot %s shared its uuid with %s: given its own",
                qPrintable(shot.data->label()),
                qPrintable(it.value()->data->label()));
-      shot.data->uuid = makeRepairedUuid(mySource, shot.data->label());
+      // Two shots may share the label too: each must end up with its own.
+      QString fresh = makeRepairedUuid(mySource, shot.data->label());
+      for (int n = 2; owner.contains(fresh); ++n)
+        fresh = makeRepairedUuid(mySource,
+                                 shot.data->label() + "#" + QString::number(n));
+      shot.data->uuid = fresh;
+      owner.insert(fresh, &shot);
     }
   }
 }
