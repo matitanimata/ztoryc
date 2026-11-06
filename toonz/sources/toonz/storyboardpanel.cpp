@@ -2945,6 +2945,18 @@ static QString makeSourcedUuid(const QString &sourceFile) {
   return QUuid::createUuidV5(ns, shotSeed.toString()).toString(QUuid::WithoutBraces);
 }
 
+// The uuid a shot gets when it shared one. Derived from the storyboard and the
+// shot's label, not random: the same repair on another machine, or on the next
+// version of the storyboard somebody sends, gives the same uuid. A random one
+// would look like a different shot each time, and the tracker treats the shot
+// it no longer finds as deleted, down to removing it from Kitsu at the Sync.
+static QString makeRepairedUuid(const QString &sourceFile, const QString &label) {
+  static const QUuid kRoot("6a1c7e2f-3b4d-5e6f-7a8b-9c0d1e2f3a4b");
+  QUuid ns = QUuid::createUuidV5(kRoot, sourceFile);
+  return QUuid::createUuidV5(ns, QString("repaired:" + label.toLower()))
+      .toString(QUuid::WithoutBraces);
+}
+
 void StoryboardPanel::ensureShotUuids() {
   ZtoryModel *m = ZtoryModel::instance();
 
@@ -2973,6 +2985,41 @@ void StoryboardPanel::ensureShotUuids() {
   // resolves the model's.  The old copy into the model — by uuid, by position
   // for legacy scenes — had nothing left to do.
   for (Shot &shot : m_shots) resolveUuid(shot.data->uuid);
+}
+
+void StoryboardPanel::repairDuplicateShotUuids() {
+  ZtoryModel *m          = ZtoryModel::instance();
+  const QString mySource = QFileInfo(ztoryPath()).fileName();
+  // Two shots of THIS storyboard with one uuid: the tracker holds one entry per
+  // uuid, so one of them vanished from the tracker and from Kitsu, its frames
+  // missing from every later shot's in and out (2026-11-06: four pairs in one
+  // production). The uuid stays with the shot the tracker's entry
+  // is named after, which is the one its Kitsu link and tasks belong to; with
+  // no such entry, with the first. The other gets its own. So it needs the
+  // project DB in memory: on opening a scene it is read AFTER ensureShotUuids,
+  // and run there this gave one shot's Kitsu link to the other.
+  QHash<QString, QString> dbLabel;
+  for (const ProjectShot &ps : m->projectShots())
+    if (ps.source == mySource) dbLabel[ps.uuid] = ps.label;
+  QHash<QString, const Shot *> owner;
+  for (const Shot &shot : m_shots) {
+    const QString &id = shot.data->uuid;
+    if (!owner.contains(id) && dbLabel.contains(id) &&
+        dbLabel[id].compare(shot.data->label(), Qt::CaseInsensitive) == 0)
+      owner.insert(id, &shot);
+  }
+  for (Shot &shot : m_shots) {
+    const QString id = shot.data->uuid;
+    auto it          = owner.constFind(id);
+    if (it == owner.constEnd()) {
+      owner.insert(id, &shot);
+    } else if (it.value() != &shot && it.value()->data != shot.data) {
+      qWarning("[ZTORY] shot %s shared its uuid with %s: given its own",
+               qPrintable(shot.data->label()),
+               qPrintable(it.value()->data->label()));
+      shot.data->uuid = makeRepairedUuid(mySource, shot.data->label());
+    }
+  }
 }
 
 ZtoryShotList::Ptr StoryboardPanel::modelShotFor(int col) {
@@ -3392,6 +3439,7 @@ void StoryboardPanel::saveZtoryc() {
   }
 
   ensureShotUuids();  // first: the file must carry every shot's uuid
+  repairDuplicateShotUuids();
   {
     std::vector<const ShotData *> shots;
     for (const Shot &shot : m_shots) shots.push_back(shot.data.get());
@@ -3767,6 +3815,7 @@ void StoryboardPanel::loadZtoryc() {
         // Same as in saveZtoryc: publish exactly THIS scene's shots.
         ZtoryModel::instance()->reconcileWithXsheet();
       }
+      repairDuplicateShotUuids();  // the project DB is loaded by now
       ZtoryModel::instance()->publishShotsToProjectDb(src);
       ZtoryModel *m = ZtoryModel::instance();
       for (int si = 0; si < (int)m_shots.size(); si++) {

@@ -400,6 +400,7 @@ struct Shot {
   // storyboard).  The Board's shots are the model's objects, so the model
   // gets the same uuid.
   void    ensureShotUuids();
+  void    repairDuplicateShotUuids();  // two shots of this storyboard, one uuid
 public:
   explicit StoryboardPanel(QWidget *parent = nullptr);
   void    saveZtoryc();
