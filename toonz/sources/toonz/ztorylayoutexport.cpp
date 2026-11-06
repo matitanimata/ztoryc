@@ -13,7 +13,8 @@
 //                                     layers (a group for a column with more
 //                                     drawings), with the camera fields
 //   <shot>_panels.csv, manifest.json  timing, texts, layers, casting
-//   refs/, <shot>_audio.wav, <shot>_animatic.mp4
+//   refs/<type>/                      the files of the shot's breakdown
+//   <shot>_audio.wav, <shot>_animatic.mp4
 // A column whose preview is off is not rendered: that is how a reference
 // (frames of another film, say) stays out of the package.
 // The format is decided by its use (filorosso's 08_ai/doc/export_ai_feedback.md).
@@ -438,6 +439,11 @@ void StoryboardPanel::onExportLayout() {
   auto *clipChk = new QCheckBox(tr("Include the shot's animatic clip (mp4)"), &dlg);
   clipChk->setChecked(st.value("Ztoryc/LayoutExportClip", true).toBool());
   form->addRow(QString(), clipChk);
+  auto *modelsChk = new QCheckBox(tr("Include the breakdown's models (model sheets, backgrounds, props, references)"), &dlg);
+  modelsChk->setChecked(st.value("Ztoryc/LayoutExportModels", true).toBool());
+  modelsChk->setToolTip(tr("The files of the assets in each shot's breakdown, in refs/ "
+                           "by type. The manifest lists them either way."));
+  form->addRow(QString(), modelsChk);
   lay->addLayout(form);
   auto *bbox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
   bbox->button(QDialogButtonBox::Ok)->setText(tr("Export"));
@@ -460,10 +466,12 @@ void StoryboardPanel::onExportLayout() {
   opt.layers  = layersChk->isChecked();
   opt.psdMode = psdCombo->currentIndex();
   opt.clip    = clipChk->isChecked();
+  opt.models  = modelsChk->isChecked();
   st.setValue("Ztoryc/LayoutExportDir", root);
   st.setValue("Ztoryc/LayoutExportLayers", opt.layers);
   st.setValue("Ztoryc/LayoutExportPsd", opt.psdMode);
   st.setValue("Ztoryc/LayoutExportClip", opt.clip);
+  st.setValue("Ztoryc/LayoutExportModels", opt.models);
   int from = fromCombo->currentIndex(), to = toCombo->currentIndex();
   if (from > to) std::swap(from, to);
 
@@ -509,15 +517,23 @@ void StoryboardPanel::onExportLayout() {
   s_progress = &progress;
 
   QStringList done, problems;
+  // The same remark on many shots is one line, with the shots it applies to.
+  QStringList remarks;
+  QHash<QString, QStringList> remarkShots;
   for (int si = from; si <= to && !progress.wasCanceled(); si++) {
     QStringList why;
     const QString dir = exportShotLayout(si, root + "/layout", sceneName, opt, &why);
     if (dir.isEmpty()) problems << QString("%1: %2").arg(m_shots[si].data->label(), why.join("; "));
     else {
       done << dir;
-      for (const QString &w : why) problems << QString("%1: %2").arg(m_shots[si].data->label(), w);
+      for (const QString &w : why) {
+        if (!remarks.contains(w)) remarks << w;
+        remarkShots[w] << m_shots[si].data->label();
+      }
     }
   }
+  for (const QString &w : remarks)
+    problems << QString("%1: %2").arg(remarkShots[w].join(", "), w);
 
   // Asked before close(): closing a QProgressDialog counts as cancelling it,
   // and every export ended announcing a cancellation.
@@ -710,15 +726,33 @@ QString StoryboardPanel::exportShotLayout(int si, const QString &root,
       o["name"] = a->name;
       o["type"] = a->type;
       const QString file = a->noFile ? QString() : m->resolveAssetFile(*a);
-      if (!file.isEmpty() && QFileInfo::exists(file)) {
-        QDir().mkpath(dir + "/refs");
-        const QString copy = a->name + "__" + QFileInfo(file).fileName();
-        QFile::remove(dir + "/refs/" + copy);
-        if (QFile::copy(file, dir + "/refs/" + copy)) o["file"] = "refs/" + copy;
+      // A character linked to its scene: a .tnz says nothing to a generator and
+      // has no levels of its own. It counts as missing until it has a sheet.
+      const bool scene =
+          QFileInfo(file).suffix().compare("tnz", Qt::CaseInsensitive) == 0;
+      if (!a->noFile && !scene && !file.isEmpty() && QFileInfo::exists(file)) {
+        if (opt.models) {
+          const QString sub2 = "refs/" + safeName(a->type) + "/";
+          QDir().mkpath(dir + "/" + sub2);
+          const QString copy = safeName(a->name) + "__" + QFileInfo(file).fileName();
+          QFile::remove(dir + "/" + sub2 + copy);
+          if (QFile::copy(file, dir + "/" + sub2 + copy))
+            o["file"] = sub2 + copy;
+          else if (warnings)
+            *warnings << tr("could not copy the file of %1").arg(a->name);
+        }
+      } else if (!a->noFile) {
+        o["missing"] = true;
+        if (scene) o["reason"] = "scene, no model sheet";
+        if (opt.models && warnings)
+          *warnings << (scene ? tr("%1 is linked to a scene, not to a model sheet: not copied")
+                              : tr("%1 has no file")).arg(a->name);
       }
-      if (!o.contains("file") && !a->noFile) o["missing"] = true;
       assets.append(o);
     }
+  // Said, because an empty refs/ looks the same as one that was never asked for.
+  if (opt.models && warnings && (!ps || ps->breakdown.empty()))
+    *warnings << tr("the breakdown is empty: no models");
 
   // ── Audio: the shot's slice of each sound column ────────────────────────
   QJsonArray audio;

@@ -251,6 +251,7 @@ struct Shot {
     bool layers = true;  // columns as image sequences + FCPXML
     int psdMode = 2;     // 0 none, 1 panels flattened, 2 columns as layers
     bool clip   = true;  // the shot's animatic as mp4
+    bool models = true;  // the breakdown's files, in refs/<type>/
   };
   QString exportShotLayout(int si, const QString &root, const QString &sceneName,
                            const LayoutOptions &opt, QStringList *warnings);
