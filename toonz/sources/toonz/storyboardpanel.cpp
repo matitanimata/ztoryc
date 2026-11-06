@@ -15,6 +15,7 @@
 #include "toonz/toonzfolders.h"
 #include <QProgressDialog>
 #include "kitsuclient.h"  // post-export upload to Kitsu
+#include "ztorykitsusync.h"
 
 // QXlsx (vendored, MIT) — production spreadsheet export.
 #include "xlsxdocument.h"
@@ -9536,7 +9537,9 @@ void StoryboardPanel::onExportAnimatic() {
     int unmatched = 0, noId = 0;
     QVector<KitsuPreviewUpload> uploads =
         KitsuClient::buildUploadsFromFolder(outDir, unmatched, noId);
-    if (uploads.isEmpty()) {
+    if (!ZtoryKitsuSync::confirmProjectFolder()) {
+      // Answered no: the clips stay on disk, nothing goes to Kitsu.
+    } else if (uploads.isEmpty()) {
       QMessageBox::warning(
           this, tr("Upload to Kitsu"),
           noId ? tr("No clips uploaded — matched shots aren't on Kitsu yet "

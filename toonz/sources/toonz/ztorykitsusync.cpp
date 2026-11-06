@@ -512,6 +512,26 @@ QString doneRigTask(const Asset &a) {
 
 }  // namespace
 
+bool ZtoryKitsuSync::confirmProjectFolder() {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (m->kitsuLinkFolderMatches()) return true;
+  const QString where =
+      m->kitsuLinkFolder().isEmpty()
+          ? tr("Ztoryc does not know which folder it was linked from: projects "
+               "linked before this check do not say.")
+          : tr("It was linked from:\n%1").arg(m->kitsuLinkFolder());
+  if (DVGui::MsgBox(
+          tr("This project is linked to the Kitsu production %1.\n\n%2\n\nThis "
+             "folder is:\n%3\n\nIf this is a copy or an old version, sending "
+             "writes its names and durations over the production.\n\nSend to "
+             "%1 from this folder?")
+              .arg(m->kitsuProjectName(), where, m->currentProjectFolder()),
+          tr("Send from this folder"), tr("Cancel"), 1) != 1)
+    return false;
+  m->adoptKitsuLinkFolder();
+  return true;
+}
+
 ZtoryKitsuSync *ZtoryKitsuSync::instance() {
   static ZtoryKitsuSync *s = new ZtoryKitsuSync();  // app lifetime
   return s;

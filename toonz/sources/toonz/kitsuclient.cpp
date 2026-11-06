@@ -2911,6 +2911,9 @@ void KitsuClient::onTaskTransition(int entity, const QString &uuid,
   if (!m_autoPushStatus || !isLoggedIn()) return;
   ZtoryModel *m = ZtoryModel::instance();
   if (!m->useKitsu() || m->kitsuProjectId().isEmpty()) return;
+  // Maybe a copy of the project: nothing leaves on its own. The change stays
+  // unsent, and the Sync asks (ZtoryKitsuSync::confirmProjectFolder).
+  if (!m->kitsuLinkFolderMatches()) return;
   QString kitsuId;
   if (entity == 0) {
     for (const ProjectShot &ps : m->projectShots())

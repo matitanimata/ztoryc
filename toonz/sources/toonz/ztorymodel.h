@@ -484,6 +484,7 @@ class ZtoryModel : public QObject {
   bool                              m_useKitsu = false; // opt-in Kitsu sync UI
   QString                           m_kitsuProjectId;   // empty = not linked
   QString                           m_kitsuProjectName; // cached for display
+  QString                           m_kitsuLinkFolder;  // project folder it was linked from
   // Episode binding, for tvshow productions. One Kitsu tvshow holds several
   // episodes and each one is a separate Ztoryc project, so the binding is the
   // PAIR (project, episode) — the project alone would pull every episode's
@@ -633,9 +634,14 @@ public:
       if (!ps.kitsuShotId.isEmpty()) return true;
     return false;
   }
-  void    setKitsuProject(const QString &id, const QString &name) {
-    m_kitsuProjectId = id; m_kitsuProjectName = name;
-  }
+  void    setKitsuProject(const QString &id, const QString &name);
+  // The link is saved in production.ztrack, so a COPY of the project folder is
+  // linked too, and its Sync would write its old names and durations over the
+  // production. Sending to Kitsu needs this folder to be the one linked.
+  QString currentProjectFolder() const;
+  QString kitsuLinkFolder() const { return m_kitsuLinkFolder; }
+  bool    kitsuLinkFolderMatches() const;
+  void    adoptKitsuLinkFolder();  // this folder is the linked one from now on
   // Episode binding (tvshow only). `name` also lands in m_episode, which is
   // what pushShots() already sends and what the worksheet header prints — so
   // the two never drift apart.

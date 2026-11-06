@@ -43,6 +43,11 @@ class ZtoryKitsuSync : public QObject {
 public:
   static ZtoryKitsuSync *instance();
 
+  // Before anything is sent to Kitsu by hand: if this project was linked from
+  // another folder (it may be a copy), asks. Yes makes this folder the linked
+  // one; false means send nothing.
+  static bool confirmProjectFolder();
+
   bool isRunning() const { return m_step >= 0; }
   // How many statuses a Sync would write on Kitsu now: what the tracker asks
   // confirmation for before a large one (typically the first, with no base).

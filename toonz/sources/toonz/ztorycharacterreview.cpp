@@ -70,6 +70,13 @@ QString renderPreview(ToonzScene *scene, const Asset &a, const QString &task) {
 // and an upload left running would be cut off. Returns true if it arrived.
 bool uploadAndWait(const Asset &a, const QString &task, const QString &png,
                    QString *message) {
+  // The scene is closing: no question here. Maybe a copy of the project, so
+  // nothing leaves on its own (ZtoryKitsuSync::confirmProjectFolder).
+  if (!ZtoryModel::instance()->kitsuLinkFolderMatches()) {
+    *message = QObject::tr("Not sent: this project was linked to Kitsu from "
+                           "another folder. A Sync asks about it.");
+    return false;
+  }
   KitsuClient *kc = KitsuClient::instance();
   QProgressDialog progress(
       QObject::tr("Sending the preview of %1 to Kitsu…").arg(a.name),

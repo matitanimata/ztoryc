@@ -1397,6 +1397,7 @@ void ZtoryModel::resetProjectLevelDefaults() {
   m_useKitsu = false;
   m_kitsuProjectId.clear();
   m_kitsuProjectName.clear();
+  m_kitsuLinkFolder.clear();
   m_kitsuEpisodeId.clear();
   m_propsDir.clear();
   m_backgroundsDir.clear();
@@ -1420,6 +1421,31 @@ TFilePath projectDbFilePath() {
   return proj->getProjectFolder() + TFilePath("production.ztrack");
 }
 }  // namespace
+
+void ZtoryModel::setKitsuProject(const QString &id, const QString &name) {
+  m_kitsuProjectId   = id;
+  m_kitsuProjectName = name;
+  m_kitsuLinkFolder  = currentProjectFolder();
+}
+
+QString ZtoryModel::currentProjectFolder() const {
+  TFilePath fp = projectDbFilePath();
+  if (fp == TFilePath()) return QString();
+  const QString dir =
+      QString::fromStdWString(fp.getParentDir().getWideString());
+  // The same folder may be reached by two paths (a Drive symlink).
+  const QString real = QFileInfo(dir).canonicalFilePath();
+  return real.isEmpty() ? dir : real;
+}
+
+bool ZtoryModel::kitsuLinkFolderMatches() const {
+  return !isKitsuLinked() || m_kitsuLinkFolder == currentProjectFolder();
+}
+
+void ZtoryModel::adoptKitsuLinkFolder() {
+  m_kitsuLinkFolder = currentProjectFolder();
+  saveProjectDb();
+}
 
 QString ZtoryModel::projectDbPath() const {
   TFilePath fp = projectDbFilePath();
@@ -1621,6 +1647,8 @@ QByteArray ZtoryModel::serializeProjectDb() const {
   if (!m_kitsuProjectId.isEmpty()) {
     xml.writeAttribute("kitsuProjectId",   m_kitsuProjectId);
     xml.writeAttribute("kitsuProjectName", m_kitsuProjectName);
+    if (!m_kitsuLinkFolder.isEmpty())
+      xml.writeAttribute("kitsuLinkFolder", m_kitsuLinkFolder);
   }
   // The episode NAME is already saved as "episode"; this is the stable id that
   // survives a rename on the Kitsu side.
@@ -1960,6 +1988,7 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
       // Kitsu (M5) binding + mirrored metadata.
       m_kitsuProjectId   = a.value("kitsuProjectId").toString();
       m_kitsuProjectName = a.value("kitsuProjectName").toString();
+      m_kitsuLinkFolder  = a.value("kitsuLinkFolder").toString();
       // Assente nei progetti salvati prima del legame per episodio: resta vuoto
       // e il comportamento e' quello di prima (nessun filtro).
       m_kitsuEpisodeId   = a.value("kitsuEpisodeId").toString();

@@ -1480,6 +1480,7 @@ void ZtoryProductionPanel::maybeAutoSync() {
 // Ztoryc: the one Sync button (2026-09-27). The work is ZtoryKitsuSync's;
 // here the confirmation of a large send, and the label.
 void ZtoryProductionPanel::onKitsuSync() {
+  if (!ZtoryKitsuSync::confirmProjectFolder()) return;
   ZtoryKitsuSync *sync = ZtoryKitsuSync::instance();
   // The first Sync of a project (no base yet) can write many statuses on
   // Kitsu: say it before, not after.
@@ -1516,6 +1517,7 @@ void ZtoryProductionPanel::onKitsuSync() {
 void ZtoryProductionPanel::onKitsuUpload() {
   ZtoryModel *m = ZtoryModel::instance();
   if (!m->isKitsuLinked()) return;
+  if (!ZtoryKitsuSync::confirmProjectFolder()) return;
   const QString dir =
       QFileDialog::getExistingDirectory(this, tr("Folder with per-shot clips"));
   if (dir.isEmpty()) return;
@@ -2755,6 +2757,7 @@ void ZtoryProductionPanel::offerKitsuCleanup(bool isAsset,
                            m->taskTypesForProjectShot(ps)});
   }
   if (queries.isEmpty()) return;  // never sent to Kitsu: nothing left there
+  if (!ZtoryKitsuSync::confirmProjectFolder()) return;
 
   // A Sync uses the same queues in the client.
   if (ZtoryKitsuSync::instance()->isRunning()) {
