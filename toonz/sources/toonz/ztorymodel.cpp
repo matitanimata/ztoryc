@@ -2566,13 +2566,28 @@ QStringList ZtoryModel::spreadsheetTaskColumns() const {
   std::set<QString> usedTechs;
   for (int si = 0; si < (int)m_shots.size(); si++)
     usedTechs.insert(techniqueForShot(si));
-  for (const ProjectShot &ps : m_projectShots) usedTechs.insert(ps.technique);
+  // The EFFECTIVE technique: a shot on the project default has an empty one, and
+  // that default used to count as unused, its tasks falling after the others'
+  // (2026-11-06: Animation, VFX and Render after Compositing).
+  for (const ProjectShot &ps : m_projectShots)
+    usedTechs.insert(techniqueForProjectShot(ps));
 
   QStringList cols;
   for (const Technique &t : m_techniques) {
     if (!usedTechs.count(t.name)) continue;
-    for (const QString &tt : t.taskTypes)
-      if (used.count(tt)) { cols << tt; used.erase(tt); }
+    // Each task goes right after the one before it in ITS workflow, not at the
+    // end: with several workflows in use, each keeps its own order among the
+    // columns. Where two disagree, the first in the project's list wins.
+    int at = -1;
+    for (const QString &tt : t.taskTypes) {
+      const int existing = cols.indexOf(tt);
+      if (existing >= 0) {
+        at = existing;
+      } else if (used.count(tt)) {
+        cols.insert(++at, tt);
+        used.erase(tt);
+      }
+    }
   }
   // Then the unused workflows, for any task type they alone own.
   for (const Technique &t : m_techniques)
