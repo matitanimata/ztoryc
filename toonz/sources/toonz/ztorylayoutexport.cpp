@@ -141,7 +141,11 @@ bool renderRange(ToonzScene *scene, int r0, int r1, int ownCol, TXsheet *sub,
   }
   TOutputProperties *prop = scene->getProperties()->getOutputProperties();
   const QFileInfo fi(out);
-  const QString stem = "ztorylayout_tmp_" + fi.completeBaseName();
+  // No dot: «name.0001.png» reads as frame 1 of the level «name», the render
+  // writes it under the frame of the MAIN xsheet (name.0406.png), and the search
+  // below finds nothing. Only a shot starting at frame 1 got away with it.
+  QString stem = "ztorylayout_tmp_" + fi.completeBaseName();
+  stem.replace('.', '-');
   prop->setPath(TFilePath(fi.absolutePath().toStdWString()) +
                 TFilePath((stem + "." + fi.suffix()).toStdWString()));
   prop->setRange(r0, r1, 1);
@@ -515,6 +519,9 @@ void StoryboardPanel::onExportLayout() {
     }
   }
 
+  // Asked before close(): closing a QProgressDialog counts as cancelling it,
+  // and every export ended announcing a cancellation.
+  const bool cancelled = progress.wasCanceled();
   s_progress = nullptr;
   progress.close();
   pref->setValue(generatedMovieViewEnabled, origFlip, false);
@@ -522,7 +529,7 @@ void StoryboardPanel::onExportLayout() {
   prop->setRange(origR0, origR1, origStep);
   ZtoryModel::instance()->burnIn() = origBurnIn;
   if (alpha) alpha->setValue(origAlpha);
-  if (progress.wasCanceled()) problems.prepend(tr("Export cancelled: the last shot is incomplete."));
+  if (cancelled) problems.prepend(tr("Export cancelled: the last shot is incomplete."));
 
   QString msg = tr("Exported %1 shot(s) to %2").arg(done.size()).arg(root + "/layout");
   if (!problems.isEmpty()) msg += "\n\n" + problems.join("\n");
