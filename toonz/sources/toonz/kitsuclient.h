@@ -107,6 +107,27 @@ struct KitsuTaskStatus {
 };
 
 //----------------------------------------------------------------------------
+// A shot or asset whose task list changed in Ztoryc (another workflow, another
+// asset type): `keep` are the task types it has now. Its other tasks on Kitsu
+// are left over from before.
+struct KitsuStaleQuery {
+  QString     kitsuId;  // shot or asset id on Kitsu
+  QString     label;    // shown in the list
+  QStringList keep;     // Ztoryc task-type names of the new workflow / type
+};
+
+// One task left on Kitsu by the previous workflow or asset type.
+struct KitsuStaleTask {
+  QString id;
+  QString entity;    // shot / asset label
+  QString taskType;  // Kitsu task-type name
+  // Someone worked on it: a status other than the default, a comment (a
+  // preview always comes with one), a start date or assignees. Deleting it
+  // loses that.
+  bool    touched = false;
+};
+
+//----------------------------------------------------------------------------
 // One shot to push up to Kitsu (push-only: Ztoryc is authoritative on the shot
 // list, so we never pull shots back).
 //----------------------------------------------------------------------------
@@ -429,6 +450,14 @@ public:
   // Canonical lowercased task-type key (handles Ztoryc↔Kitsu name aliases
   // Render↔Rendering, VFX↔FX) so push and pull match the same tasks.
   static QString normalizeTaskType(const QString &name);
+  // Tasks the last pushTasks() created on Kitsu.
+  int lastTasksCreated() const { return m_tasksCreated; }
+
+  // Tasks of these shots (or assets) whose type is no longer theirs ->
+  // staleTasksFetched(). Changes nothing on the server.
+  void fetchStaleTasks(bool isAsset, const QVector<KitsuStaleQuery> &queries);
+  // DELETE each task, with its comments and previews -> tasksDeleted().
+  void deleteTasks(const QStringList &taskIds);
 
   QVector<KitsuProject>    projects() const { return m_projects; }
   QVector<KitsuTaskStatus> taskStatuses() const { return m_taskStatuses; }
@@ -512,12 +541,31 @@ signals:
   // Asset task statuses changed in Ztoryc but not sent: their task type is
   // not linked to the asset type on Kitsu (which hides such tasks).
   void assetTasksUnlinked(int count);
+  // Asset task types Kitsu does not have and refused to create.
+  void assetTaskTypesMissing(const QStringList &names);
   void transitionPushed(int entity, const QString &uuid,
                         const QString &taskType, int result, int serverStatus,
                         const QString &message);
   void networkError(const QString &message);
+  void staleTasksFetched(bool ok, const QVector<KitsuStaleTask> &tasks,
+                         const QString &message);
+  void tasksDeleted(int deleted, const QStringList &failures);
 
 private:
+  void staleLoadTypes();
+  void staleLoadStatuses();
+  void staleNext();
+  void deleteNext();
+  QVector<KitsuStaleQuery> m_stQueue;
+  QVector<KitsuStaleTask>  m_stOut;
+  QHash<QString, QString>  m_stTypeName;  // task-type id -> name
+  QSet<QString>            m_stDefault;   // default status ids
+  bool                     m_stAsset = false;
+  int                      m_stIdx   = 0;
+  bool                     m_stBusy  = false;
+  QStringList              m_delIds, m_delFail;
+  int                      m_delIdx = 0, m_delDone = 0;
+  bool                     m_delBusy = false;
   void onLoginReply(QNetworkReply *reply);
   void onProjectsReply(QNetworkReply *reply);
   void onTaskStatusesReply(QNetworkReply *reply);
@@ -663,6 +711,10 @@ private:
   void atLoadTaskTypes();    // GET /api/data/task-types (for_entity = Asset)
   void atCreateNext();       // create the missing tasks of THESE assets, one by one
   void atLoadAssetTypes();   // GET /api/data/asset-types (name -> id)
+  void atCreateTypeNext();   // create the asset task types Kitsu lacks
+  void atLinkTypeNext();     // link the new ones to the asset types using them
+  void atLoadProject();      // which task types the project already shows
+  void atAddTypeNext();      // add the used ones it doesn't show yet
   void atLoadAssets();       // GET project assets ("typeId/name" -> asset id)
   void atLoadTasks();        // GET project tasks ("assetId/ttId" -> task id)
   void atApplyNext();        // set each task status via a comment
@@ -677,6 +729,13 @@ private:
   QHash<QString, QString> m_atStatusByKey;      // "assetId/ttId" -> current status id
   QHash<QString, QSet<QString>> m_atAssigneesByKey; // "assetId/ttId" -> person ids
   QVector<int>            m_atCreateList;       // m_atQueue indexes whose task is missing
+  QStringList             m_atMissingTypes;     // task types Kitsu lacks / refused
+  QHash<QString, int>     m_atMissingOrder;     // their position in the pipeline
+  QHash<QString, int>     m_atTtPriority;       // task-type id -> its priority
+  QHash<QString, QString> m_atNewTypeIds;       // created: id -> Ztoryc name
+  QStringList             m_atLinkQueue;        // asset type names to link
+  QVector<QString>        m_atTtAddQueue;       // used types to add to the project
+  int m_atTtNewIdx = 0, m_atLinkIdx = 0, m_atTtAddIdx = 0;
   int m_atCreateIdx    = 0;
   int m_atApplyIdx     = 0;
   int m_atStatusesSet  = 0;

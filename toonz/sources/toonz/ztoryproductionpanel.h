@@ -138,6 +138,14 @@ private:
   QWidget *buildAssetsTab();
   void rebuildAssets();            // rebuild the asset × task matrix from ZtoryModel
   void editAssetCell(int row, int col);
+  // After a change of workflow (shots) or type (assets): their tasks on Kitsu
+  // that belong to the old one are listed, and the user picks what to delete
+  // — only the untouched ones, or all of them. Nothing without Kitsu.
+  void offerKitsuCleanup(bool isAsset, const QStringList &uuids);
+  // The second half: lists the leftovers and asks. `created` = new tasks just
+  // made on Kitsu, reported in the same answer.
+  void askStaleTasks(bool isAsset, const QVector<KitsuStaleQuery> &queries,
+                     int created);
   // Workflows tab
   QWidget *buildWorkflowsTab();
   void reloadWorkflowsTab();        // model → workflow (technique) list

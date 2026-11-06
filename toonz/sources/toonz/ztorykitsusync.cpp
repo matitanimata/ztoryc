@@ -628,6 +628,14 @@ ZtoryKitsuSync::ZtoryKitsuSync(QObject *parent) : QObject(parent) {
                      .arg(names.join("\n")));
           });
 
+  connect(kc, &KitsuClient::assetTaskTypesMissing, this,
+          [this](const QStringList &names) {
+            warn(tr("These asset tasks were NOT created in Kitsu: the server has "
+                    "no Asset task type with that name, and it refused to create "
+                    "one (only a Kitsu admin can):\n\n%1\n\nCreate them in Kitsu "
+                    "(Settings > Task Types) and sync again.")
+                     .arg(names.join("\n")));
+          });
   connect(kc, &KitsuClient::assetTasksUnlinked, this, [this](int count) {
     warn(tr("%1 asset task status(es) changed in Ztoryc were NOT sent: on Kitsu "
             "their task type is not linked to the asset's type (Kitsu hides "

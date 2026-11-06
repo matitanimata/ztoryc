@@ -1684,6 +1684,13 @@ void KitsuClient::pushAssetTasks(const QString &projectId,
   m_assignIdx = 0;
   m_atCreateList.clear();
   m_atCreateIdx = m_atApplyIdx = m_atStatusesSet = m_atUnchanged = 0;
+  m_atMissingTypes.clear();
+  m_atMissingOrder.clear();
+  m_atTtPriority.clear();
+  m_atNewTypeIds.clear();
+  m_atLinkQueue.clear();
+  m_atTtAddQueue.clear();
+  m_atTtNewIdx = m_atLinkIdx = m_atTtAddIdx = 0;
 
   // Reverse status map (same six pipeline statuses as the shot push).
   rebuildStatusIdByZ();
@@ -1700,9 +1707,14 @@ void KitsuClient::atLoadTaskTypes() {
     if (r->error() != QNetworkReply::NoError) { atFail(errorMessage(r, b)); return; }
     for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
       const QJsonObject o = v.toObject();
-      if (o.value("for_entity").toString() == "Asset")
-        m_atTtIdByName.insert(o.value("name").toString().toLower(),
+      if (o.value("for_entity").toString() == "Asset") {
+        // Normalized as every lookup is: a type created here as «Render» must
+        // be found again at the next push, not created a second time.
+        m_atTtIdByName.insert(normalizeTaskType(o.value("name").toString()),
                               o.value("id").toString());
+        m_atTtPriority.insert(o.value("id").toString(),
+                              o.value("priority").toInt());
+      }
     }
     // The missing tasks are created after the existing ones are read
     // (atLoadTasks → atCreateNext), for exactly these assets.
@@ -1762,7 +1774,135 @@ void KitsuClient::atLoadAssetTypes() {
                                    o.value("id").toString());
       readAssetTypeLinks(o);
     }
-    atLoadAssets();
+    // The types Kitsu does not have, as the shot push does (Franco,
+    // 2026-11-05): only for asset types the server knows, or no task could use
+    // them. Same refusal too: the push goes on, and the list is reported.
+    ZtoryModel *m = ZtoryModel::instance();
+    QSet<QString> seen;
+    for (const KitsuAssetTaskPush &t : m_atQueue) {
+      const QString key = normalizeTaskType(t.taskType);
+      if (m_atTtIdByName.contains(key) || seen.contains(key)) continue;
+      if (!m_atAssetTypeIdByName.contains(t.assetType.toLower())) continue;
+      seen.insert(key);
+      m_atMissingTypes << t.taskType;
+      m_atMissingOrder.insert(
+          t.taskType, m->assetTaskTypesForType(t.assetType).indexOf(t.taskType) + 1);
+    }
+    atCreateTypeNext();
+  });
+}
+
+void KitsuClient::atCreateTypeNext() {
+  if (m_atTtNewIdx >= m_atMissingTypes.size()) { atLinkTypeNext(); return; }
+  const QString name = m_atMissingTypes[m_atTtNewIdx];
+  emit shotsPushProgress(tr("Creating task type %1 in Kitsu…").arg(name));
+  QJsonObject body;
+  body["name"]       = name;
+  body["for_entity"] = "Asset";
+  body["color"]      = "#999999";  // Kitsu's own neutral grey
+  body["priority"]   = m_atMissingOrder.value(name);
+  QNetworkReply *r = authPost("/api/data/task-types",
+                              QJsonDocument(body).toJson(QJsonDocument::Compact));
+  connect(r, &QNetworkReply::finished, this, [this, r, name]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() == QNetworkReply::NoError) {
+      const QJsonObject o = QJsonDocument::fromJson(b).object();
+      const QString id    = o.value("id").toString();
+      if (!id.isEmpty()) {
+        m_atTtIdByName.insert(normalizeTaskType(name), id);
+        m_atTtPriority.insert(id, o.value("priority").toInt());
+        m_atNewTypeIds.insert(id, name);
+        m_atMissingTypes.removeAt(m_atTtNewIdx);
+        atCreateTypeNext();
+        return;
+      }
+    }
+    ++m_atTtNewIdx;
+    atCreateTypeNext();
+  });
+}
+
+// An asset type on Kitsu lists its task types, and Kitsu hides the tasks of any
+// other: without this link a task of a new type would be neither created
+// (taskTypeLinked) nor seen. Only for the types created just now: a type that
+// already existed and is not linked may be somebody's choice on the server, and
+// it keeps its warning. The PUT REPLACES the list, so it sends the old ones too.
+void KitsuClient::atLinkTypeNext() {
+  if (m_atLinkIdx == 0 && m_atLinkQueue.isEmpty() && !m_atNewTypeIds.isEmpty()) {
+    for (const KitsuAssetTaskPush &t : m_atQueue) {
+      const QString id = m_atTtIdByName.value(normalizeTaskType(t.taskType));
+      const QString at = t.assetType.toLower();
+      if (!m_atNewTypeIds.contains(id) || m_atLinkQueue.contains(at)) continue;
+      // No list at all = Kitsu shows every task type: nothing to link.
+      if (m_assetTypeTaskTypes.value(at).isEmpty()) continue;
+      if (m_atAssetTypeIdByName.contains(at)) m_atLinkQueue << at;
+    }
+  }
+  if (m_atLinkIdx >= m_atLinkQueue.size()) { atLoadProject(); return; }
+  const QString at = m_atLinkQueue[m_atLinkIdx];
+  QSet<QString> ids = m_assetTypeTaskTypes.value(at);
+  for (const KitsuAssetTaskPush &t : m_atQueue) {
+    if (t.assetType.toLower() != at) continue;
+    const QString id = m_atTtIdByName.value(normalizeTaskType(t.taskType));
+    if (m_atNewTypeIds.contains(id)) ids.insert(id);
+  }
+  QJsonArray list;
+  for (const QString &id : ids) list.append(id);
+  QJsonObject body;
+  body["task_types"] = list;
+  QNetworkReply *r =
+      authPut("/api/data/entity-types/" + m_atAssetTypeIdByName.value(at),
+              QJsonDocument(body).toJson(QJsonDocument::Compact));
+  connect(r, &QNetworkReply::finished, this, [this, r, at, ids]() {
+    r->deleteLater();
+    r->readAll();
+    // Refused: the list stays as it was, and the end of the push says that
+    // those tasks were not sent.
+    if (r->error() == QNetworkReply::NoError) m_assetTypeTaskTypes.insert(at, ids);
+    ++m_atLinkIdx;
+    atLinkTypeNext();
+  });
+}
+
+// As for shots: a task whose type is not in the project's pipeline exists, but
+// Kitsu shows no column for it. Not fatal here: until now the asset push never
+// asked for this right, and a user without it must not lose the whole Sync.
+void KitsuClient::atLoadProject() {
+  QNetworkReply *r = m_nam->get(authGet("/api/data/projects/" + m_atProjectId));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) { atLoadAssets(); return; }
+    QSet<QString> shown;
+    for (const QJsonValue &v :
+         QJsonDocument::fromJson(b).object().value("task_types").toArray())
+      shown.insert(v.isObject() ? v.toObject().value("id").toString() : v.toString());
+    for (const KitsuAssetTaskPush &t : m_atQueue) {
+      const QString id = m_atTtIdByName.value(normalizeTaskType(t.taskType));
+      if (id.isEmpty() || shown.contains(id) || m_atTtAddQueue.contains(id)) continue;
+      if (!m_atAssetTypeIdByName.contains(t.assetType.toLower())) continue;
+      if (!taskTypeLinked(t.assetType, id)) continue;  // no task will use it
+      m_atTtAddQueue.push_back(id);
+    }
+    atAddTypeNext();
+  });
+}
+
+void KitsuClient::atAddTypeNext() {
+  if (m_atTtAddIdx >= m_atTtAddQueue.size()) { atLoadAssets(); return; }
+  const QString ttId = m_atTtAddQueue[m_atTtAddIdx];
+  QJsonObject body;
+  body["task_type_id"] = ttId;
+  body["priority"]     = m_atTtPriority.value(ttId);
+  QNetworkReply *r =
+      authPost("/api/data/projects/" + m_atProjectId + "/settings/task-types",
+               QJsonDocument(body).toJson(QJsonDocument::Compact));
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    r->readAll();
+    ++m_atTtAddIdx;
+    atAddTypeNext();
   });
 }
 
@@ -1912,6 +2052,7 @@ void KitsuClient::atApplyNext() {
                         m_atTtIdByName.value(normalizeTaskType(t.taskType))))
       ++unlinked;
   if (unlinked > 0) emit assetTasksUnlinked(unlinked);
+  if (!m_atMissingTypes.isEmpty()) emit assetTaskTypesMissing(m_atMissingTypes);
   m_assignOnDone = [this, statusesSet, unchanged, assigned, skipped, unlinked]() {
     QString msg = unchanged > 0
                       ? tr("Done — %1 asset task statuses changed, %2 unchanged.")
@@ -2442,9 +2583,10 @@ QVector<KitsuShotPush> KitsuClient::buildShotPushFromProject(
     // state here: a fresh shot has Storyboard and Layout at most, and Kitsu
     // ended up with a single Storyboard column while the tracker showed the
     // whole pipeline. The untouched ones are created, never given a status.
-    QStringList types = m->taskTypesForProjectShot(ps);
-    for (auto it = ps.tasks.constBegin(); it != ps.tasks.constEnd(); ++it)
-      if (!types.contains(it.key())) types << it.key();
+    // ONLY the workflow's: the states a shot keeps from a previous workflow
+    // stay in Ztoryc (switching back finds them) but are not sent, or a change
+    // of workflow added the new tasks to the old ones on Kitsu (2026-11-05).
+    const QStringList types = m->taskTypesForProjectShot(ps);
     for (int ti = 0; ti < types.size(); ++ti) {
       const QString &tt = types[ti];
       KitsuTaskPush tp;
@@ -3309,3 +3451,165 @@ void KitsuClient::revLoadAutomations(
   });
 }
 
+
+//-----------------------------------------------------------------------------
+// Tasks left on Kitsu by a previous workflow / asset type.
+//
+// The push only ever creates tasks, so a shot moved to another workflow kept
+// the old tasks next to the new ones (Franco, 2026-11-05). Here we
+// list them; what to delete is decided by the user, from the list.
+
+void KitsuClient::fetchStaleTasks(bool isAsset,
+                                  const QVector<KitsuStaleQuery> &queries) {
+  if (!isLoggedIn()) {
+    emit staleTasksFetched(false, {}, tr("Not logged in to Kitsu."));
+    return;
+  }
+  if (m_stBusy) {
+    emit staleTasksFetched(false, {}, tr("A check of the old tasks is already running."));
+    return;
+  }
+  m_stQueue.clear();
+  // A shot with no task at all in its workflow would have EVERY task listed:
+  // that is a missing workflow, not a change of workflow. Left alone.
+  for (const KitsuStaleQuery &q : queries)
+    if (!q.kitsuId.isEmpty() && !q.keep.isEmpty()) m_stQueue.push_back(q);
+  m_stOut.clear();
+  m_stIdx   = 0;
+  m_stAsset = isAsset;
+  if (m_stQueue.isEmpty()) {
+    emit staleTasksFetched(true, {}, QString());
+    return;
+  }
+  m_stBusy = true;
+  staleLoadTypes();
+}
+
+void KitsuClient::staleLoadTypes() {
+  QNetworkReply *r = m_nam->get(authGet("/api/data/task-types"));
+  armTimeout(r);
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) {
+      m_stBusy = false;
+      emit staleTasksFetched(false, {}, errorMessage(r, b));
+      return;
+    }
+    m_stTypeName.clear();
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      m_stTypeName.insert(o.value("id").toString(), o.value("name").toString());
+    }
+    staleLoadStatuses();
+  });
+}
+
+void KitsuClient::staleLoadStatuses() {
+  QNetworkReply *r = m_nam->get(authGet("/api/data/task-status"));
+  armTimeout(r);
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() != QNetworkReply::NoError) {
+      m_stBusy = false;
+      emit staleTasksFetched(false, {}, errorMessage(r, b));
+      return;
+    }
+    m_stDefault.clear();
+    QSet<QString> todo;
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o = v.toObject();
+      if (o.value("is_default").toBool()) m_stDefault.insert(o.value("id").toString());
+      if (o.value("short_name").toString().toLower() == "todo")
+        todo.insert(o.value("id").toString());
+    }
+    if (m_stDefault.isEmpty()) m_stDefault = todo;
+    staleNext();
+  });
+}
+
+void KitsuClient::staleNext() {
+  if (m_stIdx >= m_stQueue.size()) {
+    m_stBusy = false;
+    emit staleTasksFetched(true, m_stOut, QString());
+    return;
+  }
+  const KitsuStaleQuery q = m_stQueue[m_stIdx];
+  const QString path = QString("/api/data/%1/%2/tasks")
+                           .arg(m_stAsset ? "assets" : "shots", q.kitsuId);
+  QNetworkReply *r = m_nam->get(authGet(path));
+  armTimeout(r);
+  connect(r, &QNetworkReply::finished, this, [this, r, q]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() == QNetworkReply::ContentNotFoundError) {
+      ++m_stIdx;  // gone from Kitsu: nothing left over there
+      staleNext();
+      return;
+    }
+    if (r->error() != QNetworkReply::NoError) {
+      m_stBusy = false;
+      emit staleTasksFetched(false, {}, errorMessage(r, b));
+      return;
+    }
+    QSet<QString> keep;
+    for (const QString &k : q.keep) keep.insert(normalizeTaskType(k));
+    for (const QJsonValue &v : QJsonDocument::fromJson(b).array()) {
+      const QJsonObject o    = v.toObject();
+      const QString     name = m_stTypeName.value(o.value("task_type_id").toString());
+      if (name.isEmpty()) continue;  // a type we cannot name: not ours to judge
+      if (keep.contains(normalizeTaskType(name))) continue;
+      KitsuStaleTask t;
+      t.id       = o.value("id").toString();
+      t.entity   = q.label;
+      t.taskType = name;
+      t.touched  = !m_stDefault.contains(o.value("task_status_id").toString()) ||
+                  !o.value("last_comment_date").toString().isEmpty() ||
+                  !o.value("real_start_date").toString().isEmpty() ||
+                  !o.value("assignees").toArray().isEmpty();
+      if (!t.id.isEmpty()) m_stOut.push_back(t);
+    }
+    ++m_stIdx;
+    staleNext();
+  });
+}
+
+void KitsuClient::deleteTasks(const QStringList &taskIds) {
+  if (!isLoggedIn() || m_delBusy || taskIds.isEmpty()) {
+    emit tasksDeleted(0, isLoggedIn() ? QStringList()
+                                      : QStringList{tr("Not logged in to Kitsu.")});
+    return;
+  }
+  m_delBusy = true;
+  m_delIds  = taskIds;
+  m_delFail.clear();
+  m_delIdx = m_delDone = 0;
+  deleteNext();
+}
+
+void KitsuClient::deleteNext() {
+  if (m_delIdx >= m_delIds.size()) {
+    m_delBusy = false;
+    emit tasksDeleted(m_delDone, m_delFail);
+    return;
+  }
+  // force=true takes the comments and previews with it; without it Kitsu
+  // refuses a task that has any.
+  QNetworkRequest req(
+      QUrl(m_baseUrl + "/api/data/tasks/" + m_delIds[m_delIdx] + "?force=true"));
+  req.setRawHeader("Authorization", "Bearer " + m_accessToken.toUtf8());
+  QNetworkReply *r = m_nam->deleteResource(req);
+  armTimeout(r);
+  connect(r, &QNetworkReply::finished, this, [this, r]() {
+    r->deleteLater();
+    const QByteArray b = r->readAll();
+    if (r->error() == QNetworkReply::NoError ||
+        r->error() == QNetworkReply::ContentNotFoundError)
+      ++m_delDone;
+    else
+      m_delFail << errorMessage(r, b);
+    ++m_delIdx;
+    deleteNext();
+  });
+}

@@ -65,6 +65,7 @@
 #include <QIcon>
 
 #include <cassert>
+#include <memory>
 
 namespace {
 
@@ -2364,7 +2365,7 @@ void ZtoryProductionPanel::rebuildAssets() {
     // series — told apart from this episode's own assets (Franco, 2026-09-29).
     auto *typeItem = new QTableWidgetItem(
         as.kitsuMainPack ? QString("%1 · MP").arg(as.type) : as.type);
-    typeItem->setFlags(Qt::ItemIsEnabled);  // edited via click menu
+    typeItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);  // edited via click menu
     typeItem->setTextAlignment(Qt::AlignCenter);
     if (as.kitsuMainPack) {
       typeItem->setForeground(QColor(0x5A, 0xB4, 0xFF));
@@ -2373,7 +2374,7 @@ void ZtoryProductionPanel::rebuildAssets() {
     }
     m_assetTable->setItem(i, 0, typeItem);
     auto *nameItem = new QTableWidgetItem(as.name);
-    nameItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsEditable);
+    nameItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
     showAssetLink(nameItem, as, &dirCache);
     m_assetTable->setItem(i, 1, nameItem);
     // Only the task types in THIS asset's type pipeline are editable cells; the
@@ -2419,6 +2420,10 @@ void ZtoryProductionPanel::onAssetCellClicked(int row, int col) {
   ZtoryModel *m = ZtoryModel::instance();
   if (row < 0 || row >= m->assetCount()) return;
   if (col == 0) {  // Type picker
+    // ⇧ and ⌘ are selecting cells, for «Set type» on the right click.
+    if (QApplication::keyboardModifiers() &
+        (Qt::ShiftModifier | Qt::ControlModifier))
+      return;
     QMenu menu(this);
     for (const AssetType &t : m->assetTypes()) menu.addAction(t.name);
     QAction *ch = menu.exec(QCursor::pos());
@@ -2426,6 +2431,7 @@ void ZtoryProductionPanel::onAssetCellClicked(int row, int col) {
     m->assets()[row].type = ch->text();
     persistAssets();
     rebuildAssets();
+    offerKitsuCleanup(true, {m->assets()[row].uuid});
     return;
   }
   // Task cells: left-click selects only (double-click edits, right-click = menu).
@@ -2436,12 +2442,31 @@ void ZtoryProductionPanel::onAssetContextMenu(const QPoint &pos) {
   const int kFixed = 2;
   struct Target { int row; QString uuid; QString task; };
   QList<Target> targets;
+  // Rows of every selected cell (for «Set type»), and the rows picked by their
+  // Name cells: with TWO or more of those, each one stands for all its tasks.
+  // A single row keeps the row menu below (file link, PSD…).
+  QList<int> rows, wholeRows;
+  for (QTableWidgetItem *it : m_assetTable->selectedItems()) {
+    const int row = it->row();
+    if (row < 0 || row >= m->assetCount()) continue;
+    if (!rows.contains(row)) rows << row;
+    if (it->column() == 1 && !wholeRows.contains(row)) wholeRows << row;
+  }
+  auto addTarget = [&](int row, const QString &tt) {
+    for (const Target &t : targets)
+      if (t.row == row && t.task == tt) return;
+    targets.append({row, m->assets()[row].uuid, tt});
+  };
+  if (wholeRows.size() >= 2)
+    for (int row : wholeRows)
+      for (const QString &tt : m->assetTaskTypesForType(m->assets()[row].type))
+        addTarget(row, tt);
   for (QTableWidgetItem *it : m_assetTable->selectedItems()) {
     int row = it->row(), col = it->column();
     int ti  = col - kFixed;
     if (ti < 0 || ti >= m_assetTaskCols.size()) continue;
     if (row < 0 || row >= m->assetCount()) continue;
-    targets.append({row, m->assets()[row].uuid, m_assetTaskCols[ti]});
+    addTarget(row, m_assetTaskCols[ti]);
   }
   if (targets.isEmpty()) {
     if (QTableWidgetItem *it = m_assetTable->itemAt(pos)) {
@@ -2455,7 +2480,7 @@ void ZtoryProductionPanel::onAssetContextMenu(const QPoint &pos) {
   // e' il legame al FILE, che appartiene alla riga e non a una cella di task.
   // Senza questo ramo il comando sarebbe raggiungibile solo cliccando per caso
   // su una colonna di task.
-  if (targets.isEmpty()) {
+  if (targets.isEmpty() && rows.size() < 2) {
     QTableWidgetItem *it = m_assetTable->itemAt(pos);
     if (!it) return;
     const int row = it->row();
@@ -2606,16 +2631,37 @@ void ZtoryProductionPanel::onAssetContextMenu(const QPoint &pos) {
   }
 
   QMenu menu(this);
-  QMenu *sm = menu.addMenu(QObject::tr("Set status (%1 tasks)").arg(targets.size()));
-  for (TaskStatus s : kAllStatuses) {
-    QPixmap pm(14, 14);
-    pm.fill(statusColor(s));
-    sm->addAction(QIcon(pm), ZtoryModel::taskStatusLabel(s))
-        ->setData(static_cast<int>(s));
+  QAction *assignAct = nullptr;
+  if (!targets.isEmpty()) {  // only Type cells selected: nothing but «Set type»
+    QMenu *sm = menu.addMenu(QObject::tr("Set status (%1 tasks)").arg(targets.size()));
+    for (TaskStatus s : kAllStatuses) {
+      QPixmap pm(14, 14);
+      pm.fill(statusColor(s));
+      sm->addAction(QIcon(pm), ZtoryModel::taskStatusLabel(s))
+          ->setData(static_cast<int>(s));
+    }
+    assignAct = menu.addAction(QObject::tr("Set assignees…"));
   }
-  QAction *assignAct = menu.addAction(QObject::tr("Set assignees…"));
+  QSet<QAction *> typeActs;
+  if (!rows.isEmpty()) {
+    if (!menu.isEmpty()) menu.addSeparator();
+    QMenu *tm = menu.addMenu(QObject::tr("Set type (%1 assets)").arg(rows.size()));
+    for (const AssetType &t : m->assetTypes()) typeActs << tm->addAction(t.name);
+  }
   QAction *chosen    = menu.exec(m_assetTable->viewport()->mapToGlobal(pos));
   if (!chosen) return;
+
+  if (typeActs.contains(chosen)) {
+    QStringList uuids;
+    for (int row : rows) {
+      m->assets()[row].type = chosen->text();
+      uuids << m->assets()[row].uuid;
+    }
+    persistAssets();
+    rebuildAssets();
+    offerKitsuCleanup(true, uuids);
+    return;
+  }
 
   TUndoManager::manager()->beginBlock();
   {
@@ -2683,6 +2729,215 @@ void ZtoryProductionPanel::editAssetCell(int row, int col) {
         new AssetAssigneeUndo(uuid, taskType, oldAssign, r.assignees));
   }
   clearUntitledSceneDirty();
+}
+
+//-----------------------------------------------------------------------------
+// Tasks left on Kitsu by the previous workflow / asset type.
+//
+// Kitsu is only ever added to, so a shot given another workflow kept the old
+// tasks beside the new ones (Franco, 2026-11-05). Franco chose that
+// the user decides, from the list: delete only the tasks nobody touched, or
+// all of them — the touched ones lose status, comments and previews for good.
+
+void ZtoryProductionPanel::offerKitsuCleanup(bool isAsset,
+                                             const QStringList &uuids) {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (!m->isKitsuLinked() || uuids.isEmpty()) return;
+  QVector<KitsuStaleQuery> queries;
+  if (isAsset) {
+    for (const Asset &a : m->assets())
+      if (uuids.contains(a.uuid) && !a.kitsuAssetId.isEmpty())
+        queries.push_back({a.kitsuAssetId, a.name, m->assetTaskTypesForType(a.type)});
+  } else {
+    for (const ProjectShot &ps : m->projectShots())
+      if (uuids.contains(ps.uuid) && !ps.kitsuShotId.isEmpty())
+        queries.push_back({ps.kitsuShotId, ps.label.trimmed(),
+                           m->taskTypesForProjectShot(ps)});
+  }
+  if (queries.isEmpty()) return;  // never sent to Kitsu: nothing left there
+
+  // A Sync uses the same queues in the client.
+  if (ZtoryKitsuSync::instance()->isRunning()) {
+    QMessageBox::information(
+        this, tr("Kitsu"),
+        tr("A Sync is running: Kitsu was not updated. Pick the workflow or "
+           "type again when it has finished."));
+    return;
+  }
+
+  KitsuClient *kc = KitsuClient::instance();
+  if (!kc->isLoggedIn()) {
+    QMessageBox::information(
+        this, tr("Kitsu"),
+        isAsset ? tr("Not connected to Kitsu, so the tasks of the old type are "
+                     "still there. They are no longer sent: to remove them, "
+                     "pick the type again once connected.")
+                : tr("Not connected to Kitsu, so the tasks of the old workflow "
+                     "are still there. They are no longer sent: to remove them, "
+                     "pick the workflow again once connected."));
+    return;
+  }
+
+  // An asset's tasks go with its type, which only the Sync sends.
+  if (isAsset) {
+    askStaleTasks(true, queries, 0);
+    return;
+  }
+
+  // The new workflow's tasks are created now, not at the next Sync: deleting
+  // the old ones at once while the new ones waited for a Sync looked like a
+  // workflow that creates nothing (Franco, 2026-11-05). Only creation: statuses
+  // changed in Ztoryc stay for the Sync, which compares them with Kitsu's.
+  int skipped = 0;
+  QVector<KitsuTaskPush> all, tasks;
+  KitsuClient::buildShotPushFromProject(0, all, skipped);
+  for (KitsuTaskPush t : all)
+    if (uuids.contains(t.uuid) && !t.kitsuShotId.isEmpty()) {
+      t.createOnly = true;
+      tasks.push_back(t);
+    }
+
+  auto missing = std::make_shared<QStringList>();
+  auto connMissing = std::make_shared<QMetaObject::Connection>();
+  *connMissing = connect(kc, &KitsuClient::taskTypesMissing, this,
+                         [missing](const QStringList &names) { *missing = names; });
+  auto connPush = std::make_shared<QMetaObject::Connection>();
+  *connPush = connect(
+      kc, &KitsuClient::tasksPushed, this,
+      [this, kc, connPush, connMissing, missing, queries, anyTask = !tasks.isEmpty()](
+          bool ok, int, const QString &message) {
+        QObject::disconnect(*connPush);
+        QObject::disconnect(*connMissing);
+        persistProjectDb();  // the new tasks' base
+        // Without the new tasks the old ones are all that is left: keep them.
+        if (!ok) {
+          QMessageBox::warning(
+              this, tr("Kitsu"),
+              tr("Could not create the new tasks on Kitsu:\n%1").arg(message));
+          return;
+        }
+        if (!missing->isEmpty())
+          QMessageBox::warning(
+              this, tr("Kitsu"),
+              tr("Kitsu refused these task types, so their tasks were not "
+                 "created:\n%1")
+                  .arg(missing->join(", ")));
+        // With nothing to send the client does not start, nor reset its count.
+        askStaleTasks(false, queries, anyTask ? kc->lastTasksCreated() : 0);
+      });
+  kc->pushTasks(m->kitsuProjectId(), tasks);
+}
+
+void ZtoryProductionPanel::askStaleTasks(bool isAsset,
+                                         const QVector<KitsuStaleQuery> &queries,
+                                         int created) {
+  KitsuClient *kc = KitsuClient::instance();
+  const QString createdLine =
+      created > 0 ? tr("%1 new tasks created on Kitsu.").arg(created) : QString();
+  auto conn = std::make_shared<QMetaObject::Connection>();
+  *conn = connect(
+      kc, &KitsuClient::staleTasksFetched, this,
+      [this, conn, isAsset, kc, createdLine](
+          bool ok, const QVector<KitsuStaleTask> &tasks, const QString &message) {
+        QObject::disconnect(*conn);
+        if (!ok) {
+          QMessageBox::warning(
+              this, tr("Kitsu"),
+              tr("Could not read the old tasks on Kitsu:\n%1").arg(message));
+          return;
+        }
+        if (tasks.isEmpty()) {
+          if (!createdLine.isEmpty())
+            QMessageBox::information(this, tr("Kitsu"), createdLine);
+          return;
+        }
+
+        QStringList untouchedIds, allIds, touchedLines;
+        QSet<QString> entities;
+        for (const KitsuStaleTask &t : tasks) {
+          allIds << t.id;
+          entities.insert(t.entity);
+          if (t.touched)
+            touchedLines << QString("%1 — %2").arg(t.entity, t.taskType);
+          else
+            untouchedIds << t.id;
+        }
+        const int nTouched = touchedLines.size();
+        QStringList shown = touchedLines.mid(0, 15);
+        if (nTouched > 15) shown << tr("…and %1 more").arg(nTouched - 15);
+
+        QMessageBox box(this);
+        box.setWindowTitle(tr("Old tasks on Kitsu"));
+        box.setIcon(QMessageBox::Question);
+        box.setText(
+            (createdLine.isEmpty() ? QString() : createdLine + "\n\n") +
+            (isAsset ? tr("%1 tasks of the previous asset type are still on "
+                          "Kitsu (%2 assets).")
+                     : tr("%1 tasks of the previous workflow are still on "
+                          "Kitsu (%2 shots)."))
+                .arg(tasks.size())
+                .arg(entities.size()));
+        QString info = tr("Never touched: %1.").arg(untouchedIds.size());
+        if (nTouched)
+          info += "\n\n" +
+                  tr("With work in them (a status, comments, previews or "
+                     "people assigned): %1. Deleting them loses that work on "
+                     "Kitsu, for good:")
+                      .arg(nTouched) +
+                  "\n" + shown.join("\n");
+        box.setInformativeText(info);
+        QPushButton *untouchedBtn = nullptr, *allBtn = nullptr;
+        if (!untouchedIds.isEmpty())
+          untouchedBtn = box.addButton(
+              tr("Delete the untouched (%1)").arg(untouchedIds.size()),
+              QMessageBox::AcceptRole);
+        if (nTouched)
+          allBtn = box.addButton(tr("Delete all (%1)…").arg(allIds.size()),
+                                 QMessageBox::DestructiveRole);
+        QPushButton *leaveBtn = box.addButton(tr("Leave them"), QMessageBox::RejectRole);
+        box.setDefaultButton(untouchedBtn ? untouchedBtn : leaveBtn);
+        box.setEscapeButton(leaveBtn);
+        box.exec();
+
+        QStringList ids;
+        if (box.clickedButton() == untouchedBtn && untouchedBtn)
+          ids = untouchedIds;
+        else if (box.clickedButton() == allBtn && allBtn) {
+          // The irreversible one asks twice, and the safe answer is the default.
+          if (QMessageBox::warning(
+                  this, tr("Old tasks on Kitsu"),
+                  tr("Delete %1 tasks from Kitsu, %2 of them with their status, "
+                     "comments and previews?\n\nThis cannot be undone.")
+                      .arg(allIds.size())
+                      .arg(nTouched),
+                  QMessageBox::Yes | QMessageBox::No,
+                  QMessageBox::No) != QMessageBox::Yes)
+            return;
+          ids = allIds;
+        } else
+          return;
+
+        const bool keptTouched = (ids.size() < allIds.size());
+        auto conn2 = std::make_shared<QMetaObject::Connection>();
+        *conn2 = connect(
+            kc, &KitsuClient::tasksDeleted, this,
+            [this, conn2, keptTouched, nTouched](int deleted,
+                                                 const QStringList &failures) {
+              QObject::disconnect(*conn2);
+              QString msg = tr("%1 tasks deleted from Kitsu.").arg(deleted);
+              if (keptTouched)
+                msg += "\n" + tr("%1 with work in them were left.").arg(nTouched);
+              if (!failures.isEmpty()) {
+                QStringList f = failures.mid(0, 5);
+                msg += "\n\n" + tr("%1 could not be deleted:").arg(failures.size()) +
+                       "\n" + f.join("\n");
+                QMessageBox::warning(this, tr("Old tasks on Kitsu"), msg);
+              } else
+                QMessageBox::information(this, tr("Old tasks on Kitsu"), msg);
+            });
+        kc->deleteTasks(ids);
+      });
+  kc->fetchStaleTasks(isAsset, queries);
 }
 
 //-----------------------------------------------------------------------------
@@ -3059,7 +3314,7 @@ void ZtoryProductionPanel::rebuild() {
       QString fullLabel = ps.seq.isEmpty() ? ps.label
                                            : ps.seq + "_" + ps.label;
       auto *shotItem = new QTableWidgetItem(fullLabel);
-      shotItem->setFlags(Qt::ItemIsEnabled);
+      shotItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
       // Store uuid in UserRole for editing/undo.
       shotItem->setData(Qt::UserRole, ps.uuid);
       QFont f = shotItem->font();
@@ -3102,7 +3357,7 @@ void ZtoryProductionPanel::rebuild() {
       m_table->setItem(i, 4, tcItem);
 
       auto *wfItem = new QTableWidgetItem(m->techniqueForProjectShot(ps));
-      wfItem->setFlags(Qt::ItemIsEnabled);
+      wfItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
       wfItem->setTextAlignment(Qt::AlignCenter);
       wfItem->setToolTip(QObject::tr("Click to set this shot's workflow"));
       m_table->setItem(i, 5, wfItem);
@@ -3159,7 +3414,7 @@ void ZtoryProductionPanel::rebuild() {
       const ShotData &sd = m->shot(i);
 
       auto *shotItem = new QTableWidgetItem(m->fullLabel(i));
-      shotItem->setFlags(Qt::ItemIsEnabled);
+      shotItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
       shotItem->setData(Qt::UserRole, sd.uuid);
       QFont f = shotItem->font();
       f.setBold(true);
@@ -3188,7 +3443,7 @@ void ZtoryProductionPanel::rebuild() {
       m_table->setItem(i, 3, tcItem);
 
       auto *wfItem = new QTableWidgetItem(m->techniqueForShot(i));
-      wfItem->setFlags(Qt::ItemIsEnabled);
+      wfItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
       wfItem->setTextAlignment(Qt::AlignCenter);
       wfItem->setToolTip(QObject::tr("Click to set this shot's workflow"));
       m_table->setItem(i, 4, wfItem);
@@ -3255,6 +3510,10 @@ void ZtoryProductionPanel::onCellClicked(int row, int col) {
   const int wfCol = useProjectShots ? 5 : 4;  // Workflow column index
 
   if (col == wfCol) {  // Workflow picker
+    // ⇧ and ⌘ are selecting cells, for «Set workflow» on the right click.
+    if (QApplication::keyboardModifiers() &
+        (Qt::ShiftModifier | Qt::ControlModifier))
+      return;
     QMenu menu(this);
     QAction *defA = menu.addAction(
         QObject::tr("(project default: %1)").arg(m->defaultTechnique()));
@@ -3269,6 +3528,9 @@ void ZtoryProductionPanel::onCellClicked(int row, int col) {
       const QString uuid = m->projectShots()[row].uuid;
       m->setProjectShotTechnique(uuid, ch->data().toString());
       persistProjectDb();
+      // Even when the workflow is the same: picking it again is how the
+      // tasks left over from an earlier change get cleaned.
+      offerKitsuCleanup(false, {uuid});
     } else {
       if (row < 0 || row >= m->shotCount()) return;
       m->shot(row).technique = ch->data().toString();
@@ -3304,6 +3566,29 @@ void ZtoryProductionPanel::onShotContextMenu(const QPoint &pos) {
     return usePS ? m->projectShots()[row].uuid : m->shot(row).uuid;
   };
 
+  // The shot's NAME cell stands for all its tasks. Every selected cell, of any
+  // column, counts its shot for «Set workflow».
+  const int nameCol = usePS ? 1 : 0;
+  QList<int> rows, wholeRows;
+  for (QTableWidgetItem *it : m_table->selectedItems()) {
+    const int row = it->row();
+    if (!rowValid(row)) continue;
+    if (!rows.contains(row)) rows << row;
+    if (it->column() == nameCol && !wholeRows.contains(row)) wholeRows << row;
+  }
+  if (rows.isEmpty())
+    if (QTableWidgetItem *it = m_table->itemAt(pos))
+      if (rowValid(it->row())) {
+        rows << it->row();
+        if (it->column() == nameCol) wholeRows << it->row();
+      }
+  auto addTarget = [&](int row, const QString &tt) {
+    for (const Target &t : targets)
+      if (t.row == row && t.task == tt) return;
+    targets.append({row, tt, shotUuid(row)});
+  };
+  for (int row : wholeRows)
+    for (const QString &tt : taskTypes(row)) addTarget(row, tt);
   for (QTableWidgetItem *it : m_table->selectedItems()) {
     int row = it->row(), col = it->column();
     int ti  = col - kFixed;
@@ -3311,29 +3596,67 @@ void ZtoryProductionPanel::onShotContextMenu(const QPoint &pos) {
     if (!rowValid(row)) continue;
     const QString &tt = m_taskCols[ti];
     if (!taskTypes(row).contains(tt)) continue;
-    targets.append({row, tt, shotUuid(row)});
+    addTarget(row, tt);
   }
   if (targets.isEmpty()) {
     if (QTableWidgetItem *it = m_table->itemAt(pos)) {
       int row = it->row(), ti = it->column() - kFixed;
       if (ti >= 0 && ti < m_taskCols.size() && rowValid(row) &&
           taskTypes(row).contains(m_taskCols[ti]))
-        targets.append({row, m_taskCols[ti], shotUuid(row)});
+        addTarget(row, m_taskCols[ti]);
     }
   }
-  if (targets.isEmpty()) return;
+  if (targets.isEmpty() && rows.isEmpty()) return;
 
   QMenu menu(this);
-  QMenu *sm = menu.addMenu(QObject::tr("Set status (%1 tasks)").arg(targets.size()));
-  for (TaskStatus s : kAllStatuses) {
-    QPixmap pm(14, 14);
-    pm.fill(statusColor(s));
-    sm->addAction(QIcon(pm), ZtoryModel::taskStatusLabel(s))
-        ->setData(static_cast<int>(s));
+  QAction *assignAct = nullptr;
+  if (!targets.isEmpty()) {
+    QMenu *sm = menu.addMenu(QObject::tr("Set status (%1 tasks)").arg(targets.size()));
+    for (TaskStatus s : kAllStatuses) {
+      QPixmap pm(14, 14);
+      pm.fill(statusColor(s));
+      sm->addAction(QIcon(pm), ZtoryModel::taskStatusLabel(s))
+          ->setData(static_cast<int>(s));
+    }
+    assignAct = menu.addAction(QObject::tr("Set assignees…"));
   }
-  QAction *assignAct = menu.addAction(QObject::tr("Set assignees…"));
+  // The workflow of every selected shot at once (Franco, 2026-11-05: a new
+  // workflow is given to many shots, one menu each was too slow).
+  QSet<QAction *> wfActs;
+  if (!rows.isEmpty()) {
+    if (!menu.isEmpty()) menu.addSeparator();
+    QMenu *wm = menu.addMenu(QObject::tr("Set workflow (%1 shots)").arg(rows.size()));
+    QAction *defA = wm->addAction(
+        QObject::tr("(project default: %1)").arg(m->defaultTechnique()));
+    defA->setData(QString());
+    wfActs << defA;
+    wm->addSeparator();
+    for (const Technique &t : m->techniques()) {
+      QAction *a = wm->addAction(t.name);
+      a->setData(t.name);
+      wfActs << a;
+    }
+  }
   QAction *chosen    = menu.exec(m_table->viewport()->mapToGlobal(pos));
   if (!chosen) return;
+
+  if (wfActs.contains(chosen)) {
+    const QString tech = chosen->data().toString();
+    QStringList uuids;
+    for (int row : rows) {
+      if (usePS) {
+        const QString uuid = m->projectShots()[row].uuid;
+        m->setProjectShotTechnique(uuid, tech);
+        uuids << uuid;
+      } else
+        m->shot(row).technique = tech;
+    }
+    if (usePS) persistProjectDb(); else persistViaBoard();
+    emit m->taskStatusChanged();
+    rebuild();
+    if (usePS) offerKitsuCleanup(false, uuids);
+    return;
+  }
 
   TUndoManager::manager()->beginBlock();
   {
