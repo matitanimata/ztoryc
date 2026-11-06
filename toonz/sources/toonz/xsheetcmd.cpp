@@ -2877,13 +2877,40 @@ public:
 
 //-----------------------------------------------------------------------------
 
+// The current xsheet viewer is set when the mouse first ENTERS one
+// (XsheetViewer::enterEvent), so it is null until then — in a room without a
+// timeline, for the whole session. These commands also come from the keyboard:
+// O (Set Stop Marker) crashed the Production Tracker room (2026-11-06).
+static void updateCurrentXsheetViewer() {
+  if (XsheetViewer *viewer = TApp::instance()->getCurrentXsheetViewer())
+    viewer->update();
+}
+
+static int contextMenuRowOrCurrentFrame() {
+  TApp *app            = TApp::instance();
+  XsheetViewer *viewer = app->getCurrentXsheetViewer();
+  const int row        = viewer ? viewer->getContextMenuRow() : -1;
+  return row >= 0 ? row : app->getCurrentFrame()->getFrame();
+}
+
+static void goToRow(int row) {
+  TApp *app = TApp::instance();
+  if (XsheetViewer *viewer = app->getCurrentXsheetViewer())
+    viewer->setCurrentRow(row);
+  else
+    app->getCurrentFrame()->setFrame(row);
+}
+
+//-----------------------------------------------------------------------------
+
 class ToggleXsheetOpenCloseFolderCommand final : public MenuItemHandler {
 public:
   ToggleXsheetOpenCloseFolderCommand()
       : MenuItemHandler(MI_ToggleOpenCloseFolder) {}
 
   void execute() override {
-    TApp::instance()->getCurrentXsheetViewer()->toggleCurrentFolderOpenClose();
+    if (XsheetViewer *viewer = TApp::instance()->getCurrentXsheetViewer())
+      viewer->toggleCurrentFolderOpenClose();
   }
 
 } ToggleXsheetOpenCloseFolderCommand;
@@ -3019,7 +3046,7 @@ public:
         r0 = frame;
         if (r1 < r0) r1 = r0;
         XsheetGUI::setPlayRange(r0, r1, step);
-        TApp::instance()->getCurrentXsheetViewer()->update();
+        updateCurrentXsheetViewer();
     }
 } SetStartMarker;
 
@@ -3044,7 +3071,7 @@ public:
         if (r1 < r0) r0 = r1;
         r1 -= (step == 0) ? (r1 - r0) : (r1 - r0) % step;
         XsheetGUI::setPlayRange(r0, r1, step);
-        TApp::instance()->getCurrentXsheetViewer()->update();
+        updateCurrentXsheetViewer();
     }
 } SetStopMarker;
 
@@ -3058,7 +3085,7 @@ public:
         int step, r0, r1;
         XsheetGUI::getPlayRange(r0, r1, step);
         XsheetGUI::setPlayRange(0, -1, step);
-        TApp::instance()->getCurrentXsheetViewer()->update();
+        updateCurrentXsheetViewer();
     }
 } ClearMarkers;
 
@@ -3076,7 +3103,7 @@ public:
         bool exit = false;
 
         while (!exit) {
-            TXsheet *xsh = TApp::instance()->getCurrentXsheetViewer()->getXsheet();
+            TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
             TXshCell cell = xsh->getCell(currentPos, column);
             if (cell.isEmpty() || cell.getFrameId().isStopFrame() ||
                 (direction == down && currentPos > lastRow)) {
@@ -3098,7 +3125,7 @@ public:
     void execute() override {
         int col       = TApp::instance()->getCurrentColumn()->getColumnIndex();
         int row       = TApp::instance()->getCurrentFrame()->getFrame();
-        TXsheet *xsh  = TApp::instance()->getCurrentXsheetViewer()->getXsheet();
+        TXsheet *xsh  = TApp::instance()->getCurrentXsheet()->getXsheet();
         TXshCell cell = xsh->getCell(row, col);
         if (cell.isEmpty() || cell.getFrameId().isStopFrame()) return;
         int step, r0, r1;
@@ -3110,7 +3137,7 @@ public:
 
         XsheetGUI::getPlayRange(r0, r1, step);
         XsheetGUI::setPlayRange(top, bottom, step);
-        TApp::instance()->getCurrentXsheetViewer()->update();
+        updateCurrentXsheetViewer();
 
     }
 } SetAutoMarkers;
@@ -3128,7 +3155,7 @@ public:
         int r0, r1, step;
         XsheetGUI::getPlayRange(r0, r1, step);
         XsheetGUI::setPlayRange(row, row, step);
-        TApp::instance()->getCurrentXsheetViewer()->update();
+        updateCurrentXsheetViewer();
     }
 } PreviewThis;
 
@@ -3149,7 +3176,7 @@ public:
     int r0, r1, step;
     XsheetGUI::getPlayRange(r0, r1, step);
     XsheetGUI::setPlayRange(row0, row1, step);
-    TApp::instance()->getCurrentXsheetViewer()->update();
+    updateCurrentXsheetViewer();
   }
 } PreviewSelected;
 
@@ -3160,8 +3187,7 @@ public:
   ToggleTaggedFrame() : MenuItemHandler(MI_ToggleTaggedFrame) {}
   void execute() override {
     TApp *app = TApp::instance();
-    int frame = app->getCurrentXsheetViewer()->getContextMenuRow();
-    if (frame < 0) frame = app->getCurrentFrame()->getFrame();
+    int frame = contextMenuRowOrCurrentFrame();
     assert(frame >= 0);
     TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
 
@@ -3172,7 +3198,7 @@ public:
                                        navTags->isTagged(frame));
     CommandManager::instance()->enable(MI_ClearTags, (navTags->getCount() > 0));
 
-    TApp::instance()->getCurrentXsheetViewer()->update();
+    updateCurrentXsheetViewer();
   }
 } ToggleTaggedFrame;
 
@@ -3183,8 +3209,7 @@ public:
   EditTaggedFrame() : MenuItemHandler(MI_EditTaggedFrame) {}
   void execute() override {
     TApp *app = TApp::instance();
-    int frame = app->getCurrentXsheetViewer()->getContextMenuRow();
-    if (frame < 0) frame = app->getCurrentFrame()->getFrame();
+    int frame = contextMenuRowOrCurrentFrame();
     assert(frame >= 0);
     TXsheet *xsh = app->getCurrentXsheet()->getXsheet();
 
@@ -3213,7 +3238,7 @@ public:
     NavigationTags *navTags = xsh->getNavigationTags();
     int nextFrame           = navTags->getNextTag(frame);
     if (nextFrame != -1) {
-      app->getCurrentXsheetViewer()->setCurrentRow(nextFrame);
+      goToRow(nextFrame);
       TCellSelection *cellSelection = dynamic_cast<TCellSelection *>(
           TApp::instance()->getCurrentSelection()->getSelection());
       if (cellSelection)
@@ -3237,7 +3262,7 @@ public:
     NavigationTags *navTags = xsh->getNavigationTags();
     int prevFrame           = navTags->getPrevTag(frame);
     if (prevFrame != -1) {
-      app->getCurrentXsheetViewer()->setCurrentRow(prevFrame);
+      goToRow(prevFrame);
       TCellSelection *cellSelection = dynamic_cast<TCellSelection *>(
           TApp::instance()->getCurrentSelection()->getSelection());
       if (cellSelection)
@@ -3265,6 +3290,6 @@ public:
     CommandManager::instance()->enable(MI_EditTaggedFrame, false);
     CommandManager::instance()->enable(MI_ClearTags, false);
 
-    TApp::instance()->getCurrentXsheetViewer()->update();
+    updateCurrentXsheetViewer();
   }
 } ClearTags;

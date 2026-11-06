@@ -1126,13 +1126,16 @@ void TKeyframeSelection::shiftKeyframes(int direction) {
   int r0 = positions.begin()->first;
   int c0 = positions.begin()->second;
 
+  // Null until the mouse has entered a timeline; the command has a shortcut.
+  XsheetViewer *viewer = TApp::instance()->getCurrentXsheetViewer();
+  if (!viewer) return;
+
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
   TKeyframeData *data = new TKeyframeData();
   data->setKeyframes(positions, xsh);
 
   TUndoManager::manager()->beginBlock();
 
-  XsheetViewer *viewer = TApp::instance()->getCurrentXsheetViewer();
   TKeyframeSelection *selection = viewer->getKeyframeSelection();
   selection->selectNone();
 

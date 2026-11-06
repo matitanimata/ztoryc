@@ -2136,7 +2136,8 @@ public:
         TApp::instance()->getCurrentSelection()->getSelection());
     TXsheet *xsh          = TApp::instance()->getCurrentXsheet()->getXsheet();
     XsheetViewer *xviewer = TApp::instance()->getCurrentXsheetViewer();
-    int mc                = xviewer->getMenuColumnTarget();
+    // Null until the mouse has entered a timeline; the command has a shortcut.
+    int mc                = xviewer ? xviewer->getMenuColumnTarget() : -2;
     int cc =
         mc >= -1 ? mc : TApp::instance()->getCurrentColumn()->getColumnIndex();
     bool sound_changed    = false;
