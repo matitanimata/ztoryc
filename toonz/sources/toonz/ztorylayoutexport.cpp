@@ -50,7 +50,12 @@
 #include "toonz/txshsimplelevel.h"
 #include "toonz/tstageobjecttree.h"
 #include "toonzqt/gutil.h"
+#include "ext/plasticskeletondeformation.h"
+#include "tfx.h"
 #include "trasterimage.h"
+#include "tvectorimage.h"
+#include "tvectorrenderdata.h"
+#include "tofflinegl.h"
 #include "ttoonzimage.h"
 #include "trop.h"
 #include "toutputproperties.h"
@@ -185,11 +190,23 @@ bool renderRange(ToonzScene *scene, int r0, int r1, int ownCol, TXsheet *sub,
   QTimer timeout;
   timeout.setSingleShot(true);
   QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+  // A mask or an alpha-locked column renders nothing on its own: it only acts
+  // on another column. Its image is the drawing itself, for whoever rebuilds
+  // the shot.
+  TXshColumn *kept = sub && subKeep >= 0 ? sub->getColumn(subKeep) : nullptr;
+  const bool keptMask   = kept && kept->isMask();
+  const bool keptLocked = kept && kept->isAlphaLocked();
+  if (keptMask) kept->setIsMask(false);
+  if (keptLocked) kept->setAlphaLocked(false);
   CommandManager::instance()->execute(MI_Render);
   for (TXshColumn *column : hidden) column->setPreviewVisible(true);
   timeout.start(10 * 60 * 1000);
   loop.exec();
   QObject::disconnect(conn);
+  // Only now: the column's fx asks whether it is a mask while it computes, in
+  // the render, after MI_Render has returned (tcolumnfx.cpp).
+  if (keptMask) kept->setIsMask(true);
+  if (keptLocked) kept->setAlphaLocked(true);
 
   const QStringList made =
       QDir(fi.absolutePath()).entryList({stem + "*"}, QDir::Files);
@@ -262,12 +279,38 @@ QImage fieldGuide(int w, int h) {
 // A drawing as an image (top row first) and the affine that places it in the
 // stage: its pixel grid, origin at the raster's centre and y up, through the
 // level's dpi and the column's placement — how Tahoma places it.
-bool drawingInStage(TXsheet *sub, int col, int row, QImage &img, TAffine &aff,
-                    int &lx, int &ly) {
+bool drawingInStage(TXsheet *sub, int col, int row, double vectorScale,
+                    QImage &img, TAffine &aff, int &lx, int &ly) {
   const TXshCell cell = sub->getCell(row, col);
   TXshSimpleLevel *sl = cell.getSimpleLevel();
   if (!sl) return false;
   TImageP ip = sl->getFrame(cell.getFrameId(), false);
+  // A vector drawing has no pixels of its own: it is drawn at the resolution of
+  // the canvas (vectorScale, pixels per stage unit), on the box around it.
+  if (TVectorImageP vi = ip) {
+    TRectD box = vi->getBBox();
+    if (box.x0 >= box.x1 || box.y0 >= box.y1 || vectorScale <= 0) return false;
+    const double longest = qMax(box.getLx(), box.getLy()) * vectorScale;
+    const double scale =
+        longest > 16000 ? vectorScale * 16000 / longest : vectorScale;
+    box = TScale(scale) * box;
+    const TRect r(tfloor(box.x0) - 2, tfloor(box.y0) - 2, tceil(box.x1) + 1,
+                  tceil(box.y1) + 1);
+    TOfflineGL gl(r.getSize());
+    gl.makeCurrent();
+    const TVectorRenderData rd(TTranslation(-convert(r.getP00())) * TScale(scale),
+                               TRect(r.getSize()), vi->getPalette(), 0, true, true);
+    gl.draw(vi, rd, false);
+    TRaster32P out = gl.getRaster();
+    gl.doneCurrent();
+    if (!out) return false;
+    lx  = out->getLx();
+    ly  = out->getLy();
+    img = rasterToQImage(out, true, true).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    aff = sub->getPlacement(TStageObjectId::ColumnId(col), row) * TScale(1.0 / scale) *
+          TTranslation(convert(r.getP00()) + TPointD(lx / 2.0, ly / 2.0));
+    return true;
+  }
   TRasterP ras;
   if (TToonzImageP ti = ip) {
     TRasterCM32P cm = ti->getRaster();
@@ -279,13 +322,26 @@ bool drawingInStage(TXsheet *sub, int col, int row, QImage &img, TAffine &aff,
   } else if (TRasterImageP ri = ip) {
     ras = ri->getRaster();
   }
-  if (!ras) return false;  // vector, mesh: not yet
+  if (!ras) return false;  // mesh, sub-scene: not yet
   lx  = ras->getLx();
   ly  = ras->getLy();
   img = rasterToQImage(ras, true, true).convertToFormat(QImage::Format_ARGB32_Premultiplied);
   aff = sub->getPlacement(TStageObjectId::ColumnId(col), row) *
         getDpiAffine(sl, cell.getFrameId());
   return true;
+}
+
+// What the file on disk cannot show as the render does: a sub-scene, a rig that
+// deforms the drawing, an FX on the column, anything without a drawing of its
+// own. These come from the column's render.
+bool needsColumnRender(TXsheet *sub, int col, int row) {
+  const TXshCell cell = sub->getCell(row, col);
+  if (!cell.getSimpleLevel()) return true;
+  if (sub->getStageObject(TStageObjectId::ColumnId(col))->getPlasticSkeletonDeformation())
+    return true;
+  TXshColumn *column = sub->getColumn(col);
+  TFx *fx            = column ? column->getFx() : nullptr;
+  return fx && fx->getOutputConnectionCount() > 0;
 }
 
 struct StageCanvas {
@@ -351,6 +407,8 @@ struct Column {
   int index = 0;
   QString name, folder;  // «02_cupido»
   QVector<Pose> poses;
+  bool mask = false, maskInverted = false;
+  QStringList maskedBy;  // folders of the columns that clip this one
 };
 
 // The columns as tracks (column 1 lowest) and every drawing as a clip, on a
@@ -362,7 +420,9 @@ void writeFcpxml(const QString &path, const QString &shotName,
                     .arg(fcpTime(1, fps)).arg(w).arg(h);
   QString clips;
   int n = 2;
-  for (int lane = 0; lane < cols.size(); lane++)
+  for (int lane = 0; lane < cols.size(); lane++) {
+    // A mask as a track would cover what it should clip: the manifest says it.
+    if (cols[lane].mask) continue;
     for (const Pose &p : cols[lane].poses) {
       const QString id = QString("r%1").arg(n++);
       res += QString("    <asset id=\"%1\" name=\"%2\" src=\"%3\" start=\"0s\" duration=\"0s\" hasVideo=\"1\" format=\"r1\"/>\n")
@@ -371,6 +431,7 @@ void writeFcpxml(const QString &path, const QString &shotName,
       clips += QString("            <video ref=\"%1\" lane=\"%2\" offset=\"%3\" duration=\"%4\" start=\"0s\"/>\n")
                    .arg(id).arg(lane + 1).arg(fcpTime(p.start - 1, fps)).arg(fcpTime(p.duration, fps));
     }
+  }
   const QString total = fcpTime(frames, fps);
   QFile f(path);
   if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
@@ -603,6 +664,8 @@ QString StoryboardPanel::exportShotLayout(int si, const QString &root,
       if (!isPictureColumn(column) || !column->isPreviewVisible()) continue;
       Column cd;
       cd.index = c;
+      cd.mask         = column->isMask();
+      cd.maskInverted = column->isInvertedMask();
       cd.name  = QString::fromStdString(
           sub->getStageObject(TStageObjectId::ColumnId(c))->getName());
       if (cd.name == QString("Col%1").arg(c + 1))  // unnamed: the level's name
@@ -629,6 +692,18 @@ QString StoryboardPanel::exportShotLayout(int si, const QString &root,
       }
       cols << cd;
     }
+
+  // Who clips whom, while every column is still visible: the renders below hide
+  // them, and a column comes out whole.
+  for (Column &cd : cols) {
+    TXshColumn *column = sub->getColumn(cd.index);
+    for (const Pose &p : cd.poses)
+      for (TXshColumn *maskColumn : column->getColumnMasks(p.start - 1))
+        for (const Column &other : cols)
+          if (&other != &cd && sub->getColumn(other.index) == maskColumn &&
+              !cd.maskedBy.contains(other.folder))
+            cd.maskedBy << other.folder;
+  }
 
   if (opt.layers || opt.psdMode == 2)
     for (const Column &cd : cols) {
@@ -786,6 +861,11 @@ QString StoryboardPanel::exportShotLayout(int si, const QString &root,
     o["column"] = cd.index + 1;
     o["name"]   = cd.name;
     o["folder"] = cd.folder;
+    if (cd.mask) {
+      o["mask"]         = true;
+      o["maskInverted"] = cd.maskInverted;
+    }
+    if (!cd.maskedBy.isEmpty()) o["maskedBy"] = QJsonArray::fromStringList(cd.maskedBy);
     QJsonArray poses;
     for (const Pose &p : cd.poses) {
       QJsonObject q;
@@ -850,8 +930,28 @@ QString StoryboardPanel::exportShotLayout(int si, const QString &root,
       for (const Pose &p : cols[k].poses) {
         Placed pl;
         pl.name = cols[k].poses.size() > 1 ? QFileInfo(p.file).completeBaseName() : cols[k].folder;
-        if (!drawingInStage(sub, cols[k].index, p.start - 1, pl.img, pl.aff, pl.lx, pl.ly)) {
-          if (warnings) *warnings << tr("%1: not a raster drawing, left out of the PSD").arg(pl.name);
+        // Everything the render shows goes in the PSD: whole drawings where the
+        // file says it all, otherwise the column's render, as the camera frames
+        // it, placed where the camera is.
+        bool placedOk = !needsColumnRender(sub, cols[k].index, p.start - 1) &&
+                        drawingInStage(sub, cols[k].index, p.start - 1,
+                                       minCamW > 0 ? res.lx / minCamW : 1, pl.img,
+                                       pl.aff, pl.lx, pl.ly);
+        if (!placedOk) {
+          const QImage rendered(dir + "/" + p.file);
+          if (!rendered.isNull()) {
+            const TStageObjectId camId = sub->getStageObjectTree()->getCurrentCameraId();
+            const TDimensionD size     = sub->getStageObject(camId)->getCamera()->getSize();
+            pl.img = rendered.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            pl.lx  = rendered.width();
+            pl.ly  = rendered.height();
+            pl.aff = sub->getPlacement(camId, p.start - 1) *
+                     TScale(size.lx * Stage::inch / pl.lx, size.ly * Stage::inch / pl.ly);
+            placedOk = true;
+          }
+        }
+        if (!placedOk) {
+          if (warnings) *warnings << tr("%1: not rendered, left out of the PSD").arg(pl.name);
           continue;
         }
         for (const TPointD &q : {TPointD(-pl.lx / 2.0, pl.ly / 2.0), TPointD(pl.lx / 2.0, pl.ly / 2.0),
@@ -898,14 +998,16 @@ QString StoryboardPanel::exportShotLayout(int si, const QString &root,
         pt.setTransform(cv.transform(pl.aff, pl.lx, pl.ly));
         pt.drawImage(0, 0, pl.img);
         pt.end();
-        g.layers << ZtoryPsdLayer{pl.name, layer, true};
+        // A mask is there to be used, not to cover the drawings: off by default.
+        g.layers << ZtoryPsdLayer{cols[k].mask ? pl.name + " (mask)" : pl.name, layer,
+                                  !cols[k].mask};
       }
       if (!g.layers.isEmpty()) groups << g;
     }
     {  // the flattened picture: every column's first drawing, bottom up
       QPainter pm(&merged);
       for (int k = 0; k < cols.size(); k++)
-        if (!placed[k].isEmpty()) {
+        if (!placed[k].isEmpty() && !cols[k].mask) {
           pm.setTransform(cv.transform(placed[k][0].aff, placed[k][0].lx, placed[k][0].ly));
           pm.drawImage(0, 0, placed[k][0].img);
         }
