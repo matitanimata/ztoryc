@@ -1,3 +1,22 @@
+## [2026-11-07, dopo la 0.20.0] — Export Layout: nomi dei disegni, vettoriali e maschere nel PSD
+
+### Fixed
+- **Export Layout, disegni delle colonne con nomi temporanei** su ogni shot tranne il primo (`241b6f742`): il nome
+  temporaneo con un numero in fondo veniva letto come fotogramma. Il primo tentativo (`5a56af1f0`, nella 0.20.0) non
+  bastava. Provato su sh020. Nella 0.20.0 resta tra i limiti noti.
+- **Maschera esportata vuota:** ora esce come forma (`aac070f5b`); il flag resta spento fino alla fine del render.
+
+### Added
+- **PSD a colonne con tutto quello che il render mostra** (`aac070f5b`): vettoriali disegnati alla risoluzione del PSD;
+  sotto-scene, rig Plastic e colonne con FX dal render della colonna (NON ancora eseguito); maschera come livello spento,
+  fuori dall'FCPXML, `mask`/`maskInverted`/`maskedBy` nel manifest.
+
+### Notes
+- **0.20.0 pubblicata** (nove pacchetti, firma e minos verificati sui DMG). Niente 0.20.1 per ora (Franco): Export
+  Layout lo usa solo lui. Limite noto aggiunto alle note.
+- Le note della 0.20.0 sono state riscritte dal confronto col tag: la prima versione partiva dal lavoro recente e
+  dimenticava le cose del 25/10.
+
 ## [2026-11-07] — 0.20.0: workflow AI, cambio di workflow su Kitsu, uuid doppi, crash del tasto O, gestore crash
 
 ### Added

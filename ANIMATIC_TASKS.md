@@ -162,71 +162,26 @@ degli status).
 
 ## 🎬 Ztoryc — storyboard, animatic, thumbs
 
-## 🆕 Da provare il 06/11 — cambio di workflow e Kitsu (NON ANCORA COMMITTATO)
+## 🆕 Aperti dopo la 0.20.0 (07/11)
 
-Modifiche nel working tree, nel bundle, **senza commit**: si fa dopo le prove.
-File: `kitsuclient.cpp/.h`, `ztoryproductionpanel.cpp/.h`, `ztorykitsusync.cpp`.
-
-- Il push manda solo i task del workflow attuale (prima sommava quelli vecchi).
-- Al cambio di workflow: task nuovi creati SUBITO, poi domanda sui vecchi:
-  solo i non toccati, tutti (doppia conferma) o lasciarli.
-- Clic destro: «Set workflow (N shots)», «Set type (N assets)»; la cella del nome
-  vale come tutti i task della riga (asset: da due righe in su).
-- Sync asset: crea i tipi di task mancanti, li collega al tipo di asset e alle
-  colonne del progetto.
-
-Prove, su `ZTORYC-AI` (progetto `renameTest`; guardare il titolo):
-1. `sq10/sh020` → altro workflow, SENZA Sync: conteggio dei creati + domanda; ricaricare Kitsu.
-2. `test_asset` su Prop, Sync: colonna e task su Kitsu. Poi cancellare il tipo dal server.
-3. Passate le prove: commit. Poi filorosso: `sh010` ha il workflow «AI»; riscegliendolo
-   crea i tipi AI sul server e propone la pulizia (Layout risulta «toccato», e' WIP).
-
-Aggiunte del 06/11, sempre SENZA commit (tre commit separati: workflow/Kitsu, tecnica AI, crash):
-- Tecnica «AI» (`ztorymodel.cpp`): Storyboard, Layout, AI - setup, Key Animation, Inbetweening,
-  Clean up, Matte, Compositing. Migrazione con `presets=` su `<techniques>`; non scrive sopra
-  una tecnica con lo stesso nome. Prova su `renameTest`: compare una volta sola; cancellata, non torna.
-- filorosso: in `IlFiloRosso 7/production.ztrack` la «AI» e' stata sostituita a mano (Franco, scelta A).
-  Copia in `reference/filorosso_AI_technique_2026-11-06/`. Kitsu non ancora toccato.
-- Crash del tasto O (Set Stop Marker) senza timeline: corretto, candidato upstream scritto. Prova: su
-  `renameTest`, appena aperto e senza passare col mouse su una timeline, premere O.
-- Rapporto del crash (`crashhandler.cpp`, senza commit): prima riga = l'indirizzo che ha fatto il crash, via il
-  trampolino del segnale. Sonda su macOS arm64 ok; Linux mai eseguito. Prova: `kill -SEGV` su Ztoryc aperto su `renameTest`.
-- **Lista per il rilascio 0.20.0 (minor: Auto-stretch, Export Layout, presets=):** collaudi su `renameTest` =
-  tasto O, tecnica AI, cambio workflow senza Sync con le due cancellazioni, selezione multipla, tipo nuovo su asset,
-  recupero+palette, avviso scena senza nome, kill -SEGV. Dal 25/10 e 2/11: blocchi timeline salvati, Reference fuori
-  dall'import, personaggio legato a un foglio, .zmouth per numero di gruppo, Auto-stretch, Assistants senza colonna,
-  Finger tool, nome .fcpxml, Export Layout con panoramica. Linux: memoryShortage e crash handler, sul Dell.
-  Protezione copie del progetto (Franco, 06/11, senza commit): `kitsuLinkFolder` nel tracker; se la cartella e' diversa,
-  chiede prima di Sync, upload clip e cambio workflow; auto-push e anteprime del personaggio non partono. Da provare.
-  Sentinella audio (decisione di Franco, 06/11): spenta nelle build pubblicate, attiva solo se esiste crash/audio_watch.on, gia' creato sul Mac di Franco.
-- **BLOCCANTE per il rilascio: shot con lo stesso uuid nel .ztoryc (06/11).** Filorosso: sh070/sh080, sh110/sh120,
-  sh140/sh150, sh230/sh240; il tracker ne tiene uno per coppia (29 su 33) e i frame in/out su Kitsu sono sfalsati.
-  I doppioni sono GIA' dentro i pacchetti della storyboardista (IlFiloRosso4-7.zip; sh230/sh240 nasce col 6.zip del 2/11),
-  non li crea il cambio di versione sul Mac. In 6 e 7.zip il .tnz e' piu' recente del .ztoryc. La CAUSA CHE LI CREA NON E' TROVATA. Stesso difetto in `filorosso_franx`, `laudate san francesco`, `kitsuTest01`.
-  Riparazione in `StoryboardPanel::repairDuplicateShotUuids` (senza commit): l'uuid resta allo shot nominato nel tracker,
-  l'altro ne riceve uno ricavato da file+etichetta; `qWarning` «shared its uuid». PROVATA da Claude il 06/11 sulla copia
-  `reference/test_projects/filorosso_uuid_2026-11-06` (senza Kitsu): 33 shot, nessun doppio, 3076 fotogrammi come la scena.
-  Prima prova: l'uuid andava allo shot sbagliato perche' il DB si carica dopo: corretto. Filorosso vero riparato e sincronizzato il 06/11: 33 shot allineati a Kitsu, 3076 fotogrammi.
-  Non riprodotto il doppione sulla versione attuale: in background Add/Paste rifiutati.
-
-### 🆕 Aperti dopo la sessione del 04/11 (groundzero: crash handler, file compressi, recupero)
-
-- **Collaudi da fare** (installati, non provati da Franco):
-  - **Recupero e palette raster**: su una COPIA (`reference/test_projects/scenetest`), lanciato con
-    `ZTORYC_RECOVERY_SECONDS=20`: livello raster, cambiare il colore di uno stile, mezzo minuto. Il
-    `Raster_Drawing_Palette.tpl` del progetto NON deve cambiare data; nella cartella di recupero c'e'
-    `levels/fullcolor/`. Poi chiusura forzata, riapertura, Recover: il colore torna.
-  - **Avviso scena senza nome**: scena nuova senza salvarla, lavorarci due giri del timer (con 20 s: un
-    minuto): compare una volta «This scene has no name yet...», «Save Scene As...» apre il dialogo.
-  - **Gestore dei crash nuovo** (46a647a03): il dialogo del crash precedente esce alla riapertura;
-    il percorso Linux non e' mai stato eseguito.
-- **Scene senza nome nel recupero: SOLO L'AVVISO** (Franco, 04/11). Il recupero vero voleva dire dividere
-  `ToonzScene::save` (come il `saveCopy` di groundzero) e un ripristino a parte: non per un caso che
-  non dovrebbe capitare.
+- **NIENTE 0.20.1 per ora (Franco, 07/11):** Export Layout lo usa solo lui. Le correzioni escono col prossimo rilascio,
+  e allora si toglie il limite noto dalle note della 0.20.0.
+  - `241b6f742`: nome temporaneo senza numeri, disegni delle colonne giusti su ogni shot (provato su sh020).
+  - `aac070f5b`: vettoriali nel PSD a colonne; maschera esportata come forma (spenta nel PSD, fuori dall'FCPXML,
+    `mask`/`maskInverted`/`maskedBy` nel manifest) — provato su sh030. **Sotto-scene, rig Plastic e colonne con FX**
+    vanno nel PSD dal render della colonna: MAI ESEGUITO, serve una scena di prova (Franco dice dove ce n'e' una).
+- **Shot con lo stesso uuid nel .ztoryc:** riparati all'apertura (`0e62ce7ac`), filorosso riparato e sincronizzato.
+  La CAUSA non e' trovata: erano gia' nei pacchetti salvati con la 0.15 dalla storyboardista. Da chiederle come ha
+  aggiunto i 7 shot fra il 27/10 e il 2/11, e farla aggiornare.
+- **test_asset** (tipo di task nuovo su un asset, Sync) mai provato su Kitsu.
+- **Linux:** rapporto del crash e memoryShortage mai eseguiti (Dell fuori uso). Windows: novita' mai provate.
+- **groundzero #133:** risposta a JParks123 («windows very slow») scritta, NON pubblicata: aspetta il si' di Franco.
+- La cartella di Export Layout di Franco e' rimasta su `reference/test_projects/filorosso_uuid_2026-11-06/out_prova`:
+  rimettere `04_animazione`.
 
 ### 🆕 Aperti dopo la sessione del 25/10 (Assistants, Kitsu fra episodi, rinomini, sentinella audio)
 
-- **Fuori sync dell'audio sull'animatic (Franco, 25/10): SENTINELLA ATTIVA.** `ztoryaudiowatch.cpp` scrive in
+- **Fuori sync dell'audio sull'animatic (Franco, 25/10): SENTINELLA ATTIVA solo dove esiste `crash/audio_watch.on` (dal 06/11, `4558286d8`; c'e' sul Mac di Franco).** `ztoryaudiowatch.cpp` scrive in
   `crash/audio_watch.log` ogni spostamento di un clip audio dello xsheet principale, con l'ultima operazione e lo
   stack. Al prossimo fuori sync Franco dice l'ora: si legge il log, si trova la causa, poi la sentinella SI TOGLIE.
   Sospetti letti dal codice e non verificati: l'annullamento di una modifica del Board rimette la foto dell'audio
