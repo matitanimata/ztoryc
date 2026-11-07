@@ -142,11 +142,16 @@ bool renderRange(ToonzScene *scene, int r0, int r1, int ownCol, TXsheet *sub,
   }
   TOutputProperties *prop = scene->getProperties()->getOutputProperties();
   const QFileInfo fi(out);
-  // No dot: «name.0001.png» reads as frame 1 of the level «name», the render
-  // writes it under the frame of the MAIN xsheet (name.0406.png), and the search
-  // below finds nothing. Only a shot starting at frame 1 got away with it.
-  QString stem = "ztorylayout_tmp_" + fi.completeBaseName();
-  stem.replace('.', '-');
+  // A fixed name, with no digits. Any number at its end («name.0001», also
+  // «name-0001») reads as a frame of the level: the render writes it under the
+  // frame of the MAIN xsheet (name-0406.png) and the search below finds nothing.
+  // Only a shot starting at frame 1 got away with it.
+  const QString stem = "ztorylayouttmp";
+  {
+    QDir folder(fi.absolutePath());  // what an interrupted export left
+    for (const QString &old : folder.entryList({stem + "*"}, QDir::Files))
+      folder.remove(old);
+  }
   prop->setPath(TFilePath(fi.absolutePath().toStdWString()) +
                 TFilePath((stem + "." + fi.suffix()).toStdWString()));
   prop->setRange(r0, r1, 1);
@@ -187,7 +192,7 @@ bool renderRange(ToonzScene *scene, int r0, int r1, int ownCol, TXsheet *sub,
   QObject::disconnect(conn);
 
   const QStringList made =
-      QDir(fi.absolutePath()).entryList({stem + ".*"}, QDir::Files);
+      QDir(fi.absolutePath()).entryList({stem + "*"}, QDir::Files);
   if (made.isEmpty()) return false;
   QFile::remove(out);
   return QFile::rename(fi.absolutePath() + "/" + made.first(), out);
