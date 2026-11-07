@@ -175,7 +175,8 @@ degli status).
   aggiunto i 7 shot fra il 27/10 e il 2/11, e farla aggiornare.
 - **test_asset** (tipo di task nuovo su un asset, Sync) mai provato su Kitsu.
 - **Linux:** rapporto del crash e memoryShortage mai eseguiti (Dell fuori uso). Windows: novita' mai provate.
-- **groundzero #133:** risposta a JParks123 («windows very slow») scritta, NON pubblicata: aspetta il si' di Franco.
+- **groundzero #133:** al commento di JParks123 («windows very slow») NON si risponde (Franco, 07/11): la PR non tocca
+  Windows e la domanda e' per Rodney. Si riprende solo se qualcuno chiede a noi.
 - La cartella di Export Layout di Franco e' rimasta su `reference/test_projects/filorosso_uuid_2026-11-06/out_prova`:
   rimettere `04_animazione`.
 
