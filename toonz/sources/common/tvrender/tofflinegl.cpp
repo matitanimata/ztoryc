@@ -64,6 +64,9 @@ void TOfflineGL::setContextManager(TGLContextManager *contextManager) {
 
 #ifdef _WIN32
 
+#include <QCoreApplication>
+#include <QThread>
+
 namespace {
 // We found out that our implementation of win32 opengl contexts can be someway
 // not thread-safe. Deadlocks and errors could happen for wgl* and GDI functions
@@ -330,10 +333,31 @@ public:
 // compiled on every platform, so Windows can use the same path. The legacy DIB
 // implementation stays reachable via ZTORYC_LEGACY_OFFLINEGL for the case where
 // some driver/RDP/headless configuration cannot create an offscreen surface.
+//
+// BUT only on the GUI thread (2026-11-12). QtOfflineGL creates a
+// QOffscreenSurface, which on Windows is a hidden QWindow and may be created
+// only on the GUI thread. TLevelColumnFx::doCompute builds a TOfflineGL for
+// vector levels on TRenderer's worker threads: the Export Animatic of a scene
+// with vector columns died with an access violation in QWindowPrivate::create,
+// and ZTORYC_LEGACY_OFFLINEGL made the same export finish. So any other thread
+// takes the WIN32 DIB again. The price: IconGenerator renders on a thread of its
+// own, so scene icons and Board/StoryStrip thumbnails go back to the software
+// rasterizer too, until the surface is created on the GUI thread for them.
+//
+// A WIN32 context can share display lists only with another WIN32 one
+// (createContext dynamic_casts the shared Imp before wglShareLists): with a
+// shared context of another kind it is created without sharing. Nothing passes
+// a shared context today; QtOfflineGL ignores the parameter.
 static std::shared_ptr<TOfflineGL::Imp> defaultOfflineGLGenerator(
     const TDimension &dim, std::shared_ptr<TOfflineGL::Imp> shared) {
   static const bool legacy = ::getenv("ZTORYC_LEGACY_OFFLINEGL") != nullptr;
-  if (legacy) return std::make_shared<WIN32Implementation>(dim, shared);
+  const QCoreApplication *app = QCoreApplication::instance();
+  const bool guiThread = app && QThread::currentThread() == app->thread();
+  if (legacy || !guiThread) {
+    if (shared && !dynamic_cast<const WIN32Implementation *>(shared.get()))
+      shared.reset();
+    return std::make_shared<WIN32Implementation>(dim, shared);
+  }
   return std::make_shared<QtOfflineGL>(dim, shared);
 }
 
