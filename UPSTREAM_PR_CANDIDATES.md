@@ -674,6 +674,15 @@ not portable.
 **Commit:** `447a97b03` and the update undo right after it (2026-11-19). The undo keeps the xsheet it was made in, so ⌘Z after leaving a sub-xsheet acts on the right one; parents are restored before removing columns and set after inserting them (indices are the final ones). Tested by hand on Ztoryc: single and multiple columns, undo/redo, Plastic tool active, update case still clearing.
 **Verified on stock:** no. The same `reset()` is in Tahoma2D `upstream/master` (`0ca33cb8a`) and in OpenToonz `master`. For both.
 
+### macOS with a system SuperLU compiles against the bundled 4.1 headers
+
+**Symptom:** none visible yet — it is latent. On macOS with `WITH_SYSTEM_SUPERLU=ON` (needed on Apple Silicon, where the bundled `libsuperlu_4.1.a` is `i386 x86_64` only), the build links Homebrew's SuperLU 7 but may compile `tlin_superlu_wrap.cpp` against the 4.1 headers. Those declare `dgstrf()` without the `GlobalLU_t` argument (added in 5.0): the call would compile and then run with the wrong signature, inside Plastic's mesh deformation.
+**Where:** `toonz/sources/tnzext/CMakeLists.txt` (~line 98): `if(BUILD_ENV_MSVC OR BUILD_ENV_APPLE)` always adds `thirdparty/superlu/SuperLU_4.1/SRC` on Apple. `toonz/sources/CMakeLists.txt` (Apple branch, ~line 431 upstream): `set(SUPERLU_INCLUDE_DIR ${SUPERLU_INCLUDE_DIR}/superlu)` — Homebrew's SuperLU 7 keeps its headers flat in `include/`, so that path does not exist.
+**Root cause:** the Apple include setup assumes the bundled library. With a system one, the right headers win only if `/opt/homebrew/include` happens to come earlier on the include path, through some other package.
+**Fix:** the 4.1 `SRC` include only when `NOT WITH_SYSTEM_SUPERLU`; `/superlu` appended only when `${SUPERLU_INCLUDE_DIR}/superlu/slu_ddefs.h` exists. The wrapper already handles both APIs through `SUPERLU_MAJOR_VERSION`.
+**Commit:** `746ef3d61` (2026-11-19). Checked on the compile command (no `SuperLU_4.1` left) and by hand: Create Mesh and Plastic deformation on Apple Silicon.
+**Verified on stock:** no — read on `upstream/master`, which defaults to the bundled SuperLU on Apple and so does not hit it unless built for arm64 with the system library. The same lines are in groundzero (OpenToonz fork), where the Apple Silicon draft PR #176 carries the same fix.
+
 ---
 
 ### 2.2 — Features that can go upstream as they are
