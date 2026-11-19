@@ -960,6 +960,20 @@ Milestone:
 
 ## 🦴 ZtoRig / personaggio
 
+- **NEW, IDEA (Franco, 2026-11-19) — un MCP dentro Ztoryc, perche' Claude possa usare rig e layout.** Non iniziato.
+  Prima si guarda come lo fa groundzero: un maintainer sta mettendo un MCP dentro OpenToonz, ed e' per questo che
+  ha chiesto di aspettare con la build Apple Silicon (PR #176).
+  - **Rig di un personaggio di Puppetoonz:** le parti hanno gia' un nome, quindi le articolazioni si ricavano da
+    dove si toccano. Poi scheletro Plastic e mesh, un render di prova e la correzione. Lavoro a regole: adatto.
+  - **Layout dallo storyboard:** leggere il pannello del Board, mettere il personaggio nella posa schizzata e
+    posizionare BG, personaggi e props. Per confrontare si mette il pannello semitrasparente sopra il render.
+    Il risultato e' un layout grezzo, che Franco rifinisce.
+  - **Animazione:** solo la parte meccanica, cioe' lip sync dal `.zmouth`, pose chiave descritte a parole,
+    cicli e blocking. La recitazione resta a Franco: Claude vede fotogrammi fermi, non il movimento.
+  - **Comandi minimi da esporre:** leggere scena e colonne; render di un fotogramma; posizione, scala e rotazione
+    di colonne e pegbar; ossa e mesh Plastic; angoli delle ossa a un fotogramma (con la chiave); leggere i
+    pannelli del Board.
+
 - **Proxy 3D per il giro di testa — esperimento PARCHEGGIATO, da riprendere (Franco, 2026-11-02: «non ce lo
   dimentichiamo»).** Idea: agganciare il disegno vero a una forma di riferimento (un ovale) per far girare la testa
   meglio dell'intercalazione 2D. Prova del 2026-08-03 in `reference/exp_3dproxy/` (`RISULTATI.md`: lo scarto del 2D

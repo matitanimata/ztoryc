@@ -26,6 +26,8 @@
 - Franco manda a Slam Rockwell il link della 0.20.1 per la prova su Windows.
 - **groundzero, build Apple Silicon:** PR in bozza #176 (SuperLU, `-Di386` fuori da OpenEXR, flex 2.6.4). IN PAUSA
   su richiesta di un maintainer finche' non entra il loro MCP; Franco aspetta il via libera.
+- **Idea: MCP dentro Ztoryc** (rig dei personaggi Puppetoonz, layout dallo storyboard, animazione solo meccanica):
+  scritta in ANIMATIC_TASKS, sezione ZtoRig. Prima si guarda quello di groundzero.
 
 ## [2026-11-07, dopo la 0.20.0] — Export Layout: nomi dei disegni, vettoriali e maschere nel PSD
 
