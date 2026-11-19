@@ -834,10 +834,10 @@ void MeshifyPopup::apply() {
   bool undoRegistered = false;
   if (meshifySelection(options, undoRegistered))  // Meshify invocation
   {
-    // Only the plain creation of new mesh columns and levels has an undo.
-    // Updating existing meshes, overwriting an existing mesh level or filling
-    // an existing mesh column still have none: since they modify the xsheet,
-    // they keep CLEARING THE UNDOS stack, as the original code always did.
+    // Creating new mesh columns and levels, and updating existing meshes,
+    // have an undo. Overwriting an existing mesh level or filling an existing
+    // mesh column still have none: since they modify the xsheet, they keep
+    // CLEARING THE UNDOS stack, as the original code always did.
     if (!undoRegistered) TUndoManager::manager()->reset();
     close();
   }
@@ -1258,7 +1258,48 @@ bool createMeshifiedColumns(int r0, int c0, int r1, int c1,
 
 //------------------------------------------------------------------------------
 
-// No undo: always returns false.
+// Undo of a mesh update: the frames of an existing mesh level are replaced,
+// nothing else changes, so undo puts the previous meshes back.
+class UpdateMeshUndo final : public TUndo {
+public:
+  struct Frame {
+    TXshSimpleLevelP m_level;
+    TFrameId m_fid;
+    TImageP m_old, m_new;
+  };
+
+private:
+  std::vector<Frame> m_frames;
+
+  void put(bool old) const {
+    for (const Frame &f : m_frames) {
+      f.m_level->setFrame(f.m_fid, old ? f.m_old : f.m_new);
+      f.m_level->setDirtyFlag(true);
+      IconGenerator::instance()->invalidate(f.m_level.getPointer(), f.m_fid);
+    }
+    TApp *app = TApp::instance();
+    app->getCurrentXsheet()->notifyXsheetChanged();
+    app->getCurrentScene()->setDirtyFlag(true);
+  }
+
+public:
+  UpdateMeshUndo(const std::vector<Frame> &frames) : m_frames(frames) {}
+
+  void undo() const override { put(true); }
+  void redo() const override { put(false); }
+
+  int getSize() const override {
+    return sizeof(*this) + int(m_frames.size()) * 2000;
+  }
+
+  QString getHistoryString() override { return QObject::tr("Update Mesh"); }
+
+  int getHistoryType() override { return HistoryType::Xsheet; }
+};
+
+//------------------------------------------------------------------------------
+
+// Returns true when it registered an undo (see UpdateMeshUndo).
 bool updateMeshifiedColumns(int r0, int c0, int r1, int c1,
                             const MeshifyOptions &options) {
   typedef std::map<std::pair<TXshLevel *, TFrameId>, TXshCell> MeshesMap;
@@ -1308,15 +1349,27 @@ bool updateMeshifiedColumns(int r0, int c0, int r1, int c1,
   // Now, we have to re-meshify the map's former mesh references against the
   // latter textures
 
+  // The previous meshes, for the undo. A frame that cannot be read back
+  // (none in memory nor on disk) cannot be restored: then no undo at all.
+  std::vector<UpdateMeshUndo::Frame> undoFrames;
+  bool undoable = true;
+
   MeshesMap::iterator ct, cEnd(meshToUpdate.end());
   for (ct = meshToUpdate.begin(); ct != cEnd; ++ct) {
     TXshSimpleLevel *ml  = ct->first.first->getSimpleLevel();
     const TFrameId &mFid = ct->first.second;
 
+    TImageP oldImg = ml->getFrame(mFid, false);
     TMeshImageP meshImg = meshify(ct->second, options);
 
     ml->setFrame(mFid, meshImg);
     ml->setDirtyFlag(true);
+
+    if (!oldImg) undoable = false;
+    UpdateMeshUndo::Frame f;
+    f.m_level = ml, f.m_fid = mFid, f.m_old = oldImg,
+    f.m_new = TImageP(meshImg);
+    undoFrames.push_back(f);
   }
 
   // Update icons. Okay, I'm doing this in a separate cycle, because I suspect
@@ -1330,7 +1383,9 @@ bool updateMeshifiedColumns(int r0, int c0, int r1, int c1,
     IconGenerator::instance()->invalidate(
         ct->first.first, ct->first.second);  // Yep, this is still manual...
 
-  return false;
+  if (!undoable || undoFrames.empty()) return false;
+  TUndoManager::manager()->add(new UpdateMeshUndo(undoFrames));
+  return true;
 }
 
 //------------------------------------------------------------------------------
