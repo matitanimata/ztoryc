@@ -47,9 +47,10 @@ find_path(
         ${_header_suffixes}
 )
 
-# Homebrew SuperLU 7+ installs headers to include/superlu/*.h. Only on Apple,
-# toonz/sources/CMakeLists.txt appends "/superlu" to SUPERLU_INCLUDE_DIR; find_path
-# must then yield the parent (e.g. .../include). Linux/BSD use SUPERLU_INCLUDE_DIR as-is.
+# Homebrew's SuperLU 7 keeps its headers flat in include/; some layouts use
+# include/superlu/. Only on Apple, toonz/sources/CMakeLists.txt appends "/superlu"
+# when that subdirectory holds slu_ddefs.h, so find_path must yield the parent
+# (e.g. .../include). Linux/BSD use SUPERLU_INCLUDE_DIR as-is.
 if(WITH_SYSTEM_SUPERLU AND SUPERLU_INCLUDE_DIR AND APPLE)
     if(EXISTS "${SUPERLU_INCLUDE_DIR}/slu_Cnames.h")
         get_filename_component(_superlu_include_leaf "${SUPERLU_INCLUDE_DIR}" NAME)
