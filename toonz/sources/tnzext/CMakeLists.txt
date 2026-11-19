@@ -95,7 +95,10 @@ if(BUILD_ENV_APPLE)
     find_library(ACCE_LIB Accelerate)
 endif()
 
-if(BUILD_ENV_MSVC OR BUILD_ENV_APPLE)
+# A system SuperLU must be compiled against its own headers: the 4.1 headers
+# declare the pre-5.0 dgstrf(), without the GlobalLU_t argument, and calling
+# SuperLU 7 through them is undefined behaviour.
+if(BUILD_ENV_MSVC OR (BUILD_ENV_APPLE AND NOT WITH_SYSTEM_SUPERLU))
     # Warning, this looks wrong,
     # should _only_ use SUPERLU_INCLUDE_DIR, for now do this with Linux.
     include_directories(

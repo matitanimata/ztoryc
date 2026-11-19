@@ -507,7 +507,13 @@ elseif(BUILD_ENV_APPLE)
     find_package(GLEW)
 
     find_package(SuperLU REQUIRED)
-    set(SUPERLU_INCLUDE_DIR ${SUPERLU_INCLUDE_DIR}/superlu)
+    # Point at the directory that really holds slu_ddefs.h: Homebrew's
+    # SuperLU 7 keeps its headers flat in include/, older layouts in
+    # include/superlu/. A path that does not exist leaves the choice of
+    # headers to whatever else is on the include path.
+    if(EXISTS "${SUPERLU_INCLUDE_DIR}/superlu/slu_ddefs.h")
+        set(SUPERLU_INCLUDE_DIR ${SUPERLU_INCLUDE_DIR}/superlu)
+    endif()
     set(SUPERLU_LIB ${SUPERLU_LIBRARY})
     message("SuperLU:" ${SUPERLU_INCLUDE_DIR})
 
