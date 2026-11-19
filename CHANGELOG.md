@@ -1,3 +1,26 @@
+## [2026-11-19] — 0.20.1: crash Windows dell'Export Animatic, undo di Create Mesh
+
+### Fixed
+- **Windows, Export Animatic che chiudeva l'app** (`49ce44bda`, PR #9, segnalato da Slam Rockwell con il log): sui
+  thread di lavoro torna l'OpenGL offline WIN32; QtOfflineGL resta solo sul thread della GUI. `ZTORYC_LEGACY_OFFLINEGL`
+  forza WIN32 ovunque. MAI provato su Windows vero.
+- **Create Mesh senza undo, e svuotava tutta la cronologia** (`447a97b03`, `44e25880c`): ora creazione e aggiornamento
+  di una mesh si annullano e si rifanno, anche dopo essere usciti dallo shot. Resta il reset di stock solo quando si
+  sovrascrive un livello mesh esistente. Collaudato da Franco su Mac.
+
+### Release
+- **0.20.1 pubblicata** (`58c34b73e`): nove pacchetti, note bilingui, DMG Apple Silicon verificato (codesign exit=0).
+  Il job Apple Silicon e' stato annullato da GitHub per mancanza di runner e rilanciato con `gh run rerun --failed`.
+  Contiene anche le correzioni di Export Layout del 07/11 (nomi temporanei, vettoriali e maschere nel PSD).
+
+### Upstream candidates
+- **Create Mesh senza undo**: lo stesso `TUndoManager::manager()->reset()` c'e' in Tahoma2D e OpenToonz. Scritto in
+  `UPSTREAM_PR_CANDIDATES.md`; non verificato su stock.
+
+### Notes
+- Review del 19/11: nessun bloccante; i minori di `ztorylayoutexport.cpp` sono in ANIMATIC_TASKS.
+- Franco manda a Slam Rockwell il link della 0.20.1 per la prova su Windows.
+
 ## [2026-11-07, dopo la 0.20.0] — Export Layout: nomi dei disegni, vettoriali e maschere nel PSD
 
 ### Fixed

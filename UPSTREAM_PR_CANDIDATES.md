@@ -104,6 +104,7 @@ not portable.
 3. ✅ **CRASH dragging the "Drawing #" handle of the Animate tool** — `tnztools/edittool.cpp`. Single-channel tool used the two-channel API → OOB heap write. Root cause found via lldb, reproduced on stock (upstream feature PR #2124).
 4. ⚠️ **`TUndoManager` use-after-free on reentrant `add()`** — `tcore/tundo.cpp`. `doAdd()`/`beginBlock()` truncate the redo branch without protecting the object whose `undo()`/`redo()` is running. Code identical upstream, but no stock repro (our trigger was Ztoryc code) → present as hardening. `c0e7c92bf`.
 5. ❓ **`lzoCompress`/`lzodecompress` deadlock on macOS/Linux** — `tcodec.cpp`. `QProcess::start()` forks; a signal during `malloc_fork_prepare` deadlocks (silent hang on .tlv save). Fix: block signals around `process.start()`. Affects all Mac/Linux users — high priority. `140d790ac`.
+   > **groundzero, 2026-11-04: not needed there.** The deadlock needs a crash handler that allocates; groundzero PR #13 made its handler async-signal-safe (`write`/`open` only), so the mechanism is gone. Ztoryc still has the allocating handler: porting groundzero #13 to Ztoryc is the real fix.
 6. ❓ **ImageManager cache leak after render** — `imagemanager.cpp`, `rendercommand.cpp`. All frames stay cached (~10 GB on 350-frame scenes). `be20f9512`.
 7. ✅ **TasksViewer crash on room switch** — `tasksviewer.cpp`. Empty destructor leaves a dangling pointer in `BatchesController`. Verified and fixed — ready for PR. `1569cf2cc`.
 8. ❓ **`requireColumnSoundTrack` allocates RAM proportional to audio duration** — 2h audio → ~1.3 GB per column. Cap `toFrame` to the video frame count. `69a8b9043`.
@@ -113,6 +114,7 @@ not portable.
 12. ❓ **Peg column width reset after delete** — `columnfan.cpp` (1 line). The column after a deleted peg inherits the reduced width. `b8ddea829`.
 13. ❓ **PSD first layer lost when loaded as sub-scene** — `txshsimplelevel.cpp`, `tiio_psd.cpp`. Affinity 16-bit PSD, empty Pascal names, group mode: `##`→`#` replace corrupts the path. `5b8eeb3c1`.
 13b. ❓ **CRASH compressing a non-raster image in `TImageCache`** — `common/tcache/timagecache.cpp`. The compressed and on-disk cache items only build raster / Toonz raster images; for anything else `UncompressedOnDiskCacheItem` dereferences a null raster. `m_cantCompress` lists vectors and meshes only, and `get()` resets it to false for every image, so any other `TImage` (OpenToonz's `TMetaImage`, i.e. an Assistants level) crashes as soon as `doCompress()` runs under memory pressure. Fix: `isCompressible()` (raster or Toonz raster) checked at the three compression points and in `add()`. `23d7138c2`. Reproduced with a probe against the real cache (old: SIGSEGV, new: survives) — *on Ztoryc code; stock has the same lines, not reproduced on stock*. Note: on Windows `memoryShortage()` always worked, on macOS/Linux only after #17 — fixing #17 upstream makes this crash reachable there too.
+   > **groundzero, 2026-11-04: already fixed there** by OpenToonz PR #6980 (`c082f243`, Rodney, Aug 2026): `add()` sets `m_cantCompress = !raster && !toonzRaster`, and no path resets it for a non-raster item. Do not propose.
 
 #### 🟠 Medium
 
@@ -120,6 +122,7 @@ not portable.
 15. ❓ **Mesh sub-scenes saved to the wrong folder** — `meshifypopup.cpp`.
 16. ❓ **New Scene missing the save dialog** — `iocommand.cpp`.
 17. ❓ **`TSystem::memoryShortage()` always returns false on macOS/Linux** — `tsystempd.cpp`. A no-op (`return false`) → `TImageCache` never auto-evicts even near full RAM. Fix: `host_statistics64` (macOS) / `/proc/meminfo` (Linux). Affects all Mac/Linux users — high priority. `b79ba7d32`.
+   > **groundzero, 2026-11-04: ported** on branch `fix/memory-shortage-macos-linux` (commit `5462fb53`, not pushed yet). ⚠️ Porting it showed a bug in OUR Linux branch: the loop stops at `MemFree`, which comes before `MemAvailable` in `/proc/meminfo`, so it always uses MemFree and reports a shortage on almost every machine (probe: MemAvailable 9 GB, MemFree 500 MB → shortage). The groundzero version reads MemAvailable.
 18. ❓ **macOS "Unable to create a new document" on launch** — `BundleInfo.plist.in` (`NSQuitAlwaysKeepsWindows`, `NSApplicationSupportsSecureRestorableState`). `a7a822704`.
 19. ❓ **macOS CI deployment target** — needs `-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0` or the binary embeds the runner's `minos`. `940e895bc`.
 20. ❓ **AutoFill undo/redo (brush)** *(⚠️ same dependency as #15 for OpenToonz.)* — the brush AutoFill wasn't undoable and refilled existing shapes; dedicated `AutoFillUndo` (before/after tiles) grouped with the stroke, and "new shapes only". `25ad78f53`, `toonzrasterbrushtool.cpp`. *(bug fix side of the AutoFill work; the color-picker part is a feature — see Part 2)*
@@ -630,6 +633,46 @@ not portable.
   terminates, fixed code stores the value. In OpenToonz the stock assistants
   have no option with a range starting above 0, so it may only bite new
   options — verify on stock before proposing.)* For OpenToonz.
+
+- **A damaged compressed file hangs the reader forever** —
+  `common/tstream/tstream.cpp`, `lz4decompress()` and `TIStream::TIStream`
+  (stock OpenToonz and Tahoma2D, same code). Every `TIStream` on a file that
+  starts with `T` takes the LZ4 path: today that is the Plastic `.mesh` files
+  (`tiio_mesh.cpp:41` writes them compressed) and any scene saved compressed.
+  A header that declares a decompressed size smaller than the data makes
+  `LZ4F_decompress` return with nothing read and nothing written, and the
+  `while (in_len)` loop never ends. The same constructor also reads the sizes
+  into uninitialised variables when the header is cut short, sizes the buffer
+  from a declared length with no bound (a negative `TINT32` becomes a huge
+  `size_t`), and decompresses a payload cut short from uninitialised memory.
+  Fix: stop the loop when there is no progress, initialise the header fields,
+  refuse an unknown byte-order mark, bound the sizes (compressed ≤ 100M,
+  decompressed ≤ 256M and ≤ 256 × compressed + 1024), check `malloc`, the
+  bytes read and `bad_alloc`. Taken from groundzero (OpenAnimationLibrary,
+  PR #94 and its earlier `3d7526bb`), BSD. Ztoryc commit after `46a647a03`.
+  *(Reproduced with a probe against the bundle dylibs: a `.mesh` declaring 10
+  bytes for 20 KB of data hangs the old library and is refused by the new
+  one; four other damaged headers refused; two real ZtoRig meshes open the
+  same with both. Not tried on stock, the code is identical.)* For OpenToonz
+  and Tahoma2D.
+
+### A keyboard shortcut crashes the app until the mouse has entered a timeline
+
+**Symptom:** pressing O (Set Stop Marker) in a room with no Xsheet or Timeline panel: SIGSEGV in `QWidget::update()`, at address 0x28.
+**Where:** `toonz/sources/toonz/xsheetcmd.cpp`, `TApp::instance()->getCurrentXsheetViewer()->update()` in the marker, preview and tag commands; also `columncommand.cpp` and `keyframeselection.cpp`.
+**Root cause:** `TApp::m_xsheetViewer` is only set in `XsheetViewer::enterEvent`, so it stays null until the mouse enters a timeline. The commands have shortcuts and dereference it unchecked.
+**Fix:** check for null in the commands; they fall back to the current xsheet and frame.
+**Commit:** `9d97abc0e`.
+**Verified on stock:** no. Diagnosed from a Ztoryc crash report (2026-11-06); the same unchecked calls are in Tahoma2D `upstream/master` (`0ca33cb8a`). OpenToonz not checked.
+
+### Create Mesh has no undo, and wipes the whole undo history
+
+**Symptom:** after Create Mesh (Plastic), ⌘Z / Ctrl+Z does nothing — and every earlier step is gone from the history too.
+**Where:** `toonz/sources/toonz/meshifypopup.cpp`, `MeshifyPopup::apply()` (around line 829): `TUndoManager::manager()->reset()` with the original comment "this operation CURRENTLY HAS NO UNDO".
+**Root cause:** not a bug but a gap left on purpose: no undo was ever written, so the command clears the stack instead.
+**Fix:** a `CreateMeshUndo` for the plain case — new mesh columns and new mesh levels only. Undo gives each texture column back its own parent and parent handle, removes the mesh columns (by final index, descending) and takes the new `_mesh` levels out of the cast; redo puts the same column objects and levels back. An `UpdateMeshUndo` does the same for updating an existing mesh (previous mesh frames kept and put back). Overwriting an existing mesh level (which may delete a file on disk) and filling an existing mesh column still have no undo and still call `reset()`.
+**Commit:** `447a97b03` and the update undo right after it (2026-11-19). The undo keeps the xsheet it was made in, so ⌘Z after leaving a sub-xsheet acts on the right one; parents are restored before removing columns and set after inserting them (indices are the final ones). Tested by hand on Ztoryc: single and multiple columns, undo/redo, Plastic tool active, update case still clearing.
+**Verified on stock:** no. The same `reset()` is in Tahoma2D `upstream/master` (`0ca33cb8a`) and in OpenToonz `master`. For both.
 
 ---
 

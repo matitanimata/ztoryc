@@ -164,12 +164,20 @@ degli status).
 
 ## 🆕 Aperti dopo la 0.20.0 (07/11)
 
-- **NIENTE 0.20.1 per ora (Franco, 07/11):** Export Layout lo usa solo lui. Le correzioni escono col prossimo rilascio,
-  e allora si toglie il limite noto dalle note della 0.20.0.
-  - `241b6f742`: nome temporaneo senza numeri, disegni delle colonne giusti su ogni shot (provato su sh020).
-  - `aac070f5b`: vettoriali nel PSD a colonne; maschera esportata come forma (spenta nel PSD, fuori dall'FCPXML,
-    `mask`/`maskInverted`/`maskedBy` nel manifest) — provato su sh030. **Sotto-scene, rig Plastic e colonne con FX**
-    vanno nel PSD dal render della colonna: MAI ESEGUITO, serve una scena di prova (Franco dice dove ce n'e' una).
+- **0.20.1 pubblicata il 19/11** (crash Windows dell'Export Animatic, undo di Create Mesh, correzioni di Export Layout).
+  Resta aperto:
+  - **Crash Windows (`49ce44bda`) MAI provato su Windows vero**: riusa la strada provata con `ZTORYC_LEGACY_OFFLINEGL=1`.
+    Franco manda il link della 0.20.1 a Slam Rockwell; aspettare il suo esito.
+  - **Export Layout, PSD a colonne:** sotto-scene, rig Plastic e colonne con FX provati su poche scene (limite noto
+    nelle note della 0.20.1).
+  - **Minori della review del 19/11, tutti in `ztorylayoutexport.cpp`:** `renderRange` rimette i flag di maschera e
+    alpha-lock senza RAII (un'uscita anticipata li lascerebbe cambiati); tetto di 16000 px in `drawingInStage`
+    (proposto 8192); pulizia di `ztorylayouttmp*` che presume una cartella dedicata.
+  - **Create Mesh:** quando Ztoryc chiede cosa fare con un livello mesh gia' esistente (sovrascrivi / riempi una colonna
+    mesh esistente) la cronologia si svuota ancora, come in stock.
+  - **Update Mesh, minori della review (`44e25880c`):** se `meshify(cell)` da' una mesh nulla il redo rimette quella
+    letta dal disco (`continue` se `!meshImg`, `meshifypopup.cpp` ~1364); `getSize` sottostima la memoria (2000 byte
+    per frame contro due mesh intere).
 - **Shot con lo stesso uuid nel .ztoryc:** riparati all'apertura (`0e62ce7ac`), filorosso riparato e sincronizzato.
   La CAUSA non e' trovata: erano gia' nei pacchetti salvati con la 0.15 dalla storyboardista. Da chiederle come ha
   aggiunto i 7 shot fra il 27/10 e il 2/11, e farla aggiornare.
