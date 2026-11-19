@@ -8,6 +8,10 @@
   di una mesh si annullano e si rifanno, anche dopo essere usciti dallo shot. Resta il reset di stock solo quando si
   sovrascrive un livello mesh esistente. Collaudato da Franco su Mac.
 
+- **SuperLU su macOS** (`746ef3d61`, dopo la 0.20.1): si compilava con gli header della 4.1 e si linkava la 7 di
+  Homebrew; giusto solo per l'ordine delle cartelle di include. Ora gli header sono quelli della libreria linkata.
+  Collaudato da Franco (Create Mesh + Plastic). Candidato upstream.
+
 ### Release
 - **0.20.1 pubblicata** (`58c34b73e`): nove pacchetti, note bilingui, DMG Apple Silicon verificato (codesign exit=0).
   Il job Apple Silicon e' stato annullato da GitHub per mancanza di runner e rilanciato con `gh run rerun --failed`.
@@ -20,6 +24,8 @@
 ### Notes
 - Review del 19/11: nessun bloccante; i minori di `ztorylayoutexport.cpp` sono in ANIMATIC_TASKS.
 - Franco manda a Slam Rockwell il link della 0.20.1 per la prova su Windows.
+- **groundzero, build Apple Silicon:** PR in bozza #176 (SuperLU, `-Di386` fuori da OpenEXR, flex 2.6.4). IN PAUSA
+  su richiesta di un maintainer finche' non entra il loro MCP; Franco aspetta il via libera.
 
 ## [2026-11-07, dopo la 0.20.0] — Export Layout: nomi dei disegni, vettoriali e maschere nel PSD
 
