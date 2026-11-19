@@ -29,6 +29,7 @@
 #include "toonz/txshlevelhandle.h"
 #include "toonz/tframehandle.h"
 #include "toonz/tcolumnhandle.h"
+#include "toonz/tobjecthandle.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/tscenehandle.h"
 #include "toonz/stage.h"
@@ -51,6 +52,7 @@
 #include "tmsgcore.h"
 #include "tsystem.h"
 #include "tundo.h"
+#include "historytypes.h"
 
 // Qt includes
 #include <QStringList>
@@ -62,6 +64,9 @@
 #include <QShowEvent>
 #include <QHideEvent>
 #include <QMainWindow>
+
+// STD includes
+#include <algorithm>
 
 // Tunable parameters
 
@@ -443,7 +448,7 @@ TMeshImageP meshify(const TRasterP &ras, const TPointD &rasDpi,
                     const TPointD &worldOriginPos, const TPointD &meshDpi,
                     const MeshBuilderOptions &options);
 
-bool meshifySelection(const MeshifyOptions &options);
+bool meshifySelection(const MeshifyOptions &options, bool &undoRegistered);
 
 }  // namespace
 
@@ -826,11 +831,15 @@ void MeshifyPopup::apply() {
                             m_rasterizationDpi->getValue(),
                             m_margin->getValue()};
 
-  if (meshifySelection(options))  // Meshify invocation
+  bool undoRegistered = false;
+  if (meshifySelection(options, undoRegistered))  // Meshify invocation
   {
-    TUndoManager::manager()
-        ->reset();  // Since this operation CURRENTLY HAS NO UNDO, and yet
-    close();        // it modifies the xsheet, it CLEARS THE UNDOS stack.
+    // Only the plain creation of new mesh columns and levels has an undo.
+    // Updating existing meshes, overwriting an existing mesh level or filling
+    // an existing mesh column still have none: since they modify the xsheet,
+    // they keep CLEARING THE UNDOS stack, as the original code always did.
+    if (!undoRegistered) TUndoManager::manager()->reset();
+    close();
   }
 }
 
@@ -997,7 +1006,121 @@ void createMeshifiedLevels(std::map<TXshLevel *, TXshSimpleLevel *> &meshLevels,
 
 //------------------------------------------------------------------------------
 
-void createMeshifiedColumns(int r0, int c0, int r1, int c1,
+// Undo of a Create Mesh that made only NEW mesh columns and NEW mesh levels.
+// makeMeshColumn() inserts the mesh column right after its texture column and
+// moves the texture under it: undo gives the texture back its own parent
+// before removing the mesh column (TStageObjectTree::removeColumn would hand
+// it to the mesh column's parent, but not its parent handle), then takes the
+// new levels out of the cast so they are not left there as orphans.
+class CreateMeshUndo final : public TUndo {
+public:
+  struct Entry {
+    int m_texCol, m_meshCol;  // indices after the whole operation
+    TXshColumnP m_meshColumn;
+    std::string m_meshName;
+    TStageObjectId m_parent;  // the texture's parent before Create Mesh
+    std::string m_parentHandle;
+  };
+
+private:
+  // The xsheet the mesh was made in. In Ztoryc every shot is a sub-scene:
+  // ⌘Z after leaving it must act on the shot, not on the xsheet now current
+  TXsheetP m_xsh;
+  std::vector<Entry> m_entries;  // ascending m_meshCol
+  std::vector<TXshLevelP> m_levels;
+
+public:
+  CreateMeshUndo(TXsheet *xsh, const std::vector<Entry> &entries,
+                 const std::vector<TXshLevelP> &levels)
+      : m_xsh(xsh), m_entries(entries), m_levels(levels) {}
+
+  bool isCurrent() const {
+    return m_xsh.getPointer() ==
+           TApp::instance()->getCurrentXsheet()->getXsheet();
+  }
+
+  void undo() const override {
+    TApp *app    = TApp::instance();
+    TXsheet *xsh = m_xsh.getPointer();
+
+    // Parents are ids in the FINAL index space: set them all while every
+    // column is still there, then remove the mesh columns (descending, since
+    // removing a column shifts only the ones after it). Parent links follow
+    // the objects when the ids shift.
+    for (const Entry &e : m_entries) {
+      TStageObject *texObj =
+          xsh->getStageObject(TStageObjectId::ColumnId(e.m_texCol));
+      texObj->setParent(e.m_parent);
+      texObj->setParentHandle(e.m_parentHandle);
+    }
+    for (auto it = m_entries.rbegin(); it != m_entries.rend(); ++it)
+      xsh->removeColumn(it->m_meshCol);
+
+    ToonzScene *scene = app->getCurrentScene()->getScene();
+    for (const TXshLevelP &level : m_levels)
+      scene->getLevelSet()->removeLevel(level.getPointer());
+
+    if (isCurrent())
+      app->getCurrentColumn()->setColumnIndex(m_entries.front().m_texCol);
+    notify();
+  }
+
+  void redo() const override {
+    TApp *app         = TApp::instance();
+    TXsheet *xsh      = m_xsh.getPointer();
+    ToonzScene *scene = app->getCurrentScene()->getScene();
+
+    for (const TXshLevelP &level : m_levels)
+      scene->getLevelSet()->insertLevel(level.getPointer());
+
+    // Ascending insertion reproduces the final indices; only then, with every
+    // column in place, are the parent ids (final index space) valid
+    for (const Entry &e : m_entries)
+      xsh->insertColumn(e.m_meshCol, e.m_meshColumn.getPointer());
+
+    for (const Entry &e : m_entries) {
+      TStageObject *meshObj =
+          xsh->getStageObject(TStageObjectId::ColumnId(e.m_meshCol));
+      meshObj->setParent(e.m_parent);
+      meshObj->setParentHandle(e.m_parentHandle);
+      meshObj->setName(e.m_meshName);
+
+      xsh->getStageObject(TStageObjectId::ColumnId(e.m_texCol))
+          ->setParent(TStageObjectId::ColumnId(e.m_meshCol));
+    }
+
+    if (isCurrent())
+      app->getCurrentColumn()->setColumnIndex(m_entries.back().m_meshCol);
+    notify();
+  }
+
+  void notify() const {
+    TApp *app = TApp::instance();
+    app->getCurrentXsheet()->notifyXsheetChanged();
+    app->getCurrentObject()->notifyObjectIdSwitched();
+    app->getCurrentScene()->setDirtyFlag(true);
+    app->getCurrentScene()->notifyCastChange();
+  }
+
+  int getSize() const override { return sizeof(*this) + 1000; }
+
+  QString getHistoryString() override { return QObject::tr("Create Mesh"); }
+
+  int getHistoryType() override { return HistoryType::Xsheet; }
+};
+
+//------------------------------------------------------------------------------
+
+int columnIndexOf(const TXsheet &xsh, const TXshColumn *column) {
+  for (int c = 0; c < xsh.getColumnCount(); ++c)
+    if (xsh.getColumn(c) == column) return c;
+  return -1;
+}
+
+//------------------------------------------------------------------------------
+
+// Returns true when it registered an undo (see CreateMeshUndo).
+bool createMeshifiedColumns(int r0, int c0, int r1, int c1,
                             const MeshifyOptions &options) {
   struct locals {
     static inline bool isEmpty(const TXsheet &xsh, int r0, int r1, int c) {
@@ -1029,10 +1152,24 @@ void createMeshifiedColumns(int r0, int c0, int r1, int c1,
   // Retrieve selection data
   TXsheet *xsh = TApp::instance()->getCurrentXsheet()->getXsheet();
 
+  // The cast before meshifying: a mesh level found in it was REUSED (the
+  // "overwrite processed frames" answer), and that case has no undo
+  std::set<TXshLevel *> castBefore;
+  {
+    TLevelSet *levelSet =
+        TApp::instance()->getCurrentScene()->getScene()->getLevelSet();
+    for (int i = 0; i < levelSet->getLevelCount(); ++i)
+      castBefore.insert(levelSet->getLevel(i));
+  }
+
   // Meshify levels
   std::map<TXshLevel *, TXshSimpleLevel *> meshLevels;
   createMeshifiedLevels(meshLevels, options);
-  if (meshLevels.empty()) return;
+  if (meshLevels.empty()) return false;
+
+  // (texture column, new mesh column) pairs, by pointer: indices still move
+  std::vector<std::pair<TXshColumn *, TXshColumn *>> madeColumns;
+  bool reusedMeshColumn = false;
 
   // Create corresponding columns and assign them the meshified levels
   int meshColIdx;
@@ -1063,9 +1200,13 @@ void createMeshifiedColumns(int r0, int c0, int r1, int c1,
         if (meshColIdx < 0) {
           meshColIdx = locals::meshColumnIdx(
               *xsh, r0, r1, c);  // Attempt retrieval of an existing mesh column
-          if (meshColIdx < 0)    // first - if not found, then make a new one
+          if (meshColIdx < 0) {  // first - if not found, then make a new one
             ::makeMeshColumn(*xsh, c,
                              meshColIdx = c + 1);  // right after current one.
+            madeColumns.push_back(
+                std::make_pair(xsh->getColumn(c), xsh->getColumn(meshColIdx)));
+          } else
+            reusedMeshColumn = true;
         }
         TXshCell dstCell(lt->second, srcCell.m_frameId);
         if (useImplicitHolds && dstCell == prevCell) continue;
@@ -1080,11 +1221,45 @@ void createMeshifiedColumns(int r0, int c0, int r1, int c1,
   // in case they want to start editing meshes immediately
   assert(meshColIdx >= 0);
   TApp::instance()->getCurrentColumn()->setColumnIndex(meshColIdx);
+
+  // Undo only when everything is new
+  if (madeColumns.empty() || reusedMeshColumn) return false;
+
+  std::vector<TXshLevelP> newLevels;
+  for (const auto &ml : meshLevels) {
+    if (castBefore.count(ml.second)) return false;
+    newLevels.push_back(TXshLevelP(ml.second));
+  }
+
+  std::vector<CreateMeshUndo::Entry> entries;
+  for (const auto &made : madeColumns) {
+    CreateMeshUndo::Entry e;
+    e.m_texCol  = columnIndexOf(*xsh, made.first);
+    e.m_meshCol = columnIndexOf(*xsh, made.second);
+    if (e.m_texCol < 0 || e.m_meshCol < 0) return false;
+
+    // makeMeshColumn() gave the mesh column the texture's former parent
+    const TStageObject *meshObj =
+        xsh->getStageObject(TStageObjectId::ColumnId(e.m_meshCol));
+    e.m_meshColumn   = made.second;
+    e.m_meshName     = meshObj->getName();
+    e.m_parent       = meshObj->getParent();
+    e.m_parentHandle = meshObj->getParentHandle();
+    entries.push_back(e);
+  }
+  std::sort(entries.begin(), entries.end(),
+            [](const CreateMeshUndo::Entry &a, const CreateMeshUndo::Entry &b) {
+              return a.m_meshCol < b.m_meshCol;
+            });
+
+  TUndoManager::manager()->add(new CreateMeshUndo(xsh, entries, newLevels));
+  return true;
 }
 
 //------------------------------------------------------------------------------
 
-void updateMeshifiedColumns(int r0, int c0, int r1, int c1,
+// No undo: always returns false.
+bool updateMeshifiedColumns(int r0, int c0, int r1, int c1,
                             const MeshifyOptions &options) {
   typedef std::map<std::pair<TXshLevel *, TFrameId>, TXshCell> MeshesMap;
 
@@ -1154,12 +1329,14 @@ void updateMeshifiedColumns(int r0, int c0, int r1, int c1,
   for (ct = meshToUpdate.begin(); ct != cEnd; ++ct)
     IconGenerator::instance()->invalidate(
         ct->first.first, ct->first.second);  // Yep, this is still manual...
+
+  return false;
 }
 
 //------------------------------------------------------------------------------
 
 template <typename Func>
-void meshifySelection(Func func, TSelection *selection,
+bool meshifySelection(Func func, TSelection *selection,
                       const MeshifyOptions &options) {
   bool emptySelection = selection ? selection->isEmpty() : true;
 
@@ -1169,8 +1346,7 @@ void meshifySelection(Func func, TSelection *selection,
     int r0, c0, r1, c1;
     cellSelection->getSelectedCells(r0, c0, r1, c1);
 
-    (*func)(r0, c0, r1, c1, options);
-    return;
+    return (*func)(r0, c0, r1, c1, options);
   }
 
   if (TColumnSelection *colSelection =
@@ -1192,15 +1368,14 @@ void meshifySelection(Func func, TSelection *selection,
       r1 = std::max(r1, column->getMaxFrame());
     }
 
-    (*func)(r0, c0, r1, c1, options);
-    return;
+    return (*func)(r0, c0, r1, c1, options);
   }
 
   // Meshify the sole cell at current frame and column positions
   int r = TApp::instance()->getCurrentFrame()->getFrame();
   int c = TApp::instance()->getCurrentColumn()->getColumnIndex();
 
-  (*func)(r, c, r, c, options);
+  return (*func)(r, c, r, c, options);
 }
 
 //------------------------------------------------------------------------------
@@ -1247,7 +1422,7 @@ int columnTypes(TXsheet *xsh, const std::set<int> &indices) {
 
 //------------------------------------------------------------------------------
 
-bool meshifySelection(const MeshifyOptions &options) {
+bool meshifySelection(const MeshifyOptions &options, bool &undoRegistered) {
   TApp *app = TApp::instance();
 
   // Build selection data
@@ -1280,13 +1455,15 @@ bool meshifySelection(const MeshifyOptions &options) {
   switch (cTypes) {
   case HAS_LEVEL_COLUMNS:
     // Create new mesh columns corresponding to specified selection
-    meshifySelection(&createMeshifiedColumns, selection, options);
+    undoRegistered =
+        meshifySelection(&createMeshifiedColumns, selection, options);
     break;
   case HAS_MESH_COLUMNS:
     // Check parental relationship - if specified columns have level column
     // children,
     // update related meshes
-    meshifySelection(&updateMeshifiedColumns, selection, options);
+    undoRegistered =
+        meshifySelection(&updateMeshifiedColumns, selection, options);
     break;
   case HAS_LEVEL_COLUMNS | HAS_MESH_COLUMNS:
     // Error message
