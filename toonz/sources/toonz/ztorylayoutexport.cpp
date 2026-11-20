@@ -193,20 +193,30 @@ bool renderRange(ToonzScene *scene, int r0, int r1, int ownCol, TXsheet *sub,
   // A mask or an alpha-locked column renders nothing on its own: it only acts
   // on another column. Its image is the drawing itself, for whoever rebuilds
   // the shot.
+  // The flags go back when this scope ends, however it ends — not only on
+  // the straight path: a column left as a non-mask would change the scene.
+  struct KeptFlags {
+    TXshColumn *column;
+    bool mask, locked;
+    ~KeptFlags() {
+      if (mask) column->setIsMask(true);
+      if (locked) column->setAlphaLocked(true);
+    }
+  };
   TXshColumn *kept = sub && subKeep >= 0 ? sub->getColumn(subKeep) : nullptr;
-  const bool keptMask   = kept && kept->isMask();
-  const bool keptLocked = kept && kept->isAlphaLocked();
-  if (keptMask) kept->setIsMask(false);
-  if (keptLocked) kept->setAlphaLocked(false);
-  CommandManager::instance()->execute(MI_Render);
-  for (TXshColumn *column : hidden) column->setPreviewVisible(true);
-  timeout.start(10 * 60 * 1000);
-  loop.exec();
-  QObject::disconnect(conn);
-  // Only now: the column's fx asks whether it is a mask while it computes, in
-  // the render, after MI_Render has returned (tcolumnfx.cpp).
-  if (keptMask) kept->setIsMask(true);
-  if (keptLocked) kept->setAlphaLocked(true);
+  {
+    KeptFlags restore{kept, kept && kept->isMask(), kept && kept->isAlphaLocked()};
+    if (restore.mask) kept->setIsMask(false);
+    if (restore.locked) kept->setAlphaLocked(false);
+    CommandManager::instance()->execute(MI_Render);
+    for (TXshColumn *column : hidden) column->setPreviewVisible(true);
+    timeout.start(10 * 60 * 1000);
+    loop.exec();
+    QObject::disconnect(conn);
+    // The flags come back only here: the column's fx asks whether it is a mask
+    // while it computes, in the render, after MI_Render has returned
+    // (tcolumnfx.cpp).
+  }
 
   const QStringList made =
       QDir(fi.absolutePath()).entryList({stem + "*"}, QDir::Files);
@@ -290,9 +300,12 @@ bool drawingInStage(TXsheet *sub, int col, int row, double vectorScale,
   if (TVectorImageP vi = ip) {
     TRectD box = vi->getBBox();
     if (box.x0 >= box.x1 || box.y0 >= box.y1 || vectorScale <= 0) return false;
+    // One drawing becomes one offscreen buffer and two image copies: at
+    // 8192 px a side that is 256 MB each, at 16000 it was 1 GB each.
+    const double maxSide = 8192;
     const double longest = qMax(box.getLx(), box.getLy()) * vectorScale;
     const double scale =
-        longest > 16000 ? vectorScale * 16000 / longest : vectorScale;
+        longest > maxSide ? vectorScale * maxSide / longest : vectorScale;
     box = TScale(scale) * box;
     const TRect r(tfloor(box.x0) - 2, tfloor(box.y0) - 2, tceil(box.x1) + 1,
                   tceil(box.y1) + 1);

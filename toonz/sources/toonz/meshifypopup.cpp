@@ -1288,8 +1288,25 @@ public:
   void undo() const override { put(true); }
   void redo() const override { put(false); }
 
+  // Both meshes of every frame stay alive in the undo: count their vertices,
+  // edges and faces, so that the undo manager's memory limit sees them.
+  static int meshBytes(const TImageP &img) {
+    TMeshImageP mi = img;
+    if (!mi) return 0;
+    int bytes = sizeof(TMeshImage);
+    for (const TTextureMeshP &m : mi->meshes())
+      bytes += sizeof(TTextureMesh) +
+               m->verticesCount() * int(sizeof(TTextureMesh::vertex_type)) +
+               m->edgesCount() * int(sizeof(TTextureMesh::edge_type)) +
+               m->facesCount() * int(sizeof(TTextureMesh::face_type));
+    return bytes;
+  }
+
   int getSize() const override {
-    return sizeof(*this) + int(m_frames.size()) * 2000;
+    int bytes = sizeof(*this);
+    for (const Frame &f : m_frames)
+      bytes += int(sizeof(Frame)) + meshBytes(f.m_old) + meshBytes(f.m_new);
+    return bytes;
   }
 
   QString getHistoryString() override { return QObject::tr("Update Mesh"); }
@@ -1361,6 +1378,10 @@ bool updateMeshifiedColumns(int r0, int c0, int r1, int c1,
 
     TImageP oldImg = ml->getFrame(mFid, false);
     TMeshImageP meshImg = meshify(ct->second, options);
+    // No mesh could be built (the texture gave no raster): keep the current
+    // one. Setting a null frame would only drop it from memory and reload the
+    // saved one from disk, and the redo would do the same.
+    if (!meshImg) continue;
 
     ml->setFrame(mFid, meshImg);
     ml->setDirtyFlag(true);
