@@ -406,6 +406,10 @@ public:
 
   static DvDirModel *instance();
 
+  // Ztoryc: show or hide Props / Backgrounds / Model Sheets as the project's
+  // tracker says now.
+  void refreshZtorycAssetFolders();
+
   void onFolderChanged(const TFilePath &path) override;
 
   DvDirModelNode *getNode(const QModelIndex &index) const;

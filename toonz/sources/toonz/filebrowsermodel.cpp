@@ -1622,12 +1622,26 @@ DvDirModel::DvDirModel() {
                        this, SLOT(onPreferenceChanged(const QString &)));
   assert(ret);
 
+  // The project's tracker loads AFTER sceneSwitched: the project switch
+  // happens halfway through loading a scene, so ZtoryModel follows it on the
+  // next turn of the event loop. The asset folders asked at sceneSwitched
+  // found no tracker yet and stayed hidden.
+  connect(ZtoryModel::instance(), &ZtoryModel::productionReloaded, this,
+          [this]() { refreshZtorycAssetFolders(); });
+
   onSceneSwitched();
 }
 
 //-----------------------------------------------------------------------------
 
 DvDirModel::~DvDirModel() { delete m_root; }
+
+//-----------------------------------------------------------------------------
+
+void DvDirModel::refreshZtorycAssetFolders() {
+  if (auto *rootNode = dynamic_cast<DvDirModelRootNode *>(m_root))
+    rootNode->updateZtorycAssetNodes();
+}
 
 //-----------------------------------------------------------------------------
 

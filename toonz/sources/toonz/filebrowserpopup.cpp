@@ -423,6 +423,9 @@ void FileBrowserPopup::showEvent(QShowEvent *) {
   TSelectionHandle::getCurrent()->pushSelection();
   m_selectedPaths.clear();
   m_currentFIdsSet.clear();
+  // Ztoryc: the asset folders as the tracker has them now — they can have been
+  // set or changed in the Production Tracker since the scene was opened.
+  DvDirModel::instance()->refreshZtorycAssetFolders();
 
   TFilePath projectPath = TProjectManager::instance()->getCurrentProjectPath();
   if (m_currentProjectPath != projectPath) {
