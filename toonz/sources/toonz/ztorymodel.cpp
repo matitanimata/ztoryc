@@ -488,17 +488,37 @@ static bool looksLikeSpeakerCue(const QString &line) {
   return last != '.' && last != '!' && last != '?' && last != ',';
 }
 
+// The characters of the project and the aliases, keyed as assetNameKey()
+// compares names: «Scienziato», «SCIENZIATO» and «scienziato» are one, and so
+// are «Guida Scienziato» and «GUIDA-SCIENZIATO». The old key (lower case
+// only) left the second pair apart, and a name typed with a dash or an accent
+// never turned green (Franco, 2026-11-22). parseDialogue and speakerAt read
+// this one index: two copies of the rule diverge at the first edge case.
+static QHash<QString, QString> speakerIndex(const ZtoryModel *m) {
+  QHash<QString, QString> idx;
+  for (const Asset &a : m->assets())
+    if (ZtoryModel::isCharacterType(a.type)) {
+      const QString k = ZtoryModel::assetNameKey(a.name);
+      if (!k.isEmpty()) idx.insert(k, a.uuid);
+    }
+  // Aliases win over a name: forcing a name is what they are for.
+  const QHash<QString, QString> &al = m->speakerAliases();
+  for (auto it = al.constBegin(); it != al.constEnd(); ++it) {
+    const QString k = ZtoryModel::assetNameKey(it.key());
+    if (!k.isEmpty()) idx.insert(k, it.value());
+  }
+  return idx;
+}
+
+static QString speakerKey(const QString &name) {
+  return ZtoryModel::assetNameKey(name);
+}
+
 QVector<DialogueLine> ZtoryModel::parseDialogue(const QString &text) const {
   QVector<DialogueLine> out;
   if (text.trimmed().isEmpty()) return out;
 
-  // Indice dei personaggi del progetto, per nome minuscolo.
-  QHash<QString, QString> uuidByName;
-  for (const Asset &a : m_assets)
-    if (ZtoryModel::isCharacterType(a.type))
-      uuidByName.insert(a.name.trimmed().toLower(), a.uuid);
-  for (auto it = m_speakerAliases.constBegin(); it != m_speakerAliases.constEnd(); ++it)
-    uuidByName.insert(it.key(), it.value());
+  const QHash<QString, QString> uuidByName = speakerIndex(this);
 
   auto emitLine = [&](const QString &speaker, const QString &saidRaw) {
     // Parentheticals INSIDE the line — «MARIO: (ride) Non ci credo», «Non ci
@@ -517,7 +537,7 @@ QVector<DialogueLine> ZtoryModel::parseDialogue(const QString &text) const {
     dl.character = speaker;
     dl.text      = said.trimmed();
     if (!speaker.isEmpty()) {
-      auto it = uuidByName.constFind(speaker.toLower());
+      auto it = uuidByName.constFind(speakerKey(speaker));
       if (it != uuidByName.constEnd()) { dl.assetUuid = *it; dl.matched = true; }
     }
     out.push_back(dl);
@@ -557,7 +577,7 @@ QVector<DialogueLine> ZtoryModel::parseDialogue(const QString &text) const {
     const int colon = line.indexOf(':');
     if (colon > 0) {
       const QString head = stripSpeakerExtension(line.left(colon));
-      if (looksLikeSpeakerCue(head) || uuidByName.contains(head.toLower())) {
+      if (looksLikeSpeakerCue(head) || uuidByName.contains(speakerKey(head))) {
         flush();
         current.clear();
         emitLine(head, line.mid(colon + 1));
@@ -575,7 +595,11 @@ QVector<DialogueLine> ZtoryModel::parseDialogue(const QString &text) const {
     // io?») e unknownSpeakers() non poteva piu' segnalarlo: proprio il caso per
     // cui esiste — hai incollato uno script con un personaggio che non hai
     // ancora creato. Meglio mostrarlo che mangiarlo.
-    if (looksLikeSpeakerCue(line) && nextIsDialogue) {
+    // A name the project KNOWS is a cue in any case and even before its line
+    // is written: «Scienziato» typed on its own line used to stay plain text
+    // until it was retyped in capitals (Franco, 2026-11-22).
+    if ((looksLikeSpeakerCue(line) && nextIsDialogue) ||
+        uuidByName.contains(speakerKey(stripSpeakerExtension(line)))) {
       flush();
       current = stripSpeakerExtension(line);
       continue;
@@ -597,10 +621,136 @@ void ZtoryModel::setFollowEnabled(bool on) {
 
 void ZtoryModel::setSpeakerAlias(const QString &scriptName,
                                 const QString &assetUuid) {
-  const QString key = scriptName.trimmed().toLower();
+  // Selecting «Scienziato:» stored the colon with the name, and the alias then
+  // matched nothing (Franco, 2026-11-22): the key is the name alone.
+  QString name = scriptName.trimmed();
+  while (name.endsWith(':')) name.chop(1);
+  const QString key = stripSpeakerExtension(name).toLower();
   if (key.isEmpty()) return;
   if (assetUuid.isEmpty()) m_speakerAliases.remove(key);
   else m_speakerAliases.insert(key, assetUuid);
+}
+
+void ZtoryModel::setWordTag(const QString &phrase, const QString &assetUuid) {
+  const QString key = wordTagKey(phrase);
+  if (key.isEmpty()) return;
+  if (assetUuid.isEmpty()) {
+    m_wordTags.remove(key);
+    // Senza tag le eccezioni per shot non hanno piu' niente a cui riferirsi.
+    for (auto it = m_wordTagSkips.begin(); it != m_wordTagSkips.end();) {
+      if (it->endsWith('|' + key)) it = m_wordTagSkips.erase(it);
+      else ++it;
+    }
+  } else
+    m_wordTags.insert(key, assetUuid);
+  m_wordTagRxDirty = true;
+}
+
+void ZtoryModel::setWordTagSkipped(const QString &shotUuid,
+                                   const QString &phrase, bool skipped) {
+  const QString key = wordTagKey(phrase);
+  if (shotUuid.isEmpty() || key.isEmpty()) return;
+  if (skipped) m_wordTagSkips.insert(shotUuid + '|' + key);
+  else m_wordTagSkips.remove(shotUuid + '|' + key);
+}
+
+QVector<ZtoryWordTagHit> ZtoryModel::findWordTags(const QString &text) const {
+  QVector<ZtoryWordTagHit> hits;
+  if (m_wordTags.isEmpty() || text.isEmpty()) return hits;
+  if (m_wordTagRxDirty) {
+    // Una sola espressione per tutti i tag, i piu' lunghi prima: «tavolo da
+    // cucina» deve vincere su «tavolo». Il colore viene ricalcolato a ogni
+    // tasto, e compilarne una per tag a ogni riga sarebbe lo spreco.
+    QStringList keys = m_wordTags.keys();
+    std::sort(keys.begin(), keys.end(), [](const QString &a, const QString &b) {
+      return a.length() > b.length();
+    });
+    QStringList alts;
+    for (const QString &k : keys) {
+      QStringList words = k.split(' ', Qt::SkipEmptyParts);
+      for (QString &w : words) w = QRegularExpression::escape(w);
+      alts << words.join("\\s+");
+    }
+    // Parola intera anche con le lettere accentate: \b, senza le proprieta'
+    // Unicode, spezzerebbe «citta'» sulla «a'».
+    m_wordTagRx = QRegularExpression(
+        "(?<![\\p{L}\\p{N}])(?:" + alts.join('|') + ")(?![\\p{L}\\p{N}])",
+        QRegularExpression::CaseInsensitiveOption |
+            QRegularExpression::UseUnicodePropertiesOption);
+    m_wordTagRxDirty = false;
+  }
+  QSet<QString> alive;
+  for (const Asset &a : m_assets) alive.insert(a.uuid);
+  QRegularExpressionMatchIterator it = m_wordTagRx.globalMatch(text);
+  while (it.hasNext()) {
+    const QRegularExpressionMatch mt = it.next();
+    const QString key  = wordTagKey(mt.captured(0));
+    const QString uuid = m_wordTags.value(key);
+    if (uuid.isEmpty() || !alive.contains(uuid)) continue;
+    hits.push_back({mt.capturedStart(0), mt.capturedLength(0), uuid, key});
+  }
+  return hits;
+}
+
+QSet<QString> ZtoryModel::taggedAssetsInShot(const ShotData &sd) const {
+  QSet<QString> out;
+  if (m_wordTags.isEmpty()) return out;
+  auto take = [&](const QString &text) {
+    for (const ZtoryWordTagHit &h : findWordTags(text))
+      if (!m_wordTagSkips.contains(sd.uuid + '|' + h.key)) out.insert(h.assetUuid);
+  };
+  for (const PanelData &pd : sd.panels) {
+    take(pd.dialog);
+    take(pd.action);
+  }
+  return out;
+}
+
+const ShotData *ZtoryModel::shotByUuid(const QString &uuid) const {
+  if (uuid.isEmpty()) return nullptr;
+  for (const ShotData &sd : m_shots)
+    if (sd.uuid == uuid) return &sd;
+  return nullptr;
+}
+
+int ZtoryModel::projectShotIndex(const QString &shotUuid) const {
+  for (int i = 0; i < (int)m_projectShots.size(); i++)
+    if (m_projectShots[i].uuid == shotUuid) return i;
+  return -1;
+}
+
+bool ZtoryModel::shotBreakdownHas(const QString &shotUuid,
+                                  const QString &assetUuid) const {
+  const int i = projectShotIndex(shotUuid);
+  if (i < 0) return false;
+  for (const BreakdownEntry &e : m_projectShots[i].breakdown)
+    if (e.assetUuid == assetUuid) return true;
+  return false;
+}
+
+bool ZtoryModel::addToShotBreakdown(const QString &shotUuid,
+                                    const QString &assetUuid) {
+  const int i = projectShotIndex(shotUuid);
+  if (i < 0 || assetUuid.isEmpty() || shotBreakdownHas(shotUuid, assetUuid))
+    return false;
+  BreakdownEntry e;
+  e.assetUuid = assetUuid;
+  m_projectShots[i].breakdown.push_back(e);
+  emit breakdownChanged();
+  return true;
+}
+
+void ZtoryModel::removeFromShotBreakdown(const QString &shotUuid,
+                                         const QString &assetUuid) {
+  const int i = projectShotIndex(shotUuid);
+  if (i < 0) return;
+  QVector<BreakdownEntry> &b = m_projectShots[i].breakdown;
+  for (int k = 0; k < b.size(); k++)
+    if (b[k].assetUuid == assetUuid) {
+      b.remove(k);
+      emit breakdownChanged();
+      return;
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -741,17 +891,12 @@ bool ZtoryModel::speakerAt(const QString &rawLine, const QString &rawNext,
   if (line.isEmpty()) return false;
   if (line.startsWith('(') && line.endsWith(')')) return false;  // didascalia
 
-  QHash<QString, QString> uuidByName;
-  for (const Asset &a : m_assets)
-    if (ZtoryModel::isCharacterType(a.type))
-      uuidByName.insert(a.name.trimmed().toLower(), a.uuid);
   // Gli alias contano come nomi veri: e' il loro scopo.
-  for (auto it = m_speakerAliases.constBegin(); it != m_speakerAliases.constEnd(); ++it)
-    uuidByName.insert(it.key(), it.value());
+  const QHash<QString, QString> uuidByName = speakerIndex(this);
 
   auto give = [&](const QString &name) {
     if (outName) *outName = name;
-    if (outMatched) *outMatched = uuidByName.contains(name.toLower());
+    if (outMatched) *outMatched = uuidByName.contains(speakerKey(name));
     return true;
   };
 
@@ -759,12 +904,15 @@ bool ZtoryModel::speakerAt(const QString &rawLine, const QString &rawNext,
   const int colon = line.indexOf(':');
   if (colon > 0) {
     const QString head = stripSpeakerExtension(line.left(colon));
-    if (looksLikeSpeakerCue(head) || uuidByName.contains(head.toLower()))
+    if (looksLikeSpeakerCue(head) || uuidByName.contains(speakerKey(head)))
       return give(head);
   }
-  // Forma sceneggiatura: maiuscolo, e seguito da qualcosa.
-  if (looksLikeSpeakerCue(line) && !rawNext.trimmed().isEmpty())
-    return give(stripSpeakerExtension(line));
+  // Forma sceneggiatura: maiuscolo, e seguito da qualcosa — oppure un nome
+  // che il progetto conosce, scritto come capita (stessa regola del parser).
+  const QString bare = stripSpeakerExtension(line);
+  if ((looksLikeSpeakerCue(line) && !rawNext.trimmed().isEmpty()) ||
+      uuidByName.contains(speakerKey(bare)))
+    return give(bare);
   return false;
 }
 
@@ -1404,6 +1552,9 @@ void ZtoryModel::resetProjectLevelDefaults() {
   m_modelSheetDir.clear();
   m_defaultImportPolicy = AssetImportPolicy();
   m_speakerAliases.clear();
+  m_wordTags.clear();
+  m_wordTagSkips.clear();
+  m_wordTagRxDirty = true;
   m_productionType.clear();
   m_productionStyle.clear();
   m_ratio.clear();
@@ -1669,6 +1820,19 @@ QByteArray ZtoryModel::serializeProjectDb() const {
     xml.writeStartElement("alias");
     xml.writeAttribute("name",  it.key());
     xml.writeAttribute("asset", it.value());
+    xml.writeEndElement();
+  }
+  for (auto it = m_wordTags.constBegin(); it != m_wordTags.constEnd(); ++it) {
+    xml.writeStartElement("wordtag");
+    xml.writeAttribute("name",  it.key());
+    xml.writeAttribute("asset", it.value());
+    xml.writeEndElement();
+  }
+  for (const QString &skip : m_wordTagSkips) {
+    const int bar = skip.indexOf('|');
+    xml.writeStartElement("wordtagskip");
+    xml.writeAttribute("shot", skip.left(bar));
+    xml.writeAttribute("name", skip.mid(bar + 1));
     xml.writeEndElement();
   }
   xml.writeEndElement();
@@ -1996,15 +2160,29 @@ void ZtoryModel::loadProjectDbFromDevice(QIODevice &file) {
       m_backgroundsDir   = a.value("backgroundsDir").toString();
       m_modelSheetDir    = a.value("modelSheetDir").toString();
       m_defaultImportPolicy = readImportPolicy(a);
+      // Stavano nel ramo «alias» qui sotto (dal 2026-08-15, f7482e1f2): si
+      // leggevano dagli attributi di un alias, cioe' mai, e il salvataggio
+      // dopo li riscriveva vuoti.
+      m_productionType   = a.value("productionType").toString();
+      m_productionStyle  = a.value("productionStyle").toString();
+      m_ratio            = a.value("ratio").toString();
+      m_resolution       = a.value("resolution").toString();
     } else if (xml.name() == QLatin1String("alias")) {
       auto a = xml.attributes();
       const QString n = a.value("name").toString();
       const QString u = a.value("asset").toString();
       if (!n.isEmpty() && !u.isEmpty()) m_speakerAliases.insert(n.toLower(), u);
-      m_productionType   = a.value("productionType").toString();
-      m_productionStyle  = a.value("productionStyle").toString();
-      m_ratio            = a.value("ratio").toString();
-      m_resolution       = a.value("resolution").toString();
+    } else if (xml.name() == QLatin1String("wordtag")) {
+      auto a = xml.attributes();
+      const QString n = wordTagKey(a.value("name").toString());
+      const QString u = a.value("asset").toString();
+      if (!n.isEmpty() && !u.isEmpty()) m_wordTags.insert(n, u);
+      m_wordTagRxDirty = true;
+    } else if (xml.name() == QLatin1String("wordtagskip")) {
+      auto a = xml.attributes();
+      const QString s = a.value("shot").toString();
+      const QString n = wordTagKey(a.value("name").toString());
+      if (!s.isEmpty() && !n.isEmpty()) m_wordTagSkips.insert(s + '|' + n);
     } else if (xml.name() == QLatin1String("person")) {
       QString nm = xml.attributes().value("name").toString().trimmed();
       if (!nm.isEmpty()) team << nm;
@@ -2253,6 +2431,13 @@ void ZtoryModel::publishShotsToProjectDb(const QString &sourceFile) {
       ps.frames    = sd.totalDuration();
       ps.technique = sd.technique;
       ps.tasks     = sd.tasks;
+      // A shot born after its words were tagged: the tags could not reach a
+      // tracker entry that did not exist yet, so it gets them here.
+      for (const QString &u : taggedAssetsInShot(sd)) {
+        BreakdownEntry e;
+        e.assetUuid = u;
+        ps.breakdown.push_back(e);
+      }
       m_projectShots.push_back(ps);
     }
     // else: uuid found but belongs to a different source (storyboard copied from

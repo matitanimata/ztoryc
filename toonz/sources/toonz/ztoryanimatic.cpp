@@ -8,6 +8,8 @@
 #include "comboviewerpane.h"
 #include "ztorymodel.h"
 #include "ztorydialoguehighlighter.h"
+#include "ztorydialoguecompleter.h"
+#include "ztorywordtag.h"
 #include "ztoryshotops.h"
 #include "toonz/tcolumnhandle.h"
 #include "subscenecommand.h"
@@ -4369,6 +4371,8 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
   // DEVE vedersi: una convenzione che fallisce in silenzio e' peggio di un
   // campo in piu'. Qui si legge chi e' stato riconosciuto e chi no.
   new ZtoryDialogueHighlighter(m_dialogField->document());
+  // Scrivendo l'inizio di un nome, propone i personaggi del progetto.
+  new ZtoryDialogueCompleter(m_dialogField);
   // Tasto destro sul campo: se c'e' una selezione, si puo' forzarla su un
   // personaggio. Il menu standard (taglia/copia/incolla) resta.
   m_dialogField->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -4385,6 +4389,18 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
   lay->addWidget(makeLbl(tr("Action:")));
   m_actionField = makeField(tr("Enter action notes..."));
   lay->addWidget(m_actionField);
+  // Spoglio a parole anche nell'Action: li' si descrivono oggetti e luoghi.
+  new ZtoryDialogueHighlighter(m_actionField->document(), /*speakers=*/false);
+  m_actionField->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(m_actionField, &QWidget::customContextMenuRequested, this,
+          [this](const QPoint &p) {
+            ztoryOfferWordTagMenu(this, m_actionField, p);
+          });
+  for (QTextEdit *f : {m_dialogField, m_actionField})
+    new ZtoryWordTagWatcher(f, [this]() {
+      return hasValidShot() ? ZtoryModel::instance()->shot(m_shotIdx).uuid
+                            : QString();
+    });
   lay->addWidget(makeLbl(tr("Notes:")));
   m_notesField = makeField(tr("Enter notes..."));
   lay->addWidget(m_notesField);
@@ -6257,7 +6273,10 @@ static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
                                    const QPoint &pos) {
   ZtoryModel *m = ZtoryModel::instance();
   QMenu *menu = field->createStandardContextMenu();
-  const QString sel = field->textCursor().selectedText().trimmed();
+  // Il nome senza i due punti: selezionando «Scienziato:» l'alias si
+  // salvava con i due punti, e non corrispondeva piu' a niente.
+  QString sel = field->textCursor().selectedText().trimmed();
+  while (sel.endsWith(':')) sel = sel.left(sel.length() - 1).trimmed();
 
   if (!sel.isEmpty() && sel.length() <= 40) {
     menu->addSeparator();
@@ -6278,6 +6297,9 @@ static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
       clearAct = sub->addAction(QObject::tr("Remove this alias"));
     }
     if (sub->isEmpty()) sub->setEnabled(false);
+    // Spoglio a parole: la stessa selezione si puo' segnare come oggetto,
+    // ambiente, effetto (ztorywordtag.h).
+    ztoryAddWordTagMenu(menu, sel, field);
 
     QAction *chosen = menu->exec(field->viewport()->mapToGlobal(pos));
     if (chosen) {

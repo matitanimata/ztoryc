@@ -423,6 +423,14 @@ ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   connect(m, &ZtoryModel::shotDataChanged,   this, [this](int) { scheduleRebuild(); });
   connect(m, &ZtoryModel::taskStatusChanged, this, [this] { rebuild(); reloadProjectTab(); });
   connect(m, &ZtoryModel::assetsChanged,     this, [this] { rebuildAssets(); });
+  // Breakdown changed from the Board or the Animatic (word tags).
+  // One rebuild for many shots: tagging a word can add the asset to forty.
+  QTimer *breakdownTimer = new QTimer(this);
+  breakdownTimer->setSingleShot(true);
+  breakdownTimer->setInterval(0);
+  connect(breakdownTimer, &QTimer::timeout, this, [this] { rebuildBreakdown(); });
+  connect(m, &ZtoryModel::breakdownChanged, breakdownTimer,
+          QOverload<>::of(&QTimer::start));
   connect(m, &ZtoryModel::productionReloaded, this, &ZtoryProductionPanel::onModelChanged);
 
   // --- Kitsu (Project tab) -------------------------------------------------
@@ -1852,66 +1860,144 @@ bool ZtoryProductionPanel::linkAssetFileInteractive(int assetIndex) {
   return true;
 }
 
-// La colonna della tabella Breakdown che porta l'indice dell'asset (Qt::UserRole).
-// In un posto solo: quando si aggiunge una colonna a sinistra, l'indice scritto
-// a mano in tre punti se ne accorge in due.
-static const int kBreakdownAssetCol = 2;
+// La tabella Breakdown e' fatta come quella di Kitsu (Franco, 2026-11-22): una
+// riga per shot, una colonna per ogni tipo di asset presente nel progetto. Le
+// prime due colonne sono fisse; quelle dei tipi seguono m_breakdownColumnTypes,
+// dove una stringa vuota e' la colonna «Other» (asset senza tipo, o sparito).
+static const int kBdStoryboardCol = 0;  // carries the shot uuid (UserRole)
+static const int kBdShotCol       = 1;
+static const int kBdFirstTypeCol  = 2;
+// Su una cella di tipo: gli uuid dei suoi asset, nell'ordine in cui si vedono,
+// e i loro nomi in chiaro per la ricerca. I dati stanno sull'item, non sul
+// QLabel che li disegna: menu, ricerca e Remove non dipendono dal widget.
+static const int kBdAssetsRole = Qt::UserRole;
+static const int kBdNamesRole  = Qt::UserRole + 1;
+
+namespace {
+
+int assetIndexByUuid(const QString &uuid) {
+  ZtoryModel *m = ZtoryModel::instance();
+  for (int i = 0; i < m->assetCount(); i++)
+    if (m->assets()[i].uuid == uuid) return i;
+  return -1;
+}
+
+// The asset types of the project, once each (first spelling wins, compared
+// without case) and sorted: the Breakdown columns, its Type filter and the
+// «+ Add» dialog all read this one list, so they cannot disagree.
+QStringList projectAssetTypes() {
+  QStringList types;
+  for (const Asset &a : ZtoryModel::instance()->assets())
+    if (!a.type.isEmpty() && !types.contains(a.type, Qt::CaseInsensitive))
+      types << a.type;
+  types.sort(Qt::CaseInsensitive);
+  return types;
+}
+
+}  // namespace
+
+QString ZtoryProductionPanel::breakdownShotUuidAt(int row) const {
+  QTableWidgetItem *it =
+      m_breakdownTable ? m_breakdownTable->item(row, kBdStoryboardCol) : nullptr;
+  return it ? it->data(Qt::UserRole).toString() : QString();
+}
+
+QString ZtoryProductionPanel::breakdownTypeAt(int col) const {
+  return m_breakdownColumnTypes.value(col - kBdFirstTypeCol);
+}
+
+QStringList ZtoryProductionPanel::breakdownAssetsAt(int row, int col) const {
+  if (!m_breakdownTable || col < kBdFirstTypeCol) return QStringList();
+  QTableWidgetItem *it = m_breakdownTable->item(row, col);
+  return it ? it->data(kBdAssetsRole).toStringList() : QStringList();
+}
+
+// Cosa si puo' fare su UN asset di UNO shot. Le azioni sul file sono quelle
+// della vecchia tabella; «quanti» e «togli» sono della coppia shot-asset.
+void ZtoryProductionPanel::addBreakdownAssetActions(QMenu *menu, int assetIndex,
+                                                    const QString &assetUuid,
+                                                    const QString &shotUuid) {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (assetIndex >= 0 && assetIndex < m->assetCount()) {
+    const Asset &a    = m->assets()[assetIndex];
+    const bool isChar = ZtoryModel::isCharacterType(a.type);
+    connect(menu->addAction(isChar ? QObject::tr("Link scene or sheet…")
+                                   : QObject::tr("Link file…")),
+            &QAction::triggered, this,
+            [this, assetIndex]() { linkAssetFileInteractive(assetIndex); });
+    if (!a.filePath.isEmpty())
+      connect(menu->addAction(QObject::tr("Clear link")), &QAction::triggered,
+              this, [this, assetIndex]() {
+                ZtoryModel::instance()->setAssetFilePath(assetIndex, QString());
+                persistAssets();
+                rebuildAssets();
+                rebuildBreakdown();
+              });
+    if (isChar) {
+      menu->addSeparator();
+      connect(menu->addAction(QObject::tr("Link PSD to rig…")),
+              &QAction::triggered, this,
+              [this, assetIndex]() { linkAssetRigPsdInteractive(assetIndex); });
+      if (!a.rigPsdPath.isEmpty())
+        connect(menu->addAction(QObject::tr("Clear PSD link")),
+                &QAction::triggered, this, [this, assetIndex]() {
+                  ZtoryModel::instance()->setAssetRigPsd(assetIndex, QString());
+                  persistAssets();
+                  rebuildAssets();
+                });
+    }
+    if (QFileInfo(isChar ? m->resolveAssetRigPsd(a) : m->resolveAssetFile(a))
+            .suffix()
+            .compare("psd", Qt::CaseInsensitive) == 0) {
+      menu->addSeparator();
+      connect(menu->addAction(QObject::tr("PSD import options…")),
+              &QAction::triggered, this,
+              [this, assetIndex]() { editAssetPsdOptions(assetIndex); });
+    }
+    menu->addSeparator();
+  }
+  connect(menu->addAction(QObject::tr("How many in this shot…")),
+          &QAction::triggered, this, [this, shotUuid, assetUuid]() {
+            setBreakdownCount(shotUuid, assetUuid);
+          });
+  connect(menu->addAction(QObject::tr("Remove from this shot")),
+          &QAction::triggered, this, [this, shotUuid, assetUuid]() {
+            removeBreakdownEntry(shotUuid, assetUuid);
+          });
+}
 
 void ZtoryProductionPanel::onBreakdownContextMenu(const QPoint &pos) {
   if (!m_breakdownTable) return;
-  QTableWidgetItem *it = m_breakdownTable->itemAt(pos);
-  if (!it) return;
-  // L'indice dell'asset viaggia sulla riga: la tabella e' piatta (shot × asset)
-  // e lo stesso asset compare in piu' righe, quindi risalirci dal nome sarebbe
-  // sbagliato appena due asset si chiamano uguale in tipi diversi.
-  const int assetIndex =
-      m_breakdownTable->item(it->row(), kBreakdownAssetCol)
-          ->data(Qt::UserRole)
-          .toInt();
-  ZtoryModel *m = ZtoryModel::instance();
-  if (assetIndex < 0 || assetIndex >= m->assetCount()) return;
-  const Asset &a    = m->assets()[assetIndex];
-  const bool isChar = ZtoryModel::isCharacterType(a.type);
+  const QModelIndex idx = m_breakdownTable->indexAt(pos);
+  if (!idx.isValid()) return;
+  const QString shotUuid = breakdownShotUuidAt(idx.row());
+  if (shotUuid.isEmpty()) return;
+  const QStringList uuids = breakdownAssetsAt(idx.row(), idx.column());
+  ZtoryModel *m           = ZtoryModel::instance();
 
   QMenu menu(this);
-  QAction *linkAct = menu.addAction(isChar
-                                        ? QObject::tr("Link scene or sheet…")
-                                        : QObject::tr("Link file…"));
-  QAction *clearAct = a.filePath.isEmpty()
-                          ? nullptr
-                          : menu.addAction(QObject::tr("Clear link"));
-  QAction *rigLinkAct = nullptr, *rigClearAct = nullptr;
-  if (isChar) {
-    menu.addSeparator();
-    rigLinkAct = menu.addAction(QObject::tr("Link PSD to rig…"));
-    if (!a.rigPsdPath.isEmpty())
-      rigClearAct = menu.addAction(QObject::tr("Clear PSD link"));
+  // Una cella puo' avere piu' asset: con uno solo le azioni stanno in cima,
+  // con piu' d'uno ogni asset ha il suo sottomenu.
+  if (uuids.size() == 1) {
+    addBreakdownAssetActions(&menu, assetIndexByUuid(uuids[0]), uuids[0],
+                             shotUuid);
+  } else {
+    for (const QString &u : uuids) {
+      const int ai = assetIndexByUuid(u);
+      QMenu *sub   = menu.addMenu(
+          ai >= 0 ? m->assets()[ai].name
+                    : QObject::tr("⟨missing asset %1⟩").arg(u.left(8)));
+      addBreakdownAssetActions(sub, ai, u, shotUuid);
+    }
   }
-  QAction *psdAct = nullptr;
-  if (QFileInfo(isChar ? m->resolveAssetRigPsd(a) : m->resolveAssetFile(a))
-          .suffix()
-          .compare("psd", Qt::CaseInsensitive) == 0) {
-    menu.addSeparator();
-    psdAct = menu.addAction(QObject::tr("PSD import options…"));
-  }
-  QAction *ch = menu.exec(m_breakdownTable->viewport()->mapToGlobal(pos));
-  if (!ch) return;
-  if (ch == rigLinkAct) {
-    linkAssetRigPsdInteractive(assetIndex);
-  } else if (ch == rigClearAct) {
-    m->setAssetRigPsd(assetIndex, QString());
-    persistAssets();
-    rebuildAssets();
-  } else if (ch == psdAct) {
-    editAssetPsdOptions(assetIndex);
-  } else if (ch == linkAct) {
-    linkAssetFileInteractive(assetIndex);
-  } else if (ch == clearAct) {
-    m->setAssetFilePath(assetIndex, QString());
-    persistAssets();
-    rebuildAssets();
-    rebuildBreakdown();
-  }
+  if (!uuids.isEmpty()) menu.addSeparator();
+  const QString type = breakdownTypeAt(idx.column());
+  QAction *addAct    = menu.addAction(
+      type.isEmpty() ? QObject::tr("Add an asset to this shot…")
+                        : QObject::tr("Add %1 to this shot…").arg(type));
+  connect(addAct, &QAction::triggered, this,
+          [this, shotUuid, type]() { onBreakdownAdd(shotUuid, type); });
+  menu.exec(m_breakdownTable->viewport()->mapToGlobal(pos));
 }
 
 //-----------------------------------------------------------------------------
@@ -1942,8 +2028,16 @@ int projectShotIndexByUuid(const QString &uuid) {
 
 }  // namespace
 
-void ZtoryProductionPanel::onBreakdownAdd() {
+void ZtoryProductionPanel::onBreakdownAdd(QString shotUuid, QString type) {
   ZtoryModel *m = ZtoryModel::instance();
+  // Senza indicazioni si parte dalla cella corrente: il suo shot e, se e' una
+  // colonna di tipo, quel tipo. Quasi sempre si aggiunge li' dove si guarda.
+  if (m_breakdownTable && m_breakdownTable->currentRow() >= 0) {
+    if (shotUuid.isEmpty())
+      shotUuid = breakdownShotUuidAt(m_breakdownTable->currentRow());
+    if (type.isEmpty())
+      type = breakdownTypeAt(m_breakdownTable->currentColumn());
+  }
   if (m->projectShots().empty() || m->assetCount() == 0) {
     DVGui::warning(QObject::tr(
         "Add some assets first, and save the storyboard so its shots reach the "
@@ -1960,25 +2054,18 @@ void ZtoryProductionPanel::onBreakdownAdd() {
   auto *shotCombo = new QComboBox(&dlg);
   for (const ProjectShot &ps : m->projectShots())
     shotCombo->addItem(projectShotLabel(ps), ps.uuid);
-  // Se una riga e' selezionata, si parte da quel suo shot: quasi sempre si
-  // aggiunge un asset allo shot che si sta guardando.
-  if (m_breakdownTable && m_breakdownTable->currentRow() >= 0)
-    if (QTableWidgetItem *it =
-            m_breakdownTable->item(m_breakdownTable->currentRow(), 0)) {
-      int i = shotCombo->findData(it->data(Qt::UserRole).toString());
-      if (i >= 0) shotCombo->setCurrentIndex(i);
-    }
+  if (!shotUuid.isEmpty()) {
+    const int i = shotCombo->findData(shotUuid);
+    if (i >= 0) shotCombo->setCurrentIndex(i);
+  }
 
   // The asset list is the whole project: a type and a search narrow it.
   auto *typeCombo = new QComboBox(&dlg);
   typeCombo->addItem(QObject::tr("All types"), QString());
-  {
-    QStringList types;
-    for (const Asset &a : m->assets())
-      if (!a.type.isEmpty() && !types.contains(a.type, Qt::CaseInsensitive))
-        types << a.type;
-    types.sort(Qt::CaseInsensitive);
-    for (const QString &t : types) typeCombo->addItem(t, t);
+  for (const QString &t : projectAssetTypes()) typeCombo->addItem(t, t);
+  if (!type.isEmpty()) {
+    const int i = typeCombo->findData(type);
+    if (i >= 0) typeCombo->setCurrentIndex(i);
   }
   auto *searchEdit = new QLineEdit(&dlg);
   searchEdit->setPlaceholderText(QObject::tr("Search…"));
@@ -2046,15 +2133,9 @@ void ZtoryProductionPanel::onBreakdownAdd() {
   rebuildBreakdown();
 }
 
-void ZtoryProductionPanel::onBreakdownRemove() {
-  if (!m_breakdownTable) return;
-  const int row = m_breakdownTable->currentRow();
-  if (row < 0) return;
-  QTableWidgetItem *key = m_breakdownTable->item(row, 0);
-  if (!key) return;
-  const QString shotUuid  = key->data(Qt::UserRole).toString();
-  const QString assetUuid = key->data(Qt::UserRole + 1).toString();
-  const int si            = projectShotIndexByUuid(shotUuid);
+void ZtoryProductionPanel::removeBreakdownEntry(const QString &shotUuid,
+                                                const QString &assetUuid) {
+  const int si = projectShotIndexByUuid(shotUuid);
   if (si < 0) return;
   ZtoryModel *m             = ZtoryModel::instance();
   QVector<BreakdownEntry> b = m->projectShots()[si].breakdown;
@@ -2063,6 +2144,59 @@ void ZtoryProductionPanel::onBreakdownRemove() {
   m->setShotBreakdown(si, b);
   m->saveProjectDb();
   rebuildBreakdown();
+}
+
+void ZtoryProductionPanel::setBreakdownCount(const QString &shotUuid,
+                                             const QString &assetUuid) {
+  const int si = projectShotIndexByUuid(shotUuid);
+  if (si < 0) return;
+  ZtoryModel *m             = ZtoryModel::instance();
+  QVector<BreakdownEntry> b = m->projectShots()[si].breakdown;
+  for (BreakdownEntry &be : b) {
+    if (be.assetUuid != assetUuid) continue;
+    bool ok     = false;
+    const int n = QInputDialog::getInt(
+        this, QObject::tr("How many"),
+        QObject::tr("How many times does this shot need it?"),
+        qMax(1, be.nbOccurrences), 1, 99, 1, &ok);
+    if (!ok || n == be.nbOccurrences) return;
+    be.nbOccurrences = n;
+    m->setShotBreakdown(si, b);
+    m->saveProjectDb();
+    rebuildBreakdown();
+    return;
+  }
+}
+
+void ZtoryProductionPanel::onBreakdownRemove() {
+  if (!m_breakdownTable) return;
+  const int row = m_breakdownTable->currentRow();
+  if (row < 0) return;
+  const QStringList uuids =
+      breakdownAssetsAt(row, m_breakdownTable->currentColumn());
+  if (uuids.isEmpty()) {
+    DVGui::info(QObject::tr(
+        "Click the cell with the asset to remove, then «− Remove».\n"
+        "Right-clicking an asset removes it as well."));
+    return;
+  }
+  QString assetUuid = uuids[0];
+  if (uuids.size() > 1) {
+    // Piu' asset nella stessa cella: si chiede quale, invece di togliere il
+    // primo a caso.
+    QMenu menu(this);
+    ZtoryModel *m = ZtoryModel::instance();
+    for (const QString &u : uuids) {
+      const int ai = assetIndexByUuid(u);
+      menu.addAction(ai >= 0 ? m->assets()[ai].name
+                             : QObject::tr("⟨missing asset %1⟩").arg(u.left(8)))
+          ->setData(u);
+    }
+    QAction *ch = menu.exec(QCursor::pos());
+    if (!ch) return;
+    assetUuid = ch->data().toString();
+  }
+  removeBreakdownEntry(breakdownShotUuidAt(row), assetUuid);
 }
 
 void ZtoryProductionPanel::onBreakdownFromDialogue() {
@@ -2143,7 +2277,7 @@ QWidget *ZtoryProductionPanel::buildBreakdownTab() {
   btns->addWidget(remBreakdownBtn);
   btns->addWidget(fromDialogueBtn);
   connect(addBreakdownBtn, &QPushButton::clicked, this,
-          &ZtoryProductionPanel::onBreakdownAdd);
+          [this]() { onBreakdownAdd(); });
   connect(remBreakdownBtn, &QPushButton::clicked, this,
           &ZtoryProductionPanel::onBreakdownRemove);
   connect(fromDialogueBtn, &QPushButton::clicked, this,
@@ -2169,30 +2303,95 @@ QWidget *ZtoryProductionPanel::buildBreakdownTab() {
           [this](const QString &) { applyBreakdownFilter(); });
 
   m_breakdownTable = new QTableWidget(w);
-  m_breakdownTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+  // Si seleziona la CELLA, non la riga: e' la cella (shot × tipo) che dice su
+  // cosa agiscono «− Remove» e «+ Add».
+  m_breakdownTable->setSelectionBehavior(QAbstractItemView::SelectItems);
+  m_breakdownTable->setSelectionMode(QAbstractItemView::SingleSelection);
   m_breakdownTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
   m_breakdownTable->verticalHeader()->setVisible(false);
   m_breakdownTable->setContextMenuPolicy(Qt::CustomContextMenu);
   lay->addWidget(m_breakdownTable);
   connect(m_breakdownTable, &QWidget::customContextMenuRequested, this,
           &ZtoryProductionPanel::onBreakdownContextMenu);
-  // La colonna File e' dove si VEDE cosa manca, quindi e' li' che si aggiusta:
-  // doppio clic = collega, senza passare dalla scheda Assets.
+  // Doppio clic: su un asset solo, lo si collega (e' qui che si VEDE cosa
+  // manca, quindi e' qui che si aggiusta); su una cella vuota si aggiunge; su
+  // una cella con piu' asset si apre il menu per scegliere quale.
   connect(m_breakdownTable, &QTableWidget::cellDoubleClicked, this,
-          [this](int row, int) {
-            QTableWidgetItem *it =
-                m_breakdownTable->item(row, kBreakdownAssetCol);
-            if (it) linkAssetFileInteractive(it->data(Qt::UserRole).toInt());
+          [this](int row, int col) {
+            const QStringList uuids = breakdownAssetsAt(row, col);
+            if (uuids.isEmpty()) {
+              onBreakdownAdd(breakdownShotUuidAt(row), breakdownTypeAt(col));
+            } else if (uuids.size() == 1) {
+              const int ai = assetIndexByUuid(uuids[0]);
+              if (ai >= 0) linkAssetFileInteractive(ai);
+            } else {
+              onBreakdownContextMenu(
+                  m_breakdownTable->viewport()->mapFromGlobal(QCursor::pos()));
+            }
           });
 
   return w;
 }
+
+namespace {
+
+// How one asset of the breakdown stands with its file: the colour of its name
+// in the cell, and the line of the tooltip that says why. It is what the old
+// File column said, per asset: an asset that does not resolve must be seen
+// here, not discovered at the export.
+struct BreakdownFileStatus {
+  QString color, tip;
+};
+
+BreakdownFileStatus breakdownFileStatus(const Asset *a,
+                                        QHash<QString, QFileInfoList> *cache) {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (!a)
+    return {"#E05252",
+            QObject::tr("This asset is no longer in the project.")};
+  QString why;
+  ZtoryModel::AssetMatch how = ZtoryModel::AssetMatch::None;
+  const QString path         = m->resolveAssetFile(*a, &why, cache, &how);
+  const bool isNear          = how == ZtoryModel::AssetMatch::NearName ||
+                      how == ZtoryModel::AssetMatch::Convention;
+  if (!path.isEmpty())
+    return {isNear ? "#3273DC" : "#22D160",
+            isNear ? path + "\n" + why + "\n" +
+                         QObject::tr("Check it, and link it (right-click).")
+                   : path};
+  if (how == ZtoryModel::AssetMatch::NoFile)
+    return {"#9E9E9E", QObject::tr("No file (on purpose). ") + why};
+  return {"#F5A623",
+          why + "\n" + QObject::tr("Right-click to link the file by hand.")};
+}
+
+}  // namespace
 
 void ZtoryProductionPanel::rebuildBreakdown() {
   if (!m_breakdownTable) return;
   ZtoryModel *m = ZtoryModel::instance();
   QHash<QString, QFileInfoList> breakdownDirCache;  // each folder listed once
 
+  // Le colonne: ogni tipo di asset presente nel progetto, piu' «Other» solo
+  // se serve (una voce il cui asset non ha tipo o non esiste piu'): senza,
+  // quelle voci sparirebbero dalla tabella in silenzio.
+  const QStringList types = projectAssetTypes();
+  QHash<QString, int> colOfType;  // lower-case type → column
+  for (int i = 0; i < types.size(); i++)
+    colOfType.insert(types[i].toLower(), kBdFirstTypeCol + i);
+  bool needOther = false;
+  for (const ProjectShot &ps : m->projectShots())
+    for (const BreakdownEntry &be : ps.breakdown) {
+      const int ai = assetIndexByUuid(be.assetUuid);
+      if (ai < 0 || m->assets()[ai].type.isEmpty()) needOther = true;
+    }
+  m_breakdownColumnTypes = types;
+  if (needOther) m_breakdownColumnTypes << QString();
+  const int otherCol = needOther ? kBdFirstTypeCol + types.size() : -1;
+
+  // setRowCount(0) prima di tutto: toglie anche i QLabel delle celle, che
+  // clear() lascerebbe appesi alle righe.
+  m_breakdownTable->setRowCount(0);
   m_breakdownTable->clear();
   // ⚠️ La colonna «Storyboard» non e' un di piu'. Un progetto ha piu' file di
   // storyboard, e ognuno ha il suo SH010: senza la provenienza, due righe
@@ -2200,96 +2399,75 @@ void ZtoryProductionPanel::rebuildBreakdown() {
   // credere che lo shot che si sta esportando abbia il breakdown di un altro.
   // Successo davvero il 2026-08-17, con l'export che diceva giustamente «non
   // c'e' niente da importare» mentre la tabella mostrava quattro asset.
-  m_breakdownTable->setColumnCount(6);
-  m_breakdownTable->setHorizontalHeaderLabels(
-      {QObject::tr("Storyboard"), QObject::tr("Shot"), QObject::tr("Asset"),
-       QObject::tr("Type"), QObject::tr("×"), QObject::tr("File")});
+  QStringList headers{QObject::tr("Storyboard"), QObject::tr("Shot")};
+  headers << types;
+  if (needOther) headers << QObject::tr("Other");
+  m_breakdownTable->setColumnCount(headers.size());
+  m_breakdownTable->setHorizontalHeaderLabels(headers);
 
-  // One row per (shot, asset): the flat form is what you read when you want to
-  // know «what does this shot need», and it sorts and searches naturally.
-  int rows = 0;
-  for (const ProjectShot &ps : m->projectShots()) rows += ps.breakdown.size();
-  m_breakdownTable->setRowCount(rows);
+  // Una riga per OGNI shot, anche quelli senza niente: sono proprio le righe
+  // vuote a dire cosa manca ancora.
+  const std::vector<ProjectShot> &shots = m->projectShots();
+  m_breakdownTable->setRowCount((int)shots.size());
+  for (int r = 0; r < (int)shots.size(); r++) {
+    const ProjectShot &ps = shots[r];
+    QString src           = ps.source;
+    src.remove(QRegularExpression("\\.ztoryc$",
+                                  QRegularExpression::CaseInsensitiveOption));
+    auto *srcItem = new QTableWidgetItem(src);
+    srcItem->setData(Qt::UserRole, ps.uuid);
+    srcItem->setToolTip(ps.source);
+    srcItem->setForeground(QBrush(QColor("#999999")));
+    m_breakdownTable->setItem(r, kBdStoryboardCol, srcItem);
+    // Sequenza + shot: due storyboard possono avere lo stesso SH010, ma
+    // dentro uno stesso storyboard e' la sequenza a distinguerli.
+    m_breakdownTable->setItem(
+        r, kBdShotCol,
+        new QTableWidgetItem(ps.seq.isEmpty() ? ps.label
+                                              : (ps.seq + " " + ps.label)));
 
-  int r = 0;
-  for (const ProjectShot &ps : m->projectShots()) {
+    // Asset di questo shot, raggruppati per colonna.
+    QHash<int, QStringList> uuids, html, names, tips;
     for (const BreakdownEntry &be : ps.breakdown) {
-      // The asset is held by uuid; resolve it for display. An entry whose asset
-      // is gone shows the uuid rather than an empty cell — a silent blank would
-      // read as «no asset» instead of «dangling link».
-      QString name = QObject::tr("⟨missing asset %1⟩").arg(be.assetUuid.left(8));
-      QString type;
-      const Asset *found = nullptr;
-      int assetIndex = -1;
-      for (int ai = 0; ai < m->assetCount(); ai++)
-        if (m->assets()[ai].uuid == be.assetUuid) {
-          found = &m->assets()[ai]; name = found->name; type = found->type;
-          assetIndex = ai;
-          break;
-        }
-
-      QString src = ps.source;
-      src.remove(QRegularExpression("\\.ztoryc$", 
-                                    QRegularExpression::CaseInsensitiveOption));
-      auto *srcItem = new QTableWidgetItem(src);
-      // Le due chiavi della riga: quale shot e quale asset. Servono a togliere
-      // la voce senza dover indovinare da nome ed etichetta, che si ripetono.
-      srcItem->setData(Qt::UserRole, ps.uuid);
-      srcItem->setData(Qt::UserRole + 1, be.assetUuid);
-      srcItem->setToolTip(ps.source);
-      srcItem->setForeground(QBrush(QColor("#999999")));
-      m_breakdownTable->setItem(r, 0, srcItem);
-      // Sequenza + shot: due storyboard possono avere lo stesso SH010, ma
-      // dentro uno stesso storyboard e' la sequenza a distinguerli.
-      const QString shotText =
-          ps.seq.isEmpty() ? ps.label : (ps.seq + " " + ps.label);
-      m_breakdownTable->setItem(r, 1, new QTableWidgetItem(shotText));
-      auto *nameItem = new QTableWidgetItem(name);
-      nameItem->setData(Qt::UserRole, assetIndex);
-      m_breakdownTable->setItem(r, kBreakdownAssetCol, nameItem);
-      m_breakdownTable->setItem(r, 3, new QTableWidgetItem(type));
-      m_breakdownTable->setItem(
-          r, 4,
-          new QTableWidgetItem(be.nbOccurrences > 1
-                                   ? QString::number(be.nbOccurrences)
-                                   : QString()));
-
-      // Cosa troverebbe l'export, ADESSO. E' la colonna che rende il breakdown
-      // utile invece che decorativo: un asset che non si risolve va visto qui,
-      // non scoperto a export fatto.
-      auto *fileItem = new QTableWidgetItem();
-      if (found) {
-        QString why;
-        ZtoryModel::AssetMatch how = ZtoryModel::AssetMatch::None;
-        const QString path =
-            m->resolveAssetFile(*found, &why, &breakdownDirCache, &how);
-        const bool isNear = how == ZtoryModel::AssetMatch::NearName ||
-                            how == ZtoryModel::AssetMatch::Convention;
-        if (!path.isEmpty()) {
-          fileItem->setText(QFileInfo(path).fileName());
-          fileItem->setToolTip(
-              isNear ? path + "\n\n" + why + "\n" +
-                           QObject::tr("Check it, and link it (Assets tab, "
-                                       "right-click).")
-                     : path);
-          fileItem->setForeground(
-              QBrush(QColor(isNear ? "#3273DC" : "#22D160")));
-        } else if (how == ZtoryModel::AssetMatch::NoFile) {
-          fileItem->setText(QObject::tr("— no file (on purpose)"));
-          fileItem->setToolTip(why);
-          fileItem->setForeground(QBrush(QColor("#9E9E9E")));
-        } else {
-          fileItem->setText(why);
-          fileItem->setToolTip(
-              why + QObject::tr("\n\nRight-click to link the file by hand."));
-          fileItem->setForeground(QBrush(QColor("#F5A623")));
-        }
-      }
-      m_breakdownTable->setItem(r, 5, fileItem);
-      r++;
+      const int ai = assetIndexByUuid(be.assetUuid);
+      const Asset *a = ai >= 0 ? &m->assets()[ai] : nullptr;
+      const QString name =
+          a ? a->name
+            : QObject::tr("⟨missing asset %1⟩").arg(be.assetUuid.left(8));
+      const int col = (a && !a->type.isEmpty())
+                          ? colOfType.value(a->type.toLower(), otherCol)
+                          : otherCol;
+      if (col < 0) continue;  // cannot happen: «Other» exists when needed
+      const QString shown =
+          be.nbOccurrences > 1
+              ? QString("%1 ×%2").arg(name).arg(be.nbOccurrences)
+              : name;
+      const BreakdownFileStatus st = breakdownFileStatus(a, &breakdownDirCache);
+      uuids[col] << be.assetUuid;
+      names[col] << name;
+      html[col] << QString("<span style=\"color:%1\">%2</span>")
+                       .arg(st.color, shown.toHtmlEscaped());
+      tips[col] << shown + "\n" + st.tip;
+    }
+    for (int c = kBdFirstTypeCol; c < headers.size(); c++) {
+      auto *it = new QTableWidgetItem();
+      it->setData(kBdAssetsRole, uuids.value(c));
+      it->setData(kBdNamesRole, names.value(c).join("\n"));
+      if (tips.contains(c)) it->setToolTip(tips.value(c).join("\n\n"));
+      m_breakdownTable->setItem(r, c, it);
+      if (!html.contains(c)) continue;
+      // Un nome per riga, ognuno del colore del suo file. Il QLabel e' solo
+      // il disegno: lascia passare il mouse alla tabella, che sa di che
+      // cella si tratta.
+      auto *lbl = new QLabel(html.value(c).join("<br>"));
+      lbl->setTextFormat(Qt::RichText);
+      lbl->setAttribute(Qt::WA_TransparentForMouseEvents);
+      lbl->setStyleSheet("background: transparent; padding: 2px 4px;");
+      m_breakdownTable->setCellWidget(r, c, lbl);
     }
   }
   m_breakdownTable->resizeColumnsToContents();
+  m_breakdownTable->resizeRowsToContents();
   refreshBreakdownTypes();
   applyBreakdownFilter();
 }
@@ -2297,20 +2475,18 @@ void ZtoryProductionPanel::rebuildBreakdown() {
 void ZtoryProductionPanel::refreshBreakdownTypes() {
   if (!m_breakdownTypeFilter) return;
   const QString keep = m_breakdownTypeFilter->currentData().toString();
-  QStringList types;
-  for (const Asset &a : ZtoryModel::instance()->assets())
-    if (!a.type.isEmpty() && !types.contains(a.type, Qt::CaseInsensitive))
-      types << a.type;
-  types.sort(Qt::CaseInsensitive);
   m_breakdownTypeFilter->blockSignals(true);
   m_breakdownTypeFilter->clear();
   m_breakdownTypeFilter->addItem(QObject::tr("All types"), QString());
-  for (const QString &t : types) m_breakdownTypeFilter->addItem(t, t);
+  for (const QString &t : projectAssetTypes())
+    m_breakdownTypeFilter->addItem(t, t);
   const int i = m_breakdownTypeFilter->findData(keep);
   m_breakdownTypeFilter->setCurrentIndex(i >= 0 ? i : 0);
   m_breakdownTypeFilter->blockSignals(false);
 }
 
+// Type: shows only that type's column. Search: keeps the shots whose
+// storyboard, shot or one of the assets in the visible columns matches.
 void ZtoryProductionPanel::applyBreakdownFilter() {
   if (!m_breakdownTable) return;
   const QString type =
@@ -2318,17 +2494,20 @@ void ZtoryProductionPanel::applyBreakdownFilter() {
                             : QString();
   const QString text =
       m_breakdownSearch ? m_breakdownSearch->text().trimmed() : QString();
-  auto cell = [this](int r, int c) {
+  for (int c = kBdFirstTypeCol; c < m_breakdownTable->columnCount(); c++)
+    m_breakdownTable->setColumnHidden(
+        c, !type.isEmpty() &&
+               breakdownTypeAt(c).compare(type, Qt::CaseInsensitive) != 0);
+  auto has = [&](int r, int c, int role) {
     QTableWidgetItem *it = m_breakdownTable->item(r, c);
-    return it ? it->text() : QString();
+    return it && it->data(role).toString().contains(text, Qt::CaseInsensitive);
   };
   for (int r = 0; r < m_breakdownTable->rowCount(); r++) {
-    bool show = type.isEmpty() ||
-                cell(r, 3).compare(type, Qt::CaseInsensitive) == 0;
-    if (show && !text.isEmpty())
-      show = cell(r, kBreakdownAssetCol).contains(text, Qt::CaseInsensitive) ||
-             cell(r, 1).contains(text, Qt::CaseInsensitive) ||
-             cell(r, 0).contains(text, Qt::CaseInsensitive);
+    bool show = text.isEmpty() || has(r, kBdStoryboardCol, Qt::DisplayRole) ||
+                has(r, kBdShotCol, Qt::DisplayRole);
+    for (int c = kBdFirstTypeCol;
+         !show && c < m_breakdownTable->columnCount(); c++)
+      show = !m_breakdownTable->isColumnHidden(c) && has(r, c, kBdNamesRole);
     m_breakdownTable->setRowHidden(r, !show);
   }
 }

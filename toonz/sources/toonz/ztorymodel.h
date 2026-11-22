@@ -353,6 +353,13 @@ struct BreakdownEntry {
   bool operator!=(const BreakdownEntry &o) const { return !(*this == o); }
 };
 
+// Where a tagged word was found in a text (ZtoryModel::findWordTags).
+struct ZtoryWordTagHit {
+  int     pos = 0, len = 0;
+  QString assetUuid;
+  QString key;  // wordTagKey of the matched words
+};
+
 struct ProjectShot {
   QString uuid;
   QString source;    // the originating storyboard, by its sidecar name (e.g. "reel1.ztoryc")
@@ -507,6 +514,10 @@ class ZtoryModel : public QObject {
   // Senza, l'unica via sarebbe correggere il copione o rinominare l'asset —
   // due cose che non si vogliono fare per far funzionare un riconoscimento.
   QHash<QString, QString>           m_speakerAliases;
+  QHash<QString, QString>           m_wordTags;  // wordTagKey -> asset uuid
+  QSet<QString>                     m_wordTagSkips;  // "shotUuid|wordTagKey"
+  mutable QRegularExpression        m_wordTagRx;  // every tag, longest first
+  mutable bool                      m_wordTagRxDirty = true;
 
   QString                           m_propsDir;
   QString                           m_backgroundsDir;
@@ -751,6 +762,43 @@ public:
     return m_speakerAliases.value(scriptName.trimmed().toLower());
   }
   const QHash<QString, QString> &speakerAliases() const { return m_speakerAliases; }
+
+  // Spoglio a parole (Franco, 2026-11-22): una parola del Dialog o dell'Action
+  // segnata come un asset («sedia» -> SEDIA, Prop). Come gli alias vale per
+  // TUTTO il progetto: dove la parola e' scritta, lo shot ha quell'asset nel
+  // Breakdown. Mappa a parte dagli alias apposta: un oggetto da solo su una
+  // riga non deve diventare l'intestazione di una battuta.
+  // uuid vuoto = toglie il tag (il Breakdown resta com'e').
+  void setWordTag(const QString &phrase, const QString &assetUuid);
+  QString wordTag(const QString &phrase) const {
+    return m_wordTags.value(wordTagKey(phrase));
+  }
+  const QHash<QString, QString> &wordTags() const { return m_wordTags; }
+  // «Solo nominata» in uno shot (Franco, 2026-11-22): la racchetta di cui un
+  // personaggio parla ma che non si vede. Il tag resta per gli altri shot; in
+  // questo la parola non porta l'asset nel Breakdown.
+  bool wordTagSkipped(const QString &shotUuid, const QString &phrase) const {
+    return m_wordTagSkips.contains(shotUuid + '|' + wordTagKey(phrase));
+  }
+  void setWordTagSkipped(const QString &shotUuid, const QString &phrase,
+                         bool skipped);
+  // Una sola chiave per salvare, caricare e cercare: spazi ridotti, minuscolo.
+  static QString wordTagKey(const QString &phrase) {
+    return phrase.simplified().toLower();
+  }
+  // Le parole segnate in `text`, parole intere (non «sedia» dentro
+  // «sediamo»). Salta i tag il cui asset non c'e' piu'.
+  QVector<ZtoryWordTagHit> findWordTags(const QString &text) const;
+  // Gli asset segnati in tutti i pannelli dello shot, Dialog e Action.
+  QSet<QString> taggedAssetsInShot(const ShotData &sd) const;
+  // The model's shot with this uuid (the Board's own list can diverge).
+  const ShotData *shotByUuid(const QString &uuid) const;
+  int  projectShotIndex(const QString &shotUuid) const;
+  bool shotBreakdownHas(const QString &shotUuid, const QString &assetUuid) const;
+  // true = added (false: already there, or the shot is not in the tracker
+  // yet — publishShotsToProjectDb gives a new shot its tagged assets).
+  bool addToShotBreakdown(const QString &shotUuid, const QString &assetUuid);
+  void removeFromShotBreakdown(const QString &shotUuid, const QString &assetUuid);
   // Il file legato a un asset (per un Character cutout: la scena da importare
   // come sotto-scena). Vuoto = nessun legame diretto.
   void setAssetFilePath(int i, const QString &path) {
@@ -1381,6 +1429,7 @@ signals:
   void shotDataChanged(int shotIdx);
   void taskStatusChanged();  // a per-task status was edited (Production Tracker)
   void assetsChanged();      // asset list or an asset task changed (Production Tracker)
+  void breakdownChanged();   // a shot's breakdown changed outside the tracker (word tags)
   void productionReloaded(); // .ztoryc finished loading (project/team/assets populated)
   void previewUpdated(int shotIdx, int panelIdx);
   void scriptFileChanged();  // imported screenplay changed (or cleared)

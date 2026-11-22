@@ -9,6 +9,8 @@
 #include "ztoryanimatic.h"   // ZtoryAnimaticController::invalidateSoundTrack
 #include "ztorylightgizmo.h"
 #include "ztorydialoguehighlighter.h"
+#include "ztorydialoguecompleter.h"
+#include "ztorywordtag.h"
 #include "ztorylipsync.h"
 #include "ztoryassetimport.h"
 #include <QMenu>
@@ -726,6 +728,8 @@ PanelWidget::PanelWidget(QWidget *parent)
   // campo in piu'. Stessa etichetta dello Shot Board.
   // Il nome si colora dove sta, dentro il campo.
   new ZtoryDialogueHighlighter(m_dialogField->document());
+  // Scrivendo l'inizio di un nome, propone i personaggi del progetto.
+  new ZtoryDialogueCompleter(m_dialogField);
   // Tasto destro sul campo: se c'e' una selezione, si puo' forzarla su un
   // personaggio. Il menu standard (taglia/copia/incolla) resta.
   m_dialogField->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -743,6 +747,13 @@ PanelWidget::PanelWidget(QWidget *parent)
   layout->addWidget(makeFieldLabel("Action Notes"));
   m_actionField = makeStableTextEdit("Enter action notes...");
   layout->addWidget(m_actionField);
+  // Spoglio a parole anche nell'Action: li' si descrivono oggetti e luoghi.
+  new ZtoryDialogueHighlighter(m_actionField->document(), /*speakers=*/false);
+  m_actionField->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(m_actionField, &QWidget::customContextMenuRequested, this,
+          [this](const QPoint &p) {
+            ztoryOfferWordTagMenu(this, m_actionField, p);
+          });
 
   layout->addWidget(makeFieldLabel("Notes"));
   m_notesField = makeStableTextEdit("Enter notes...");
@@ -1061,7 +1072,10 @@ static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
                                    const QPoint &pos) {
   ZtoryModel *m = ZtoryModel::instance();
   QMenu *menu = field->createStandardContextMenu();
-  const QString sel = field->textCursor().selectedText().trimmed();
+  // Il nome senza i due punti: selezionando «Scienziato:» l'alias si
+  // salvava con i due punti, e non corrispondeva piu' a niente.
+  QString sel = field->textCursor().selectedText().trimmed();
+  while (sel.endsWith(':')) sel = sel.left(sel.length() - 1).trimmed();
 
   if (!sel.isEmpty() && sel.length() <= 40) {
     menu->addSeparator();
@@ -1082,6 +1096,9 @@ static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
       clearAct = sub->addAction(QObject::tr("Remove this alias"));
     }
     if (sub->isEmpty()) sub->setEnabled(false);
+    // Spoglio a parole: la stessa selezione si puo' segnare come oggetto,
+    // ambiente, effetto (ztorywordtag.h).
+    ztoryAddWordTagMenu(menu, sel, field);
 
     QAction *chosen = menu->exec(field->viewport()->mapToGlobal(pos));
     if (chosen) {
@@ -2231,6 +2248,16 @@ void StoryboardPanel::connectPanelWidget(PanelWidget *pw) {
     }
     m_rerenderTimer->start(200);  // coalesce rapid resize events into one render
   });
+  // Spoglio a parole: all'uscita dal Dialog o dall'Action, gli asset segnati
+  // che sono comparsi o spariti nello shot (ztorywordtag.h). Lo shot si chiede
+  // al momento: il pannello puo' essere stato riassegnato a un altro.
+  for (QTextEdit *f : pw->textFields().mid(0, 2))
+    new ZtoryWordTagWatcher(f, [this, pw]() {
+      const int si = pw->shotIndex();
+      return (si >= 0 && si < (int)m_shots.size() && m_shots[si].data)
+                 ? m_shots[si].data->uuid
+                 : QString();
+    });
   connect(pw, &PanelWidget::dataChanged, [this](int si, int pi){
     if (si >= 0 && si < (int)m_shots.size()) {
       // Update both shotLabel (primary) and shotNumber (legacy compat)

@@ -30,6 +30,7 @@ class QPushButton;
 class QCheckBox;
 class QSpinBox;
 class QGroupBox;
+class QMenu;
 
 class ZtoryProductionPanel final : public TPanel {
   Q_OBJECT
@@ -157,11 +158,20 @@ private:
   // Written here or on Kitsu; the Sync merges the two.
   QWidget *buildBreakdownTab();
   void rebuildBreakdown();
-  // Shows only the rows of the chosen asset type whose shot or asset matches
-  // the search; refills the type list from the project's assets.
+  // The table is Kitsu's: one row per shot, one column per asset type.
+  // Type shows only that type's column; the search keeps the matching shots.
   void applyBreakdownFilter();
   void refreshBreakdownTypes();
   void onBreakdownContextMenu(const QPoint &pos);
+  QString breakdownShotUuidAt(int row) const;
+  QString breakdownTypeAt(int col) const;  // "" = Storyboard/Shot/Other
+  QStringList breakdownAssetsAt(int row, int col) const;  // asset uuids
+  void addBreakdownAssetActions(QMenu *menu, int assetIndex,
+                                const QString &assetUuid,
+                                const QString &shotUuid);
+  void removeBreakdownEntry(const QString &shotUuid, const QString &assetUuid);
+  void setBreakdownCount(const QString &shotUuid, const QString &assetUuid);
+  QStringList m_breakdownColumnTypes;  // type of each column from the third
   // Chiede il file di un asset e lo lega. Condivisa fra scheda Assets e
   // scheda Breakdown: due copie divergono, e la seconda dimentica il
   // filtro .tnz dei personaggi.
@@ -189,7 +199,8 @@ private:
   QComboBox    *m_breakdownTypeFilter = nullptr;  // «All types» or one type
   QLineEdit    *m_breakdownSearch     = nullptr;  // asset or shot, any part
   // Scrittura del breakdown a mano: fino alla 0.13.0 lo scriveva solo Kitsu.
-  void onBreakdownAdd();
+  // Shot and type preselect the dialog; empty = the current cell's.
+  void onBreakdownAdd(QString shotUuid = QString(), QString type = QString());
   void onBreakdownRemove();
   void onBreakdownFromDialogue();
   void reloadAssetTypesTab();        // model → asset-type list
