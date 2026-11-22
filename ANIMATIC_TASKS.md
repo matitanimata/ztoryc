@@ -170,18 +170,35 @@ degli status).
     Franco manda il link della 0.20.1 a Slam Rockwell; aspettare il suo esito.
   - **Export Layout, PSD a colonne:** sotto-scene, rig Plastic e colonne con FX provati su poche scene (limite noto
     nelle note della 0.20.1).
-  - **Minori della review del 19/11, tutti in `ztorylayoutexport.cpp`:** `renderRange` rimette i flag di maschera e
-    alpha-lock senza RAII (un'uscita anticipata li lascerebbe cambiati); tetto di 16000 px in `drawingInStage`
-    (proposto 8192); pulizia di `ztorylayouttmp*` che presume una cartella dedicata.
+  - **Minori della review del 19/11, tutti in `ztorylayoutexport.cpp`:** flag con RAII (`KeptFlags`) e tetto di
+    8192 in `drawingInStage` — **FATTI il 20/11, committati in `d7ea2643b`, MAI COLLAUDATI: aspettano il collaudo di Franco**
+    (PSD a colonne con una colonna maschera: dopo, la colonna e' ancora maschera; i vettoriali ci sono).
+    Resta: la pulizia di `ztorylayouttmp*` presume una cartella dedicata.
   - **Create Mesh:** quando Ztoryc chiede cosa fare con un livello mesh gia' esistente (sovrascrivi / riempi una colonna
     mesh esistente) la cronologia si svuota ancora, come in stock.
-  - **Update Mesh, minori della review (`44e25880c`):** se `meshify(cell)` da' una mesh nulla il redo rimette quella
-    letta dal disco (`continue` se `!meshImg`, `meshifypopup.cpp` ~1364); `getSize` sottostima la memoria (2000 byte
-    per frame contro due mesh intere).
+  - **Update Mesh, minori della review (`44e25880c`):** `continue` se `!meshImg`, e `getSize` che conta le mesh vere —
+    **FATTI il 20/11, committati in `d7ea2643b`, MAI COLLAUDATI: aspettano il collaudo** (aggiorna una mesh esistente, ⌘Z, ⌘Y).
+- **Popup e pannelli flottanti che finiscono dietro la finestra principale (Franco, 20-21/11)** — anche con AeroSpace
+  spento. Due casi:
+  - **dietro dopo un clic sulla principale:** su macOS DVGui::Dialog e i pannelli flottanti sono gia' `Qt::Tool`,
+    che dovrebbe tenerli sopra, quindi la causa non e' spiegata. Quando ricapita, Franco lo lascia dietro e lo
+    dice: si lancia la sonda in sola lettura dei livelli finestra (CGWindowList; script nello scratchpad della
+    sessione del 21/11, da rifare: 20 righe di swift).
+  - **su un'altra scrivania:** Ztoryc e' assegnato a una scrivania in Spaces (`com.apple.spaces app-bindings`).
+    Franco: Dock → Opzioni → Assegna a: Nessuno.
+- **Errore «Critical» sul PSD di GUIDA-SCIENZIATO (Cascina)** dopo modifiche in Krita: «nomi che non coincidono».
+  Ipotesi: i livelli della scena sono agganciati al numero interno del livello PSD (`CH_Lui#67#group.psd`), e
+  Krita rinumera e duplica (`01 1 #3` due volte, gruppi vuoti). Serve lo screenshot del messaggio.
+- **README, sezione Download superata:** dice ancora `xattr -cr` e «tasto destro → Apri», e non nomina Linux.
+  La checklist di rilascio dice il contrario dal 0.13.2. Da riscrivere, col si' di Franco.
 - **Shot con lo stesso uuid nel .ztoryc:** riparati all'apertura (`0e62ce7ac`), filorosso riparato e sincronizzato.
   La CAUSA non e' trovata: erano gia' nei pacchetti salvati con la 0.15 dalla storyboardista. Da chiederle come ha
   aggiunto i 7 shot fra il 27/10 e il 2/11, e farla aggiornare.
-- **test_asset** (tipo di task nuovo su un asset, Sync) mai provato su Kitsu.
+- **test_asset** (tipo di task nuovo su un asset, Sync) mai provato su Kitsu. Va fatto in un progetto di prova collegato
+  a **ZTORYC-AI**, perche' le copie di prova (arquata_copy, messina_copy) puntano a CARTOON SCHOOL 2026/2027, che sono
+  progetti veri. I passi sono: collegare il progetto a ZTORYC-AI, dare a un asset (p.es. `vaso`) il tipo `test_asset`,
+  lanciare Sync asset. Poi Claude verifica su Kitsu che il tipo sia stato creato, sia collegato al tipo di asset e che
+  il task esista. Al 20/11 ZTORYC-AI non ha nessun tipo di task per gli asset: si parte da pulito.
 - **Linux:** rapporto del crash e memoryShortage mai eseguiti (Dell fuori uso). Windows: novita' mai provate.
 - **groundzero #133:** al commento di JParks123 («windows very slow») NON si risponde (Franco, 07/11): la PR non tocca
   Windows e la domanda e' per Rodney. Si riprende solo se qualcuno chiede a noi.

@@ -1,3 +1,25 @@
+## [2026-11-21] — Import Assets mostra le cartelle degli asset; minori della review
+
+### Fixed
+- **Import Assets senza Props/Backgrounds/Model Sheets** (`0ed3cf3a8`): il browser chiedeva le cartelle al tracker prima
+  che si caricasse (il cambio di progetto e' rimandato al giro dopo). Ora si riallineano al caricamento del tracker e a
+  ogni apertura di una finestra di file. Provato da Franco su Cascina (GUIDA-SCIENZIATO). Push con SKIP_LICENSE_SCAN
+  (falso positivo «otx» sull'intero filebrowserpopup.cpp stock, col si' di Franco).
+- **Minori della review** (`d7ea2643b`, MAI collaudati): Update Mesh tiene la mesh se non la sa ricostruire e conta la
+  memoria vera; Export Layout rimette i flag di maschera comunque, tetto 8192 px per disegno vettoriale.
+
+### Notes
+- **AeroSpace:** regole per Ztoryc aggiunte (principale tiling, il resto floating); poi Franco l'ha disattivato e i
+  popup finiscono ancora dietro. Due casi: dietro dopo un clic sulla principale (i Dialog sono gia' Qt::Tool su macOS:
+  non spiegato, si guarda col probe dei livelli finestra quando ricapita) e su un'altra scrivania (Ztoryc assegnato a
+  una scrivania in Spaces: Dock → Opzioni → Assegna a: Nessuno).
+- **GitHub Discussions attive (22/11):** cinque categorie (Announcements, Bug Reports, Help & Questions, Ideas, Show
+  your work), benvenuto #10 fissato in alto, badge e riga nel README, controllo delle discussioni senza risposta al
+  passo 1-bis della checklist di rilascio (AGENTS.md). Schools & Studios e Italiano rimandate (pochi utenti); il repo
+  privato per gli sponsor (canale Backer, voto Pro) non c'e' ancora. Struttura in `~/ZtorYc/DISCUSSIONS_SETUP.md`.
+- **Errore PSD su GUIDA-SCIENZIATO** dopo modifiche in Krita: ipotesi, i livelli della scena sono agganciati al numero
+  interno del livello PSD (`#67`) e Krita rinumera/duplica. Serve lo screenshot del messaggio.
+
 ## [2026-11-19] — 0.20.1: crash Windows dell'Export Animatic, undo di Create Mesh
 
 ### Fixed

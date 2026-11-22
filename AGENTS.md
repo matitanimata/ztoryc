@@ -612,7 +612,15 @@ git diff <last-tag>..HEAD --stat
 ```bash
 gh pr list --repo matitanimata/ztoryc --state open
 gh issue list --repo matitanimata/ztoryc --state open   # oggi le issue sono disabilitate
+# Discussions senza risposta (attive dal 2026-11-22): nessun commento, o una
+# domanda di Help & Questions senza risposta segnata. Announcements escluse.
+gh api graphql -f query='query{repository(owner:"matitanimata",name:"ztoryc"){discussions(first:50,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number title url comments{totalCount} category{name isAnswerable} answer{id}}}}}' \
+  --jq '.data.repository.discussions.nodes[] | select(.category.name!="Announcements") | select(.comments.totalCount==0 or (.category.isAnswerable and .answer==null)) | "#\(.number) [\(.category.name)] \(.title) — \(.url)"'
 ```
+
+> Le **Discussions** valgono come le PR: una domanda o un bug senza risposta e'
+> lo stesso silenzio della PR #3. Regola minima: risposta entro una settimana,
+> anche solo «l'ho visto, ci guardo» (`~/ZtorYc/DISCUSSIONS_SETUP.md`).
 
 > Aggiunto il 2026-08-28 perche' era gia' successo: la **PR #3** di WizzerWorks
 > (cinque righe di CMake per Linux, fatte bene) e' rimasta aperta **un mese
