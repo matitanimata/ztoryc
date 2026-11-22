@@ -5,6 +5,7 @@
 #include "ztoryshotops.h"
 #include "ztorytaskflow.h"
 #include "kitsuclient.h"
+#include "kitsuconnectdialog.h"
 #include "tapp.h"
 
 #include "toonz/tframehandle.h"
@@ -19,6 +20,7 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QFileInfo>
+#include <QMainWindow>
 #include <QObject>
 #include <QPixmap>
 #include <QProgressDialog>
@@ -182,6 +184,20 @@ void offerWfaOnClose(bool changesDiscarded) {
     DVGui::info(QObject::tr("%1 — %2 is waiting for approval.\nPreview:\n%3")
                     .arg(a.name, task, png));
     return;
+  }
+
+  // Said yes but not connected: offer the connection instead of failing.
+  // The dialog logs in by itself when the password is saved.
+  if (!KitsuClient::instance()->isLoggedIn()) {
+    const int connectNow = DVGui::MsgBox(
+        QObject::tr("You are not connected to Kitsu, so %1 cannot be sent "
+                    "for approval yet.\n\nConnect now?")
+            .arg(a.name),
+        QObject::tr("Connect…"), QObject::tr("Not now"), 0);
+    if (connectNow == 1) {
+      KitsuConnectDialog dlg(TApp::instance()->getMainWindow());
+      dlg.exec();
+    }
   }
 
   const QString why = sendViaKitsu(a, task, png);
