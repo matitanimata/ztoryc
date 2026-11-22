@@ -152,7 +152,7 @@ void offerWfaOnClose(bool changesDiscarded) {
   ZtoryModel *m = ZtoryModel::instance();
   const Asset *found = m->assetByUuid(uuid);
   if (!found) return;
-  const Asset a      = *found;  // a copy: the model may change under the dialogs
+  Asset a            = *found;  // a copy: the model may change under the dialogs
   const QString task = ZtoryTaskFlow::characterSceneTask(uuid);
   if (task.isEmpty() ||
       m->taskStatusOf(static_cast<int>(ZtoryTaskFlow::Entity::Asset), uuid,
@@ -197,6 +197,11 @@ void offerWfaOnClose(bool changesDiscarded) {
     if (connectNow == 1) {
       KitsuConnectDialog dlg(TApp::instance()->getMainWindow());
       dlg.exec();
+      // Connecting can link the asset to Kitsu meanwhile: take its id from
+      // the model, not from the copy made before the dialog.
+      const Asset *now = m->assetByUuid(uuid);
+      if (!now) return;
+      a.kitsuAssetId = now->kitsuAssetId;
     }
   }
 
