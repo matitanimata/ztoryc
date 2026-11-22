@@ -1969,15 +1969,48 @@ void ZtoryProductionPanel::onBreakdownAdd() {
       if (i >= 0) shotCombo->setCurrentIndex(i);
     }
 
-  auto *assetCombo = new QComboBox(&dlg);
-  for (int i = 0; i < m->assetCount(); i++) {
-    const Asset &a = m->assets()[i];
-    assetCombo->addItem(QString("%1  (%2)").arg(a.name, a.type), a.uuid);
+  // The asset list is the whole project: a type and a search narrow it.
+  auto *typeCombo = new QComboBox(&dlg);
+  typeCombo->addItem(QObject::tr("All types"), QString());
+  {
+    QStringList types;
+    for (const Asset &a : m->assets())
+      if (!a.type.isEmpty() && !types.contains(a.type, Qt::CaseInsensitive))
+        types << a.type;
+    types.sort(Qt::CaseInsensitive);
+    for (const QString &t : types) typeCombo->addItem(t, t);
   }
+  auto *searchEdit = new QLineEdit(&dlg);
+  searchEdit->setPlaceholderText(QObject::tr("Search…"));
+  searchEdit->setClearButtonEnabled(true);
+  auto *assetCombo = new QComboBox(&dlg);
+  auto refill = [&]() {
+    const QString keep = assetCombo->currentData().toString();
+    const QString type = typeCombo->currentData().toString();
+    const QString text = searchEdit->text().trimmed();
+    assetCombo->clear();
+    for (int i = 0; i < m->assetCount(); i++) {
+      const Asset &a = m->assets()[i];
+      if (!type.isEmpty() && a.type.compare(type, Qt::CaseInsensitive) != 0)
+        continue;
+      if (!text.isEmpty() && !a.name.contains(text, Qt::CaseInsensitive))
+        continue;
+      assetCombo->addItem(QString("%1  (%2)").arg(a.name, a.type), a.uuid);
+    }
+    const int k = assetCombo->findData(keep);
+    if (k >= 0) assetCombo->setCurrentIndex(k);
+  };
+  refill();
+  connect(typeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          &dlg, [&](int) { refill(); });
+  connect(searchEdit, &QLineEdit::textChanged, &dlg,
+          [&](const QString &) { refill(); });
   auto *nSpin = new QSpinBox(&dlg);
   nSpin->setRange(1, 99);
 
   form->addRow(QObject::tr("Shot:"), shotCombo);
+  form->addRow(QObject::tr("Type:"), typeCombo);
+  form->addRow(QObject::tr("Search:"), searchEdit);
   form->addRow(QObject::tr("Asset:"), assetCombo);
   form->addRow(QObject::tr("How many:"), nSpin);
 
@@ -1992,6 +2025,7 @@ void ZtoryProductionPanel::onBreakdownAdd() {
   if (si < 0) return;
   QVector<BreakdownEntry> b = m->projectShots()[si].breakdown;
   const QString assetUuid   = assetCombo->currentData().toString();
+  if (assetUuid.isEmpty()) return;  // the filters left nothing to choose
   for (BreakdownEntry &be : b)
     if (be.assetUuid == assetUuid) {
       // Gia' presente: si aggiorna il numero invece di aggiungere una seconda
@@ -2117,6 +2151,23 @@ QWidget *ZtoryProductionPanel::buildBreakdownTab() {
   btns->addStretch();
   lay->addLayout(btns);
 
+  // A project's breakdown runs into hundreds of rows (Franco, 2026-11-22):
+  // one type at a time, and a search on the asset or the shot.
+  auto *filters = new QHBoxLayout();
+  m_breakdownTypeFilter = new QComboBox(w);
+  m_breakdownSearch     = new QLineEdit(w);
+  m_breakdownSearch->setPlaceholderText(QObject::tr("Search asset or shot…"));
+  m_breakdownSearch->setClearButtonEnabled(true);
+  filters->addWidget(new QLabel(QObject::tr("Type:"), w));
+  filters->addWidget(m_breakdownTypeFilter);
+  filters->addWidget(m_breakdownSearch, 1);
+  lay->addLayout(filters);
+  connect(m_breakdownTypeFilter,
+          QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this](int) { applyBreakdownFilter(); });
+  connect(m_breakdownSearch, &QLineEdit::textChanged, this,
+          [this](const QString &) { applyBreakdownFilter(); });
+
   m_breakdownTable = new QTableWidget(w);
   m_breakdownTable->setSelectionBehavior(QAbstractItemView::SelectRows);
   m_breakdownTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -2239,6 +2290,47 @@ void ZtoryProductionPanel::rebuildBreakdown() {
     }
   }
   m_breakdownTable->resizeColumnsToContents();
+  refreshBreakdownTypes();
+  applyBreakdownFilter();
+}
+
+void ZtoryProductionPanel::refreshBreakdownTypes() {
+  if (!m_breakdownTypeFilter) return;
+  const QString keep = m_breakdownTypeFilter->currentData().toString();
+  QStringList types;
+  for (const Asset &a : ZtoryModel::instance()->assets())
+    if (!a.type.isEmpty() && !types.contains(a.type, Qt::CaseInsensitive))
+      types << a.type;
+  types.sort(Qt::CaseInsensitive);
+  m_breakdownTypeFilter->blockSignals(true);
+  m_breakdownTypeFilter->clear();
+  m_breakdownTypeFilter->addItem(QObject::tr("All types"), QString());
+  for (const QString &t : types) m_breakdownTypeFilter->addItem(t, t);
+  const int i = m_breakdownTypeFilter->findData(keep);
+  m_breakdownTypeFilter->setCurrentIndex(i >= 0 ? i : 0);
+  m_breakdownTypeFilter->blockSignals(false);
+}
+
+void ZtoryProductionPanel::applyBreakdownFilter() {
+  if (!m_breakdownTable) return;
+  const QString type =
+      m_breakdownTypeFilter ? m_breakdownTypeFilter->currentData().toString()
+                            : QString();
+  const QString text =
+      m_breakdownSearch ? m_breakdownSearch->text().trimmed() : QString();
+  auto cell = [this](int r, int c) {
+    QTableWidgetItem *it = m_breakdownTable->item(r, c);
+    return it ? it->text() : QString();
+  };
+  for (int r = 0; r < m_breakdownTable->rowCount(); r++) {
+    bool show = type.isEmpty() ||
+                cell(r, 3).compare(type, Qt::CaseInsensitive) == 0;
+    if (show && !text.isEmpty())
+      show = cell(r, kBreakdownAssetCol).contains(text, Qt::CaseInsensitive) ||
+             cell(r, 1).contains(text, Qt::CaseInsensitive) ||
+             cell(r, 0).contains(text, Qt::CaseInsensitive);
+    m_breakdownTable->setRowHidden(r, !show);
+  }
 }
 
 QWidget *ZtoryProductionPanel::buildAssetsTab() {

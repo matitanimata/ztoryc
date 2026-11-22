@@ -108,6 +108,14 @@ ZtoryImportedAssets ztoryImportShotAssets(const QString &shotUuid,
 // `importScenePath`: con Import, la scena nella cui cartella va la copia
 // (vuoto = la corrente). Tahoma non copia MAI un PSD, neanche su Import
 // (loadPSDResource non passa dall'import): la copia la fa questa funzione.
+// Asks before a character's drawing goes into its new scene: the file, and
+// the tracker's import options, editable for THIS import only (Franco,
+// 2026-11-22: the tracker does not change). `foundByName`: the file was found
+// in the Model Sheets folder, not linked — the question says so.
+// False = the user skipped it; `policy` then is untouched.
+bool ztoryAskCharacterImport(const QString &characterName, const QString &file,
+                             bool foundByName, AssetImportPolicy &policy);
+
 QList<TXshLevel *> ztoryLoadPsdWithPolicy(
     const TFilePath &psd, const AssetImportPolicy &policy, int col0,
     QStringList *errors = nullptr,

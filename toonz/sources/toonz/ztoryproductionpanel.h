@@ -157,6 +157,10 @@ private:
   // Written here or on Kitsu; the Sync merges the two.
   QWidget *buildBreakdownTab();
   void rebuildBreakdown();
+  // Shows only the rows of the chosen asset type whose shot or asset matches
+  // the search; refills the type list from the project's assets.
+  void applyBreakdownFilter();
+  void refreshBreakdownTypes();
   void onBreakdownContextMenu(const QPoint &pos);
   // Chiede il file di un asset e lo lega. Condivisa fra scheda Assets e
   // scheda Breakdown: due copie divergono, e la seconda dimentica il
@@ -182,6 +186,8 @@ private:
   QLineEdit *m_bgDirEdit = nullptr;
   QLineEdit *m_modelSheetDirEdit = nullptr;
   QTableWidget *m_breakdownTable = nullptr;
+  QComboBox    *m_breakdownTypeFilter = nullptr;  // «All types» or one type
+  QLineEdit    *m_breakdownSearch     = nullptr;  // asset or shot, any part
   // Scrittura del breakdown a mano: fino alla 0.13.0 lo scriveva solo Kitsu.
   void onBreakdownAdd();
   void onBreakdownRemove();

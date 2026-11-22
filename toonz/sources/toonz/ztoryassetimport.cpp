@@ -20,7 +20,16 @@
 #include "ztoryassetpreview.h"
 #include "../common/psdlib/psd.h"
 
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QLabel>
+#include <QMainWindow>
+#include <QPushButton>
+#include <QVBoxLayout>
 #include <QFileInfo>
 #include <QObject>
 #include <QSet>
@@ -283,6 +292,84 @@ static TFilePath importPsdCopy(const TFilePath &psd, const TFilePath &scenePath,
   }
   if (log) *log << QObject::tr("copied into %1").arg(dst.getQString());
   return dst;
+}
+
+bool ztoryAskCharacterImport(const QString &characterName, const QString &file,
+                             bool foundByName, AssetImportPolicy &policy) {
+  const bool isPsd =
+      QFileInfo(file).suffix().compare("psd", Qt::CaseInsensitive) == 0;
+  QDialog dlg(TApp::instance()->getMainWindow());
+  dlg.setWindowTitle(QObject::tr("Import %1").arg(characterName));
+  auto *lay = new QVBoxLayout(&dlg);
+  QString text =
+      QObject::tr("Import the drawing of %1 into its new scene?\n\n%2")
+          .arg(characterName, file);
+  if (foundByName)
+    text += "\n\n" + QObject::tr("Found by name in the Model Sheets folder. "
+                                  "If you import it, it becomes %1's PSD to "
+                                  "rig in the Production Tracker.")
+                          .arg(characterName);
+  auto *label = new QLabel(text, &dlg);
+  label->setWordWrap(true);
+  label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  lay->addWidget(label);
+
+  // The tracker's options, as they would apply now; changed here they hold
+  // for this import only.
+  auto *form = new QFormLayout();
+  lay->addLayout(form);
+  auto *mode = new QComboBox(&dlg);
+  mode->addItem(QObject::tr("Load (point to the file)"),
+                int(AssetImportPolicy::Load));
+  mode->addItem(QObject::tr("Import (copy into the project)"),
+                int(AssetImportPolicy::Import));
+  mode->setCurrentIndex(policy.mode == AssetImportPolicy::Import ? 1 : 0);
+  form->addRow(QObject::tr("Mode:"), mode);
+
+  const QStringList kLoadAs{"Single Image", "Frames", "Columns"};
+  const QStringList kGroups{"Ignore", "SubSceneColumns", "ColumnFrames"};
+  QComboBox *loadAs = nullptr, *levelName = nullptr, *groups = nullptr;
+  QCheckBox *subScene = nullptr;
+  if (isPsd) {
+    loadAs = new QComboBox(&dlg);
+    loadAs->addItems({QObject::tr("Single Image"), QObject::tr("Frames"),
+                      QObject::tr("Columns")});
+    loadAs->setCurrentIndex(qMax(0, kLoadAs.indexOf(policy.psdLoadAs)));
+    levelName = new QComboBox(&dlg);
+    levelName->addItems({"FileName#LayerName", "LayerName"});
+    const int li = levelName->findText(policy.psdLevelName);
+    if (li >= 0) levelName->setCurrentIndex(li);
+    groups = new QComboBox(&dlg);
+    groups->addItems({QObject::tr("Ignore groups"),
+                      QObject::tr("Group layers as columns in a sub-scene"),
+                      QObject::tr("Group layers as frames in a column")});
+    groups->setCurrentIndex(qMax(0, kGroups.indexOf(policy.psdGroups)));
+    subScene = new QCheckBox(QObject::tr("Expose in a Sub-Scene"), &dlg);
+    subScene->setChecked(policy.psdSubScene == 1);
+    form->addRow(QObject::tr("Load as:"), loadAs);
+    form->addRow(QObject::tr("Level name:"), levelName);
+    form->addRow(QObject::tr("Groups:"), groups);
+    form->addRow(QString(), subScene);
+  }
+
+  auto *box = new QDialogButtonBox(&dlg);
+  QPushButton *importBtn =
+      box->addButton(QObject::tr("Import"), QDialogButtonBox::AcceptRole);
+  box->addButton(QObject::tr("Skip"), QDialogButtonBox::RejectRole);
+  importBtn->setDefault(true);
+  lay->addWidget(box);
+  QObject::connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  QObject::connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  if (dlg.exec() != QDialog::Accepted) return false;
+
+  policy.mode = AssetImportPolicy::Mode(mode->currentData().toInt());
+  if (isPsd) {
+    policy.psdLoadAs    = kLoadAs[loadAs->currentIndex()];
+    policy.psdLevelName = levelName->currentText();
+    policy.psdGroups    = kGroups[groups->currentIndex()];
+    policy.psdSubScene  = subScene->isChecked() ? 1 : 0;
+  }
+  return true;
 }
 
 QList<TXshLevel *> ztoryLoadPsdWithPolicy(const TFilePath &psd,

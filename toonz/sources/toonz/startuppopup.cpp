@@ -1228,23 +1228,59 @@ void StartupPopup::refreshCharacterChoices() {
 
 //-----------------------------------------------------------------------------
 
-// Ztoryc: il PSD da riggare collegato al personaggio entra da solo nella sua
-// scena appena creata, con le opzioni PSD del personaggio (o quelle di
-// progetto dove non le ha): e' il passo che prima si faceva a mano ogni volta
-// (Franco, 2026-09-26). Nessun PSD collegato, o file sparito: non fa niente
-// e lo dice, perche' una scena del personaggio vuota deve avere un perche'.
-static void importCharacterRigPsd(const Asset &a) {
-  ZtoryModel *m     = ZtoryModel::instance();
-  const QString psd = m->resolveAssetRigPsd(a);
-  if (psd.isEmpty()) return;
-  if (!QFileInfo::exists(psd)) {
+// Ztoryc: il disegno del personaggio entra nella sua scena appena creata
+// (Franco, 2026-09-26). Il PSD da riggare collegato, oppure, se non c'e', il
+// file che la cartella Model Sheets ha col suo nome — lo stesso che la colonna
+// File del Breakdown mostra (Franco, 2026-11-22: a Cascina solo un personaggio
+// su dodici aveva il PSD collegato, e gli altri nascevano vuoti senza un
+// perche'). Prima si chiede, con le opzioni del tracker modificabili per
+// questo import; un file trovato per nome e confermato diventa il PSD da
+// riggare. Niente da importare: lo si dice.
+static void importCharacterRigPsd(int assetIndex) {
+  ZtoryModel *m = ZtoryModel::instance();
+  if (assetIndex < 0 || assetIndex >= m->assetCount()) return;
+  const Asset a   = m->assets()[assetIndex];  // a copy: dialogs follow
+  QString file    = m->resolveAssetRigPsd(a);
+  bool byName     = false;
+  if (file.isEmpty()) {
+    // The asset already points at the scene just created: look in the
+    // folder as if it pointed at nothing.
+    Asset probe = a;
+    probe.filePath.clear();
+    QString why;
+    file   = m->resolveAssetFile(probe, &why);
+    byName = true;
+    if (file.isEmpty()) {
+      DVGui::info(QObject::tr("No drawing of %1 was imported: %2.\n\nLink "
+                              "its PSD to rig in the Production Tracker "
+                              "(Assets tab) and it will come in by itself.")
+                      .arg(a.name, why));
+      return;
+    }
+  } else if (!QFileInfo::exists(file)) {
     DVGui::warning(QObject::tr("The PSD to rig of %1 was not found:\n%2")
-                       .arg(a.name, psd));
+                       .arg(a.name, file));
     return;
   }
-  ztoryLoadPsdWithPolicy(
-      TFilePath(psd.toStdWString()), m->effectiveImportPolicy(a),
-      TApp::instance()->getCurrentXsheet()->getXsheet()->getColumnCount());
+
+  AssetImportPolicy policy = m->effectiveImportPolicy(a);
+  if (!ztoryAskCharacterImport(a.name, file, byName, policy)) return;
+
+  const TFilePath fp(file.toStdWString());
+  const int col0 =
+      TApp::instance()->getCurrentXsheet()->getXsheet()->getColumnCount();
+  if (QFileInfo(file).suffix().compare("psd", Qt::CaseInsensitive) == 0) {
+    ztoryLoadPsdWithPolicy(fp, policy, col0);
+    if (byName) m->setAssetRigPsd(assetIndex, file);
+  } else {
+    IoCmd::LoadResourceArguments args;
+    args.resourceDatas.emplace_back(fp);
+    args.importPolicy = policy.mode == AssetImportPolicy::Import
+                            ? IoCmd::LoadResourceArguments::IMPORT
+                            : IoCmd::LoadResourceArguments::LOAD;
+    args.col0 = col0;
+    IoCmd::loadResources(args, /*updateRecentFile=*/false);
+  }
 }
 
 void StartupPopup::refreshShotChoices() {
@@ -1443,7 +1479,7 @@ void StartupPopup::onCreateButton() {
           // in revisione o chiuso non si riporta indietro — la regola sta in
           // ZtoryTaskFlow, con le altre.
           ZtoryTaskFlow::characterSceneCreated(characterUuid);
-          importCharacterRigPsd(m->assets()[i]);
+          importCharacterRigPsd(i);
           // Gli asset vivono in production.ztrack, non nel .ztoryc: senza
           // questo il collegamento resterebbe solo in memoria e sparirebbe
           // alla chiusura — e il personaggio si ritroverebbe scollegato senza
