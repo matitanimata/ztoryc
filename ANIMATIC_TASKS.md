@@ -178,6 +178,10 @@ degli status).
     mesh esistente) la cronologia si svuota ancora, come in stock.
   - **Update Mesh, minori della review (`44e25880c`):** `continue` se `!meshImg`, e `getSize` che conta le mesh vere —
     **FATTI il 20/11, committati in `d7ea2643b`, MAI COLLAUDATI: aspettano il collaudo** (aggiorna una mesh esistente, ⌘Z, ⌘Y).
+- **Invio per approvazione da scena personaggio senza Kitsu collegato (Franco, 22/11)** — ora chiede di collegarsi e
+  apre la finestra Kitsu, invece di fallire. Commit `7343f5c10`, **MAI COLLAUDATO**. Prova in un progetto di prova collegato
+  a Kitsu: Ztoryc aperto senza connessione, scena personaggio con task in WIP, chiuderla, «Send for approval», poi
+  «Connect…»: l'anteprima deve arrivare su Kitsu e il task passare in WFA.
 - **Popup e pannelli flottanti che finiscono dietro la finestra principale (Franco, 20-21/11)** — anche con AeroSpace
   spento. Due casi:
   - **dietro dopo un clic sulla principale:** su macOS DVGui::Dialog e i pannelli flottanti sono gia' `Qt::Tool`,

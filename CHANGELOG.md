@@ -1,3 +1,12 @@
+## [2026-11-22] — Kitsu: invio per approvazione con proposta di connessione
+
+### Modified
+- **Scena personaggio, «Send for approval» senza Kitsu collegato** (`7343f5c10`, segnalato da Franco, MAI collaudato):
+  invece di fallire e lasciare l'anteprima su disco, chiede di collegarsi e apre la finestra Kitsu (che entra da sola
+  se la password e' salvata); poi l'invio prosegue. «Not now» o un login fallito: come prima, WIP e anteprima in
+  `previews/`.
+- **Undo di Update Mesh** (`8b9a71064`): stima della memoria in 64 bit, limitata; minore della review del 22/11.
+
 ## [2026-11-21] — Import Assets mostra le cartelle degli asset; minori della review
 
 ### Fixed
