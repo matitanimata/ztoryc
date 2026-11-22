@@ -3,6 +3,9 @@
 **The complete solution for professional storyboarding.** From your first thumbnail to the final animatic, Ztoryc supports your creative work through every stage of pre-production — free, open source, and built by artists for artists.
 
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/ZP2gqQwmDb)
+[![Discussions](https://img.shields.io/badge/GitHub-Discussions-24292f?logo=github&logoColor=white)](https://github.com/matitanimata/ztoryc/discussions)
+
+💬 **Questions, bug reports, ideas?** → [Discussions](https://github.com/matitanimata/ztoryc/discussions)
 
 Ztoryc is a fork of Tahoma2D built for storyboard artists, directors and studios who need a serious, professional tool to tell better stories, before a single frame is animated.
 

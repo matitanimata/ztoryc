@@ -67,6 +67,7 @@
 
 // STD includes
 #include <algorithm>
+#include <climits>
 
 // Tunable parameters
 
@@ -1288,25 +1289,27 @@ public:
   void undo() const override { put(true); }
   void redo() const override { put(false); }
 
-  // Both meshes of every frame stay alive in the undo: count their vertices,
-  // edges and faces, so that the undo manager's memory limit sees them.
-  static int meshBytes(const TImageP &img) {
+  // Both meshes of every frame stay alive in the undo. An estimate from their
+  // vertices, edges and faces (the per-vertex edge lists on the heap are not
+  // counted), so that the undo manager's memory limit sees them at all.
+  static qint64 meshBytes(const TImageP &img) {
     TMeshImageP mi = img;
     if (!mi) return 0;
-    int bytes = sizeof(TMeshImage);
+    qint64 bytes = sizeof(TMeshImage);
     for (const TTextureMeshP &m : mi->meshes())
-      bytes += sizeof(TTextureMesh) +
-               m->verticesCount() * int(sizeof(TTextureMesh::vertex_type)) +
-               m->edgesCount() * int(sizeof(TTextureMesh::edge_type)) +
-               m->facesCount() * int(sizeof(TTextureMesh::face_type));
+      bytes += qint64(sizeof(TTextureMesh)) +
+               qint64(m->verticesCount()) * sizeof(TTextureMesh::vertex_type) +
+               qint64(m->edgesCount()) * sizeof(TTextureMesh::edge_type) +
+               qint64(m->facesCount()) * sizeof(TTextureMesh::face_type);
     return bytes;
   }
 
   int getSize() const override {
-    int bytes = sizeof(*this);
+    qint64 bytes = sizeof(*this);
     for (const Frame &f : m_frames)
-      bytes += int(sizeof(Frame)) + meshBytes(f.m_old) + meshBytes(f.m_new);
-    return bytes;
+      bytes += qint64(sizeof(Frame)) + meshBytes(f.m_old) + meshBytes(f.m_new);
+    // A negative size would make the undo manager never drop anything.
+    return int(qMin<qint64>(bytes, INT_MAX));
   }
 
   QString getHistoryString() override { return QObject::tr("Update Mesh"); }
