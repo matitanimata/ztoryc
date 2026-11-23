@@ -399,6 +399,21 @@ QList<TXshLevel *> ztoryLoadPsdWithPolicy(const TFilePath &psd,
   return levels;
 }
 
+// L'ordine delle colonne e' l'ordine di sovrapposizione: in Tahoma la colonna
+// piu' a destra sta sopra. Quindi prima le scenografie, poi i personaggi, poi
+// i props, e in cima il resto (FX, reference). Importando nell'ordine del
+// breakdown i personaggi finivano sotto le scenografie (Franco, 2026-11-23).
+static int ztoryImportLayer(const QString &type) {
+  if (type.compare("Environment", Qt::CaseInsensitive) == 0 ||
+      type.compare("BG", Qt::CaseInsensitive) == 0 ||
+      type.compare("BKG", Qt::CaseInsensitive) == 0)
+    return 0;
+  if (ZtoryModel::isCharacterType(type)) return 1;
+  if (type.compare("Prop", Qt::CaseInsensitive) == 0) return 2;
+  return 3;
+}
+static const int kImportLayers = 4;
+
 ZtoryImportedAssets ztoryImportShotAssets(const QString &shotUuid,
                                           TXsheet *subXsheet,
                                           const TFilePath &shotScenePath,
@@ -423,10 +438,12 @@ ZtoryImportedAssets ztoryImportShotAssets(const QString &shotUuid,
 
   // Due liste perche' la politica e' per CHIAMATA, non per file: gli asset da
   // copiare nella scena e quelli a cui puntare e basta vanno in due giri.
-  std::vector<TFilePath> toLoad, toImport;
+  // Una lista per strato (ztoryImportLayer): gli strati si caricano in ordine.
+  std::vector<TFilePath> toLoad[kImportLayers], toImport[kImportLayers];
   // I psd a parte, ognuno con la SUA politica: le impostazioni sono per asset,
   // e due psd nello stesso shot possono volerne di diverse.
-  QVector<QPair<TFilePath, AssetImportPolicy>> psdFiles;
+  QVector<QPair<TFilePath, AssetImportPolicy>> psdFiles[kImportLayers];
+  bool any = false;
   QSet<QString> already;  // stesso file due volte = una modale «Allow duplicate?»
 
   for (const BreakdownEntry &be : ps->breakdown) {
@@ -470,6 +487,7 @@ ZtoryImportedAssets ztoryImportShotAssets(const QString &shotUuid,
 
     const AssetImportPolicy pol = m->effectiveImportPolicy(*a);
     const TFilePath fp(file.toStdWString());
+    const int layer = ztoryImportLayer(a->type);
     // ⚠️ L'audio dentro una sotto-scena e' vietato in Ztoryc (vive solo nel
     // main xsheet) e loadResources risponde con una finestra di avviso: in
     // mezzo a un export sarebbe una modale per shot. Si salta qui, dicendo
@@ -487,17 +505,18 @@ ZtoryImportedAssets ztoryImportShotAssets(const QString &shotUuid,
       // confermare. Le impostazioni pero' ci sono gia' — quelle dell'asset
       // sopra quelle di progetto — e si applicano direttamente al popup senza
       // mostrarlo.
-      psdFiles.push_back(qMakePair(fp, pol));
+      psdFiles[layer].push_back(qMakePair(fp, pol));
     } else if (pol.mode == AssetImportPolicy::Import) {
-      toImport.push_back(fp);
+      toImport[layer].push_back(fp);
     } else {
-      toLoad.push_back(fp);
+      toLoad[layer].push_back(fp);
     }
+    any = true;
     res.log << QObject::tr("%1 (%2) ← %3").arg(a->name, a->type, file) +
                    (isNear ? QObject::tr("  (%1)").arg(why) : QString());
   }
 
-  if (toLoad.empty() && toImport.empty() && psdFiles.isEmpty()) return res;
+  if (!any) return res;
 
   const int before = subXsheet->getColumnCount();
 
@@ -522,17 +541,19 @@ ZtoryImportedAssets ztoryImportShotAssets(const QString &shotUuid,
     for (TXshLevel *lv : args.loadedLevels)
       if (lv) res.levels.append(lv);
   };
-  runLoad(toLoad, false);
-  runLoad(toImport, true);
+  for (int layer = 0; layer < kImportLayers; layer++) {
+    runLoad(toLoad[layer], false);
+    runLoad(toImport[layer], true);
 
-  // I psd, uno per volta: il popup porta le scelte di QUEL psd, quindi va
-  // riconfigurato fra un file e l'altro.
-  for (const auto &pr : psdFiles) {
-    QStringList psdErrors;
-    res.levels.append(ztoryLoadPsdWithPolicy(pr.first, pr.second,
-                                             subXsheet->getColumnCount(),
-                                             &psdErrors, shotScenePath));
-    for (const QString &e : psdErrors) res.log << e;
+    // I psd, uno per volta: il popup porta le scelte di QUEL psd, quindi va
+    // riconfigurato fra un file e l'altro.
+    for (const auto &pr : psdFiles[layer]) {
+      QStringList psdErrors;
+      res.levels.append(ztoryLoadPsdWithPolicy(pr.first, pr.second,
+                                               subXsheet->getColumnCount(),
+                                               &psdErrors, shotScenePath));
+      for (const QString &e : psdErrors) res.log << e;
+    }
   }
 
   // Le colonne nate adesso sono quelle dopo `before`. Contate cosi' e non
