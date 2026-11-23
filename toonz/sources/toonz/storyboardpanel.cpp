@@ -1196,7 +1196,73 @@ void PanelWidget::showBreakdownPopup() {
   addBtnMenu->setText(tr("+ Add asset"));
   addBtnMenu->setStyleSheet("QToolButton{color:#ddd;font-size:11px;border:1px "
                             "solid #555;padding:2px 6px;}");
-  lay->addWidget(addBtnMenu, 0, Qt::AlignLeft);
+  // Copia e incolla del breakdown fra shot con lo stesso setup (Franco,
+  // 2026-11-23). Incollare AGGIUNGE quelli che mancano, non toglie niente:
+  // cio' che e' di troppo si toglie con le spunte.
+  // Con hover e pressed: senza, il clic funzionava ma il pulsante restava
+  // identico e non si capiva se fosse successo qualcosa (Franco, 2026-11-23).
+  const QString smallBtn =
+      "QToolButton{color:#ddd;font-size:11px;border:1px solid #555;"
+      "padding:2px 6px;}"
+      "QToolButton:hover{background:#3a3a3a;border-color:#777;}"
+      "QToolButton:pressed{background:#5a8fd0;color:#fff;}"
+      "QToolButton:disabled{color:#666;border-color:#444;}";
+  addBtnMenu->setStyleSheet(smallBtn);
+  QToolButton *copyBtn  = new QToolButton(pop);
+  QToolButton *pasteBtn = new QToolButton(pop);
+  copyBtn->setText(tr("Copy"));
+  copyBtn->setStyleSheet(smallBtn);
+  copyBtn->setToolTip(tr("Copy this shot's breakdown, to paste it into a "
+                         "shot with the same setup."));
+  pasteBtn->setStyleSheet(smallBtn);
+  auto *btnRow = new QHBoxLayout();
+  btnRow->setSpacing(4);
+  btnRow->addWidget(addBtnMenu);
+  btnRow->addStretch(1);
+  btnRow->addWidget(copyBtn);
+  btnRow->addWidget(pasteBtn);
+  lay->addLayout(btnRow);
+  // Gli asset del clip che a questo shot mancano (quelli cancellati dal
+  // progetto nel frattempo non contano).
+  auto missingFromClip = [shot]() {
+    ZtoryModel *m = ZtoryModel::instance();
+    QStringList out;
+    for (const QString &u : m->breakdownClip()) {
+      bool exists = false;
+      for (const Asset &a : m->assets())
+        if (a.uuid == u) { exists = true; break; }
+      if (exists && !m->shotBreakdownHas(shot, u)) out << u;
+    }
+    return out;
+  };
+  auto updateCopyPaste = [shot, copyBtn, pasteBtn, missingFromClip]() {
+    ZtoryModel *m = ZtoryModel::instance();
+    const int i   = m->projectShotIndex(shot);
+    copyBtn->setEnabled(i >= 0 && !m->projectShots()[i].breakdown.isEmpty());
+    const int n = missingFromClip().size();
+    pasteBtn->setText(n ? tr("Paste %1").arg(n) : tr("Paste"));
+    pasteBtn->setEnabled(n > 0);
+    pasteBtn->setToolTip(
+        m->breakdownClip().isEmpty()
+            ? tr("Nothing copied yet: use Copy in another shot's breakdown.")
+            : n ? tr("Add the %1 copied assets this shot does not have yet.")
+                      .arg(n)
+                : tr("This shot already has all the copied assets."));
+  };
+  updateCopyPaste();
+  connect(copyBtn, &QToolButton::clicked, pop,
+          [shot, copyBtn, updateCopyPaste]() {
+    ZtoryModel *m = ZtoryModel::instance();
+    const int i   = m->projectShotIndex(shot);
+    if (i < 0) return;
+    QStringList uuids;
+    for (const BreakdownEntry &e : m->projectShots()[i].breakdown)
+      uuids << e.assetUuid;
+    m->setBreakdownClip(uuids);
+    updateCopyPaste();
+    // Conferma visibile: quanti ne sono stati copiati.
+    copyBtn->setText(tr("Copied %1 \u2713").arg(uuids.size()));
+  });
   QWidget *catRow = new QWidget(pop);
   catRow->setStyleSheet("border:none;");
   auto *catGrid = new QGridLayout(catRow);
@@ -1298,8 +1364,11 @@ void PanelWidget::showBreakdownPopup() {
     QStringList types;
     for (const Asset &a : ZtoryModel::instance()->assets())
       if (!types.contains(a.type, Qt::CaseInsensitive)) types << a.type;
-    const QString idle = "QToolButton{color:#ddd;font-size:11px;border:1px "
-                         "solid #555;padding:2px 6px;}";
+    const QString idle =
+        "QToolButton{color:#ddd;font-size:11px;border:1px solid #555;"
+        "padding:2px 6px;}"
+        "QToolButton:hover{background:#3a3a3a;border-color:#777;}"
+        "QToolButton:pressed{background:#5a8fd0;color:#fff;}";
     const QString sel  = "QToolButton{color:#fff;font-size:11px;border:1px "
                          "solid #5a8fd0;background:#3a4a60;padding:2px 6px;}";
     int i = 0;
@@ -1346,7 +1415,8 @@ void PanelWidget::showBreakdownPopup() {
   });
 
   connect(addBtn, &QPushButton::clicked, pop,
-          [shot, pending, removals, refill, catRow, picker, pop]() {
+          [shot, pending, removals, refill, catRow, picker, updateCopyPaste,
+           pop]() {
             ZtoryModel *m = ZtoryModel::instance();
             bool changed  = false;
             for (const QString &u : *pending)
@@ -1359,8 +1429,24 @@ void PanelWidget::showBreakdownPopup() {
             removals->clear();
             if (changed) m->saveProjectDb();
             refill();
+            updateCopyPaste();
             // Applicato, si torna alla sola lista dello shot (Franco,
             // 2026-11-23): categorie e spunte si richiudono.
+            catRow->hide();
+            picker->hide();
+            pop->adjustSize();
+          });
+
+  connect(pasteBtn, &QToolButton::clicked, pop,
+          [shot, missingFromClip, refill, updateCopyPaste, catRow, picker,
+           pop]() {
+            ZtoryModel *m = ZtoryModel::instance();
+            bool changed  = false;
+            for (const QString &u : missingFromClip())
+              changed |= m->addToShotBreakdown(shot, u);
+            if (changed) m->saveProjectDb();
+            refill();
+            updateCopyPaste();
             catRow->hide();
             picker->hide();
             pop->adjustSize();

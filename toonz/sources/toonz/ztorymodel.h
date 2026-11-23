@@ -538,6 +538,7 @@ class ZtoryModel : public QObject {
   bool                              m_pdfNoLogo = false;  // true = export PDF with no logo at all
   ZtoryWorkflow                     m_workflow = ZtoryWorkflow::Tradigital;
   std::vector<ZtoryClipEntry>       m_sharedClip;
+  QStringList                       m_breakdownClip;
   std::set<int>                     m_sharedSelection;
   NumberingConfig                   m_numberingConfig;
   bool                              m_autoRenumber = true;  // global numbering mode
@@ -1271,6 +1272,10 @@ public:
 
   // ── Shared clipboard (Board ↔ Animatic) ──────────────────────────────────
   const std::vector<ZtoryClipEntry>& sharedClip() const { return m_sharedClip; }
+  // Breakdown copiato da uno shot per incollarlo in un altro con lo stesso
+  // setup (Franco, 2026-11-23). Uuid di asset; vive finche' l'app e' aperta.
+  const QStringList &breakdownClip() const { return m_breakdownClip; }
+  void setBreakdownClip(const QStringList &uuids) { m_breakdownClip = uuids; }
   void setSharedClip(std::vector<ZtoryClipEntry> v)     { m_sharedClip = std::move(v); }
   // The data of a cut shot whose sub-scene is `cl`, while it waits in the clip
   // to be pasted; nullptr if none.
