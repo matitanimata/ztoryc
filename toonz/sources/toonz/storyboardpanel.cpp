@@ -114,6 +114,8 @@
 #include <QSizePolicy>
 #include <QResizeEvent>
 #include <QWindow>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QFile>
 #include <QTextStream>
 #include <QXmlStreamWriter>
@@ -1119,6 +1121,44 @@ void PanelWidget::setBreakdown(const QString &shotUuid, int count,
   m_breakdownBtn->show();
 }
 
+// Tiene il popup del Breakdown dentro lo schermo a ogni cambio di misura:
+// aperto dagli shot piu' a sinistra usciva dal bordo (Franco, 2026-11-23), e
+// cresce quando si apre una categoria. Ancorato al bordo destro del pulsante,
+// sotto; se non ci sta sotto, va sopra.
+namespace {
+class ZtoryKeepOnScreen final : public QObject {
+public:
+  ZtoryKeepOnScreen(QWidget *pop, QWidget *anchor)
+      : QObject(pop), m_pop(pop), m_anchor(anchor) {
+    pop->installEventFilter(this);
+  }
+  void place() {
+    if (!m_anchor) return;
+    const QPoint a = m_anchor->mapToGlobal(QPoint(0, 0));
+    QScreen *scr   = QGuiApplication::screenAt(a);
+    if (!scr) scr = QGuiApplication::primaryScreen();
+    const QRect area = scr->availableGeometry();
+    const QSize s    = m_pop->size();
+    int x = a.x() + m_anchor->width() - s.width();
+    int y = a.y() + m_anchor->height();
+    if (y + s.height() > area.bottom()) y = a.y() - s.height();
+    x = qBound(area.left(), x, qMax(area.left(), area.right() - s.width()));
+    y = qBound(area.top(), y, qMax(area.top(), area.bottom() - s.height()));
+    m_pop->move(x, y);
+  }
+
+protected:
+  bool eventFilter(QObject *o, QEvent *e) override {
+    if (o == m_pop && e->type() == QEvent::Resize) place();
+    return false;
+  }
+
+private:
+  QWidget *m_pop;
+  QPointer<QWidget> m_anchor;
+};
+}  // namespace
+
 void PanelWidget::showBreakdownPopup() {
   // Un popup che si chiude cliccando altrove: si consulta, si corregge, e si
   // torna a scrivere (Franco, 2026-11-23: «cosi' evitiamo di scrivere nel
@@ -1147,14 +1187,23 @@ void PanelWidget::showBreakdownPopup() {
   // consulta, e se ne spuntano piu' d'uno alla volta. Togliere la spunta a
   // uno gia' nello shot lo toglie (Franco, 2026-11-23: il personaggio fuori
   // campo entrato dal Dialog). Niente cambia finche' non si preme il pulsante.
+  //
+  // Le categorie sono pulsanti DENTRO il popup, non un menu: un QMenu aperto da
+  // un Qt::Popup funzionava una volta sola, poi il clic andava perso (Franco,
+  // 2026-11-23: «non mi apre la scelta per cambiare categoria»). Restano
+  // visibili mentre si spunta, cosi' cambiare categoria e' un clic.
   QToolButton *addBtnMenu = new QToolButton(pop);
   addBtnMenu->setText(tr("+ Add asset"));
-  addBtnMenu->setPopupMode(QToolButton::InstantPopup);
   addBtnMenu->setStyleSheet("QToolButton{color:#ddd;font-size:11px;border:1px "
                             "solid #555;padding:2px 6px;}");
-  QMenu *catMenu = new QMenu(addBtnMenu);
-  addBtnMenu->setMenu(catMenu);
   lay->addWidget(addBtnMenu, 0, Qt::AlignLeft);
+  QWidget *catRow = new QWidget(pop);
+  catRow->setStyleSheet("border:none;");
+  auto *catGrid = new QGridLayout(catRow);
+  catGrid->setContentsMargins(0, 4, 0, 0);
+  catGrid->setSpacing(3);
+  catRow->hide();
+  lay->addWidget(catRow);
 
   // La parte che compare scelta una categoria.
   QWidget *picker = new QWidget(pop);
@@ -1231,23 +1280,48 @@ void PanelWidget::showBreakdownPopup() {
           });
   connect(filter, &QLineEdit::textChanged, pop, [fillChecks]() { fillChecks(); });
 
-  // Le categorie si leggono all'apertura del menu: un asset creato a popup
-  // aperto (da un tag) deve esserci.
-  connect(catMenu, &QMenu::aboutToShow, catMenu,
-          [catMenu, category, catTitle, filter, picker, fillChecks, pop]() {
-    catMenu->clear();
+  // Le categorie si rileggono a ogni clic su «+ Add asset»: un asset creato a
+  // popup aperto (da un tag) deve esserci. Un secondo clic le richiude.
+  connect(addBtnMenu, &QToolButton::clicked, pop,
+          [catRow, catGrid, category, catTitle, filter, picker, fillChecks,
+           pop]() {
+    if (catRow->isVisible()) {
+      catRow->hide();
+      picker->hide();
+      pop->adjustSize();
+      return;
+    }
+    while (QLayoutItem *li = catGrid->takeAt(0)) {
+      delete li->widget();
+      delete li;
+    }
     QStringList types;
     for (const Asset &a : ZtoryModel::instance()->assets())
       if (!types.contains(a.type, Qt::CaseInsensitive)) types << a.type;
+    const QString idle = "QToolButton{color:#ddd;font-size:11px;border:1px "
+                         "solid #555;padding:2px 6px;}";
+    const QString sel  = "QToolButton{color:#fff;font-size:11px;border:1px "
+                         "solid #5a8fd0;background:#3a4a60;padding:2px 6px;}";
+    int i = 0;
     for (const QString &type : types) {
       int n = 0;
       for (const Asset &a : ZtoryModel::instance()->assets())
         if (a.type.compare(type, Qt::CaseInsensitive) == 0) n++;
       const QString label = type.isEmpty() ? QObject::tr("Other") : type;
-      QAction *act = catMenu->addAction(QString("%1 (%2)").arg(label).arg(n));
-      connect(act, &QAction::triggered, pop,
-              [type, label, n, category, catTitle, filter, picker, fillChecks,
-               pop]() {
+      QToolButton *b = new QToolButton(catRow);
+      b->setText(QString("%1 (%2)").arg(label).arg(n));
+      b->setStyleSheet(type.compare(*category, Qt::CaseInsensitive) == 0 &&
+                               picker->isVisible()
+                           ? sel
+                           : idle);
+      b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+      catGrid->addWidget(b, i / 3, i % 3);
+      i++;
+      QObject::connect(b, &QToolButton::clicked, pop,
+                       [b, catRow, idle, sel, type, label, n, category,
+                        catTitle, filter, picker, fillChecks, pop]() {
+        for (QToolButton *o : catRow->findChildren<QToolButton *>())
+          o->setStyleSheet(o == b ? sel : idle);
         *category = type;
         catTitle->setText(label);
         // Il filtro solo dove serve: in una categoria di cinque e' rumore.
@@ -1262,13 +1336,17 @@ void PanelWidget::showBreakdownPopup() {
         if (filter->isVisible()) filter->setFocus();
       });
     }
-    if (catMenu->isEmpty())
-      catMenu->addAction(QObject::tr("No assets in the project"))
-          ->setEnabled(false);
+    if (types.isEmpty()) {
+      QLabel *none = new QLabel(QObject::tr("No assets in the project"), catRow);
+      none->setStyleSheet("color:#808080;font-size:11px;");
+      catGrid->addWidget(none, 0, 0);
+    }
+    catRow->show();
+    pop->adjustSize();
   });
 
   connect(addBtn, &QPushButton::clicked, pop,
-          [shot, pending, removals, refill, fillChecks, pop]() {
+          [shot, pending, removals, refill, catRow, picker, pop]() {
             ZtoryModel *m = ZtoryModel::instance();
             bool changed  = false;
             for (const QString &u : *pending)
@@ -1281,7 +1359,10 @@ void PanelWidget::showBreakdownPopup() {
             removals->clear();
             if (changed) m->saveProjectDb();
             refill();
-            fillChecks();
+            // Applicato, si torna alla sola lista dello shot (Franco,
+            // 2026-11-23): categorie e spunte si richiudono.
+            catRow->hide();
+            picker->hide();
             pop->adjustSize();
           });
 
@@ -1291,8 +1372,8 @@ void PanelWidget::showBreakdownPopup() {
   hint->setStyleSheet("color:#808080;font-size:10px;border:none;");
   lay->addWidget(hint);
   pop->adjustSize();
-  pop->move(m_breakdownBtn->mapToGlobal(
-      QPoint(m_breakdownBtn->width() - pop->width(), m_breakdownBtn->height())));
+  auto *keep = new ZtoryKeepOnScreen(pop, m_breakdownBtn);
+  keep->place();
   pop->show();
 }
 
