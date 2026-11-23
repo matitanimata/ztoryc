@@ -2070,22 +2070,32 @@ void ZtoryProductionPanel::onBreakdownAdd(QString shotUuid, QString type) {
   auto *searchEdit = new QLineEdit(&dlg);
   searchEdit->setPlaceholderText(QObject::tr("Search…"));
   searchEdit->setClearButtonEnabled(true);
-  auto *assetCombo = new QComboBox(&dlg);
+  // Un elenco, non una tendina: su macOS una tendina con decine di asset si
+  // apriva a tutta altezza e non scorreva (Franco, 2026-11-23). E si puo'
+  // sceglierne piu' d'uno: uno shot di solito ne vuole diversi.
+  auto *assetList = new QListWidget(&dlg);
+  assetList->setSelectionMode(QAbstractItemView::ExtendedSelection);
+  assetList->setMinimumHeight(260);
   auto refill = [&]() {
-    const QString keep = assetCombo->currentData().toString();
+    QSet<QString> keep;
+    for (QListWidgetItem *it : assetList->selectedItems())
+      keep.insert(it->data(Qt::UserRole).toString());
     const QString type = typeCombo->currentData().toString();
     const QString text = searchEdit->text().trimmed();
-    assetCombo->clear();
+    assetList->clear();
     for (int i = 0; i < m->assetCount(); i++) {
       const Asset &a = m->assets()[i];
       if (!type.isEmpty() && a.type.compare(type, Qt::CaseInsensitive) != 0)
         continue;
       if (!text.isEmpty() && !a.name.contains(text, Qt::CaseInsensitive))
         continue;
-      assetCombo->addItem(QString("%1  (%2)").arg(a.name, a.type), a.uuid);
+      auto *it = new QListWidgetItem(QString("%1  (%2)").arg(a.name, a.type),
+                                     assetList);
+      it->setData(Qt::UserRole, a.uuid);
+      if (keep.contains(a.uuid)) it->setSelected(true);
     }
-    const int k = assetCombo->findData(keep);
-    if (k >= 0) assetCombo->setCurrentIndex(k);
+    if (assetList->selectedItems().isEmpty() && assetList->count() > 0)
+      assetList->setCurrentRow(0);
   };
   refill();
   connect(typeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -2098,7 +2108,7 @@ void ZtoryProductionPanel::onBreakdownAdd(QString shotUuid, QString type) {
   form->addRow(QObject::tr("Shot:"), shotCombo);
   form->addRow(QObject::tr("Type:"), typeCombo);
   form->addRow(QObject::tr("Search:"), searchEdit);
-  form->addRow(QObject::tr("Asset:"), assetCombo);
+  form->addRow(QObject::tr("Asset:"), assetList);
   form->addRow(QObject::tr("How many:"), nSpin);
 
   auto *box = new QDialogButtonBox(
@@ -2106,28 +2116,34 @@ void ZtoryProductionPanel::onBreakdownAdd(QString shotUuid, QString type) {
   lay->addWidget(box);
   connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
   connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  connect(assetList, &QListWidget::itemDoubleClicked, &dlg,
+          [&](QListWidgetItem *) { dlg.accept(); });
   if (dlg.exec() != QDialog::Accepted) return;
 
   const int si = projectShotIndexByUuid(shotCombo->currentData().toString());
   if (si < 0) return;
+  QStringList chosen;
+  for (QListWidgetItem *it : assetList->selectedItems())
+    chosen << it->data(Qt::UserRole).toString();
+  if (chosen.isEmpty()) return;  // the filters left nothing to choose
   QVector<BreakdownEntry> b = m->projectShots()[si].breakdown;
-  const QString assetUuid   = assetCombo->currentData().toString();
-  if (assetUuid.isEmpty()) return;  // the filters left nothing to choose
-  for (BreakdownEntry &be : b)
-    if (be.assetUuid == assetUuid) {
-      // Gia' presente: si aggiorna il numero invece di aggiungere una seconda
-      // riga per la stessa coppia, che al momento dell'import sarebbe lo stesso
-      // file due volte.
-      be.nbOccurrences = nSpin->value();
-      m->setShotBreakdown(si, b);
-      m->saveProjectDb();
-      rebuildBreakdown();
-      return;
-    }
-  BreakdownEntry be;
-  be.assetUuid     = assetUuid;
-  be.nbOccurrences = nSpin->value();
-  b.push_back(be);
+  for (const QString &assetUuid : chosen) {
+    bool present = false;
+    for (BreakdownEntry &be : b)
+      if (be.assetUuid == assetUuid) {
+        // Gia' presente: si aggiorna il numero invece di aggiungere una
+        // seconda riga per la stessa coppia, che al momento dell'import
+        // sarebbe lo stesso file due volte.
+        be.nbOccurrences = nSpin->value();
+        present          = true;
+        break;
+      }
+    if (present) continue;
+    BreakdownEntry be;
+    be.assetUuid     = assetUuid;
+    be.nbOccurrences = nSpin->value();
+    b.push_back(be);
+  }
   m->setShotBreakdown(si, b);
   m->saveProjectDb();
   rebuildBreakdown();
