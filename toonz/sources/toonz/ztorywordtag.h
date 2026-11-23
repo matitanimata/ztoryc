@@ -152,8 +152,21 @@ inline void ztoryApplyWordTag(const QString &phrase, const QString &assetUuid) {
   ZtoryDialogueHighlighter::rehighlightAll();
 }
 
-// «Tag "sedia" as ▸ Prop ▸ SEDIA / New Prop…». The characters stay with
-// «Treat as character»: that is an alias, it makes a speaker, not an object.
+// The asset's name in a menu, with ✓ when it is already in the breakdown of
+// the field's shot (Franco, 2026-11-23: «come faccio a sapere se e' gia'
+// inserito o se lo devo ancora taggare?»). The answer goes where the choice
+// is made.
+inline QString ztoryAssetMenuText(const Asset &a, const QString &shotUuid) {
+  return !shotUuid.isEmpty() &&
+                 ZtoryModel::instance()->shotBreakdownHas(shotUuid, a.uuid)
+             ? a.name + QString::fromUtf8("  \u2713")
+             : a.name;
+}
+
+// «Tag "sedia" as ▸ Prop ▸ SEDIA / New Prop…». Anche i personaggi (Franco,
+// 2026-11-23): uno che non parla ma e' scritto nell'Action e' in scena lo
+// stesso. Il menu si offre solo in Action e Notes; nel Dialog chi parla si
+// riconosce dal testo, e «Treat as character» resta l'alias di chi parla.
 inline void ztoryAddWordTagMenu(QMenu *menu, const QString &selection,
                                 QTextEdit *field) {
   QWidget *parent = field->window();
@@ -166,19 +179,17 @@ inline void ztoryAddWordTagMenu(QMenu *menu, const QString &selection,
 
   QStringList types;
   for (const AssetType &t : m->assetTypes())
-    if (!ZtoryModel::isCharacterType(t.name) &&
-        !types.contains(t.name, Qt::CaseInsensitive))
-      types << t.name;
+    if (!types.contains(t.name, Qt::CaseInsensitive)) types << t.name;
   for (const Asset &a : m->assets())  // a type only an asset has (from Kitsu)
-    if (!a.type.isEmpty() && !ZtoryModel::isCharacterType(a.type) &&
-        !types.contains(a.type, Qt::CaseInsensitive))
+    if (!a.type.isEmpty() && !types.contains(a.type, Qt::CaseInsensitive))
       types << a.type;
 
+  const QString fieldShot = ztoryFieldShotUuid(field);
   for (const QString &type : types) {
     QMenu *sub = tagMenu->addMenu(type);
     for (const Asset &a : m->assets()) {
       if (a.type.compare(type, Qt::CaseInsensitive) != 0) continue;
-      QAction *act = sub->addAction(a.name);
+      QAction *act = sub->addAction(ztoryAssetMenuText(a, fieldShot));
       act->setCheckable(true);
       act->setChecked(current == a.uuid);
       const QString uuid = a.uuid;
@@ -246,15 +257,70 @@ inline void ztoryAddWordTagMenu(QMenu *menu, const QString &selection,
   }
 }
 
-// The Action field's menu: the standard one plus «Tag as».
+// «Insert asset ▸ Prop ▸ SEDIA» (Franco, 2026-11-23: invece di scrivere la
+// parola e poi segnarla). Scrive il nome dell'asset dove si e' cliccato e lo
+// segna: e' lo stesso tag che si farebbe a mano, quindi vale per tutto il
+// progetto e si toglie dallo stesso menu.
+// pos: viewport coordinates, as customContextMenuRequested gives them.
+inline void ztoryAddInsertAssetMenu(QMenu *menu, QTextEdit *field,
+                                    const QPoint &pos) {
+  if (field->isReadOnly()) return;
+  ZtoryModel *m = ZtoryModel::instance();
+  if (m->assets().empty()) return;
+  QMenu *insMenu = menu->addMenu(QObject::tr("Insert asset"));
+  const QString fieldShot = ztoryFieldShotUuid(field);
+  if (!fieldShot.isEmpty()) {
+    insMenu->addAction(QString::fromUtf8("\u2713 ") +
+                       QObject::tr("= already in this shot's breakdown"))
+        ->setEnabled(false);
+    insMenu->addSeparator();
+  }
+  QStringList types;
+  for (const Asset &a : m->assets())
+    if (!types.contains(a.type, Qt::CaseInsensitive)) types << a.type;
+  QPointer<QTextEdit> fld(field);
+  for (const QString &type : types) {
+    QMenu *sub = insMenu->addMenu(type.isEmpty() ? QObject::tr("Other") : type);
+    for (const Asset &a : m->assets()) {
+      if (a.type.compare(type, Qt::CaseInsensitive) != 0) continue;
+      const QString name = a.name, uuid = a.uuid;
+      QObject::connect(sub->addAction(ztoryAssetMenuText(a, fieldShot)),
+                       &QAction::triggered,
+                       [fld, pos, name, uuid]() {
+        if (!fld) return;
+        QTextCursor cur = fld->cursorForPosition(pos);
+        // Spazi solo dove servono: il nome deve restare una parola intera,
+        // o il riconoscimento non lo ritrova.
+        const QString text = fld->toPlainText();
+        const int at       = cur.position();
+        auto wordChar = [](QChar ch) { return ch.isLetterOrNumber(); };
+        QString ins = name;
+        if (at > 0 && wordChar(text.at(at - 1))) ins.prepend(' ');
+        if (at < text.size() && wordChar(text.at(at))) ins.append(' ');
+        cur.insertText(ins);
+        fld->setTextCursor(cur);
+        ztoryApplyWordTag(name, uuid);
+        // Lo shot di questo campo subito, anche se il modello non ha ancora
+        // ricevuto il testo nuovo: all'uscita dal campo il resto torna.
+        const QString shot = ztoryFieldShotUuid(fld);
+        ZtoryModel *mm     = ZtoryModel::instance();
+        if (!shot.isEmpty() && mm->addToShotBreakdown(shot, uuid))
+          mm->saveProjectDb();
+        fld->setFocus();
+      });
+    }
+  }
+}
+
+// The Action and Notes menu: the standard one plus «Insert asset» and, on a
+// selection, «Tag as».
 inline void ztoryOfferWordTagMenu(QWidget *parent, QTextEdit *field,
                                   const QPoint &pos) {
   QMenu *menu = field->createStandardContextMenu();
+  menu->addSeparator();
+  ztoryAddInsertAssetMenu(menu, field, pos);
   const QString sel = field->textCursor().selectedText().trimmed();
-  if (!sel.isEmpty()) {
-    menu->addSeparator();
-    ztoryAddWordTagMenu(menu, sel, field);
-  }
+  if (!sel.isEmpty()) ztoryAddWordTagMenu(menu, sel, field);
   menu->exec(field->viewport()->mapToGlobal(pos));
   delete menu;
 }

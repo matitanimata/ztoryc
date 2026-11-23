@@ -66,6 +66,11 @@ class PanelWidget final : public QFrame {
   void refreshSpeakersLabel();
   QTextEdit   *m_actionField;
   QTextEdit   *m_notesField;
+  // Il breakdown dello shot: un bottone nel primo pannello che lo mostra in
+  // un popup (Franco, 2026-11-23: una riga fissa allungava il pannello).
+  QToolButton *m_breakdownBtn = nullptr;
+  QString      m_breakdownShot;  // uuid of the shot the button speaks for
+  void showBreakdownPopup();
   QLabel* makeFieldLabel(const QString &text);
   QString framesToTimecode(int frames) const;
   void    updateBorderStyle();
@@ -104,6 +109,9 @@ public:
   void setDialog(const QString &t);
   void setAction(const QString &t);
   void setNotes(const QString &t);
+  // Empty shotUuid hides the button (every panel but the shot's first, and
+  // a shot not in the tracker yet).
+  void setBreakdown(const QString &shotUuid, int count, const QString &tooltip);
   void setShotNumber(const QString &n);
   void setSeqLabel(const QString &seq);
   void setSeqVisible(bool visible);
@@ -332,6 +340,11 @@ struct Shot {
   QTimer                    *m_durationCommitTimer = nullptr;
   void addPanelWidget(int shotIdx, int panelIdx);
   void connectPanelWidget(PanelWidget *pw);
+  // The breakdown strip under each shot's first panel. Coalesced: a tag can
+  // touch forty shots, and Kitsu sync rewrites them one by one.
+  QTimer *m_breakdownStripTimer = nullptr;
+  void scheduleBreakdownStrips();
+  void refreshBreakdownStrips();
   void renumberAll();
   // Generate shotLabel for shots[si] using the Board's own m_shots as context
   void assignBoardShotLabel(int si);

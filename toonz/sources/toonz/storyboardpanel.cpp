@@ -95,6 +95,9 @@
 #include <QTextEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QListWidget>
+#include <QSignalBlocker>
+#include <memory>
 #include <QToolButton>
 #include <QSpinBox>
 #include <QSettings>
@@ -569,6 +572,32 @@ void ztoryApplyLightOverlay(QPixmap &px, const PanelData &pd) {
   p.end();
 }
 
+// The shot's breakdown as rich text, one asset per line in its type's
+// colour. Shared by the Board's button and its popup.
+static QString ztoryShotBreakdownHtml(const QString &shotUuid, int *count) {
+  ZtoryModel *m = ZtoryModel::instance();
+  *count             = 0;
+  const int pi = m->projectShotIndex(shotUuid);
+  if (pi < 0) return QString();
+  QHash<QString, const Asset *> byUuid;
+  for (const Asset &a : m->assets()) byUuid.insert(a.uuid, &a);
+  QStringList items;
+  for (const BreakdownEntry &e : m->projectShots()[pi].breakdown) {
+    const Asset *a = byUuid.value(e.assetUuid, nullptr);
+    if (!a) continue;
+    // Tutti nel colore del tipo (Franco, 2026-11-23): il grigio per «non
+    // scritto nel testo» non serve, ora che si aggiunge anche dal popup.
+    items << QString("<span style='color:%1'>%2</span>")
+                 .arg(ztoryWordTagColor(a->type).name(),
+                      a->name.toHtmlEscaped());
+  }
+  *count = items.size();
+  return items.isEmpty()
+             ? QString("<span style='color:#808080'>%1</span>")
+                   .arg(QObject::tr("Nothing in this shot's breakdown yet."))
+             : items.join("<br>");
+}
+
 PanelWidget::PanelWidget(QWidget *parent)
     : QFrame(parent)
     , m_shotIndex(0)
@@ -755,9 +784,38 @@ PanelWidget::PanelWidget(QWidget *parent)
             ztoryOfferWordTagMenu(this, m_actionField, p);
           });
 
-  layout->addWidget(makeFieldLabel("Notes"));
+  // Cosa c'e' gia' nel breakdown dello shot, per non doverlo chiedere al
+  // tracker prima di taggare (Franco, 2026-11-23). Un bottone sulla riga
+  // dell'etichetta Notes, non una riga in piu': quella allungava il primo
+  // pannello e sballava la griglia. Si apre quando serve.
+  {
+    QWidget *row  = new QWidget(this);
+    auto *rowLay  = new QHBoxLayout(row);
+    rowLay->setContentsMargins(0, 0, 0, 0);
+    rowLay->setSpacing(0);
+    rowLay->addWidget(makeFieldLabel("Notes"), 1);
+    m_breakdownBtn = new QToolButton(row);
+    m_breakdownBtn->setAutoRaise(true);
+    m_breakdownBtn->setStyleSheet(
+        "QToolButton{color:#aaa;font-size:10px;background:#333;"
+        "border:none;border-top:1px solid #555;padding:1px 4px;}"
+        "QToolButton:hover{color:#fff;}");
+    m_breakdownBtn->hide();
+    connect(m_breakdownBtn, &QToolButton::clicked, this,
+            &PanelWidget::showBreakdownPopup);
+    rowLay->addWidget(m_breakdownBtn);
+    layout->addWidget(row);
+  }
   m_notesField = makeStableTextEdit("Enter notes...");
   layout->addWidget(m_notesField);
+  // Spoglio a parole anche nelle Notes (Franco, 2026-11-23: «e' quello piu'
+  // pratico»), e sul Board si vedono i pannelli mentre lo si fa.
+  new ZtoryDialogueHighlighter(m_notesField->document(), /*speakers=*/false);
+  m_notesField->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(m_notesField, &QWidget::customContextMenuRequested, this,
+          [this](const QPoint &p) {
+            ztoryOfferWordTagMenu(this, m_notesField, p);
+          });
 
   connect(m_matchButton, &QPushButton::clicked, this,
           [this](){ emit matchDurationRequested(m_shotIndex); });
@@ -1051,6 +1109,193 @@ void PanelWidget::setAction(const QString &t) {
   m_actionField->blockSignals(false);
 }
 
+void PanelWidget::setBreakdown(const QString &shotUuid, int count,
+                               const QString &tooltip) {
+  if (!m_breakdownBtn) return;
+  m_breakdownShot = shotUuid;
+  if (shotUuid.isEmpty()) { m_breakdownBtn->hide(); return; }
+  m_breakdownBtn->setText(tr("Breakdown (%1)").arg(count));
+  m_breakdownBtn->setToolTip(tooltip);
+  m_breakdownBtn->show();
+}
+
+void PanelWidget::showBreakdownPopup() {
+  // Un popup che si chiude cliccando altrove: si consulta, si corregge, e si
+  // torna a scrivere (Franco, 2026-11-23: «cosi' evitiamo di scrivere nel
+  // campo note o action»).
+  const QString shot = m_breakdownShot;
+  if (shot.isEmpty()) return;
+  QFrame *pop = new QFrame(this, Qt::Popup);
+  pop->setAttribute(Qt::WA_DeleteOnClose);
+  pop->setStyleSheet("QFrame{background:#2a2a2a;border:1px solid #555;}");
+  auto *lay = new QVBoxLayout(pop);
+  lay->setContentsMargins(8, 6, 8, 6);
+  QLabel *list = new QLabel(pop);
+  list->setTextFormat(Qt::RichText);
+  list->setWordWrap(true);
+  list->setStyleSheet("font-size:11px;border:none;");
+  list->setMaximumWidth(320);
+  lay->addWidget(list);
+  auto refill = [list, shot]() {
+    int n = 0;
+    list->setText(ztoryShotBreakdownHtml(shot, &n));
+  };
+  refill();
+
+  // «+ Add asset ▸ categoria» apre, dentro il popup, l'elenco a spunte di
+  // quella categoria (Franco, 2026-11-23): il popup resta piccolo finche' si
+  // consulta, e se ne spuntano piu' d'uno alla volta. Togliere la spunta a
+  // uno gia' nello shot lo toglie (Franco, 2026-11-23: il personaggio fuori
+  // campo entrato dal Dialog). Niente cambia finche' non si preme il pulsante.
+  QToolButton *addBtnMenu = new QToolButton(pop);
+  addBtnMenu->setText(tr("+ Add asset"));
+  addBtnMenu->setPopupMode(QToolButton::InstantPopup);
+  addBtnMenu->setStyleSheet("QToolButton{color:#ddd;font-size:11px;border:1px "
+                            "solid #555;padding:2px 6px;}");
+  QMenu *catMenu = new QMenu(addBtnMenu);
+  addBtnMenu->setMenu(catMenu);
+  lay->addWidget(addBtnMenu, 0, Qt::AlignLeft);
+
+  // La parte che compare scelta una categoria.
+  QWidget *picker = new QWidget(pop);
+  picker->setStyleSheet("border:none;");
+  auto *pl = new QVBoxLayout(picker);
+  pl->setContentsMargins(0, 4, 0, 0);
+  QLabel *catTitle = new QLabel(picker);
+  catTitle->setStyleSheet("color:#a0a0a0;font-size:10px;font-weight:bold;");
+  pl->addWidget(catTitle);
+  QLineEdit *filter = new QLineEdit(picker);
+  filter->setPlaceholderText(tr("Filter..."));
+  filter->setClearButtonEnabled(true);
+  pl->addWidget(filter);
+  QListWidget *checks = new QListWidget(picker);
+  checks->setMinimumWidth(240);
+  checks->setMaximumHeight(320);
+  checks->setStyleSheet("QListWidget{font-size:11px;border:1px solid #444;}");
+  pl->addWidget(checks);
+  QPushButton *addBtn = new QPushButton(picker);
+  pl->addWidget(addBtn, 0, Qt::AlignRight);
+  picker->hide();
+  lay->addWidget(picker);
+
+  // Le spunte cambiate e non ancora applicate: sopravvivono al filtro e al
+  // cambio di categoria, si applicano tutte col pulsante.
+  auto pending  = std::make_shared<QSet<QString>>();  // da aggiungere
+  auto removals = std::make_shared<QSet<QString>>();  // da togliere
+  auto category = std::make_shared<QString>();
+  auto updateAddBtn = [addBtn, pending, removals]() {
+    const int a = pending->size(), r = removals->size();
+    if (a && r)
+      addBtn->setText(tr("Add %1, remove %2").arg(a).arg(r));
+    else if (r)
+      addBtn->setText(tr("Remove %1 from the shot").arg(r));
+    else
+      addBtn->setText(a ? tr("Add %1 to the shot").arg(a)
+                        : tr("Add to the shot"));
+    addBtn->setEnabled(a + r > 0);
+  };
+  auto fillChecks = [checks, shot, filter, category, pending, removals,
+                     updateAddBtn]() {
+    QSignalBlocker block(checks);
+    checks->clear();
+    ZtoryModel *m = ZtoryModel::instance();
+    const QString needle = filter->text().trimmed();
+    for (const Asset &a : m->assets()) {
+      if (a.type.compare(*category, Qt::CaseInsensitive) != 0) continue;
+      if (!needle.isEmpty() && !a.name.contains(needle, Qt::CaseInsensitive))
+        continue;
+      QListWidgetItem *it = new QListWidgetItem(a.name, checks);
+      it->setData(Qt::UserRole, a.uuid);
+      it->setForeground(ztoryWordTagColor(a.type));
+      const bool in = m->shotBreakdownHas(shot, a.uuid);
+      it->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
+      const bool checked = in ? !removals->contains(a.uuid)
+                              : pending->contains(a.uuid);
+      it->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
+    }
+    updateAddBtn();
+  };
+  connect(checks, &QListWidget::itemChanged, pop,
+          [shot, pending, removals, updateAddBtn](QListWidgetItem *it) {
+            const QString u  = it->data(Qt::UserRole).toString();
+            const bool on    = it->checkState() == Qt::Checked;
+            const bool in    = ZtoryModel::instance()->shotBreakdownHas(shot, u);
+            if (in) {
+              if (on) removals->remove(u);
+              else removals->insert(u);
+            } else {
+              if (on) pending->insert(u);
+              else pending->remove(u);
+            }
+            updateAddBtn();
+          });
+  connect(filter, &QLineEdit::textChanged, pop, [fillChecks]() { fillChecks(); });
+
+  // Le categorie si leggono all'apertura del menu: un asset creato a popup
+  // aperto (da un tag) deve esserci.
+  connect(catMenu, &QMenu::aboutToShow, catMenu,
+          [catMenu, category, catTitle, filter, picker, fillChecks, pop]() {
+    catMenu->clear();
+    QStringList types;
+    for (const Asset &a : ZtoryModel::instance()->assets())
+      if (!types.contains(a.type, Qt::CaseInsensitive)) types << a.type;
+    for (const QString &type : types) {
+      int n = 0;
+      for (const Asset &a : ZtoryModel::instance()->assets())
+        if (a.type.compare(type, Qt::CaseInsensitive) == 0) n++;
+      const QString label = type.isEmpty() ? QObject::tr("Other") : type;
+      QAction *act = catMenu->addAction(QString("%1 (%2)").arg(label).arg(n));
+      connect(act, &QAction::triggered, pop,
+              [type, label, n, category, catTitle, filter, picker, fillChecks,
+               pop]() {
+        *category = type;
+        catTitle->setText(label);
+        // Il filtro solo dove serve: in una categoria di cinque e' rumore.
+        {
+          QSignalBlocker block(filter);
+          filter->clear();
+        }
+        filter->setVisible(n > 12);
+        fillChecks();
+        picker->show();
+        pop->adjustSize();
+        if (filter->isVisible()) filter->setFocus();
+      });
+    }
+    if (catMenu->isEmpty())
+      catMenu->addAction(QObject::tr("No assets in the project"))
+          ->setEnabled(false);
+  });
+
+  connect(addBtn, &QPushButton::clicked, pop,
+          [shot, pending, removals, refill, fillChecks, pop]() {
+            ZtoryModel *m = ZtoryModel::instance();
+            bool changed  = false;
+            for (const QString &u : *pending)
+              changed |= m->addToShotBreakdown(shot, u);
+            for (const QString &u : *removals) {
+              m->removeFromShotBreakdown(shot, u);
+              changed = true;
+            }
+            pending->clear();
+            removals->clear();
+            if (changed) m->saveProjectDb();
+            refill();
+            fillChecks();
+            pop->adjustSize();
+          });
+
+  QLabel *hint = new QLabel(m_breakdownBtn->toolTip(), pop);
+  hint->setWordWrap(true);
+  hint->setMaximumWidth(320);
+  hint->setStyleSheet("color:#808080;font-size:10px;border:none;");
+  lay->addWidget(hint);
+  pop->adjustSize();
+  pop->move(m_breakdownBtn->mapToGlobal(
+      QPoint(m_breakdownBtn->width() - pop->width(), m_breakdownBtn->height())));
+  pop->show();
+}
+
 void PanelWidget::setNotes(const QString &t) {
   m_notesField->blockSignals(true);
   m_notesField->setPlainText(t);
@@ -1096,9 +1341,9 @@ static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
       clearAct = sub->addAction(QObject::tr("Remove this alias"));
     }
     if (sub->isEmpty()) sub->setEnabled(false);
-    // Spoglio a parole: la stessa selezione si puo' segnare come oggetto,
-    // ambiente, effetto (ztorywordtag.h).
-    ztoryAddWordTagMenu(menu, sel, field);
+    // Niente spoglio a parole nel Dialog (Franco, 2026-11-23): nominare un
+    // oggetto in una battuta non lo mette in scena. Si segna nell'Action o
+    // nelle Notes.
 
     QAction *chosen = menu->exec(field->viewport()->mapToGlobal(pos));
     if (chosen) {
@@ -1883,12 +2128,30 @@ StoryboardPanel::StoryboardPanel(QWidget *parent)
             // Scena nuova: i render della precedente non servono piu' a nessuno.
             ZtoryModel::instance()->clearPanelRenderCache();
             refreshFromScene();
+            scheduleBreakdownStrips();
           });
   connect(TApp::instance()->getCurrentXsheet(), &TXsheetHandle::xsheetChanged,
           this, &StoryboardPanel::onXsheetChanged);
   // Sync durations when ZtoryModel resequences (works even inside sub-scenes)
   connect(ZtoryModel::instance(), &ZtoryModel::modelReset,
           this, &StoryboardPanel::onModelResequenced);
+  // Striscia del breakdown: tutto cio' che puo' cambiarla, in un colpo solo.
+  m_breakdownStripTimer = new QTimer(this);
+  m_breakdownStripTimer->setSingleShot(true);
+  m_breakdownStripTimer->setInterval(300);
+  connect(m_breakdownStripTimer, &QTimer::timeout, this,
+          &StoryboardPanel::refreshBreakdownStrips);
+  {
+    ZtoryModel *zm = ZtoryModel::instance();
+    auto sched     = [this]() { scheduleBreakdownStrips(); };
+    connect(zm, &ZtoryModel::breakdownChanged, this, sched);
+    connect(zm, &ZtoryModel::shotBreakdownSet, this, sched);
+    connect(zm, &ZtoryModel::assetsChanged, this, sched);
+    connect(zm, &ZtoryModel::productionReloaded, this, sched);
+    connect(zm, &ZtoryModel::modelReset, this, sched);
+    connect(zm, &ZtoryModel::shotAdded, this, [sched](int) { sched(); });
+    connect(zm, &ZtoryModel::shotRemovedAt, this, [sched](int) { sched(); });
+  }
   // An imported screenplay (setScriptFile, from the Script panel) is part of
   // the .ztoryc: the scene is modified, ⌘S writes it.  Not while loadZtoryc()
   // itself publishes the scene's screenplay.
@@ -2205,7 +2468,33 @@ void StoryboardPanel::addPanelWidget(int shotIdx, int panelIdx) {
   shot.panels.push_back(pw);
 }
 
+void StoryboardPanel::scheduleBreakdownStrips() {
+  if (m_breakdownStripTimer) m_breakdownStripTimer->start();
+}
+
+// Il bottone «Breakdown (N)» nel primo pannello di ogni shot; l'elenco si
+// legge nel popup (ztoryShotBreakdownHtml), che lo ricalcola all'apertura.
+void StoryboardPanel::refreshBreakdownStrips() {
+  ZtoryModel *m = ZtoryModel::instance();
+  const QString tip =
+      tr("This shot's breakdown in the Production tracker. Tick or untick "
+         "assets here, or tag a word in Action or Notes.");
+  for (Shot &shot : m_shots) {
+    QString uuid;
+    int count = 0;
+    if (shot.data && m->projectShotIndex(shot.data->uuid) >= 0) {
+      uuid = shot.data->uuid;
+      ztoryShotBreakdownHtml(uuid, &count);
+    }
+    // Solo il primo widget dello shot: nella vista compatta e' l'unico.
+    for (size_t k = 0; k < shot.panels.size(); k++)
+      if (shot.panels[k])
+        shot.panels[k]->setBreakdown(k == 0 ? uuid : QString(), count, tip);
+  }
+}
+
 void StoryboardPanel::connectPanelWidget(PanelWidget *pw) {
+  scheduleBreakdownStrips();  // a new widget, or one given to another shot
   // Install event filter on text fields for text-edit undo (focusIn/focusOut).
   for (QTextEdit *te : pw->textFields())
     te->installEventFilter(this);
@@ -2248,10 +2537,11 @@ void StoryboardPanel::connectPanelWidget(PanelWidget *pw) {
     }
     m_rerenderTimer->start(200);  // coalesce rapid resize events into one render
   });
-  // Spoglio a parole: all'uscita dal Dialog o dall'Action, gli asset segnati
-  // che sono comparsi o spariti nello shot (ztorywordtag.h). Lo shot si chiede
-  // al momento: il pannello puo' essere stato riassegnato a un altro.
-  for (QTextEdit *f : pw->textFields().mid(0, 2))
+  // Spoglio a parole: all'uscita dall'Action o dalle Notes, gli asset segnati
+  // che sono comparsi o spariti nello shot (ztorywordtag.h). Il Dialog no: li'
+  // un oggetto si nomina e basta. Lo shot si chiede al momento: il pannello
+  // puo' essere stato riassegnato.
+  for (QTextEdit *f : pw->textFields().mid(1))
     new ZtoryWordTagWatcher(f, [this, pw]() {
       const int si = pw->shotIndex();
       return (si >= 0 && si < (int)m_shots.size() && m_shots[si].data)

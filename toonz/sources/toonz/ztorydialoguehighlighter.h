@@ -45,8 +45,7 @@ inline QColor ztoryWordTagColor(const QString &type) {
       type.compare("BG", Qt::CaseInsensitive) == 0)
     return QColor("#C792EA");
   if (type.compare("FX", Qt::CaseInsensitive) == 0) return QColor("#F06292");
-  if (type.compare("Character", Qt::CaseInsensitive) == 0)
-    return QColor("#22D160");
+  if (ZtoryModel::isCharacterType(type)) return QColor("#22D160");
   return QColor("#FFD54F");
 }
 
@@ -94,7 +93,10 @@ protected:
     if (text.trimmed().isEmpty()) return;
     // Le parole segnate non dipendono da enabled(): quello e' falso in un
     // progetto senza personaggi, dove lo spoglio degli oggetti serve lo stesso.
-    highlightWordTags(text);
+    // Solo nei campi senza personaggi (Action, Notes): nel Dialog lo spoglio
+    // a parole non vale (Franco, 2026-11-23), e colorarle li' direbbe il
+    // contrario.
+    if (!m_speakers) highlightWordTags(text);
     if (!m_speakers || !ZtoryDialogueHighlighter::enabled()) return;
     // La riga dopo serve alla regola di Fountain (nome seguito da qualcosa).
     const QTextBlock next = currentBlock().next();

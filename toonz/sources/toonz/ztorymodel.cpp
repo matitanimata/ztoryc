@@ -488,6 +488,18 @@ static bool looksLikeSpeakerCue(const QString &line) {
   return last != '.' && last != '!' && last != '?' && last != ',';
 }
 
+// A project's name on a line of its own is a cue — unless it ends like a
+// sentence: «Mario!» under «ROSA:» is Rosa calling him, not Mario speaking
+// (Franco, 2026-11-23). assetNameKey drops the «!», so it is checked here.
+static bool isKnownNameLine(const QHash<QString, QString> &idx,
+                            const QString &line) {
+  const QString s = stripSpeakerExtension(line);
+  if (s.isEmpty()) return false;
+  const QChar last = s.at(s.length() - 1);
+  if (last == '.' || last == '!' || last == '?' || last == ',') return false;
+  return idx.contains(ZtoryModel::assetNameKey(s));
+}
+
 // The characters of the project and the aliases, keyed as assetNameKey()
 // compares names: «Scienziato», «SCIENZIATO» and «scienziato» are one, and so
 // are «Guida Scienziato» and «GUIDA-SCIENZIATO». The old key (lower case
@@ -599,7 +611,7 @@ QVector<DialogueLine> ZtoryModel::parseDialogue(const QString &text) const {
     // is written: «Scienziato» typed on its own line used to stay plain text
     // until it was retyped in capitals (Franco, 2026-11-22).
     if ((looksLikeSpeakerCue(line) && nextIsDialogue) ||
-        uuidByName.contains(speakerKey(stripSpeakerExtension(line)))) {
+        isKnownNameLine(uuidByName, line)) {
       flush();
       current = stripSpeakerExtension(line);
       continue;
@@ -700,8 +712,9 @@ QSet<QString> ZtoryModel::taggedAssetsInShot(const ShotData &sd) const {
       if (!m_wordTagSkips.contains(sd.uuid + '|' + h.key)) out.insert(h.assetUuid);
   };
   for (const PanelData &pd : sd.panels) {
-    take(pd.dialog);
+    // Il Dialog no (Franco, 2026-11-23): se ne parla, non vuol dire che c'e'.
     take(pd.action);
+    take(pd.notes);  // il campo piu' pratico per lo spoglio (Franco, 2026-11-23)
   }
   return out;
 }
@@ -911,7 +924,7 @@ bool ZtoryModel::speakerAt(const QString &rawLine, const QString &rawNext,
   // che il progetto conosce, scritto come capita (stessa regola del parser).
   const QString bare = stripSpeakerExtension(line);
   if ((looksLikeSpeakerCue(line) && !rawNext.trimmed().isEmpty()) ||
-      uuidByName.contains(speakerKey(bare)))
+      isKnownNameLine(uuidByName, bare))
     return give(bare);
   return false;
 }

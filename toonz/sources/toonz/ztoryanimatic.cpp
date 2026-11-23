@@ -4396,14 +4396,21 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
           [this](const QPoint &p) {
             ztoryOfferWordTagMenu(this, m_actionField, p);
           });
-  for (QTextEdit *f : {m_dialogField, m_actionField})
+  lay->addWidget(makeLbl(tr("Notes:")));
+  m_notesField = makeField(tr("Enter notes..."));
+  lay->addWidget(m_notesField);
+  // Spoglio a parole anche nelle Notes, come nel Board.
+  new ZtoryDialogueHighlighter(m_notesField->document(), /*speakers=*/false);
+  m_notesField->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(m_notesField, &QWidget::customContextMenuRequested, this,
+          [this](const QPoint &p) {
+            ztoryOfferWordTagMenu(this, m_notesField, p);
+          });
+  for (QTextEdit *f : {m_actionField, m_notesField})  // il Dialog no
     new ZtoryWordTagWatcher(f, [this]() {
       return hasValidShot() ? ZtoryModel::instance()->shot(m_shotIdx).uuid
                             : QString();
     });
-  lay->addWidget(makeLbl(tr("Notes:")));
-  m_notesField = makeField(tr("Enter notes..."));
-  lay->addWidget(m_notesField);
 
   // --- Bottom row: Sync + Auto-match toggles ---
   QWidget *toggleRow     = new QWidget(container);
@@ -6297,9 +6304,9 @@ static void ztoryOfferSpeakerAlias(QWidget *parent, QTextEdit *field,
       clearAct = sub->addAction(QObject::tr("Remove this alias"));
     }
     if (sub->isEmpty()) sub->setEnabled(false);
-    // Spoglio a parole: la stessa selezione si puo' segnare come oggetto,
-    // ambiente, effetto (ztorywordtag.h).
-    ztoryAddWordTagMenu(menu, sel, field);
+    // Niente spoglio a parole nel Dialog (Franco, 2026-11-23): nominare un
+    // oggetto in una battuta non lo mette in scena. Si segna nell'Action o
+    // nelle Notes.
 
     QAction *chosen = menu->exec(field->viewport()->mapToGlobal(pos));
     if (chosen) {

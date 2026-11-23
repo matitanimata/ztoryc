@@ -789,7 +789,7 @@ public:
   // Le parole segnate in `text`, parole intere (non «sedia» dentro
   // «sediamo»). Salta i tag il cui asset non c'e' piu'.
   QVector<ZtoryWordTagHit> findWordTags(const QString &text) const;
-  // Gli asset segnati in tutti i pannelli dello shot, Dialog e Action.
+  // Gli asset segnati in tutti i pannelli dello shot, Action e Notes.
   QSet<QString> taggedAssetsInShot(const ShotData &sd) const;
   // The model's shot with this uuid (the Board's own list can diverge).
   const ShotData *shotByUuid(const QString &uuid) const;
@@ -896,8 +896,10 @@ public:
   // this is the only field of a project shot the sync writes, and opening the
   // whole vector to mutation to write one field is how invariants get lost.
   void setShotBreakdown(int i, const QVector<BreakdownEntry> &b) {
-    if (i >= 0 && i < (int)m_projectShots.size())
+    if (i >= 0 && i < (int)m_projectShots.size()) {
       m_projectShots[i].breakdown = b;
+      emit shotBreakdownSet();
+    }
   }
   void setShotBreakdownBase(int i, const QString &kitsuShotId,
                             const QVector<BreakdownEntry> &b) {
@@ -1430,6 +1432,10 @@ signals:
   void taskStatusChanged();  // a per-task status was edited (Production Tracker)
   void assetsChanged();      // asset list or an asset task changed (Production Tracker)
   void breakdownChanged();   // a shot's breakdown changed outside the tracker (word tags)
+  // Any setShotBreakdown (tracker, Kitsu sync): for the Board's breakdown
+  // strip. Separate from breakdownChanged, which the tracker listens to and
+  // would rebuild after its own edits.
+  void shotBreakdownSet();
   void productionReloaded(); // .ztoryc finished loading (project/team/assets populated)
   void previewUpdated(int shotIdx, int panelIdx);
   void scriptFileChanged();  // imported screenplay changed (or cleared)
