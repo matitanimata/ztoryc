@@ -113,7 +113,13 @@ QString signatureOf(const QString &file, const Asset &a) {
   // «2»: the rendering's version. Previews made before 2026-09-27 got no
   // cover (the 400 above) and no white background: a new version uploads
   // them once more.
-  return QStringLiteral("2|%1|%2|%3|%4")
+  // «3» only for a name Tahoma reads as a frame («CASA_INT_2.png»): before
+  // 2026-11-23 those were rendered from the level's FIRST frame, maybe
+  // another file. Only they are sent again, not every preview.
+  const bool framed =
+      !TFilePath(file.toStdWString()).getFrame().isNoFrame();
+  return QStringLiteral("%1|%2|%3|%4|%5")
+      .arg(framed ? 3 : 2)
       .arg(fi.fileName())
       .arg(fi.size())
       .arg(fi.lastModified().toMSecsSinceEpoch())
@@ -171,10 +177,21 @@ bool ztoryRenderAssetPreview(const QString &file, const QString &outPng,
   // Tahoma's own readers: they read what Ztoryc imports — a PSD with no
   // layer named is read MERGED (tiio_psd.cpp, layerId 0), which Qt cannot.
   try {
-    TLevelReaderP lr(TFilePath(file.toStdWString()));
+    // «CASA_INT_2.png» is, for Tahoma, frame 2 of the level «CASA_INT»
+    // (the underscore is a frame separator): its first frame is
+    // CASA_INT_1.png, another background. The file's own frame is read,
+    // the first only for a file that has none (Franco, 2026-11-23: the
+    // cover of casa_int_02 on Kitsu was casa_int_01).
+    const TFilePath path(file.toStdWString());
+    TLevelReaderP lr(path);
     TLevelP level = lr ? lr->loadInfo() : TLevelP();
     if (level && level->begin() != level->end()) {
-      TImageReaderP ir = lr->getFrameReader(level->begin()->first);
+      const TFrameId own = path.getFrame();
+      const TFrameId fid =
+          !own.isNoFrame() && level->getTable()->count(own)
+              ? own
+              : level->begin()->first;
+      TImageReaderP ir = lr->getFrameReader(fid);
       TRasterImageP ri = ir ? ir->load() : TImageP();
       TRasterP ras = ri ? ri->getRaster() : TRasterP();
       // A 16-bit PNG or TIFF comes as a 64-bit raster, which rasterToQImage
