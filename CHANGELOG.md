@@ -1,3 +1,30 @@
+## [2026-11-23 pomeriggio] — Breakdown dal Board, import per strato, clip di camminata che avanza con l'IK
+
+### Added
+- **Breakdown dal Board** (`3dc6c0372`, `f22769f57`, collaudati): pulsante «Breakdown (N)» sul primo pannello dello
+  shot; popup con gli asset colorati per tipo, «+ Add asset» → categoria → elenco a spunte. Togliere una spunta toglie
+  l'asset (il personaggio fuori campo preso dal Dialog). Il popup resta dentro lo schermo.
+- **Copy/Paste del breakdown** fra shot con lo stesso setup (`cf3886db1`, collaudato): Paste aggiunge solo i mancanti.
+- **Spoglio a parole nelle Notes**, «Insert asset» col tasto destro, ✓ sugli asset gia' nello shot; personaggi
+  segnabili in Action e Notes (`3dc6c0372`, collaudato).
+
+### Modified
+- **Niente spoglio a parole nel Dialog** (`3dc6c0372`): nominare un oggetto in una battuta non lo mette in scena.
+- **Export layout: asset importati per strato** (`0980fce15`, collaudato): scenografie, personaggi, props, il resto.
+  Prima un PSD finiva sempre sopra, e i personaggi sotto le scenografie.
+- **Clip di ZtoRig, ciclo chiuso** (`31fe45854`, collaudato su una copia dello sh030 di Cascina): ultima posa = prima,
+  con «Switch support pin here» sullo stesso piede; la clip salvata 1-25 e inserita al 26 con «Repeats move on»
+  avanza dei passi misurati fra le due piantate del piede, senza tornare indietro a ogni giro.
+
+### Fixed
+- **«Mario!» come battuta** non diventa piu' un'intestazione (`3dc6c0372`, minore della review del mattino).
+- **Piede che scivolava** nel ciclo prima di una clip inserita: le curve dei pin restano a scatto (`31fe45854`).
+
+### Notes
+- **Riquadro dell'avanzamento del caricamento su Kitsu** dopo l'Export Animatic: scritto e installato, NON
+  committato e mai collaudato (resta nell'albero di lavoro, voce in ANIMATIC_TASKS).
+- Review della seconda tornata fatta a mano (in coda ai report del 23/11): nessun bloccante.
+
 ## [2026-11-23] — Breakdown a matrice, nomi e spoglio a parole nel Dialog
 
 ### Added

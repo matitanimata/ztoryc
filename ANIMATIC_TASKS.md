@@ -182,11 +182,12 @@ degli status).
   **MAI COLLAUDATI**. Franco prova su Cascina, non subito.
   - Breakdown: tendina Type e ricerca sopra la tabella, stesso filtro nella finestra «+ Add».
   - Breakdown a matrice, nomi nel Dialog, spoglio a parole: collaudati il 22-23/11, nell'archivio.
-  - 🟡 **Minore dalla review del 23/11, non corretto:** un nome conosciuto da solo su una riga e' ora sempre
-    un'intestazione, anche con la punteggiatura di frase (`ztorymodel.cpp`, `parseDialogue` e `speakerAt`: la
-    chiave `assetNameKey` toglie «!»/«?»). Una battuta «Mario!» sotto «ROSA:» diventerebbe l'intestazione di
-    Mario e si porterebbe le righe dopo. Correzione: sulla via «nome conosciuto» rifiutare le righe che finiscono
-    con . ! ? , come gia' fa `looksLikeSpeakerCue`. Da fare col collaudo di Franco.
+  - «Mario!» come battuta non e' piu' un'intestazione: corretto in `3dc6c0372`, nell'archivio.
+- **Riquadro dell'avanzamento del caricamento su Kitsu dopo l'Export Animatic (Franco, 23/11)** — sostituisce
+  l'avviso che si chiudeva con OK: barra «Clip 3 of 12 — sh030», verde e si chiude da solo se va bene, resta aperto
+  se qualcosa e' saltato o si ferma. Segnale nuovo `KitsuClient::previewUploadProgress`. **NON COMMITTATO e MAI
+  COLLAUDATO**: le modifiche sono nell'albero di lavoro (`kitsuclient.h/.cpp`, `storyboardpanel.cpp`). Provare con
+  un export vero su `filorosso-TEST` o ZTORYC-AI, poi commit.
   - Scena character dalla finestra di avvio: compare la proposta di import con le opzioni del tracker (valgono solo
     per questo import). Se il PSD da riggare manca, si cerca il file per nome in Model Sheets; se lo si importa,
     diventa il PSD da riggare. Se non c'e' niente, Ztoryc lo dice. A Cascina, il 22/11, solo ALIENO aveva il PSD da
@@ -1165,7 +1166,10 @@ onion skin del pupazzo. Restano:
   rimedio e' un comando che copi solo ANGLE/DISTANCE/SO fra due frame.
   ⚠️ **Da mettere nel manuale**: «per chiudere un ciclo, richiama la posa in
   modalita' Part» e' conoscenza d'uso, non di codice, e senza scriverla si
-  riperde.
+  riperde. Dal 23/11 (`31fe45854`) anche: sull'ultima posa «Switch support pin
+  here» sullo stesso piede del primo fotogramma, salvare la clip CON la posa di
+  chiusura (1-25) e inserirla subito dopo (26) con «Repeats move on»: avanza dei
+  passi misurati fra le due piantate di quel piede.
 - ⬜ **Template di scheletri riusabili + registrazione di animazioni.**
   ✅ **CONFERMATO da Franco il 2026-08-03** — era ricostruito a memoria, ora e' una voce
   vera. Restano aperte le domande di progetto: cosa contiene il template (topologia?
