@@ -178,6 +178,19 @@ degli status).
     mesh esistente) la cronologia si svuota ancora, come in stock.
   - **Update Mesh, minori della review (`44e25880c`):** `continue` se `!meshImg`, e `getSize` che conta le mesh vere —
     **FATTI il 20/11, committati in `d7ea2643b`, MAI COLLAUDATI: aspettano il collaudo** (aggiorna una mesh esistente, ⌘Z, ⌘Y).
+- **Filtro nel Breakdown + import proposto nella scena character nuova (Franco, 22/11)** — commit `551f0e39d`,
+  **MAI COLLAUDATI**. Franco prova su Cascina, non subito.
+  - Breakdown: tendina Type e ricerca sopra la tabella, stesso filtro nella finestra «+ Add».
+  - Breakdown a matrice, nomi nel Dialog, spoglio a parole: collaudati il 22-23/11, nell'archivio.
+  - 🟡 **Minore dalla review del 23/11, non corretto:** un nome conosciuto da solo su una riga e' ora sempre
+    un'intestazione, anche con la punteggiatura di frase (`ztorymodel.cpp`, `parseDialogue` e `speakerAt`: la
+    chiave `assetNameKey` toglie «!»/«?»). Una battuta «Mario!» sotto «ROSA:» diventerebbe l'intestazione di
+    Mario e si porterebbe le righe dopo. Correzione: sulla via «nome conosciuto» rifiutare le righe che finiscono
+    con . ! ? , come gia' fa `looksLikeSpeakerCue`. Da fare col collaudo di Franco.
+  - Scena character dalla finestra di avvio: compare la proposta di import con le opzioni del tracker (valgono solo
+    per questo import). Se il PSD da riggare manca, si cerca il file per nome in Model Sheets; se lo si importa,
+    diventa il PSD da riggare. Se non c'e' niente, Ztoryc lo dice. A Cascina, il 22/11, solo ALIENO aveva il PSD da
+    riggare. Va provato con un personaggio SENZA scena: quelli con la scena non compaiono nella tendina.
 - **Invio per approvazione da scena personaggio senza Kitsu collegato (Franco, 22/11)** — ora chiede di collegarsi e
   apre la finestra Kitsu, invece di fallire. Commit `7343f5c10`, **MAI COLLAUDATO**. Prova in un progetto di prova collegato
   a Kitsu: Ztoryc aperto senza connessione, scena personaggio con task in WIP, chiuderla, «Send for approval», poi

@@ -1,3 +1,31 @@
+## [2026-11-23] — Breakdown a matrice, nomi e spoglio a parole nel Dialog
+
+### Added
+- **Breakdown a matrice come Kitsu** (`3392430d0`, collaudato da Franco): una riga per shot, una colonna per tipo di
+  asset; tasto destro sulla cella per collegare il file, «How many», togliere o aggiungere; filtro per tipo e ricerca.
+- **Nomi nel Dialog** (`3392430d0`, collaudato): completamento del personaggio dalla seconda lettera (Invio/Tab scrive
+  «NOME: »); nome riconosciuto in ogni maiuscola/minuscola, con trattino o accento, e anche da solo su una riga.
+- **Spoglio a parole** (`3392430d0`, collaudato): una parola del Dialog o dell'Action si segna come asset («Tag as»);
+  vale per tutto il progetto e porta l'asset nel Breakdown degli shot dove e' scritta. Se la parola sparisce si chiede
+  se togliere l'asset (predefinito No). «Not in this shot (only mentioned)»: la racchetta nominata ma non inquadrata.
+
+### Fixed
+- **productionType/Style, ratio, resolution del progetto si perdevano** (`3392430d0`): dal 15/08 (`f7482e1f2`) si
+  leggevano nel ramo degli alias, e il salvataggio dopo li riscriveva vuoti. **I progetti salvati dal 15/08 possono
+  averli persi: vanno ricontrollati nelle impostazioni del progetto.**
+- **Nomi non verdi riaprendo lo storyboard** (stesso commit): il testo arrivava prima del tracker; si ricolora al caricamento.
+- **Anteprima Kitsu di casa_int_02 uguale a casa_int_01** (`b8b8b4e1a`, collaudato): `CASA_INT_2.png` per Tahoma e' il
+  fotogramma 2 del livello «CASA_INT», e si leggeva il primo. Ora si legge il fotogramma del file; le anteprime con
+  questo tipo di nome cambiano firma e si rimandano una volta sola.
+- **«+ Add» del Breakdown non scorreva su macOS** (`667c3a90a`, collaudato): elenco a selezione multipla al posto della
+  tendina; doppio clic conferma.
+
+### Notes
+- Review di chiusura fatta a mano (`bdc177eff`..`667c3a90a`): nessun bloccante; un minore aperto in ANIMATIC_TASKS
+  (un nome conosciuto seguito da «!» o «?» su una riga sola diventa intestazione).
+- Startup bloccato dopo il deploy: richiesta di accesso ai file di macOS (TCC) nascosta dietro le finestre; l'app si
+  ferma finche' non si risponde.
+
 ## [2026-11-22] — Kitsu: invio per approvazione con proposta di connessione
 
 ### Modified
