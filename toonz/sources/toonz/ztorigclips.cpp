@@ -421,6 +421,47 @@ struct InsertOptions {
 
 namespace {
 bool isPinParam(int p) { return SkVD::isPinParam(p); }
+
+bool isPinTarget(int p) {
+  return p == SkVD::PINTX || p == SkVD::PINTY || p == SkVD::PINIX ||
+         p == SkVD::PINIY || p == SkVD::PINWX || p == SkVD::PINWY;
+}
+
+// A CLOSED cycle (Franco, 2026-11-23): the last frame repeats the first pose
+// and plants again the foot that was planted on the first frame — «Switch
+// support pin here» on frame 25 of a 1-25 walk. Its last frame is the next
+// repeat's first, so the period is rows-1, and the distance between the two
+// plants of that foot IS the step: a walk that moves by its feet (IK) and
+// not by its column has no other measure of how far it goes.
+struct ClosedCycle {
+  bool closed = false;
+  QMap<QString, QMap<int, double>> pinStep;  // column -> pin target -> step
+  QMap<QString, QString> closingVertex;      // column -> the re-planted foot
+};
+
+ClosedCycle closedCycle(const Clip &clip) {
+  ClosedCycle out;
+  const double last = clip.rows - 1;
+  if (last < 2) return out;
+  for (const ClipCurve &cv : clip.curves) {
+    if (cv.kind != ClipCurve::Vertex || cv.channel != SkVD::PIN) continue;
+    if (out.closingVertex.contains(cv.column)) continue;
+    if (cv.keys->getValue(0) < 0.5 || cv.keys->getValue(last) < 0.5) continue;
+    // Held all along is a foot that never moves, not a closed step.
+    bool released = false;
+    for (double f = 1; f < last && !released; f += 1)
+      released = cv.keys->getValue(f) < 0.5;
+    if (!released) continue;
+    out.closed                    = true;
+    out.closingVertex[cv.column] = cv.name;
+    for (const ClipCurve &t : clip.curves)
+      if (t.kind == ClipCurve::Vertex && t.column == cv.column &&
+          t.name == cv.name && isPinTarget(t.channel))
+        out.pinStep[cv.column][t.channel] =
+            t.keys->getValue(last) - t.keys->getValue(0);
+  }
+  return out;
+}
 }  // namespace
 
 // Every animated curve of the character's xsheet: the columns' movement, the
@@ -475,9 +516,51 @@ QStringList insertClip(TXsheet *xsh, const Clip &clip, const InsertOptions &o,
                        ClipUndo *undo) {
   QStringList missing;
   const double stretch = 1.0 / std::max(0.05, o.speed);
-  const double period  = clip.rows * stretch;
-  const double total   = period * o.repeats;
-  const int rowsTotal  = int(std::ceil(total));
+  const ClosedCycle cyc = closedCycle(clip);
+  const bool closed     = cyc.closed;
+  const int lastRow     = clip.rows - 1;
+  // Clip frames per repeat: a closed cycle's last frame is the next one's
+  // first, and is not played twice.
+  const int perRepeat = closed ? lastRow : clip.rows;
+
+  // CONTINUING a closed cycle: the frame before `at` already holds its
+  // closing pose, with the same foot planted (the cycle just played, or the
+  // last repeat of an insert). The clip's first frame would show that pose a
+  // second time — a hitch at every join — so it is left out, and the clip's
+  // plants are carried to where that foot stands now. Measured BEFORE the
+  // room is made, like ATTACH.
+  bool continuing = false;
+  QMap<QString, QMap<int, double>> localAttach;  // column -> pin target -> +
+  if (closed && o.attach && o.usePins && o.at > 0)
+    for (auto it = cyc.closingVertex.constBegin();
+         it != cyc.closingVertex.constEnd(); ++it) {
+      const int col = columnByName(xsh, it.key());
+      TStageObject *obj =
+          col >= 0 ? xsh->getStageObject(TStageObjectId::ColumnId(col)) : nullptr;
+      const PlasticSkeletonDeformationP &sd =
+          obj ? obj->getPlasticSkeletonDeformation() : PlasticSkeletonDeformationP();
+      SkVD *vd = sd ? sd->vertexDeformation(it.value()) : nullptr;
+      if (!vd || !vd->m_params[SkVD::PIN] ||
+          vd->m_params[SkVD::PIN]->getValue(o.at - 1) < 0.5)
+        continue;
+      continuing = true;
+      for (const ClipCurve &cv : clip.curves)
+        if (cv.kind == ClipCurve::Vertex && cv.column == it.key() &&
+            cv.name == it.value() && isPinTarget(cv.channel) &&
+            cv.channel != SkVD::PINWX && cv.channel != SkVD::PINWY &&
+            vd->m_params[cv.channel] &&
+            vd->m_params[cv.channel]->getKeyframeCount() > 0)
+          localAttach[it.key()][cv.channel] =
+              vd->m_params[cv.channel]->getValue(o.at - 1) -
+              cv.keys->getValue(0);
+    }
+  const int skip = continuing ? 1 : 0;
+  // From the first pasted key to the last; a closed cycle ends ON its
+  // closing frame, so the rows are one more than that span.
+  const double span = closed ? (double(o.repeats) * perRepeat - skip) * stretch
+                             : double(clip.rows) * stretch * o.repeats;
+  const double total  = closed ? span + 1 : span;
+  const int rowsTotal = int(std::ceil(total));
 
   // ATTACH, measured BEFORE the room is made: shifting the later keys would
   // change the interpolated values on the frame before `at`.
@@ -614,7 +697,10 @@ QStringList insertClip(TXsheet *xsh, const Clip &clip, const InsertOptions &o,
       if (col < 0 || !isRootColumn(xsh, col) || n < 2) continue;
       const double last = cv.keys->getKeyframe(n - 1).m_frame;
       if (last <= 0) continue;
-      const double s = (cv.keys->getValue(last) - cv.keys->getValue(0)) *
+      // Closed: the closing frame IS one period on, no extrapolation.
+      const double s =
+          closed ? cv.keys->getValue(lastRow) - cv.keys->getValue(0)
+                 : (cv.keys->getValue(last) - cv.keys->getValue(0)) *
                        clip.rows / last;
       if (cv.channel == TStageObject::T_X) rootStep[col].x = s;
       else rootStep[col].y = s;
@@ -664,6 +750,21 @@ QStringList insertClip(TXsheet *xsh, const Clip &clip, const InsertOptions &o,
                                           : rootStep[root].y) *
                Stage::inch;
     }
+    // A closed cycle moves its feet by what it measured: every plant of the
+    // column (both feet, not only the closing one) one step further per
+    // repeat. This is the walk that goes on by IK, with its column still.
+    double localAdd = 0.0;
+    if (closed && cv.kind == ClipCurve::Vertex && isPinTarget(cv.channel)) {
+      if (o.travel && cyc.pinStep.value(cv.column).contains(cv.channel))
+        step = cyc.pinStep[cv.column][cv.channel];
+      localAdd = localAttach.value(cv.column).value(cv.channel, 0.0);
+    }
+    // The key at the clip's frame 0: in a closed cycle it is not repeated,
+    // and the closing key takes over its interpolation into the next repeat.
+    const bool hasKey0 = cv.keys->getKeyframeCount() > 0 &&
+                         std::abs(cv.keys->getKeyframe(0).m_frame) < 1e-6;
+    const TDoubleKeyframe key0 =
+        hasKey0 ? cv.keys->getKeyframe(0) : TDoubleKeyframe();
     double attach = 0.0;
     if (!attachOffset.isEmpty()) {
       const int col  = columnByName(xsh, cv.column);
@@ -681,9 +782,21 @@ QStringList insertClip(TXsheet *xsh, const Clip &clip, const InsertOptions &o,
     for (int r = 0; r < o.repeats; r++)
       for (int i = 0; i < cv.keys->getKeyframeCount(); i++) {
         TDoubleKeyframe kf = cv.keys->getKeyframe(i);
-        kf.m_frame = o.at + r * period + kf.m_frame * stretch;
+        const double f    = kf.m_frame;
+        if (closed) {
+          // Frame 0 only opens the first repeat, and not when continuing:
+          // every later one starts from the closing frame before it.
+          if (f < 1e-6 && (r > 0 || skip)) continue;
+          if (f > lastRow + 1e-6) continue;
+          if (std::abs(f - lastRow) < 1e-6 && r < o.repeats - 1 && hasKey0) {
+            kf.m_type     = key0.m_type;
+            kf.m_speedOut = key0.m_speedOut;
+          }
+          kf.m_frame = o.at + (double(r) * perRepeat + f - skip) * stretch;
+        } else
+          kf.m_frame = o.at + r * clip.rows * stretch + f * stretch;
         if (kf.m_type != TDoubleKeyframe::Expression)
-          kf.m_value += attach + r * step;
+          kf.m_value += attach + localAdd + r * step;
         kf.m_speedIn.x *= stretch;
         kf.m_speedOut.x *= stretch;
         dst->setKeyframe(kf);
@@ -703,6 +816,32 @@ QStringList insertClip(TXsheet *xsh, const Clip &clip, const InsertOptions &o,
       on.m_type = on.m_prevType = TDoubleKeyframe::Constant;
       p.pin->setKeyframe(on);
     }
+  }
+
+  // Pin curves are switches, held until the next key (SkVD::makePinCurvesStep).
+  // The scene's last pin key before `at` is often Linear — harmless while it
+  // was the last — and with the clip's keys after it the target slid from the
+  // old plant to the new one: the foot drifted over the whole cycle before
+  // the insert (Franco, 2026-11-23, frames 13-25 of sh030). Only the curves
+  // already snapshotted, so undo brings back the types too.
+  for (int c = 0; c < xsh->getColumnCount(); c++) {
+    TStageObject *obj = xsh->getStageObject(TStageObjectId::ColumnId(c));
+    const PlasticSkeletonDeformationP &sd =
+        obj ? obj->getPlasticSkeletonDeformation() : PlasticSkeletonDeformationP();
+    if (!sd) continue;
+    PlasticSkeletonDeformation::vd_iterator vb, ve;
+    sd->vertexDeformations(vb, ve);
+    for (; vb != ve; ++vb)
+      for (int p = 0; p < SkVD::PARAMS_COUNT; p++) {
+        TDoubleParam *param = (*vb).second->m_params[p].getPointer();
+        if (!isPinParam(p) || !param || !before.count(param)) continue;
+        for (int k = 0; k < param->getKeyframeCount(); ++k) {
+          TDoubleKeyframe kf = param->getKeyframe(k);
+          if (kf.m_type == TDoubleKeyframe::Constant) continue;
+          kf.m_type = TDoubleKeyframe::Constant;
+          param->setKeyframe(k, kf);
+        }
+      }
   }
 
   // Every curve that changed — shifted, pasted or both — as it was and is.
@@ -734,7 +873,13 @@ QStringList insertClip(TXsheet *xsh, const Clip &clip, const InsertOptions &o,
       const int c = columnByName(xsh, it.key());
       if (c < 0) continue;
       for (int t = 0; t < rowsTotal; t++) {
-        const int src = int(std::floor(t / stretch)) % clip.rows;
+        int src;
+        if (closed) {
+          // Frame 0 once, then 1..last for every repeat (last = next 0).
+          const int u = int(std::floor(t / stretch + 1e-9)) + skip;
+          src         = u == 0 ? 0 : (u - 1) % perRepeat + 1;
+        } else
+          src = int(std::floor(t / stretch)) % clip.rows;
         // The last cell at or before `src`: a clip row with no cell of its
         // own is a hold of the one before.
         auto cell = it.value().upperBound(src);
@@ -807,9 +952,11 @@ void ZtoRigClips::showSaveDialog(QWidget *parent) {
   form->addRow(QObject::tr("To frame:"), to);
   lay->addLayout(form);
   auto *note = new QLabel(
-      QObject::tr("For a cycle, select it WITHOUT repeating the first pose at "
-                  "the end: repeated, the clip starts again right after its "
-                  "last frame."),
+      QObject::tr("For a cycle, either select it WITHOUT repeating the first "
+                  "pose at the end, or CLOSE it: repeat the first pose on the "
+                  "last frame and «Switch support pin here» on the same foot. "
+                  "A closed walk moves on by the step between the two plants "
+                  "of that foot."),
       &dlg);
   note->setWordWrap(true);
   lay->addWidget(note);
