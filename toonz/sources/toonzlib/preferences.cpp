@@ -611,6 +611,10 @@ void Preferences::definePreferenceItems() {
   // sentiva «un paio di fotogrammi prima», e la /u/ di «Uncinetto» che sentiva
   // subito mentre compariva al terzo fotogramma. Tutti e due chiedevano 2.
   define(lipSyncLeadFrames, "lipSyncLeadFrames", QMetaType::Int, 2);
+#ifdef _WIN32
+  define(lazyNezumiCanvasFocusEnabled, "lazyNezumiCanvasFocusEnabled",
+         QMetaType::Bool, false);
+#endif
 
   // Drawing
   define(DefRasterFormat, "DefRasterFormat", QMetaType::QString, "png");

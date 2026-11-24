@@ -1517,6 +1517,7 @@ QString PreferencesPopup::getUIString(PreferencesItemId id) {
       {whisperModel, tr("whisper.cpp Model File:")},
       {lipSyncLanguage, tr("Dialogue Language:")},
       {lipSyncLeadFrames, tr("Anticipate Mouths By (frames):")},
+      {lazyNezumiCanvasFocusEnabled, tr("Enable Lazy Nezumi Canvas Focus* (Intel/AMD systems only)")},
 
       // Drawing
       {DefRasterFormat, tr("Default Raster Level Format:")},
@@ -2366,6 +2367,13 @@ QGridLayout* PreferencesPopup::createImportExportLayout() {
     insertUI(whisperPath, lipSyncOptionsLay);
     insertUI(whisperModel, lipSyncOptionsLay);
   }
+
+#ifdef _WIN32
+  // Ztoryc: the preference is defined on Windows only (preferences.cpp), and
+  // Lazy Nezumi exists only there: elsewhere the row would show an item that
+  // was never defined.
+  insertUI(lazyNezumiCanvasFocusEnabled, lay);
+#endif
 
   lay->setRowStretch(lay->rowCount(), 1);
   return lay;

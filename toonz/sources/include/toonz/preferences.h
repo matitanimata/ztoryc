@@ -332,6 +332,9 @@ public:
     return getStringValue(lipSyncLanguage);
   }
   int getLipSyncLeadFrames() const { return getIntValue(lipSyncLeadFrames); }
+  bool isLazyNezumiCanvasFocusEnabled() {
+    return getBoolValue(lazyNezumiCanvasFocusEnabled);
+  }
 
   // Drawing  tab
   QString getDefRasterFormat() const { return getStringValue(DefRasterFormat); }

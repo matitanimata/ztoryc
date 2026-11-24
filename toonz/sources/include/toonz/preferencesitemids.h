@@ -116,6 +116,7 @@ enum PreferencesItemId {
   // tempo sembra in ritardo. Regolabile perche' e' una scelta di stile e
   // dipende anche dalla cadenza del parlato.
   lipSyncLeadFrames,
+  lazyNezumiCanvasFocusEnabled,
 
   //----------
   // Drawing
