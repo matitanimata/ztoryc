@@ -802,6 +802,18 @@ int TSystem::getProcessorCount() { return QThread::idealThreadCount(); }
 
 //--------------------------------------------------------------
 
+// Ztoryc: is `file` one of the files of the level `level`? A numbered file
+// with '_' ("BG_2.png") answers "BG_.png" to getLevelName, but the level as
+// TSystem::readDirectory groups it — and as the browser hands it over — is
+// "BG..png" (withFrame() writes the dot). Compared by name alone the two never
+// matched: the level had no files, an import copied nothing, and the loaded
+// level came up empty, a red column (Cascina, VIRGO_EXT_0.png, 2026-11-24).
+static bool ztoryFileOfLevel(const TFilePath &file, const TFilePath &level) {
+  const std::wstring ln = level.getLevelNameW();
+  if (file.getLevelNameW() == ln) return true;
+  return file.getDots() == ".." && file.withFrame().getLevelNameW() == ln;
+}
+
 bool TSystem::doesExistFileOrLevel(const TFilePath &fp) {
   if (TFileStatus(fp).doesExist()) return true;
 
@@ -817,7 +829,7 @@ bool TSystem::doesExistFileOrLevel(const TFilePath &fp) {
 
     TFilePathSet::iterator it, end = files.end();
     for (it = files.begin(); it != end; ++it) {
-      if (it->getLevelNameW() == fp.getLevelNameW()) return true;
+      if (ztoryFileOfLevel(*it, fp)) return true;
 // On case insensitive systems like Windows/OSX, we need to
 // compare using all the same case to confirm it is unique
 // We'll force this for Linux as well since the project might
@@ -879,7 +891,7 @@ void TSystem::copyFileOrLevel_throw(const TFilePath &dst,
 
     TFilePathSet::iterator it, end = files.end();
     for (it = files.begin(); it != end; ++it) {
-      if (it->getLevelNameW() == src.getLevelNameW()) {
+      if (ztoryFileOfLevel(*it, src)) {
         TFilePath src1 = *it;
         TFilePath dst1 = dst.withFrame(it->getFrame());
 
@@ -932,7 +944,7 @@ void TSystem::renameFileOrLevel_throw(const TFilePath &dst,
     files = TSystem::readDirectory(src.getParentDir(), false);
 
     for (TFilePathSet::iterator it = files.begin(); it != files.end(); it++) {
-      if (it->getLevelName() == src.getLevelName()) {
+      if (ztoryFileOfLevel(*it, src)) {
         TFilePath src1 = *it;
         TFilePath dst1 = dst.withFrame(it->getFrame());
 
@@ -965,7 +977,7 @@ void TSystem::removeFileOrLevel_throw(const TFilePath &fp) {
 
     TFilePathSet::iterator it, end = files.end();
     for (it = files.begin(); it != end; ++it) {
-      if (it->getLevelName() == fp.getLevelName()) TSystem::deleteFile(*it);
+      if (ztoryFileOfLevel(*it, fp)) TSystem::deleteFile(*it);
     }
   } else
     TSystem::deleteFile(fp);
@@ -980,7 +992,7 @@ void TSystem::hideFileOrLevel_throw(const TFilePath &fp) {
 
     TFilePathSet::iterator it, end = files.end();
     for (it = files.begin(); it != end; ++it) {
-      if (it->getLevelNameW() == fp.getLevelNameW()) TSystem::hideFile(*it);
+      if (ztoryFileOfLevel(*it, fp)) TSystem::hideFile(*it);
     }
   } else
     TSystem::hideFile(fp);
@@ -1008,7 +1020,7 @@ void TSystem::moveFileOrLevelToRecycleBin_throw(const TFilePath &fp) {
 
     TFilePathSet::iterator it, end = files.end();
     for (it = files.begin(); it != end; ++it) {
-      if (it->getLevelNameW() == fp.getLevelNameW())
+      if (ztoryFileOfLevel(*it, fp))
         TSystem::moveFileToRecycleBin(*it);
     }
   } else

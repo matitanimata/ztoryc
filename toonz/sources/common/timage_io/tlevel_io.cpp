@@ -119,8 +119,18 @@ TLevelP TLevelReader::loadInfo() {
   for (TFilePathSet::iterator it = files.begin(); it != files.end(); it++) {
     TFilePath ln(it->getLevelName());
     // cout << "try " << *it << "  " << it->getLevelName() <<  endl;
+    // Ztoryc: a numbered file with '_' ("BG_2.png") is grouped by
+    // TSystem::readDirectory as "BG..png" (withFrame() writes the dot), while
+    // its own getLevelName() keeps the underscore, "BG_.png". The level the
+    // browser hands over is the grouped name, so the two never matched: the
+    // level loaded with NO frames and its cell fell back to frame 1, missing —
+    // a red column (Cascina, VIRGO_EXT_0.png, 2026-11-24). The grouped name
+    // matches too; the frame keeps its own separator, so it reads back as
+    // "BG_2.png".
+    const bool groupedMatch =
+        it->getDots() == ".." && levelName == it->withFrame().withoutParentDir();
     if (levelName == TFilePath(it->getLevelName()) ||
-        levelName == it->withoutParentDir()) {
+        levelName == it->withoutParentDir() || groupedMatch) {
       try {
         if (levelName == it->withoutParentDir())
           level->setFrame(TFrameId::NO_FRAME, TImageP());
