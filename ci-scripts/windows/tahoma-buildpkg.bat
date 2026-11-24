@@ -69,6 +69,21 @@ copy /Y "%VCRUNTIME_PATH%\vcruntime140_1.dll" Ztoryc
 copy /Y "%VCRUNTIME_PATH%\msvcp140.dll" Ztoryc
 copy /Y "%VCRUNTIME_PATH%\msvcp140_1.dll" Ztoryc
 copy /Y "%VCRUNTIME_PATH%\msvcp140_2.dll" Ztoryc
+REM From Tahoma2D 25181b536 ("Add missing MSVC dlls"): the rest of the CRT folder.
+REM Optional: older redists lack some of them, and a missing one must not stop the build.
+for %%d in (concrt140 msvcp140_atomic_wait msvcp140_codecvt_ids vccorlib140) do (
+    if exist "%VCRUNTIME_PATH%\%%d.dll" copy /Y "%VCRUNTIME_PATH%\%%d.dll" Ztoryc
+)
+
+REM OpenMP (vcomp140.dll) sits beside the CRT, in ...\x64\Microsoft.VC*.OpenMP of the SAME
+REM redist version. Ztoryc: Tahoma's loop for it set VCRUNTIME_PATH instead of VCOMP_PATH and
+REM reused the label :done, which in a .bat jumps back to the FIRST :done.
+set VCOMP_PATH=
+for /d %%o in ("%VCRUNTIME_PATH%\..\Microsoft.VC*.OpenMP") do (
+    if exist "%%o\vcomp140.dll" set "VCOMP_PATH=%%o"
+)
+echo "VCOMP_PATH=%VCOMP_PATH%"
+if defined VCOMP_PATH copy /Y "%VCOMP_PATH%\vcomp140.dll" Ztoryc
 
 echo ">>> Configuring Ztoryc.exe for deployment"
 
