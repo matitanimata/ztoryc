@@ -3,4 +3,4 @@ camera.ini
 audiolipsync.ini
 lighting.ini
 motionpath.ini
-browser.ini
+shotmanager.ini
