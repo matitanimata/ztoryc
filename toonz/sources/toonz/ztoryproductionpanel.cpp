@@ -1539,12 +1539,18 @@ void ZtoryProductionPanel::onKitsuUpload() {
   if (!m->isKitsuLinked()) return;
   if (!ZtoryKitsuSync::confirmProjectFolder()) return;
   // Files, one or more — a render already made (Franco, 2026-11-25); the
-  // shot and the task come from the name, as before. The folder of the last
-  // pick is remembered.
+  // shot and the task come from the name, as before. It opens on the
+  // project's +outputs, where the renders go (Franco, 2026-11-25); the last
+  // folder used only when that one does not exist.
   QSettings settings;
+  QString startDir = settings.value("Ztoryc/uploadPreviewsDir").toString();
+  if (ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene()) {
+    const QString outputs = QString::fromStdWString(
+        scene->decodeFilePath(TFilePath("+outputs")).getWideString());
+    if (QFileInfo(outputs).isDir()) startDir = outputs;
+  }
   const QStringList files = QFileDialog::getOpenFileNames(
-      this, tr("Shot clips to upload"),
-      settings.value("Ztoryc/uploadPreviewsDir").toString(),
+      this, tr("Shot clips to upload"), startDir,
       tr("Movies (*.mp4 *.mov *.avi *.webm *.gif *.mkv *.m4v)"));
   if (files.isEmpty()) return;
   settings.setValue("Ztoryc/uploadPreviewsDir",
