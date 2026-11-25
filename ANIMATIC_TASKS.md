@@ -216,8 +216,9 @@ degli status).
   Reimportare o rifare l'export layout. E' Franco che decide quando.
 - **`CASA_INT_1.png` e `CASA_INT_2.png` nella stessa cartella sono UN livello di due fotogrammi** per Tahoma: uno shot
   che vuole CASA_INT_2 puo' mostrare l'1. Stesso difetto gia' corretto per le anteprime Kitsu (`b8b8b4e1a`). Aperto.
-- **Kitsu di Cascina: ogni shot ha 10 task** (anche Key Animation, Inbetweening, Clean up, Ink & Paint, FX, Rendering)
-  secondo il DB locale (25/11), mentre Franco vede solo quelli Cut-out. Capire se e' un'altra istanza o una vista.
+- **Kitsu, produzione CARTOON SCHOOL 2026: i tipi Key Animation, Inbetweening, Clean up, Ink & Paint restano
+  collegati alla produzione** anche se nessun episodio li usa piu' (i task di Cascina sono stati cancellati il 25/11,
+  vedi archivio). Toglierli dalla produzione vale per tutti gli episodi: lo decide Franco.
 - **Pacchetto Windows `c9d962ab8`** (DLL MSVC e `vcomp140.dll`): va verificato con una build Windows della CI prima
   del rilascio (regola del 29/08), controllando che `vcomp140.dll` sia nell'installer.
 - **Note per il rilascio**: (1) «Shot Manager» compare solo a chi installa da zero o ripristina le room — i profili

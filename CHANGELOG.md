@@ -1,3 +1,16 @@
+## [2026-11-25 sera] — Upload dal tracker su +outputs, pulizia dei task di Cascina su Kitsu
+
+### Modified
+- **«Upload shot previews →» si apre nella cartella +outputs del progetto**, dove vanno i render (`2bc3e9fa1`).
+
+### Notes
+- **Kitsu, Cascina: cancellati 276 task mai usati** (Key Animation, Inbetweening, Clean up, Ink & Paint), creati dal
+  primo invio del 29/09 quando l'invio mandava anche i task di un workflow precedente (corretto il 06/11). Ogni shot ha
+  ora solo i 6 task di Cut-out. I quattro tipi restano collegati alla produzione: decide Franco.
+- Le clip Animation di sh010/020/030 non erano mai state caricate: caricate da Franco dal tracker.
+- Lip sync sh040: nessun difetto, era scelto il livello di bocche frontali mentre nello shot LUI e' di profilo.
+- Versione installata di nuovo pulita (senza le tracce di prova del 25/11).
+
 ## [2026-11-24/25] — PNG numerati, cherry-pick da Tahoma, render su Kitsu, Shot Manager
 
 ### Fixed
