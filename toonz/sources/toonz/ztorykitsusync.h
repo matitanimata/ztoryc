@@ -66,6 +66,16 @@ public:
   // open (room + floating) do not both start it, or both ask.
   bool takeAutoSync();
 
+  // The offer to connect to Kitsu, once per project and session, shared by
+  // the scene opening and the tracker so they never both ask. True the first
+  // time for the Kitsu production `kitsuProjectId` (and marks it), then false.
+  bool claimConnectOffer(const QString &kitsuProjectId);
+  // A scene of a project linked to Kitsu was opened and Ztoryc is not
+  // connected: offers to connect, here and not only when the tracker shows
+  // (Franco, 2026-11-25 — a shot room has no tracker). Connect only: a Sync
+  // stays the tracker's button.
+  void offerConnectOnSceneOpen();
+
 signals:
   void progress(const QString &text);
   // warn: something needs a look (conflicts, changes that could not go).
@@ -87,6 +97,7 @@ private:
   QStringList m_warnings;
   int         m_droppedAssets = 0;  // step 3: assets of other episodes removed
   QTimer     *m_watchdog = nullptr;
+  QSet<QString> m_connectOffered;  // projects already offered this session
   bool        m_autoSyncArmed = false;  // a login happened, no auto Sync yet
   QVector<KitsuTaskPush>      m_pendingTasks;       // step 1, after the shots
   QVector<KitsuAssetTaskPush> m_pendingAssetTasks;  // step 2, after the assets

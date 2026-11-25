@@ -539,6 +539,7 @@ class ZtoryModel : public QObject {
   ZtoryWorkflow                     m_workflow = ZtoryWorkflow::Tradigital;
   std::vector<ZtoryClipEntry>       m_sharedClip;
   QStringList                       m_breakdownClip;
+  QString                           m_currentShotSceneUuid;
   std::set<int>                     m_sharedSelection;
   NumberingConfig                   m_numberingConfig;
   bool                              m_autoRenumber = true;  // global numbering mode
@@ -1276,6 +1277,9 @@ public:
   // setup (Franco, 2026-11-23). Uuid di asset; vive finche' l'app e' aperta.
   const QStringList &breakdownClip() const { return m_breakdownClip; }
   void setBreakdownClip(const QStringList &uuids) { m_breakdownClip = uuids; }
+  // The tracker shot the open scene belongs to (a shot scene's back-link), or
+  // empty: set when a scene becomes current.
+  const QString &currentShotSceneUuid() const { return m_currentShotSceneUuid; }
   void setSharedClip(std::vector<ZtoryClipEntry> v)     { m_sharedClip = std::move(v); }
   // The data of a cut shot whose sub-scene is `cl`, while it waits in the clip
   // to be pasted; nullptr if none.

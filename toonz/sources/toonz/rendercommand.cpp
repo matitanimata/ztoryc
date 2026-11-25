@@ -3,6 +3,7 @@
 // Tnz6 includes
 #include "tapp.h"
 #include "ztorymodel.h"
+#include "ztorycharacterreview.h"
 #include "mainwindow.h"
 #include "formatsettingspopups.h"
 #include "fileviewerpopup.h"
@@ -117,6 +118,7 @@ public:
   }
 
   void onDeliver() override {
+    const bool failed = m_error;
     if (m_error) {
       m_error = false;
       DVGui::error(
@@ -135,6 +137,10 @@ public:
     // swap thrash and freezes.  invalidateAllCached() skips modified builders
     // so unsaved edits are preserved.
     if (!isPreview) ImageManager::instance()->invalidateAllCached();
+
+    // Ztoryc: a render asked for in Output Name from Project Pattern goes to
+    // its Kitsu task (not a failed one: half a movie is not a preview).
+    if (!isPreview && !failed) ZtoryShotReview::renderCompleted(m_fp);
 
     TNotifier::instance()->notify(TSceneNameChange());
 
@@ -992,6 +998,10 @@ void RenderCommand::doRender(bool isPreview) {
     DVGui::warning(str);
     return;
   }
+
+  // Ztoryc: a render marked for upload to Kitsu checks the connection now,
+  // before the minutes of rendering.
+  if (!isPreview) ZtoryShotReview::renderStarting(m_fp);
 
   ToonzScene *scene = 0;
   TCamera *camera   = 0;

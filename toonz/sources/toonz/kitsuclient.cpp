@@ -2507,19 +2507,28 @@ void KitsuClient::uplFail(const QString &message) {
 QVector<KitsuPreviewUpload> KitsuClient::buildUploadsFromFolder(
     const QString &dir, int &outUnmatched, int &outNoId) {
   outUnmatched = outNoId = 0;
-  QVector<KitsuPreviewUpload> uploads;
-  ZtoryModel *m = ZtoryModel::instance();
-  const auto &pshots = m->projectShots();
-  if (dir.isEmpty() || pshots.empty()) return uploads;
-
+  if (dir.isEmpty()) return QVector<KitsuPreviewUpload>();
   static const QStringList kExts =
       {"mp4", "mov", "avi", "webm", "gif", "mkv", "m4v"};
   QStringList filters;
   for (const QString &e : kExts) filters << ("*." + e);
-  const QFileInfoList files =
-      QDir(dir).entryInfoList(filters, QDir::Files, QDir::Name);
+  QStringList files;
+  for (const QFileInfo &fi :
+       QDir(dir).entryInfoList(filters, QDir::Files, QDir::Name))
+    files << fi.absoluteFilePath();
+  return buildUploadsFromFiles(files, outUnmatched, outNoId);
+}
 
-  for (const QFileInfo &fi : files) {
+QVector<KitsuPreviewUpload> KitsuClient::buildUploadsFromFiles(
+    const QStringList &paths, int &outUnmatched, int &outNoId) {
+  outUnmatched = outNoId = 0;
+  QVector<KitsuPreviewUpload> uploads;
+  ZtoryModel *m = ZtoryModel::instance();
+  const auto &pshots = m->projectShots();
+  if (pshots.empty()) return uploads;
+
+  for (const QString &path : paths) {
+    const QFileInfo fi(path);
     const QString base       = fi.completeBaseName();
     // Match the shot whose label is the LONGEST one contained in the file name
     // (so "scene_SH010.mp4" picks SH010, not SH01).
@@ -2747,6 +2756,7 @@ void KitsuClient::uplProcessNext() {
                                .arg(m_uplIndex + 1)
                                .arg(m_uplQueue.size())
                                .arg(u.shot));
+    emit previewUploadProgress(m_uplIndex, m_uplQueue.size(), u.shot);
     uplPostComment(taskId, statusId, u.filePath, u.shot);
     return;  // resume in the callback chain
   }
@@ -2949,6 +2959,33 @@ static void armTimeout(QNetworkReply *r) {
   QTimer::singleShot(15000, r, [r]() {
     if (r->isRunning()) r->abort();
   });
+}
+
+// Ztoryc: for a file going up, a limit on SILENCE instead of on the whole
+// request. The fixed 15 s was fine for a PNG; a shot's movie to a remote
+// Kitsu takes longer, and was cut off half way (2026-11-24). Aborted only
+// when no byte moves for `ms`: 2 minutes, so a connection that drops for a
+// while and comes back (Wi-Fi, a phone hotspot) is not cut off (Franco,
+// 2026-11-25).
+static void armIdleTimeout(QNetworkReply *r, int ms = 120000) {
+  QTimer *t = new QTimer(r);
+  t->setSingleShot(true);
+  t->setInterval(ms);
+  QObject::connect(t, &QTimer::timeout, r, [r]() {
+    if (r->isRunning()) r->abort();
+  });
+  // Once the whole file is up, Kitsu converts the movie before answering:
+  // minutes of silence that are not a stall. A 30 s limit there cancelled an
+  // upload that had arrived, and skipped setting it as the cover (Franco,
+  // 2026-11-25). The wait for the answer gets 10 minutes.
+  QObject::connect(r, &QNetworkReply::uploadProgress, t,
+                   [t](qint64 sent, qint64 total) {
+                     if (total > 0 && sent >= total) t->setInterval(600000);
+                     t->start();
+                   });
+  QObject::connect(r, &QNetworkReply::downloadProgress, t,
+                   [t](qint64, qint64) { t->start(); });
+  t->start();
 }
 
 void KitsuClient::trNext() {
@@ -3274,7 +3311,11 @@ int KitsuClient::uploadReviewPreview(int entity, const QString &kitsuEntityId,
             fail(tr("Cannot open %1").arg(QFileInfo(filePath).fileName()));
             return;
           }
-          armTimeout(f);
+          armIdleTimeout(f);
+          connect(f, &QNetworkReply::uploadProgress, this,
+                  [this, token](qint64 sent, qint64 total) {
+                    emit reviewPreviewProgress(token, sent, total);
+                  });
           connect(f, &QNetworkReply::finished, this, [=]() {
             f->deleteLater();
             const QByteArray fb = f->readAll();

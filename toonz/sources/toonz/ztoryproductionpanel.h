@@ -76,7 +76,6 @@ class ZtoryProductionPanel final : public TPanel {
   void maybeAutoConnect();
   // The gate in front of it: a saved scene is open and the tracker is visible.
   void maybeAutoConnectForScene();
-  QString m_autoConnectTried;  // project DB path already tried this session
   // The Sync after a login runs ONLY when asked for: «Connect and sync» in
   // the reconnect question. Any other login — the Kitsu dialog connecting by
   // itself with the saved password — leaves the Sync to the button, so the

@@ -52,6 +52,10 @@
 #include <QRegularExpression>
 
 #include "ztorymodel.h"
+#include "ztorytaskflow.h"
+#include "ztorycharacterreview.h"
+#include <QCheckBox>
+#include <QSettings>
 #include <QMainWindow>
 #include <QFrame>
 #include <QMessageBox>
@@ -1570,6 +1574,18 @@ void OutputSettingsPopup::onNameFromPattern() {
           .match(sceneName);
   if (mShot.hasMatch()) shotGuess = mShot.captured(1).toUpper();
 
+  // A shot scene of the tracker: its own shot, and only the tasks its
+  // technique has — not every task Ztoryc knows (Franco, 2026-11-24).
+  const ProjectShot *shot = nullptr;
+  {
+    const int si = model->projectShotIndex(model->currentShotSceneUuid());
+    if (si >= 0) shot = &model->projectShots()[si];
+  }
+  if (shot) {
+    if (shotGuess.isEmpty()) shotGuess = shot->label;
+    if (seqGuess.isEmpty()) seqGuess = shot->seq;
+  }
+
   QDialog dlg(this);
   dlg.setWindowTitle(tr("Output Name from Project Pattern"));
   auto *form = new QFormLayout(&dlg);
@@ -1577,9 +1593,21 @@ void OutputSettingsPopup::onNameFromPattern() {
   auto *seqFld  = new QLineEdit(seqGuess, &dlg);
   auto *shotFld = new QLineEdit(shotGuess, &dlg);
   auto *taskCombo = new QComboBox(&dlg);
-  for (const QString &tt : ZtoryModel::canonicalTaskOrder())
+  const QStringList tasks = shot ? model->taskTypesForProjectShot(*shot)
+                                 : ZtoryModel::canonicalTaskOrder();
+  int current = -1;  // the task being worked on: WIP first, else the first open
+  for (const QString &tt : tasks) {
     taskCombo->addItem(QString("%1  [%2]").arg(tt, ZtoryModel::taskShortCode(tt)),
                        ZtoryModel::taskShortCode(tt));
+    taskCombo->setItemData(taskCombo->count() - 1, tt, Qt::UserRole + 1);
+    if (!shot || ZtoryModel::isStoryboardTask(tt)) continue;
+    const TaskStatus s = model->taskStatusOf(
+        static_cast<int>(ZtoryTaskFlow::Entity::Shot), shot->uuid, tt);
+    if (s == TaskStatus::Wip) current = taskCombo->count() - 1;
+    else if (current < 0 && s != TaskStatus::Done)
+      current = taskCombo->count() - 1;
+  }
+  if (current >= 0) taskCombo->setCurrentIndex(current);
   auto *verSpin = new QSpinBox(&dlg);
   verSpin->setRange(1, 999);
   verSpin->setValue(1);
@@ -1589,6 +1617,25 @@ void OutputSettingsPopup::onNameFromPattern() {
   form->addRow(tr("Shot:"),     shotFld);
   form->addRow(tr("Task:"),     taskCombo);
   form->addRow(tr("Version:"),  verSpin);
+
+  // After the render, the clip goes to the chosen task on Kitsu, which sets
+  // it waiting for approval. Only for a shot of the tracker that is on Kitsu;
+  // the choice is remembered.
+  auto *uploadCb = new QCheckBox(tr("Upload preview to Kitsu after the render"),
+                                 &dlg);
+  const bool canUpload = shot && model->useKitsu() &&
+                         !model->kitsuProjectId().isEmpty() &&
+                         !shot->kitsuShotId.isEmpty();
+  uploadCb->setEnabled(canUpload);
+  uploadCb->setChecked(
+      canUpload &&
+      QSettings().value("Ztoryc/renderUploadToKitsu", false).toBool());
+  uploadCb->setToolTip(
+      canUpload ? tr("The rendered clip is uploaded to this shot's task on "
+                     "Kitsu, which sets it Waiting For Approval.")
+                : tr("Only for a shot scene of the tracker, whose shot is "
+                     "already on Kitsu."));
+  form->addRow(QString(), uploadCb);
 
   auto *preview = new QLabel(&dlg);
   preview->setStyleSheet("color:#aaa; font-size:11px;");
@@ -1624,6 +1671,20 @@ void OutputSettingsPopup::onNameFromPattern() {
   if (name.isEmpty()) return;
   m_fileNameFld->setText(name);
   onNameChanged();  // apply to the output properties
+
+  if (canUpload) QSettings().setValue("Ztoryc/renderUploadToKitsu",
+                                      uploadCb->isChecked());
+  // Connected BEFORE the render, not found out after it (Franco,
+  // 2026-11-25). Declined: the box stays ticked, and the render asks again.
+  if (canUpload && uploadCb->isChecked()) ZtoryShotReview::ensureConnected();
+  // Ticked: every render of this output name goes up; unticked clears it.
+  const QString outFile = QString::fromStdWString(
+      scene->decodeFilePath(getProperties()->getPath()).getWideString());
+  ZtoryShotReview::setRenderUpload(
+      outFile, shot ? shot->uuid : QString(),
+      canUpload && uploadCb->isChecked()
+          ? taskCombo->currentData(Qt::UserRole + 1).toString()
+          : QString());
 }
 
 //-----------------------------------------------------------------------------

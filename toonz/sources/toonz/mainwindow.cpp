@@ -24,6 +24,7 @@ extern ToggleCommandHandler showMeshToggle;
 #include "aboutpopup.h"
 #include "filebrowserpopup.h"
 #include "ztorymodel.h"
+#include "ztorykitsusync.h"
 #include "ztoryrecovery.h"
 #include "ztoryaudiowatch.h"
 #include "ztoryinstance.h"
@@ -668,6 +669,15 @@ centralWidget->setLayout(centralWidgetLayout);*/
   // Il workflow cambia senza cambiare stanza (New Scene, apertura di una scena):
   // senza questo la voce del lip sync resterebbe come l'aveva lasciata l'ultimo
   // cambio di stanza.
+  // Ztoryc: opening a scene of a project linked to Kitsu offers the
+  // connection (Franco, 2026-11-25). Deferred: the model reads the scene's
+  // project in its own handler of the same signal.
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
+          this, []() {
+            QTimer::singleShot(300, []() {
+              ZtoryKitsuSync::instance()->offerConnectOnSceneOpen();
+            });
+          });
   connect(ZtoryModel::instance(), &ZtoryModel::workflowChanged, this,
           [this](ZtoryWorkflow) { updateZtoryToolbarDedup(); });
 

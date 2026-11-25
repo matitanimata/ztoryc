@@ -303,6 +303,7 @@ void ZtoryModel::updateSceneLock(bool warnIfTaken) {
 // idempotent (only the first open changes anything) and safe for non-shot scenes
 // (returns early). Mirrors StoryboardPanel's logic but is always alive.
 void ZtoryModel::onSceneSwitchedAdvanceShot() {
+  m_currentShotSceneUuid.clear();
   ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
   if (!scene) return;
   QString tnz = QString::fromStdWString(scene->getScenePath().getWideString());
@@ -336,6 +337,7 @@ void ZtoryModel::onSceneSwitchedAdvanceShot() {
   if (!QFile::exists(projectDb)) return;
 
   if (!loadProjectDbFromPath(projectDb)) return;
+  m_currentShotSceneUuid = uuid;
   // The rule itself lives in ZtoryTaskFlow (it used to be here AND, divergent,
   // in StoryboardPanel::loadZtoryc — which put Storyboard back to WIP).
   ZtoryTaskFlow::shotOpened(uuid, technique);

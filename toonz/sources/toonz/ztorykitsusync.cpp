@@ -1,4 +1,7 @@
 #include "ztorykitsusync.h"
+#include <QMainWindow>
+#include "toonz/toonzscene.h"
+#include "kitsuconnectdialog.h"
 #include "ztorystoryboardlock.h"
 
 #include "ztoryassetpreview.h"
@@ -546,6 +549,56 @@ int ZtoryKitsuSync::pendingSends() {
   for (const KitsuAssetTaskPush &t : KitsuClient::buildAssetTasksFromModel())
     if (!t.createOnly) ++toSend;
   return toSend;
+}
+
+bool ZtoryKitsuSync::claimConnectOffer(const QString &projectDb) {
+  if (projectDb.isEmpty() || m_connectOffered.contains(projectDb)) return false;
+  m_connectOffered.insert(projectDb);
+  return true;
+}
+
+void ZtoryKitsuSync::offerConnectOnSceneOpen() {
+  ZtoryModel *m   = ZtoryModel::instance();
+  KitsuClient *kc = KitsuClient::instance();
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene || scene->isUntitled()) return;
+  if (!m->isKitsuLinked() || kc->isLoggedIn()) return;
+  // One at a time: two scene openings close together (the start window, then
+  // the scene) asked twice, the second while the password was being typed
+  // (Franco, 2026-11-25).
+  static bool offering = false;
+  if (offering) return;
+  struct Guard {
+    bool &f;
+    explicit Guard(bool &b) : f(b) { f = true; }
+    ~Guard() { f = false; }
+  } guard(offering);
+  // Once per Kitsu production, not per project file: two scenes of the same
+  // production are one question.
+  if (!claimConnectOffer(m->kitsuProjectId())) return;
+  // The target in full, before connecting (as the tracker does: the
+  // connection must never go somewhere the user did not read).
+  const QString target =
+      m->isKitsuEpisodeLinked()
+          ? tr("production «%1»\nepisode «%2»")
+                .arg(m->kitsuProjectName(), m->episode())
+          : tr("production «%1»").arg(m->kitsuProjectName());
+  if (!kc->email().isEmpty() && kc->hasSavedPassword()) {
+    const int answer = DVGui::MsgBox(
+        tr("This scene's project is linked to Kitsu, and Ztoryc is not "
+           "connected.\n\nConnect to:\n%1").arg(target),
+        tr("Connect"), tr("Not now"), 1);
+    if (answer == 1) kc->connectAndSync();  // login + statuses, no Sync
+    return;
+  }
+  // No saved password: the connection dialog, where it is typed.
+  const int answer = DVGui::MsgBox(
+      tr("This scene's project is linked to Kitsu, and Ztoryc is not "
+         "connected.\n\n%1\n\nConnect now?").arg(target),
+      tr("Connect…"), tr("Not now"), 1);
+  if (answer != 1) return;
+  KitsuConnectDialog dlg(TApp::instance()->getMainWindow());
+  dlg.exec();
 }
 
 bool ZtoryKitsuSync::takeAutoSync() {

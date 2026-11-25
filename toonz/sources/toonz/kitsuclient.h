@@ -439,6 +439,10 @@ public:
   static QVector<KitsuPreviewUpload> buildUploadsFromFolder(const QString &dir,
                                                             int &outUnmatched,
                                                             int &outNoId);
+  // The same matching for files picked one by one (the tracker's «Upload
+  // shot previews», Franco 2026-11-25: a render already made, not a folder).
+  static QVector<KitsuPreviewUpload> buildUploadsFromFiles(
+      const QStringList &files, int &outUnmatched, int &outNoId);
 
   // Build the shot + task push lists from the project's shots (ZtoryModel::
   // projectShots()), padding frame ranges by `handles`. Shared by the Connect
@@ -533,9 +537,13 @@ signals:
   void teamPulled(bool ok, const QVector<KitsuPerson> &persons,
                   const QString &message);
   void previewsUploaded(bool ok, int uploaded, const QString &message);
+  // Before each clip goes up: `index` is 0-based in the queue of `total`.
+  void previewUploadProgress(int index, int total, const QString &shot);
   // One queued status change was handled. result: TransitionResult;
   // serverStatus: the TaskStatus Kitsu had (meaningful for TrConflict).
   void reviewPreviewUploaded(int token, bool ok, const QString &message);
+  // The file of an uploadReviewPreview going up: bytes sent of `total`.
+  void reviewPreviewProgress(int token, qint64 sent, qint64 total);
   void reviewPreviewSkipped(int token, const QString &why);
   void taskCoverSet(int token, int result, const QString &message);
   // Asset task statuses changed in Ztoryc but not sent: their task type is

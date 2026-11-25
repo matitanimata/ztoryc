@@ -28,6 +28,8 @@
 #include <QVBoxLayout>
 #include <QRegularExpression>
 #include <QFileDialog>
+#include <QScrollArea>
+#include <QSettings>
 #include <QMessageBox>
 #include <QImage>
 #include <QFileInfo>
@@ -382,7 +384,16 @@ public:
 ZtoryProductionPanel::ZtoryProductionPanel(QWidget *parent) : TPanel(parent) {
   m_tabs = new QTabWidget(this);
   m_tabs->setDocumentMode(true);
-  m_tabs->addTab(buildProjectTab(),   QObject::tr("Project"));
+  // The Project tab is a long form: in a short pane its rows were squeezed
+  // until the text no longer fit (Franco, 2026-11-25). It scrolls instead.
+  {
+    QScrollArea *projectScroll = new QScrollArea();
+    projectScroll->setWidget(buildProjectTab());
+    projectScroll->setWidgetResizable(true);
+    projectScroll->setFrameShape(QFrame::NoFrame);
+    projectScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_tabs->addTab(projectScroll, QObject::tr("Project"));
+  }
   m_tabs->addTab(buildShotsTab(),     QObject::tr("Shots"));
   m_tabs->addTab(buildTeamTab(),      QObject::tr("Team"));
   m_tabs->addTab(buildAssetsTab(),    QObject::tr("Assets"));
@@ -1440,9 +1451,10 @@ void ZtoryProductionPanel::maybeAutoConnect() {
   if (kc->email().isEmpty() || !kc->hasSavedPassword()) return;
   // Once per project and session: offline, a retry at every show of the
   // panel would only stack failed logins. The dialog stays the way to retry.
-  const QString key = m->projectDbPath();
-  if (key.isEmpty() || key == m_autoConnectTried) return;
-  m_autoConnectTried = key;
+  // Shared with the offer made when a scene opens: one question per project
+  // and session, whoever asks first.
+  if (!ZtoryKitsuSync::instance()->claimConnectOffer(m->kitsuProjectId()))
+    return;
   // Said before doing it, with the target in full: the reconnection must
   // never go somewhere the user did not read (Franco, 2026-09-29).
   // Plain text: the message box guesses rich text by itself.
@@ -1526,12 +1538,20 @@ void ZtoryProductionPanel::onKitsuUpload() {
   ZtoryModel *m = ZtoryModel::instance();
   if (!m->isKitsuLinked()) return;
   if (!ZtoryKitsuSync::confirmProjectFolder()) return;
-  const QString dir =
-      QFileDialog::getExistingDirectory(this, tr("Folder with per-shot clips"));
-  if (dir.isEmpty()) return;
+  // Files, one or more — a render already made (Franco, 2026-11-25); the
+  // shot and the task come from the name, as before. The folder of the last
+  // pick is remembered.
+  QSettings settings;
+  const QStringList files = QFileDialog::getOpenFileNames(
+      this, tr("Shot clips to upload"),
+      settings.value("Ztoryc/uploadPreviewsDir").toString(),
+      tr("Movies (*.mp4 *.mov *.avi *.webm *.gif *.mkv *.m4v)"));
+  if (files.isEmpty()) return;
+  settings.setValue("Ztoryc/uploadPreviewsDir",
+                    QFileInfo(files.first()).absolutePath());
   int unmatched = 0, noId = 0;
   QVector<KitsuPreviewUpload> uploads =
-      KitsuClient::buildUploadsFromFolder(dir, unmatched, noId);
+      KitsuClient::buildUploadsFromFiles(files, unmatched, noId);
   if (uploads.isEmpty()) {
     m_kitsuSyncLabel->setStyleSheet("color:#FF3860;");
     m_kitsuSyncLabel->setText(

@@ -123,6 +123,7 @@
 #include <QXmlStreamReader>
 #include <QRegularExpression>
 #include <QTimer>
+#include <QProgressBar>
 #include <cstdio>
 #ifdef _WIN32
 #include <process.h>
@@ -1158,6 +1159,104 @@ private:
   QPointer<QWidget> m_anchor;
 };
 }  // namespace
+
+// Il caricamento delle clip su Kitsu va avanti in background, una clip dopo
+// l'altra: questo riquadro, in basso a destra nella finestra principale, ne
+// mostra l'avanzamento senza bloccare il lavoro. Si chiude da solo se va tutto
+// bene; se si ferma, resta finche' non lo si chiude.
+static void ztoryShowKitsuUploadProgress(int total, int notOnKitsu) {
+  QWidget *mw = TApp::instance()->getMainWindow();
+  if (!mw || total <= 0) return;
+  QFrame *box = new QFrame(mw);
+  box->setAttribute(Qt::WA_DeleteOnClose);
+  box->setObjectName("ztoryUploadBox");
+  box->setStyleSheet(
+      "#ztoryUploadBox{background:#2a2a2a;border:1px solid #5a8fd0;}"
+      "QLabel{color:#ddd;font-size:11px;border:none;}");
+  auto *lay = new QVBoxLayout(box);
+  lay->setContentsMargins(10, 8, 10, 8);
+  auto *top    = new QHBoxLayout();
+  QLabel *title = new QLabel(QObject::tr("Uploading to Kitsu"), box);
+  title->setStyleSheet("font-weight:bold;");
+  QToolButton *closeBtn = new QToolButton(box);
+  closeBtn->setText(QString::fromUtf8("\u00d7"));
+  closeBtn->setToolTip(QObject::tr("Hide (the upload goes on)"));
+  closeBtn->setStyleSheet("QToolButton{color:#aaa;border:none;font-size:14px;}"
+                          "QToolButton:hover{color:#fff;}");
+  top->addWidget(title);
+  top->addStretch(1);
+  top->addWidget(closeBtn);
+  lay->addLayout(top);
+  QProgressBar *bar = new QProgressBar(box);
+  bar->setRange(0, total);
+  bar->setValue(0);
+  bar->setTextVisible(false);
+  bar->setFixedHeight(6);
+  lay->addWidget(bar);
+  QLabel *line = new QLabel(QObject::tr("Starting… %1 clip(s)").arg(total), box);
+  line->setWordWrap(true);
+  lay->addWidget(line);
+  if (notOnKitsu > 0) {
+    QLabel *note = new QLabel(
+        QObject::tr("%1 shot(s) not on Kitsu yet: not uploaded.").arg(notOnKitsu),
+        box);
+    note->setStyleSheet("color:#FFB000;");
+    lay->addWidget(note);
+  }
+  box->setFixedWidth(300);
+  box->adjustSize();
+  auto place = [box, mw]() {
+    box->move(mw->width() - box->width() - 16,
+              mw->height() - box->height() - 40);
+  };
+  place();
+  box->show();
+  box->raise();
+  QObject::connect(closeBtn, &QToolButton::clicked, box, &QWidget::close);
+
+  KitsuClient *kc = KitsuClient::instance();
+  QObject::connect(kc, &KitsuClient::previewUploadProgress, box,
+                   [bar, line](int index, int n, const QString &shot) {
+                     bar->setMaximum(n);
+                     bar->setValue(index);
+                     line->setText(QObject::tr("Clip %1 of %2 — %3")
+                                       .arg(index + 1)
+                                       .arg(n)
+                                       .arg(shot));
+                   });
+  QObject::connect(
+      kc, &KitsuClient::previewsUploaded, box,
+      [box, bar, line, title, total, place](bool ok, int uploaded,
+                                            const QString &msg) {
+        bar->setValue(bar->maximum());
+        if (ok) {
+          title->setText(QObject::tr("Kitsu upload done"));
+          title->setStyleSheet("font-weight:bold;color:#22D160;");
+          const int skipped = total - uploaded;
+          line->setText(
+              skipped > 0
+                  ? QObject::tr("%1 clip(s) uploaded, %2 skipped (no matching "
+                                "task or file).")
+                        .arg(uploaded)
+                        .arg(skipped)
+                  : QObject::tr("%1 clip(s) uploaded.").arg(uploaded));
+          // Tutto a posto: sparisce da solo. Se qualcosa e' stato saltato
+          // resta, perche' va letto.
+          if (skipped == 0) QTimer::singleShot(5000, box, &QWidget::close);
+        } else {
+          title->setText(QObject::tr("Kitsu upload stopped"));
+          title->setStyleSheet("font-weight:bold;color:#FF3860;");
+          line->setText(QObject::tr("%1 clip(s) uploaded before: %2")
+                            .arg(uploaded)
+                            .arg(msg));
+        }
+        box->adjustSize();
+        place();
+        // Una volta finito non ascolta piu': un caricamento successivo apre il
+        // suo riquadro.
+        QObject::disconnect(KitsuClient::instance(), nullptr, box, nullptr);
+      });
+}
 
 void PanelWidget::showBreakdownPopup() {
   // Un popup che si chiude cliccando altrove: si consulta, si corregge, e si
@@ -10039,14 +10138,13 @@ void StoryboardPanel::onExportAnimatic() {
       // Optimistic local WFA mirror (the upload sets WFA on Kitsu too; a later
       // pull reconciles if an upload fails).
       KitsuClient::mirrorUploadedWfa(uploads);
+      // Un riquadro che segue il caricamento invece di un avviso che si chiude
+      // subito (Franco, 2026-11-23: «come faccio a capire come sta
+      // procedendo?»). Collegato PRIMA di partire, per non perdere la prima
+      // clip.
+      ztoryShowKitsuUploadProgress(uploads.size(), noId);
       KitsuClient::instance()->uploadPreviews(
           ZtoryModel::instance()->kitsuProjectId(), uploads);
-      QMessageBox::information(
-          this, tr("Upload to Kitsu"),
-          tr("Uploading %1 clip(s) to Kitsu…%2")
-              .arg(uploads.size())
-              .arg(noId ? tr("  (%1 shot(s) not on Kitsu yet)").arg(noId)
-                        : QString()));
     }
   }
 
