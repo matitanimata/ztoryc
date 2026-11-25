@@ -183,11 +183,46 @@ degli status).
   - Breakdown: tendina Type e ricerca sopra la tabella, stesso filtro nella finestra «+ Add».
   - Breakdown a matrice, nomi nel Dialog, spoglio a parole: collaudati il 22-23/11, nell'archivio.
   - «Mario!» come battuta non e' piu' un'intestazione: corretto in `3dc6c0372`, nell'archivio.
-- **Riquadro dell'avanzamento del caricamento su Kitsu dopo l'Export Animatic (Franco, 23/11)** — sostituisce
-  l'avviso che si chiudeva con OK: barra «Clip 3 of 12 — sh030», verde e si chiude da solo se va bene, resta aperto
-  se qualcosa e' saltato o si ferma. Segnale nuovo `KitsuClient::previewUploadProgress`. **NON COMMITTATO e MAI
-  COLLAUDATO**: le modifiche sono nell'albero di lavoro (`kitsuclient.h/.cpp`, `storyboardpanel.cpp`). Provare con
-  un export vero su `filorosso-TEST` o ZTORYC-AI, poi commit.
+- **Riquadro dell'avanzamento del caricamento su Kitsu dopo l'Export Animatic (Franco, 23/11)** — barra «Clip 3 of
+  12 — sh030», verde e si chiude da solo, resta aperto se qualcosa e' saltato o si ferma. Committato in `61191fd05`,
+  **MAI COLLAUDATO**: provare con un export vero su `filorosso-TEST` o ZTORYC-AI. Lo scroll nel messaggio c'e' solo
+  nel riquadro del render, non in questo (messaggi brevi).
+- 🔴 **Popup «Connect» due volte all'avvio (Franco, 25/11)** — aprendo Ztoryc e una scena dalla finestra di avvio, la
+  domanda di connessione (`ZtoryKitsuSync::offerConnectOnSceneOpen`, `61191fd05`) compare due volte, la seconda
+  mentre si inserisce la password del portachiavi. Riprodotto il 25/11 su kitsuTest01 con tracce: UNA sola entrata
+  nella funzione; nello stesso momento macOS apre SecurityAgent (il portachiavi, che chiede due volte di seguito
+  anche prima di questa modifica). Da capire: chi apre il portachiavi PRIMA del «Connect», e da dove arriva la
+  seconda domanda (ensureConnected? tracker? un secondo sceneSwitched dopo la password?). Ripartire da qui.
+- **Regole dei task allineate alle automazioni di Kitsu — DECISIONI DI FRANCO del 25/11, da implementare** (ultima
+  regressione: «Layout Done → Animation Ready» su Kitsu ha riportato da WFA a Ready gli Animation di sh010–sh030 il
+  24/11 alle 20:05 e 20:23; verificato nel DB, commenti «Change triggered by Layout set to Done»):
+  - **Fonte delle regole**: nei progetti collegati il tracker segue le **automazioni di Kitsu** (quando X Done → Y
+    Ready solo se c'e' l'automazione). Dove non ce ne sono, gli stati si cambiano a mano. Senza Kitsu resta la
+    catena della tecnica. Per Cascina: Storyboard → Layout → Animation → Compositing; VFX e Render liberi.
+  - **Blocco in avanti**: Y resta Todo finche' X (legato da automazione) non e' Done. Se X e' WIP, WFA o Retake, Y
+    non si muove — vale per tutti i task in sequenza. Vale in TUTTI i punti che scrivono uno stato: tracker, Sync,
+    caricamento Animatic e render (rifiutare un ANIM con Layout aperto, e nel render mostrare solo il task aperto).
+  - **Task riaperto**: se X torna da Done a Retake/WIP, Y e i successivi tornano in **Todo**, con conferma che li
+    elenca.
+  - **Permessi**: l'artista fa solo cio' che Kitsu gli consente — leggere ruolo dell'utente e `is_artist_allowed`
+    degli stati. Oggi sulla Kitsu di Franco e' acceso per Todo/Ready/WIP/WFA/Retake/Done: se si vuole solo WIP/WFA va
+    spento in Kitsu (Impostazioni → Task Status), lo decide Franco.
+  - Fatti verificati: Zou 1.0.24 esegue le automazioni SOLO alla creazione di un commento
+    (`comments_service.py:121`), senza guardare lo stato del task d'arrivo; un PUT diretto del task non le esegue ma
+    richiede supervisor/manager. Con il blocco in avanti non serve: Layout diventa Done solo con Animation in Todo.
+  - Prima di scrivere: prova su ZTORYC-AI ricreando le automazioni di Cascina.
+- **Cascina: shot con scenografie PNG numerate da rifare** — dopo `04ea227d5` le celle gia' salvate puntano al
+  fotogramma 1: `VIRGO_EXT_0.png` in sh020, sh250, sh560; `VIRGO_INT_2.png` (quasi certo) in sh160–sh230, sh270.
+  Reimportare o rifare l'export layout. E' Franco che decide quando.
+- **`CASA_INT_1.png` e `CASA_INT_2.png` nella stessa cartella sono UN livello di due fotogrammi** per Tahoma: uno shot
+  che vuole CASA_INT_2 puo' mostrare l'1. Stesso difetto gia' corretto per le anteprime Kitsu (`b8b8b4e1a`). Aperto.
+- **Kitsu di Cascina: ogni shot ha 10 task** (anche Key Animation, Inbetweening, Clean up, Ink & Paint, FX, Rendering)
+  secondo il DB locale (25/11), mentre Franco vede solo quelli Cut-out. Capire se e' un'altra istanza o una vista.
+- **Pacchetto Windows `c9d962ab8`** (DLL MSVC e `vcomp140.dll`): va verificato con una build Windows della CI prima
+  del rilascio (regola del 29/08), controllando che `vcomp140.dll` sia nell'installer.
+- **Note per il rilascio**: (1) «Shot Manager» compare solo a chi installa da zero o ripristina le room — i profili
+  esistenti tengono la loro copia; (2) Lazy Nezumi (`68ec32750`): su Windows la tela non e' piu' una finestra nativa
+  di default — dirlo ai tester Windows, se cambia qualcosa sul viewer la causa puo' essere questa.
   - Scena character dalla finestra di avvio: compare la proposta di import con le opzioni del tracker (valgono solo
     per questo import). Se il PSD da riggare manca, si cerca il file per nome in Model Sheets; se lo si importa,
     diventa il PSD da riggare. Se non c'e' niente, Ztoryc lo dice. A Cascina, il 22/11, solo ALIENO aveva il PSD da

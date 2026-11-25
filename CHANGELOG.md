@@ -1,3 +1,29 @@
+## [2026-11-24/25] — PNG numerati, cherry-pick da Tahoma, render su Kitsu, Shot Manager
+
+### Fixed
+- **Scenografie PNG con il nome che finisce in `_numero` rosse dopo l'import** (`VIRGO_EXT_0.png`, `VIRGO_INT_2.png`):
+  il livello si caricava con zero fotogrammi e la cella cadeva sul fotogramma 1 (`04ea227d5`, collaudato a Cascina).
+  Gli shot gia' esportati vanno rifatti. Candidato upstream.
+- **Caricamento su Kitsu interrotto** dopo 15 secondi, e clip che non diventava la miniatura: ora si interrompe solo
+  dopo 2 minuti senza dati, e aspetta fino a 10 minuti la conversione di Kitsu (`61191fd05`).
+
+### Added
+- **Render caricato sul task Kitsu dello shot** (`61191fd05`, collaudato): in Name from Project Pattern solo i task
+  dello shot, la spunta «Upload preview to Kitsu», valida per ogni render di quel nome; connessione controllata
+  all'avvio del render; riquadro con barra di avanzamento.
+- **Upload shot previews dal tracker con file singoli** invece di una cartella (`61191fd05`, collaudato).
+- **Connessione a Kitsu proposta all'apertura della scena**, una volta per produzione e sessione (`61191fd05`).
+- **Room «Shot Manager»** (Browser, Production Tracker, Render Settings, Scene Cast, Tasks) in tutti i set tranne
+  Storyboard, al posto di Browser/Browser-Export (`7c76895c4`). Scroll nel tab Project del tracker.
+- Da Tahoma2D: opzione **Lazy Nezumi** per Windows (`68ec32750`) e DLL MSVC mancanti nel pacchetto Windows
+  (`c9d962ab8`, da verificare in CI).
+
+### Notes
+- Ancora da fare: doppio popup di connessione all'avvio; riquadro dell'Animatic mai provato.
+- **Regole dei task allineate alle automazioni di Kitsu**: decisioni di Franco scritte in ANIMATIC_TASKS, da
+  implementare. Causa della regressione Animation WFA → Ready verificata nel DB e nel codice di Kitsu.
+- Review a mano: nessun bloccante (`~/ZtorYc/reviews/2026-11-25_*`).
+
 ## [2026-11-23 pomeriggio] — Breakdown dal Board, import per strato, clip di camminata che avanza con l'IK
 
 ### Added
