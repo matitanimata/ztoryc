@@ -4,6 +4,7 @@
 #include "ztoryassetpreview.h"  // ztoryPsdsUsedByScene
 #include "ztorycharacter.h"
 #include "ztorymodel.h"
+#include "ztoriglibrary.h"  // currentCharacter
 
 #include "toonz/levelset.h"
 #include "toonz/toonzscene.h"
@@ -933,20 +934,35 @@ QSet<QString> ZtoryMouthLibrary::drawingFingerprint(TXsheet *xsh) {
 }
 
 // The project's characters, this scene's own first when it is one; false
-// when there are none or the question is cancelled.
+// when there are none or the question is cancelled.  The character being
+// worked on is the one ZtoRig's Publish and Update use (the character's own
+// scene, or the character sub-scene one is in): when it is known and
+// askWhenKnown is false, it is the answer and nothing is asked (Franco,
+// 2026-11-26: «Publish lo sa già, perché Mark as Mouth Level no?»).
 static bool chooseMouthCharacter(const QString &title, const QString &prompt,
                                  const QString &ownerFile, QString *name,
-                                 QString *uuid) {
+                                 QString *uuid, bool askWhenKnown = false) {
   ZtoryModel *m = ZtoryModel::instance();
   QStringList names;
   QHash<QString, QString> uuidOf;
   QString mineName;
+  QString current;
+  ZtoRigLibrary::currentCharacter(&current, nullptr, nullptr);
   for (const Asset &a : m->assets()) {
     if (!ZtoryModel::isCharacterType(a.type)) continue;
     names << a.name;
     uuidOf.insert(a.name, a.uuid);
-    if (QFileInfo(m->resolveAssetFile(a)) == QFileInfo(ownerFile))
+    if (mineName.isEmpty() && !ownerFile.isEmpty() &&
+        QFileInfo(m->resolveAssetFile(a)) == QFileInfo(ownerFile))
       mineName = a.name;
+  }
+  if (mineName.isEmpty() && !current.isEmpty())
+    for (const QString &n : names)
+      if (n.compare(current, Qt::CaseInsensitive) == 0) mineName = n;
+  if (!askWhenKnown && !mineName.isEmpty()) {
+    *name = mineName;
+    *uuid = uuidOf.value(mineName);
+    return true;
   }
   names.sort(Qt::CaseInsensitive);
   if (names.isEmpty()) {
@@ -988,7 +1004,7 @@ static void addMouthLevelActions(QMenu *menu, TXshSimpleLevel *sl) {
       QString who, uuid;
       if (!chooseMouthCharacter(
               title, QObject::tr("The mouths in «%1» belong to:").arg(level),
-              QString(), &who, &uuid))
+              QString(), &who, &uuid, true))
         return;
       now.characterName = who;
       now.characterUuid = uuid;
