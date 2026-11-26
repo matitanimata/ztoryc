@@ -922,16 +922,16 @@ void RasterPainter::onImage(const Stage::Player &player) {
   // 12/1/2018 Now the scene icon is rendered without deformation either
   // since it causes unknown error with opengl contexts..
   //
-  // Ztoryc: tried on 2026-11-26 to deform the scene icon too (characters were
-  // missing from the shot icons) and REVERTED the same day: drawing the
-  // deformation in the icon's offline context left the character's textures
-  // tied to that context, and after a save the character vanished from the
-  // viewer (Franco). The 2018 «unknown error» is that, not only the nested
-  // context. A fix needs the icon drawn without touching the viewer's caches.
+  // Ztoryc: the scene icon made at save (gui thread) IS deformed again, so the
+  // shot icons show their Plastic characters (Franco, 2026-11-26). The first
+  // attempt made the characters vanish from the viewer after a save: the
+  // icon's offline context had no display-lists space of its own, so it read
+  // the viewer's textures and freed «temporary» ones in the viewer's context.
+  // ToonzScene::renderFrame now gives the icon its own space and releases it
+  // in its own context. Icons made off the gui thread stay undeformed.
   TStageObject *obj =
       ::plasticDeformedObj(player, m_vs.m_plasticVisualSettings);
-  if (obj && QThread::currentThread() == qGuiApp->thread() &&
-      (!m_vs.m_forSceneIcon || m_vs.m_forReference)) {
+  if (obj && QThread::currentThread() == qGuiApp->thread()) {
     flushRasterImages();
     ::onPlasticDeformedImage(obj, player, m_vs, m_viewAff);
   } else {

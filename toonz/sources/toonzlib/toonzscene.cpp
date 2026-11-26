@@ -39,6 +39,7 @@
 #include "tstream.h"
 #include "tstreamexception.h"
 #include "tofflinegl.h"
+#include "tgldisplaylistsmanager.h"
 #include "tenv.h"
 #include "tsystem.h"
 #include "tfiletype.h"
@@ -933,6 +934,29 @@ void ToonzScene::renderFrame(const TRaster32P &ras, int row, const TXsheet *xsh,
   currentOfflineGL = &ogl;
 
   ogl.makeCurrent();
+
+  // Ztoryc: the scene icon gets a display-lists space of its own. Plastic
+  // textures are stored per space (TTexturesStorage); an unregistered offline
+  // context read the VIEWER's textures (space 0) and made «temporary» ones
+  // that were later unbound in whatever context was current — the viewer's:
+  // after a save the Plastic characters vanished from the viewer (Franco,
+  // 2026-11-26). With its own space, the icon's textures are made here and
+  // released here, before the context goes. The proxy does not own the
+  // context (the manager never deletes proxies — see releaseContext).
+  struct IconProxy final : public TGLDisplayListsProxy {
+    TOfflineGL *m_gl;
+    explicit IconProxy(TOfflineGL *gl) : m_gl(gl) {}
+    void makeCurrent() override { m_gl->makeCurrent(); }
+    void doneCurrent() override { m_gl->doneCurrent(); }
+  };
+  int iconSpace = -1;
+  TGlContext iconContext{};
+  if (forSceneIcon) {
+    TGLDisplayListsManager *dlm = TGLDisplayListsManager::instance();
+    iconSpace   = dlm->storeProxy(new IconProxy(&ogl));
+    iconContext = tglGetCurrentContext();
+    dlm->attachContext(iconSpace, iconContext);
+  }
   {
     glTranslated(0.5 * ras->getLx(), 0.5 * ras->getLy(), 0.0);
 
@@ -954,6 +978,12 @@ void ToonzScene::renderFrame(const TRaster32P &ras, int row, const TXsheet *xsh,
     glFlush();
 
     TRop::over(ras, ogl.getRaster());
+  }
+  if (iconSpace >= 0) {
+    // Frees the icon's textures in the icon's context (it is made current
+    // again by the proxy), then forgets the space.
+    ogl.makeCurrent();
+    TGLDisplayListsManager::instance()->releaseContext(iconContext);
   }
   ogl.doneCurrent();
 
