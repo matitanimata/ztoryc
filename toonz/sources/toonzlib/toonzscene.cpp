@@ -1020,6 +1020,12 @@ void ToonzScene::renderFrame(const TRaster32P &ras, int row, const TXsheet *xsh,
   glMatrixMode(GL_MODELVIEW), glPushMatrix();
   glMatrixMode(GL_PROJECTION), glPushMatrix();
 #else
+  // Ztoryc: this function is re-entered from inside another render (a
+  // Plastic character in a sub-scene, drawn for the scene icon). The caller's
+  // offline context is made current again at the end: doneCurrent() alone
+  // left NO context current, and the rest of the caller's drawing went
+  // nowhere (2026-11-26).
+  TOfflineGL *callerOfflineGL = currentOfflineGL;
   TOfflineGL ogl(ras->getSize());
   currentOfflineGL = &ogl;
   ogl.makeCurrent();
@@ -1088,7 +1094,8 @@ void ToonzScene::renderFrame(const TRaster32P &ras, int row, const TXsheet *xsh,
   glPopAttrib();
 #else
   ogl.doneCurrent();
-  currentOfflineGL = 0;
+  currentOfflineGL = callerOfflineGL;
+  if (callerOfflineGL) callerOfflineGL->makeCurrent();
 #endif
 }
 

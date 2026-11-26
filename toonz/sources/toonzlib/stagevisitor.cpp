@@ -921,6 +921,13 @@ void RasterPainter::onImage(const Stage::Player &player) {
   // non-gui thread (i.e. icon generator thread)
   // 12/1/2018 Now the scene icon is rendered without deformation either
   // since it causes unknown error with opengl contexts..
+  //
+  // Ztoryc: tried on 2026-11-26 to deform the scene icon too (characters were
+  // missing from the shot icons) and REVERTED the same day: drawing the
+  // deformation in the icon's offline context left the character's textures
+  // tied to that context, and after a save the character vanished from the
+  // viewer (Franco). The 2018 «unknown error» is that, not only the nested
+  // context. A fix needs the icon drawn without touching the viewer's caches.
   TStageObject *obj =
       ::plasticDeformedObj(player, m_vs.m_plasticVisualSettings);
   if (obj && QThread::currentThread() == qGuiApp->thread() &&
