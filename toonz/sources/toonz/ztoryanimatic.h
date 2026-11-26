@@ -742,6 +742,18 @@ private:
   //! through this check instead of «m_shotIdx >= 0».
   bool hasValidShot() const;
 
+  // An exported SHOT scene (its .ztoryc says role="shot"): the panels come
+  // READ-ONLY from the storyboard's .ztoryc, the images from the shot's own
+  // storyboard frames (Franco, 2026-11-26). The storyboard stays the one
+  // place where they are edited.
+  bool        m_ext = false;
+  QString     m_extUuid, m_extLabel, m_extSource, m_extProblem;
+  std::vector<PanelData> m_extPanels;
+  QString     m_extFrames;  // decoded "<label>..png" level path, or empty
+  bool loadExportedShot();
+  bool hasShot() const { return m_ext || hasValidShot(); }
+  const std::vector<PanelData> *currentPanels() const;
+
   int           m_shotIdx      = -1;
   int           m_panelIdx     = 0;
   bool          m_syncEnabled  = true;

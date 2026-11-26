@@ -63,6 +63,10 @@
 #include <QFileDialog>
 #include <QContextMenuEvent>
 #include "tsound.h"
+#include <QFileInfo>
+#include "toonz/txshsimplelevel.h"
+#include "toonz/levelset.h"
+#include <QXmlStreamReader>
 #include "toonz/tstageobject.h"
 #include "toonz/tstageobjecttree.h"
 #include "toonz/tstageobjectid.h"
@@ -4549,7 +4553,7 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
   m_refreshTimer->setSingleShot(true);
   m_refreshTimer->setInterval(800);
   connect(m_refreshTimer, &QTimer::timeout, this, [this]() {
-    if (hasValidShot()) refreshPreview();
+    if (hasShot()) refreshPreview();
   });
 
   // --- Connections ---
@@ -4578,15 +4582,20 @@ ZtoryPanelNavigator::ZtoryPanelNavigator(QWidget *parent)
   });
 
   connect(m_prevBtn, &QToolButton::clicked, this, [this]() {
-    if (!hasValidShot() || m_panelIdx <= 0) return;
+    if (!hasShot() || m_panelIdx <= 0) return;
     setActivePanel(m_panelIdx - 1, m_syncEnabled);
   });
   connect(m_nextBtn, &QToolButton::clicked, this, [this]() {
-    if (!hasValidShot()) return;
-    const auto &panels = ZtoryModel::instance()->shot(m_shotIdx).panels;
-    if (m_panelIdx >= (int)panels.size() - 1) return;
+    const std::vector<PanelData> *panels = currentPanels();
+    if (!panels || m_panelIdx >= (int)panels->size() - 1) return;
     setActivePanel(m_panelIdx + 1, m_syncEnabled);
   });
+  // A scene opened: the model reads the shot's back-link in its own handler
+  // of the same signal, so this one looks a moment later.
+  connect(TApp::instance()->getCurrentScene(), &TSceneHandle::sceneSwitched,
+          this, [this]() {
+            QTimer::singleShot(200, this, [this]() { syncFromScene(); });
+          });
   connect(m_syncBtn, &QToolButton::toggled, this, [this](bool on) {
     m_syncEnabled = on;
   });
@@ -4629,6 +4638,11 @@ void ZtoryPanelNavigator::onShotActivated(int col) {
 void ZtoryPanelNavigator::onReturnToMain() {
   m_shotIdx  = -1;
   m_panelIdx = 0;
+  m_ext      = false;
+  m_extPanels.clear();
+  m_cachedPreview = QPixmap();
+  for (QTextEdit *f : {m_dialogField, m_actionField, m_notesField})
+    f->setReadOnly(false);
   m_headerLabel->setText(tr("No shot"));
   m_panelCountLabel->setText(tr("-"));
   m_panelInfoLabel->setText(tr("-"));
@@ -4657,7 +4671,7 @@ void ZtoryPanelNavigator::onModelReset() {
   // The shot list may have changed under m_shotIdx: re-bind to the sub-scene
   // we are in before reading anything through it.
   syncFromScene();
-  if (!hasValidShot()) return;
+  if (!hasShot()) return;
   refreshPreview();
   refreshTextFields();
 }
@@ -4667,7 +4681,7 @@ bool ZtoryPanelNavigator::hasValidShot() const {
 }
 
 void ZtoryPanelNavigator::onFrameSwitched() {
-  if (!m_syncEnabled || !hasValidShot()) return;
+  if (!m_syncEnabled || !hasShot()) return;
   refreshActivePanelFromFrame();
 }
 
@@ -4676,7 +4690,7 @@ void ZtoryPanelNavigator::onXsheetChanged() {
   // the user jumps from one shot to another without xsheetSwitched firing
   // (e.g. via timeline navigation or direct cell double-click).
   syncFromScene();
-  if (hasValidShot()) m_refreshTimer->start();
+  if (hasValidShot()) m_refreshTimer->start();  // the exported shot's images do not change here
 }
 
 void ZtoryPanelNavigator::syncFromScene() {
@@ -4687,8 +4701,12 @@ void ZtoryPanelNavigator::syncFromScene() {
   if (!cs) return;
   if (cs->getAncestorCount() == 0) {
     if (m_shotIdx >= 0) onReturnToMain();
+    // Not inside a storyboard's shot: maybe this scene IS an exported shot.
+    if (loadExportedShot()) return;
+    if (m_ext) onReturnToMain();
     return;
   }
+  if (m_ext) onReturnToMain();
   AncestorNode *node = cs->getAncestorInfo(0);
   if (!node) return;
   int newSi = ZtoryModel::instance()->shotIndexForCol(node->m_col);
@@ -4702,9 +4720,131 @@ void ZtoryPanelNavigator::syncFromScene() {
   if (newSi != m_shotIdx) onShotActivated(node->m_col);
 }
 
+const std::vector<PanelData> *ZtoryPanelNavigator::currentPanels() const {
+  if (m_ext) return &m_extPanels;
+  if (!hasValidShot()) return nullptr;
+  return &ZtoryModel::instance()->shot(m_shotIdx).panels;
+}
+
+// The exported shot this scene is: its panels from the storyboard's .ztoryc,
+// read only. False when this scene is not an exported shot (it then shows
+// nothing, as before).
+bool ZtoryPanelNavigator::loadExportedShot() {
+  ZtoryModel *m      = ZtoryModel::instance();
+  const QString uuid = m->currentShotSceneUuid();
+  if (uuid.isEmpty()) return false;
+  const int si = m->projectShotIndex(uuid);
+  if (si < 0) return false;
+  const ProjectShot &ps = m->projectShots()[si];
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene) return false;
+
+  // The storyboard's .ztoryc: next to the shot's scene, else in the project's
+  // scenes folder (the tracker names it by file name only).
+  const QString sceneDir =
+      QFileInfo(scene->decodeFilePath(scene->getScenePath()).getQString())
+          .absolutePath();
+  QStringList candidates;
+  if (!ps.source.isEmpty()) {
+    candidates << sceneDir + "/" + ps.source;
+    candidates << QFileInfo(m->projectDbPath()).absolutePath() + "/scenes/" +
+                      ps.source;
+  }
+  QString source;
+  for (const QString &cnd : candidates)
+    if (QFileInfo::exists(cnd)) { source = cnd; break; }
+
+  std::vector<PanelData> panels;
+  QString problem;
+  if (source.isEmpty()) {
+    problem = ps.source.isEmpty()
+                  ? tr("The tracker does not say which storyboard this shot "
+                       "comes from.")
+                  : tr("Storyboard «%1» not found.").arg(ps.source);
+  } else {
+    QFile f(source);
+    if (f.open(QIODevice::ReadOnly)) {
+      QXmlStreamReader xml(&f);
+      bool inShot = false;
+      PanelData *cur = nullptr;
+      while (!xml.atEnd()) {
+        xml.readNext();
+        if (xml.isStartElement()) {
+          const auto n = xml.name();
+          if (n == QLatin1String("shot")) {
+            inShot = xml.attributes().value("uuid").toString() == uuid;
+          } else if (inShot && n == QLatin1String("panel")) {
+            PanelData pd;
+            pd.startFrame = xml.attributes().value("startFrame").toInt();
+            pd.duration   = xml.attributes().value("duration").toInt();
+            pd.panelLabel =
+                QString("P%1").arg((int)panels.size() + 1, 3, 10, QChar('0'));
+            panels.push_back(pd);
+            cur = &panels.back();
+          } else if (inShot && cur && n == QLatin1String("dialog")) {
+            cur->dialog = xml.readElementText();
+          } else if (inShot && cur && n == QLatin1String("action")) {
+            cur->action = xml.readElementText();
+          } else if (inShot && cur && n == QLatin1String("notes")) {
+            cur->notes = xml.readElementText();
+          }
+        } else if (xml.isEndElement() && xml.name() == QLatin1String("shot")) {
+          if (inShot) break;
+        }
+      }
+    }
+    if (panels.empty())
+      problem = tr("Storyboard «%1» has no panels for %2.")
+                    .arg(QFileInfo(source).fileName(), ps.label);
+  }
+
+  // The shot's storyboard frames: the export's level «<label>..png», one
+  // drawing per panel.
+  QString frames;
+  TLevelSet *ls = scene->getLevelSet();
+  for (int i = 0; ls && i < ls->getLevelCount(); i++) {
+    TXshSimpleLevel *sl = ls->getLevel(i)->getSimpleLevel();
+    if (!sl) continue;
+    const TFilePath p = sl->getPath();
+    if (p.getType() == "png" &&
+        QString::fromStdWString(p.getWideName())
+                .compare(ps.label, Qt::CaseInsensitive) == 0) {
+      frames = scene->decodeFilePath(p).getQString();
+      break;
+    }
+  }
+
+  const bool same = m_ext && m_extUuid == uuid && m_extSource == source;
+  m_ext        = true;
+  m_extUuid    = uuid;
+  m_extLabel   = ps.label;
+  m_extSource  = source;
+  m_extProblem = problem;
+  m_extPanels  = panels;
+  m_extFrames  = frames;
+  if (!same) {
+    m_panelIdx      = 0;
+    m_cachedPreview = QPixmap();
+  }
+  for (QTextEdit *fld : {m_dialogField, m_actionField, m_notesField})
+    fld->setReadOnly(true);
+  const int n = (int)m_extPanels.size();
+  if (m_panelIdx >= n) m_panelIdx = 0;
+  m_prevBtn->setEnabled(m_panelIdx > 0);
+  m_nextBtn->setEnabled(m_panelIdx < n - 1);
+  m_panelCountLabel->setText(
+      n > 0 ? tr("P %1 / %2").arg(m_panelIdx + 1).arg(n) : tr("-"));
+  refreshInfoLabels();
+  refreshPreview();
+  refreshTextFields();
+  if (m_syncEnabled) refreshActivePanelFromFrame();
+  return true;
+}
+
 void ZtoryPanelNavigator::setActivePanel(int panelIdx, bool updateFrame) {
-  if (!hasValidShot()) return;
-  const auto &panels = ZtoryModel::instance()->shot(m_shotIdx).panels;
+  const std::vector<PanelData> *pp = currentPanels();
+  if (!pp) return;
+  const auto &panels = *pp;
   if (panelIdx < 0 || panelIdx >= (int)panels.size()) return;
 
   m_panelIdx = panelIdx;
@@ -4847,6 +4987,31 @@ bool ZtoryPanelNavigator::eventFilter(QObject *obj, QEvent *e) {
 }
 
 void ZtoryPanelNavigator::refreshPreview() {
+  if (m_ext) {
+    // The export's storyboard frame for this panel: frame k+1 of the level.
+    QPixmap px;
+    if (!m_extFrames.isEmpty() && m_panelIdx < (int)m_extPanels.size()) {
+      const TFilePath frame = TFilePath(m_extFrames.toStdWString())
+                                  .withFrame(TFrameId(m_panelIdx + 1));
+      px.load(frame.getQString());
+    }
+    if (px.isNull()) {
+      m_previewLabel->setPixmap(QPixmap());
+      m_previewLabel->setText(m_extProblem.isEmpty()
+                                  ? tr("(no storyboard image)")
+                                  : m_extProblem);
+      return;
+    }
+    qreal dpr = 1.0;
+    if (QWindow *win = window()->windowHandle()) dpr = win->devicePixelRatio();
+    QSize avail = m_previewLabel->size();
+    if (avail.isEmpty()) avail = QSize(320, 180);
+    px = px.scaled(avail * dpr, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    px.setDevicePixelRatio(dpr);
+    m_cachedPreview = px;
+    m_previewLabel->setPixmap(px);
+    return;
+  }
   if (!hasValidShot()) return;
   const auto &shot = ZtoryModel::instance()->shot(m_shotIdx);
   if (m_panelIdx >= (int)shot.panels.size()) return;
@@ -4948,7 +5113,7 @@ void ZtoryPanelNavigator::showEvent(QShowEvent *e) {
 
 void ZtoryPanelNavigator::resizeEvent(QResizeEvent *e) {
   TPanel::resizeEvent(e);
-  if (!hasValidShot()) return;
+  if (!hasShot()) return;
   // Cheap immediate feedback: rescale the cached pixmap (keeps aspect), then
   // re-render at the new resolution only after the resize burst settles —
   // refreshPreview() does a full sub-scene render and lagged on every tick.
@@ -4967,16 +5132,26 @@ void ZtoryPanelNavigator::resizeEvent(QResizeEvent *e) {
     m_resizeRenderTimer->setSingleShot(true);
     m_resizeRenderTimer->setInterval(250);
     connect(m_resizeRenderTimer, &QTimer::timeout, this, [this]() {
-      if (hasValidShot()) refreshPreview();
+      if (hasShot()) refreshPreview();
     });
   }
   m_resizeRenderTimer->start();
 }
 
 void ZtoryPanelNavigator::refreshTextFields() {
-  if (!hasValidShot()) return;
-  const auto &panels = ZtoryModel::instance()->shot(m_shotIdx).panels;
-  if (m_panelIdx >= (int)panels.size()) return;
+  const std::vector<PanelData> *pp = currentPanels();
+  if (!pp) return;
+  const auto &panels = *pp;
+  if (m_panelIdx >= (int)panels.size()) {
+    if (m_ext) {
+      m_blockSignals = true;
+      m_dialogField->clear();
+      m_actionField->clear();
+      m_notesField->clear();
+      m_blockSignals = false;
+    }
+    return;
+  }
 
   m_blockSignals = true;
   const PanelData &pd = panels[m_panelIdx];
@@ -4988,6 +5163,26 @@ void ZtoryPanelNavigator::refreshTextFields() {
 }
 
 void ZtoryPanelNavigator::refreshInfoLabels() {
+  if (m_ext) {
+    ZtoryModel *m = ZtoryModel::instance();
+    const int fps = m->fps() > 0 ? m->fps() : 24;
+    const int n   = (int)m_extPanels.size();
+    m_headerLabel->setText(
+        tr("%1  -  %2 panels  (storyboard, read-only)").arg(m_extLabel).arg(n));
+    if (m_panelIdx >= 0 && m_panelIdx < n) {
+      const PanelData &pd = m_extPanels[m_panelIdx];
+      m_panelInfoLabel->setText(tr("%1  -  %2f / %3s")
+                                    .arg(pd.panelLabel)
+                                    .arg(pd.duration)
+                                    .arg((double)pd.duration / fps, 0, 'f', 2));
+    } else
+      m_panelInfoLabel->setText(tr("-"));
+    int total = 0;
+    for (const PanelData &pd : m_extPanels) total += pd.duration;
+    m_shotInfoLabel->setText(
+        tr("Total: %1f / %2s").arg(total).arg((double)total / fps, 0, 'f', 2));
+    return;
+  }
   if (!hasValidShot()) return;
   ZtoryModel *m = ZtoryModel::instance();
   const ShotData &shot = m->shot(m_shotIdx);
@@ -5023,8 +5218,9 @@ void ZtoryPanelNavigator::refreshInfoLabels() {
 }
 
 void ZtoryPanelNavigator::refreshActivePanelFromFrame() {
-  if (!hasValidShot()) return;
-  const auto &panels = ZtoryModel::instance()->shot(m_shotIdx).panels;
+  const std::vector<PanelData> *pp = currentPanels();
+  if (!pp) return;
+  const auto &panels = *pp;
   int frame = TApp::instance()->getCurrentFrame()->getFrame();
   for (int i = 0; i < (int)panels.size(); i++) {
     if (frame >= panels[i].startFrame &&
