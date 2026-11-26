@@ -1,3 +1,21 @@
+## [2026-11-26] — Personaggio aggiornato all'apertura, icone con i Plastic, Shot Board negli shot
+
+### Added
+- **Personaggio aggiornato all'apertura della scena** (`f51ba9b2a`): bocche, pose e correttive nuovi della libreria
+  entrano da soli con un avviso; i diversi restano una domanda. Update bocche anche sulle copie senza mappa (sh080);
+  tra mappe con lo stesso nome vince la piu' recente.
+- **Shot Board negli shot esportati** (`f20f9746e`, collaudato): pannelli e testi dello storyboard in sola lettura,
+  immagini dello shot. Per ora pannello flottante (decisione di Franco in sospeso).
+
+### Fixed
+- **Icone delle scene con i personaggi Plastic** (`a50fe0c07`, collaudato): spazio OpenGL proprio per l'icona. Primo
+  tentativo (`b9e680e9e`) tolto: faceva sparire il personaggio dal viewer. Candidato upstream.
+
+### Notes
+- Impostazioni di Franco: aggiornamento/publish del rig all'apertura/salvataggio riaccesi.
+- Un avvio dal terminale ha preso il profilo vecchio dentro l'app: solo avvio di prova, segnato.
+- Review a mano: nessun bloccante.
+
 ## [2026-11-25 sera] — Upload dal tracker su +outputs, pulizia dei task di Cascina su Kitsu
 
 ### Modified

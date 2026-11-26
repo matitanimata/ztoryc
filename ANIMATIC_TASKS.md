@@ -187,6 +187,21 @@ degli status).
   12 — sh030», verde e si chiude da solo, resta aperto se qualcosa e' saltato o si ferma. Committato in `61191fd05`,
   **MAI COLLAUDATO**: provare con un export vero su `filorosso-TEST` o ZTORYC-AI. Lo scroll nel messaggio c'e' solo
   nel riquadro del render, non in questo (messaggi brevi).
+- ✅ **Icone delle scene con i personaggi Plastic** — `a50fe0c07` (26/11), collaudato da Franco su Cascina: l'icona
+  ha uno spazio OpenGL suo (le texture Plastic non si mescolano piu' con quelle del viewer). Primo tentativo
+  `b9e680e9e` tolto perche' faceva sparire il personaggio dal viewer dopo il salvataggio. Candidato upstream.
+- **Avvio di Ztoryc col profilo dentro l'app (26/11 12:44)** — un'istanza partita subito dopo un deploy mostrava
+  progetti e recenti del profilo VECCHIO in `Ztoryc.app/ztorycstuff/profiles` invece di Application Support;
+  riaprendo e' tornato normale. Non si sa chi l'ha avviata ne' perche' `configureWritablePortableProfiles`
+  (`main.cpp:140`) non abbia reindirizzato. Se ricapita: chiedere a Franco come l'ha aperta.
+- **Personaggio aggiornato all'apertura della scena (`f51ba9b2a`, 26/11) — DA COLLAUDARE**: bocche e rig, i nuovi
+  entrano da soli con avviso, i diversi restano domanda. Update delle bocche anche sulle copie senza mappa (sh080);
+  tra mappe con lo stesso nome vince la piu' recente. Impostazioni di Franco: RigLibrary askOnOpen/askOnSave erano
+  spente, riaccese il 26/11 (copia in scratchpad).
+- ⏸ **Shot Board negli shot esportati (`f20f9746e`, 26/11, collaudato)** — DECISIONE DI FRANCO IN SOSPESO: per ora
+  resta pannello FLOTTANTE, non in una room installata ("fammici ragionare"). Da decidere: metterlo nella room cutout
+  installata, e il messaggio al posto del pannello vuoto nelle scene che non sono shot. Non riproporlo finche' non ne
+  parla lui.
 - 🔴 **Popup «Connect» due volte all'avvio (Franco, 25/11)** — aprendo Ztoryc e una scena dalla finestra di avvio, la
   domanda di connessione (`ZtoryKitsuSync::offerConnectOnSceneOpen`, `61191fd05`) compare due volte, la seconda
   mentre si inserisce la password del portachiavi. Riprodotto il 25/11 su kitsuTest01 con tracce: UNA sola entrata
