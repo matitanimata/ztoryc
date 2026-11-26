@@ -372,9 +372,13 @@ QString physicalPsdName(const TFilePath &level) {
 }
 
 // What a scene has mapped. False for an untitled scene or a character's own
-// scene, which IS the library.
+// scene, which IS the library. `onlyMapped` false: every PSD layer level,
+// mapped or not — the update must reach a copy that has NO map yet (a shot
+// imported as a sub-scene copies the drawings, not their .zmouth: in sh080
+// the front mouths of LEI had none, and «Update» said there was nothing to
+// update; Franco, 2026-11-26).
 bool scanScene(ToonzScene *scene, TFilePath *scenePath, QSet<QString> *subs,
-               QVector<TFilePath> *levels) {
+               QVector<TFilePath> *levels, bool onlyMapped = true) {
   if (!scene || scene->isUntitled()) return false;
   *scenePath = scene->decodeFilePath(scene->getScenePath());
   if (ZtoryCharacter::roleOf(scenePath->getQString()) ==
@@ -386,7 +390,7 @@ bool scanScene(ToonzScene *scene, TFilePath *scenePath, QSet<QString> *subs,
     TXshSimpleLevel *sl = ls->getLevel(i)->getSimpleLevel();
     if (!sl || sl->getPath().getType() != "psd") continue;
     const TFilePath level = scene->decodeFilePath(sl->getPath());
-    if (ZtoryMouthMap::exists(level)) levels->push_back(level);
+    if (!onlyMapped || ZtoryMouthMap::exists(level)) levels->push_back(level);
   }
   return true;
 }
@@ -748,11 +752,13 @@ QVector<MouthLibraryItem> ZtoryMouthLibrary::pendingFromLibrary(
   TFilePath scenePath;
   QSet<QString> subs;
   QVector<TFilePath> levels;
-  if (!scanScene(scene, &scenePath, &subs, &levels) || levels.isEmpty())
+  if (!scanScene(scene, &scenePath, &subs, &levels, /*onlyMapped=*/false) ||
+      levels.isEmpty())
     return out;
   const QHash<QString, Library> libs = librariesByName();
   for (const LevelPair &lp : levelPairs(levels, libs)) {
     MouthMap shotMap, libMap;
+    // A layer the library has no map for (body, eyes…): nothing to bring.
     if (!ZtoryMouthMap::load(lp.libLevel, QString(), libMap)) continue;
     ZtoryMouthMap::load(lp.shotLevel, QString(), shotMap);
     MouthLibraryItem item;
@@ -834,11 +840,61 @@ ZtoryMouthLibrary::characterScenesByName() {
 }
 
 void ZtoryMouthLibrary::offerOnOpen() {
-  if (!QSettings().value(kAskOnOpenKey, true).toBool()) return;
-  runWhenNoModal([]() {
+  // At opening, the character keeps up with its library (Franco, 2026-11-26):
+  // the NEW mouth sets come in by themselves, with a notice; a set that
+  // differs from the shot's may be a variant made on purpose, and stays a
+  // question — the only thing «Don't ask again» silences now.
+  const bool ask = QSettings().value(kAskOnOpenKey, true).toBool();
+  runWhenNoModal([ask]() {
     ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
-    if (!pendingFromLibrary(scene).isEmpty())
-      showUpdateDialog(dialogParent(), true);
+    QVector<MouthLibraryItem> items = pendingFromLibrary(scene);
+    if (items.isEmpty()) return;
+    const QString title = QObject::tr("Update mouths from the library");
+    QStringList done, failed;
+    QVector<MouthLibraryItem> changedOnly;
+    for (const MouthLibraryItem &it : items) {
+      if (!it.added.isEmpty()) {
+        QString why;
+        QStringList names;
+        for (const MouthSet &s : it.added) names << s.name;
+        if (mergeInto(it.shotOwner, QString(), it.libOwner, it.added, &why))
+          done << QObject::tr("%1: %2").arg(it.label, names.join(", "));
+        else
+          failed << QObject::tr("%1: %2").arg(it.label, why);
+      }
+      if (!it.changed.isEmpty() && ask) {
+        MouthLibraryItem c = it;
+        c.added.clear();
+        changedOnly << c;
+      }
+    }
+    if (!done.isEmpty() || !failed.isEmpty())
+      report(dialogParent(), title, done, failed);
+    if (changedOnly.isEmpty()) return;
+    QVector<QVector<MouthSet>> chosen;
+    if (!chooseSets(dialogParent(), title,
+                    QObject::tr("These mouth sets differ between the "
+                                "character's library and this scene. Yours "
+                                "may be a variant made on purpose for this "
+                                "scene: tick the ones to replace."),
+                    changedOnly, kAskOnOpenKey,
+                    QObject::tr("Don't ask again when opening a scene (new "
+                                "sets still come in by themselves)"),
+                    &chosen))
+      return;
+    QStringList done2, failed2;
+    for (int i = 0; i < changedOnly.size(); i++) {
+      if (chosen[i].isEmpty()) continue;
+      QString why;
+      if (mergeInto(changedOnly[i].shotOwner, QString(),
+                    changedOnly[i].libOwner, chosen[i], &why))
+        done2 << QObject::tr("%1: %2 set(s)")
+                     .arg(changedOnly[i].label)
+                     .arg(chosen[i].size());
+      else
+        failed2 << QObject::tr("%1: %2").arg(changedOnly[i].label, why);
+    }
+    report(dialogParent(), title, done2, failed2);
   });
 }
 

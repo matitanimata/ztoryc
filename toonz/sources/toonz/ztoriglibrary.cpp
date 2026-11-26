@@ -1011,8 +1011,14 @@ static bool updateFor(const Context &ctx, QWidget *parent, bool onOpen,
   // the .zrig, not the closed .tnz (Franco, 2026-09-27: «sto aprendo la scena
   // originale di Sofia per cui pensavo ci fosse già»). Only a pose that
   // DIFFERS from the scene's own is asked about: there the user chooses.
+  //
+  // At OPENING the same holds for every shot (Franco, 2026-11-26: «è
+  // importante che il personaggio si aggiorni durante la produzione e venga
+  // aggiornato in apertura scena»): new poses and correctives come in by
+  // themselves, with a notice; one that differs from the shot's stays a
+  // question — it may be a variant made on purpose.
   QVector<Offer> automatic;
-  if (ctx.isLibraryScene) {
+  if (ctx.isLibraryScene || onOpen) {
     QVector<Offer> asked;
     for (const Offer &o : fitting) (o.changed ? asked : automatic) << o;
     fitting = asked;
@@ -1048,6 +1054,18 @@ static bool updateFor(const Context &ctx, QWidget *parent, bool onOpen,
   TUndoManager::manager()->add(undo);
   TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
   TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+  // Said, not silent: what came in from the library, and how to take it back.
+  if (onOpen && !automatic.isEmpty() && !ctx.isLibraryScene) {
+    QStringList names;
+    for (const Offer &o : automatic)
+      names << (o.kind == Offer::Pose ? lib.poses[o.index].name
+                                      : lib.correctives[o.index].c.m_name);
+    QMessageBox::information(
+        parent, title,
+        QObject::tr("%1's library had new poses or correctives: they are now "
+                    "in this shot (⌘Z takes them back).\n\n%2")
+            .arg(ctx.character, names.join("\n")));
+  }
   return true;
 }
 
@@ -1087,10 +1105,12 @@ void ZtoRigLibrary::offerOnSave() {
 void ZtoRigLibrary::offerOnOpen() {
   // «Don't ask again» turns off the QUESTIONS, not the character's own scene
   // taking the library's new poses by itself (Franco, 2026-09-27: «separa»).
+  // Since 2026-11-26 the new items come in by themselves in every scene, so
+  // the update runs always; the setting only silences the question about
+  // items that differ.
   const bool ask = QSettings().value(kAskOnOpenKey, true).toBool();
   ZtoryMouthLibrary::runWhenNoModal([ask]() {
     for (const Context &ctx : allContexts())
-      if (ask || ctx.isLibraryScene)
-        updateFor(ctx, ZtoryMouthLibrary::dialogParent(), true, ask);
+      updateFor(ctx, ZtoryMouthLibrary::dialogParent(), true, ask);
   });
 }

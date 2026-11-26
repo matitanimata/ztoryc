@@ -85,6 +85,7 @@ namespace {
 //! ricorreva per cella invece che per sotto-scena).
 QHash<QString, TFilePath> indexProjectMaps(ToonzScene *scene) {
   QHash<QString, TFilePath> out;
+  QHash<QString, QDateTime> when;
   if (!scene) return out;
   for (const char *alias : {"+extras", "+drawings", "+scenes"}) {
     const TFilePath dir = scene->decodeFilePath(TFilePath(alias));
@@ -96,10 +97,18 @@ QHash<QString, TFilePath> indexProjectMaps(ToonzScene *scene) {
     while (it.hasNext()) {
       const QString f = it.next();
       const QFileInfo fi(f);
-      // Il primo che si trova vince: se lo stesso nome esiste in due punti
-      // sono la stessa mappa copiata, non due mappe diverse.
-      if (!out.contains(fi.completeBaseName()))
-        out.insert(fi.completeBaseName(), TFilePath(f.toStdWString()));
+      // The same name in several places is the same map COPIED, but copies
+      // drift: sets added in one shot and published reach that shot and the
+      // character's folder, not the copies made earlier. «First found wins»
+      // picked whichever the disk listed first — in sh080 an old copy from
+      // sh030 without the new front sets of LEI (Franco, 2026-11-26). The
+      // newest one wins: the last edited or published.
+      const QString key = fi.completeBaseName();
+      const QDateTime mtime = fi.lastModified();
+      if (!out.contains(key) || mtime > when.value(key)) {
+        out.insert(key, TFilePath(f.toStdWString()));
+        when.insert(key, mtime);
+      }
     }
   }
   return out;

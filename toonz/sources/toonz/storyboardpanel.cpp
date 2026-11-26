@@ -7406,10 +7406,16 @@ static void copyMouthMapsIntoShot(ToonzScene *scene, TXsheet *childXsh,
         if (root.isEmpty() || !QDir(root).exists()) continue;
         QDirIterator di(root, QStringList() << "*.zmouth", QDir::Files,
                         QDirIterator::Subdirectories);
+        // Copies of one map drift (sets added and published in one shot):
+        // the newest wins, not the first the disk lists (2026-11-26, see
+        // indexProjectMaps in ztorymouthapply.cpp).
         while (di.hasNext()) {
           const QString p = di.next();
           const QString name = QFileInfo(p).fileName();
-          if (!index->contains(name))
+          auto prev = index->constFind(name);
+          if (prev == index->constEnd() ||
+              QFileInfo(p).lastModified() >
+                  QFileInfo(prev.value().getQString()).lastModified())
             index->insert(name, TFilePath(p.toStdWString()));
         }
       }
