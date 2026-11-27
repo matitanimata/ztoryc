@@ -30,6 +30,7 @@
 #include <QHash>
 #include <QLabel>
 #include <QListWidget>
+#include <QStyle>
 #include <QMessageBox>
 #include <QRegularExpression>
 #include <QSettings>
@@ -451,9 +452,14 @@ bool chooseSets(QWidget *parent, const QString &title, const QString &text,
     QString what = changed ? QObject::tr("differs — replaces it")
                            : QObject::tr("new");
     if (missing)
-      what += QObject::tr("; ⚠️ uses drawings the library does not have");
+      what += QObject::tr("; uses drawings the library does not have");
     auto *w = new QListWidgetItem(
         QObject::tr("%1: «%2» — %3").arg(items[i].label, s.name, what), list);
+  // No emoji in a list row: Qt 5 cannot draw «⚠️» there, and the WHOLE row
+  // came out as one empty box (Franco, 2026-11-27). The warning is the row's
+  // icon instead.
+    if (missing)
+      w->setIcon(dlg.style()->standardIcon(QStyle::SP_MessageBoxWarning));
     w->setFlags(w->flags() | Qt::ItemIsUserCheckable);
     w->setCheckState(!changed && !missing ? Qt::Checked : Qt::Unchecked);
     picks << Pick{i, &s};

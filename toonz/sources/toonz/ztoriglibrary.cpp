@@ -9,8 +9,10 @@
 #include "ext/plasticskeleton.h"
 #include "ext/plasticskeletondeformation.h"
 #include "toonz/childstack.h"
+#include "toonz/levelset.h"
 #include "toonz/toonzscene.h"
 #include "toonz/tscenehandle.h"
+#include "toonz/txshlevelhandle.h"
 #include "toonz/tstageobject.h"
 #include "toonz/txshcell.h"
 #include "toonz/txshchildlevel.h"
@@ -35,9 +37,11 @@
 #include <QRegularExpression>
 #include <QLabel>
 #include <QListWidget>
+#include <QStyle>
 #include <QMessageBox>
 #include <QSaveFile>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QXmlStreamReader>
@@ -639,9 +643,14 @@ bool choose(QWidget *parent, const QString &title, const QString &text,
                                     .arg(o.how))
                        : QObject::tr("new");
     if (!o.misfit.isEmpty())
-      what = QObject::tr("⚠️ does not fit %1: %2").arg(character, o.misfit);
+      what = QObject::tr("does not fit %1: %2").arg(character, o.misfit);
     auto *w = new QListWidgetItem(
         QObject::tr("%1 «%2» — %3").arg(kind, name, what), list);
+  // No emoji in a list row: Qt 5 cannot draw «⚠️» there, and the WHOLE row
+  // came out as one empty box (Franco, 2026-11-27). The warning is the row's
+  // icon instead.
+    if (!o.misfit.isEmpty())
+      w->setIcon(dlg.style()->standardIcon(QStyle::SP_MessageBoxWarning));
     w->setFlags(w->flags() | Qt::ItemIsUserCheckable);
     w->setCheckState(!o.changed && o.misfit.isEmpty() ? Qt::Checked
                                                       : Qt::Unchecked);
@@ -815,14 +824,36 @@ bool createVersion2(const Context &ctx, TFilePath *newScene, QString *why) {
     if (why) *why = QObject::tr("%1 exists already").arg(newScene->getQString());
     return false;
   }
-  // The current xsheet IS the character's copy (we are inside it).
-  if (TApp::instance()->getCurrentXsheet()->getXsheet() != ctx.xsh) {
-    if (why)
-      *why = QObject::tr("open the character's sub-scene first: the new "
-                         "version is made from it");
+  // The new version is the character's copy: SAVE_SUBXSHEET saves the CURRENT
+  // xsheet, so the copy is made current for the save and the previous one put
+  // back after. It used to ask to open the sub-scene first, and at save time
+  // one is in the shot's main xsheet: «Create a new version» always failed
+  // there (Franco, 2026-11-27).
+  // setXsheet EMITS xsheetSwitched: blocked, or Board, animatic and viewers
+  // would take the character for the current xsheet with the shot's column
+  // and frame indices (review 2026-11-27). saveScene also writes the shot's
+  // play range into the current xsheet's markers and clears the dirty flag:
+  // both put back after.
+  if (!ctx.xsh) {
+    if (why) *why = QObject::tr("the character's sub-scene was not found");
     return false;
   }
-  if (!IoCmd::saveScene(*newScene, IoCmd::SAVE_SUBXSHEET)) {
+  TSceneHandle *sh  = TApp::instance()->getCurrentScene();
+  TXsheetHandle *xh = TApp::instance()->getCurrentXsheet();
+  TXsheet *was      = xh->getXsheet();
+  const bool dirty  = sh->getDirtyFlag();
+  int markIn = 0, markOut = -1;
+  ctx.xsh->getInOutMarkers(markIn, markOut);
+  bool saved = false;
+  {
+    QSignalBlocker block(xh);
+    xh->setXsheet(ctx.xsh);
+    saved = IoCmd::saveScene(*newScene, IoCmd::SAVE_SUBXSHEET);
+    xh->setXsheet(was);
+  }
+  ctx.xsh->setInOutMarkers(markIn, markOut);
+  sh->setDirtyFlag(dirty);
+  if (!saved) {
     if (why) *why = QObject::tr("the new scene could not be saved");
     return false;
   }
@@ -832,9 +863,34 @@ bool createVersion2(const Context &ctx, TFilePath *newScene, QString *why) {
   for (const Asset &a : m->assets())
     if (a.name == ctx.character) type = a.type;
   if (!type.isEmpty()) {
-    m->addAsset(type, name.trimmed());  // appended at the end
+    // In the tracker, the character's name with the version: «KIKO_v2», not
+    // the file's «lib_kiko_v2» (sh320, Franco 2026-11-27).
+    QString assetName = name.trimmed();
+    if (assetName.startsWith(base, Qt::CaseInsensitive) &&
+        assetName.size() > base.size())
+      assetName = ctx.character + assetName.mid(base.size());
+    m->addAsset(type, assetName);  // appended at the end
     m->setAssetFilePath(int(m->assets().size()) - 1, newScene->getQString());
     m->saveProjectDb();
+  }
+  // The shot's copy now IS the new version: a shot knows its character by
+  // the sub-scene's name (characterScenesByName: the scene file's name), and
+  // with the old name it kept comparing with v1 and offering a new version at
+  // every save (Franco, 2026-11-27). The scene is left modified: the new name
+  // is kept at the next save.
+  if (!ctx.isLibraryScene) {
+    ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+    TLevelSet *levels = scene ? scene->getLevelSet() : nullptr;
+    const std::wstring newName = newScene->getWideName();
+    for (int i = 0; levels && i < levels->getLevelCount(); i++) {
+      TXshChildLevel *cl = levels->getLevel(i)->getChildLevel();
+      if (!cl || cl->getXsheet() != ctx.xsh) continue;
+      if (levels->renameLevel(cl, newName)) {
+        TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+        TApp::instance()->getCurrentScene()->notifyCastChange();
+      }
+      break;
+    }
   }
   return true;
 }
@@ -957,8 +1013,13 @@ static bool publishFor(const Context &ctx, QWidget *parent, bool onSave) {
   QMessageBox::information(
       parent, title,
       QObject::tr("%1 item(s) published in %2.")
-          .arg(offers.size())
-          .arg(libraryFile(target).getQString()));
+              .arg(offers.size())
+              .arg(libraryFile(target).getQString()) +
+          (target != ctx.libScene
+               ? QObject::tr("\n\nThis shot now uses %1: save the scene to "
+                             "keep it.")
+                     .arg(QString::fromStdWString(target.getWideName()))
+               : QString()));
   return true;
 }
 
@@ -1102,6 +1163,195 @@ void ZtoRigLibrary::offerOnSave() {
   });
 }
 
+// A newer version of a character this scene uses: «KIKO_v2» beside «KIKO»
+// (createVersion2 names them so). Franco, 2026-11-27: KIKO has no meshes, its
+// v2 has; opening the layout he wants the v2 in. The v2 scene is loaded as a
+// sub-scene and put in the old one's cells (same frames, same column, so its
+// position stays), or in a column of its own beside it; with «Discard» the old
+// sub-scene leaves the cast.
+static int versionOf(const QString &name, const QString &base) {
+  if (name.compare(base, Qt::CaseInsensitive) == 0) return 1;
+  static const QRegularExpression kVer(QStringLiteral("_v(\\d+)$"),
+                                       QRegularExpression::CaseInsensitiveOption);
+  const QRegularExpressionMatch mt = kVer.match(name);
+  if (!mt.hasMatch() ||
+      name.left(mt.capturedStart()).compare(base, Qt::CaseInsensitive) != 0)
+    return 0;
+  return mt.captured(1).toInt();
+}
+
+static QString versionBase(const QString &name) {
+  QString b = name;
+  b.remove(QRegularExpression(QStringLiteral("_v\\d+$"),
+                              QRegularExpression::CaseInsensitiveOption));
+  return b;
+}
+
+// Every place the old sub-scene is exposed, down the tree from the top.
+struct ChildUse {
+  TXsheet *xsh;
+  int col;
+};
+static QVector<ChildUse> usesOf(TXsheet *top, TXshLevel *level) {
+  QVector<ChildUse> out;
+  QSet<TXsheet *> seen;
+  std::function<void(TXsheet *, int)> walk = [&](TXsheet *x, int depth) {
+    if (!x || depth > 8 || seen.contains(x)) return;
+    seen.insert(x);
+    for (int c = 0; c < x->getColumnCount(); c++) {
+      int r0 = 0, r1 = -1;
+      x->getCellRange(c, r0, r1);
+      bool used = false;
+      QSet<TXshLevel *> inside;
+      for (int r = r0; r <= r1; r++) {
+        const TXshCell cell = x->getCell(r, c);
+        if (cell.isEmpty() || !cell.m_level) continue;
+        if (cell.m_level.getPointer() == level) used = true;
+        else if (TXshChildLevel *cl = cell.m_level->getChildLevel())
+          inside.insert(cl);
+      }
+      if (used) out << ChildUse{x, c};
+      for (TXshLevel *l : inside) walk(l->getChildLevel()->getXsheet(), depth + 1);
+    }
+  };
+  walk(top, 0);
+  return out;
+}
+
+static TXshLevel *childLevelOf(ToonzScene *scene, TXsheet *xsh) {
+  TLevelSet *levels = scene->getLevelSet();
+  for (int i = 0; i < levels->getLevelCount(); i++)
+    if (TXshChildLevel *cl = levels->getLevel(i)->getChildLevel())
+      if (cl->getXsheet() == xsh) return cl;
+  return nullptr;
+}
+
+// Returns true when the scene was changed.
+static bool offerNewerVersions(QWidget *parent) {
+  ToonzScene *scene = TApp::instance()->getCurrentScene()->getScene();
+  if (!scene || scene->isUntitled()) return false;
+  // The loading works on the CURRENT xsheet: only at the top of the scene.
+  if (scene->getChildStack()->getAncestorCount() > 0) return false;
+  const QVector<Context> ctxs = allContexts();
+  if (ctxs.isEmpty() || ctxs.first().isLibraryScene) return false;
+  // By the scene FILES' names, as a shot knows its characters: the asset is
+  // «KIKO», its scene lib_kiko.tnz, the new version lib_kiko_v2.tnz (sh320,
+  // Franco 2026-11-27: by the assets' names the v2 was never found).
+  auto fileKey = [](const TFilePath &f) {
+    return QString::fromStdWString(f.getWideName()).toLower();
+  };
+  QSet<QString> present;
+  for (const Context &c : ctxs) present.insert(fileKey(c.libScene));
+  const QHash<QString, QPair<QString, TFilePath>> chars =
+      ZtoryMouthLibrary::characterScenesByName();
+  bool changed = false;
+  QSet<QString> asked;
+  for (const Context &ctx : ctxs) {
+    const QString base = versionBase(fileKey(ctx.libScene));
+    if (asked.contains(base)) continue;
+    asked.insert(base);
+    const int mine = versionOf(fileKey(ctx.libScene), base);
+    QString newest;
+    TFilePath newestScene;
+    int best = mine;
+    for (auto it = chars.constBegin(); it != chars.constEnd(); ++it) {
+      const int v = versionOf(it.key(), base);
+      if (v > best && QFileInfo::exists(it.value().second.getQString())) {
+        best        = v;
+        newest      = it.value().first;
+        newestScene = it.value().second;
+      }
+    }
+    if (newest.isEmpty() || present.contains(fileKey(newestScene))) continue;
+    TXshLevel *oldLevel = childLevelOf(scene, ctx.xsh);
+    if (!oldLevel) continue;
+
+    const QString title = QObject::tr("Newer version of %1").arg(ctx.character);
+    QMessageBox box(parent);
+    box.setWindowTitle(title);
+    box.setIcon(QMessageBox::Question);
+    box.setText(QObject::tr("This scene uses %1, and %2 is newer.\n\nLoad %2 "
+                            "in its place?")
+                    .arg(ctx.character, newest));
+    QPushButton *replace = box.addButton(
+        QObject::tr("Load %1, discard previous version").arg(newest),
+        QMessageBox::AcceptRole);
+    QPushButton *both = box.addButton(
+        QObject::tr("Load %1, keep both").arg(newest), QMessageBox::ActionRole);
+    box.addButton(QObject::tr("Not now"), QMessageBox::RejectRole);
+    // Enter keeps both: discarding has no undo (Franco, 2026-11-27).
+    box.setDefaultButton(both);
+    box.exec();
+    const bool discard = box.clickedButton() == replace;
+    if (!discard && box.clickedButton() != both) continue;
+    // The dialog runs its own event loop: the scene may have changed meanwhile.
+    if (TApp::instance()->getCurrentScene()->getScene() != scene ||
+        childLevelOf(scene, ctx.xsh) != oldLevel)
+      break;
+
+    TXsheet *top     = scene->getXsheet();
+    const int before = top->getColumnCount();
+    IoCmd::LoadResourceArguments args;
+    args.resourceDatas.push_back(newestScene);
+    args.importPolicy = IoCmd::LoadResourceArguments::LOAD;
+    args.expose       = true;
+    args.silent       = true;
+    args.row0         = 0;
+    args.col0         = before;
+    IoCmd::loadResources(args, /*updateRecentFile=*/false);
+    TXshLevel *newLevel = nullptr;
+    for (TXshLevel *lv : args.loadedLevels)
+      if (lv && lv->getChildLevel()) newLevel = lv;
+    // The column the load made is only the way in: the new sub-scene goes
+    // where the old one was.
+    for (int c = top->getColumnCount() - 1; c >= before; c--)
+      top->removeColumn(c);
+    top->updateFrameCount();  // removeColumn does not: the load lengthened it
+    if (!newLevel) {
+      QMessageBox::warning(parent, title,
+                           QObject::tr("%1 could not be loaded (%2).")
+                               .arg(newest, newestScene.getQString()));
+      continue;
+    }
+    // From the last: a column inserted beside one must not shift the next.
+    const QVector<ChildUse> uses = usesOf(top, oldLevel);
+    for (int i = uses.size() - 1; i >= 0; --i) {
+      const ChildUse &u = uses[i];
+      int r0 = 0, r1 = -1;
+      u.xsh->getCellRange(u.col, r0, r1);
+      int dst = u.col;
+      if (!discard) {
+        dst = u.col + 1;
+        u.xsh->insertColumn(dst);
+      }
+      for (int r = r0; r <= r1; r++) {
+        const TXshCell cell = u.xsh->getCell(r, u.col);
+        if (cell.m_level.getPointer() != oldLevel) continue;
+        u.xsh->setCell(r, dst, TXshCell(newLevel, cell.m_frameId));
+      }
+    }
+    if (discard && usesOf(top, oldLevel).isEmpty()) {
+      // Out of the cast, but not deleted: the level handle, a queued icon or
+      // a Context may still point at it — a small leak instead of a dangling
+      // pointer (review 2026-11-27).
+      if (TApp::instance()->getCurrentLevel()->getLevel() == oldLevel)
+        TApp::instance()->getCurrentLevel()->setLevel(nullptr);
+      scene->getLevelSet()->removeLevel(oldLevel, false);
+    }
+    present.insert(fileKey(newestScene));
+    changed = true;
+  }
+  if (changed) {
+    // Done by hand after the load's own undo: undoing half of it would leave
+    // the cells pointing at a level the undo took away.
+    TUndoManager::manager()->reset();
+    TApp::instance()->getCurrentScene()->setDirtyFlag(true);
+    TApp::instance()->getCurrentScene()->notifyCastChange();
+    TApp::instance()->getCurrentXsheet()->notifyXsheetChanged();
+  }
+  return changed;
+}
+
 void ZtoRigLibrary::offerOnOpen() {
   // «Don't ask again» turns off the QUESTIONS, not the character's own scene
   // taking the library's new poses by itself (Franco, 2026-09-27: «separa»).
@@ -1110,6 +1360,10 @@ void ZtoRigLibrary::offerOnOpen() {
   // items that differ.
   const bool ask = QSettings().value(kAskOnOpenKey, true).toBool();
   ZtoryMouthLibrary::runWhenNoModal([ask]() {
+    // First the version, then its library: the update reads the new one.
+    // A new version brings its own mouths too: their check again.
+    if (offerNewerVersions(ZtoryMouthLibrary::dialogParent()))
+      ZtoryMouthLibrary::offerOnOpen();
     for (const Context &ctx : allContexts())
       updateFor(ctx, ZtoryMouthLibrary::dialogParent(), true, ask);
   });
