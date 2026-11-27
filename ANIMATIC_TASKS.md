@@ -176,6 +176,15 @@ degli status).
   Motion Blur → Random Wave → TrFx, `trasterfx.cpp:912` (tile senza raster). Franco spegneva e
   accendeva l'occhio di RENDER della colonna (camstand acceso). Nel render due astronavi, nella
   preview normale una. Codice stock; da riprodurre sotto lldb quando Franco puo'.
+- [ ] **Crash all'apertura: due thread ricalcolano le chiavi dello stesso oggetto** — CAUSA TROVATA il 27/11
+  sera (sh280, 22:48: nel report macOS il viewer e il thread delle icone XsheetIconRenderer sono tutti e due
+  dentro `updateKeyframes`). Lucchetto sul ricalcolo in `TStageObject::lazyData()` e `updateKeyframes()`
+  (committato il 27/11 sera, build 23:14, DA COLLAUDARE aprendo scene per qualche giorno). Candidato upstream.
+  Copre anche la voce qui sotto. **Resta la causa di fondo** (review 27/11 sera, B1): XsheetIconRenderer
+  (icongenerator.cpp:911) rende lo xsheet VIVO da un altro thread; il lucchetto serializza i ricalcoli, non le
+  letture. Soluzione vera: icona resa su una copia dello xsheet o sul thread principale — voce di lavoro.
+- [ ] **Debito Shot Board** (review 27/11 sera): `<label>..png` + withFrame in tre punti (helper unico);
+  loadExportedShot da spezzare; campi m_ext* in una struct.
 - [ ] **Crash all'apertura di sh030 dai recenti** (26/11 18:53 e 19:50 ×3): `updateKeyframes` su
   due thread, icona della sotto-scena (XsheetIconRenderer) contro il thread principale.
   Sospetto: l'aggiornamento automatico dalla libreria all'apertura scrive le chiavi mentre le
@@ -197,6 +206,12 @@ degli status).
   createVersion2 ritorna true anche se la v2 non entra nel tracker (tipo mancante). Limiti noti: il
   range In/Out dello shot finisce nel file della v2; «keep both» non copia la posizione della colonna;
   il breakdown del tracker non passa alla v2; una v2 rinominata a mano (non `<scena>_vN`) non si riconosce.
+- [ ] **Comando «Camera Shake»** (richiesta di Franco, 27/11 sera): scrive da solo le espressioni del
+  tremolio su camera o pegbar scelto — X `random_s(1,-a,a)`, Y `random_s(2,-a,a)` (semi diversi, se no
+  si muove in diagonale), da un fotogramma iniziale per una durata, con smorzamento
+  (`* max(0, 1-(frame-inizio)/durata)`); variabile del fotogramma `frame`/`f` (tgrammar.cpp:1192).
+  Da decidere: tremolio in 1 o in 2, ampiezza in unita' utente, togliere/modificare uno shake gia' messo.
+  Nessun effetto dedicato esiste in Ztoryc/Tahoma (Random Wave deforma, non scuote).
 - [ ] **Ri-posare su una chiave esistente** con Auto Bezier acceso non ricalcola le maniglie dei
   vicini (l'auto bezier lavora solo quando nasce una chiave).
 

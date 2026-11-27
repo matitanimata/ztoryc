@@ -28,7 +28,12 @@
   senza il livello d'export (extras/, poi miniatura del tracker). sh270: la domanda della versione nuova
   tornava perche' la scena non era stata salvata dopo la sostituzione; salvata, non torna. Restano nel
   cast i doppioni (`_v2_1`): Franco li lascia, pulizia a mano.
-- Aperti: crash sh240 (effetti), crash sh030 dai recenti.
+- Notte: **crash all'apertura, causa trovata** (sh280 22:48): il viewer e il thread delle icone delle
+  sotto-scene ricalcolavano insieme la cache delle chiavi dello stesso oggetto. Lucchetto sul ricalcolo
+  (tstageobject.cpp, NON collaudato; candidato upstream). La causa di fondo (icone rese dallo xsheet vivo
+  su un altro thread) resta, segnata. Review: lucchetto esteso a updateKeyframes(), Shot Board torna a
+  cercare le immagini a ogni cambio.
+- Aperti: crash sh240 (effetti).
 
 ## [2026-11-26] — Personaggio aggiornato all'apertura, icone con i Plastic, Shot Board negli shot
 
