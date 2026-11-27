@@ -24,7 +24,11 @@
 - «Crash all'avvio» delle 15:09: falso allarme, era il resoconto del crash sh240 delle 11:53.
 - Una mia istanza di debug chiusa con kill -9 ha lasciato macOS convinto che Ztoryc fosse aperto
   («non è più aperta»): sbloccato con `open -n`; sparisce al logout.
-- Aperti: crash sh240 (effetti), crash sh030 dai recenti, Shot Board (immagini e sotto-scene).
+- Sera: **Shot Board** corretta (`3f756cd94`, collaudata): resta agganciata nelle sotto-scene, immagini anche
+  senza il livello d'export (extras/, poi miniatura del tracker). sh270: la domanda della versione nuova
+  tornava perche' la scena non era stata salvata dopo la sostituzione; salvata, non torna. Restano nel
+  cast i doppioni (`_v2_1`): Franco li lascia, pulizia a mano.
+- Aperti: crash sh240 (effetti), crash sh030 dai recenti.
 
 ## [2026-11-26] — Personaggio aggiornato all'apertura, icone con i Plastic, Shot Board negli shot
 

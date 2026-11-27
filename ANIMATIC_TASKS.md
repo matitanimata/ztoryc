@@ -181,12 +181,17 @@ degli status).
   Sospetto: l'aggiornamento automatico dalla libreria all'apertura scrive le chiavi mentre le
   icone si disegnano. Il 27/11 non si ripete. Non riprodotto sotto lldb (2 tentativi).
 - [ ] **Collaudo delle correzioni della review del 27/11** (`5844ec8fd`, build 16:13): v2 dall'xsheet
-  principale senza che Board/animatic saltino e con la scena ancora «da salvare»; popup «Newer version»
-  con Invio = keep both; dopo un Discard l'xsheet della lunghezza giusta. Se va, nulla da fare.
+  principale senza che Board/animatic saltino e con la scena ancora «da salvare». (Popup con Invio =
+  keep both e Discard su sh270: provati da Franco il 27/11 sera.)
 - [ ] **v2 che si ripropone a ogni salvataggio**: corretto in `5844ec8fd` (la sotto-scena dello shot
   prende il nome della v2), non provato esplicitamente; controllare anche le bocche nello shot rinominato.
-- [ ] **Shot Board (`f20f9746e`) da sistemare** (Franco 27/11): spesso non carica le immagini dello
-  storyboard; entrando in una sotto-scena perde il collegamento allo storyboard.
+- [x] **Shot Board (`f20f9746e`)**: CORRETTO in `3f756cd94`, collaudato da Franco il 27/11 sera — resta
+  agganciata nelle sotto-scene; immagini dal livello d'export, poi da extras/, poi dalla miniatura del
+  tracker (una sola per shot: sh010 con 31 pannelli mostra la stessa immagine su tutti).
+- [ ] **Versione nuova caricata ma non salvata = doppioni nel cast** (sh270, 27/11): la sostituzione
+  funziona (verificato col log), ma se non si salva la volta dopo la v2 si ricarica come `_v2_1`;
+  sh270 e' passata da 18 a 26 MB. Franco: lasciare cosi' (niente salvataggio automatico, niente riuso
+  della copia nel cast). Pulizia: rimuovere i livelli inutilizzati dal cast. «Keep both» non provato.
 - [ ] **Debito di `ztoriglibrary.cpp`** (review 27/11): offerNewerVersions ~110 righe e createVersion2
   ~80 da spezzare; walk dell'albero duplicato (usesOf/allContexts); formato `_vN` in due posti;
   createVersion2 ritorna true anche se la v2 non entra nel tracker (tipo mancante). Limiti noti: il
