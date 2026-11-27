@@ -750,6 +750,8 @@ private:
   QString     m_extUuid, m_extLabel, m_extSource, m_extProblem;
   std::vector<PanelData> m_extPanels;
   QString     m_extFrames;  // decoded "<label>..png" level path, or empty
+  QString     m_extThumb;   // the tracker's thumbnail of the shot, or empty
+  qint64      m_extStamp = 0;  // the storyboard file's mtime when read
   bool loadExportedShot();
   bool hasShot() const { return m_ext || hasValidShot(); }
   const std::vector<PanelData> *currentPanels() const;

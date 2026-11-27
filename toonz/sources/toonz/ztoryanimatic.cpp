@@ -4699,7 +4699,11 @@ void ZtoryPanelNavigator::syncFromScene() {
   if (!scene) return;
   auto *cs = scene->getChildStack();
   if (!cs) return;
-  if (cs->getAncestorCount() == 0) {
+  // An exported SHOT scene stays itself in its sub-scenes (a character's, a
+  // background's): they are not a storyboard's shots, and going in used to
+  // drop the panels (Franco, 2026-11-27).
+  if (cs->getAncestorCount() == 0 ||
+      !ZtoryModel::instance()->currentShotSceneUuid().isEmpty()) {
     if (m_shotIdx >= 0) onReturnToMain();
     // Not inside a storyboard's shot: maybe this scene IS an exported shot.
     if (loadExportedShot()) return;
@@ -4753,6 +4757,13 @@ bool ZtoryPanelNavigator::loadExportedShot() {
   QString source;
   for (const QString &cnd : candidates)
     if (QFileInfo::exists(cnd)) { source = cnd; break; }
+  // Called at every xsheet change: the storyboard is read again only when it
+  // changed on disk.
+  const qint64 stamp =
+      source.isEmpty() ? 0 : QFileInfo(source).lastModified().toMSecsSinceEpoch();
+  if (m_ext && m_extUuid == uuid && m_extSource == source &&
+      m_extStamp == stamp)
+    return true;
 
   std::vector<PanelData> panels;
   QString problem;
@@ -4814,6 +4825,20 @@ bool ZtoryPanelNavigator::loadExportedShot() {
     }
   }
 
+  // Not in the scene (an older export, or the column taken out): the same
+  // files where the export writes them, in the project's extras.
+  const QString projectDir = QFileInfo(m->projectDbPath()).absolutePath();
+  if (frames.isEmpty() && !ps.label.isEmpty()) {
+    const QString conv =
+        projectDir + "/extras/" + ps.label + "/" + ps.label + "..png";
+    if (QFileInfo::exists(TFilePath(conv.toStdWString())
+                              .withFrame(TFrameId(1))
+                              .getQString()))
+      frames = conv;
+  }
+  // Last: the tracker's thumbnail of the shot — one image, not one per panel.
+  const QString thumb = projectDir + "/thumbs/" + uuid + ".png";
+
   const bool same = m_ext && m_extUuid == uuid && m_extSource == source;
   m_ext        = true;
   m_extUuid    = uuid;
@@ -4822,6 +4847,8 @@ bool ZtoryPanelNavigator::loadExportedShot() {
   m_extProblem = problem;
   m_extPanels  = panels;
   m_extFrames  = frames;
+  m_extThumb   = QFileInfo::exists(thumb) ? thumb : QString();
+  m_extStamp   = stamp;
   if (!same) {
     m_panelIdx      = 0;
     m_cachedPreview = QPixmap();
@@ -4995,6 +5022,7 @@ void ZtoryPanelNavigator::refreshPreview() {
                                   .withFrame(TFrameId(m_panelIdx + 1));
       px.load(frame.getQString());
     }
+    if (px.isNull() && !m_extThumb.isEmpty()) px.load(m_extThumb);
     if (px.isNull()) {
       m_previewLabel->setPixmap(QPixmap());
       m_previewLabel->setText(m_extProblem.isEmpty()
