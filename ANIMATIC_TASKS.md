@@ -164,6 +164,37 @@ degli status).
 
 ## 🆕 Aperti dopo la 0.20.0 (07/11)
 
+### 🆕 Aperti il 26-27/11 (chiavi Speed In/Out, Skeleton Id, lista senza nomi, crash)
+
+- [ ] **Collaudo** (committato in `0b6962162` il 27/11, non provato): fra chiavi uguali il
+  tratto resta Speed In/Out con maniglie piatte invece di diventare Linear (`tstageobject.cpp`,
+  holdEqualNeighbours); «Skeleton Id» escluso dall'Auto Bezier (`doubleparamcmd.cpp`,
+  isStepOnlyCurve); liste Publish/bocche senza emoji ⚠️ (QUESTE collaudate il 27/11) (Qt 5 la disegna come un quadratino e
+  sparisce la riga intera) — icona di avviso al suo posto. Le scene gia' animate (sh080: 785
+  tratti lineari in movimento) NON si convertono da sole.
+- [ ] **Crash sh240, calcolo effetti** (27/11 11:53): thread di render dell'anteprima,
+  Motion Blur → Random Wave → TrFx, `trasterfx.cpp:912` (tile senza raster). Franco spegneva e
+  accendeva l'occhio di RENDER della colonna (camstand acceso). Nel render due astronavi, nella
+  preview normale una. Codice stock; da riprodurre sotto lldb quando Franco puo'.
+- [ ] **Crash all'apertura di sh030 dai recenti** (26/11 18:53 e 19:50 ×3): `updateKeyframes` su
+  due thread, icona della sotto-scena (XsheetIconRenderer) contro il thread principale.
+  Sospetto: l'aggiornamento automatico dalla libreria all'apertura scrive le chiavi mentre le
+  icone si disegnano. Il 27/11 non si ripete. Non riprodotto sotto lldb (2 tentativi).
+- [ ] **Collaudo delle correzioni della review del 27/11** (`5844ec8fd`, build 16:13): v2 dall'xsheet
+  principale senza che Board/animatic saltino e con la scena ancora «da salvare»; popup «Newer version»
+  con Invio = keep both; dopo un Discard l'xsheet della lunghezza giusta. Se va, nulla da fare.
+- [ ] **v2 che si ripropone a ogni salvataggio**: corretto in `5844ec8fd` (la sotto-scena dello shot
+  prende il nome della v2), non provato esplicitamente; controllare anche le bocche nello shot rinominato.
+- [ ] **Shot Board (`f20f9746e`) da sistemare** (Franco 27/11): spesso non carica le immagini dello
+  storyboard; entrando in una sotto-scena perde il collegamento allo storyboard.
+- [ ] **Debito di `ztoriglibrary.cpp`** (review 27/11): offerNewerVersions ~110 righe e createVersion2
+  ~80 da spezzare; walk dell'albero duplicato (usesOf/allContexts); formato `_vN` in due posti;
+  createVersion2 ritorna true anche se la v2 non entra nel tracker (tipo mancante). Limiti noti: il
+  range In/Out dello shot finisce nel file della v2; «keep both» non copia la posizione della colonna;
+  il breakdown del tracker non passa alla v2; una v2 rinominata a mano (non `<scena>_vN`) non si riconosce.
+- [ ] **Ri-posare su una chiave esistente** con Auto Bezier acceso non ricalcola le maniglie dei
+  vicini (l'auto bezier lavora solo quando nasce una chiave).
+
 - **0.20.1 pubblicata il 19/11** (crash Windows dell'Export Animatic, undo di Create Mesh, correzioni di Export Layout).
   Resta aperto:
   - **Crash Windows (`49ce44bda`) MAI provato su Windows vero**: riusa la strada provata con `ZTORYC_LEGACY_OFFLINEGL=1`.

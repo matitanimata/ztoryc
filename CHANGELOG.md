@@ -1,3 +1,31 @@
+## [2026-11-27] — Versioni del personaggio, chiavi Speed In/Out, Mark as Mouth sul personaggio corrente
+
+### Added
+- **Versione piu' recente all'apertura** (`5844ec8fd`, collaudato su sh320): se lo shot usa un personaggio
+  (`lib_kiko`) ed esiste `lib_kiko_v2`, chiede di caricarla tenendo entrambe (predefinito) o scartando la
+  vecchia. Le versioni si trovano dal file collegato al personaggio nel tracker, non dal nome.
+
+### Fixed
+- **«Create a new version» dall'xsheet principale** (`5844ec8fd`, collaudato): prima chiedeva di entrare
+  nella sotto-scena. Dopo, lo shot segue la v2 e non ne propone un'altra a ogni salvataggio; l'asset si
+  chiama personaggio + `_vN`.
+- **Liste Publish e bocche senza nomi** (`5844ec8fd`, collaudato): l'emoji ⚠️ faceva disegnare a Qt 5 la riga
+  vuota; ora un'icona di avviso.
+- **Interpolazioni tutte lineari** (`0b6962162`, NON collaudato): fra chiavi uguali il tratto diventava
+  Linear (con Global Key All quasi ogni canale); ora resta Speed In/Out con maniglie piatte. «Skeleton Id»
+  esclusa dall'Auto Bezier. Le scene gia' animate non si convertono da sole.
+- **Mark as Mouth Level/Column** (`d84f8eea8`, collaudato): usa il personaggio su cui si lavora, come
+  Publish e Update; «Change Character…» chiede ancora.
+
+### Notes
+- Review: 5 bloccanti nelle funzioni delle versioni, corretti in sessione (segnali dell'handle bloccati,
+  range e dirty flag rimessi, lunghezza xsheet, puntatori dopo Discard, scena cambiata col popup aperto).
+  Correzioni NON ancora collaudate. License-guard OK, SCANOSS non raggiunto (504).
+- «Crash all'avvio» delle 15:09: falso allarme, era il resoconto del crash sh240 delle 11:53.
+- Una mia istanza di debug chiusa con kill -9 ha lasciato macOS convinto che Ztoryc fosse aperto
+  («non è più aperta»): sbloccato con `open -n`; sparisce al logout.
+- Aperti: crash sh240 (effetti), crash sh030 dai recenti, Shot Board (immagini e sotto-scene).
+
 ## [2026-11-26] — Personaggio aggiornato all'apertura, icone con i Plastic, Shot Board negli shot
 
 ### Added
