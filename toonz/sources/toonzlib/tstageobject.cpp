@@ -30,6 +30,8 @@
 
 // Qt includes
 #include <QMetaObject>
+#include <QMutex>
+#include <QMutexLocker>
 
 // STD includes
 #include <fstream>
@@ -522,7 +524,21 @@ TStageObject::~TStageObject() {
 
 //-----------------------------------------------------------------------------
 
+static QMutex &lazyDataMutex() {
+  static QMutex mutex(QMutex::Recursive);
+  return mutex;
+}
+
 const TStageObject::LazyData &TStageObject::lazyData() const {
+  // Ztoryc: the sub-scene icons are rendered on a worker thread from the LIVE
+  // xsheet (XsheetIconRenderer, icongenerator.cpp:911) while the viewer draws
+  // the same scene: both rebuilt the same keyframe map at once and one of them
+  // crashed in updateKeyframes (sh030 26/11 ×4, sh280 27/11 — at opening, when
+  // every cache is still to be built and a dialog lets both draw). The rebuild
+  // is now one thread at a time. Recursive: a rebuild asks its parents'.
+  // It serializes the REBUILDS only: a reader keeps its reference unlocked,
+  // so the live xsheet is still not thread-safe for the icon renderer.
+  QMutexLocker lock(&lazyDataMutex());
   return m_lazyData([this](LazyData &ld) { this->update(ld); });
 }
 
@@ -2334,6 +2350,9 @@ void TStageObject::updateKeyframes(LazyData &ld) const {
 //-----------------------------------------------------------------------------
 
 void TStageObject::updateKeyframes() {
+  // The same rebuild as lazyData(), from the gui (Plastic tool, commands):
+  // the same lock.
+  QMutexLocker lock(&lazyDataMutex());
   return updateKeyframes(m_lazyData(tcg::direct_access));
 }
 

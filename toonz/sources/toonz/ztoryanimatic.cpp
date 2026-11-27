@@ -4758,16 +4758,19 @@ bool ZtoryPanelNavigator::loadExportedShot() {
   for (const QString &cnd : candidates)
     if (QFileInfo::exists(cnd)) { source = cnd; break; }
   // Called at every xsheet change: the storyboard is read again only when it
-  // changed on disk.
+  // changed on disk. The images are looked for every time: the export's level
+  // or a thumbnail may appear after the first look (review 2026-11-27).
   const qint64 stamp =
       source.isEmpty() ? 0 : QFileInfo(source).lastModified().toMSecsSinceEpoch();
-  if (m_ext && m_extUuid == uuid && m_extSource == source &&
-      m_extStamp == stamp)
-    return true;
+  const bool unchanged = m_ext && m_extUuid == uuid && m_extSource == source &&
+                         m_extStamp == stamp;
 
   std::vector<PanelData> panels;
   QString problem;
-  if (source.isEmpty()) {
+  if (unchanged) {
+    panels  = m_extPanels;
+    problem = m_extProblem;
+  } else if (source.isEmpty()) {
     problem = ps.source.isEmpty()
                   ? tr("The tracker does not say which storyboard this shot "
                        "comes from.")
@@ -4838,6 +4841,9 @@ bool ZtoryPanelNavigator::loadExportedShot() {
   }
   // Last: the tracker's thumbnail of the shot — one image, not one per panel.
   const QString thumb = projectDir + "/thumbs/" + uuid + ".png";
+  const QString thumbFound = QFileInfo::exists(thumb) ? thumb : QString();
+  if (unchanged && frames == m_extFrames && thumbFound == m_extThumb)
+    return true;
 
   const bool same = m_ext && m_extUuid == uuid && m_extSource == source;
   m_ext        = true;
@@ -4847,7 +4853,7 @@ bool ZtoryPanelNavigator::loadExportedShot() {
   m_extProblem = problem;
   m_extPanels  = panels;
   m_extFrames  = frames;
-  m_extThumb   = QFileInfo::exists(thumb) ? thumb : QString();
+  m_extThumb   = thumbFound;
   m_extStamp   = stamp;
   if (!same) {
     m_panelIdx      = 0;
