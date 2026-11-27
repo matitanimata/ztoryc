@@ -472,7 +472,9 @@ bool KeyframeSetter::isStepOnlyCurve(const TDoubleParam *curve) {
   // The switch, and the pin targets — created stepped on purpose: made smooth,
   // the planted point would slide between two keys.
   const std::string &name = curve->getName();
-  return name == "Pin" || name == "PinTX" || name == "PinTY" ||
+  // The plastic skeleton switch too: an id between two ids is no skeleton.
+  return name == "Skeleton Id" || name == "Pin" || name == "PinTX" ||
+         name == "PinTY" ||
          name == "PinWX" || name == "PinWY" || name == "PinIX" ||
          name == "PinIY";
 }

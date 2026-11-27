@@ -986,18 +986,22 @@ static void holdEqualNeighbours(TDoubleParam *p, double frame) {
   int i       = 0;
   while (i < n && p->getKeyframe(i).m_frame != frame) ++i;
   if (i == n) return;
-  auto flatten = [p](int a) {  // the segment that starts at key a
-    TDoubleKeyframe kf = p->getKeyframe(a);
-    switch (kf.m_type) {
-    case TDoubleKeyframe::SpeedInOut:
-    case TDoubleKeyframe::EaseInOut:
-    case TDoubleKeyframe::EaseInOutPercentage:
-    case TDoubleKeyframe::Exponential:
-      kf.m_type = TDoubleKeyframe::Linear;
-      p->setKeyframe(a, kf);
-      break;
-    default:  // Constant, Linear, expressions, files: left alone
-      break;
+  // The segment that starts at key a. It used to become Linear, and stayed
+  // Linear when one of its keys was posed again later: with Global Key All
+  // every unmoved channel gets an equal key, so most of a shot's curves ended
+  // up linear whatever the Default Interpolation said (sh080: 785 moving
+  // segments Linear, 62 Speed In/Out — Franco, 2026-11-26). Now the segment
+  // keeps its type: only Speed In/Out can leave a hold, through its handles,
+  // so those are laid HORIZONTAL at both keys — the same flat tangent auto
+  // bezier gives a key with a flat side. Ease and exponential between two
+  // equal values are already flat.
+  auto flatten = [p](int a) {
+    if (p->getKeyframe(a).m_type != TDoubleKeyframe::SpeedInOut) return;
+    for (int k : {a, a + 1}) {
+      TDoubleKeyframe kf = p->getKeyframe(k);
+      kf.m_speedIn.y     = 0.0;
+      kf.m_speedOut.y    = 0.0;
+      p->setKeyframe(k, kf);
     }
   };
   const double v = p->getKeyframe(i).m_value;
