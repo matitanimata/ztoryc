@@ -9,6 +9,7 @@
 #include "tstream.h"
 #include "tsystem.h"
 #include "tundo.h"
+#include "toonz/txshchildlevel.h"
 #include "toonz/levelset.h"
 #include "toonz/toonzscene.h"
 #include "toonz/tframehandle.h"
@@ -359,11 +360,43 @@ QString baseLevelName(const QString &name) {
 // The level a clip's cell names, in this scene: the exact name; else, among
 // the levels the target column already shows, the same name but for the
 // «_N»; else any level of the scene so named.
+// The levels the character's own xsheet shows, its sub-scenes included.
+static void levelsShown(TXsheet *xsh, int depth, QSet<TXsheet *> &seen,
+                        QList<TXshLevel *> &out) {
+  if (!xsh || depth > 8 || seen.contains(xsh)) return;
+  seen.insert(xsh);
+  for (int c = 0; c < xsh->getColumnCount(); c++) {
+    int r0 = 0, r1 = -1;
+    xsh->getCellRange(c, r0, r1);
+    for (int r = r0; r <= r1; r++) {
+      TXshLevel *lv = xsh->getCell(r, c).m_level.getPointer();
+      if (!lv || out.contains(lv)) continue;
+      out << lv;
+      if (TXshChildLevel *cl = lv->getChildLevel())
+        levelsShown(cl->getXsheet(), depth + 1, seen, out);
+    }
+  }
+}
+
 TXshLevel *findLevel(ToonzScene *scene, TXsheet *xsh, int col,
                      const QString &name) {
   TLevelSet *ls = scene->getLevelSet();
-  if (TXshLevel *lv = ls->getLevel(name.toStdWString())) return lv;
   const QString base = baseLevelName(name);
+  // First the character's OWN levels: in a shot with two characters the
+  // exact name may be the other one's — the scientist's clip said «sub», the
+  // shot's «sub» was KIKO's (his came first; the scientist's became
+  // «sub_21»), and the clip drew KIKO's pieces (Franco, 2026-11-28).
+  {
+    QSet<TXsheet *> seen;
+    QList<TXshLevel *> own;
+    levelsShown(xsh, 0, seen, own);
+    for (TXshLevel *lv : own)
+      if (QString::fromStdWString(lv->getName()) == name) return lv;
+    for (TXshLevel *lv : own)
+      if (baseLevelName(QString::fromStdWString(lv->getName())) == base)
+        return lv;
+  }
+  if (TXshLevel *lv = ls->getLevel(name.toStdWString())) return lv;
   if (col >= 0) {
     int r0 = 0, r1 = -1;
     xsh->getCellRange(col, r0, r1);
